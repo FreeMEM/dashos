@@ -48,23 +48,17 @@ lo comparte. Así queda en cada máquina:
 
 - **Raspberry Pi**: DashOS tiene sus controladores de pantalla, GPU y decodificador (S9, S21). La caja Linux pinta y
   decodifica a través de DashOS por virtio-gpu y virtio-video: manda el vídeo comprimido y DashOS lo decodifica.
-- **PC: qué gráfica se queda DashOS** (regla del 2026-11-15, con la rama `x86`): al arrancar, la gráfica donde esté
-  el monitor (su pantalla del firmware, GOP); después, para DashOS la de Intel si la hay (es la documentada), y si no,
-  la integrada; la otra, a la caja Linux. Ejemplos de la casa: en pegaso (i5-8500, UHD 630 y RTX 3050), la UHD 630
-  para DashOS y la RTX 3050 a la caja Linux (su grupo de IOMMU solo lleva la gráfica, su audio y el puerto PCIe: se
-  puede pasar); en shiva (Ryzen 9 9955HX con Radeon 610M, y una Intel Arc A310), la Arc A310 para DashOS (sola en su
-  grupo de IOMMU; necesita el firmware GuC/HuC de `linux-firmware` y va mucho mejor con Resizable BAR activado en la
-  BIOS, sin comprobar en shiva) y la Radeon a la caja Linux.
-  - Con dos gráficas, la dedicada se pasa a la caja Linux, que usa sus controladores y VA-API o NVDEC, y DashOS
-    recibe los cuadros como superficies.
-  - Con una sola Intel moderna (Xe, de Alder Lake en adelante), SR-IOV: DashOS la función física, Linux una virtual.
-  - Con una sola AMD o Nvidia, no se pasa: su controlador de Linux corre como proceso aislado en la zona GPL (S30,
-    regla 7) y hace de controlador para DashOS (un dominio de controladores, como en Qubes o Genode). DashOS pinta en
-    memoria y le pide mostrar y decodificar por un canal. Si cae, no tumba el sistema.
-  - Intel, AMD y Nvidia tienen que llegar por la zona GPL (decisión del usuario en S30), empezando por la Intel
-    integrada, la más documentada. Controlador propio y nativo, solo de Intel y si hace falta.
-- **Requisito previo en PC: IOMMU** (VT-d, AMD-Vi). Sin él, un aparato pasado a la caja Linux alcanza toda la memoria.
-  DashOS x86 aún no lo tiene (límite apuntado en `docs/referencia/kernel.md` de la rama `x86`).
+- **PC y ARM que no son la Pi: lo manda S34** (`docs/diseño/S34-grafica-compartida.md`, rama `x86`; decidido por el
+  usuario el 2026-11-15). En resumen: un dominio de gráficos (máquina virtual con Linux mínimo y los controladores del
+  fabricante, en la zona GPL) lleva las gráficas por pase con IOMMU (SMMU en ARM); DashOS y la caja Linux son clientes
+  suyos (contexto nativo o Venus, sin copia). Con dos gráficas, dos dominios: el de pantalla (integrada, el monitor
+  enchufado ahí, el compositor y guardian) y el de cómputo (dedicada). La caja Linux sigue siendo máquina virtual
+  aparte; CUDA llega por reenvío de la interfaz del controlador de Nvidia con lista blanca (como WSL2 o el nvproxy de
+  gVisor), y mientras tanto con la dedicada pasada entera cuando la usa. El dominio, desde 4 GB y apagable en Prefs;
+  con menos, pantalla del firmware y CPU. Requisito: IOMMU (DashOS x86 aún no lo tiene).
+- Ejemplos de la casa: pegaso (i5-8500, UHD 630 y RTX 3050): pantalla en la UHD 630 con el monitor ahí, cómputo en la
+  RTX (su grupo de IOMMU solo lleva la gráfica, su audio y el puerto PCIe); shiva (Ryzen 9 9955HX con Radeon 610M, y
+  Arc A310 sola en su grupo; la Arc pide el firmware GuC/HuC y va mejor con Resizable BAR, sin comprobar en shiva).
 - **Por CPU, siempre**: lo libre (AV1, VP9) cabe en cualquier PC moderno, también en 4K.
 
 Sala limpia: los controladores de Linux corren dentro de la caja Linux o de la zona GPL, nunca copiados a DashOS.
