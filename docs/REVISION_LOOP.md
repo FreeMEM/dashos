@@ -2106,3 +2106,9 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   cambiar la fecha (`file_set_date`); (5) que `sesiones` e `inicio` digan qué es cada llave que dan, en vez de que el
   runtime lo adivine por cuántas recibe. El (4), que el runtime de Dash use las asignaciones, es de la sesión de Dash.
   Los menús de Dash esperan decisión del usuario: no tocarlos.
+- **Orden 35 `FECHAR` en `archivos`** (pendiente (3) de la sesión de Dash, para `file_set_date` y `SetFileDate`): la
+  fecha de modificación (segundos y nanosegundos); solo el dueño y con la W del tope de su raíz (entra en `por_asa`,
+  como comentar y proteger). Prueba en `ficheros`: se pone y se lee con DATOS, y lo hostil (nanosegundos de más, fecha
+  fuera de rango, asa que no es) se rechaza; al acabar devuelve la fecha original (la comprobación del disco mira que lo
+  escrito sea de hoy). make prueba y arranque-virt bien. Documentada en `docs/referencia/servicios.md`. Falta: que la
+  caja Amiga (`SetFileDate` de dos) y el runtime de Dash la usen.

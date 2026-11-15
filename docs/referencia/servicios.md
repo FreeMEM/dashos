@@ -298,6 +298,7 @@ del cliente; la orden 21 da la raíz de otro volumen.
 | 13 comentario | Pone en la ventana el comentario (UTF-8, hasta 255 bytes) | asa | a su largo |
 | 14 comentar | Cambia el comentario; vacío, lo quita | asa, nombre: el comentario | — |
 | 15 proteger | Cambia los bits del Amiga y los permisos de Unix | asa, a bits, b permisos (hasta 0o7777) | — |
+| 35 fechar | Cambia la fecha de modificación (solo el dueño) | asa, a segundos desde 1970, b nanosegundos (< 10⁹) | — |
 | 16 comprobar | Comprueba el disco entero, sin cambiar nada (FS8); pone en la ventana los problemas, uno por línea, hasta llenarla | a: 1 = leer también los datos | a cuántos problemas, b bytes en la ventana, c bytes en uso |
 | 17 instantáneas | Pone en la ventana las instantáneas del volumen de la asa, de la más vieja a la más nueva: fecha (8), largo del nombre (1) y el nombre; la siguiente en un múltiplo de 8 (FS9) | asa | a cuántas caben, b cuántas hay, c bytes usados |
 | 18 tomar | Toma una instantánea del volumen de la asa | asa, nombre (hasta 64 bytes, sin ':' ni '/') | — |

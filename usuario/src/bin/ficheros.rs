@@ -403,6 +403,19 @@ fn principal() -> u64 {
         && modo_y_bits(&c) == (0o644, NO_BORRAR)
         && c.pedir(PROTEGER, h.asa, GUION, 0o644, "").estado == 0
         && c.pedir(PROTEGER, h.asa, 1 << 20, 0o644, "").estado == -1;
+    // La fecha de modificación (FECHAR): se pone y se lee con DATOS; nanosegundos de más, una asa que no es o una fecha
+    // fuera de rango, no.
+    // Al acabar se le devuelve su fecha: la comprobación del disco tras la prueba mira que lo escrito sea de hoy.
+    let antes = c.pedir(DATOS, h.asa, 0, 0, "").b;
+    let fecha = c.pedir(FECHAR, h.asa, 1_700_000_000, 5, "").estado == 0
+        && c.pedir(DATOS, h.asa, 0, 0, "").b == 1_700_000_000
+        && c.pedir(FECHAR, h.asa, 1_700_000_000, 1_000_000_000, "").estado == -1
+        && c.pedir(FECHAR, h.asa, u64::MAX, 0, "").estado == -1
+        && c.pedir(FECHAR, 999, 1_700_000_000, 0, "").estado == -5
+        && c.pedir(DATOS, h.asa, 0, 0, "").b == 1_700_000_000
+        && c.pedir(FECHAR, h.asa, antes, 0, "").estado == 0
+        && c.pedir(DATOS, h.asa, 0, 0, "").b == antes;
+    println!("  [ficheros] fecha de modificación: {}", si(fecha));
     println!(
         "  [ficheros] FS6 mayúsculas: {}; FS7 comentario: {}, en la lista: {}; bits: {}",
         si(mayusculas),

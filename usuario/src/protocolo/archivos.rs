@@ -73,6 +73,9 @@ pub const SOLTAR: u32 = 33;
 /// S10: el dueño (a) y el grupo (b) de lo que tiene la asa, y el usuario de quien pregunta (c). Para la Información
 /// del Workbench: decir de quién es y si se puede cambiar (comentar y proteger, solo el dueño).
 pub const DUENO: u32 = 34;
+/// La fecha de modificación de lo que tiene la asa: a, los segundos desde 1970; b, los nanosegundos (menos de mil
+/// millones). Solo el dueño, como comentar y proteger. Es lo que piden `SetFileDate` de la caja y `file_set_date` de Dash.
+pub const FECHAR: u32 = 35;
 pub const TROZO_PRESTADO: usize = 512 * 1024;
 pub const POR_PRESTAMO: usize = 4;
 pub const MAX_PRESTADOS: usize = 8;

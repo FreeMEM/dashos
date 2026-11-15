@@ -1334,7 +1334,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
         return mal(SOLO_LECTURA);
     }
     // Lo que cambia algo por una asa necesita la W de su tope (la de su raíz); renombrar, también en el destino.
-    let por_asa = matches!(p.orden, ESCRIBIR | CREAR | BORRAR | RENOMBRAR | TAMANO | COMENTAR | PROTEGER);
+    let por_asa = matches!(p.orden, ESCRIBIR | CREAR | BORRAR | RENOMBRAR | TAMANO | COMENTAR | PROTEGER | FECHAR);
     if por_asa && (tope(c, p.asa) & W == 0 || p.orden == RENOMBRAR && tope(c, p.b as u32) & W == 0) {
         return mal(PROTEGIDO);
     }
@@ -1804,6 +1804,25 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 let modo = nodo.data().mode() & Node::MODE_TYPE | p.b as u16;
                 nodo.data_mut().set_mode(modo);
                 nodo.data_mut().set_amiga_bits(bits);
+                tx.sync_tree(nodo)
+            });
+            match r {
+                Ok(()) => Respuesta { estado: BIEN, asa: p.asa, ..Default::default() },
+                Err(e) => mal(estado_de(e)),
+            }
+        }
+        FECHAR => {
+            let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            let Ok(nsec) = u32::try_from(p.b) else { return mal(MAL_FORMADO) };
+            if nsec >= 1_000_000_000 || p.a > i64::MAX as u64 {
+                return mal(MAL_FORMADO);
+            }
+            let r = fs.tx_in(vol, |tx| {
+                let mut nodo = tx.read_tree(n)?;
+                if nodo.data().uid() != ficha.uid {
+                    return Err(negado());
+                }
+                nodo.data_mut().set_mtime(p.a, nsec);
                 tx.sync_tree(nodo)
             });
             match r {
