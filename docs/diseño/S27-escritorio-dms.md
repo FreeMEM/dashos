@@ -243,3 +243,29 @@ El usuario aceptó las siete recomendaciones de arriba (2026-11-13). Detalle en 
 6. **Paso del volumen con las teclas.** 5 % (DMS usa 3 %; los botones del panel, 10 %). Recomiendo 5 %.
 7. **Atajos.** Super sola abre el lanzador (S10), Super+1..9 los espacios. DMS usa Super+Espacio para el lanzador.
    Recomiendo dejar Super sola y añadir también Super+Espacio en la oleada 2.
+
+## 7. Ajustes de todo DashOS al estilo de DMS (pedido del usuario, 2026-11-15)
+
+La idea de los Ajustes de DMS (Super+Coma): una ventana con barra lateral de categorías, un buscador que encuentra
+cualquier ajuste por su nombre, cambios que se ven al momento sin "Aplicar", y todo guardado en ficheros de texto.
+Se toma la idea (sin leer su código), y se casa con las Prefs del Amiga:
+
+- **Una sola cara, las Prefs de siempre por debajo.** Cada categoría de Ajustes es un editor de `SYS:Prefs` (S4b):
+  guarda en `ENVARC:` (la capa del usuario, `Home:Prefs/Env-Archive`) y lo en uso va en `ENV:`; los servicios vigilan
+  `ENV:` y aplican el cambio al momento. Quien prefiera el Amiga abre `SYS:Prefs/Pantalla` suelto, y es lo mismo.
+- **Categorías**: Apariencia (tema claro u oscuro y por la hora, color dinámico del fondo, acento, fuentes, iconos,
+  densidad, animaciones), Fondo, Barra, Panel rápido, Dock, Lanzador, Avisos y no molestar, Espacios de trabajo y
+  columnas, Atajos, Pantallas (resolución, escala, varias), Sonido (salidas, entradas, volumen por programa), Red
+  (cable, Wi-Fi cuando haya, cortafuegos), Bluetooth (cuando haya), Teclado y ratón, Idioma y región (S4b, catálogos),
+  Fecha y hora (zona, hora por red), Energía, Usuarios (cuentas, contraseña, avatar; lo de otros, con administrador),
+  Privacidad y permisos (lo concedido a cada programa, S6b), Programas (Paq y Hangar, actualizaciones, S8), Disco
+  (volúmenes y espacio, S32), Caja Amiga (memoria, pantallas, ajustes del 68k) y Caja Linux (memoria, núcleos, disco).
+- **El buscador** busca en los nombres y en palabras clave de cada ajuste, también en el idioma del usuario, y abre
+  la categoría con el ajuste resaltado. El lanzador (Super+Espacio) también encuentra ajustes.
+- **De máquina o de usuario**: lo de máquina (hora del sistema, red del sistema, usuarios, programas de todos) lleva el
+  candado de administrador (S6b); lo demás es de cada usuario y va en su `Home:`.
+- **Ficheros de texto legibles** en `ENVARC:` para lo nativo (los que lee la caja Amiga siguen en IFF, S4b): se
+  pueden copiar entre máquinas y guardar en git. "Volver a fábrica" por categoría: borrar ese fichero de la capa del
+  usuario.
+- Hoy los Ajustes (C1, C3) tienen 8 secciones; faltan Red, Sonido, Teclado, Idioma, Fecha y hora y Usuarios, el
+  buscador por ajuste y la casación con `SYS:Prefs`/`ENVARC:` (que depende de las asignaciones nativas, paso 2).

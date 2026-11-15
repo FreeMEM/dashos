@@ -2033,3 +2033,7 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   sistema). make prueba bien; arranque-virt bien (el fallo suelto del explorador salió dos veces, y en la comparación
   a la vez salió SIN el cambio y no con él: suelto). Sin comprobar todavía: que datatypes tenga los tipos registrados
   (siguiente: una prueba que abra un ILBM por NewDTObject).
+  6. **Ajustes de todo DashOS al estilo de DankMaterialShell** (S27, sección 7; pedido del usuario 2026-11-15): una
+     cara con categorías y buscador sobre las Prefs del Amiga (`SYS:Prefs`, `ENVARC:`, `ENV:` vigilado). Faltan las
+     categorías de Red, Sonido, Teclado, Idioma, Fecha y hora y Usuarios, el buscador por ajuste y guardar en
+     `ENVARC:` (tras el paso 2).
