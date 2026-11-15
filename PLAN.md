@@ -398,3 +398,22 @@ resumido, en `docs/diseño/RESUMEN.md`.
   - ARM se queda en las placas (Pi 3, 4 y 5, THEA). Los portátiles, en x86, que son baratos. Los portátiles ARM y los
     Mac bajan de prioridad (cambia "Otros ordenadores ARM", arriba).
 
+## Decisiones del usuario del 2026-11-15
+
+Tras la revisión de arquitectura (`docs/diseño/S22-revision-arquitectura.md`, a renumerar: en `revision` ya hay otro
+S21 y otro S22) y la de RelevoJIT (`~/Projects/RelevoJIT/docs/REVISION.md`). Prioridades: compatibilidad,
+estabilidad y velocidad, por ese orden.
+
+- **La rama `x86` se pone al día con `revision`** antes de seguir (la caja Amiga, los hilos de usuario y el permiso
+  de ejecutar están allí).
+- **Interfaz de motor en la caja Amiga**, con Emu68 detrás al principio. **RelevoJIT como único motor es la meta**,
+  también en ARM; el cambio en ARM, solo tras programas reales, un generador para AArch64 y medirlo contra Emu68.
+  Con un solo motor que gira los bytes, la caja es little-endian en todas partes.
+- **RelevoJIT:** memoria 68k en la dirección 0, reentrada (`relevo_run` desde una función del anfitrión), MMU del
+  68030 y 68040, y el 68060 de verdad.
+- **Las bibliotecas de la caja siguen en Rust** (es lo que hay; corrige "las bibliotecas Amiga, en Dash" de arriba).
+  Las que se escriban en Dash se compilan a 68k y corren dentro del JIT.
+- **PCID apagado por defecto** en x86 hasta probarlo en hardware.
+- **Caja PowerPC en x86: aplazada.** Sin tercer JIT.
+- **Dash para x86-64, por la vía de C** (sesiones de Dash).
+
