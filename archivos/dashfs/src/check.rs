@@ -115,6 +115,9 @@ pub enum Problem {
     Keys { name: String },
     /// Something wrong in a volume other than the main one.
     InVolume { name: String, problem: Box<Problem> },
+    /// DashOS (S32): the header says the file system has `size` bytes and the disk (the partition) has only `disk`:
+    /// what was beyond is gone. If nothing was in use there, shrinking to the disk fixes it.
+    BeyondDisk { size: u64, disk: u64 },
 }
 
 impl fmt::Display for EntryFault {
@@ -185,6 +188,9 @@ impl fmt::Display for Problem {
                 write!(f, "main volume: {problem}")
             }
             Problem::InVolume { name, problem } => write!(f, "volume {name:?}: {problem}"),
+            Problem::BeyondDisk { size, disk } => {
+                write!(f, "the file system says {size} bytes and the disk has only {disk}")
+            }
         }
     }
 }
@@ -374,6 +380,14 @@ pub fn check<D: Disk>(
     };
     if !allocator_read {
         c.problems.push(Problem::AllocLog);
+    }
+    if c.tx.fs.disk.size_is_limit()
+        && let Ok(disk) = c.tx.fs.disk.size()
+    {
+        let size = c.tx.header.size();
+        if (c.tx.fs.block * BLOCK_SIZE).saturating_add(size) > disk {
+            c.problems.push(Problem::BeyondDisk { size, disk: disk.saturating_sub(c.tx.fs.block * BLOCK_SIZE) });
+        }
     }
     let focus = c.tx.volume();
     c.tx.leave_volume()?;

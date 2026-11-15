@@ -117,6 +117,19 @@ impl<D: Disk> FileSystem<D> {
                 header = newest[1];
             }
 
+            // DashOS (S32): una cabecera que dice más tamaño del que tiene el disco (una partición encogida sin
+            // encoger antes el sistema de archivos). Usarlo así acabaría escribiendo fuera: no se abre. Para
+            // comprobarlo sí, que es como se puede arreglar (`check`: `Problem::BeyondDisk`; `shrink`).
+            if !damaged_allocator
+                && disk.size_is_limit()
+                && let Ok(size) = disk.size()
+                && (block * BLOCK_SIZE).saturating_add(header.size()) > size
+            {
+                #[cfg(feature = "log")]
+                log::error!("OPEN: EL SISTEMA DE ARCHIVOS DICE {} BYTES Y EL DISCO TIENE {}", header.size(), size);
+                return Err(Error::new(syscall::error::EINVAL));
+            }
+
             let cipher_opt = match password_opt {
                 Some(password) => {
                     if !header.encrypted() {
@@ -472,7 +485,7 @@ impl<D: Disk> FileSystem<D> {
     ///
     /// # Safety
     /// Unsafe, it must only be called when opening the filesystem
-    unsafe fn reset_allocator(&mut self) -> Result<()> {
+    pub(crate) unsafe fn reset_allocator(&mut self) -> Result<()> {
         self.allocator = Allocator::default();
 
         // To avoid having to update all prior alloc blocks, there is only a previous pointer
@@ -505,11 +518,9 @@ impl<D: Disk> FileSystem<D> {
                         }
                     }
                 } else {
-                    for i in 0..count {
-                        let addr =
-                            unsafe { BlockAddr::new(index + i as u64, BlockMeta::default()) };
-                        self.allocator.deallocate(addr);
-                    }
+                    // DashOS: el tramo entero de una vez (lo mismo que bloque a bloque): la entrada de un disco
+                    // recién hecho o recién crecido puede ser de millones de bloques.
+                    self.allocator.free_run(index, count as u64);
                 }
             }
         }

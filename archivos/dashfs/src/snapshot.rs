@@ -212,7 +212,7 @@ impl<D: Disk> Transaction<'_, D> {
     }
 
     /// Writes the list of snapshots anew.
-    fn write_snapshots(&mut self, list: &[Snapshot]) -> Result<()> {
+    pub(crate) fn write_snapshots(&mut self, list: &[Snapshot]) -> Result<()> {
         let mut ptr = self.header.snapshots;
         while !ptr.is_null() {
             let block = self.read_block(ptr)?;
@@ -234,7 +234,7 @@ impl<D: Disk> Transaction<'_, D> {
     }
 
     /// The blocks in a dead list, and the blocks of the list itself.
-    fn read_dead(
+    pub(crate) fn read_dead(
         &mut self,
         mut ptr: BlockPtr<DeadList>,
     ) -> Result<(Vec<BlockAddr>, Vec<BlockAddr>)> {
@@ -250,7 +250,7 @@ impl<D: Disk> Transaction<'_, D> {
     }
 
     /// Writes a dead list anew.
-    fn write_dead_list(&mut self, addrs: &[BlockAddr]) -> Result<BlockPtr<DeadList>> {
+    pub(crate) fn write_dead_list(&mut self, addrs: &[BlockAddr]) -> Result<BlockPtr<DeadList>> {
         let mut prev = BlockPtr::default();
         for chunk in addrs.chunks(DEAD_LIST_ENTRIES) {
             let mut block = BlockData::<DeadList>::empty(BlockAddr::default()).unwrap();
@@ -289,7 +289,7 @@ impl<D: Disk> Transaction<'_, D> {
     }
 
     /// Writes a release list anew.
-    fn write_release_list(&mut self, ids: &[u32]) -> Result<BlockPtr<ReleaseList>> {
+    pub(crate) fn write_release_list(&mut self, ids: &[u32]) -> Result<BlockPtr<ReleaseList>> {
         let mut prev = BlockPtr::default();
         for chunk in ids.chunks(RELEASE_LIST_ENTRIES) {
             let mut block = BlockData::<ReleaseList>::empty(BlockAddr::default()).unwrap();

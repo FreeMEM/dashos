@@ -80,6 +80,7 @@ pub mod mount;
 mod node;
 mod record;
 pub mod repair;
+pub mod resize;
 pub mod snapshot;
 mod transaction;
 mod tree;
@@ -110,3 +111,5 @@ mod tests_a5;
 mod tests_a9;
 #[cfg(test)]
 mod tests_a8;
+#[cfg(all(feature = "std", test))]
+mod tests_resize;

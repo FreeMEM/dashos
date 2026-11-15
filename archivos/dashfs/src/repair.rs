@@ -229,6 +229,7 @@ fn fix<D: Disk>(tx: &mut Transaction<D>, report: &Report, lost: &str) -> Result<
             // FS10d: each volume is repaired in its own turn; their blocks stay in use.
             | Problem::Volumes
             | Problem::VolumeUnreadable { .. }
+            | Problem::BeyondDisk { .. }
             | Problem::InVolume { .. } => {}
         }
     }

@@ -111,6 +111,9 @@ pub struct Transaction<'a, D: Disk> {
     /// `fresh` and the disk forgets them only when this transaction commits: if it fails, the committed state still
     /// uses them, and their data must still reach the disk.
     forget_on_commit: Vec<(u64, u64)>,
+    /// DashOS (encoger): la transacción que cambia el tamaño. Lo que suelta en este bloque o más allá no se apunta
+    /// en el registro de asignación: queda fuera del sistema de archivos (`resize.rs`).
+    pub(crate) cut: Option<u64>,
 }
 
 /// How many checked blocks `FileSystem::verified` remembers (16 bytes each).
@@ -138,6 +141,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             quarantine: Vec::new(),
             fresh: Vec::new(),
             forget_on_commit: Vec::new(),
+            cut: None,
         }
     }
 
@@ -186,6 +190,19 @@ impl<'a, D: Disk> Transaction<'a, D> {
             }
             None => Err(Error::new(ENOSPC)),
         }
+    }
+
+    /// Reserva un bloque como `old` (su nivel, su compresión y su época) para llevar allí lo que hay en `old`
+    /// (encoger, `resize.rs`). La época es la del bloque viejo: las instantáneas lo siguen viendo igual.
+    pub(crate) fn reallocate(&mut self, old: BlockAddr) -> Result<BlockAddr> {
+        let addr = self.fs.allocator.allocate_snug(old.meta()).ok_or(Error::new(ENOSPC))?;
+        self.undo.push((true, addr));
+        let addr = addr.with_epoch(old.epoch());
+        self.allocator_log.push_back(AllocEntry::allocate(addr));
+        if self.fs.deferred {
+            self.fresh.push((addr.index(), addr.level().blocks::<u64>()));
+        }
+        Ok(addr)
     }
 
     /// Reserva en el asignador de la transacción (la reparación) o en el del sistema de archivos, apuntándolo (A8).
@@ -301,7 +318,9 @@ impl<'a, D: Disk> Transaction<'a, D> {
             && self.header.generation() >= ALLOC_GC_THRESHOLD
             && self.allocator.as_ref().unwrap_or(&self.fs.allocator).free() > 0
             && self.fs.quarantine.is_empty()
-            && self.fs.held.as_ref().is_none_or(|h| h.is_empty());
+            && self.fs.held.as_ref().is_none_or(|h| h.is_empty())
+            // Encogiendo, al asignador le falta lo libre del tramo que se quita: rehacer el registro lo perdería.
+            && self.fs.allocator.limit().is_none();
         if force_squash || should_gc {
             // Clear and rebuild alloc log
             self.allocator_log.clear();
@@ -380,7 +399,15 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 }
                 self.alloc_deallocate(addr);
             }
-            self.allocator_log.push_back(AllocEntry::deallocate(addr));
+            match self.cut {
+                // Fuera del nuevo tamaño: no existe para el registro. De lo que cruza el corte, la parte de antes.
+                Some(cut) if addr.index() >= cut => {}
+                Some(cut) if addr.index() + addr.level().blocks::<u64>() > cut => {
+                    self.allocator_log
+                        .push_back(AllocEntry::new(addr.index(), (cut - addr.index()) as i64));
+                }
+                _ => self.allocator_log.push_back(AllocEntry::deallocate(addr)),
+            }
         }
 
         for new_block in new_blocks {
