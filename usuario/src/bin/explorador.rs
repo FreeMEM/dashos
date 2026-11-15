@@ -14,9 +14,10 @@
 //! - Abrir con doble clic (los programas de `Programas`, por `sesiones`, como el Workbench), Abrir con, Propiedades
 //!   (la rejilla de permisos de la Información del Workbench), búsqueda en las subcarpetas y miniaturas de los PNG.
 //!
-//! Seguridad (S6b): la ficha es de Ana (1000) con el derecho de repartir. Se cede a sí mismo sus raíces: el disco solo
-//! para leer (1, "Sistema"), `C` para leer y escribir (2, "Home", provisional como en el Workbench) y el cajón de la caja
-//! Amiga (3). Solo va por ellas, por asas y un nombre cada vez; los nombres raros ni se enseñan ni se abren
+//! Seguridad (S6b): la ficha es de Ana (1000) con el derecho de repartir. Se cede a sí mismo sus raíces, en los huecos de
+//! cada volumen del protocolo (`RAIZ_*`, paso 2 de las asignaciones): el disco solo para leer (1, `SYS:`), `C` para leer
+//! y escribir (2, `Home:`, provisional como en el Workbench), su `RAM:` (3) y `Work:` (4), y el cajón de la caja Amiga
+//! (5). Los caminos se escriben como en el Amiga: `SYS:Programas`, `Home:Privado/nota.txt`. Solo va por ellas, por asas y un nombre cada vez; los nombres raros ni se enseñan ni se abren
 //! (`explorador/logica.rs`). Copiar es leer y escribir con sus permisos: el servicio no hace nada que su ficha no deje.
 //!
 //! Llaves: 1 el canal "ventanas", 2 "archivos", 3 "sesiones" (lanzar y saber quién está) y 4 su canal "explorador",
@@ -95,9 +96,12 @@ const VA_VENTANAS: usize = 0x60_0000_0000;
 const HUECO: usize = 32 << 20;
 pub const MAX_VENTANAS: usize = 4;
 const MAX_PESTANAS: usize = 8;
-pub const RAIZ_SISTEMA: u32 = 1;
-pub const RAIZ_HOME: u32 = 2;
-pub const RAIZ_AMIGA: u32 = 3;
+pub const RAIZ_SISTEMA: u32 = s::RAIZ_SYS as u32;
+pub const RAIZ_HOME: u32 = s::RAIZ_HOME as u32;
+pub const RAIZ_RAM: u32 = s::RAIZ_RAM as u32;
+pub const RAIZ_WORK: u32 = s::RAIZ_WORK as u32;
+/// El cajón de la caja Amiga, tras los de los volúmenes.
+pub const RAIZ_AMIGA: u32 = 5;
 const CAMINO_AMIGA: &[u8] = b"Estado/Servicios/caja-amiga";
 const BOTON_IZQUIERDO: u32 = 0x110;
 const BOTON_DERECHO: u32 = 0x111;
@@ -223,7 +227,7 @@ impl Servicio {
     }
 
     /// Se cede a sí mismo sus raíces (S6b, capa 2): el estado de cada una.
-    fn ceder_raices(&self, c: &mut Cliente) -> [i32; 3] {
+    fn ceder_raices(&self, c: &mut Cliente) -> [i32; 5] {
         let mut ceder = |camino: &[u8], derechos: u64, hueco: u32| {
             let r = self.pedir_una(c, a::BUSCAR, 0, 0, 0, camino);
             if r.e != a::BIEN {
@@ -233,7 +237,13 @@ impl Servicio {
             self.pedir_una(c, a::CERRAR, r.asa, 0, 0, b"");
             e
         };
-        [ceder(b"", 4, RAIZ_SISTEMA), ceder(b"C", 4 | 2, RAIZ_HOME), ceder(CAMINO_AMIGA, 4 | 2, RAIZ_AMIGA)]
+        [
+            ceder(b"", 4, RAIZ_SISTEMA),
+            ceder(b"C", 4 | 2, RAIZ_HOME),
+            ceder(b"Estado/RAM/Ana", 4 | 2, RAIZ_RAM),
+            ceder(s::CAMINO_WORK.as_bytes(), 4 | 2, RAIZ_WORK),
+            ceder(CAMINO_AMIGA, 4 | 2, RAIZ_AMIGA),
+        ]
     }
 }
 
@@ -248,7 +258,7 @@ impl Fs for Real<'_> {
         let r = self.s.pedir_una(self.c, orden, asa, x, y, nombre);
         // Al volver el disco a una instantánea, el servicio suelta las raíces de todos: se ceden otra vez (si esa raíz
         // de verdad ya no vale; una asa mala puede ser también la del destino de renombrar).
-        if r.e == a::ASA_MALA && (1..=3).contains(&asa) && self.s.pedir_una(self.c, a::DATOS, asa, 0, 0, b"").e == a::ASA_MALA {
+        if r.e == a::ASA_MALA && (RAIZ_SISTEMA..=RAIZ_AMIGA).contains(&asa) && self.s.pedir_una(self.c, a::DATOS, asa, 0, 0, b"").e == a::ASA_MALA {
             let e = self.s.ceder_raices(self.c);
             println!("  [explorador] sus raíces ya no valían: otra vez {:?}", e);
             return self.s.pedir_una(self.c, orden, asa, x, y, nombre);
@@ -327,11 +337,13 @@ pub struct Sitio {
     pub marca: Option<&'static str>,
 }
 
-pub fn sitios() -> [Sitio; 4] {
+pub fn sitios() -> [Sitio; 6] {
     [
         Sitio { nombre: "Carpeta personal", lugar: Lugar::raiz(RAIZ_HOME), icono: Icono::Casa, marca: None },
         Sitio { nombre: "Papelera", lugar: papelera_archivos(), icono: Icono::Papelera, marca: None },
-        Sitio { nombre: "Sistema", lugar: Lugar::raiz(RAIZ_SISTEMA), icono: Icono::Disco, marca: None },
+        Sitio { nombre: "SYS:", lugar: Lugar::raiz(RAIZ_SISTEMA), icono: Icono::Disco, marca: None },
+        Sitio { nombre: "RAM:", lugar: Lugar::raiz(RAIZ_RAM), icono: Icono::Disco, marca: None },
+        Sitio { nombre: "Work:", lugar: Lugar::raiz(RAIZ_WORK), icono: Icono::Disco, marca: None },
         Sitio { nombre: "Amiga", lugar: Lugar::raiz(RAIZ_AMIGA), icono: Icono::Amiga, marca: Some("68K") },
     ]
 }
@@ -347,28 +359,40 @@ pub fn papelera_archivos() -> Lugar {
 /// El nombre de una raíz (en el camino escrito y en las migas).
 pub fn nombre_raiz(r: u32) -> &'static str {
     match r {
-        RAIZ_SISTEMA => "Sistema",
+        RAIZ_SISTEMA => "SYS",
         RAIZ_HOME => "Home",
+        RAIZ_RAM => "RAM",
+        RAIZ_WORK => "Work",
         RAIZ_AMIGA => "Amiga",
         _ => "?",
     }
 }
 
-const RAICES_ESCRITAS: [(&str, u32); 6] = [("Home", RAIZ_HOME), ("Sistema", RAIZ_SISTEMA), ("Amiga", RAIZ_AMIGA), ("Caja", RAIZ_AMIGA), ("SYS", RAIZ_SISTEMA), ("Personal", RAIZ_HOME)];
+const RAICES_ESCRITAS: [(&str, u32); 8] = [
+    ("Home", RAIZ_HOME),
+    ("SYS", RAIZ_SISTEMA),
+    ("RAM", RAIZ_RAM),
+    ("Work", RAIZ_WORK),
+    ("Amiga", RAIZ_AMIGA),
+    ("Caja", RAIZ_AMIGA),
+    ("Sistema", RAIZ_SISTEMA),
+    ("Personal", RAIZ_HOME),
+];
 
 /// El camino para la persona: "Home/Privado", "Papelera".
 pub fn texto_lugar(l: &Lugar) -> String {
     if l.dentro_de(&papelera_archivos()) {
         return Lugar { raiz: 0, nombres: l.nombres[2..].to_vec() }.texto("Papelera");
     }
-    l.texto(nombre_raiz(l.raiz))
+    // Como en el Amiga (paso 2 de las asignaciones): el volumen con sus dos puntos y los cajones detrás.
+    alloc::format!("{}:{}", nombre_raiz(l.raiz), l.nombres.join("/"))
 }
 
 /// Las migas del camino: (texto, lugar al que llevan).
 pub fn migas(l: &Lugar) -> Vec<(String, Lugar)> {
     let mut v = Vec::new();
     let (desde, primera) = if l.dentro_de(&papelera_archivos()) { (2, String::from("Papelera")) } else {
-        (0, String::from(match l.raiz { RAIZ_HOME => "Carpeta personal", r => nombre_raiz(r) }))
+        (0, match l.raiz { RAIZ_HOME => String::from("Carpeta personal"), r => alloc::format!("{}:", nombre_raiz(r)) })
     };
     let mut x = Lugar { raiz: l.raiz, nombres: l.nombres[..desde].to_vec() };
     v.push((primera, x.clone()));
@@ -1079,7 +1103,7 @@ impl App {
         let p = v.p();
         let nombres: Vec<&str> = p.vista.iter().map(|&i| p.cosas[i].e.nombre.as_str()).collect();
         println!(
-            "  [explorador] ventana {} en {}: {} {} ({} nombres raros sin enseñar){}: {}",
+            "  [explorador] ventana {} en {}, {} {} ({} nombres raros sin enseñar){}: {}",
             v.numero,
             texto_lugar(&p.lugar),
             p.vista.len(),
@@ -1327,7 +1351,7 @@ impl App {
     }
 
     fn raices() -> Vec<u32> {
-        alloc::vec![RAIZ_SISTEMA, RAIZ_HOME, RAIZ_AMIGA]
+        alloc::vec![RAIZ_SISTEMA, RAIZ_HOME, RAIZ_RAM, RAIZ_WORK, RAIZ_AMIGA]
     }
 
     /// Tirar a la papelera lo elegido (o borrar de verdad, preguntando, si no puede ir: Sistema, o ya está en ella).
@@ -1686,7 +1710,7 @@ impl App {
         let bits = ((d.c >> 32) & 0xffff) as i64;
         let (dueno, grupo, yo) = (du.a, du.b, du.c);
         let puede = dueno == yo && donde.raiz != RAIZ_SISTEMA;
-        let porque = if donde.raiz == RAIZ_SISTEMA { "Por Sistema solo se puede leer" } else if dueno != yo { "Solo lo puede cambiar su dueño" } else { "" };
+        let porque = if donde.raiz == RAIZ_SISTEMA { "Por SYS: solo se puede leer" } else if dueno != yo { "Solo lo puede cambiar su dueño" } else { "" };
         let titulo_t = nombre.clone().unwrap_or_else(|| migas(&donde).last().map_or(String::new(), |m| m.0.clone()));
         let que = if tipo == a::CAJON { String::from("Carpeta") } else { alloc::format!("{} · {}", tipo_texto(&Entrada { nombre: titulo_t.clone(), cajon: false, tam: d.a, fecha: d.b, modo: modo as u16, bits: 0 }), tamano(d.a)) };
         let mut arbol = Arbol::new();
@@ -2145,7 +2169,7 @@ fn comprobar_lo_ajeno(app: &mut App) {
     };
     let bien = carla == Err(a::PROTEGIDO) && carta == a::PROTEGIDO && subir.is_err() && crear == a::PROTEGIDO && copia == a::NO_EXISTE && raros && ren == a::MAL_FORMADO && ren_servicio != a::BIEN && crear_punto < 0 && mover_dentro && por_asas != a::BIEN;
     println!(
-        "  [explorador] lo ajeno: listar DeCarla {:?}, abrir su carta {}, copiarla {}; \"..\" desde Home {}; crear por Sistema {}; renombrar a \"..\" {} (servicio {}), crear \"..\" {}; Privado dentro de sí {} (servicio {}): {}",
+        "  [explorador] lo ajeno: listar DeCarla {:?}, abrir su carta {}, copiarla {}; \"..\" desde Home: {}; crear por SYS: {}; renombrar a \"..\" {} (servicio {}), crear \"..\" {}; Privado dentro de sí {} (servicio {}): {}",
         carla.err(), carta, if copia == a::NO_EXISTE { "no" } else { "SÍ" }, if subir.is_err() { "no" } else { "SÍ" }, crear, ren, ren_servicio, crear_punto, if mover_dentro { "no" } else { "SÍ" }, por_asas, if bien { "bien" } else { "MAL" }
     );
 }
@@ -2179,7 +2203,7 @@ fn preparar_papelera(app: &mut App) {
             for asa in asas {
                 ops::cerrar(&mut fs, asa);
             }
-            println!("  [explorador] papelera en Home/{}: lista", PAPELERA);
+            println!("  [explorador] papelera en Home:{}: lista", PAPELERA);
         }
         Err(e) => println!("  [explorador] sin papelera: {}", e),
     }
@@ -2211,7 +2235,10 @@ fn principal() -> u64 {
         return 4;
     };
     let raices = sv.ceder_raices(&mut c);
-    println!("  [explorador] raíces: Sistema solo para leer {}, Home {}, Amiga {}; ventana del servicio de {} KB", raices[0], raices[1], raices[2], sv.tam / 1024);
+    println!(
+        "  [explorador] raíces: SYS: solo para leer {}, Home: {}, RAM: {}, Work: {}, Amiga {}; ventana del servicio de {} KB",
+        raices[0], raices[1], raices[2], raices[3], raices[4], sv.tam / 1024
+    );
     if raices[0] != a::BIEN || raices[1] != a::BIEN {
         return 5;
     }

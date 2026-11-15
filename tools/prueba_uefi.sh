@@ -1019,8 +1019,8 @@ while time.time() - inicio < total:
                             ultimo("pantalla de entrada pintada"))
         bloqueado_ahora = bloqueo_desde > max(ultimo("[guardian] desbloqueado"), ultimo("[guardian] entra "))
         # El explorador de archivos, al final (tras la barra), con la sesión de Ana delante y sin bloquear: el doble clic
-        # en el icono de Sistema del Workbench lo abre; luego DeCarla (no se lista), Atrás, Programas, hola (lo lanza
-        # `sesiones`), sus Propiedades (por Sistema no se cambian), la carpeta personal, Privado como lista, las
+        # en el icono de SYS: del Workbench lo abre; luego DeCarla (no se lista), Atrás, Programas, hola (lo lanza
+        # `sesiones`), sus Propiedades (por SYS: no se cambian), la carpeta personal, Privado como lista, las
         # Propiedades de nota.txt (comentario y Archivado), buscar escribiendo, carpeta nueva (y un nombre que no vale),
         # copiar y pegar, cambiar el nombre (F2), la papelera y restaurar, las miniaturas de Fondos, una pestaña, otra
         # ventana con el camino escrito (Ctrl+L), moverla por su barra y arrastrar un fichero a la primera. Los sitios
@@ -1050,7 +1050,7 @@ while time.time() - inicio < total:
                 mandar("mouse_button 1", "mouse_button 0", "mouse_button 1", "mouse_button 0", pausa=0.08)
             def escribir_ex(t):
                 # Como `teclear`, sin el Intro del final.
-                mandar(*[("sendkey spc" if c == " " else "sendkey shift-" + c.lower() if c.isupper() else "sendkey shift-7" if c == "/" else "sendkey " + c) for c in t], pausa=0.15)
+                mandar(*[("sendkey spc" if c == " " else "sendkey shift-" + c.lower() if c.isupper() else "sendkey shift-7" if c == "/" else "sendkey shift-dot" if c == ":" else "sendkey " + c) for c in t], pausa=0.15)
             def tecla_ex(*t):
                 mandar(*["sendkey " + x for x in t], pausa=0.25)
             def capa_ex():
@@ -1074,41 +1074,41 @@ while time.time() - inicio < total:
                 return en_ex(n, que, "menú")
             def cuenta(t):
                 return texto.count(t)
-            espera = {1: "[explorador] ventana 1 en Sistema:" in texto and origen_ex(1),
-                      2: "[explorador] no abre Sistema/DeCarla: -12" in texto,
-                      3: cuenta("[explorador] ventana 1 en Sistema:") >= 2,
-                      4: "[explorador] ventana 1 en Sistema/Programas:" in texto,
+            espera = {1: "[explorador] ventana 1 en SYS:," in texto and origen_ex(1),
+                      2: "[explorador] no abre SYS:DeCarla: -12" in texto,
+                      3: cuenta("[explorador] ventana 1 en SYS:,") >= 2,
+                      4: "[explorador] ventana 1 en SYS:Programas," in texto,
                       5: "[explorador] lanza Programas/hola" in texto,
                       6: "[explorador] ventana 1, menú:" in texto,
                       7: "[explorador] ventana 1, propiedades:" in texto,
                       8: "[explorador] ventana 1: diálogo cancelado" in texto,
-                      9: "[explorador] ventana 1 en Home:" in texto,
-                      10: "[explorador] ventana 1 en Home/Privado:" in texto,
+                      9: "[explorador] ventana 1 en Home:," in texto,
+                      10: "[explorador] ventana 1 en Home:Privado," in texto,
                       11: "[explorador] ventana 1 como lista" in texto,
                       12: "[explorador] ventana 1: por Tamano" in texto,
-                      13: "[explorador] Propiedades de Home/Privado/nota.txt" in texto and cuenta("[explorador] ventana 1, propiedades:") >= 2,
-                      14: "[explorador] guarda Home/Privado/nota.txt" in texto,
-                      15: cuenta("[explorador] ventana 1 en Home:") >= 2,
+                      13: "[explorador] Propiedades de Home:Privado/nota.txt" in texto and cuenta("[explorador] ventana 1, propiedades:") >= 2,
+                      14: "[explorador] guarda Home:Privado/nota.txt" in texto,
+                      15: cuenta("[explorador] ventana 1 en Home:,") >= 2,
                       16: "[explorador] búsqueda de \"nota\" acabada" in texto,
-                      17: cuenta("[explorador] ventana 1 en Home:") >= 3,
-                      18: "[explorador] crea la carpeta Home/Viaje: 0" in texto,
+                      17: cuenta("[explorador] ventana 1 en Home:,") >= 3,
+                      18: "[explorador] crea la carpeta Home:Viaje: 0" in texto,
                       19: "[explorador] ventana 1: el nombre \"..\" no vale" in texto,
                       20: "[explorador] copia 2 elementos" in texto,
-                      21: "[explorador] ventana 1 en Home/Viaje:" in texto,
+                      21: "[explorador] ventana 1 en Home:Viaje," in texto,
                       22: "[explorador] acabado: Copiar 2 elementos a Viaje" in texto,
-                      23: "[explorador] cambia el nombre de Home/Viaje/grande.txt a \"texto grande.txt\": 0" in texto,
+                      23: "[explorador] cambia el nombre de Home:Viaje/grande.txt a \"texto grande.txt\": 0" in texto,
                       24: "[explorador] acabado: Mover \"texto grande.txt\" a la papelera" in texto,
-                      25: "[explorador] ventana 1 en Papelera:" in texto,
+                      25: "[explorador] ventana 1 en Papelera," in texto,
                       26: cuenta("[explorador] ventana 1, menú:") >= 2,
                       27: "[explorador] acabado: Restaurar" in texto,
-                      28: "[explorador] ventana 1 en Home/Fondos:" in texto,
-                      29: "[explorador] miniatura de Home/Fondos/" in texto,
+                      28: "[explorador] ventana 1 en Home:Fondos," in texto,
+                      29: "[explorador] miniatura de Home:Fondos/" in texto,
                       30: "[explorador] ventana 1: pestaña nueva (2 pestañas)" in texto,
                       31: "[explorador] ventana 1: cierra una pestaña (1 quedan)" in texto,
-                      32: cuenta("[explorador] ventana 1 en Home/Privado:") >= 2,
+                      32: cuenta("[explorador] ventana 1 en Home:Privado,") >= 2,
                       33: "[explorador] ventana 2 en pantalla" in texto and origen_ex(2),
                       34: "[explorador] ventana 2: camino escrito \"Home/../DeCarla\": no vale" in texto,
-                      35: "[explorador] ventana 2 en Home/Viaje:" in texto,
+                      35: "[explorador] ventana 2 en Home:Viaje," in texto,
                       36: True,
                       37: "[explorador] acabado: Mover \"datos.bin\" a Privado" in texto,
                       38: "[explorador] cierra la ventana 2" in texto,
@@ -1122,15 +1122,24 @@ while time.time() - inicio < total:
             time.sleep(0.6)
             sitio = None
             if ex == 1:
-                sitio = icono_ex("Sistema")
+                sitio = icono_ex("SYS")
                 if sitio:
                     ir_ex(*sitio)
                     doble_ex()
-            elif ex in (2, 4, 5, 10):
-                sitio = en_ex(1, {2: "DeCarla", 4: "Programas", 5: "hola", 10: "Privado"}[ex])
+            elif ex in (2, 5, 10):
+                sitio = en_ex(1, {2: "DeCarla", 5: "hola", 10: "Privado"}[ex])
                 if sitio:
                     ir_ex(*sitio)
                     doble_ex()
+            elif ex == 4:
+                # Paso 2 de las asignaciones: SYS: tiene ya todos sus cajones y Programas no cabe a la vista; se va por su
+                # nombre, como en el Amiga (Ctrl+L y "SYS:Programas").
+                sitio = True
+                tecla_ex("ctrl-l")
+                time.sleep(0.4)
+                tecla_ex("ctrl-a")
+                escribir_ex("SYS:Programas")
+                tecla_ex("ret")
             elif ex == 3:
                 sitio = en_ex(1, "Atrás")
                 if sitio:

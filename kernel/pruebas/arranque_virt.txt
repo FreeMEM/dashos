@@ -48,7 +48,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [archivos] comprobado al arrancar: 1 problemas; reparado, quedan 0
 # A7: la memoria de la caché de páginas, creada al arrancar (24 MB).
 ~│   [archivos] caché de páginas: 48 trozos de 512 KB creados
-~│   [ficheros] raíz (8 entradas, fin bien): C/ DeCarla/ Estado/ Imagenes/ LEEME.txt Prefs/ Programas/ Work/
+~│   [ficheros] raíz (21 entradas, fin bien): C/ Classes/ DeCarla/ Devs/ Estado/ Fonts/ Imagenes/ L/ LEEME.txt Libs/ Locale/ Prefs/ Programas/ Rexx/ S/ Storage/ System/ Tools/ Utilities/ WBStartup/ Work/
 ~│   [ficheros] LEEME.txt (19 bytes): "DashOS lee RedoxFS"
 # A3 (docs/REVISION_LOOP.md): buscar, leer y cerrar en un viaje.
 ~│   [ficheros] A3 leer por nombre: bien
@@ -238,61 +238,64 @@ DashOS en marcha con 4 núcleos.
 ~│   [barra] pide el espacio 1
 ~│   [panel] OSD abierto: volumen
 ~│   [panel] OSD cerrado: 7 pulsaciones; volumen
-# S10: el Workbench de Ana. Sus raíces: el disco solo para leer (Sistema) y `C` (Home, provisional). No lista el cajón
-# de `sesiones` ni el de Carla, no abre sus ficheros, no crea por Sistema ni sube por encima de Home; y los nombres con
+# S10: el Workbench de Ana. Sus raíces: el disco solo para leer (SYS:) y `C` (Home, provisional). No lista el cajón
+# de `sesiones` ni el de Carla, no abre sus ficheros, no crea por SYS: ni sube por encima de Home; y los nombres con
 # '|' o ':' no salen.
-~│   [workbench] raíces: Sistema solo para leer 0, Home para leer y escribir 0
-~│   [workbench] lo ajeno: listar el cajón de sesiones -12, abrir su registro -12; listar DeCarla -12, abrir su fichero -12; crear por Sistema -12; ".." desde Home no se abre: bien
-~│   [workbench] nombres raros: 1 sin enseñar en Home, 1 en Sistema/Imagenes; "..", "a/b", "x:y" no se buscan: bien
+~│   [workbench] raíces: SYS: solo para leer 0, Home: 0, RAM: 0, Work: 0
+~│   [workbench] lo ajeno: listar el cajón de sesiones -12, abrir su registro -12; listar DeCarla -12, abrir su fichero -12; crear por SYS: -12; ".." desde Home: no se abre: bien
+~│   [workbench] nombres raros: 1 sin enseñar en Home:, 1 en SYS:Imagenes; "..", "a/b", "x:y" no se buscan: bien
 # Sus iconos, en una capa de abajo (una columna a la derecha, bajo la barra); el de Home, con la sesión de Ana abierta.
 ~│   [compositor] capa de workbench en (696, 40)
-~│   [workbench] en pantalla: 104x560, icono de Sistema en (
+~│   [workbench] en pantalla: 104x560, icono de SYS en (
 ~│   [workbench] icono de Home en (
-# El explorador de archivos (como Nautilus): de Ana, con sus raíces (Sistema para leer, Home y el cajón de la caja
-# Amiga). Lo de Carla no se lista ni se copia, no sube con "..", no crea por Sistema, ni él ni el servicio aceptan "." y
+~│   [workbench] icono de RAM en (
+~│   [workbench] icono de Work en (
+~│   [workbench] volúmenes de su tabla de nombres: SYS: Home: RAM: Work:
+# El explorador de archivos (como Nautilus): de Ana, con sus raíces (SYS: para leer, Home y el cajón de la caja
+# Amiga). Lo de Carla no se lista ni se copia, no sube con "..", no crea por SYS:, ni él ni el servicio aceptan "." y
 # ".." como nombres, y nada se mete dentro de sí mismo. Crea su papelera en Home.
-~│   [explorador] raíces: Sistema solo para leer 0, Home 0, Amiga 0; ventana del servicio de 256 KB
-~│   [explorador] lo ajeno: listar DeCarla Some(-12), abrir su carta -12, copiarla no; ".." desde Home no; crear por Sistema -12; renombrar a ".." -1 (servicio -1), crear ".." -1; Privado dentro de sí no (servicio
+~│   [explorador] raíces: SYS: solo para leer 0, Home: 0, RAM: 0, Work: 0, Amiga 0; ventana del servicio de 256 KB
+~│   [explorador] lo ajeno: listar DeCarla Some(-12), abrir su carta -12, copiarla no; ".." desde Home: no; crear por SYS: -12; renombrar a ".." -1 (servicio -1), crear ".." -1; Privado dentro de sí no (servicio
 ~): bien
-~│   [explorador] papelera en Home/.Papelera: lista
+~│   [explorador] papelera en Home:.Papelera: lista
 ~│   [explorador] listo: espera a que el Workbench le pida abrir algo
-# Con el ratón y el teclado (el guion, al final): el doble clic en el icono de Sistema del Workbench lo abre; DeCarla
-# no se lista; Programas y hola (lo lanza `sesiones`, como Ana); sus Propiedades (por Sistema no se cambian).
-~│   [workbench] pide al explorador que abra Sistema: 0
-~│   [explorador] el Workbench pide abrir Sistema
-~│   [explorador] ventana 1 en Sistema: 
-~│   [explorador] no abre Sistema/DeCarla: -12
-~│   [explorador] ventana 1 en Sistema/Programas: 
+# Con el ratón y el teclado (el guion, al final): el doble clic en el icono de SYS: del Workbench lo abre; DeCarla
+# no se lista; Programas y hola (lo lanza `sesiones`, como Ana); sus Propiedades (por SYS: no se cambian).
+~│   [workbench] pide al explorador que abra SYS: (0)
+~│   [explorador] el Workbench pide abrir SYS:
+~│   [explorador] ventana 1 en SYS:, 
+~│   [explorador] no abre SYS:DeCarla: -12
+~│   [explorador] ventana 1 en SYS:Programas, 
 ~│   [sesiones] explorador lanza Programas/hola: 0 (proceso 
 ~│   [explorador] lanza Programas/hola: 0 (proceso 
-~│   [explorador] Propiedades de Sistema/Programas/hola (ventana 1): Programa · 
+~│   [explorador] Propiedades de SYS:Programas/hola (ventana 1): Programa · 
 ~, dueño 1000 (tú), grupo 1000, modo 755, bits 0x0, comentario ""; se puede cambiar: no
 # La carpeta personal, Privado como lista ordenada por tamaño, y las Propiedades de nota.txt: comentario nuevo y el bit
 # de archivado (el disco lo comprueba).
-~│   [explorador] ventana 1 en Home/Privado: 1 elemento (0 nombres raros sin enseñar): nota.txt
+~│   [explorador] ventana 1 en Home:Privado, 1 elemento (0 nombres raros sin enseñar): nota.txt
 ~│   [explorador] ventana 1 como lista: nota.txt 18 bytes Texto
 ~│   [explorador] ventana 1: por Tamano, de menos a más: nota.txt
-~│   [explorador] Propiedades de Home/Privado/nota.txt (ventana 1): Texto · 18 bytes, dueño 1000 (tú), grupo 1000, modo 600, bits 0x0, comentario ""; se puede cambiar: sí
-~│   [explorador] guarda Home/Privado/nota.txt: comentario "nota de Ana": 0, protección bits 0x1 modo 600: 0
+~│   [explorador] Propiedades de Home:Privado/nota.txt (ventana 1): Texto · 18 bytes, dueño 1000 (tú), grupo 1000, modo 600, bits 0x0, comentario ""; se puede cambiar: sí
+~│   [explorador] guarda Home:Privado/nota.txt: comentario "nota de Ana": 0, protección bits 0x1 modo 600: 0
 # Escribir busca en la carpeta y en las de dentro.
-~│   [explorador] búsqueda de "nota" acabada: 1 resultados: Home/Privado/nota.txt
+~│   [explorador] búsqueda de "nota" acabada: 1 resultados: Home:Privado/nota.txt
 # Carpeta nueva (Ctrl+Mayús+N) y un nombre que no vale; copiar dos ficheros (Ctrl+flechas, Ctrl+espacio, Ctrl+C) y
 # pegarlos en ella; cambiar el nombre (F2) dejando la extensión; a la papelera (Supr) y restaurar desde ella.
-~│   [explorador] crea la carpeta Home/Viaje: 0
+~│   [explorador] crea la carpeta Home:Viaje: 0
 ~│   [explorador] ventana 1: el nombre ".." no vale: "." y ".." no valen como nombre
 ~│   [explorador] copia 2 elementos: datos.bin, grande.txt
 ~│   [explorador] acabado: Copiar 2 elementos a Viaje: 2 de 2 elementos, 928290 bytes
-~│   [explorador] cambia el nombre de Home/Viaje/grande.txt a "texto grande.txt": 0
+~│   [explorador] cambia el nombre de Home:Viaje/grande.txt a "texto grande.txt": 0
 ~│   [explorador] acabado: Mover "texto grande.txt" a la papelera: 1 de 1 elementos
-~│   [explorador] ventana 1 en Papelera: 1 elemento (0 nombres raros sin enseñar): texto grande.txt
+~│   [explorador] ventana 1 en Papelera, 1 elemento (0 nombres raros sin enseñar): texto grande.txt
 ~│   [explorador] acabado: Restaurar "texto grande.txt": 1 de 1 elementos
 # Las miniaturas de los PNG de Fondos, una pestaña (Ctrl+T, Ctrl+W), otra ventana (Ctrl+N) con un camino escrito que
 # no vale (sube con "..") y otro que sí; se mueve por su barra y se arrastra datos.bin de ella a la primera (Privado).
-~│   [explorador] miniatura de Home/Fondos/
+~│   [explorador] miniatura de Home:Fondos/
 ~│   [explorador] ventana 1: pestaña nueva (2 pestañas)
 ~│   [explorador] ventana 2: camino escrito "Home/../DeCarla": no vale
-~│   [explorador] ventana 2: camino escrito "Home/Viaje": va a Home/Viaje
-~│   [explorador] suelta en la ventana 1: mueve a Home/Privado
+~│   [explorador] ventana 2: camino escrito "Home/Viaje": va a Home:Viaje
+~│   [explorador] suelta en la ventana 1: mueve a Home:Privado
 ~│   [explorador] acabado: Mover "datos.bin" a Privado: 1 de 1 elementos
 ~│   [explorador] sin ventanas abiertas
 # El botón del panel rápido lo abre, como Super+A (el compositor solo se lo acepta a la barra).
@@ -599,8 +602,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] malware: residente: 0 conseguidos de lo que no se debe
 ~│   [caja-amiga] malware residente.exe: 0 conseguidos (vector -1), 0 negativas de la guardia (0 preguntas: sin preguntas), 3 avisos del Enforcer; deshecho: 0 entradas de tablas, 2 grupos de ExecBase, 2 vectores del 68k: bien
 ~│   [caja-amiga] malware: guion: abrir S:Startup-Sequence para escribir: no (IoErr 218)
-~│   [caja-amiga] malware: guion: crear SYS:S/Startup-Sequence: no (IoErr 205)
-~│   [caja-amiga] malware: guion: poner su SYS:L/Disk-Validator: no (IoErr 205)
+~│   [caja-amiga] malware: guion: crear SYS:S/Startup-Sequence: no (IoErr 214)
+~│   [caja-amiga] malware: guion: poner su SYS:L/Disk-Validator: no (IoErr 214)
 ~│   [caja-amiga] malware: guion: anadir una linea a Caja:S/Startup-Sequence: no (IoErr 223)
 ~│   [caja-amiga] malware: guion: escribir al principio de Caja:S/Startup-Sequence: no (IoErr 223)
 ~│   [caja-amiga] malware: guion: sustituir Caja:S/Startup-Sequence (MODE_NEWFILE): no (IoErr 223)
@@ -610,7 +613,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] malware: guion: borrar Caja:S/Startup-Sequence: no (IoErr 222)
 ~│   [caja-amiga] malware: guion: renombrar Caja:S/inocente a Caja:S/User-Startup: no (IoErr 223)
 ~│   [caja-amiga] malware: guion: 0 conseguidos de lo que no se debe
-~│   [caja-amiga] malware guion.exe: 0 conseguidos (vector -1), 8 negativas de la guardia (1 preguntas: el usuario dice no), 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
+~│   [caja-amiga] malware guion.exe: 0 conseguidos (vector -1), 10 negativas de la guardia (1 preguntas: el usuario dice no), 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
 ~│   [caja-amiga] malware: troyano: borrar SYS:LEEME.txt: no (IoErr 214)
 ~│   [caja-amiga] malware: troyano: borrar SYS:Imagenes/disquete.adf: no (IoErr 214)
 ~│   [caja-amiga] malware: troyano: borrar SYS:Programas/hola: no (IoErr 214)

@@ -840,7 +840,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
                         v.zonas.push((f, Zona::FilaDialogo(i)));
                     }
                     if programas.is_empty() {
-                        reg.dibujar(l, r.x + 24, y + 20, "No hay programas en Sistema/Programas", 14, t.sobre_variante_superficie);
+                        reg.dibujar(l, r.x + 24, y + 20, "No hay programas en SYS:Programas", 14, t.sobre_variante_superficie);
                     }
                     y += alto_filas;
                 }

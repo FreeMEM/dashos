@@ -210,7 +210,8 @@ fn principal() -> u64 {
     // Listar la raíz: tamaño, fecha, modo, tipo, largo del nombre, bits del Amiga, largo del comentario, nombre y
     // comentario, de 8 en 8 bytes.
     let r = c.pedir(LISTAR, 0, 0, 0, "");
-    let mut nombres: [(&str, u8); 8] = [("", 0); 8];
+    // Paso 2 de las asignaciones: la raíz es `SYS:`, con sus cajones (21 entradas).
+    let mut nombres: [(&str, u8); 32] = [("", 0); 32];
     let v = c.ventana();
     let mut off = 0;
     for e in nombres.iter_mut().take(r.a as usize) {
@@ -218,9 +219,9 @@ fn principal() -> u64 {
         *e = (core::str::from_utf8(&v[off + 24..off + 24 + largo]).unwrap_or("?"), v[off + 18]);
         off += (24 + largo + v[off + 22] as usize).next_multiple_of(8);
     }
-    let lista = &mut nombres[..r.a as usize];
+    let lista = &mut nombres[..(r.a as usize).min(32)];
     lista.sort_unstable();
-    let mut texto = [0u8; 128];
+    let mut texto = [0u8; 512];
     let mut t = 0;
     for (n, tipo) in lista.iter() {
         for b in n.bytes().chain(if *tipo == 2 { "/ " } else { " " }.bytes()) {

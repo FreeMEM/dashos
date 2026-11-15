@@ -64,6 +64,37 @@ CAJA_LIBS.append(("rota.library", b"\x00\x00\x03\xf3 esto no es un ejecutable"))
 # con el mismo nombre y uno de nombre largo: `caja/pruebas68k/malware/troyano.c`) y el virus de guiones (`inocente`).
 PAPELERA = CAJA + ".papelera"
 LARGO = "largo_" + "x" * 84
+# Paso 2 de las asignaciones: los cajones de `SYS:` del árbol de S4b ("El árbol de `SYS:`, completo") y los guiones de
+# `S`. Los .info (iconos) aún no: el formato de iconos con PNG está por hacer.
+SYS_CAJONES = [
+    "Classes/DataTypes", "Classes/Gadgets", "Classes/Images", "Classes/MUI",
+    "Devs/DataTypes", "Devs/DOSDrivers", "Devs/Keymaps", "Devs/Monitors", "Devs/Printers",
+    "Fonts", "L", "Libs",
+    "Locale/Catalogs", "Locale/Countries", "Locale/Help", "Locale/Languages",
+    "Prefs/Env-Archive/Sys", "Prefs/Presets",
+    "Rexx", "S",
+    "Storage/DOSDrivers", "Storage/Keymaps", "Storage/Monitors", "Storage/Printers",
+    "System", "Tools/Commodities", "Utilities", "WBStartup",
+]
+SYS_FICHEROS = [
+    ("S/Startup-Sequence", b"; El arranque de la maquina (S14): lo hace el sistema antes de que entre nadie.\n"),
+    ("S/Shell-Startup", b"; Lo que hace cada Shell al abrirse.\n"),
+    ("S/User-Startup", b""),
+]
+
+
+def sys_esperado():
+    """Las líneas del árbol de `SYS:` en el listado de `ver` (los cajones con sus padres, y los ficheros)."""
+    lineas = set()
+    for c in SYS_CAJONES:
+        partes = c.split("/")
+        for i in range(1, len(partes) + 1):
+            lineas.add("/".join(partes[:i]) + "/ cajón")
+    for n, d in SYS_FICHEROS:
+        lineas.add(f"{n} {len(d)}")
+    return lineas
+
+
 DISQUETE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "kernel", "pruebas", "disquete.adf.gz")
 
 if sys.argv[1] == "--comprobar":
@@ -207,6 +238,8 @@ if sys.argv[1] == "--comprobar":
         fallos.append(f"comprobación: {comprobado.strip()}")
     # Paso 2 de la caja Amiga: el AmigaOS del usuario (con DASHOS_AMIGAOS) no es parte de lo que se compara.
     arbol = [l for l in arbol if not l.startswith("Amiga/") and not l.startswith(("C/Prefs/amigaos ", "C/Prefs/programas-amiga "))]
+    # Paso 2 de las asignaciones: los cajones de SYS:, en su sitio del orden de `ver` (el de los nombres).
+    esperado = sorted(set(esperado) | sys_esperado(), key=lambda l: [p for p in l.split(" ")[0].split("/")])
     if arbol != esperado:
         fallos.append(f"árbol: {arbol}")
     permisos = subprocess.run([ver, disco, desde, "Estado/Servicios/sesiones/permisos"], capture_output=True).stdout
@@ -288,6 +321,13 @@ with tempfile.TemporaryDirectory() as t:
             os.makedirs(os.path.join(raiz, "Estado", "RAM", cuenta, sub))
         os.chmod(os.path.join(raiz, "Estado", "RAM", cuenta), 0o700)
     os.makedirs(os.path.join(raiz, "Work"))
+    # Paso 2 de las asignaciones: la raíz del disco es `SYS:`, con los cajones del árbol de S4b (vacíos donde aún no hay
+    # nada; `C` ya existe y guarda, provisional, lo del Home del escritorio). `Prefs` ya existe (con `fuente`).
+    for cajon in SYS_CAJONES:
+        os.makedirs(os.path.join(raiz, *cajon.split("/")), exist_ok=True)
+    for nombre, datos in SYS_FICHEROS:
+        with open(os.path.join(raiz, *nombre.split("/")), "wb") as f:
+            f.write(datos)
     # S28: el cajón de la caja Amiga (de Ana, como todo; solo suyo).
     caja = os.path.join(raiz, *CAJA.split("/"))
     for sub, nombre, datos in [("C", "saludo", open(SALUDO, "rb").read()), ("C", "saludo.info", CAJA_ICONO),

@@ -181,3 +181,32 @@ Cambio en lo esperado: la línea de `ficheros` con la raíz del disco cuenta 8 e
 `make prueba` bien; `make arranque-virt` bien (la primera vuelta falló por esa línea de `ficheros` y por dos líneas de
 `Estado/RAM/Carla` que faltaban en lo esperado del disco; arreglado, la comprobación del disco repetida sobre el mismo
 disco, bien); `make arranque-virt-2` y `make arranque-virt-linux` bien.
+
+### Paso 4: el disco con la forma de `SYS:`, y los volúmenes por su nombre
+
+- **Disco de pruebas** (y el de usar a mano, que es el mismo, `tools/qemu_a_mano.sh`): la raíz es `SYS:` y tiene los
+  cajones del árbol de S4b: `Classes/{DataTypes,Gadgets,Images,MUI}`, `Devs/{DataTypes,DOSDrivers,Keymaps,Monitors,
+  Printers}`, `Fonts`, `L`, `Libs`, `Locale/{Catalogs,Countries,Help,Languages}`, `Prefs/{Env-Archive/Sys,Presets}`,
+  `Rexx`, `S` (con `Startup-Sequence`, `Shell-Startup` y `User-Startup` vacío), `Storage/{DOSDrivers,Keymaps,Monitors,
+  Printers}`, `System`, `Tools/Commodities`, `Utilities`, `WBStartup`. Vacíos donde no hay nada. `C` ya estaba y sigue
+  guardando lo del Home provisional del escritorio. Sin `.info`: el formato de iconos con PNG está por hacer.
+- **Workbench**: los iconos del escritorio son los volúmenes de su tabla de nombres (`SYS`, `Home` con la sesión de
+  Ana abierta, `RAM`, `Work`), con su nombre; se cede las raíces 3 y 4 (`RAM:` y `Work:`). Los caminos, como en el
+  Amiga: `SYS:Programas`.
+- **Explorador**: la barra lateral lleva `SYS:`, `RAM:` y `Work:` (y la carpeta personal, la papelera y la caja Amiga,
+  que pasa a la raíz 5); los caminos y las migas, como en el Amiga (`Home:Privado/nota.txt`); la línea de cada ventana,
+  "ventana 1 en SYS:Programas, 3 elementos…".
+
+Cambios en las pruebas (todos en este commit):
+
+- `tools/prueba_uefi.sh`: los textos del explorador con el camino nuevo; el icono del Workbench se busca como `SYS`;
+  el paso 4 del explorador va a `SYS:Programas` escribiendo el camino (Ctrl+L), porque con todos los cajones de `SYS:`
+  `Programas` ya no cabe a la vista en la rejilla; escribir `:` es Mayúsculas y punto (teclado español).
+- `kernel/pruebas/arranque_virt.txt`: las mismas líneas; `ficheros` lista 21 entradas en la raíz (`ficheros.rs` tenía
+  sitio para 8: ahora 32); el malware de guiones de la caja Amiga ya no da "no existe" (205) al intentar crear
+  `SYS:S/Startup-Sequence` y `SYS:L/Disk-Validator`, sino "protegido" (214), porque esos cajones existen; y la guardia
+  cuenta 10 negativas en vez de 8. Sigue sin conseguir nada.
+
+`make prueba` bien; `make arranque-virt` bien a la tercera (la primera, `Programas` no cabía a la vista; la segunda,
+las líneas del malware de guiones; las dos, ajustes de lo esperado, no fallos); `make arranque-virt-2` y
+`make arranque-virt-linux` bien.
