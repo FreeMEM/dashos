@@ -60,7 +60,8 @@ Dos líneas a la vez (decisión 4 de S30):
   Lo que queda abierto, para después:
   - Sin INTx en x86: su número sale del `_PRT` del AML de ACPI, que no se lee. Todos los aparatos de `q35` tienen MSI.
   - Las interrupciones del IOAPIC entregadas a un proceso siguen sin probar (los aparatos van por MSI).
-  - Sin IOMMU (VT-d o AMD-Vi): un aparato con bus master alcanza toda la memoria.
+  - Sin IOMMU (VT-d o AMD-Vi): un aparato con bus master alcanza toda la memoria. Hecho en X5b (si el firmware da
+    DMAR o IVRS).
   - Otras llamadas largas con las interrupciones cerradas: `memoria_dma` pone a cero hasta 4 MB con el cerrojo del
     repartidor tomado, y soltar 4 MB o un proceso grande también va de una vez. Solo `memoria_crear` tiene pausas.
   - Lo que quedaba de X4 sigue igual: el camino con PCID sin probar, y `vaciar_tlb_otros` vacía la TLB entera.
@@ -69,10 +70,18 @@ Dos líneas a la vez (decisión 4 de S30):
   (capa de puertos en RelevoJIT: memoria, `memcpy`, matemáticas), su memoria de código sobre objetos de memoria de
   DashOS (doble proyección RW y RX), y un programa que ejecuta los programas de `jit-host/pruebas68k` con el
   intérprete y con el JIT, con la misma salida que en Linux. El cargador avisa con `relevo_invalidate`.
-- [ ] X5b **IOMMU** (VT-d de Intel y AMD-Vi): tablas DMAR e IVRS de ACPI, un dominio por aparato, el DMA de cada
+- [x] X5b **IOMMU** (VT-d de Intel y AMD-Vi): tablas DMAR e IVRS de ACPI, un dominio por aparato, el DMA de cada
   servicio limitado a sus ventanas, y el aviso de fallos de DMA. Requisito para pasar aparatos a la caja Linux y
   para el dominio de controladores de la zona GPL (S32 y S33 de `revision`). En QEMU: `-device intel-iommu` y
-  `-device amd-iommu`. Prioridad de la línea A.
+  `-device amd-iommu`. Prioridad de la línea A. Lo que queda abierto:
+  - Remapeo de interrupciones (VT-d y AMD-Vi): no está. Hace falta para núcleos con ID de APIC de más de 8 bits y
+    para pasar aparatos a una máquina virtual (X11) sin que puedan mandar cualquier interrupción.
+  - Alias: un aparato detrás de un puente de PCIe a PCI hace DMA con el número del puente; no recibe dominio (su DMA
+    falla). Tampoco los grupos de funciones sin ACS. Solo el segmento 0 del PCI.
+  - Sin probar en una máquina de verdad (pegaso, VT-d; shiva, AMD-Vi), ni con RMRR o IVMD (QEMU no los da): lo de la
+    pantalla de la gráfica integrada de Intel depende de las RMRR.
+  - VT-d solo en modo clásico (tabla raíz y de contexto, segundo nivel), sin el modo escalable. No se mira si la
+    unidad tiene el clásico: en una que solo tuviera el escalable, no funcionaría.
 - [ ] X5c **Aparatos de un PC de verdad**: AHCI (SATA), HDA (sonido), y la red de cada placa o, mientras, la del
   dominio de controladores de la zona GPL; y compartir internet del móvil por USB (CDC-NCM y RNDIS).
 - [ ] X10 a X17 **La gráfica compartida** (`docs/diseño/S34-grafica-compartida.md`): X10 hipervisor de x86 (VT-x con
@@ -449,3 +458,52 @@ Resumen de la tanda del 14 y 15 de noviembre:
 
 Se retoma tras la renovación semanal (lunes 2026-11-16 por la noche), con un solo agente a la vez: X5b (IOMMU) o
 RR4, y la interfaz de motor de la caja.
+
+
+### 2026-11-15 — X5b: IOMMU (VT-d y AMD-Vi)
+
+Hecho (sala limpia: las especificaciones de Intel VT-d y de AMD n.º 48882; el código de QEMU solo se miró para
+entender lo que emula):
+
+- `acpi.rs` lee la DMAR (unidades DRHD con sus ámbitos, reservas RMRR) y la IVRS (bloques IVHD, uno por IOMMU, con sus
+  entradas de aparatos; IVMD con proyección 1:1).
+- `base/x86_64/iommu.rs`, lo que toca el hardware. VT-d en modo clásico: tabla raíz, tablas de contexto por bus,
+  tablas de segundo nivel de 4 niveles (3 si no hay), invalidación por registros (contextos e IOTLB por dominio),
+  `clflush` de cada entrada si la unidad no es coherente, el búfer de escrituras si lo pide, y apaga lo que dejara
+  encendido el firmware (traducción, cola de invalidaciones, remapeo, regiones protegidas). AMD-Vi: tabla de aparatos
+  de 2 MB con todos bloqueados (traducción con una tabla vacía), cola de órdenes (INVALIDATE_DEVTAB_ENTRY,
+  INVALIDATE_IOMMU_PAGES, INVALIDATE_ALL y COMPLETION_WAIT con escritura en memoria) y registro de eventos.
+- Los fallos llegan por el vector 0xF3 del núcleo 0 (VT-d por sus registros FEDATA y FEADDR; AMD-Vi por la MSI de su
+  función del PCI). Se cuentan, se guardan los 16 últimos y se escriben en la consola (aparato, dirección, lectura o
+  escritura, motivo); los seguidos iguales, una vez. El kernel sigue.
+- `kernel/src/iommu.rs`: qué unidad lleva cada aparato (ámbitos resueltos por los puentes del PCIe, rangos de la IVRS,
+  la de "todos"), las reservas del firmware 1:1 en el dominio de su aparato, y `dominio_para`.
+- Un dominio por aparato (número del PCI). La dirección de E/S es la física: los servicios no cambian. El
+  `PermisoDma` lleva el dominio: `memoria_dma` proyecta en él lo que da, la cuarentena sigue proyectada (el aparato
+  puede seguir escribiendo) y `dma_liberar` la quita del dominio, con la IOTLB invalidada, antes de devolverla.
+  `inicio_x86.rs` da a xHCI, NVMe y virtio-sound su permiso con dominio. `kmain` enumera el PCIe una vez y enciende las
+  IOMMU antes de las pruebas y de `inicio`.
+- `virtio-sonido` acepta `VIRTIO_F_ACCESS_PLATFORM` si el aparato la ofrece (en ARM no la ofrece: nada cambia).
+- Makefile: `IOMMU=intel` (`-device intel-iommu`) e `IOMMU=amd` (`-device amd-iommu,dma-remap=on`; sin `dma-remap`
+  la AMD-Vi de QEMU no traduce) en `prueba-x86` y `arranque-x86`. Con IOMMU, virtio-sound va con `iommu_platform=on`,
+  `prueba-x86` añade un NVMe sin disco y los esperados suman `pruebas/*_iommu.txt`. `arranque-x86` con IOMMU falla si
+  sale algún fallo de DMA.
+- Prueba nueva en `pruebas_x86.rs` (X5b): el kernel hace de controlador del NVMe con colas en memoria DMA de un
+  permiso con dominio y le pide "Identify" a cuatro sitios: en la ventana (escribe), en otra ventana (escribe), en esa
+  misma tras soltarla y liberar su cuarentena (falla: comprueba la invalidación de la IOTLB) y en una página del kernel
+  (falla, y la página queda intacta). Los dos fallos llegan por la interrupción, con el aparato y la dirección. Además,
+  ningún fallo de DMA desde el arranque hasta la prueba.
+
+Comprobado (QEMU 11.1.3, q35, TCG): `make -C kernel prueba-x86 IOMMU=intel` y `IOMMU=amd` BIEN; `make -C kernel
+arranque-x86 IOMMU=intel` y `IOMMU=amd` BIEN (salida, disco, captura y sonido, los tres servicios en su dominio y ni un
+fallo de DMA); `make -C kernel prueba-x86` y `arranque-x86` sin IOMMU BIEN ("IOMMU: no hay"); ARM: `make -C kernel
+prueba` y `arranque-virt` BIEN.
+
+Cosas de QEMU que conviene saber: el NVMe contesta con estado 0 aunque su DMA haya fallado (la prueba no mira el
+estado); la AMD-Vi deja a 0 la dirección de sus eventos (una máscara de `<< 64` en su código) y pone sus propios bits
+de permiso en las banderas, así que con AMD la prueba acepta dirección 0 y no mira si era escritura; y da decenas de
+eventos por orden (se escriben una vez).
+
+No comprobado: una máquina de verdad (pegaso con VT-d, shiva con AMD-Vi); RMRR e IVMD (QEMU no los da); varias
+unidades; aparatos detrás de puentes; KVM. Lo que queda abierto está en la tarea X5b (remapeo de interrupciones,
+alias, grupos, modo escalable).
