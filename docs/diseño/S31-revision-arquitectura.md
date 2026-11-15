@@ -372,3 +372,13 @@ Los pasos 3, 4 y 8 no dependen entre sí y los llevan sesiones distintas. El 6 n
 - De Dash no se leyó `codegen.py` entero (30 533 líneas): solo lo de DashOS y las estructuras del Amiga. La
   rama `dashos-a7`, sin fusionar, no se miró.
 - La velocidad de RelevoJIT frente a Emu68 es un cálculo, no una medida.
+
+## Anexo (2026-11-15): Emu68 upstream
+
+Cruce de michalsc/Emu68 `master` (v1.1.0-beta.1, 332 commits desde nuestra base `af63580`) con nuestra copia
+parcheada. Adoptado por la sesión de `revision`: `7c457be` (LRU al validar), como `patches/emu68/0015`. Pendientes
+para quien lleve la caja PowerPC (`docs/PPC_LOOP.md`), sin dueño ahora: `d2705bd` (el JIT PowerPC suelta los
+bloques expulsados del LRU; aplica limpio) y `7360b06` (traducciones PowerPC arregladas e instrucciones nuevas;
+unas 1000 líneas, choca con los parches 0010 y 0011). Fuera: el arranque directo en la Pi (MMU, árbol de
+dispositivos, overlays, CMA, unicam, VideoCore, firmware de PiStorm) y el intérprete nuevo de Emu68. El arreglo de
+`MULU.L`/`MULS.L` (#347) ya estaba.
