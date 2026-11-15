@@ -2062,3 +2062,10 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
      compositor lo concreto (una tecla, inactividad, un comportamiento) con su permiso; Exchange como herramienta y
      como categoría de Ajustes; las clásicas nativas (Blanker, ClickToFront, AutoPoint, FKey, NoCapsLock); y
      `commodities.library` en la caja Amiga, limitada a sus ventanas.
+- **cybergraphics y Picasso96API unidos a revision** (33a26a3, rama `caja-amiga-cgx` hasta 9c3a0d8; detalle en
+  `docs/bitacoras/caja-amiga.md`, 2026-11-15 y (2)): las dos bibliotecas nativas; mapas de color verdadero en la
+  memoria del 68k, cada uno en su formato (los 13 de cybergraphics, con alfa y conversión al presentar), LockBitMap sin
+  copia (de 40-60 ms a menos de un tic en 640x480); un monitor RTG propio con varios tamaños y 8/15/16/24/32 bits,
+  base de datos de pantallas y pantallas propias. Tachyon pinta en color los iconos de su barra (el logo sigue vacío:
+  es un PNG que decodifica él). Tanda completa sobre 33a26a3: todo rc=0. Sigue el agente en la rama con lo pendiente:
+  paletas y plumas de pantallas propias, pantallas públicas, 8 bits chunky, ventanas y Workbench sin copia, el logo.
