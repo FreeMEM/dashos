@@ -28,6 +28,8 @@ pub enum Formato {
     Argb32,
     Bgra32,
     Rgba32,
+    /// 8 bits, una pluma por punto (`PIXFMT_LUT8`, `RGBFB_CLUT`): sus valores son plumas de una paleta, no colores.
+    Lut8,
 }
 
 /// Todos, en orden.
@@ -57,10 +59,17 @@ fn de6(v: u32) -> u32 {
 impl Formato {
     /// Su `PIXFMT_*`.
     pub fn pixfmt(self) -> u32 {
-        self as u32 + 1
+        if self == Formato::Lut8 { 0 } else { self as u32 + 1 }
     }
     pub fn de_pixfmt(p: u32) -> Option<Formato> {
+        if p == 0 {
+            return Some(Formato::Lut8);
+        }
         FORMATOS.get((p as usize).wrapping_sub(1)).copied()
+    }
+    /// Si sus valores son plumas (LUT8) y no colores.
+    pub fn es_lut(self) -> bool {
+        self == Formato::Lut8
     }
     /// Su `RGBFB_*` de Picasso96, si lo tiene (los BGR de 15 y 16 bits big-endian no).
     pub fn rgbfb(self) -> Option<u32> {
@@ -77,15 +86,22 @@ impl Formato {
             Argb32 => 6,
             Bgra32 => 9,
             Rgba32 => 8,
+            Lut8 => 1,
             Bgr15 | Bgr16 => return None,
         })
     }
     /// El formato de un `RGBFB_*` (A8B8G8R8, CLUT y los YUV no tienen: `None`).
     pub fn de_rgbfb(f: u32) -> Option<Formato> {
+        if f == 1 {
+            return Some(Formato::Lut8);
+        }
         FORMATOS.iter().copied().find(|x| x.rgbfb() == Some(f))
     }
     /// Bytes por píxel.
     pub fn bpp(self) -> u32 {
+        if self == Formato::Lut8 {
+            return 1;
+        }
         match self as u32 {
             0..=7 => 2,
             8 | 9 => 3,
@@ -94,6 +110,9 @@ impl Formato {
     }
     /// Bits que guarda (15, 16, 24 o 32).
     pub fn profundidad(self) -> u32 {
+        if self == Formato::Lut8 {
+            return 8;
+        }
         match self as u32 {
             0..=3 => 15,
             4..=7 => 16,
@@ -111,7 +130,7 @@ impl Formato {
             _ => Formato::Argb32,
         }
     }
-    /// Un píxel (sus `bpp` bytes) a ARGB (el alfa, el guardado en los de 32 bits; 0 en los demás).
+    /// Un píxel (sus `bpp` bytes) a ARGB (el alfa, el guardado en los de 32 bits; 0 en los demás). En LUT8, la pluma.
     pub fn leer(self, p: &[u8]) -> u32 {
         use Formato::*;
         let rgb = |r: u32, g: u32, b: u32| (r << 16) | (g << 8) | b;
@@ -135,9 +154,11 @@ impl Formato {
             Argb32 => u32::from_be_bytes([p[0], p[1], p[2], p[3]]),
             Bgra32 => u32::from_be_bytes([p[3], p[2], p[1], p[0]]),
             Rgba32 => u32::from_be_bytes([p[3], p[0], p[1], p[2]]),
+            // La pluma, tal cual.
+            Lut8 => p[0] as u32,
         }
     }
-    /// Un color ARGB a un píxel (los `bpp` primeros bytes de `o`).
+    /// Un color ARGB a un píxel (los `bpp` primeros bytes de `o`). En LUT8, el byte de abajo es la pluma.
     pub fn escribir(self, argb: u32, o: &mut [u8]) {
         use Formato::*;
         let [a, r, g, b] = argb.to_be_bytes();
@@ -157,6 +178,7 @@ impl Formato {
             Argb32 => o[..4].copy_from_slice(&[a, r, g, b]),
             Bgra32 => o[..4].copy_from_slice(&[b, g, r, a]),
             Rgba32 => o[..4].copy_from_slice(&[r, g, b, a]),
+            Lut8 => o[0] = argb as u8,
         }
     }
 }
@@ -203,7 +225,11 @@ impl Chunky {
         let bpp = self.fmt.bpp();
         o.clear();
         match mem.leer(self.dir(x, y), n * bpp) {
-            Ok(b) => o.extend(b.chunks_exact(bpp as usize).map(|p| self.fmt.leer(p))),
+            Ok(b) => match self.fmt {
+                Formato::Argb32 => o.extend(b.chunks_exact(4).map(|p| u32::from_be_bytes([p[0], p[1], p[2], p[3]]))),
+                Formato::Bgra32 => o.extend(b.chunks_exact(4).map(|p| u32::from_le_bytes([p[0], p[1], p[2], p[3]]))),
+                f => o.extend(b.chunks_exact(bpp as usize).map(|p| f.leer(p))),
+            },
             Err(_) => o.resize(n as usize, 0),
         }
     }

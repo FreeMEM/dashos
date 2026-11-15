@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use caja_exec::Memoria;
 
 use crate::estructuras::drmd;
-use crate::lienzo::{Lienzo, Rect};
+use crate::lienzo::{Pinta, Rect};
 
 /// Un mapa planar: hasta 8 planos de `bpr` bytes por fila. Un plano 0 se lee como ceros y uno `0xFFFFFFFF` como
 /// unos; en ninguno de los dos se escribe (es lo que hace el blitter con ellos).
@@ -75,7 +75,7 @@ impl Planar {
 
 /// Dónde se dibuja.
 pub(crate) enum Sup<'a, M: Memoria> {
-    Nativa(&'a mut Lienzo),
+    Nativa(crate::lienzo::Vista<'a, M>),
     Planar(&'a mut M, Planar),
     /// Color verdadero en la memoria del 68k (`chunky.rs`).
     Chunky(&'a mut M, crate::chunky::Chunky),
@@ -104,11 +104,31 @@ pub(crate) struct Pintor<'a, M: Memoria> {
     /// es la esquina de dentro de los bordes. Las coordenadas del pintor (y `clip`) son las del `RastPort`.
     pub dx: i32,
     pub dy: i32,
+    /// Si el mapa es el de un programa que es el de una pantalla (`vigia.rs`): dónde se apunta lo que se escribe (en
+    /// coordenadas del mapa). En los lienzos lo apunta la vista.
+    pub vigia: Option<&'a mut Rect>,
 }
 
-impl<M: Memoria> Pintor<'_, M> {
+/// Mete `(x, y)` en `r`.
+fn apuntar(r: &mut Rect, x: i32, y: i32) {
+    if r.vacio() {
+        *r = Rect::nuevo(x, y, x, y);
+    } else {
+        r.x0 = r.x0.min(x);
+        r.y0 = r.y0.min(y);
+        r.x1 = r.x1.max(x);
+        r.y1 = r.y1.max(y);
+    }
+}
+
+impl<'a, M: Memoria> Pintor<'a, M> {
+    /// Si sus valores crudos son colores ARGB (y no plumas: los planares y los de 8 bits, LUT8).
     pub fn es_nativa(&self) -> bool {
-        !matches!(self.sup, Sup::Planar(..))
+        match &self.sup {
+            Sup::Planar(..) => false,
+            Sup::Nativa(v) => !v.es_lut(),
+            Sup::Chunky(_, c) => !c.fmt.es_lut(),
+        }
     }
 
     /// Los límites del mapa (sin el recorte de la capa), en coordenadas del `RastPort`.
@@ -141,7 +161,7 @@ impl<M: Memoria> Pintor<'_, M> {
         }
         let (x, y) = (x + self.dx, y + self.dy);
         match &self.sup {
-            Sup::Nativa(l) => l.pixel(x, y),
+            Sup::Nativa(l) => l.pixel_crudo(x, y),
             Sup::Planar(mem, p) => p.leer(&**mem, x, y) as u32,
             Sup::Chunky(mem, c) => c.leer(&**mem, x, y),
         }
@@ -177,8 +197,11 @@ impl<M: Memoria> Pintor<'_, M> {
         }
         let (x, y) = (x + self.dx, y + self.dy);
         let mascara = self.mascara;
+        if let Some(r) = self.vigia.as_deref_mut() {
+            apuntar(r, x, y);
+        }
         match &mut self.sup {
-            Sup::Nativa(l) => l.poner(x, y, v),
+            Sup::Nativa(l) => l.poner_crudo(x, y, v),
             Sup::Planar(mem, p) => p.escribir(&mut **mem, x, y, v as u8, mascara),
             Sup::Chunky(mem, c) => c.escribir(&mut **mem, x, y, v),
         }
@@ -197,10 +220,14 @@ impl<M: Memoria> Pintor<'_, M> {
         }
         let (x, y) = (x + self.dx, y + self.dy);
         let mascara = self.mascara;
+        if let Some(r) = self.vigia.as_deref_mut() {
+            apuntar(r, x, y);
+        }
         match &mut self.sup {
             Sup::Nativa(l) => {
-                let v = l.pixel(x, y);
-                l.poner(x, y, v ^ 0x00FF_FFFF);
+                let v = l.pixel_crudo(x, y);
+                let n = if l.es_lut() { (v ^ mascara as u32) & 0xFF } else { v ^ 0x00FF_FFFF };
+                l.poner_crudo(x, y, n);
             }
             Sup::Planar(mem, p) => {
                 let v = p.leer(&**mem, x, y);
@@ -208,7 +235,8 @@ impl<M: Memoria> Pintor<'_, M> {
             }
             Sup::Chunky(mem, c) => {
                 let v = c.leer(&**mem, x, y);
-                c.escribir(&mut **mem, x, y, v ^ 0x00FF_FFFF);
+                let n = if c.fmt.es_lut() { (v ^ mascara as u32) & 0xFF } else { v ^ 0x00FF_FFFF };
+                c.escribir(&mut **mem, x, y, n);
             }
         }
     }
@@ -271,12 +299,36 @@ impl<M: Memoria> Pintor<'_, M> {
         if r.vacio() {
             return;
         }
+        // Lo de siempre (un color, sin patrón ni región, JAM1/JAM2 sin invertir) en un lienzo: fila a fila.
+        if patron.is_empty() && self.region.is_none() && self.modo & (drmd::COMPLEMENT | drmd::INVERSVID) == 0 {
+            let c = self.a.argb;
+            let (dx, dy) = (self.dx, self.dy);
+            if let Sup::Nativa(v) = &mut self.sup
+                && !v.es_lut()
+            {
+                let fila = alloc::vec![c; r.ancho() as usize];
+                for y in r.y0..=r.y1 {
+                    v.escribir_fila(r.x0 + dx, y + dy, &fila);
+                }
+                return;
+            }
+        }
+        let vigia = self.apuntar_rect(r);
         for y in r.y0..=r.y1 {
             let fila = if patron.is_empty() { 0xFFFF } else { patron[y as usize % patron.len()] };
             for x in r.x0..=r.x1 {
                 self.punto(x, y, fila & (0x8000 >> (x & 15)) != 0);
             }
         }
+        self.vigia = vigia;
+    }
+
+    /// Apunta de una vez `r` (en coordenadas del `RastPort`) en el vigía, si lo hay, y lo quita mientras se pinta (para
+    /// no apuntar punto a punto): se devuelve para volver a ponerlo.
+    fn apuntar_rect(&mut self, r: Rect) -> Option<&'a mut Rect> {
+        let v = self.vigia.take()?;
+        *v = v.union(&Rect::nuevo(r.x0 + self.dx, r.y0 + self.dy, r.x1 + self.dx, r.y1 + self.dy));
+        Some(v)
     }
 
     /// Una plantilla de un bit de `ancho` x `alto` en `(x, y)`: `bit(col, fila)` dice si el punto es del dibujo.
@@ -285,11 +337,13 @@ impl<M: Memoria> Pintor<'_, M> {
         if r.vacio() {
             return;
         }
+        let vigia = self.apuntar_rect(r);
         for py in r.y0..=r.y1 {
             for px in r.x0..=r.x1 {
                 self.punto(px, py, bit((px - x) as u32, (py - y) as u32));
             }
         }
+        self.vigia = vigia;
     }
 }
 

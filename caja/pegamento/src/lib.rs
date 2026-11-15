@@ -461,6 +461,16 @@ pub unsafe extern "C" fn caja_rust_arrancar(
             }
         }
         di(&format!("ramlib: lo que no es nativo se carga de disco; {}", if hechas.is_empty() { String::from("sin cajones") } else { hechas.join(", ") }));
+        // `T:` y `ENV:`, que los programas dan por hechos (en un Amiga, en `RAM:`): en el cajón de la caja, que es lo que
+        // tiene para escribir. Sin `T:`, Tachyon no puede dejar ahí las imágenes que decodifica (el logo de su página).
+        let mut temporales = Vec::new();
+        for (nombre, ruta) in [("T", "Caja:T"), ("ENV", "Caja:Env")] {
+            match c.dos.asignar_creando(&mut cd, nombre, ruta) {
+                Ok(()) => temporales.push(alloc::format!("{}: {}", nombre, ruta)),
+                Err(e) => temporales.push(alloc::format!("{}: no ({})", nombre, e)),
+            }
+        }
+        di(&format!("temporales: {}", temporales.join(", ")));
         // El AmigaOS del usuario, si lo dio (`SYS:C/Prefs/amigaos`): detrás de lo nativo y de la caja.
         di(&ramlib::montar_amigaos(&mut c.dos, &mut cd));
     }

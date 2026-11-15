@@ -13,6 +13,7 @@ use caja_exec::estructuras::{memf, message};
 use caja_exec::{Accion, Exec, Memoria};
 
 use crate::acceso::Acceso;
+use crate::lienzo::Pinta;
 use crate::compositor::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Evento};
 use crate::estructuras::{idcmp, ie, intuimessage as im, intuitionbase as ib, screen as sc, wflg, window as win};
 use crate::marco::Gadget;
@@ -102,7 +103,7 @@ impl<C: Compositor> CajaGrafica<C> {
             }
             self.repintar_tema(ex);
         }
-        self.presentar();
+        self.presentar(ex);
         replan
     }
 
@@ -122,16 +123,18 @@ impl<C: Compositor> CajaGrafica<C> {
                 v.aspecto = aspecto;
             }
             // Los textos nítidos se apuntan otra vez al repintar (solo "como DashOS").
-            if let Some(l) = self.gfx.lienzos.get_mut(&bm) {
-                l.olvidar_textos();
-                l.nitido = aspecto.is_some();
+            if let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) {
+                let l = &mut l;
+                l.l.olvidar_textos();
+                l.l.nitido = aspecto.is_some();
             }
             let nuevo = match self.tema_de(w).como().fondo_ventana() {
                 Some(f) => f | 0xFF00_0000,
-                None => self.color(self.intui.wb.cm, 0) | 0xFF00_0000,
+                None => self.color(self.pantalla_de(w).cm, 0) | 0xFF00_0000,
             };
             if nuevo != viejo {
-                if let Some(l) = self.gfx.lienzos.get_mut(&bm) {
+                if let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) {
+                    let l = &mut l;
                     let (an, al) = (l.ancho() as i32, l.alto() as i32);
                     for y in ba.max(0)..(al - bb).min(al) {
                         for x in bi.max(0)..(an - bd).min(an) {
@@ -146,7 +149,7 @@ impl<C: Compositor> CajaGrafica<C> {
                     v.fondo = nuevo;
                 }
             }
-            self.dibujar_marco(w);
+            self.dibujar_marco(ex, w);
             let primero = ex.l32(w.wrapping_add(win::FIRSTGADGET)).unwrap_or(0);
             self.dibujar_lista(ex, w, primero, -1, true);
             if self.requesters.iter().any(|q| q.w == w) {
@@ -157,7 +160,7 @@ impl<C: Compositor> CajaGrafica<C> {
 
     /// Un evento del compositor para la ventana de la superficie `s`.
     pub fn evento<M: Memoria>(&mut self, ex: &mut Exec<M>, s: Superficie, e: Evento) -> Result<bool, Fallo> {
-        let Some(&w) = self.intui.por_superficie.get(&s) else { return Ok(false) };
+        let Some(&w) = self.intui.por_superficie.get(&s) else { return self.evento_pantalla(ex, s, e) };
         match e {
             Evento::Raton { x, y } => self.raton(ex, w, x, y),
             Evento::Boton { boton, pulsado } => self.boton(ex, w, boton, pulsado),
@@ -177,7 +180,8 @@ impl<C: Compositor> CajaGrafica<C> {
             },
             Evento::Exponer => {
                 let bm = self.ventana(w)?.bm;
-                if let Some(l) = self.gfx.lienzos.get_mut(&bm) {
+                if let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) {
+                    let l = &mut l;
                     let r = l.rect();
                     l.danar(r);
                 }
@@ -216,6 +220,24 @@ impl<C: Compositor> CajaGrafica<C> {
         self.intui.calif.boton(boton, pulsado);
         let v = self.ventana(w)?;
         let (s, g) = (v.superficie, v.geometria);
+        // En una pantalla propia, el compositor da el foco a la pantalla y no a sus ventanas: se activa al pulsarla, como
+        // en el Amiga.
+        let mut replan = false;
+        if pulsado && !v.activa && self.pantalla(v.pantalla).is_some_and(|p| p.superficie != 0) {
+            replan = self.activar(ex, w, true)?;
+        }
+        self.boton_en(ex, w, s, g, boton, pulsado).map(|r| r | replan)
+    }
+
+    fn boton_en<M: Memoria>(
+        &mut self,
+        ex: &mut Exec<M>,
+        w: u32,
+        s: Superficie,
+        g: crate::marco::Geometria,
+        boton: u32,
+        pulsado: bool,
+    ) -> Result<bool, Fallo> {
         let (x, y) = (ex.l16(w + win::MOUSEX)? as i16 as i32, ex.l16(w + win::MOUSEY)? as i16 as i32);
         if boton == BTN_LEFT
             && let Some(r) = self.requester_boton(ex, w, x, y, pulsado)
@@ -284,7 +306,7 @@ impl<C: Compositor> CajaGrafica<C> {
         }
     }
 
-    fn tecla<M: Memoria>(
+    pub(crate) fn tecla<M: Memoria>(
         &mut self,
         ex: &mut Exec<M>,
         w: u32,

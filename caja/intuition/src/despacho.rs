@@ -54,13 +54,16 @@ filas!(I;
     VIEWPORTADDRESS = "ViewPortAddress", CURRENTTIME = "CurrentTime", DISPLAYBEEP = "DisplayBeep",
     SETMENUSTRIP = "SetMenuStrip", CLEARMENUSTRIP = "ClearMenuStrip", RESETMENUSTRIP = "ResetMenuStrip",
     SETPOINTER = "SetPointer", CLEARPOINTER = "ClearPointer", SETWINDOWPOINTERA = "SetWindowPointerA",
-    SCREENTOFRONT = "ScreenToFront", SCREENTOBACK = "ScreenToBack",
+    SCREENTOFRONT = "ScreenToFront", SCREENTOBACK = "ScreenToBack", SCREENDEPTH = "ScreenDepth",
+    MOVESCREEN = "MoveScreen", SCREENPOSITION = "ScreenPosition",
     ADDGADGET = "AddGadget", REMOVEGADGET = "RemoveGadget", ADDGLIST = "AddGList", REMOVEGLIST = "RemoveGList",
     REFRESHGLIST = "RefreshGList", REFRESHGADGETS = "RefreshGadgets", ONGADGET = "OnGadget", OFFGADGET = "OffGadget",
     ITEMADDRESS = "ItemAddress", ONMENU = "OnMenu", OFFMENU = "OffMenu", OPENSCREENTAGLIST = "OpenScreenTagList",
     OPENSCREEN = "OpenScreen", CLOSESCREEN = "CloseScreen", GETDEFAULTPUBSCREEN = "GetDefaultPubScreen",
     INTUITEXTLENGTH = "IntuiTextLength", EASYREQUESTARGS = "EasyRequestArgs",
-    LOCKIBASE = "LockIBase", UNLOCKIBASE = "UnlockIBase", REPORTMOUSE = "ReportMouse", DOUBLECLICK = "DoubleClick",
+    PUBSCREENSTATUS = "PubScreenStatus", LOCKPUBSCREENLIST = "LockPubScreenList",
+    UNLOCKPUBSCREENLIST = "UnlockPubScreenList", NEXTPUBSCREEN = "NextPubScreen", SETDEFAULTPUBSCREEN = "SetDefaultPubScreen",
+    SETPUBSCREENMODES = "SetPubScreenModes", LOCKIBASE = "LockIBase", UNLOCKIBASE = "UnlockIBase", REPORTMOUSE = "ReportMouse", DOUBLECLICK = "DoubleClick",
 );
 
 /// Las funciones que devuelven -1 al fallar.
@@ -419,7 +422,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 }
                 hecho(self.close_window(ex, a[0]))
             }
-            REFRESHWINDOWFRAME => hecho(self.refresh_window_frame(a[0])),
+            REFRESHWINDOWFRAME => hecho(self.refresh_window_frame(ex, a[0])),
             SETWINDOWTITLES => hecho(self.set_window_titles(ex, a[0], a[1], a[2])),
             MODIFYIDCMP => self.modify_idcmp(ex, a[0], d[0]),
             ACTIVATEWINDOW => hecho(self.activate_window(a[0])),
@@ -456,7 +459,13 @@ impl<C: Compositor> CajaGrafica<C> {
             }
             // El puntero es el del escritorio (provisional).
             SETPOINTER | CLEARPOINTER | SETWINDOWPOINTERA => hecho(self.ventana(a[0]).map(|_| ())),
-            SCREENTOFRONT | SCREENTOBACK => Ok(0),
+            // ScreenToFront(screen)(a0), ScreenToBack(screen)(a0), ScreenDepth(screen, flags, reserved)(a0/d0/a1):
+            // `apilado.rs`.
+            SCREENTOFRONT | SCREENTOBACK => hecho(self.screen_depth(ex, a[0], f == SCREENTOFRONT)),
+            SCREENDEPTH => hecho(self.screen_depth_flags(ex, a[0], d[0])),
+            // MoveScreen(screen, dx, dy)(a0/d0/d1), ScreenPosition(screen, flags, x1, y1, x2, y2)(a0/d0/d1/d2/d3/d4).
+            MOVESCREEN => hecho(self.move_screen(ex, a[0], w(0), w(1))),
+            SCREENPOSITION => hecho(self.screen_position(ex, a[0], d[0], d[1] as i32, d[2] as i32)),
             ADDGADGET => self.add_g_list(ex, a[0], a[1], palabra(d[0]), 1),
             ADDGLIST => self.add_g_list(ex, a[0], a[1], palabra(d[0]), palabra(d[1])),
             REMOVEGADGET => self.remove_g_list(ex, a[0], a[1], 1),
@@ -480,12 +489,17 @@ impl<C: Compositor> CajaGrafica<C> {
             OPENSCREEN => self.open_screen(ex, a[0], 0),
             OPENSCREENTAGLIST => self.open_screen(ex, a[0], a[1]),
             CLOSESCREEN => self.close_screen(ex, a[0]),
-            GETDEFAULTPUBSCREEN => {
-                if a[0] != 0 {
-                    ex.escribir_bytes(a[0], b"Workbench\0")?;
-                }
-                Ok(0)
-            }
+            // PubScreenStatus(screen, flags)(a0/d0).
+            PUBSCREENSTATUS => self.pub_screen_status(a[0], d[0] & 0xFFFF),
+            // La lista de pantallas públicas y la de serie (`publicas.rs`): LockPubScreenList(), UnlockPubScreenList(),
+            // NextPubScreen(screen, namebuff)(a0/a1), SetDefaultPubScreen(name)(a0), GetDefaultPubScreen(namebuff)(a0),
+            // SetPubScreenModes(modes)(d0).
+            LOCKPUBSCREENLIST => self.lock_pub_screen_list(ex),
+            UNLOCKPUBSCREENLIST => hecho(self.unlock_pub_screen_list(ex)),
+            NEXTPUBSCREEN => self.next_pub_screen(ex, a[0], a[1]),
+            SETDEFAULTPUBSCREEN => hecho(self.set_default_pub_screen(ex, a[0])),
+            GETDEFAULTPUBSCREEN => self.get_default_pub_screen(ex, a[0]),
+            SETPUBSCREENMODES => Ok(self.set_pub_screen_modes(d[0] & 0xFFFF)),
             // DoubleClick(sSecs, sMicros, cSecs, cMicros)(d0-d3): si caben en el doble clic de DashOS (500 ms, el de
             // MUI y Workbench de serie). Al revés, o con microsegundos imposibles, no.
             DOUBLECLICK => {

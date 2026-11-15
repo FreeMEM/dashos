@@ -166,8 +166,6 @@ const MAX_RECTS: u32 = 16384;
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Cerrojo {
     pub bm: u32,
-    /// El largo del búfer de la copia (un lienzo); 0 en un chunky (sin copia).
-    pub largo: u32,
     pub bpr: u32,
     pub fmt: Formato,
     pub ancho: u32,
@@ -196,6 +194,9 @@ struct Destino {
     region: Option<Vec<Rect>>,
     dx: i32,
     dy: i32,
+    /// El lienzo (ventana, pantalla) que es el mapa, si lo es: se trata como un chunky (sus píxeles también están en la
+    /// memoria del 68k) y lo escrito se apunta como cambiado para el compositor.
+    lienzo: Option<u32>,
     /// La paleta del mapa: 256 colores ARGB (la del lienzo, o la del Workbench en los planares). En los nativos, solo
     /// si se pidió (hacen falta para las plumas): una llamada de un punto no la arma.
     paleta: Vec<u32>,
@@ -570,7 +571,7 @@ impl<C: Compositor> CajaGrafica<C> {
         Ok(match mapa {
             Mapa::Nativo => {
                 let l = &self.gfx.lienzos[&bm];
-                let f = l.formato;
+                let f = l.formato();
                 match attr {
                     CYBRMATTR_XMOD => crate::chunky::Chunky::bpr_de(l.ancho(), f).unwrap_or(0),
                     CYBRMATTR_BPPIX => f.bpp(),
@@ -579,8 +580,7 @@ impl<C: Compositor> CajaGrafica<C> {
                     CYBRMATTR_HEIGHT => l.alto(),
                     CYBRMATTR_DEPTH => f.profundidad(),
                     CYBRMATTR_ISCYBERGFX | CYBRMATTR_ISLINEARMEM => u32::MAX,
-                    // Privada: los píxeles no están en la memoria del 68k.
-                    CYBRMATTR_DISPADR => 0,
+                    CYBRMATTR_DISPADR => l.mapa.base,
                     _ => u32::MAX,
                 }
             }
@@ -607,9 +607,19 @@ impl<C: Compositor> CajaGrafica<C> {
     }
 
     /// El destino de un `RastPort`, con su recorte, como lo arma `pintor`.
-    fn destino<M: Memoria>(&self, ex: &Exec<M>, rp: u32, con_paleta: bool) -> Result<Destino, Fallo> {
+    fn destino<M: Memoria>(&mut self, ex: &mut Exec<M>, rp: u32, con_paleta: bool) -> Result<Destino, Fallo> {
         let i = self.leer_rp(ex, rp)?;
-        let mapa = self.mapa(ex, i.bm)?;
+        let mut mapa = self.mapa(ex, i.bm)?;
+        // Un lienzo es un chunky más (con sus píxeles reservados ya, si aún no los tenía).
+        let mut lienzo = None;
+        if let Mapa::Nativo = mapa {
+            let _ = crate::graphics::vista(&mut self.gfx.lienzos, ex, i.bm);
+            let l = &self.gfx.lienzos[&i.bm];
+            if l.con_pixeles() {
+                mapa = Mapa::Chunky(l.mapa);
+                lienzo = Some(i.bm);
+            }
+        }
         let r_mapa = match mapa {
             Mapa::Nativo => self.gfx.lienzos[&i.bm].rect(),
             Mapa::Planar(p) => p.rect(),
@@ -633,7 +643,7 @@ impl<C: Compositor> CajaGrafica<C> {
         } else {
             Vec::new()
         };
-        Ok(Destino { bm: i.bm, mapa, lim: mover(r_mapa), clip, region, dx, dy, paleta })
+        Ok(Destino { bm: i.bm, mapa, lim: mover(r_mapa), clip, region, dx, dy, lienzo, paleta })
     }
 
     /// Escribe un trozo de fila (`x` en coordenadas del `RastPort`) ya recortado. Devuelve los puntos puestos.
@@ -648,19 +658,21 @@ impl<C: Compositor> CajaGrafica<C> {
     ) -> u32 {
         let (mx, my) = (x + d.dx, y + d.dy);
         match d.mapa {
-            Mapa::Nativo => {
-                let fila: Vec<u32> = match v {
-                    Valores::Argb(c) => c,
-                    Valores::Plumas(p) => p.iter().map(|&q| d.paleta[q as usize]).collect(),
-                };
-                self.gfx.lienzos.get_mut(&d.bm).map_or(0, |l| l.escribir_fila(mx, my, &fila))
-            }
+            // Un lienzo sin píxeles (sin memoria para ellos): nada que pintar. Los que los tienen van como chunky.
+            Mapa::Nativo => 0,
             Mapa::Chunky(c) => {
-                let fila: Vec<u32> = match v {
-                    Valores::Argb(c) => c,
-                    Valores::Plumas(p) => p.iter().map(|&q| d.paleta[q as usize]).collect(),
+                // Colores en los de color verdadero; plumas en los de 8 bits (el color, a la más cercana).
+                let fila: Vec<u32> = match (v, c.fmt.es_lut()) {
+                    (Valores::Argb(c), false) => c,
+                    (Valores::Plumas(p), false) => p.iter().map(|&q| d.paleta[q as usize]).collect(),
+                    (Valores::Plumas(p), true) => p.iter().map(|&q| q as u32).collect(),
+                    (Valores::Argb(c), true) => c
+                        .iter()
+                        .map(|&argb| *cache.entry(argb & 0x00FF_FFFF).or_insert_with(|| mas_cercano(&d.paleta, argb)) as u32)
+                        .collect(),
                 };
                 c.escribir_fila(&mut ex.mem, mx, my, &fila);
+                self.tocar(d.bm, Rect::nuevo(mx, my, mx + fila.len() as i32 - 1, my));
                 fila.len() as u32
             }
             Mapa::Planar(p) => {
@@ -673,6 +685,9 @@ impl<C: Compositor> CajaGrafica<C> {
                 };
                 for (k, &q) in plumas.iter().enumerate() {
                     p.escribir(&mut ex.mem, mx + k as i32, my, q, 0xFF);
+                }
+                if !plumas.is_empty() {
+                    self.tocar(d.bm, Rect::nuevo(mx, my, mx + plumas.len() as i32 - 1, my));
                 }
                 plumas.len() as u32
             }
@@ -699,6 +714,7 @@ impl<C: Compositor> CajaGrafica<C> {
         let d = self.destino(ex, rp, es_de_plumas(fmt) && lut.is_none())?;
         // RECTFMT_RAW: el formato del propio mapa.
         let fmt = match (fmt, d.mapa) {
+            (RECTFMT_RAW, Mapa::Chunky(c)) if c.fmt.es_lut() => RECTFMT_LUT8,
             (RECTFMT_RAW, Mapa::Chunky(c)) => MAPA + c.fmt.pixfmt(),
             (RECTFMT_RAW, Mapa::Nativo) => RECTFMT_ARGB,
             (RECTFMT_RAW, Mapa::Planar(_)) => RECTFMT_LUT8,
@@ -868,7 +884,7 @@ impl<C: Compositor> CajaGrafica<C> {
         }
         let (mx, my) = (x + d.dx, y + d.dy);
         match d.mapa {
-            Mapa::Nativo => self.gfx.lienzos.get(&d.bm).map_or(0, |l| l.pixel(mx, my)),
+            Mapa::Nativo => self.gfx.lienzos.get(&d.bm).map_or(0, |l| l.pixel_en(&ex.mem, mx, my)),
             Mapa::Planar(p) => p.leer(&ex.mem, mx, my) as u32,
             Mapa::Chunky(c) => c.leer(&ex.mem, mx, my),
         }
@@ -882,6 +898,8 @@ impl<C: Compositor> CajaGrafica<C> {
         }
         let c = self.crudo(ex, d, x, y);
         Some(match d.mapa {
+            Mapa::Chunky(k) if k.fmt.es_lut() => d.paleta[c as usize & 0xFF] & 0x00FF_FFFF,
+            Mapa::Chunky(_) if d.lienzo.is_some() => c & 0x00FF_FFFF,
             Mapa::Chunky(_) => c,
             Mapa::Nativo => c & 0x00FF_FFFF,
             Mapa::Planar(_) => d.paleta[c as usize & 0xFF] & 0x00FF_FFFF,
@@ -985,21 +1003,22 @@ impl<C: Compositor> CajaGrafica<C> {
                 solo.escribir(&mut ex.mem, i, j, es as u8, 1);
             }
         }
+        if an > 0 && al > 0 {
+            self.tocar(mapa, Rect::nuevo(0, 0, an - 1, al - 1));
+        }
         Ok(1)
     }
 
     // --- Acceso directo ---
 
-    /// `LockBitMapTagList`. Un mapa chunky ya está en la memoria del 68k: su dirección de verdad, sin copiar (el asa es
-    /// esa dirección). Un lienzo (una ventana, la pantalla: superficies del compositor, fuera de la memoria del 68k) se
-    /// copia a un búfer en su formato y vuelve al soltarlo (el asa es el búfer). 0 si el mapa es planar, si lo tiene
-    /// otra tarea o si no hay memoria para la copia.
+    /// `LockBitMapTagList`: la dirección de verdad de los píxeles del mapa en la memoria del 68k, sin copiar (el asa es
+    /// esa dirección): un chunky, o un lienzo (una ventana, la pantalla; si aún no tenía píxeles, se le reservan ahora).
+    /// 0 si el mapa es planar, si lo tiene otra tarea o si no hay memoria.
     pub(crate) fn lock_bit_map<M: Memoria>(&mut self, ex: &mut Exec<M>, bm: u32, tags: u32) -> Result<u32, Fallo> {
         if bm == 0 {
             return Err(Fallo::BitMapMalo { dir: 0 });
         }
-        let chunky = self.gfx.chunkies.get(&bm).copied();
-        if !self.gfx.lienzos.contains_key(&bm) && chunky.is_none() {
+        if !self.gfx.lienzos.contains_key(&bm) && !self.gfx.chunkies.contains_key(&bm) {
             return Ok(0);
         }
         let lista = crate::gadtools::leer_etiquetas(ex, tags)?;
@@ -1008,49 +1027,29 @@ impl<C: Compositor> CajaGrafica<C> {
                 ex.tramo(p, 4)?;
             }
         }
-        let tarea = ex.tarea_actual();
-        let ya = self.cgx.cerrojos.iter().find(|(_, c)| c.bm == bm).map(|(h, c)| (*h, *c));
-        let (asa, c) = match (ya, chunky) {
-            (Some((h, c)), _) if c.tarea == tarea => {
-                self.cgx.cerrojos.get_mut(&h).unwrap().veces += 1;
-                (h, c)
-            }
-            (Some(_), _) => return Ok(0),
-            (None, Some(k)) => {
-                let c = Cerrojo { bm, largo: 0, ancho: k.ancho, alto: k.alto, bpr: k.bpr, fmt: k.fmt, tarea, veces: 1 };
-                self.cgx.cerrojos.insert(k.base, c);
-                (k.base, c)
-            }
-            (None, None) => {
-                let fmt = self.formato_de(bm).unwrap_or(Formato::Argb32);
-                let l = self.gfx.lienzos.get_mut(&bm).unwrap();
-                let (an, al) = (l.ancho(), l.alto());
-                let Some(bpr) = crate::chunky::Chunky::bpr_de(an, fmt) else { return Ok(0) };
-                let Some(largo) = bpr.checked_mul(al) else { return Ok(0) };
+        let k = match self.gfx.chunkies.get(&bm) {
+            Some(k) => *k,
+            None => {
+                let _ = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm);
+                let l = &self.gfx.lienzos[&bm];
                 if !l.con_pixeles() {
                     return Ok(0);
                 }
-                let buf = match ex.reservar(largo, 0) {
-                    Ok(b) => b,
-                    Err(_) => return Ok(0),
-                };
-                let pix = self.gfx.lienzos.get_mut(&bm).unwrap().pixeles();
-                match ex.mem.leer_mut(buf, largo) {
-                    Ok(dst) => {
-                        for (fila, origen) in dst.chunks_exact_mut(bpr as usize).zip(pix.chunks_exact(an as usize)) {
-                            for (o, p) in fila.chunks_exact_mut(fmt.bpp() as usize).zip(origen) {
-                                fmt.escribir(*p, o);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let _ = ex.soltar(buf, largo);
-                        return Err(e.into());
-                    }
-                }
-                let c = Cerrojo { bm, largo, ancho: an, alto: al, bpr, fmt, tarea, veces: 1 };
-                self.cgx.cerrojos.insert(buf, c);
-                (buf, c)
+                l.mapa
+            }
+        };
+        let tarea = ex.tarea_actual();
+        let ya = self.cgx.cerrojos.iter().find(|(_, c)| c.bm == bm).map(|(h, c)| (*h, *c));
+        let (asa, c) = match ya {
+            Some((h, c)) if c.tarea == tarea => {
+                self.cgx.cerrojos.get_mut(&h).unwrap().veces += 1;
+                (h, c)
+            }
+            Some(_) => return Ok(0),
+            None => {
+                let c = Cerrojo { bm, ancho: k.ancho, alto: k.alto, bpr: k.bpr, fmt: k.fmt, tarea, veces: 1 };
+                self.cgx.cerrojos.insert(k.base, c);
+                (k.base, c)
             }
         };
         for (t, p) in lista {
@@ -1069,33 +1068,16 @@ impl<C: Compositor> CajaGrafica<C> {
         Ok(asa)
     }
 
-    /// Copia al lienzo lo del búfer de un cerrojo, en `r` (coordenadas del mapa). Los de un chunky no copian nada.
-    fn volver_al_lienzo<M: Memoria>(&mut self, ex: &Exec<M>, c: &Cerrojo, asa: u32, r: Rect) {
-        if c.largo == 0 {
-            return;
-        }
-        let r = r.interseccion(&Rect::de_tamano(c.ancho, c.alto));
-        if r.vacio() {
-            return;
-        }
-        let Some(l) = self.gfx.lienzos.get_mut(&c.bm) else { return };
-        if l.ancho() != c.ancho || l.alto() != c.alto {
-            // El mapa cambió de tamaño (una ventana): lo cogido ya no vale.
-            return;
-        }
-        let bpp = c.fmt.bpp();
-        let mut fila = Vec::with_capacity(r.ancho() as usize);
-        for y in r.y0..=r.y1 {
-            let d = asa + y as u32 * c.bpr + r.x0 as u32 * bpp;
-            let Ok(b) = ex.mem.leer(d, r.ancho() * bpp) else { return };
-            fila.clear();
-            fila.extend(b.chunks_exact(bpp as usize).map(|p| c.fmt.leer(p)));
-            l.escribir_fila(r.x0, y, &fila);
-        }
+    /// Lo que el programa pudo escribir directamente en un mapa cogido (`r`, en coordenadas del mapa): cambiado, para
+    /// que se presente (en un lienzo, o en el mapa de un programa que es el de una pantalla; en un chunky suelto no hay
+    /// nada que hacer).
+    fn marcar_lienzo(&mut self, c: &Cerrojo, r: Rect) {
+        self.tocar(c.bm, r);
     }
 
-    /// `UnLockBitMap` y `UnLockBitMapTagList` (con `tags`): copia lo del búfer al lienzo y lo suelta. Con
-    /// `UBMI_REALLYUNLOCK` a FALSE solo copia (los rectángulos de `UBMI_UPDATERECTS`, o todo) y sigue cogido.
+    /// `UnLockBitMap` y `UnLockBitMapTagList` (con `tags`): lo suelta. En un lienzo, lo que dice `UBMI_UPDATERECTS` (o, si
+    /// no lo dice, el mapa entero) se apunta como cambiado para el compositor. Con `UBMI_REALLYUNLOCK` a FALSE solo se
+    /// apunta y sigue cogido.
     pub(crate) fn unlock_bit_map<M: Memoria>(&mut self, ex: &mut Exec<M>, asa: u32, tags: u32) -> Result<(), Fallo> {
         if asa == 0 {
             return Err(caja_exec::Fallo::PunteroNulo.into());
@@ -1111,51 +1093,38 @@ impl<C: Compositor> CajaGrafica<C> {
                 }
             }
         }
-        if !soltar {
-            match rects {
-                Some(rs) => {
-                    for r in rs {
-                        self.volver_al_lienzo(ex, &c, asa, r);
-                    }
+        match rects {
+            Some(rs) => {
+                for r in rs {
+                    self.marcar_lienzo(&c, r);
                 }
-                None => self.volver_al_lienzo(ex, &c, asa, Rect::de_tamano(c.ancho, c.alto)),
             }
+            None => self.marcar_lienzo(&c, Rect::de_tamano(c.ancho, c.alto)),
+        }
+        if !soltar {
             return Ok(());
         }
         if c.veces > 1 {
             self.cgx.cerrojos.get_mut(&asa).unwrap().veces -= 1;
             return Ok(());
         }
-        // Al soltarlo de verdad se copia todo: la memoria es lineal (`CYBRMATTR_ISLINEARMEM`), así que el programa
-        // puede haber escrito fuera de los rectángulos que dice.
-        self.volver_al_lienzo(ex, &c, asa, Rect::de_tamano(c.ancho, c.alto));
         self.cgx.cerrojos.remove(&asa);
-        if c.largo != 0 { ex.soltar(asa, c.largo) } else { Ok(()) }
+        Ok(())
     }
 
-    /// Lo cogido de un mapa que se suelta (`FreeBitMap`): sin copiar nada.
-    pub(crate) fn cgx_mapa_soltado<M: Memoria>(&mut self, ex: &mut Exec<M>, bm: u32) {
-        let asas: Vec<(u32, u32)> =
-            self.cgx.cerrojos.iter().filter(|(_, c)| c.bm == bm).map(|(a, c)| (*a, c.largo)).collect();
-        for (a, l) in asas {
-            self.cgx.cerrojos.remove(&a);
-            if l != 0 {
-                let _ = ex.soltar(a, l);
-            }
-        }
+    /// Lo cogido de un mapa que se suelta (`FreeBitMap`, el cierre de una ventana): se olvida.
+    pub(crate) fn cgx_mapa_soltado<M: Memoria>(&mut self, _ex: &mut Exec<M>, bm: u32) {
+        self.cgx.cerrojos.retain(|_, c| c.bm != bm);
     }
 
-    /// Lo cogido por una tarea que acaba: se copia y se suelta. Sus listas de modos las suelta exec con su memoria.
-    pub(crate) fn cgx_tarea_muerta<M: Memoria>(&mut self, ex: &mut Exec<M>, t: u32) {
-        let asas: Vec<(u32, Cerrojo)> =
-            self.cgx.cerrojos.iter().filter(|(_, c)| c.tarea == t).map(|(a, c)| (*a, *c)).collect();
-        for (a, c) in asas {
-            self.volver_al_lienzo(ex, &c, a, Rect::de_tamano(c.ancho, c.alto));
-            self.cgx.cerrojos.remove(&a);
-            if c.largo != 0 {
-                let _ = ex.soltar(a, c.largo);
-            }
+    /// Lo cogido por una tarea que acaba: se suelta (lo de un lienzo, apuntado como cambiado). Sus listas de modos las
+    /// suelta exec con su memoria.
+    pub(crate) fn cgx_tarea_muerta<M: Memoria>(&mut self, _ex: &mut Exec<M>, t: u32) {
+        let suyos: Vec<Cerrojo> = self.cgx.cerrojos.values().filter(|c| c.tarea == t).copied().collect();
+        for c in suyos {
+            self.marcar_lienzo(&c, Rect::de_tamano(c.ancho, c.alto));
         }
+        self.cgx.cerrojos.retain(|_, c| c.tarea != t);
         self.cgx.listas.retain(|_, (_, tarea)| *tarea != t);
     }
 }

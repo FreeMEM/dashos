@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use caja_exec::{Exec, Memoria};
 
 use crate::gadtools::Gt;
-use crate::lienzo::Rect;
+use crate::lienzo::{Pinta, Rect};
 use crate::nitido::{Alinea, Estilo};
 use crate::tema::{Elegido, Vista, bisel, llenar};
 use crate::{CajaGrafica, Compositor};
@@ -24,12 +24,13 @@ pub(crate) struct Control<'a> {
 
 impl<C: Compositor> CajaGrafica<C> {
     /// Pinta un control en el rectángulo `r` de la ventana `w` con su tema. Devuelve lo que tocó.
-    pub(crate) fn pintar_control<M: Memoria>(&mut self, ex: &Exec<M>, w: u32, r: Rect, c: &Control) -> Rect {
+    pub(crate) fn pintar_control<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32, r: Rect, c: &Control) -> Rect {
         let Some(bm) = self.intui.ventanas.get(&w).map(|v| v.bm) else { return Rect::nuevo(0, 0, -1, -1) };
-        let plumas = self.plumas(ex);
+        let plumas = self.plumas(ex, w);
         let tema = self.tema_de(w);
         let glifos = &self.intui.glifos;
-        let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return Rect::nuevo(0, 0, -1, -1) };
+        let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) else { return Rect::nuevo(0, 0, -1, -1) };
+        let l = &mut l;
         let vista = Vista {
             s: c.s,
             r,
@@ -46,10 +47,11 @@ impl<C: Compositor> CajaGrafica<C> {
     }
 
     /// Rellena `r` de la ventana con su color de dentro.
-    pub(crate) fn fondo_en(&mut self, w: u32, r: Rect) {
+    pub(crate) fn fondo_en<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32, r: Rect) {
         let Some(v) = self.intui.ventanas.get(&w) else { return };
         let (bm, f) = (v.bm, v.fondo);
-        if let Some(l) = self.gfx.lienzos.get_mut(&bm) {
+        if let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) {
+            let l = &mut l;
             let r = r.interseccion(&l.rect());
             if !r.vacio() {
                 llenar(l, r, f);
@@ -60,14 +62,15 @@ impl<C: Compositor> CajaGrafica<C> {
 
     /// Un marco (de grupo, de bisel) en la ventana, con su tema: en relieve (hundido o en cresta) en el clásico, una
     /// tarjeta con contorno en el de DashOS.
-    pub(crate) fn marco_en<M: Memoria>(&mut self, ex: &Exec<M>, w: u32, r: Rect, hundido: bool, cresta: bool) {
+    pub(crate) fn marco_en<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32, r: Rect, hundido: bool, cresta: bool) {
         let Some(bm) = self.intui.ventanas.get(&w).map(|v| v.bm) else { return };
         if r.x1 - r.x0 < 2 || r.y1 - r.y0 < 2 {
             return;
         }
-        let p = self.plumas(ex);
+        let p = self.plumas(ex, w);
         let tema = self.tema_de(w);
-        let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return };
+        let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) else { return };
+        let l = &mut l;
         if !tema.como().bisel_caja(l, r, hundido, cresta) {
             bisel(l, r, p.claro, p.oscuro, hundido);
             if cresta {
@@ -78,15 +81,16 @@ impl<C: Compositor> CajaGrafica<C> {
     }
 
     /// Una raya separadora (horizontal si es más ancha que alta).
-    pub(crate) fn raya_en<M: Memoria>(&mut self, ex: &Exec<M>, w: u32, r: Rect) {
+    pub(crate) fn raya_en<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32, r: Rect) {
         let Some(bm) = self.intui.ventanas.get(&w).map(|v| v.bm) else { return };
-        let p = self.plumas(ex);
+        let p = self.plumas(ex, w);
         let material = matches!(self.tema_de(w), Elegido::Material(_));
         let linea = match self.tema_de(w) {
             Elegido::Material(m) => m.t.variante_contorno,
             _ => p.oscuro,
         };
-        let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return };
+        let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) else { return };
+        let l = &mut l;
         let horizontal = r.x1 - r.x0 >= r.y1 - r.y0;
         if horizontal {
             let y = (r.y0 + r.y1) / 2;
@@ -106,15 +110,16 @@ impl<C: Compositor> CajaGrafica<C> {
 
     /// Un texto en la ventana con la tinta del tema (nítido si va "como DashOS"), sin pasar de `hasta`.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn texto_en<M: Memoria>(&mut self, ex: &Exec<M>, w: u32, x: i32, y: i32, s: &[u8], hasta: i32, alinea: Alinea, estilo: Estilo) {
+    pub(crate) fn texto_en<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32, x: i32, y: i32, s: &[u8], hasta: i32, alinea: Alinea, estilo: Estilo) {
         let Some(bm) = self.intui.ventanas.get(&w).map(|v| v.bm) else { return };
-        let p = self.plumas(ex);
+        let p = self.plumas(ex, w);
         let tinta = match self.tema_de(w) {
             Elegido::Material(m) => m.t.sobre_superficie,
             _ => p.texto,
         };
         let glifos = &self.intui.glifos;
-        let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return };
+        let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) else { return };
+        let l = &mut l;
         let fin = crate::gadtools::texto_n(l, glifos, x, y, s, tinta, hasta, alinea, estilo);
         let r = Rect::nuevo(x, y, fin.max(x), y + crate::fuente::ALTO as i32);
         l.danar(r.interseccion(&l.rect()));

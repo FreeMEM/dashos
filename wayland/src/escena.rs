@@ -2230,6 +2230,19 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                     s.hueco_marca = Some((args[1].int(), args[2].int()));
                 }
             }
+            // La caja Amiga: una ventana suya delante o detrás de las demás, sin tocar el teclado (`ScreenToFront`,
+            // `ScreenToBack`: cada pantalla propia es una ventana con las suyas dentro). Solo la caja Amiga y de una ventana
+            // suya de primer nivel; si no, nada.
+            "dashos_tema_v1" if orden == dashos_tema_v1::req::APILAR => {
+                let ventana = (self.cliente, args[0].uint());
+                if escena.de_caja_amiga.contains(&self.cliente) && escena.orden.contains(&ventana) {
+                    if args[1].uint() == 0 {
+                        escena.subir(ventana);
+                    } else {
+                        escena.bajar(ventana);
+                    }
+                }
+            }
             // S27: ver otro espacio de trabajo, como Super y el número; solo la barra.
             "dashos_tema_v1" if orden == dashos_tema_v1::req::ESPACIO => {
                 if !escena.barras.contains(&self.cliente) {
@@ -3203,6 +3216,17 @@ impl<M: Memorias> Escena<M> {
     /// Dónde acabó la última ventana arrastrada (su esquina, en la pantalla), una vez.
     pub fn tomar_ultimo_arrastre(&mut self) -> Option<(i32, i32)> {
         self.ultimo_arrastre.take()
+    }
+
+    /// Baja una ventana detrás de todas, sin tocar el teclado.
+    pub fn bajar(&mut self, ventana: (Cliente, u32)) {
+        if self.orden.first() != Some(&ventana) && self.orden.contains(&ventana) {
+            self.orden.retain(|o| *o != ventana);
+            self.orden.insert(0, ventana);
+            if let Some(r) = decoracion::ventana_de(&self.clientes[&ventana.0], ventana.1) {
+                self.danos.push(r);
+            }
+        }
     }
 
     /// H9: si se está arrastrando una ventana (para medir los cuadros mientras tanto).

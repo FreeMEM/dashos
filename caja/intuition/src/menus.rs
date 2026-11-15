@@ -16,7 +16,7 @@ use caja_exec::{Exec, Memoria};
 use crate::acceso::Acceso;
 use crate::estructuras::{drawinfo as dri, idcmp, window as win};
 use crate::tema::{Elem, Titulo, VistaMenu};
-use crate::lienzo::Rect;
+use crate::lienzo::{Pinta, Rect};
 use crate::{CajaGrafica, Compositor, Fallo, fuente};
 
 /// `struct Menu` (con el `UserData` de GadTools detrás).
@@ -376,12 +376,10 @@ impl<C: Compositor> CajaGrafica<C> {
             return false;
         }
         let Some(bm) = self.intui.ventanas.get(&w).map(|v| v.bm) else { return false };
-        let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return false };
-        let px = l.pixeles();
-        let mut debajo = Vec::new();
-        if debajo.try_reserve_exact(px.len()).is_ok() {
-            debajo.extend_from_slice(px);
-        }
+        let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) else { return false };
+        let l = &mut l;
+        let r = l.rect();
+        let debajo = l.copiar(r);
         self.menus.abierto = Some(Abierto { w, tira, menu: -1, item: -1, debajo });
         // Lo que ya está bajo el ratón (el título sobre el que se pulsó).
         let x = ex.l16(w.wrapping_add(win::MOUSEX)).unwrap_or(0) as i16 as i32;
@@ -456,10 +454,11 @@ impl<C: Compositor> CajaGrafica<C> {
     }
 
     /// Quita el menú de la ventana (vuelve lo que había debajo).
-    fn cerrar_menu<M: Memoria>(&mut self, _ex: &mut Exec<M>, _w: Option<u32>) {
+    fn cerrar_menu<M: Memoria>(&mut self, ex: &mut Exec<M>, _w: Option<u32>) {
         let Some(a) = self.menus.abierto.take() else { return };
         let Some(bm) = self.intui.ventanas.get(&a.w).map(|v| v.bm) else { return };
-        let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return };
+        let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) else { return };
+        let l = &mut l;
         let an = l.ancho() as i32;
         if a.debajo.len() == (l.ancho() * l.alto()) as usize {
             for (k, &p) in a.debajo.iter().enumerate() {
@@ -476,7 +475,7 @@ impl<C: Compositor> CajaGrafica<C> {
         let (w, tira, msel, isel) = (a.w, a.tira, a.menu, a.item);
         let Some(v) = self.intui.ventanas.get(&w) else { return };
         let (bm, alto_barra) = (v.bm, v.geometria.bordes[1].max(fuente::ALTO as i32 + 3));
-        let plumas = self.plumas(ex);
+        let plumas = self.plumas(ex, w);
         let tema = self.tema_de(w);
         let mut titulos = Vec::new();
         let mut elems = Vec::new();
@@ -521,7 +520,8 @@ impl<C: Compositor> CajaGrafica<C> {
             }
         }
         let glifos = &self.intui.glifos;
-        let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return };
+        let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) else { return };
+        let l = &mut l;
         let Some(a) = self.menus.abierto.as_ref() else { return };
         let an_l = l.ancho() as i32;
         if a.debajo.len() == (l.ancho() * l.alto()) as usize {

@@ -5,10 +5,11 @@
 //! las leen y las escriben a mano. Cada función se llama por la línea A (`$A0FF n RTS` en la tabla de saltos): la
 //! caja recibe `Accion::Ajena` de exec y pasa el número a `CajaGrafica::llamar`.
 //!
+//! Los píxeles de todos los mapas están en la memoria del 68k: los planares (los que monta el programa, que se dibujan
+//! bit a bit como en el chipset), los chunky de color verdadero (`chunky.rs`) y los lienzos de las ventanas y de la
+//! pantalla (`Lienzo`, en el formato del modo de su pantalla; se pasan a ARGB al presentarlos al compositor).
+//!
 //! Lo que no está en la memoria del 68k:
-//! - **Los píxeles de los mapas nativos** (`Lienzo`): ARGB de 32 bits, lo que espera el compositor. Son los de
-//!   cada ventana y los de `AllocBitMap` de más de 8 planos o con un amigo nativo. Los mapas que monta el propio
-//!   programa (`InitBitMap` y `AllocRaster`) son planares, en su memoria, y se dibujan bit a bit como en el chipset.
 //! - **Las paletas**: cada `ColorMap` tiene su tabla de colores ARGB; las plumas se traducen al dibujar.
 //! - **Las ventanas**: cada `struct Window` es una ventana del compositor (la idea de Newbench, S4 §3), con su
 //!   búfer propio. El puente es el rasgo `Compositor`: la caja lo implementa sobre Wayland.
@@ -42,6 +43,7 @@ pub mod regiones;
 pub mod teclado;
 
 mod acceso;
+mod apilado;
 mod areas;
 mod despacho;
 mod dibujo;
@@ -54,8 +56,10 @@ mod intuition;
 mod marco;
 mod menus;
 mod pantallas;
+mod publicas;
 mod requester;
 mod tema;
+mod vigia;
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -262,7 +266,7 @@ impl<C: Compositor> CajaGrafica<C> {
     /// planar, no existe o el punto cae fuera (para las pruebas).
     pub fn pixel_de<M: Memoria>(&self, ex: &Exec<M>, bm: u32, x: i32, y: i32) -> Option<u32> {
         if let Some(l) = self.gfx.lienzos.get(&bm) {
-            return l.rect().contiene(x, y).then(|| l.pixel(x, y));
+            return l.rect().contiene(x, y).then(|| l.pixel_en(&ex.mem, x, y));
         }
         let c = self.gfx.chunkies.get(&bm)?;
         c.rect().contiene(x, y).then(|| c.leer(&ex.mem, x, y) | 0xFF00_0000)

@@ -1061,7 +1061,7 @@ pub mod ext_idle_notification_v1 {
 
 pub static DASHOS_TEMA_V1: Interface = Interface {
     name: "dashos_tema_v1",
-    version: 6,
+    version: 7,
     requests: &[
         Message { name: "destroy", since: 1, destructor: true, args: &[] },
         Message { name: "poner", since: 1, destructor: false, args: &[Arg { name: "color", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "oscuro", kind: Kind::Uint, nullable: false, interface: None }] },
@@ -1072,6 +1072,7 @@ pub static DASHOS_TEMA_V1: Interface = Interface {
         Message { name: "espacio", since: 4, destructor: false, args: &[Arg { name: "numero", kind: Kind::Uint, nullable: false, interface: None }] },
         Message { name: "estado", since: 5, destructor: false, args: &[Arg { name: "red", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "nivel", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "silencio", kind: Kind::Uint, nullable: false, interface: None }] },
         Message { name: "marca", since: 6, destructor: false, args: &[Arg { name: "superficie", kind: Kind::Object, nullable: false, interface: Some("wl_surface") }, Arg { name: "derecha", kind: Kind::Int, nullable: false, interface: None }, Arg { name: "alto", kind: Kind::Int, nullable: false, interface: None }] },
+        Message { name: "apilar", since: 7, destructor: false, args: &[Arg { name: "superficie", kind: Kind::Object, nullable: false, interface: Some("wl_surface") }, Arg { name: "fondo", kind: Kind::Uint, nullable: false, interface: None }] },
     ],
     events: &[
         Message { name: "tema", since: 1, destructor: false, args: &[Arg { name: "color", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "oscuro", kind: Kind::Uint, nullable: false, interface: None }] },
@@ -1098,6 +1099,7 @@ pub mod dashos_tema_v1 {
         pub const ESPACIO: u16 = 6;
         pub const ESTADO: u16 = 7;
         pub const MARCA: u16 = 8;
+        pub const APILAR: u16 = 9;
     }
     pub mod ev {
         pub const TEMA: u16 = 0;

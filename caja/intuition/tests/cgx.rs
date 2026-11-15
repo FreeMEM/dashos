@@ -144,13 +144,13 @@ fn atributos_de_mapas() {
         (8, especial(PIXFMT_RGB16), PIXFMT_RGB16, 16),
         (32, especial(10), 10, 24),
         (24, especial(PIXFMT_RGBA32), PIXFMT_RGBA32, 32),
-        (8, especial(PIXFMT_LUT8), 0, 8),
+        (8, especial(PIXFMT_LUT8), PIXFMT_LUT8, 8),
         (8, 2, 0, 8),
         (5, 0, 0, 5),
     ] {
         let m = g(&mut c, "AllocBitMap", &[20, 10, prof, flags], &[0]);
         assert_ne!(m, 0, "{} {:x}", prof, flags);
-        let de_cgx = fmt != 0;
+        let de_cgx = fmt != 0 || flags & BMF_SPECIALFMT != 0;
         assert_eq!(a(&mut c, m, 0x8000_0008) != 0, de_cgx, "{} {:x}", prof, flags);
         assert_eq!(a(&mut c, m, 0x8000_0004), fmt, "{} {:x}", prof, flags);
         assert_eq!(g(&mut c, "GetBitMapAttr", &[0, 4], &[m]), bits, "{} {:x}", prof, flags);
@@ -440,8 +440,9 @@ fn acceso_directo() {
     assert!(av.is_empty(), "{:?}", av);
 }
 
-/// `LockBitMapTagList` de un lienzo (la pantalla: una superficie del compositor, fuera de la memoria del 68k): se copia
-/// a un búfer y vuelve al soltarlo; con `UBMI_REALLYUNLOCK` a FALSE y `UBMI_UPDATERECTS`, solo esos rectángulos.
+/// `LockBitMapTagList` de un lienzo (la pantalla, una ventana: superficies del compositor) también da la dirección de
+/// verdad de sus píxeles en la memoria del 68k, sin copia; al soltarlo, lo que dice `UBMI_UPDATERECTS` (o todo) queda
+/// como cambiado para el compositor.
 #[test]
 fn acceso_directo_a_un_lienzo() {
     use caja_intuition::estructuras::screen;
@@ -455,18 +456,20 @@ fn acceso_directo_a_un_lienzo() {
     let a1 = x(&mut c, "LockBitMapTagList", &[], &[bm, t]);
     assert_ne!(a1, 0);
     assert_eq!((l32(&c, campos), l32(&c, campos + 4)), (a1, 640 * 4));
-    assert_eq!(c.0.bloques_de(0).len(), antes + 1, "el búfer de la copia");
+    assert_eq!(a1, x(&mut c, "GetCyberMapAttr", &[0x8000_0003], &[bm]), "la de sus píxeles");
+    assert_eq!(c.0.bloques_de(0).len(), antes, "sin búfer de copia");
     assert_eq!(l32(&c, a1) & 0x00FF_FFFF, 0x112233);
-    e32(&mut c, a1, 0x0000_0001);
+    // Lo escrito se ve en seguida; al soltar con un rectángulo, ese queda por presentar.
     e32(&mut c, a1 + 8, 0x0000_0002);
+    assert_eq!(rgb(&mut c, rp, 2, 0), 2);
     let rl = reservar(&mut c, 16);
     e32(&mut c, rl, 1);
+    e16(&mut c, rl + 8 + 4, 2);
     let tu = etiquetas(&mut c, &[(UBMI_UPDATERECTS, rl), (UBMI_REALLYUNLOCK, 0)]);
     x(&mut c, "UnLockBitMapTagList", &[], &[a1, tu]);
-    assert_eq!((rgb(&mut c, rp, 0, 0), rgb(&mut c, rp, 2, 0)), (1, 0x112233));
     assert_eq!(c.1.cerrojos_cgx(), 1);
+    assert!(c.1.lienzo(bm).unwrap().dano().is_some_and(|d| d.contiene(2, 0)));
     x(&mut c, "UnLockBitMap", &[], &[a1]);
-    assert_eq!(rgb(&mut c, rp, 2, 0), 2);
     assert_eq!(c.1.cerrojos_cgx(), 0);
     assert_eq!(c.0.bloques_de(0).len(), antes);
     let av = c.1.tomar_avisos();
@@ -497,7 +500,12 @@ fn picasso96() {
         assert_eq!(p(&mut c, "p96GetBitMapAttr", &[P96BMA_BYTESPERROW], &[m]), 16 * bpp);
         p(&mut c, "p96FreeBitMap", &[], &[m]);
     }
-    let pl = p(&mut c, "p96AllocBitMap", &[16, 8, 8, 0, 0, 0, 0, RGBFB_CLUT], &[0]);
+    let pl = p(&mut c, "p96AllocBitMap", &[16, 8, 8, 0, 0, 0, 0, RGBFB_NONE], &[0]);
+    // CLUT: un chunky de 8 bits (una pluma por byte, como en una tarjeta).
+    let clut = p(&mut c, "p96AllocBitMap", &[16, 8, 8, 0, 0, 0, 0, RGBFB_CLUT], &[0]);
+    let at = |c: &mut Caja, bm: u32, attr: u32| p(c, "p96GetBitMapAttr", &[attr], &[bm]);
+    assert_eq!((at(&mut c, clut, P96BMA_RGBFORMAT), at(&mut c, clut, P96BMA_ISP96), at(&mut c, clut, P96BMA_BYTESPERROW)), (RGBFB_CLUT, 1, 16));
+    p(&mut c, "p96FreeBitMap", &[], &[clut]);
     let a = |c: &mut Caja, bm: u32, attr: u32| p(c, "p96GetBitMapAttr", &[attr], &[bm]);
     assert_eq!((a(&mut c, bm, P96BMA_WIDTH), a(&mut c, bm, P96BMA_HEIGHT)), (16, 8));
     assert_eq!((a(&mut c, bm, P96BMA_RGBFORMAT), a(&mut c, bm, P96BMA_ISP96)), (RGBFB_A8R8G8B8, 1));

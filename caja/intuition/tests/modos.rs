@@ -195,12 +195,14 @@ fn pantalla_propia() {
     assert_eq!(c.0.bloques_de(0).len(), antes, "todo suelto");
     let av = c.1.tomar_avisos();
     assert!(av.is_empty(), "{:?}", av);
-    // Una de 8 bits: 8 planos (no es de cybergraphics), y su modo sí.
+    // Una de 8 bits: chunky LUT8 (de cybergraphics, una pluma por byte), y su modo también.
     let t = etiquetas(&mut c, &[(0x8000_0032, id(1, 0))]);
     let s8 = i(&mut c, "OpenScreenTagList", &[], &[0, t]);
     assert_ne!(s8, 0);
     assert_eq!(g(&mut c, "GetBitMapAttr", &[0, 4], &[s8 + screen::BITMAP]), 8);
-    assert_eq!(x(&mut c, "GetCyberMapAttr", &[0x8000_0008], &[s8 + screen::BITMAP]), 0);
+    assert_eq!(x(&mut c, "GetCyberMapAttr", &[0x8000_0008], &[s8 + screen::BITMAP]), u32::MAX);
+    assert_eq!(x(&mut c, "GetCyberMapAttr", &[0x8000_0004], &[s8 + screen::BITMAP]), 0, "PIXFMT_LUT8");
+    assert_eq!(x(&mut c, "GetCyberMapAttr", &[0x8000_0001], &[s8 + screen::BITMAP]), 640, "un byte por punto");
     let m8 = g(&mut c, "GetVPModeID", &[], &[s8 + screen::VIEWPORT]);
     assert_eq!(x(&mut c, "IsCyberModeID", &[m8], &[]), 1);
     // Una con SA_Width/SA_Height propios, y otra con NewScreen y su extensión de etiquetas.

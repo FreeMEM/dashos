@@ -19,7 +19,7 @@ use crate::estructuras::{
     cliprect, colormap, drawinfo as dri, idcmp, intuitionbase as ib, layer, newwindow as nw, rastport as rp_, rectangle,
     screen as sc, tag, textattr, textfont, tipo_pantalla, viewport, wa, wflg, window as win,
 };
-use crate::lienzo::{self, Rect};
+use crate::lienzo::{self, Pinta, Rect};
 use crate::marco::{GADGET_TAMANO, Gadget, Geometria};
 use crate::teclado::Calificadores;
 use crate::{CajaGrafica, Compositor, Fallo, Superficie, Tabla, fuente, lvo};
@@ -39,6 +39,19 @@ pub(crate) struct Pantalla {
     /// La tarea que la abrió (0: la de Workbench) y lo reservado para ella (dirección, largo), para soltarlo.
     pub tarea: u32,
     pub bloques: Vec<(u32, u32)>,
+    /// Pública (`SA_PubName`): su nombre, si está en modo privado (`PubScreenStatus`) y a quién avisar cuando se va el
+    /// último visitante (`SA_PubSig`, `SA_PubTask`: tarea y número de señal).
+    pub nombre: Option<Vec<u8>>,
+    pub privada: bool,
+    pub aviso: Option<(u32, u8)>,
+    /// Su superficie del compositor (0: ninguna), para que se vea lo que se pinta en su mapa.
+    pub superficie: Superficie,
+    /// El mapa del programa (`SA_BitMap`), si lo dio (0: el suyo, un lienzo).
+    pub mapa_programa: u32,
+    /// Su última ventana activa (0: ninguna): la que recibe el teclado cuando el compositor da el foco a la pantalla.
+    pub activa: u32,
+    /// Cuándo se abrió (en el orden de las pantallas): la lista de las públicas va en ese orden.
+    pub orden: u64,
 }
 
 /// Lo que intuition sabe de una ventana fuera de la memoria del 68k.
@@ -93,6 +106,11 @@ pub(crate) struct Estado {
     pub ceros: u32,
     pub orden: u64,
     pub glifos: Vec<[u8; 8]>,
+    /// La pantalla pública de serie (`SetDefaultPubScreen`; 0: el Workbench), los modos de `SetPubScreenModes` y la foto
+    /// de la lista de las públicas que tienen los programas (`publicas.rs`).
+    pub pub_defecto: u32,
+    pub modos_pub: u32,
+    pub lista_pub: Option<crate::publicas::ListaPub>,
 }
 
 /// Lo que pide `OpenWindow` u `OpenWindowTagList`.
@@ -212,6 +230,13 @@ impl<C: Compositor> CajaGrafica<C> {
             modo: crate::modos::workbench(),
             tarea: 0,
             bloques: Vec::new(),
+            nombre: Some(b"Workbench".to_vec()),
+            privada: false,
+            aviso: None,
+            superficie: 0,
+            mapa_programa: 0,
+            activa: 0,
+            orden: 0,
         };
         self.bordes_pantalla(ex)?;
         Ok(())
@@ -237,30 +262,52 @@ impl<C: Compositor> CajaGrafica<C> {
 
     // --- Pantallas ---
 
-    /// `LockPubScreen`: el Workbench con el nombre 0 o "Workbench"; 0 con otro nombre.
+    /// `LockPubScreen`: la pantalla pública de ese nombre (sin distinguir mayúsculas; 0, la de serie: el Workbench) que no
+    /// esté en modo privado; 0 si no hay. Le suma un visitante.
     pub fn lock_pub_screen<M: Memoria>(&mut self, ex: &mut Exec<M>, nombre: u32) -> Result<u32, Fallo> {
-        if nombre != 0 && !ex.cadena(nombre)?.eq_ignore_ascii_case(b"Workbench") {
+        let s = self.lock_nombre(ex, nombre)?;
+        if s == 0 {
             return Ok(0);
         }
-        self.intui.wb.bloqueos += 1;
-        Ok(self.intui.wb.dir)
+        if let Some(p) = self.pantalla_mut(s) {
+            p.bloqueos += 1;
+        }
+        Ok(s)
     }
 
-    /// `UnlockPubScreen`.
+    /// `UnlockPubScreen` (por la pantalla o por su nombre): un visitante menos; con el último, la señal de `SA_PubSig`.
     pub fn unlock_pub_screen<M: Memoria>(&mut self, ex: &mut Exec<M>, nombre: u32, s: u32) -> Result<(), Fallo> {
-        let s = if s != 0 { s } else { self.lock_nombre(ex, nombre)? };
-        if s != self.intui.wb.dir {
-            return Err(Fallo::PantallaDesconocida { dir: s });
-        }
-        if self.intui.wb.bloqueos == 0 {
+        let s = if s != 0 { s } else { self.nombre_a_pantalla(ex, nombre, true)? };
+        let Some(p) = self.pantalla_mut(s) else { return Err(Fallo::PantallaDesconocida { dir: s }) };
+        if p.bloqueos == 0 {
             return Err(Fallo::DesbloqueoDeMas { dir: s });
         }
-        self.intui.wb.bloqueos -= 1;
+        p.bloqueos -= 1;
+        if p.bloqueos == 0
+            && let Some((t, bit)) = p.aviso
+        {
+            let _ = ex.signal(t, 1 << bit);
+        }
         Ok(())
     }
 
-    fn lock_nombre<M: Memoria>(&self, ex: &Exec<M>, nombre: u32) -> Result<u32, Fallo> {
-        if nombre == 0 || ex.cadena(nombre)?.eq_ignore_ascii_case(b"Workbench") { Ok(self.intui.wb.dir) } else { Ok(0) }
+    /// La pantalla pública de un nombre (0: el Workbench), si no está en modo privado.
+    pub(crate) fn lock_nombre<M: Memoria>(&self, ex: &Exec<M>, nombre: u32) -> Result<u32, Fallo> {
+        self.nombre_a_pantalla(ex, nombre, false)
+    }
+
+    /// La pantalla pública de un nombre (0: la de serie, `SetDefaultPubScreen`; el Workbench si no hay otra); con
+    /// `privadas`, también las que están en modo privado.
+    fn nombre_a_pantalla<M: Memoria>(&self, ex: &Exec<M>, nombre: u32, privadas: bool) -> Result<u32, Fallo> {
+        if nombre == 0 {
+            return Ok(self.pub_por_defecto());
+        }
+        let n = ex.cadena(nombre)?;
+        let wb = core::iter::once(&self.intui.wb);
+        Ok(wb
+            .chain(self.intui.pantallas.values())
+            .find(|p| p.nombre.as_ref().is_some_and(|x| x.eq_ignore_ascii_case(&n)) && (privadas || !p.privada))
+            .map_or(0, |p| p.dir))
     }
 
     /// Cuántas veces está bloqueado el Workbench.
@@ -423,13 +470,29 @@ impl<C: Compositor> CajaGrafica<C> {
         {
             return Err(Fallo::PantallaDesconocida { dir: s });
         }
-        if let Some(nombre) = p.nombre_pub
-            && self.lock_nombre(ex, nombre)? == 0
-            && !p.respaldo
-        {
-            return Err(Fallo::PantallaDesconocida { dir: nombre });
+        if let Some(nombre) = p.nombre_pub {
+            match self.lock_nombre(ex, nombre)? {
+                0 if !p.respaldo => return Err(Fallo::PantallaDesconocida { dir: nombre }),
+                0 => {}
+                s => p.pantalla = Some(s),
+            }
         }
-        self.abrir(ex, p)
+        // SHANGHAI: la que iba al Workbench sin pedirlo, a la pantalla pública de serie.
+        if p.pantalla.is_none() && p.nombre_pub.is_none() && self.intui.modos_pub & crate::publicas::SHANGHAI != 0 {
+            let d = self.pub_por_defecto();
+            if d != self.intui.wb.dir {
+                p.pantalla = Some(d);
+            }
+        }
+        // POPPUBSCREEN: una pantalla pública pasa delante al abrirse en ella una ventana.
+        let delante = p
+            .pantalla
+            .filter(|&s| self.intui.modos_pub & crate::publicas::POPPUBSCREEN != 0 && self.pantalla(s).is_some_and(|x| x.nombre.is_some()));
+        let w = self.abrir(ex, p)?;
+        if let Some(s) = delante {
+            self.screen_depth(ex, s, true)?;
+        }
+        Ok(w)
     }
 
     fn abrir<M: Memoria>(&mut self, ex: &mut Exec<M>, mut p: Peticion) -> Result<u32, Fallo> {
@@ -448,7 +511,9 @@ impl<C: Compositor> CajaGrafica<C> {
         // es de fondo) e intuition no pinta la suya. Sus bordes, los de la pantalla en ese aspecto (`WBor*` a 0): arriba,
         // `WBorTop` + el alto de la letra + 1 si tiene barra, como en 3.x (los programas que colocan sus cosas con
         // `BorderTop` o con `WBorTop + ta_YSize + 1` cuentan con eso), y nada a los lados ni abajo.
-        let dashos = aspecto.is_some() && self.comp.pone_barra() && p.flags & wflg::BORDERLESS == 0;
+        // (No en una pantalla propia: sus ventanas van dentro de ella, sin barra del compositor.)
+        let en_escritorio = self.pantalla(wb).is_none_or(|pa| pa.superficie == 0);
+        let dashos = aspecto.is_some() && self.comp.pone_barra() && p.flags & wflg::BORDERLESS == 0 && en_escritorio;
         let bordes = if p.flags & wflg::BORDERLESS != 0 {
             [0, 0, 0, 0]
         } else if dashos {
@@ -533,8 +598,11 @@ impl<C: Compositor> CajaGrafica<C> {
         let cm = cm_pantalla;
         self.nuevo_nativo(ex, bm, an as u32, al as u32, cm)?;
         // Un programa la ve en el formato del modo de su pantalla (`LockBitMap`, cybergraphics).
+        let colores = self.gfx.paletas.get(&cm).cloned().unwrap_or_default();
         if let Some(l) = self.gfx.lienzos.get_mut(&bm) {
-            l.formato = formato;
+            l.poner_formato(formato);
+            // En una pantalla de 8 bits, la ventana es de plumas: su paleta, la de la pantalla.
+            l.poner_lut(&colores);
         }
         // S26: con el aspecto de DashOS, dentro es de la superficie del tema (la paleta de la pantalla no se toca: un
         // programa que borra con la pluma 0 pinta el gris de siempre).
@@ -628,6 +696,8 @@ impl<C: Compositor> CajaGrafica<C> {
                 let derecha = if p.flags & wflg::DEPTHGADGET != 0 { crate::marco::ANCHO_PROF } else { 0 };
                 (derecha, bordes[1])
             }),
+            // En una pantalla propia, dentro de su superficie.
+            padre: self.pantalla(wb).map(|pa| pa.superficie).filter(|&x| x != 0),
         };
         self.intui.orden += 1;
         let orden = self.intui.orden;
@@ -661,7 +731,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 dir: w,
             },
         );
-        self.dibujar_marco(w);
+        self.dibujar_marco(ex, w);
         let Some(s) = self.comp.crear_ventana(&pedida) else {
             self.soltar_ventana(ex, w)?;
             return Err(Fallo::SinCompositor);
@@ -677,7 +747,7 @@ impl<C: Compositor> CajaGrafica<C> {
             self.add_g_list(ex, w, p.gadgets, -1, -1)?;
             self.dibujar_lista(ex, w, p.gadgets, -1, false);
         }
-        self.presentar_ventana(w);
+        self.presentar_ventana(ex, w);
         // Una ventana de refresco simple nace con todo por pintar (como en el Amiga, donde su capa nueva no guarda nada):
         // su capa queda marcada (`LAYERREFRESH`) y, si lo pide, recibe `IDCMP_REFRESHWINDOW` (MUI pinta al recibirlo).
         self.refresco_inicial(ex, w)?;
@@ -763,30 +833,27 @@ impl<C: Compositor> CajaGrafica<C> {
     }
 
     /// Manda al compositor lo que ha cambiado de una ventana.
-    pub(crate) fn presentar_ventana(&mut self, w: u32) {
+    pub(crate) fn presentar_ventana<M: Memoria>(&mut self, ex: &Exec<M>, w: u32) {
         let Some(v) = self.intui.ventanas.get(&w) else { return };
         let (s, bm) = (v.superficie, v.bm);
         if s == 0 {
             return;
         }
         let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return };
-        let Some(d) = l.tomar_dano() else { return };
         let (an, al) = (l.ancho(), l.alto());
-        let (pix, textos) = l.pixeles_y_textos();
-        // Sin memoria para sus píxeles, no hay nada que mandar.
-        if pix.len() != an as usize * al as usize {
-            return;
-        }
+        // Lo cambiado, de la memoria del 68k a ARGB (sin píxeles o sin memoria para la copia, nada que mandar).
+        let Some((d, pix, textos)) = l.presentar(&ex.mem) else { return };
         self.comp.presentar(s, pix, an, al, d, textos);
     }
 
     /// Manda al compositor lo que ha cambiado en todas las ventanas. La caja lo llama a cada cuadro (o al volver
     /// de las llamadas nativas).
-    pub fn presentar(&mut self) {
+    pub fn presentar<M: Memoria>(&mut self, ex: &Exec<M>) {
         let ws: Vec<u32> = self.intui.ventanas.keys().copied().collect();
         for w in ws {
-            self.presentar_ventana(w);
+            self.presentar_ventana(ex, w);
         }
+        self.presentar_pantallas(ex);
     }
 
     // --- Cerrar ---
@@ -831,7 +898,7 @@ impl<C: Compositor> CajaGrafica<C> {
         let Some(v) = self.intui.ventanas.remove(&w) else { return Ok(()) };
         self.comp.cerrar_ventana(v.superficie);
         self.intui.por_superficie.remove(&v.superficie);
-        self.gfx.lienzos.remove(&v.bm);
+        self.soltar_lienzo(ex, v.bm);
         self.gfx.capas.remove(&v.capa);
         self.gfx.origenes.remove(&v.capa);
         if v.pendientes.is_empty() {
@@ -878,10 +945,15 @@ impl<C: Compositor> CajaGrafica<C> {
         let wb = self.intui.ventanas.get(&w).map_or(self.intui.wb.dir, |v| v.pantalla);
         ex.e32(wb + sc::FIRSTWINDOW, ex.l32(w + win::NEXTWINDOW)?)?;
         let Some(v) = self.intui.ventanas.remove(&w) else { return Ok(()) };
+        if let Some(p) = self.pantalla_mut(v.pantalla)
+            && p.activa == w
+        {
+            p.activa = 0;
+        }
         if v.puerto_creado != 0 {
             ex.delete_msg_port(v.puerto_creado)?;
         }
-        self.gfx.lienzos.remove(&v.bm);
+        self.soltar_lienzo(ex, v.bm);
         self.gfx.capas.remove(&v.capa);
         self.gfx.origenes.remove(&v.capa);
         self.liberar(ex, &v)
@@ -952,6 +1024,7 @@ impl<C: Compositor> CajaGrafica<C> {
         self.boopsi_tarea_muerta(ex, t);
         self.cgx_tarea_muerta(ex, t);
         self.pantallas_tarea_muerta(ex, t);
+        self.lista_pub_tarea_muerta(ex, t);
         // Lo que esa tarea tenía sin contestar ya no volverá.
         let cerradas = core::mem::take(&mut self.intui.cerradas);
         for v in cerradas {
@@ -970,10 +1043,10 @@ impl<C: Compositor> CajaGrafica<C> {
     // --- Lo demás de las ventanas ---
 
     /// `RefreshWindowFrame`.
-    pub fn refresh_window_frame(&mut self, w: u32) -> Result<(), Fallo> {
+    pub fn refresh_window_frame<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32) -> Result<(), Fallo> {
         self.ventana(w)?;
-        self.dibujar_marco(w);
-        self.presentar_ventana(w);
+        self.dibujar_marco(ex, w);
+        self.presentar_ventana(ex, w);
         Ok(())
     }
 
@@ -998,7 +1071,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 let s = v.superficie;
                 self.comp.poner_titulo(s, &texto);
             }
-            self.refresh_window_frame(w)?;
+            self.refresh_window_frame(ex, w)?;
         }
         Ok(())
     }
@@ -1060,8 +1133,13 @@ impl<C: Compositor> CajaGrafica<C> {
                 replan |= self.activar(ex, o, false)?;
             }
         }
+        let mut pantalla = 0;
         if let Some(v) = self.intui.ventanas.get_mut(&w) {
             v.activa = si;
+            pantalla = v.pantalla;
+        }
+        if si && let Some(p) = self.pantalla_mut(pantalla) {
+            p.activa = w;
         }
         let f = ex.l32(w + win::FLAGS)?;
         ex.e32(w + win::FLAGS, if si { f | wflg::WINDOWACTIVE } else { f & !wflg::WINDOWACTIVE })?;
@@ -1071,7 +1149,7 @@ impl<C: Compositor> CajaGrafica<C> {
         } else if ex.l32(base + ib::ACTIVEWINDOW)? == w {
             ex.e32(base + ib::ACTIVEWINDOW, 0)?;
         }
-        self.dibujar_marco(w);
+        self.dibujar_marco(ex, w);
         let clase = if si { idcmp::ACTIVEWINDOW } else { idcmp::INACTIVEWINDOW };
         replan |= self.enviar(ex, w, clase, 0, 0)?;
         Ok(replan)
@@ -1210,8 +1288,9 @@ impl<C: Compositor> CajaGrafica<C> {
         let (bm, capa) = (v.bm, v.capa);
         // Lo de dentro, del color con el que se abrió (el de BACKGROUNDPEN, o la superficie de DashOS).
         let fondo = v.fondo;
-        if let Some(l) = self.gfx.lienzos.get_mut(&bm) {
-            l.cambiar_tamano(an as u32, al as u32);
+        self.cambiar_tamano_lienzo(ex, bm, an as u32, al as u32);
+        if let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) {
+            let l = &mut l;
             // Lo que era borde abajo y a la derecha queda dentro: se borra.
             let [_, _, bd, bb] = g.bordes;
             for y in 0..al {
@@ -1233,7 +1312,7 @@ impl<C: Compositor> CajaGrafica<C> {
             v.geometria.ancho = an;
             v.geometria.alto = al;
         }
-        self.dibujar_marco(w);
+        self.dibujar_marco(ex, w);
         // Los gadgets BOOPSI relativos (el layout de una ventana de ReAction) se colocan otra vez.
         if self.tiene_boopsi(ex, w) {
             self.apuntar(crate::boopsi::Pendiente::Colocar { w });
