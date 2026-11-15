@@ -1,0 +1,29 @@
+; Los textos de kit (versión 1), de kit/src
+; Hecho con tools/catalogo.py cd: no se edita a mano.
+;
+MSG_1 (1//)
+sí
+MSG_2 (2//)
+no
+MSG_3 (3//)
+no es un PNG
+MSG_4 (4//)
+se acaba antes de tiempo
+MSG_5 (5//)
+un trozo está roto (su CRC no cuadra)
+MSG_6 (6//)
+no sigue el formato
+MSG_7 (7//)
+lo comprimido está roto
+MSG_8 (8//)
+demasiado grande
+MSG_9 (9//)
+no cabe en la memoria
+MSG_10 (10//)
+Violeta
+MSG_11 (11//)
+Azul
+MSG_12 (12//)
+Verde
+MSG_13 (13//)
+Naranja

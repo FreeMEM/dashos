@@ -12,3 +12,4 @@ path = "src/lib.rs"
 [dependencies]
 ttf-parser = { version = "0.25", default-features = false, features = ["no-std-float"] }
 libm = "0.2"
+idioma = { package = "dashos-idioma", path = "../idioma" }

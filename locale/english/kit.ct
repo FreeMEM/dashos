@@ -1,0 +1,43 @@
+## version $VER: kit.catalog 1.0 (15.11.2026)
+## language english
+## codeset 106
+;
+MSG_1
+yes
+; sí
+MSG_2
+no
+; no
+MSG_3
+it is not a PNG
+; no es un PNG
+MSG_4
+it ends too soon
+; se acaba antes de tiempo
+MSG_5
+a chunk is damaged (its CRC does not match)
+; un trozo está roto (su CRC no cuadra)
+MSG_6
+it does not follow the format
+; no sigue el formato
+MSG_7
+the compressed data is damaged
+; lo comprimido está roto
+MSG_8
+too large
+; demasiado grande
+MSG_9
+it does not fit in memory
+; no cabe en la memoria
+MSG_10
+Violet
+; Violeta
+MSG_11
+Blue
+; Azul
+MSG_12
+Green
+; Verde
+MSG_13
+Orange
+; Naranja

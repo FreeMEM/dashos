@@ -55,8 +55,16 @@ $(PRUEBAS): usuario FORCE
 	cargo build $(CARGO_PERFIL) --features pruebas
 	$(OBJCOPY) -O binary $(ELF) $(PRUEBAS)
 
+# Idiomas (paso 4 de docs/REVISION_LOOP.md): el árbol de `LOCALE:` (../build/Locale: catálogos, idiomas y países) que
+# sale de ../locale con `tools/catalogo.py`. Falla si un .cd no está al día con los tr() del código, o si una traducción
+# no cuadra con su original; entonces: python3 tools/catalogo.py todo -o build/Locale, y revisar los .ct.
+catalogos: FORCE
+	python3 ../tools/catalogo.py todo --comprobar -o ../build/Locale
+
 # Antes de QEMU, las pruebas de PC de las bibliotecas de los servicios (B6): Wayland y la mezcla del sonido.
-prueba: $(PRUEBAS)
+prueba: $(PRUEBAS) catalogos
+	@# Idiomas y catálogos: el crate (catálogos rotos, locale.prefs roto, formatos) y lo que hace tools/catalogo.py.
+	cd ../idioma && cargo test --quiet
 	cd ../wayland && cargo test --quiet
 	cd ../sonido && cargo test --quiet
 	cd ../amigados && cargo test --quiet --release
@@ -103,7 +111,7 @@ virt: usuario FORCE
 DISCO_NVME := target/nvme.img
 DASHFS_AR := ../archivos/dashfs/target/release/dashfs-ar
 VER := ../archivos/herramientas/target/release/ver
-$(DISCO_NVME): FORCE
+$(DISCO_NVME): catalogos FORCE
 	cd ../archivos/dashfs && cargo build --release --bin dashfs-ar --bin dashfs-volume
 	cd ../archivos/herramientas && cargo build --release
 	python3 ../tools/disco_archivos.py $@ $(DASHFS_AR)
@@ -256,7 +264,7 @@ arranque-virt-wayland: usuario $(DISCO_NVME) FORCE
 # en capturas-agente/aspecto-$(ASPECTO_NOMBRE)-{gtk4,foot}.png. Para Full HD: DASHOS_PANTALLA=1920x1080.
 ASPECTO_PREFS ?= fondo=ondas.png;apariencia=claro fondo;cajas=general dashos
 ASPECTO_NOMBRE ?= dashos-ondas
-arranque-virt-aspecto: usuario FORCE
+arranque-virt-aspecto: usuario catalogos FORCE
 	@test -f "$(ARCH_IMAGE)" || { echo "Falta el kernel (ARCH_IMAGE=$(ARCH_IMAGE)): tools/aspecto_caja_linux.py preparar"; exit 1; }
 	@test -f "$(ARCH_DISCO)" || { echo "Falta el disco de Arch (ARCH_DISCO=$(ARCH_DISCO)): tools/aspecto_caja_linux.py preparar"; exit 1; }
 	cd ../archivos/dashfs && cargo build --release --bin dashfs-ar --bin dashfs-volume

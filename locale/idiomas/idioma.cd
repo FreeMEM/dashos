@@ -1,0 +1,104 @@
+; Los textos de un idioma (días, meses…), con los números de GetLocaleStr de locale.library (1 a 50), en castellano,
+; que es el idioma de serie (idioma::fecha::CASTELLANO: lo comprueba una prueba). Cada locale/idiomas/<idioma>.ct los
+; traduce, y de ahí sale LOCALE:Languages/<idioma>.language.
+;
+MSG_1 (1//)
+domingo
+MSG_2 (2//)
+lunes
+MSG_3 (3//)
+martes
+MSG_4 (4//)
+miércoles
+MSG_5 (5//)
+jueves
+MSG_6 (6//)
+viernes
+MSG_7 (7//)
+sábado
+MSG_8 (8//)
+dom
+MSG_9 (9//)
+lun
+MSG_10 (10//)
+mar
+MSG_11 (11//)
+mié
+MSG_12 (12//)
+jue
+MSG_13 (13//)
+vie
+MSG_14 (14//)
+sáb
+MSG_15 (15//)
+enero
+MSG_16 (16//)
+febrero
+MSG_17 (17//)
+marzo
+MSG_18 (18//)
+abril
+MSG_19 (19//)
+mayo
+MSG_20 (20//)
+junio
+MSG_21 (21//)
+julio
+MSG_22 (22//)
+agosto
+MSG_23 (23//)
+septiembre
+MSG_24 (24//)
+octubre
+MSG_25 (25//)
+noviembre
+MSG_26 (26//)
+diciembre
+MSG_27 (27//)
+ene
+MSG_28 (28//)
+feb
+MSG_29 (29//)
+mar
+MSG_30 (30//)
+abr
+MSG_31 (31//)
+may
+MSG_32 (32//)
+jun
+MSG_33 (33//)
+jul
+MSG_34 (34//)
+ago
+MSG_35 (35//)
+sep
+MSG_36 (36//)
+oct
+MSG_37 (37//)
+nov
+MSG_38 (38//)
+dic
+MSG_39 (39//)
+Sí
+MSG_40 (40//)
+No
+MSG_41 (41//)
+a. m.
+MSG_42 (42//)
+p. m.
+MSG_43 (43//)
+-
+MSG_44 (44//)
+-
+MSG_45 (45//)
+«
+MSG_46 (46//)
+»
+MSG_47 (47//)
+Ayer
+MSG_48 (48//)
+Hoy
+MSG_49 (49//)
+Mañana
+MSG_50 (50//)
+Futuro

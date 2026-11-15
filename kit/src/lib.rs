@@ -16,3 +16,7 @@ pub mod semilla;
 pub mod tema;
 pub mod teclado;
 pub mod texto;
+pub mod textos;
+
+/// Idiomas y catálogos (el crate `idioma`), para los programas que usan el kit.
+pub use idioma;
