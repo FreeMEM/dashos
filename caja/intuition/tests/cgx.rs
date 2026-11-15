@@ -55,36 +55,43 @@ fn biblioteca_y_modos() {
     assert_eq!(x(&mut c, "GetCyberIDAttr", &[0x8000_0005, MODO_CAJA], &[]), 4);
     assert_eq!(x(&mut c, "GetCyberIDAttr", &[0x8000_0099, MODO_CAJA], &[]), u32::MAX);
     assert_eq!(x(&mut c, "GetCyberIDAttr", &[0x8000_0001, 0x1234], &[]), 0);
-    // BestCModeIDTagList: el modo de la caja hasta 32 bits; sin etiquetas, también.
+    // BestCModeIDTagList: la profundidad pedida (24) y el más pequeño que llegue al tamaño (con un escritorio de 640 x
+    // 480, solo hay ese); 8 bits de serie; más de 32, ninguno.
+    let id = |t: usize, p: usize| caja_intuition::modos::id(t, p);
     let t = etiquetas(&mut c, &[(0x8005_0000, 24), (0x8005_0001, 800), (0x8005_0002, 600)]);
-    assert_eq!(x(&mut c, "BestCModeIDTagList", &[], &[t]), MODO_CAJA);
-    assert_eq!(x(&mut c, "BestCModeIDTagList", &[], &[0]), MODO_CAJA);
+    assert_eq!(x(&mut c, "BestCModeIDTagList", &[], &[t]), id(0, 3));
+    assert_eq!(x(&mut c, "BestCModeIDTagList", &[], &[0]), id(0, 0));
     let t = etiquetas(&mut c, &[(0x8005_0000, 64)]);
     assert_eq!(x(&mut c, "BestCModeIDTagList", &[], &[t]), INVALID_ID);
-    // La lista de modos: uno, el de la caja.
+    // La lista de modos: los cinco del escritorio (8, 15, 16, 24 y 32 bits), en orden.
     let antes = c.0.bloques_de(c.2).len();
     let l = x(&mut c, "AllocCModeListTagList", &[], &[0, 0]);
     assert_ne!(l, 0);
-    let n = l32(&c, l);
-    assert_eq!(l32(&c, n), l + 4, "el nodo es el último");
-    assert_eq!(l32(&c, l + 8), n);
-    assert_eq!(l32(&c, n + CMN_DISPLAYID), MODO_CAJA);
-    assert_eq!((l16(&c, n + CMN_WIDTH), l16(&c, n + CMN_HEIGHT), l16(&c, n + CMN_DEPTH)), (640, 480, 32));
-    assert_eq!(l8(&c, n + CMN_MODETEXT), b'D');
+    let mut n = l32(&c, l);
+    let mut vistos = Vec::new();
+    while l32(&c, n) != 0 {
+        assert_eq!((l16(&c, n + CMN_WIDTH), l16(&c, n + CMN_HEIGHT)), (640, 480));
+        assert_eq!(l8(&c, n + CMN_MODETEXT), b'D');
+        vistos.push((l32(&c, n + CMN_DISPLAYID), l16(&c, n + CMN_DEPTH)));
+        n = l32(&c, n);
+    }
+    assert_eq!(n, l + 4, "acaba en lh_Tail");
+    assert_eq!(vistos, [(id(0, 0), 8), (id(0, 1), 15), (id(0, 2), 16), (id(0, 3), 24), (id(0, 4), 32)]);
     x(&mut c, "FreeCModeList", &[], &[l]);
     assert_eq!(c.0.bloques_de(c.2).len(), antes);
-    // Filtros que lo dejan fuera: profundidad, tamaño y modelos de color sin ARGB32.
+    // Filtros que los dejan fuera: profundidad, tamaño y modelos de color que no da ninguno.
     let t = etiquetas(&mut c, &[(0x8004_0000, 33)]);
     assert_eq!(x(&mut c, "AllocCModeListTagList", &[], &[0, t]), 0);
     let t = etiquetas(&mut c, &[(0x8004_0003, 320)]);
     assert_eq!(x(&mut c, "AllocCModeListTagList", &[], &[0, t]), 0);
-    let modelos = datos(&mut c, &[0, 5, 0, 9, 0xFF, 0xFF]);
+    let modelos = datos(&mut c, &[0, 2, 0, 12, 0xFF, 0xFF]);
     let t = etiquetas(&mut c, &[(0x8004_0006, modelos)]);
     assert_eq!(x(&mut c, "AllocCModeListTagList", &[], &[0, t]), 0);
     let modelos = datos(&mut c, &[0, 5, 0, 11, 0xFF, 0xFF]);
     let t = etiquetas(&mut c, &[(0x8004_0006, modelos)]);
     let l = x(&mut c, "AllocCModeListTagList", &[], &[0, t]);
     assert_ne!(l, 0);
+    assert_eq!(l32(&c, l32(&c, l) + CMN_DISPLAYID), id(0, 2), "RGB16 y ARGB32: el primero, el de 16");
     let av = c.1.tomar_avisos();
     assert!(av.is_empty(), "{:?}", av);
     // Hostil: soltar dos veces o lo que no es una lista; sin pedidor de modos (falla limpia, apuntado).
@@ -527,10 +534,11 @@ fn picasso96() {
     assert_eq!(p(&mut c, "p96EncodeColor", &[RGBFB_R5G6B5, 0x00FF_0000], &[]), 0xF800);
     assert_eq!(p(&mut c, "p96EncodeColor", &[RGBFB_A8R8G8B8, 0x0012_3456], &[]), 0x0012_3456);
     // El modo de la caja.
-    let id = p(&mut c, "p96BestModeIDTagList", &[], &[0]);
-    assert_eq!(id, MODO_CAJA);
+    assert_eq!(p(&mut c, "p96BestModeIDTagList", &[], &[0]), caja_intuition::modos::id(0, 0), "8 bits de serie");
     let t = etiquetas(&mut c, &[(P96BIDTAG_FORMATS_ALLOWED, 1 << RGBFB_R5G6B5)]);
-    assert_eq!(p(&mut c, "p96BestModeIDTagList", &[], &[t]), INVALID_ID);
+    assert_eq!(p(&mut c, "p96BestModeIDTagList", &[], &[t]), caja_intuition::modos::id(0, 2));
+    let t = etiquetas(&mut c, &[(P96BIDTAG_FORMATS_ALLOWED, 1 << 3)]);
+    assert_eq!(p(&mut c, "p96BestModeIDTagList", &[], &[t]), INVALID_ID, "B8G8R8: ninguno");
     let m = |c: &mut Caja, attr: u32| p(c, "p96GetModeIDAttr", &[MODO_CAJA, attr], &[]);
     assert_eq!((m(&mut c, P96IDA_WIDTH), m(&mut c, P96IDA_HEIGHT), m(&mut c, P96IDA_RGBFORMAT)), (640, 480, RGBFB_A8R8G8B8));
     assert_eq!((m(&mut c, P96IDA_ISP96), m(&mut c, 99)), (1, u32::MAX));

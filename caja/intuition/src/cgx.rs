@@ -32,6 +32,7 @@ use caja_exec::{Exec, Memoria, Registros};
 
 use crate::acceso::{Acceso, palabra};
 use crate::chunky::Formato;
+use crate::modos;
 use crate::dibujo::{Planar, mas_cercano};
 use crate::graphics::Mapa;
 use crate::lienzo::Rect;
@@ -82,8 +83,8 @@ pub const FUNCIONES: [&str; 37] = [
 
 pub const VERSION: u16 = 41;
 
-/// El modo de pantalla de la caja: el que da `GetVPModeID` de cualquier pantalla.
-pub const MODO_CAJA: u32 = 0x0002_9000;
+/// El modo de la pantalla de Workbench (`modos::workbench`): el del escritorio en 32 bits.
+pub const MODO_CAJA: u32 = modos::workbench();
 /// `INVALID_ID` de `graphics/displayinfo.h`.
 pub const INVALID_ID: u32 = 0xFFFF_FFFF;
 
@@ -362,7 +363,7 @@ impl<C: Compositor> CajaGrafica<C> {
         let (d, a) = (r.d, r.a);
         let w = |i: usize| u16_de(d[i]);
         Ok(match FUNCIONES[f] {
-            "IsCyberModeID" => (d[0] == MODO_CAJA) as u32,
+            "IsCyberModeID" => modos::modo(d[0], self.comp.tamano_escritorio()).is_some() as u32,
             "BestCModeIDTagList" => self.best_cmode_id(ex, a[0])?,
             "AllocCModeListTagList" => self.alloc_cmode_list(ex, a[1])?,
             "FreeCModeList" => {
@@ -467,82 +468,94 @@ impl<C: Compositor> CajaGrafica<C> {
 
     // --- Modos de pantalla ---
 
+    /// `BestCModeIDTagList`: entre los modos de la caja (`modos::mejor`), el de la profundidad más pequeña que llegue a
+    /// `CYBRBIDTG_Depth` (8 de serie) y el más pequeño que llegue al tamaño pedido. `CYBRBIDTG_MonitorID` y
+    /// `CYBRBIDTG_BoardName` (una placa concreta) no cuentan: la caja es una sola.
     fn best_cmode_id<M: Memoria>(&mut self, ex: &mut Exec<M>, tags: u32) -> Result<u32, Fallo> {
-        let mut prof = 8;
+        let (mut prof, mut an, mut al) = (8, None, None);
         for (t, v) in crate::gadtools::leer_etiquetas(ex, tags)? {
-            if t == CYBRBIDTG_DEPTH {
-                prof = v;
+            match t {
+                CYBRBIDTG_DEPTH => prof = v,
+                CYBRBIDTG_NOMINAL_WIDTH => an = Some(v & 0xFFFF),
+                CYBRBIDTG_NOMINAL_HEIGHT => al = Some(v & 0xFFFF),
+                _ => {}
             }
         }
-        Ok(if prof <= 32 { MODO_CAJA } else { INVALID_ID })
+        Ok(modos::mejor(self.comp.tamano_escritorio(), prof, (an, al), |_| true))
     }
 
     fn get_cyber_id_attr(&self, attr: u32, id: u32) -> u32 {
-        if id != MODO_CAJA {
-            return 0;
-        }
-        let (an, al) = self.comp.tamano_escritorio();
+        let Some(m) = modos::modo(id, self.comp.tamano_escritorio()) else { return 0 };
         match attr {
-            CYBRIDATTR_PIXFMT => PIXFMT_ARGB32,
-            CYBRIDATTR_WIDTH => an,
-            CYBRIDATTR_HEIGHT => al,
-            CYBRIDATTR_DEPTH => 32,
-            CYBRIDATTR_BPPIX => 4,
+            CYBRIDATTR_PIXFMT => m.pixfmt(),
+            CYBRIDATTR_WIDTH => m.ancho,
+            CYBRIDATTR_HEIGHT => m.alto,
+            CYBRIDATTR_DEPTH => m.prof,
+            CYBRIDATTR_BPPIX => m.bpp(),
             _ => u32::MAX,
         }
     }
 
-    /// `AllocCModeListTagList`: una `List` con un `CyberModeNode` (el modo de la caja) si pasa los filtros. Los de
-    /// tamaño solo cuentan si se dan (el modo es del tamaño del escritorio, que puede pasar del máximo de serie).
+    /// `AllocCModeListTagList`: una `List` de `CyberModeNode`, uno por cada modo de la caja que pase los filtros (los de
+    /// serie del autodoc: de 320 x 240 a 1600 x 1200, de 8 a 32 bits, todos los modelos de color).
     fn alloc_cmode_list<M: Memoria>(&mut self, ex: &mut Exec<M>, tags: u32) -> Result<u32, Fallo> {
-        let (an, al) = self.comp.tamano_escritorio();
-        let (mut pmin, mut pmax) = (8u32, 32u32);
-        let mut vale = true;
+        let (mut pmin, mut pmax, mut amin, mut amax, mut hmin, mut hmax) = (8u32, 32u32, 320u32, 1600u32, 240u32, 1200u32);
+        let mut modelos: Option<Vec<u32>> = None;
         for (t, v) in crate::gadtools::leer_etiquetas(ex, tags)? {
             match t {
                 CYBRMREQ_MIN_DEPTH => pmin = v & 0xFFFF,
                 CYBRMREQ_MAX_DEPTH => pmax = v & 0xFFFF,
-                CYBRMREQ_MIN_WIDTH => vale &= an >= v,
-                CYBRMREQ_MAX_WIDTH => vale &= an <= v,
-                CYBRMREQ_MIN_HEIGHT => vale &= al >= v,
-                CYBRMREQ_MAX_HEIGHT => vale &= al <= v,
+                CYBRMREQ_MIN_WIDTH => amin = v,
+                CYBRMREQ_MAX_WIDTH => amax = v,
+                CYBRMREQ_MIN_HEIGHT => hmin = v,
+                CYBRMREQ_MAX_HEIGHT => hmax = v,
                 CYBRMREQ_CMODEL_ARRAY if v != 0 => {
                     // UWORD con los modelos; acaba en uno que no existe (como -1). Como mucho 16.
-                    let mut esta = false;
+                    let mut l = Vec::new();
                     for i in 0..16 {
                         let m = ex.l16(v.wrapping_add(2 * i))? as u32;
                         if m > PIXFMT_RGBA32 {
                             break;
                         }
-                        esta |= m == PIXFMT_ARGB32;
+                        l.push(m);
                     }
-                    vale &= esta;
+                    modelos = Some(l);
                 }
                 _ => {}
             }
         }
-        if !vale || pmin > 32 || pmax < 32 {
+        let lista: Vec<modos::Modo> = modos::modos(self.comp.tamano_escritorio())
+            .into_iter()
+            .filter(|m| (pmin..=pmax).contains(&m.prof) && (amin..=amax).contains(&m.ancho) && (hmin..=hmax).contains(&m.alto))
+            .filter(|m| modelos.as_ref().is_none_or(|l| l.contains(&m.pixfmt())))
+            .collect();
+        if lista.is_empty() {
             return Ok(0);
         }
-        // La lista (14 bytes, en 16) y su nodo, en un bloque de la tarea.
-        let largo = 16 + CMN_TAMANO;
+        // La lista (14 bytes, en 16) y sus nodos, en un bloque de la tarea.
+        let largo = 16 + CMN_TAMANO * lista.len() as u32;
         let l = ex.alloc_mem(largo, memf::PUBLIC | memf::CLEAR)?;
         if l == 0 {
             return Ok(0);
         }
-        let n = l + 16;
-        // lh_Head = nodo, lh_Tail = 0, lh_TailPred = nodo; el nodo apunta a lh_Tail y a lh_Head.
-        ex.e32(l, n)?;
+        let n = |i: usize| l + 16 + CMN_TAMANO * i as u32;
+        let ultimo = n(lista.len() - 1);
+        // lh_Head = el primero, lh_Tail = 0, lh_TailPred = el último; cada nodo, a sus vecinos (o a la cabeza).
+        ex.e32(l, n(0))?;
         ex.e32(l + 4, 0)?;
-        ex.e32(l + 8, n)?;
-        ex.e32(n, l + 4)?;
-        ex.e32(n + 4, l)?;
-        ex.e32(n + 10, n + CMN_MODETEXT)?;
-        ex.escribir_bytes(n + CMN_MODETEXT, b"DashOS")?;
-        ex.e32(n + CMN_DISPLAYID, MODO_CAJA)?;
-        ex.e16(n + CMN_WIDTH, an.min(0xFFFF) as u16)?;
-        ex.e16(n + CMN_HEIGHT, al.min(0xFFFF) as u16)?;
-        ex.e16(n + CMN_DEPTH, 32)?;
+        ex.e32(l + 8, ultimo)?;
+        for (i, m) in lista.iter().enumerate() {
+            let d = n(i);
+            ex.e32(d, if i + 1 < lista.len() { n(i + 1) } else { l + 4 })?;
+            ex.e32(d + 4, if i == 0 { l } else { n(i - 1) })?;
+            ex.e32(d + 10, d + CMN_MODETEXT)?;
+            let nombre = m.nombre();
+            ex.escribir_bytes(d + CMN_MODETEXT, &nombre.as_bytes()[..nombre.len().min(31)])?;
+            ex.e32(d + CMN_DISPLAYID, m.id)?;
+            ex.e16(d + CMN_WIDTH, m.ancho.min(0xFFFF) as u16)?;
+            ex.e16(d + CMN_HEIGHT, m.alto.min(0xFFFF) as u16)?;
+            ex.e16(d + CMN_DEPTH, m.prof as u16)?;
+        }
         self.cgx.listas.insert(l, (largo, ex.tarea_actual()));
         Ok(l)
     }

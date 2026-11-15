@@ -35,6 +35,7 @@ pub mod escala;
 pub mod estructuras;
 pub mod lienzo;
 pub mod lvo;
+pub mod modos;
 pub mod nitido;
 pub mod p96;
 pub mod regiones;
@@ -52,6 +53,7 @@ mod idcmp;
 mod intuition;
 mod marco;
 mod menus;
+mod pantallas;
 mod requester;
 mod tema;
 

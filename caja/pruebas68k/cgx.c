@@ -17,11 +17,14 @@
 #include <proto/dos.h>
 #include <proto/graphics.h>
 #include <proto/cybergraphics.h>
+#include <intuition/screens.h>
+#include <proto/intuition.h>
 
 struct ExecBase *SysBase;
 struct DosLibrary *DOSBase;
 struct GfxBase *GfxBase;
 struct Library *CyberGfxBase;
+struct IntuitionBase *IntuitionBase;
 static struct Library *P96Base;
 
 static void di(const char *f, LONG a, LONG b, LONG c)
@@ -106,13 +109,14 @@ LONG inicio(void)
     GfxBase = (struct GfxBase *)OpenLibrary((CONST_STRPTR)"graphics.library", 39);
     CyberGfxBase = OpenLibrary((CONST_STRPTR)"cybergraphics.library", 41);
     P96Base = OpenLibrary((CONST_STRPTR)"Picasso96API.library", 2);
+    IntuitionBase = (struct IntuitionBase *)OpenLibrary((CONST_STRPTR)"intuition.library", 39);
     LONG fallo = 0;
     struct BitMap *bm = 0, *pl = 0;
     UBYTE *pix = 0;
     struct RastPort rp;
 
     /* 1. Las dos abren; un mapa de 32 bits es de cybergraphics, en ARGB32. */
-    if (!GfxBase || !CyberGfxBase || !P96Base) fallo = 1;
+    if (!GfxBase || !CyberGfxBase || !P96Base || !IntuitionBase) fallo = 1;
     if (!fallo) {
         bm = AllocBitMap(AN, AL, 32, BMF_DISPLAYABLE, 0);
         pl = AllocBitMap(64, 16, 4, BMF_CLEAR, 0);
@@ -189,6 +193,26 @@ LONG inicio(void)
     }
     if (!fallo) di("  [caja-amiga] cgx: formatos (RGB16 de dos bytes, RGB24 de ancho impar con relleno): bien\n", 0, 0, 0);
 
+    /* 4c. Modos RTG: el del Workbench es de la caja (no del chipset); una pantalla propia en el mejor modo de 16 bits
+       para 640 x 480 lleva su mapa en RGB16, y CloseScreen la suelta. */
+    if (!fallo) {
+        struct Screen *wb = LockPubScreen(0);
+        ULONG id = BestCModeIDTags(CYBRBIDTG_Depth, 16, CYBRBIDTG_NominalWidth, 640, CYBRBIDTG_NominalHeight, 480, TAG_DONE);
+        ULONG err = 0;
+        struct Screen *s = 0;
+        if (!wb || !IsCyberModeID(GetVPModeID(&wb->ViewPort)) || IsCyberModeID(0x29000) || id == INVALID_ID
+            || GetCyberIDAttr(CYBRIDATTR_DEPTH, id) != 16)
+            fallo = 8;
+        if (wb) UnlockPubScreen(0, wb);
+        if (!fallo) {
+            s = OpenScreenTags(0, SA_DisplayID, id, SA_Title, (ULONG)"cgx", SA_ErrorCode, (ULONG)&err, TAG_DONE);
+            if (!s || GetVPModeID(&s->ViewPort) != id || GetCyberMapAttr(s->RastPort.BitMap, CYBRMATTR_PIXFMT) != PIXFMT_RGB16)
+                fallo = 8;
+            if (s && !CloseScreen(s)) fallo = 8;
+        }
+    }
+    if (!fallo) di("  [caja-amiga] cgx: modos RTG (Workbench de la caja, pantalla propia de 16 bits): bien\n", 0, 0, 0);
+
     /* 5. Lo hostil: fuera, negativo, enorme, un formato que no existe, un mapa planar. */
     if (!fallo) {
         if (WritePixelArray(pix, 0, 0, 3, &rp, AN + 5, 0, 10, 10, RECTFMT_RGB) != 0) fallo = 5;
@@ -232,6 +256,7 @@ LONG inicio(void)
     if (pl) FreeBitMap(pl);
     if (bm) FreeBitMap(bm);
     if (P96Base) CloseLibrary(P96Base);
+    if (IntuitionBase) CloseLibrary((struct Library *)IntuitionBase);
     if (CyberGfxBase) CloseLibrary(CyberGfxBase);
     if (GfxBase) CloseLibrary((struct Library *)GfxBase);
     CloseLibrary((struct Library *)DOSBase);

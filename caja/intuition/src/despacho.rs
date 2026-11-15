@@ -39,7 +39,8 @@ filas!(G;
     BLTMASKBITMAPRASTPORT = "BltMaskBitMapRastPort", INITAREA = "InitArea", INITTMPRAS = "InitTmpRas",
     AREAMOVE = "AreaMove", AREADRAW = "AreaDraw", AREAELLIPSE = "AreaEllipse", AREAEND = "AreaEnd",
     READPIXELLINE8 = "ReadPixelLine8", WRITEPIXELLINE8 = "WritePixelLine8", READPIXELARRAY8 = "ReadPixelArray8",
-    WRITEPIXELARRAY8 = "WritePixelArray8",
+    WRITEPIXELARRAY8 = "WritePixelArray8", FINDDISPLAYINFO = "FindDisplayInfo", NEXTDISPLAYINFO = "NextDisplayInfo",
+    MODENOTAVAILABLE = "ModeNotAvailable", BESTMODEIDA = "BestModeIDA",
 );
 
 filas!(I;
@@ -197,7 +198,15 @@ impl<C: Compositor> CajaGrafica<C> {
             ANDREGIONREGION => self.region_region(ex, a[0], a[1], Op::Y)?,
             XORREGIONREGION => self.region_region(ex, a[0], a[1], Op::Xor)?,
             // GetDisplayInfoData(handle, buf, size, tagID, displayID)(a0/a1/d0/d1/d2): bytes copiados, o 0.
-            GETDISPLAYINFODATA => self.get_display_info_data(ex, a[1], d[0], d[1], d[2])?,
+            // GetDisplayInfoData(handle, buf, size, tagID, displayID)(a0/a1/d0/d1/d2): el handle, si lo hay, manda.
+            GETDISPLAYINFODATA => {
+                let id = if a[0] != 0 { a[0] } else { d[2] };
+                self.get_display_info_data(ex, a[1], d[0], d[1], id)?
+            }
+            FINDDISPLAYINFO => self.find_display_info(d[0]),
+            NEXTDISPLAYINFO => self.next_display_info(d[0]),
+            MODENOTAVAILABLE => self.mode_not_available(d[0]),
+            BESTMODEIDA => self.best_mode_id_a(ex, a[0])?,
             // WeighTAMatch(reqTextAttr, targetTextAttr, targetTags)(a0/a1/a2): cuánto se parecen dos fuentes.
             WEIGHTAMATCH => self.weigh_ta_match(ex, a[0], a[1])?,
             // TextExtent(rp, string, count, textExtent)(a1/a0/d0/a2)
@@ -392,7 +401,7 @@ impl<C: Compositor> CajaGrafica<C> {
             // No hay blitter ni barrido: no se espera a nada (provisional: WaitTOF debería esperar al cuadro).
             WAITTOF | WAITBLIT | OWNBLITTER | DISOWNBLITTER | VBEAMPOS => 0,
             // El modo de la pantalla: "PAL:HighRes" (PAL_MONITOR_ID | HIRES_KEY), el del Workbench de un A1200.
-            GETVPMODEID => crate::cgx::MODO_CAJA,
+            GETVPMODEID => self.modo_de_vp(a[0]),
             _ => return Err(Fallo::NoImplementada { n: self.numeros.graphics + f as u16 }),
         })
     }
@@ -467,13 +476,10 @@ impl<C: Compositor> CajaGrafica<C> {
             ONMENU | OFFMENU => hecho(self.on_off_menu(ex, a[0], d[0], f == ONMENU)),
             // Una pantalla propia es, de momento, el Workbench (cada ventana ya es una del escritorio): se cuenta
             // como un bloqueo, y CloseScreen lo suelta. Provisional (ver la bitácora).
-            OPENSCREEN | OPENSCREENTAGLIST => self.lock_pub_screen(ex, 0),
-            CLOSESCREEN => {
-                if a[0] != self.workbench() {
-                    return Err(Fallo::PantallaDesconocida { dir: a[0] });
-                }
-                self.unlock_pub_screen(ex, 0, a[0]).map(|_| 1)
-            }
+            // OpenScreen(newScreen)(a0) y OpenScreenTagList(newScreen, tagList)(a0/a1): `pantallas.rs`.
+            OPENSCREEN => self.open_screen(ex, a[0], 0),
+            OPENSCREENTAGLIST => self.open_screen(ex, a[0], a[1]),
+            CLOSESCREEN => self.close_screen(ex, a[0]),
             GETDEFAULTPUBSCREEN => {
                 if a[0] != 0 {
                     ex.escribir_bytes(a[0], b"Workbench\0")?;

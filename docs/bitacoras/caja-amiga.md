@@ -2120,3 +2120,32 @@ modo con el ID `0x29000` del chipset y `LockBitMap` que copia. Por orden: 3 (dó
   vuelta marca el daño (los `UBMI_UPDATERECTS`, o todo) para el compositor.
 - Las funciones de pixel array convierten desde y hacia cualquier formato del programa: `RECTFMT_RGB`, `RGBA`, `ARGB`,
   `LUT8`, `GREY8`, `RAW` (el del mapa, byte a byte) y los `RGBFB_*` de Picasso96.
+
+### Paso 2: modos de pantalla RTG
+
+- **Modos de la caja** (`caja/intuition/src/modos.rs`): un monitor propio, `0x5DA01000` (no es ninguno del chipset de
+  `graphics/modeid.h`); el `ModeID` lleva el tamaño en los bits 4-11 (el 0, el del escritorio; luego 640 x 480,
+  800 x 600, 1024 x 768, 1280 x 720, 1280 x 1024, 1600 x 1200 y 1920 x 1080) y la profundidad en los 0-3 (8, 15, 16, 24
+  y 32 bits: LUT8, RGB15, RGB16, RGB24, ARGB32). Un tamaño que no cabe en el escritorio no está, ni el de la lista que
+  es igual al del escritorio. La pantalla de Workbench va en el del escritorio a 32 bits (`0x5DA01004`), y ese es el
+  que da `GetVPModeID`.
+- **Base de datos de pantallas** (graphics): `FindDisplayInfo` (el asa es el propio ID; 0 para los del chipset),
+  `NextDisplayInfo` (todos los de la caja, en orden), `ModeNotAvailable` (0, o `DI_AVAIL_NOMONITOR` para los del
+  chipset), `GetDisplayInfoData` con `DTAG_DISP` (bits por color del modo, `DIPF_IS_FOREIGN`), `DTAG_DIMS` (su
+  profundidad, su tamaño), `DTAG_MNTR` y `DTAG_NAME` ("DashOS: 800x600 16 bits"); con un ID que no es de la caja,
+  lo de antes. `BestModeIDA` sobre los de la caja (profundidad, tamaño deseado o nominal, el de un `ViewPort` o
+  `SourceID`, `MonitorID`, bits por color, `DIPF_*`).
+- **Elegir**: `BestModeIDA`, `BestCModeIDTagList` y `p96BestModeIDTagList` (con `FormatsAllowed`/`Forbidden`) dan el de
+  la profundidad más pequeña que llegue y, de esa, el tamaño más pequeño que llegue (sin tamaño, el del escritorio;
+  si ninguno llega, el más grande). `IsCyberModeID`, `GetCyberIDAttr`, `p96GetModeIDAttr` y `AllocCModeListTagList`
+  (todos los que pasan los filtros, con los de serie del autodoc) sobre lo mismo. Los del chipset siguen siendo del
+  chipset: `IsCyberModeID` dice que no.
+- **Pantallas propias** (`pantallas.rs`): `OpenScreen`/`OpenScreenTagList` con un `SA_DisplayID` de la caja da una
+  `struct Screen` nueva del tamaño del modo (o `SA_Width`/`SA_Height`), con su `ColorMap` (la paleta del Workbench de
+  partida), su `DrawInfo` (con su profundidad) y su `BitMap` chunky en el formato del modo, en la memoria del 68k
+  (`LockBitMap` sin copia; los amigos, en ese formato), o de 8 planos en los de 8 bits. Va delante en la lista de
+  `IntuitionBase`. Sus ventanas (`WA_CustomScreen`, `nw_Screen`) son ventanas del compositor como las del Workbench,
+  con su paleta y su lienzo visto en el formato del modo; `ViewPortAddress` y `GetScreenDrawInfo` dan los suyos.
+  `CloseScreen` la suelta si no le quedan ventanas (si no, FALSE, como en 3.x); si su tarea acaba sin cerrarla, se
+  cierra. Sin modo de la caja (uno del chipset o ninguno), la de Workbench, como antes. Un ID del monitor de la caja
+  que no está: 0 y `OSERR_UNKNOWNMODE` en `SA_ErrorCode`.

@@ -13,7 +13,7 @@ use caja_exec::{Exec, Memoria, Registros};
 
 use crate::acceso::{Acceso, palabra};
 use crate::cgx::constantes::{BMF_SPECIALFMT, P96, RECTFMT_ARGB};
-use crate::cgx::{INVALID_ID, MODO_CAJA, codificar_p96};
+use crate::cgx::codificar_p96;
 use crate::graphics::Mapa;
 use crate::{CajaGrafica, Compositor, Fallo};
 
@@ -90,6 +90,8 @@ pub mod constantes {
 
     pub const P96BIDTAG_FORMATS_ALLOWED: u32 = 0x8000_0061;
     pub const P96BIDTAG_FORMATS_FORBIDDEN: u32 = 0x8000_0062;
+    pub const P96BIDTAG_NOMINAL_WIDTH: u32 = 0x8000_0063;
+    pub const P96BIDTAG_NOMINAL_HEIGHT: u32 = 0x8000_0064;
     pub const P96BIDTAG_DEPTH: u32 = 0x8000_0065;
 
     /// `struct RenderInfo`: Memory, BytesPerRow (WORD), pad, RGBFormat.
@@ -163,16 +165,22 @@ impl<C: Compositor> CajaGrafica<C> {
                 0
             }
             "p96BestModeIDTagList" => {
-                let (mut prof, mut si, mut no) = (8, u32::MAX, 0);
+                let (mut prof, mut si, mut no, mut an, mut al) = (8, u32::MAX, 0, None, None);
                 for (t, v) in crate::gadtools::leer_etiquetas(ex, a[0])? {
                     match t {
                         P96BIDTAG_DEPTH => prof = v,
+                        P96BIDTAG_NOMINAL_WIDTH => an = Some(v & 0xFFFF),
+                        P96BIDTAG_NOMINAL_HEIGHT => al = Some(v & 0xFFFF),
                         P96BIDTAG_FORMATS_ALLOWED => si = v,
                         P96BIDTAG_FORMATS_FORBIDDEN => no = v,
                         _ => {}
                     }
                 }
-                if prof <= 32 && si & RGBFF_A8R8G8B8 != 0 && no & RGBFF_A8R8G8B8 == 0 { MODO_CAJA } else { INVALID_ID }
+                let tam = (an, al);
+                crate::modos::mejor(self.comp.tamano_escritorio(), prof, tam, |m| {
+                    let bit = 1u32 << m.rgbfb();
+                    si & bit != 0 && no & bit == 0
+                })
             }
             "p96GetModeIDAttr" => self.p96_get_mode_id_attr(d[0], d[1]),
             "p96WritePixelArray" | "p96ReadPixelArray" => {
@@ -297,22 +305,22 @@ impl<C: Compositor> CajaGrafica<C> {
         if attr > P96IDA_PALOMAIVCOMPATIBLE {
             return u32::MAX;
         }
-        if id != MODO_CAJA {
-            return 0;
-        }
-        let (an, al) = self.comp.tamano_escritorio();
+        let Some(m) = crate::modos::modo(id, self.comp.tamano_escritorio()) else { return 0 };
         match attr {
-            P96IDA_WIDTH => an,
-            P96IDA_HEIGHT => al,
-            P96IDA_DEPTH | P96IDA_BITSPERPIXEL => 32,
-            P96IDA_BYTESPERPIXEL => 4,
-            P96IDA_RGBFORMAT => RGBFB_A8R8G8B8,
+            P96IDA_WIDTH => m.ancho,
+            P96IDA_HEIGHT => m.alto,
+            // Bits de memoria por punto, y los que valen (los de 32 bits llevan 24 de color).
+            P96IDA_DEPTH => m.bpp() * 8,
+            P96IDA_BITSPERPIXEL => m.prof.min(24),
+            P96IDA_BYTESPERPIXEL => m.bpp(),
+            P96IDA_RGBFORMAT => m.rgbfb(),
             P96IDA_ISP96 => 1,
-            P96IDA_STDBYTESPERROW => an * 4,
+            P96IDA_STDBYTESPERROW => m.ancho * m.bpp(),
             P96IDA_BOARDNAME => self.p96.placa,
-            P96IDA_COMPATIBLEFORMATS => RGBFF_A8R8G8B8,
+            P96IDA_COMPATIBLEFORMATS => 1 << m.rgbfb(),
             // P96IDA_BOARDNUMBER (la 0) y las de vídeo (no).
             _ => 0,
         }
     }
+
 }

@@ -976,8 +976,14 @@ impl<C: Compositor> CajaGrafica<C> {
         tag: u32,
         id: u32,
     ) -> Result<u32, Fallo> {
-        let (an, al) = self.comp.tamano_escritorio();
+        // Un modo de la caja (RTG) con lo suyo; cualquier otro ID, lo de la pantalla de la caja de 8 bits por color
+        // (como antes: no hay chipset, pero un programa que pregunta por el suyo no se queda sin respuesta).
+        let esc = self.comp.tamano_escritorio();
+        let rtg = crate::modos::modo(id, esc);
+        let (an, al) = rtg.map_or(esc, |m| (m.ancho, m.alto));
         let (an, al) = (an.min(0x7FFF) as u16, al.min(0x7FFF) as u16);
+        let (prof, bits) = rtg.map_or((8, (8, 8, 8)), |m| (m.prof, m.bits()));
+        let nombre = rtg.map_or(alloc::string::String::from("DashOS"), |m| m.nombre());
         let mut v: alloc::vec::Vec<u8> = match tag {
             0x8000_0000 => alloc::vec![0; 56],
             0x8000_1000 => alloc::vec![0; 88],
@@ -998,7 +1004,8 @@ impl<C: Compositor> CajaGrafica<C> {
         };
         match tag {
             0x8000_0000 => {
-                pon32(&mut v, 18, 0x0000_0100 | 0x0000_0200); // DIPF_IS_WB | DIPF_IS_DRAGGABLE
+                // DIPF_IS_WB | DIPF_IS_DRAGGABLE, y DIPF_IS_FOREIGN en los de la caja (no son del chipset).
+                pon32(&mut v, 18, 0x0000_0100 | 0x0000_0200 | if rtg.is_some() { 0x8000_0000 } else { 0 });
                 pon16(&mut v, 22, 22);
                 pon16(&mut v, 24, 22);
                 pon16(&mut v, 26, 35);
@@ -1006,12 +1013,12 @@ impl<C: Compositor> CajaGrafica<C> {
                 pon16(&mut v, 30, 4096);
                 pon16(&mut v, 32, 22);
                 pon16(&mut v, 34, 22);
-                v[40] = 8;
-                v[41] = 8;
-                v[42] = 8;
+                v[40] = bits.0;
+                v[41] = bits.1;
+                v[42] = bits.2;
             }
             0x8000_1000 => {
-                pon16(&mut v, 16, 8);
+                pon16(&mut v, 16, prof as u16);
                 pon16(&mut v, 18, 16);
                 pon16(&mut v, 20, 16);
                 pon16(&mut v, 22, 16368);
@@ -1030,7 +1037,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 pon32(&mut v, 84, id);
             }
             _ => {
-                let nombre = b"DashOS";
+                let nombre = &nombre.as_bytes()[..nombre.len().min(31)];
                 v[16..16 + nombre.len()].copy_from_slice(nombre);
             }
         }
@@ -1043,6 +1050,65 @@ impl<C: Compositor> CajaGrafica<C> {
             ex.e8(buf + i as u32, *b)?;
         }
         Ok(k as u32)
+    }
+
+    /// `FindDisplayInfo`: el asa de un modo de la caja (el propio `ModeID`), o 0 si no está (los del chipset no).
+    pub fn find_display_info(&self, id: u32) -> u32 {
+        if crate::modos::modo(id, self.comp.tamano_escritorio()).is_some() { id } else { 0 }
+    }
+
+    /// `NextDisplayInfo`: el modo de la caja que va detrás de `id` (`INVALID_ID`: el primero), o `INVALID_ID` al acabar.
+    pub fn next_display_info(&self, id: u32) -> u32 {
+        let modos = crate::modos::modos(self.comp.tamano_escritorio());
+        let i = if id == crate::modos::INVALID_ID { 0 } else { modos.iter().position(|m| m.id > id).unwrap_or(modos.len()) };
+        modos.get(i).map_or(crate::modos::INVALID_ID, |m| m.id)
+    }
+
+    /// `ModeNotAvailable`: 0 para un modo de la caja; `DI_AVAIL_NOMONITOR` para cualquier otro (no hay chipset).
+    pub fn mode_not_available(&self, id: u32) -> u32 {
+        if self.find_display_info(id) != 0 { 0 } else { 2 }
+    }
+
+    /// `BestModeIDA` de graphics, sobre los modos de la caja: `BIDTAG_Depth`, el tamaño (`Desired`, si no `Nominal`,
+    /// si no el de `BIDTAG_SourceID` o el del `ViewPort`), `BIDTAG_MonitorID` (otro que el de la caja: ninguno) y los bits
+    /// por color pedidos; las `DIPF_*` que tiene que tener o no (los de la caja son `IS_WB`, `IS_DRAGGABLE` e `IS_FOREIGN`).
+    pub fn best_mode_id_a<M: Memoria>(&mut self, ex: &mut Exec<M>, tags: u32) -> Result<u32, Fallo> {
+        let esc = self.comp.tamano_escritorio();
+        let (mut prof, mut an, mut al, mut des) = (1u32, None, None, (None, None));
+        let (mut tiene, mut no_tiene, mut monitor) = (0u32, 0u32, None);
+        let mut bits = (0u8, 0u8, 0u8);
+        let mut fuente = None;
+        for (t, v) in crate::gadtools::leer_etiquetas(ex, tags)? {
+            match t {
+                0x8000_0001 => tiene = v,
+                0x8000_0002 => no_tiene = v,
+                0x8000_0003 if v != 0 => fuente = fuente.or(Some(self.modo_de_vp(v))),
+                0x8000_0004 => an = Some(v & 0xFFFF),
+                0x8000_0005 => al = Some(v & 0xFFFF),
+                0x8000_0006 => des.0 = Some(v & 0xFFFF),
+                0x8000_0007 => des.1 = Some(v & 0xFFFF),
+                0x8000_0008 => prof = v,
+                0x8000_0009 => monitor = Some(v),
+                0x8000_000A => fuente = Some(v),
+                0x8000_000B => bits.0 = v as u8,
+                0x8000_000C => bits.2 = v as u8,
+                0x8000_000D => bits.1 = v as u8,
+                _ => {}
+            }
+        }
+        let propias = 0x0000_0100 | 0x0000_0200 | 0x8000_0000;
+        if tiene & !propias != 0 || no_tiene & propias != 0 {
+            return Ok(crate::modos::INVALID_ID);
+        }
+        if monitor.is_some_and(|m| m & crate::modos::MASCARA_MONITOR != crate::modos::MONITOR) {
+            return Ok(crate::modos::INVALID_ID);
+        }
+        let de_fuente = fuente.and_then(|f| crate::modos::modo(f, esc));
+        let tam = (des.0.or(an).or(de_fuente.map(|m| m.ancho)), des.1.or(al).or(de_fuente.map(|m| m.alto)));
+        Ok(crate::modos::mejor(esc, prof, tam, |m| {
+            let b = m.bits();
+            b.0 >= bits.0 && b.1 >= bits.1 && b.2 >= bits.2
+        }))
     }
 
     /// `WeighTAMatch(reqTextAttr, targetTextAttr, targetTags)`: de 0 (nada que ver) a 32767 (`MAXFONTMATCHWEIGHT`, la
@@ -1348,15 +1414,38 @@ impl<C: Compositor> CajaGrafica<C> {
         cm: u32,
         _flags: u32,
     ) -> Result<u32, Fallo> {
+        let bm = ex.reservar(bitmap::TAMANO, memf::CLEAR)?;
+        match self.chunky_en(ex, bm, ancho, alto, fmt, cm) {
+            Ok(Some(pixeles)) => {
+                self.gfx.reservados.insert(bm, vec![(bm, bitmap::TAMANO), pixeles]);
+                Ok(bm)
+            }
+            otro => {
+                ex.soltar(bm, bitmap::TAMANO)?;
+                otro.map(|_| 0)
+            }
+        }
+    }
+
+    /// Hace chunky el `struct BitMap` de `bm` (que ya existe: el de `AllocBitMap` o el de una pantalla): sus píxeles en
+    /// la memoria del 68k, del color de la pluma 0. Devuelve el bloque de los píxeles (para soltarlo), o `None` sin
+    /// memoria.
+    pub(crate) fn chunky_en<M: Memoria>(
+        &mut self,
+        ex: &mut Exec<M>,
+        bm: u32,
+        ancho: u32,
+        alto: u32,
+        fmt: Formato,
+        cm: u32,
+    ) -> Result<Option<(u32, u32)>, Fallo> {
         let Some(bpr) = Chunky::bpr_de(ancho, fmt) else { return Err(Fallo::TamanoMalo { ancho: ancho as i32, alto: alto as i32 }) };
         let Some(largo) = bpr.checked_mul(alto).filter(|&l| l <= u32::MAX / 2) else {
             return Err(Fallo::TamanoMalo { ancho: ancho as i32, alto: alto as i32 });
         };
-        let bm = ex.reservar(bitmap::TAMANO, memf::CLEAR)?;
         let base = ex.alloc_mem(largo, memf::PUBLIC | memf::CLEAR)?;
         if base == 0 {
-            ex.soltar(bm, bitmap::TAMANO)?;
-            return Ok(0);
+            return Ok(None);
         }
         ex.cambiar_dueno(base, 0);
         // Borrado es la pluma 0 en todas partes (como un planar a cero): su color.
@@ -1373,12 +1462,12 @@ impl<C: Compositor> CajaGrafica<C> {
                 }
             }
         }
+        ex.cero(bm, bitmap::TAMANO)?;
         ex.e16(bm + bitmap::BYTESPERROW, bpr.min(0xFFFF) as u16)?;
         ex.e16(bm + bitmap::ROWS, alto as u16)?;
         ex.e8(bm + bitmap::DEPTH, 8)?;
         self.gfx.chunkies.insert(bm, Chunky { base, bpr, ancho, alto, fmt, cm });
-        self.gfx.reservados.insert(bm, vec![(bm, bitmap::TAMANO), (base, largo)]);
-        Ok(bm)
+        Ok(Some((base, largo)))
     }
 
     /// `FreeBitMap`. Con 0 no hace nada; uno que no salió de `AllocBitMap` da un aviso.

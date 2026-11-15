@@ -72,8 +72,18 @@ impl Modo {
 }
 
 /// El `ModeID` del tamaño `t` y la profundidad `p` (índices).
-pub fn id(t: usize, p: usize) -> u32 {
+pub const fn id(t: usize, p: usize) -> u32 {
     MONITOR | ((t as u32) << 4) | p as u32
+}
+
+/// El formato de los píxeles de un `ModeID` de la caja (esté o no con este escritorio); `None` en los de 8 bits y en los
+/// que no son de la caja.
+pub fn formato_de_id(id: u32) -> Option<Formato> {
+    if id & MASCARA_MONITOR != MONITOR {
+        return None;
+    }
+    let prof = *PROFUNDIDADES.get((id & 0xF) as usize)?;
+    Modo { id, ancho: 0, alto: 0, prof }.formato()
 }
 
 /// El modo de un `ModeID`, si es de la caja y está con este escritorio.
@@ -104,7 +114,7 @@ pub fn modos(escritorio: (u32, u32)) -> Vec<Modo> {
 }
 
 /// El de la pantalla de Workbench: el del escritorio, en 32 bits.
-pub fn workbench() -> u32 {
+pub const fn workbench() -> u32 {
     id(0, 4)
 }
 
@@ -116,7 +126,7 @@ pub fn mejor(escritorio: (u32, u32), prof: u32, tam: (Option<u32>, Option<u32>),
     let Some(p) = todos.iter().map(|m| m.prof).min() else { return INVALID_ID };
     let deesa: Vec<&Modo> = todos.iter().filter(|m| m.prof == p).collect();
     let (an, al) = (tam.0.unwrap_or(escritorio.0), tam.1.unwrap_or(escritorio.1));
-    let area = |m: &&Modo| m.ancho as u64 * m.alto as u64;
-    let llegan = deesa.iter().filter(|m| m.ancho >= an && m.alto >= al).min_by_key(area);
-    llegan.or_else(|| deesa.iter().max_by_key(area)).map_or(INVALID_ID, |m| m.id)
+    let area = |m: &Modo| m.ancho as u64 * m.alto as u64;
+    let llegan = deesa.iter().filter(|m| m.ancho >= an && m.alto >= al).min_by_key(|m| area(m));
+    llegan.or_else(|| deesa.iter().max_by_key(|m| area(m))).map_or(INVALID_ID, |m| m.id)
 }
