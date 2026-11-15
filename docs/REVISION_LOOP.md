@@ -2077,3 +2077,10 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   pruebas tiene los cajones de `SYS:`; el Workbench y el explorador enseñan `SYS:`, `Home:`, `RAM:`, `Work:` y el
   explorador resuelve los caminos con nombre por su tabla. Pendientes del usuario y lo que falta por pasar, en la
   bitácora.
+- **Asignaciones nativas unidas a revision** (2c412e9, rama `asignaciones`; detalle en `docs/bitacoras/asignaciones.md`).
+  Tanda completa sobre 2c412e9: todo rc=0 salvo av, por el fallo suelto conocido del explorador (ahora "no abre
+  SYS:DeCarla: -12"); repetido, bien. Decisiones propuestas al usuario (recomendación entre paréntesis): una
+  asignación no puede llamarse como un volumen (no, como en el Amiga); los hijos heredan las asignaciones cambiadas del
+  padre (sí, Plan 9); `RAM:` hoy es un cajón del disco (hacerla disco en memoria de verdad, por sesión). Por pasar a
+  nombres: el Workbench por dentro, selector, centro, fondo, panel, lanzar por nombre, la tabla vieja `NOMBRES`; y
+  copiar `ENV:` de `ENVARC:` al entrar, iconos `.info` de los cajones, orden `Assign` nativa.
