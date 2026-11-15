@@ -766,6 +766,36 @@ pub struct Proceso {
     pub _cargo: crate::cupo::Cargo,
     /// Sus hilos y cómo acabó (C39). Lo comparte con las llaves de proceso que lo nombran.
     pub control: Arc<Control>,
+    /// Qué es cada llave con que nació, si quien lo lanzó lo dijo (llamada 12 con `CON_NOMBRES`): `NOMBRE_LLAVE` bytes
+    /// por llave, en su orden (la primera es la de la llave 1). El kernel no los mira: los devuelve la llamada 56.
+    pub nombres: NombresLlaves,
+}
+
+/// Lo que mide el nombre de una llave de nacimiento (relleno con ceros).
+pub const NOMBRE_LLAVE: usize = 16;
+
+/// Los nombres de las llaves con que nace un proceso: cuántos y sus bytes.
+#[derive(Clone, Copy)]
+pub struct NombresLlaves {
+    pub cuantos: u8,
+    pub bytes: [u8; NOMBRE_LLAVE * MAX_LLAVES],
+}
+
+impl NombresLlaves {
+    pub const NINGUNO: Self = Self { cuantos: 0, bytes: [0; NOMBRE_LLAVE * MAX_LLAVES] };
+
+    /// De `bytes` (un múltiplo de `NOMBRE_LLAVE`, como mucho `MAX_LLAVES` nombres); lo que sobre no se guarda.
+    pub fn de(bytes: &[u8]) -> Self {
+        let mut n = Self::NINGUNO;
+        let largo = (bytes.len() / NOMBRE_LLAVE).min(MAX_LLAVES) * NOMBRE_LLAVE;
+        n.bytes[..largo].copy_from_slice(&bytes[..largo]);
+        n.cuantos = (largo / NOMBRE_LLAVE) as u8;
+        n
+    }
+
+    pub fn datos(&self) -> &[u8] {
+        &self.bytes[..self.cuantos as usize * NOMBRE_LLAVE]
+    }
 }
 
 /// El proceso del hilo actual, si lo hay.

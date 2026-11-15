@@ -42,7 +42,10 @@
 //! | 48 | maquina_estado(máquina, operación, argumento, a, b): registros, aborto, GICV, otra vCPU, reiniciarla, patearla, parar |
 //! | 51 | apagar(permiso, modo): 0 apaga la máquina, 1 la reinicia; no vuelve si se pudo |
 //!
-//! `proceso_crear` lleva en x4 una llave de grupo donde crear el proceso, o 0 para el propio (C42).
+//! | 56 | llaves_nombres(búfer, capacidad) -> cuántas llaves de nacimiento tienen nombre; los copia al búfer |
+//!
+//! `proceso_crear` lleva en x4 una llave de grupo donde crear el proceso, o 0 para el propio (C42). Con el bit 16 de
+//! x3 (`CON_NOMBRES`), tras los números de llave van sus nombres, 16 bytes por llave: lo que es cada una.
 
 use crate::excepciones::Marco;
 use crate::objetos::{self, Canal, Mensaje, Objeto, MAX_DATOS, MAX_LLAVES};
@@ -210,6 +213,9 @@ pub fn atender(marco: &mut Marco) {
         // Aviso a las cajas: el globo de una máquina (a[0] una vCPU con escribir; a[1] 0 soltar, 1 reponer; a[2] tabla
         // de direcciones del invitado en u64; a[3] cuántas, hasta 256).
         55 => maquina_globo(a[0] as u32, a[1], a[2], a[3]),
+        // Qué es cada llave con que nació quien llama: sus nombres (16 bytes cada uno, en el orden de las llaves) a
+        // a[0], hasta a[1] bytes. Devuelve cuántas tienen nombre (0 si quien lo lanzó no los dio).
+        56 => llaves_nombres(a[0], a[1]),
         // M2b (docs/MULTITAREA_LOOP.md): dormir a[0] microsegundos (como mucho una hora), sin canal ni temporizador.
         30 => {
             planificador::dormir_us(a[0].min(3_600_000_000));
@@ -715,8 +721,25 @@ fn sacar_llaves(proc_: &objetos::Proceso, numeros: &[u32]) -> Result<Vec<objetos
     Ok(numeros.iter().filter_map(|&n| t.quitar(n)).collect())
 }
 
+/// En `n_llaves` de `proceso_crear`: tras la tabla de llaves van sus nombres (`NOMBRE_LLAVE` bytes cada uno).
+const CON_NOMBRES: u64 = 1 << 16;
+
+/// Los nombres de las llaves con que nació quien llama (los que dio quien lo lanzó): copia los que quepan enteros en
+/// `capacidad` bytes y devuelve cuántos hay. El programa no los puede cambiar.
+fn llaves_nombres(bufer: u64, capacidad: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let datos = proc_.nombres.datos();
+    let caben = (capacidad as usize).min(datos.len()) / objetos::NOMBRE_LLAVE * objetos::NOMBRE_LLAVE;
+    if caben > 0 && !escribir_usuario(bufer, &datos[..caben]) {
+        return E_ARGUMENTO;
+    }
+    proc_.nombres.cuantos as u64
+}
+
 fn proceso_crear(h: u32, tamano: u64, llaves: u64, n_llaves: u64, grupo: u32) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let con_nombres = n_llaves & CON_NOMBRES != 0;
+    let n_llaves = n_llaves & !CON_NOMBRES;
     // El grupo del proceso nuevo: el propio, o el de una llave de grupo con derecho de escribir (C42).
     let cupo = if grupo == 0 {
         proc_.cupo.clone()
@@ -732,6 +755,13 @@ fn proceso_crear(h: u32, tamano: u64, llaves: u64, n_llaves: u64, grupo: u32) ->
         return E_TAMANO;
     }
     let Some(tabla) = leer_usuario(llaves, 4 * n_llaves as usize) else { return E_ARGUMENTO };
+    // Los nombres, antes de tocar nada: si no se pueden leer, no se crea nada y las llaves no se mueven.
+    let nombres = if con_nombres {
+        let Some(b) = llaves.checked_add(4 * n_llaves).and_then(|p| leer_usuario(p, objetos::NOMBRE_LLAVE * n_llaves as usize)) else { return E_ARGUMENTO };
+        objetos::NombresLlaves::de(&b)
+    } else {
+        objetos::NombresLlaves::NINGUNO
+    };
     let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
     let Objeto::Memoria(m) = l.objeto else { return E_TIPO };
     if l.derechos & objetos::LEER == 0 {
@@ -757,7 +787,7 @@ fn proceso_crear(h: u32, tamano: u64, llaves: u64, n_llaves: u64, grupo: u32) ->
         Ok(v) => v,
         Err(e) => return e,
     };
-    match crate::procesos::lanzar_en_llamada(&binario, viajan, None, cupo) {
+    match crate::procesos::lanzar_en_llamada(&binario, viajan, None, cupo, nombres) {
         Ok((control, _)) => {
             let llave = objetos::Llave::nueva(Objeto::Proceso(control.clone()), objetos::TODOS);
             let instalada = proc_.llaves.tomar().instalar(llave);
