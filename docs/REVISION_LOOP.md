@@ -2084,3 +2084,6 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   padre (sí, Plan 9); `RAM:` hoy es un cajón del disco (hacerla disco en memoria de verdad, por sesión). Por pasar a
   nombres: el Workbench por dentro, selector, centro, fondo, panel, lanzar por nombre, la tabla vieja `NOMBRES`; y
   copiar `ENV:` de `ENVARC:` al entrar, iconos `.info` de los cajones, orden `Assign` nativa.
+  8. **Caja Linux en dos perfiles** (S7, decisión del usuario 2026-11-15): completa desde 4 GB; de terminal (Claude
+     Code, herramientas) desde 2 GB, sin escritorio, con globo, memoria comprimida y carpetas compartidas con DAX; sin
+     caja con 1 GB o menos. Claude Code, a corto plazo en la caja Linux.

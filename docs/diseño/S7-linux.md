@@ -123,13 +123,34 @@ Decidido por el usuario:
   configuración por defecto de la caja; cada usuario la cambia en su `~/.zshrc`.
 - Lo instalado en la caja aparece en el lanzador de DashOS y en el escaparate de Hangar (S8).
 
+## Decidido el 2026-11-15: dos perfiles de caja Linux, según la memoria
+
+Decisión del usuario (apuntada también en `PLAN.md` de la rama `x86`). Sustituye a "solo desde 4 GB" (pregunta 3 de
+abajo):
+
+| Perfil | Para qué | Desde | Cómo |
+|---|---|---|---|
+| **Completa** | Escritorio, navegador, ofimática (Firefox, GTK, Wayland) | 4 GB | Como hoy |
+| **Terminal** | Claude Code, herramientas, compilar | 2 GB | Sin escritorio; globo de memoria (virtio-balloon, ya hecho: aviso-cajas), memoria comprimida (S3) y carpetas compartidas con DAX (las páginas del fichero, sin copia) |
+| Sin caja | — | 1 GB o menos (Pi 3, THEA500) | No se ofrece |
+
+- El perfil se elige en Ajustes (categoría Caja Linux, S27) y lo propone el instalador según la máquina. Pasar de
+  terminal a completa es instalar el escritorio dentro de la caja; no hace falta otra caja.
+- **Claude Code en DashOS**: a corto plazo, dentro de la caja Linux (en los dos perfiles), con su terminal como ventana
+  del escritorio de DashOS por el puente de Wayland y las carpetas del usuario compartidas; a largo plazo, terminal
+  nativa sobre la capa POSIX con Node.js.
+- En el código: hoy la caja decide la memoria del invitado por la de la máquina (`dashos::maquina::memoria_invitado`:
+  256 MB con 2 GB, 512 con 4 GB, 1 GB con 8 GB o más). Falta el perfil de terminal (imagen sin escritorio, DAX en las
+  carpetas compartidas) y que el perfil, no solo la memoria, decida qué arranca.
+
 ## Lo que queda abierto
 
 1. ¿Este orden: biblioteca POSIX nativa, después caja Linux en máquina virtual, y la capa de llamadas solo si hace
    falta? Recomendado: sí.
 2. ¿Qué distribución dentro de la caja Linux? **Decidido por el usuario (2026-11-10): Arch Linux ARM**, con pacman,
    como sus máquinas con CachyOS.
-3. ¿La caja Linux solo en Pi 4 de 4 y 8 GB, o también en las de 2 GB con avisos? Recomendado: de 4 GB en adelante.
+3. ~~¿La caja Linux solo en Pi 4 de 4 y 8 GB, o también en las de 2 GB con avisos?~~ Decidido el 2026-11-15: dos
+   perfiles (arriba).
 
 ## Cómo encaja
 
