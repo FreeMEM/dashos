@@ -1995,3 +1995,16 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   de reconocimiento de algunos descriptores (lo lee de memoria con funciones de lectura 68k propias). Sin comprobar
   si quedan tipos registrados (hace falta un NewDTObject de un ILBM). Lo siguiente: `InternalLoadSeg` (llamar a las
   funciones 68k que pasa) y una prueba que abra un ILBM por datatypes.
+- **Pasos nuevos pedidos por el usuario (2026-11-15)**, por este orden, detrás de InternalLoadSeg:
+  1. **El árbol del Amiga, completo en S4b**: `Classes:` (MUI, ReAction), `REXX:`, `KEYMAPS:`, `HELP:`, `L:`,
+     `Storage` (DOSDrivers, Monitors, Keymaps que no se usan), los iconos de unidades, `WBStartup` (S14),
+     `Utilities` y `Tools` con su contenido, `Prefs/Presets`, `Env-Archive/Sys`.
+  2. **Asignaciones con nombre en el lado nativo**: hoy los programas nativos ven raíces numeradas ("Sistema",
+     "Home"). Hacer el espacio de nombres de S4b: volúmenes y asignaciones por proceso, heredadas del que lanza, con
+     las tres capas (usuario, paquetes, sistema); y que la imagen del sistema y el disco de pruebas tengan de verdad
+     la forma de `SYS:` (C, Libs, Devs, L, S, Fonts, Locale, Prefs, System, Utilities, Tools). Toca `archivos`,
+     el arranque y el escritorio: por pasos, cada uno con su prueba hostil.
+  3. **Instalador y herramienta de discos** (S32, borrador): lo que le falta a DashFS (encoger moviendo datos, crecer
+     montado, aplicar `quota`, pruebas de cortes) y la escritura de particiones con plan y copia de las tablas.
+     Decisiones abiertas en S32. Averiguado: `dashfs-resize` crece y encoge solo fuera de uso y sin mover datos (un
+     `assert` si hay bloques usados en el tramo); los volúmenes de FS10 son elásticos y su `quota` no se aplica.
