@@ -2115,3 +2115,13 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
 - La prueba de Dash con ventana (`kit-c/pruebas/ventana.dash`) pone y lee la fecha de un fichero por `file_set_date` y
   `file_date`, contra el servicio real (FECHAR): "fecha: puesta true, leída true". Necesita el compilador de Dash para
   DashOS rehecho desde main 9151482 (`./dash` no rehace `dashc/dashc-a64` solo). arranque-virt bien.
+- **Asignaciones: las tres decisiones, cerradas** (el usuario pidió revisarlas y seguir, 2026-11-15):
+  1. Una asignación no puede llamarse como un volumen ni como `PROGDIR:` (como en AmigaDOS). Quien decide qué ve un
+     programa es quien lo lanza con sus raíces (`sesiones`), no un nombre que tapa a otro. Ya está así.
+  2. Los hijos heredan las asignaciones del padre tal como estén al lanzar (una copia: lo que cambie luego el hijo no
+     toca al padre), pero filtradas por el perfil del hijo: un programa encerrado no recibe la capa de usuario de
+     `LIBS:`, `C:` ni `FONTS:` (S4b). El filtro está hecho y probado solo en el PC: falta probarlo en QEMU.
+  3. `RAM:` de verdad: un volumen en memoria por sesión, no un cajón del disco. Diseño: DashFS sobre un disco de
+     memoria disperso dentro de `archivos` (páginas que se piden al escribir y se devuelven con TRIM, que DashFS ya
+     manda), cobrado al grupo de la sesión, con tope; se destruye al salir de la sesión. Sobre él, `ENV:` (copiado de
+     `ENVARC:` al entrar) y `T:`. En marcha (rama `ram-volumen`).
