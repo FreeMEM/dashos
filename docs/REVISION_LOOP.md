@@ -2112,3 +2112,6 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   fuera de rango, asa que no es) se rechaza; al acabar devuelve la fecha original (la comprobación del disco mira que lo
   escrito sea de hoy). make prueba y arranque-virt bien. Documentada en `docs/referencia/servicios.md`. Falta: que la
   caja Amiga (`SetFileDate` de dos) y el runtime de Dash la usen.
+- La prueba de Dash con ventana (`kit-c/pruebas/ventana.dash`) pone y lee la fecha de un fichero por `file_set_date` y
+  `file_date`, contra el servicio real (FECHAR): "fecha: puesta true, leída true". Necesita el compilador de Dash para
+  DashOS rehecho desde main 9151482 (`./dash` no rehace `dashc/dashc-a64` solo). arranque-virt bien.

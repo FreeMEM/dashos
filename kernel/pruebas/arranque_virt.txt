@@ -121,6 +121,7 @@ DashOS en marcha con 4 núcleos.
 ~│ [dash-ventana] lista.txt: escrito true, 25 bytes
 ~│ [dash-ventana] Listas: creado true, movido true; 1 entrada: lista.txt, 25 bytes
 ~│ [dash-ventana] leída: primera línea true, entera true
+~│ [dash-ventana] fecha: puesta true, leída true
 ~│ [dash-ventana] borrado: true true; queda: false
 # El selector de ficheros de DashOS (file_open_dialog, dialog_file_at): el guion elige C/Privado/nota.txt para leer y
 # la carpeta C para guardar; el programa lee lo elegido y guarda, lee y borra en la carpeta.

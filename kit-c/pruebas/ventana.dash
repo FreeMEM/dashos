@@ -34,6 +34,9 @@ func ficheros(t: String)
     leida = file_read_text("Listas/lista.txt")
     esperada = "Primera línea\n"
     Print "[dash-ventana] leída: primera línea #{primera == esperada}, entera #{leida == t}"
+    # La fecha por el servicio de archivos (orden FECHAR): se pone y se lee igual.
+    fechada = file_set_date("Listas/lista.txt", 1700000000)
+    Print "[dash-ventana] fecha: puesta #{fechada}, leída #{file_date(\"Listas/lista.txt\") == 1700000000}"
     a = file_delete("Listas/lista.txt")
     b = file_delete("Listas")
     Print "[dash-ventana] borrado: #{a} #{b}; queda: #{file_exists(\"Listas\")}"
