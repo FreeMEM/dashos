@@ -114,6 +114,14 @@ pub struct Transaction<'a, D: Disk> {
     /// DashOS (encoger): la transacción que cambia el tamaño. Lo que suelta en este bloque o más allá no se apunta
     /// en el registro de asignación: queda fuera del sistema de archivos (`resize.rs`).
     pub(crate) cut: Option<u64>,
+    /// DashOS (la cuota de los volúmenes): cuántos bloques ha ganado (o perdido) el volumen en que está la
+    /// transacción desde que entró en él o desde que se apuntó por última vez (`note_volume`).
+    pub(crate) grown: i64,
+    /// Lo que se reserva y se suelta ahora es del disco, no de un volumen: el registro de asignación y la lista de
+    /// volúmenes.
+    pub(crate) global: bool,
+    /// La cuota no se aplica: la reparación, que no debe fallar por ella.
+    pub(crate) unlimited: bool,
 }
 
 /// How many checked blocks `FileSystem::verified` remembers (16 bytes each).
@@ -142,6 +150,9 @@ impl<'a, D: Disk> Transaction<'a, D> {
             fresh: Vec::new(),
             forget_on_commit: Vec::new(),
             cut: None,
+            grown: 0,
+            global: false,
+            unlimited: false,
         }
     }
 
@@ -185,6 +196,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 if self.fs.deferred {
                     self.fresh.push((addr.index(), addr.level().blocks::<u64>()));
                 }
+                self.count(addr.level().blocks::<i64>());
                 ctx.allocate(addr);
                 Ok(addr)
             }
@@ -202,7 +214,15 @@ impl<'a, D: Disk> Transaction<'a, D> {
         if self.fs.deferred {
             self.fresh.push((addr.index(), addr.level().blocks::<u64>()));
         }
+        self.count(addr.level().blocks::<i64>());
         Ok(addr)
+    }
+
+    /// Apunta bloques ganados o perdidos por el volumen en que está la transacción (el principal no lleva cuenta).
+    fn count(&mut self, blocks: i64) {
+        if self.main.is_some() && !self.global {
+            self.grown += blocks;
+        }
     }
 
     /// Reserva en el asignador de la transacción (la reparación) o en el del sistema de archivos, apuntándolo (A8).
@@ -250,6 +270,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
     /// Deallocate a block that no snapshot can see: the allocation log, the release list, the dead lists and the
     /// list of snapshots, which are not part of the tree of nodes.
     pub(crate) unsafe fn deallocate_unshared(&mut self, addr: BlockAddr) {
+        self.count(-addr.level().blocks::<i64>());
         // Remove from write_cache if it is there, since it no longer needs to be written
         //TODO: for larger blocks do we need to check for sub-blocks in here?
         self.write_cache.remove(&addr);
@@ -312,6 +333,14 @@ impl<'a, D: Disk> Transaction<'a, D> {
     /// periodically be fully rebuilt using the state of `self.allocator`.
     /// This rebuild can be forced by setting `force_squash` to `true`.
     fn sync_allocator(&mut self, force_squash: bool) -> Result<bool> {
+        // El registro de asignación es del disco: no cuenta para ningún volumen.
+        let was = core::mem::replace(&mut self.global, true);
+        let done = self.sync_allocator_inner(force_squash);
+        self.global = was;
+        done
+    }
+
+    fn sync_allocator_inner(&mut self, force_squash: bool) -> Result<bool> {
         let mut prev_ptr = BlockPtr::default();
         // Not while blocks wait in quarantine: the rebuilt log would keep them in use (`deferred`).
         let should_gc = self.header.generation() % ALLOC_GC_THRESHOLD == 0
@@ -434,7 +463,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         // The dead list first: writing it allocates and frees blocks.
         self.write_dead()?;
         // Then the list of volumes, which allocates and frees too.
-        self.note_volume();
+        self.note_volume()?;
         self.write_volume_changes()?;
 
         // Make sure alloc is synced

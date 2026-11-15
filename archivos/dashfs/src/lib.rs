@@ -113,3 +113,5 @@ mod tests_a9;
 mod tests_a8;
 #[cfg(all(feature = "std", test))]
 mod tests_resize;
+#[cfg(all(feature = "std", test))]
+mod tests_quota;

@@ -6,7 +6,9 @@ use std::{env, process};
 use dashfs::{DiskFile, FileSystem};
 
 fn usage() -> ! {
-    eprintln!("dashfs-volume DISK [list | create NAME | create-encrypted NAME | delete NAME]");
+    eprintln!("dashfs-volume DISK [list | create NAME | create-encrypted NAME | delete NAME | quota NAME SIZE]");
+    eprintln!("  quota: the most the volume may use (500MiB, 2GB; 0 for no limit), rounded down to 4 KiB blocks;");
+    eprintln!("    what only its snapshots see counts too");
     eprintln!("  create-encrypted: reads the password from the first line of the standard input; with");
     eprintln!("    --test-cost after the name, a cheap Argon2 (64 KiB, 1 pass), for test disks only");
     eprintln!("  delete: removes the volume with all its files and snapshots");
@@ -34,6 +36,7 @@ fn main() {
         [path, what, name, flag] if what == "create-encrypted" && flag == "--test-cost" => {
             (path, "create-encrypted-test", Some(name.as_str()))
         }
+        [path, what, name, _size] if what == "quota" => (path, "quota", Some(name.as_str())),
         _ => usage(),
     };
     let disk = match DiskFile::open(path) {
@@ -55,7 +58,12 @@ fn main() {
         ("list", None) => fs.tx(|tx| tx.volumes()).map(|list| {
             for v in list {
                 let kind = if v.is_encrypted() { "encrypted" } else { "" };
-                println!("{}\t{}\t{kind}", v.id(), v.name());
+                // Used and quota, in bytes: "-" when not counted yet or without a limit.
+                let bytes = |blocks: u64| match blocks {
+                    0 => "-".to_string(),
+                    n => (n * dashfs::BLOCK_SIZE).to_string(),
+                };
+                println!("{}\t{}\t{kind}\t{}\t{}", v.id(), v.name(), bytes(v.used()), bytes(v.quota()));
             }
         }),
         ("create-encrypted" | "create-encrypted-test", Some(name)) => {
@@ -97,6 +105,19 @@ fn main() {
         ("create", Some(name)) => fs
             .tx(|tx| tx.create_volume(name, now.as_secs(), now.subsec_nanos()))
             .map(|_| ()),
+        ("quota", Some(name)) => {
+            let size = match parse_size::parse_size(&args[3]) {
+                Ok(size) => size,
+                Err(err) => {
+                    eprintln!("dashfs-volume: size {:?}: {err}", args[3]);
+                    process::exit(2);
+                }
+            };
+            fs.tx(|tx| {
+                let id = tx.find_volume(name)?;
+                tx.set_volume_quota(id, size / dashfs::BLOCK_SIZE)
+            })
+        }
         ("delete", Some(name)) => fs.tx(|tx| {
             let id = tx.find_volume(name)?;
             tx.delete_volume(id)
