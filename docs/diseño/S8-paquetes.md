@@ -189,7 +189,8 @@ falten y cambiar de tabla de golpe. Volver atrás es usar la tabla anterior.
 
 - Las rutas no llevan versión ni huella. El usuario y los programas ven `Paquetes:Tachyon`, como hasta ahora, y los
   iconos, `PROGDIR:` y los guiones siguen valiendo tras actualizar. Las versiones guardadas viven en un almacén que
-  solo toca `Paq` y que no sale en el explorador; `Paquetes:` es la vista de la generación en uso (cada proceso ya
+  solo toca `Paq`, que no estorba en el explorador pero se ve con "Mostrar todos los ficheros" y se lee desde el
+  Shell (ordenado, no escondido: S0); `Paquetes:` es la vista de la generación en uso (cada proceso ya
   tiene su vista de los nombres, S4b).
 - No hay fichero de configuración que escribir ni lenguaje que aprender. Se instala y se quita igual que antes.
 - Una sola acción nueva: "Deshacer la última actualización", en Ajustes y en `Paq`. Quien quiera, puede ver la lista
