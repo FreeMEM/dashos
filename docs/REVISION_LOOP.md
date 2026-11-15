@@ -2008,3 +2008,12 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
      montado, aplicar `quota`, pruebas de cortes) y la escritura de particiones con plan y copia de las tablas.
      Decisiones abiertas en S32. Averiguado: `dashfs-resize` crece y encoge solo fuera de uso y sin mover datos (un
      `assert` si hay bloques usados en el tramo); los volúmenes de FS10 son elásticos y su `quota` no se aplica.
+  4. **Idiomas y catálogos, como en el Workbench** (pedido del usuario, 2026-11-15). Diseñado en S4b y S11
+     (`LOCALE:Catalogs/<idioma>/<programa>.catalog`, `LOCALE:Languages`, `LOCALE:Countries`, Prefs/Locale), pero sin
+     código en el lado nativo: los textos de los programas y del kit van escritos en castellano dentro del código.
+     Hacer: un servicio o biblioteca de idioma (idioma, país, formato de fecha, hora, números y moneda, desde
+     Prefs/Locale, con aviso de cambio), catálogos en el formato IFF CTLG del Amiga pero en UTF-8, con el texto de
+     siempre dentro del programa como respaldo (como `GetCatalogStr`); que el kit y los programas del sistema pasen por
+     ahí; una herramienta que saque los textos de un programa a un catálogo (Dash ya tiene `tools/catalogo.py`); y en
+     la caja, `locale.library` dando los catálogos en Latin-1 a los programas 68k. Primer idioma además del castellano:
+     inglés.
