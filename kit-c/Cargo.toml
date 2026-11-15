@@ -1,0 +1,25 @@
+[package]
+name = "dashos-kit-c"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "El kit de interfaz de DashOS con ABI de C: las ventanas de los programas de Dash (mui_* con --dashos)"
+
+[lib]
+name = "kit_c"
+path = "src/lib.rs"
+crate-type = ["staticlib"]
+test = false
+
+[dependencies]
+kit = { package = "dashos-kit", path = "../kit" }
+wayland = { package = "dashos-wayland", path = "../wayland" }
+dashos = { package = "dashos-usuario", path = "../usuario", default-features = false }
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+[profile.release.package."*"]
+opt-level = 3
+[profile.dev]
+panic = "abort"

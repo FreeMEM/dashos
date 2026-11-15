@@ -58,6 +58,9 @@ const FICHAS: &[(&str, u32, u32, u32, &str)] = &[
     // aunque alguien se hiciera con la caja. Provisional, como todo `FICHAS`: con `sesiones`, su cajón será
     // `Home:Datos/<paquete>` (S6b).
     ("caja-amiga", 1000, 1000, 0, "Estado/Servicios/caja-amiga"),
+    // kit-c: la prueba de las ventanas de Dash, de Ana, sin derechos y encerrada en su cajón: lee su catálogo de
+    // `Locale/Catalogs` de ahí (LOCALE:, provisional hasta las asignaciones).
+    ("dash-ventana", 1000, 1000, 0, "Estado/Servicios/dash-ventana"),
 ];
 /// Raíces de más en el alta de archivos (U2, S6b capa 2): programa, hueco (1 a 15), tope (4 leer, 6 leer y escribir) y
 /// camino desde la raíz del disco.

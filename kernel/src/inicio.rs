@@ -289,6 +289,14 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // portapapeles de los demás mientras el guion teclea contraseñas. Al final, para no cambiar las marcas de los de antes.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux"), not(feature = "uso")))]
     ("espia", programa!("espia"), &[], &["ventanas"]),
+    // Las ventanas de Dash (kit-c): un programa de Dash con ventana, botón y lista (`kit-c/pruebas/ventana.dash`, en
+    // `build/dash-ventana` si estaba Dash al compilar). Sus llaves (en el orden de los canales de esta lista): 1
+    // ventanas, 2 archivos, 3 sesiones (no la usa) y 4 el selector de ficheros, que `sesiones` aún no reparte. El
+    // runtime de Dash sabe dónde está cada una por cuántas trae: 2 o 4, así; 3, lo que lanza `sesiones` (1 su canal, 2
+    // archivos, 3 ventanas). Al final, para no cambiar las marcas de los de antes ni la cascada de sus ventanas (antes de
+    // la caja Amiga, Ajustes salía encima del botón de cerrar de su ventana).
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso"), dash_ventana))]
+    ("dash-ventana", programa!("dash-ventana"), &[], &["ventanas", "archivos", "sesiones", "selector"]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", programa!("medir-fs"), &[], &["archivos"]),
     #[cfg(feature = "medir")]
