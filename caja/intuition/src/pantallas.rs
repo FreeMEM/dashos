@@ -323,6 +323,7 @@ impl<C: Compositor> CajaGrafica<C> {
             programa: Self::nombre_programa(ex, tarea),
             barra_dashos: false,
             hueco_marca: None,
+            padre: None,
         };
         let superficie = self.comp.crear_ventana(&pedida).unwrap_or(0);
         let nombre = if q.nombre != 0 { self.nombre_libre(ex, q.nombre)? } else { None };
@@ -346,6 +347,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 aviso,
                 superficie,
                 mapa_programa: q.mapa,
+                activa: 0,
             },
         );
         if q.mapa != 0 {

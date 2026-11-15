@@ -147,6 +147,20 @@ impl<C: Compositor> CajaGrafica<C> {
         }
     }
 
+    /// El compositor perdió el búfer de la pantalla `s`: se presenta entera la próxima vez.
+    pub(crate) fn exponer_pantalla<M: Memoria>(&mut self, ex: &mut Exec<M>, s: u32) {
+        let Some(programa) = self.intui.pantallas.get(&s).map(|p| p.mapa_programa) else { return };
+        let bm = if programa != 0 { programa } else { s + crate::estructuras::screen::BITMAP };
+        if let Some(v) = self.gfx.vigilados.get_mut(&bm) {
+            v.huellas.clear();
+            v.presentado.clear();
+        } else if let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) {
+            use crate::lienzo::Pinta;
+            let r = l.rect();
+            l.danar(r);
+        }
+    }
+
     /// Cuántas escrituras directas (sin llamadas) se han visto en el mapa del programa de una pantalla, y si ahora se
     /// mira en cada presentación (para las pruebas).
     pub fn escrituras_directas(&self, s: u32) -> Option<(u32, bool)> {

@@ -48,6 +48,8 @@ pub(crate) struct Pantalla {
     pub superficie: Superficie,
     /// El mapa del programa (`SA_BitMap`), si lo dio (0: el suyo, un lienzo).
     pub mapa_programa: u32,
+    /// Su última ventana activa (0: ninguna): la que recibe el teclado cuando el compositor da el foco a la pantalla.
+    pub activa: u32,
 }
 
 /// Lo que intuition sabe de una ventana fuera de la memoria del 68k.
@@ -226,6 +228,7 @@ impl<C: Compositor> CajaGrafica<C> {
             aviso: None,
             superficie: 0,
             mapa_programa: 0,
+            activa: 0,
         };
         self.bordes_pantalla(ex)?;
         Ok(())
@@ -484,7 +487,9 @@ impl<C: Compositor> CajaGrafica<C> {
         // es de fondo) e intuition no pinta la suya. Sus bordes, los de la pantalla en ese aspecto (`WBor*` a 0): arriba,
         // `WBorTop` + el alto de la letra + 1 si tiene barra, como en 3.x (los programas que colocan sus cosas con
         // `BorderTop` o con `WBorTop + ta_YSize + 1` cuentan con eso), y nada a los lados ni abajo.
-        let dashos = aspecto.is_some() && self.comp.pone_barra() && p.flags & wflg::BORDERLESS == 0;
+        // (No en una pantalla propia: sus ventanas van dentro de ella, sin barra del compositor.)
+        let en_escritorio = self.pantalla(wb).is_none_or(|pa| pa.superficie == 0);
+        let dashos = aspecto.is_some() && self.comp.pone_barra() && p.flags & wflg::BORDERLESS == 0 && en_escritorio;
         let bordes = if p.flags & wflg::BORDERLESS != 0 {
             [0, 0, 0, 0]
         } else if dashos {
@@ -667,6 +672,8 @@ impl<C: Compositor> CajaGrafica<C> {
                 let derecha = if p.flags & wflg::DEPTHGADGET != 0 { crate::marco::ANCHO_PROF } else { 0 };
                 (derecha, bordes[1])
             }),
+            // En una pantalla propia, dentro de su superficie.
+            padre: self.pantalla(wb).map(|pa| pa.superficie).filter(|&x| x != 0),
         };
         self.intui.orden += 1;
         let orden = self.intui.orden;
@@ -914,6 +921,11 @@ impl<C: Compositor> CajaGrafica<C> {
         let wb = self.intui.ventanas.get(&w).map_or(self.intui.wb.dir, |v| v.pantalla);
         ex.e32(wb + sc::FIRSTWINDOW, ex.l32(w + win::NEXTWINDOW)?)?;
         let Some(v) = self.intui.ventanas.remove(&w) else { return Ok(()) };
+        if let Some(p) = self.pantalla_mut(v.pantalla)
+            && p.activa == w
+        {
+            p.activa = 0;
+        }
         if v.puerto_creado != 0 {
             ex.delete_msg_port(v.puerto_creado)?;
         }
@@ -1096,8 +1108,13 @@ impl<C: Compositor> CajaGrafica<C> {
                 replan |= self.activar(ex, o, false)?;
             }
         }
+        let mut pantalla = 0;
         if let Some(v) = self.intui.ventanas.get_mut(&w) {
             v.activa = si;
+            pantalla = v.pantalla;
+        }
+        if si && let Some(p) = self.pantalla_mut(pantalla) {
+            p.activa = w;
         }
         let f = ex.l32(w + win::FLAGS)?;
         ex.e32(w + win::FLAGS, if si { f | wflg::WINDOWACTIVE } else { f & !wflg::WINDOWACTIVE })?;

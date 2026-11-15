@@ -54,7 +54,8 @@ filas!(I;
     VIEWPORTADDRESS = "ViewPortAddress", CURRENTTIME = "CurrentTime", DISPLAYBEEP = "DisplayBeep",
     SETMENUSTRIP = "SetMenuStrip", CLEARMENUSTRIP = "ClearMenuStrip", RESETMENUSTRIP = "ResetMenuStrip",
     SETPOINTER = "SetPointer", CLEARPOINTER = "ClearPointer", SETWINDOWPOINTERA = "SetWindowPointerA",
-    SCREENTOFRONT = "ScreenToFront", SCREENTOBACK = "ScreenToBack",
+    SCREENTOFRONT = "ScreenToFront", SCREENTOBACK = "ScreenToBack", SCREENDEPTH = "ScreenDepth",
+    MOVESCREEN = "MoveScreen", SCREENPOSITION = "ScreenPosition",
     ADDGADGET = "AddGadget", REMOVEGADGET = "RemoveGadget", ADDGLIST = "AddGList", REMOVEGLIST = "RemoveGList",
     REFRESHGLIST = "RefreshGList", REFRESHGADGETS = "RefreshGadgets", ONGADGET = "OnGadget", OFFGADGET = "OffGadget",
     ITEMADDRESS = "ItemAddress", ONMENU = "OnMenu", OFFMENU = "OffMenu", OPENSCREENTAGLIST = "OpenScreenTagList",
@@ -456,7 +457,13 @@ impl<C: Compositor> CajaGrafica<C> {
             }
             // El puntero es el del escritorio (provisional).
             SETPOINTER | CLEARPOINTER | SETWINDOWPOINTERA => hecho(self.ventana(a[0]).map(|_| ())),
-            SCREENTOFRONT | SCREENTOBACK => Ok(0),
+            // ScreenToFront(screen)(a0), ScreenToBack(screen)(a0), ScreenDepth(screen, flags, reserved)(a0/d0/a1):
+            // `apilado.rs`.
+            SCREENTOFRONT | SCREENTOBACK => hecho(self.screen_depth(ex, a[0], f == SCREENTOFRONT)),
+            SCREENDEPTH => hecho(self.screen_depth_flags(ex, a[0], d[0])),
+            // MoveScreen(screen, dx, dy)(a0/d0/d1), ScreenPosition(screen, flags, x1, y1, x2, y2)(a0/d0/d1/d2/d3/d4).
+            MOVESCREEN => hecho(self.move_screen(ex, a[0], w(0), w(1))),
+            SCREENPOSITION => hecho(self.screen_position(ex, a[0], d[0], d[1] as i32, d[2] as i32)),
             ADDGADGET => self.add_g_list(ex, a[0], a[1], palabra(d[0]), 1),
             ADDGLIST => self.add_g_list(ex, a[0], a[1], palabra(d[0]), palabra(d[1])),
             REMOVEGADGET => self.remove_g_list(ex, a[0], a[1], 1),

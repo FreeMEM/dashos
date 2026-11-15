@@ -18,6 +18,7 @@
 #include <proto/graphics.h>
 #include <proto/cybergraphics.h>
 #include <intuition/screens.h>
+#include <intuition/intuitionbase.h>
 #include <proto/intuition.h>
 
 struct ExecBase *SysBase;
@@ -208,10 +209,25 @@ LONG inicio(void)
             s = OpenScreenTags(0, SA_DisplayID, id, SA_Title, (ULONG)"cgx", SA_ErrorCode, (ULONG)&err, TAG_DONE);
             if (!s || GetVPModeID(&s->ViewPort) != id || GetCyberMapAttr(s->RastPort.BitMap, CYBRMATTR_PIXFMT) != PIXFMT_RGB16)
                 fallo = 8;
+            /* Una ventana dentro de ella (en el compositor, una subsuperficie de la pantalla), y la pantalla detrás y
+               delante de las demás: va primera o última en la lista de IntuitionBase. */
+            if (s && !fallo) {
+                struct Window *w = OpenWindowTags(0, WA_CustomScreen, (ULONG)s, WA_Left, 20, WA_Top, 30, WA_Width, 200,
+                                                  WA_Height, 100, WA_Title, (ULONG)"cgx", WA_Flags, WFLG_DRAGBAR, TAG_DONE);
+                if (!w || w->WScreen != s) fallo = 8;
+                ScreenToBack(s);
+                if (IntuitionBase->FirstScreen == s) fallo = 8;
+                ScreenToFront(s);
+                if (IntuitionBase->FirstScreen != s) fallo = 8;
+                if (w) {
+                    WindowToFront(w);
+                    CloseWindow(w);
+                }
+            }
             if (s && !CloseScreen(s)) fallo = 8;
         }
     }
-    if (!fallo) di("  [caja-amiga] cgx: modos RTG (Workbench de la caja, pantalla propia de 16 bits): bien\n", 0, 0, 0);
+    if (!fallo) di("  [caja-amiga] cgx: modos RTG (Workbench de la caja, pantalla propia de 16 bits, con su ventana dentro): bien\n", 0, 0, 0);
 
     /* 5. Lo hostil: fuera, negativo, enorme, un formato que no existe, un mapa planar. */
     if (!fallo) {

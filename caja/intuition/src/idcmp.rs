@@ -160,7 +160,7 @@ impl<C: Compositor> CajaGrafica<C> {
 
     /// Un evento del compositor para la ventana de la superficie `s`.
     pub fn evento<M: Memoria>(&mut self, ex: &mut Exec<M>, s: Superficie, e: Evento) -> Result<bool, Fallo> {
-        let Some(&w) = self.intui.por_superficie.get(&s) else { return Ok(false) };
+        let Some(&w) = self.intui.por_superficie.get(&s) else { return self.evento_pantalla(ex, s, e) };
         match e {
             Evento::Raton { x, y } => self.raton(ex, w, x, y),
             Evento::Boton { boton, pulsado } => self.boton(ex, w, boton, pulsado),
@@ -220,6 +220,24 @@ impl<C: Compositor> CajaGrafica<C> {
         self.intui.calif.boton(boton, pulsado);
         let v = self.ventana(w)?;
         let (s, g) = (v.superficie, v.geometria);
+        // En una pantalla propia, el compositor da el foco a la pantalla y no a sus ventanas: se activa al pulsarla, como
+        // en el Amiga.
+        let mut replan = false;
+        if pulsado && !v.activa && self.pantalla(v.pantalla).is_some_and(|p| p.superficie != 0) {
+            replan = self.activar(ex, w, true)?;
+        }
+        self.boton_en(ex, w, s, g, boton, pulsado).map(|r| r | replan)
+    }
+
+    fn boton_en<M: Memoria>(
+        &mut self,
+        ex: &mut Exec<M>,
+        w: u32,
+        s: Superficie,
+        g: crate::marco::Geometria,
+        boton: u32,
+        pulsado: bool,
+    ) -> Result<bool, Fallo> {
         let (x, y) = (ex.l16(w + win::MOUSEX)? as i16 as i32, ex.l16(w + win::MOUSEY)? as i16 as i32);
         if boton == BTN_LEFT
             && let Some(r) = self.requester_boton(ex, w, x, y, pulsado)
@@ -288,7 +306,7 @@ impl<C: Compositor> CajaGrafica<C> {
         }
     }
 
-    fn tecla<M: Memoria>(
+    pub(crate) fn tecla<M: Memoria>(
         &mut self,
         ex: &mut Exec<M>,
         w: u32,
