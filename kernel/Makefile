@@ -60,6 +60,8 @@ prueba: $(PRUEBAS)
 	cd ../wayland && cargo test --quiet
 	cd ../sonido && cargo test --quiet
 	cd ../amigados && cargo test --quiet --release
+	@# El Shell nativo: patrones, plantillas, líneas, rutas, el intérprete y la consola (hostiles incluidos).
+	cd ../shell && cargo test --quiet
 	cd ../archivos/herramientas && cargo test --quiet --release
 	cd ../kit && cargo test --quiet
 	cd ../caja-linux/vmm && cargo test --quiet
