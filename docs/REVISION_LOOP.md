@@ -2087,3 +2087,12 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   8. **Caja Linux en dos perfiles** (S7, decisión del usuario 2026-11-15): completa desde 4 GB; de terminal (Claude
      Code, herramientas) desde 2 GB, sin escritorio, con globo, memoria comprimida y carpetas compartidas con DAX; sin
      caja con 1 GB o menos. Claude Code, a corto plazo en la caja Linux.
+- **Pantallas y gráficos de la caja Amiga, completos, en revision** (7d754fa, rama `caja-amiga-cgx` hasta c1b406d;
+  detalle en `docs/bitacoras/caja-amiga.md`, 2026-11-15 (2) y siguientes). Con el criterio del usuario de hacerlo como
+  debe funcionar: lienzos de ventanas y Workbench en la memoria del 68k (LockBitMap sin copia también ahí), los 13
+  formatos de píxel, modos RTG con su base de datos, pantallas de 8 bits LUT8 con paleta, pantallas propias completas
+  (paleta, plumas, públicas con su lista, `SA_BitMap` que se presenta solo donde cambia, orden delante/detrás con las
+  ventanas dentro), T: y ENV: de la caja (el logo de Tachyon ya se ve). Toca el compositor: `dashos_tema_v1.apilar`
+  v7, solo para la caja Amiga y sus propias ventanas, con prueba hostil (revisado). Conflicto al fusionar en
+  wayland/src/escena.rs resuelto conservando `tomar_ultimo_arrastre` y `bajar`. Tanda completa sobre 7d754fa (tras el
+  reinicio de shiva): todo rc=0.
