@@ -173,7 +173,7 @@ Home:                       (Usuarios:<nombre>, cifrado, solo suyo)
 - **`RAM:` y `T:`**, una por sesión: lo de un usuario no lo ve otro, ni con cambio rápido de usuario (U6).
 - **Cupos**: cada sesión es un grupo de recursos con su tope de memoria (cupos como topes); el espacio de disco de
   cada `Home:`, con el tope del volumen (FS10, `quota`, aún sin aplicar).
-- **Invitado**: una sesión sin volumen propio, con `Home:` en `RAM:`, que se borra al salir. Por decidir.
+- **Sin sesión de invitado** (decisión del usuario, 2026-11-15): todo el que entra tiene su cuenta y su volumen.
 
 Hecho hoy: entrada, bloqueo, cambio rápido de usuario y un volumen por usuario (U2, U6). Falta: crear y borrar
 cuentas (hoy fijas en el código), el árbol de `Home:` de arriba, las asignaciones con nombre en lo nativo (paso 2 de
