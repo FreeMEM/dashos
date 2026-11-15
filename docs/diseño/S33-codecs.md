@@ -48,8 +48,13 @@ lo comparte. Así queda en cada máquina:
 
 - **Raspberry Pi**: DashOS tiene sus controladores de pantalla, GPU y decodificador (S9, S21). La caja Linux pinta y
   decodifica a través de DashOS por virtio-gpu y virtio-video: manda el vídeo comprimido y DashOS lo decodifica.
-- **PC: DashOS se queda siempre la gráfica integrada** (Intel, o la de un procesador AMD con gráfica) para el
-  compositor.
+- **PC: qué gráfica se queda DashOS** (regla del 2026-11-15, con la rama `x86`): al arrancar, la gráfica donde esté
+  el monitor (su pantalla del firmware, GOP); después, para DashOS la de Intel si la hay (es la documentada), y si no,
+  la integrada; la otra, a la caja Linux. Ejemplos de la casa: en pegaso (i5-8500, UHD 630 y RTX 3050), la UHD 630
+  para DashOS y la RTX 3050 a la caja Linux (su grupo de IOMMU solo lleva la gráfica, su audio y el puerto PCIe: se
+  puede pasar); en shiva (Ryzen 9 9955HX con Radeon 610M, y una Intel Arc A310), la Arc A310 para DashOS (sola en su
+  grupo de IOMMU; necesita el firmware GuC/HuC de `linux-firmware` y va mucho mejor con Resizable BAR activado en la
+  BIOS, sin comprobar en shiva) y la Radeon a la caja Linux.
   - Con dos gráficas, la dedicada se pasa a la caja Linux, que usa sus controladores y VA-API o NVDEC, y DashOS
     recibe los cuadros como superficies.
   - Con una sola Intel moderna (Xe, de Alder Lake en adelante), SR-IOV: DashOS la función física, Linux una virtual.
