@@ -81,13 +81,29 @@ pub struct Lienzo {
     textos: Vec<TextoNitido>,
     /// Lo presentado, en ARGB (`ancho` x `alto`; vacío hasta la primera vez).
     presentado: Vec<u32>,
+    /// En los de 8 bits (`Formato::Lut8`): los 256 colores de su paleta (la de su pantalla), para pintar colores
+    /// (la pluma más cercana) y presentar (el color de cada pluma); y la última conversión de color a pluma.
+    lut: Vec<u32>,
+    cerca: Option<(u32, u8)>,
 }
 
 impl Lienzo {
     /// Un lienzo de `ancho` x `alto` del color `fondo`, aún sin píxeles. Los tamaños se tienen que haber comprobado antes.
     pub fn nuevo(ancho: u32, alto: u32, fondo: u32, paleta: u32) -> Lienzo {
         let mapa = Chunky { base: 0, bpr: 0, ancho, alto, fmt: Formato::Argb32, cm: paleta };
-        Lienzo { ancho, alto, mapa, fondo: fondo | 0xFF00_0000, paleta, dano: None, nitido: false, textos: Vec::new(), presentado: Vec::new() }
+        Lienzo {
+            ancho,
+            alto,
+            mapa,
+            fondo: fondo | 0xFF00_0000,
+            paleta,
+            dano: None,
+            nitido: false,
+            textos: Vec::new(),
+            presentado: Vec::new(),
+            lut: Vec::new(),
+            cerca: None,
+        }
     }
     pub fn ancho(&self) -> u32 {
         self.ancho
@@ -119,7 +135,47 @@ impl Lienzo {
         if self.mapa.base == 0 {
             return self.fondo;
         }
-        self.mapa.leer(mem, x, y) | 0xFF00_0000
+        self.color_de(self.mapa.leer(mem, x, y))
+    }
+    /// El valor crudo de `(x, y)`: ARGB en los de color verdadero, la pluma en los de 8 bits; 0 fuera o sin píxeles.
+    pub fn crudo_en<M: Memoria>(&self, mem: &M, x: i32, y: i32) -> u32 {
+        if self.mapa.base == 0 || x < 0 || y < 0 || x as u32 >= self.ancho || y as u32 >= self.alto {
+            return 0;
+        }
+        self.mapa.leer(mem, x, y)
+    }
+    /// Si sus valores son plumas (8 bits).
+    pub fn es_lut(&self) -> bool {
+        self.mapa.fmt.es_lut()
+    }
+    /// El color (ARGB opaco) de un valor crudo.
+    pub fn color_de(&self, v: u32) -> u32 {
+        if self.es_lut() { self.lut.get(v as usize & 0xFF).copied().unwrap_or(0) | 0xFF00_0000 } else { v | 0xFF00_0000 }
+    }
+    /// El valor crudo de un color: él mismo, o la pluma más cercana de su paleta en los de 8 bits.
+    pub fn crudo_de(&mut self, argb: u32) -> u32 {
+        if !self.es_lut() {
+            return argb | 0xFF00_0000;
+        }
+        let c = argb & 0x00FF_FFFF;
+        if let Some((k, p)) = self.cerca
+            && k == c
+        {
+            return p as u32;
+        }
+        let p = crate::dibujo::mas_cercano(&self.lut, c);
+        self.cerca = Some((c, p));
+        p as u32
+    }
+    /// La paleta de un lienzo de 8 bits (la de su pantalla, al nacer o al cambiar): si cambia, todo por presentar.
+    pub fn poner_lut(&mut self, colores: &[u32]) {
+        if self.lut.as_slice() != colores {
+            self.lut = colores.to_vec();
+            self.cerca = None;
+            if self.es_lut() {
+                self.danar(self.rect());
+            }
+        }
     }
     /// Si tiene sus píxeles.
     pub fn con_pixeles(&self) -> bool {
@@ -139,7 +195,8 @@ impl Lienzo {
         self.mapa.alto = self.alto;
         let (fmt, bpp) = (self.mapa.fmt, self.mapa.fmt.bpp() as usize);
         let mut p = [0u8; 4];
-        fmt.escribir(self.fondo, &mut p);
+        let fondo = self.crudo_de(self.fondo);
+        fmt.escribir(fondo, &mut p);
         if let Ok(m) = mem.leer_mut(base, largo) {
             for fila in m.chunks_exact_mut(bpr as usize) {
                 for o in fila[..self.ancho as usize * bpp].chunks_exact_mut(bpp) {
@@ -239,8 +296,10 @@ impl Lienzo {
         for y in d.y0..=d.y1 {
             self.mapa.leer_fila(mem, d.x0, y, d.ancho(), &mut fila);
             let i = y as usize * self.ancho as usize;
+            let lut = &self.lut;
+            let es_lut = self.mapa.fmt.es_lut();
             for (o, c) in self.presentado[i + d.x0 as usize..=i + d.x1 as usize].iter_mut().zip(&fila) {
-                *o = c | 0xFF00_0000;
+                *o = if es_lut { lut.get(*c as usize & 0xFF).copied().unwrap_or(0) } else { *c } | 0xFF00_0000;
             }
         }
         Some((d, &self.presentado, &self.textos))
@@ -294,6 +353,22 @@ pub struct Vista<'a, M: Memoria> {
 }
 
 impl<M: Memoria> Vista<'_, M> {
+    /// El valor crudo de `(x, y)` (ARGB, o la pluma en los de 8 bits); 0 fuera.
+    pub fn pixel_crudo(&self, x: i32, y: i32) -> u32 {
+        self.l.crudo_en(&*self.mem, x, y)
+    }
+    /// Pone un valor crudo (ARGB opaco, o una pluma en los de 8 bits) y lo apunta como cambiado.
+    pub fn poner_crudo(&mut self, x: i32, y: i32, v: u32) {
+        if !self.dentro(x, y) {
+            return;
+        }
+        let v = if self.l.es_lut() { v & 0xFF } else { v | 0xFF00_0000 };
+        self.l.mapa.escribir(&mut *self.mem, x, y, v);
+        self.l.danar(Rect::nuevo(x, y, x, y));
+    }
+    pub fn es_lut(&self) -> bool {
+        self.l.es_lut()
+    }
     fn dentro(&self, x: i32, y: i32) -> bool {
         self.l.mapa.base != 0 && x >= 0 && y >= 0 && (x as u32) < self.l.ancho && (y as u32) < self.l.alto
     }
@@ -330,14 +405,11 @@ impl<M: Memoria> Pinta for Vista<'_, M> {
         if self.l.mapa.base == 0 {
             return self.l.fondo;
         }
-        self.l.mapa.leer(&*self.mem, x, y) | 0xFF00_0000
+        self.l.color_de(self.l.mapa.leer(&*self.mem, x, y))
     }
     fn poner(&mut self, x: i32, y: i32, v: u32) {
-        if !self.dentro(x, y) {
-            return;
-        }
-        self.l.mapa.escribir(&mut *self.mem, x, y, v | 0xFF00_0000);
-        self.l.danar(Rect::nuevo(x, y, x, y));
+        let c = self.l.crudo_de(v);
+        self.poner_crudo(x, y, c);
     }
     fn escribir_fila(&mut self, x: i32, y: i32, v: &[u32]) -> u32 {
         if self.l.mapa.base == 0 || y < 0 || y as u32 >= self.l.alto || v.is_empty() {
@@ -350,7 +422,7 @@ impl<M: Memoria> Pinta for Vista<'_, M> {
         }
         let o = (desde - x as i64) as usize;
         let n = (hasta - desde) as usize;
-        let opacos: Vec<u32> = v[o..o + n].iter().map(|c| c | 0xFF00_0000).collect();
+        let opacos: Vec<u32> = v[o..o + n].iter().map(|&c| self.l.crudo_de(c)).collect();
         self.l.mapa.escribir_fila(&mut *self.mem, desde as i32, y, &opacos);
         self.l.danar(Rect::nuevo(desde as i32, y, hasta as i32 - 1, y));
         n as u32
@@ -370,7 +442,7 @@ impl<M: Memoria> Pinta for Vista<'_, M> {
         let mut fila = Vec::with_capacity(r.ancho() as usize);
         for y in r.y0..=r.y1 {
             self.l.mapa.leer_fila(&*self.mem, r.x0, y, r.ancho(), &mut fila);
-            v.extend(fila.iter().map(|c| c | 0xFF00_0000));
+            v.extend(fila.iter().map(|&c| self.l.color_de(c)));
         }
         v
     }

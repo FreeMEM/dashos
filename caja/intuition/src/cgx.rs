@@ -661,9 +661,15 @@ impl<C: Compositor> CajaGrafica<C> {
             // Un lienzo sin píxeles (sin memoria para ellos): nada que pintar. Los que los tienen van como chunky.
             Mapa::Nativo => 0,
             Mapa::Chunky(c) => {
-                let fila: Vec<u32> = match v {
-                    Valores::Argb(c) => c,
-                    Valores::Plumas(p) => p.iter().map(|&q| d.paleta[q as usize]).collect(),
+                // Colores en los de color verdadero; plumas en los de 8 bits (el color, a la más cercana).
+                let fila: Vec<u32> = match (v, c.fmt.es_lut()) {
+                    (Valores::Argb(c), false) => c,
+                    (Valores::Plumas(p), false) => p.iter().map(|&q| d.paleta[q as usize]).collect(),
+                    (Valores::Plumas(p), true) => p.iter().map(|&q| q as u32).collect(),
+                    (Valores::Argb(c), true) => c
+                        .iter()
+                        .map(|&argb| *cache.entry(argb & 0x00FF_FFFF).or_insert_with(|| mas_cercano(&d.paleta, argb)) as u32)
+                        .collect(),
                 };
                 c.escribir_fila(&mut ex.mem, mx, my, &fila);
                 if let Some(l) = d.lienzo.and_then(|b| self.gfx.lienzos.get_mut(&b)) {
@@ -707,6 +713,7 @@ impl<C: Compositor> CajaGrafica<C> {
         let d = self.destino(ex, rp, es_de_plumas(fmt) && lut.is_none())?;
         // RECTFMT_RAW: el formato del propio mapa.
         let fmt = match (fmt, d.mapa) {
+            (RECTFMT_RAW, Mapa::Chunky(c)) if c.fmt.es_lut() => RECTFMT_LUT8,
             (RECTFMT_RAW, Mapa::Chunky(c)) => MAPA + c.fmt.pixfmt(),
             (RECTFMT_RAW, Mapa::Nativo) => RECTFMT_ARGB,
             (RECTFMT_RAW, Mapa::Planar(_)) => RECTFMT_LUT8,
@@ -890,6 +897,7 @@ impl<C: Compositor> CajaGrafica<C> {
         }
         let c = self.crudo(ex, d, x, y);
         Some(match d.mapa {
+            Mapa::Chunky(k) if k.fmt.es_lut() => d.paleta[c as usize & 0xFF] & 0x00FF_FFFF,
             Mapa::Chunky(_) if d.lienzo.is_some() => c & 0x00FF_FFFF,
             Mapa::Chunky(_) => c,
             Mapa::Nativo => c & 0x00FF_FFFF,

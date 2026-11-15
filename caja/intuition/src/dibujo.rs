@@ -107,8 +107,13 @@ pub(crate) struct Pintor<'a, M: Memoria> {
 }
 
 impl<M: Memoria> Pintor<'_, M> {
+    /// Si sus valores crudos son colores ARGB (y no plumas: los planares y los de 8 bits, LUT8).
     pub fn es_nativa(&self) -> bool {
-        !matches!(self.sup, Sup::Planar(..))
+        match &self.sup {
+            Sup::Planar(..) => false,
+            Sup::Nativa(v) => !v.es_lut(),
+            Sup::Chunky(_, c) => !c.fmt.es_lut(),
+        }
     }
 
     /// Los límites del mapa (sin el recorte de la capa), en coordenadas del `RastPort`.
@@ -141,7 +146,7 @@ impl<M: Memoria> Pintor<'_, M> {
         }
         let (x, y) = (x + self.dx, y + self.dy);
         match &self.sup {
-            Sup::Nativa(l) => l.pixel(x, y),
+            Sup::Nativa(l) => l.pixel_crudo(x, y),
             Sup::Planar(mem, p) => p.leer(&**mem, x, y) as u32,
             Sup::Chunky(mem, c) => c.leer(&**mem, x, y),
         }
@@ -178,7 +183,7 @@ impl<M: Memoria> Pintor<'_, M> {
         let (x, y) = (x + self.dx, y + self.dy);
         let mascara = self.mascara;
         match &mut self.sup {
-            Sup::Nativa(l) => l.poner(x, y, v),
+            Sup::Nativa(l) => l.poner_crudo(x, y, v),
             Sup::Planar(mem, p) => p.escribir(&mut **mem, x, y, v as u8, mascara),
             Sup::Chunky(mem, c) => c.escribir(&mut **mem, x, y, v),
         }
@@ -199,8 +204,9 @@ impl<M: Memoria> Pintor<'_, M> {
         let mascara = self.mascara;
         match &mut self.sup {
             Sup::Nativa(l) => {
-                let v = l.pixel(x, y);
-                l.poner(x, y, v ^ 0x00FF_FFFF);
+                let v = l.pixel_crudo(x, y);
+                let n = if l.es_lut() { (v ^ mascara as u32) & 0xFF } else { v ^ 0x00FF_FFFF };
+                l.poner_crudo(x, y, n);
             }
             Sup::Planar(mem, p) => {
                 let v = p.leer(&**mem, x, y);
@@ -208,7 +214,8 @@ impl<M: Memoria> Pintor<'_, M> {
             }
             Sup::Chunky(mem, c) => {
                 let v = c.leer(&**mem, x, y);
-                c.escribir(&mut **mem, x, y, v ^ 0x00FF_FFFF);
+                let n = if c.fmt.es_lut() { (v ^ mascara as u32) & 0xFF } else { v ^ 0x00FF_FFFF };
+                c.escribir(&mut **mem, x, y, n);
             }
         }
     }
@@ -275,7 +282,9 @@ impl<M: Memoria> Pintor<'_, M> {
         if patron.is_empty() && self.region.is_none() && self.modo & (drmd::COMPLEMENT | drmd::INVERSVID) == 0 {
             let c = self.a.argb;
             let (dx, dy) = (self.dx, self.dy);
-            if let Sup::Nativa(v) = &mut self.sup {
+            if let Sup::Nativa(v) = &mut self.sup
+                && !v.es_lut()
+            {
                 let fila = alloc::vec![c; r.ancho() as usize];
                 for y in r.y0..=r.y1 {
                     v.escribir_fila(r.x0 + dx, y + dy, &fila);

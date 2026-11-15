@@ -36,10 +36,10 @@ pub struct Modo {
 }
 
 impl Modo {
-    /// El formato de sus píxeles (`None`: 8 bits, plumas de una paleta).
+    /// El formato de sus píxeles (los de 8 bits, LUT8: una pluma por punto de una paleta de 24 bits).
     pub fn formato(&self) -> Option<Formato> {
         match self.prof {
-            8 => None,
+            8 => Some(Formato::Lut8),
             15 => Some(Formato::Rgb15),
             16 => Some(Formato::Rgb16),
             24 => Some(Formato::Rgb24),
@@ -76,8 +76,8 @@ pub const fn id(t: usize, p: usize) -> u32 {
     MONITOR | ((t as u32) << 4) | p as u32
 }
 
-/// El formato de los píxeles de un `ModeID` de la caja (esté o no con este escritorio); `None` en los de 8 bits y en los
-/// que no son de la caja.
+/// El formato de los píxeles de un `ModeID` de la caja (esté o no con este escritorio); `None` en los que no son de la
+/// caja.
 pub fn formato_de_id(id: u32) -> Option<Formato> {
     if id & MASCARA_MONITOR != MONITOR {
         return None;

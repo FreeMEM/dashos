@@ -533,8 +533,11 @@ impl<C: Compositor> CajaGrafica<C> {
         let cm = cm_pantalla;
         self.nuevo_nativo(ex, bm, an as u32, al as u32, cm)?;
         // Un programa la ve en el formato del modo de su pantalla (`LockBitMap`, cybergraphics).
+        let colores = self.gfx.paletas.get(&cm).cloned().unwrap_or_default();
         if let Some(l) = self.gfx.lienzos.get_mut(&bm) {
             l.poner_formato(formato);
+            // En una pantalla de 8 bits, la ventana es de plumas: su paleta, la de la pantalla.
+            l.poner_lut(&colores);
         }
         // S26: con el aspecto de DashOS, dentro es de la superficie del tema (la paleta de la pantalla no se toca: un
         // programa que borra con la pluma 0 pinta el gris de siempre).

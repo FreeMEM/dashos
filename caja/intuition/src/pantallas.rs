@@ -1,8 +1,8 @@
 //! Las pantallas propias: `OpenScreenTagList` con un modo de la caja (`modos.rs`) da una `struct Screen` nueva, del
 //! tamaño y la profundidad del modo (o los que pida, `SA_Width`/`SA_Height`), con su `ColorMap` (la paleta del
 //! Workbench de partida), su `DrawInfo` y su `BitMap`: chunky en la memoria del 68k en el formato del modo (15, 16, 24 y
-//! 32 bits; `LockBitMap` da su dirección de verdad y los mapas amigos salen en ese formato) o planar de 8 planos (los de
-//! 8 bits). Sus ventanas son ventanas del compositor como las del Workbench (su lienzo lleva el formato del modo). Se
+//! 32 bits, y LUT8 en los de 8: una pluma por byte con su paleta, como en una tarjeta; `LockBitMap` da su dirección de
+//! verdad y los mapas amigos salen en ese formato). Sus ventanas son ventanas del compositor como las del Workbench (su lienzo lleva el formato del modo). Se
 //! pone delante en la lista de `IntuitionBase`. `CloseScreen` la suelta si no le quedan ventanas (si no, FALSE, como
 //! en 3.x); si su tarea acaba sin cerrarla, se cierra.
 //!
@@ -142,31 +142,10 @@ impl<C: Compositor> CajaGrafica<C> {
             }
         };
         bloques.push((s, sc::TAMANO));
-        // Los píxeles de su BitMap: chunky en el formato del modo, o 8 planos.
+        // Los píxeles de su BitMap: chunky en el formato del modo (LUT8 en los de 8 bits, como en una tarjeta).
         let bm = s + sc::BITMAP;
-        let pixeles = match m.formato() {
-            Some(f) => self.chunky_en(ex, bm, an, al, f, cm)?.map(|b| vec![b]),
-            None => {
-                self.init_bit_map(ex, bm, 8, an, al)?;
-                let mut v = Vec::new();
-                let largo = an.div_ceil(16) * 2 * al;
-                for i in 0..8 {
-                    let p = ex.alloc_mem(largo, memf::CHIP | memf::CLEAR)?;
-                    if p == 0 {
-                        break;
-                    }
-                    ex.cambiar_dueno(p, 0);
-                    ex.e32(bm + crate::estructuras::bitmap::PLANES + 4 * i, p)?;
-                    v.push((p, largo));
-                }
-                if v.len() == 8 { Some(v) } else {
-                    for (d, l) in v {
-                        ex.soltar(d, l)?;
-                    }
-                    None
-                }
-            }
-        };
+        let fmt = m.formato().unwrap_or(crate::chunky::Formato::Argb32);
+        let pixeles = self.chunky_en(ex, bm, an, al, fmt, cm)?.map(|b| vec![b]);
         let Some(pixeles) = pixeles else {
             ex.soltar(s, sc::TAMANO)?;
             self.free_color_map(ex, cm)?;
