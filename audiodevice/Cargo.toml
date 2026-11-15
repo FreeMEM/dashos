@@ -1,0 +1,12 @@
+[package]
+name = "dashos-audiodevice"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "audio.device nativo de DashOS (S19, fase 2): los cuatro canales de Paula, su reparto y sus órdenes"
+
+[lib]
+name = "audiodevice"
+path = "src/lib.rs"
+
+[dependencies]

@@ -74,6 +74,9 @@ struct Vision {
     rgb_d: [f64; 3],
     fl: f64,
     z: f64,
+    /// Lo que no cambia entre colores: (1,64 − 0,29^n)^0,73 y 1/c/z.
+    k_alfa: f64,
+    inv_cz: f64,
 }
 
 fn vision() -> Vision {
@@ -97,7 +100,7 @@ fn vision() -> Vision {
         400.0 * x / (x + 27.13)
     });
     let aw = (2.0 * rgb_a[0] + rgb_a[1] + 0.05 * rgb_a[2]) * nbb;
-    Vision { n, aw, nbb, ncb: nbb, c, nc: f, rgb_d, fl, z }
+    Vision { n, aw, nbb, ncb: nbb, c, nc: f, rgb_d, fl, z, k_alfa: pow(1.64 - pow(0.29, n), 0.73), inv_cz: 1.0 / c / z }
 }
 
 /// Un color en HCT: matiz (grados), croma y tono (0 a 100).
@@ -110,9 +113,18 @@ pub struct Hct {
 
 impl Hct {
     pub fn desde(color: Color) -> Hct {
+        Hct::desde_con(color, &vision())
+    }
+
+    /// Los de muchos colores: las condiciones de visión se calculan una vez (sin FPU cuestan lo que un color).
+    pub fn de_varios(colores: &[Color]) -> alloc::vec::Vec<Hct> {
+        let v = vision();
+        colores.iter().map(|&c| Hct::desde_con(c, &v)).collect()
+    }
+
+    fn desde_con(color: Color, v: &Vision) -> Hct {
         let lin = [lineal((color >> 16) & 0xff), lineal((color >> 8) & 0xff), lineal(color & 0xff)];
         let xyz = por(&SRGB_A_XYZ, lin);
-        let v = vision();
         let rgb_c = por(&XYZ_A_CAM16, xyz);
         let rgb_a = [0, 1, 2].map(|i| {
             let d = v.rgb_d[i] * rgb_c[i];
@@ -140,14 +152,19 @@ impl Hct {
 
     /// El color de este matiz, croma y tono; si el croma no cabe en sRGB, el más alto que cabe.
     pub fn color(matiz: f64, croma: f64, tono: f64) -> Color {
+        Hct::color_con(&vision(), matiz, croma, tono)
+    }
+
+    /// Lo mismo, con las condiciones de visión ya calculadas (las de un esquema entero, una vez).
+    fn color_con(v: &Vision, matiz: f64, croma: f64, tono: f64) -> Color {
         if tono <= 0.0 {
             return 0xff00_0000;
         }
         if tono >= 100.0 {
             return 0xffff_ffff;
         }
-        let v = vision();
         let y = y_de_tono(tono);
+        let m = DelMatiz::nuevo(v, matiz);
         // Sin croma, gris: la Y del tono en los tres canales.
         let gris = || {
             let g = sin_lineal(y);
@@ -156,15 +173,17 @@ impl Hct {
         if croma < 0.5 {
             return gris();
         }
-        if let Some(c) = lineal_con_y(&v, matiz, croma, y) {
+        if let Some(c) = lineal_con_y(v, &m, croma, y) {
             return a_color(c);
         }
-        // Bisección del croma: el más alto que cabe en sRGB.
+        // Bisección del croma: el más alto que cabe en sRGB. 14 pasos (antes 30) y 36 en la de J (antes 60): los mismos
+        // 1560 colores en 60 colores base, claro y oscuro, con 3,2 veces menos cuentas (con 12 y 32 ya cambian dos en
+        // una unidad); sin FPU, cada cuenta cuesta.
         let (mut bajo, mut alto) = (0.0, croma);
         let mut mejor = None;
-        for _ in 0..30 {
+        for _ in 0..14 {
             let medio = (bajo + alto) / 2.0;
-            match lineal_con_y(&v, matiz, medio, y) {
+            match lineal_con_y(v, &m, medio, y) {
                 Some(c) => {
                     mejor = Some(c);
                     bajo = medio;
@@ -180,16 +199,29 @@ fn a_color(lin: [f64; 3]) -> Color {
     0xff00_0000 | sin_lineal(lin[0]) << 16 | sin_lineal(lin[1]) << 8 | sin_lineal(lin[2])
 }
 
+/// Lo de un matiz que no cambia al buscar J: su seno, su coseno y p1 (sin FPU, cada uno cuesta lo que unas cuantas
+/// cuentas; antes se calculaban en cada paso de las bisecciones).
+struct DelMatiz {
+    hs: f64,
+    hc: f64,
+    p1: f64,
+}
+
+impl DelMatiz {
+    fn nuevo(v: &Vision, matiz: f64) -> DelMatiz {
+        let h = matiz * PI / 180.0;
+        let e = 0.25 * (cos(h + 2.0) + 3.8);
+        DelMatiz { hs: sin(h), hc: cos(h), p1: e * (50000.0 / 13.0) * v.nc * v.ncb }
+    }
+}
+
 /// XYZ de un color CAM16 (J, croma, matiz).
-fn xyz_de_jch(v: &Vision, j: f64, croma: f64, matiz: f64) -> [f64; 3] {
+fn xyz_de_jch(v: &Vision, m: &DelMatiz, j: f64, croma: f64) -> [f64; 3] {
     let alfa = if croma == 0.0 || j == 0.0 { 0.0 } else { croma / sqrt(j / 100.0) };
-    let t = pow(alfa / pow(1.64 - pow(0.29, v.n), 0.73), 1.0 / 0.9);
-    let h = matiz * PI / 180.0;
-    let e = 0.25 * (cos(h + 2.0) + 3.8);
-    let ac = v.aw * pow(j / 100.0, 1.0 / v.c / v.z);
-    let p1 = e * (50000.0 / 13.0) * v.nc * v.ncb;
+    let t = pow(alfa / v.k_alfa, 1.0 / 0.9);
+    let ac = v.aw * pow(j / 100.0, v.inv_cz);
+    let (p1, hs, hc) = (m.p1, m.hs, m.hc);
     let p2 = ac / v.nbb;
-    let (hs, hc) = (sin(h), cos(h));
     let gamma = 23.0 * (p2 + 0.305) * t / (23.0 * p1 + 11.0 * t * hc + 108.0 * t * hs);
     let (a, b) = (gamma * hc, gamma * hs);
     let ra = (460.0 * p2 + 451.0 * a + 288.0 * b) / 1403.0;
@@ -204,12 +236,12 @@ fn xyz_de_jch(v: &Vision, j: f64, croma: f64, matiz: f64) -> [f64; 3] {
 }
 
 /// sRGB lineal (0 a 100) del matiz y croma dados con la Y pedida, si cabe: bisección en J, que sube con Y.
-fn lineal_con_y(v: &Vision, matiz: f64, croma: f64, y: f64) -> Option<[f64; 3]> {
+fn lineal_con_y(v: &Vision, m: &DelMatiz, croma: f64, y: f64) -> Option<[f64; 3]> {
     let (mut bajo, mut alto) = (0.0f64, 100.0f64);
     let mut xyz = [0.0; 3];
-    for _ in 0..60 {
+    for _ in 0..36 {
         let j = (bajo + alto) / 2.0;
-        xyz = xyz_de_jch(v, j, croma, matiz);
+        xyz = xyz_de_jch(v, m, j, croma);
         if xyz[1] < y {
             bajo = j;
         } else {
@@ -236,6 +268,19 @@ impl Paleta {
     }
 }
 
+/// Las condiciones de visión, para pedir muchos tonos sin calcularlas cada vez (`Paletas::tono`).
+pub struct Visto(Vision);
+
+impl Visto {
+    pub fn nuevo() -> Visto {
+        Visto(vision())
+    }
+
+    pub fn tono(&self, p: &Paleta, tono: f64) -> Color {
+        Hct::color_con(&self.0, p.matiz, p.croma, tono)
+    }
+}
+
 /// Las cinco paletas de un color base.
 pub struct Paletas {
     pub primaria: Paleta,
@@ -258,3 +303,4 @@ impl Paletas {
         }
     }
 }
+

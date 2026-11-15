@@ -1,4 +1,4 @@
-# X1 y X2 (S21): el programa de UEFI en x86-64 (BOOTX64.EFI), arrancado por OVMF en QEMU q35, carga el ELF del kernel,
+# X1 y X2 (S30): el programa de UEFI en x86-64 (BOOTX64.EFI), arrancado por OVMF en QEMU q35, carga el ELF del kernel,
 # sale de los servicios de arranque y salta; el kernel habla por COM1 con lo que le dejó el cargador, carga su GDT y su
 # IDT, reparte la memoria del mapa de UEFI, enciende las defensas y pasa a sus tablas de páginas.
 DashOS: arranque por UEFI en x86-64
@@ -23,7 +23,7 @@ DashOS en marcha (x86-64)
 ~virtio-sonido: en el PCIe 0:
 # X6: la consola es un proceso, con el registro y los puertos de COM1 (el mapa de E/S de la TSS).
 ~│   [inicio] consola lanzado en su grupo, con 2 llaves
-~│   [inicio] todo lanzado; se queda esperando
+~│   [inicio] todo lanzado; se queda vigilando los servicios
 ~│   hola desde Rust en EL0 (DashOS, little-endian)
 # El xHCI: el teclado detrás de un concentrador y el ratón; sus eventos llegan al compositor (X6).
 ~│   [xhci] puerto 5: ranura 1, concentrador
@@ -37,10 +37,10 @@ DashOS en marcha (x86-64)
 ~│   [ventana-a] 30 cuadros: bien
 ~│   [ventana-b] 30 cuadros: bien
 ~│   [compositor] Wayland: 2 ventanas en pantalla
-~│   [ajustes] ventana del kit en pantalla (360x250)
+~│   [ajustes] ventana del kit en pantalla (360x408)
 ~│   [ajustes] el campo dice: DashOSa
 ~│   [ajustes] el compositor pide 1280x800
-~│   [ajustes] vuelve a 360x250
+~│   [ajustes] vuelve a 360x408
 ~│   [ventana] ratón dentro
 ~│   [ventana] tecla 30 recibida
 # El NVMe con su disco (target/nvme.img, el de arranque-virt), por su interrupción.
@@ -48,11 +48,14 @@ DashOS en marcha (x86-64)
 ~│   [nvme] sector 0: "DashOS: sector 0 del disco NVMe", firma 0xaa55
 ~│   [nvme] sector 1: "DashOS: sector 1", firma 0x0000
 ~│   [nvme] avisos por su interrupción
-~│   [disco] abierto: 16384 sectores de 512 bytes
+# Desde la fusión con `revision`, el disco lleva particiones: `disco` ve el primer MB y `archivos`, la de DashOS.
+~│   [nvme] particiones: MBR; DashOS, sectores 2048 a 16383
+~│   [disco] abierto: 2048 sectores de 512 bytes
 ~│   [disco] leer: bien; escribir y releer: bien; cruzando páginas: bien; rechazos: bien; vaciar: bien
+~│   [disco] descartar: bien; rechazos al descartar: bien
 ~│   [disco] anillo: 16 lecturas y un rechazo: bien
 ~│   [archivos] RedoxFS abierto: 7168 KB,
-~│   [ficheros] raíz (3 entradas, fin bien): C/ LEEME.txt Prefs/
+~│   [ficheros] raíz (7 entradas, fin bien): C/ DeCarla/ Estado/ Imagenes/ LEEME.txt Prefs/ Programas/
 ~│   [ficheros] LEEME.txt (19 bytes): "DashOS lee RedoxFS"
 ~│   [ficheros] C/grande.txt: 313890 bytes, 25000 líneas: bien
 ~│   [ficheros] datos: bien; volumen: 7168 KB,

@@ -19,3 +19,10 @@ jit-host/ppc/pruebas/t4.*
 jit-host/ppc/pruebas/t[5-9].*
 jit-host/ppc/pruebas/__pycache__/
 jit-host/ppc/pruebas/p3.elf
+caja/build/
+jit-host/medidas/build/
+caja-linux/vmm/target/
+caja-linux/vhost-prueba/target/
+caja/build-pc/
+caja/pruebas68k/*.o
+caja-linux/aspecto/target/

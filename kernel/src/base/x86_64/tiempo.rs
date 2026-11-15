@@ -1,4 +1,4 @@
-//! El tiempo en x86-64 (S21, X3): el TSC como contador, calibrado contra el HPET (o el temporizador de gestión de
+//! El tiempo en x86-64 (S30, X3): el TSC como contador, calibrado contra el HPET (o el temporizador de gestión de
 //! energía de ACPI si no hay HPET), y el temporizador del APIC local para las interrupciones.
 //!
 //! Escrito con el manual de Intel (SDM, volumen 3: 18.17, el TSC; 11.5.4, el temporizador del APIC y el modo de plazo

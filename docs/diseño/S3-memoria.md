@@ -121,7 +121,8 @@ Cada controlador pide memoria para DMA diciendo qué periférico la usará, y el
   petición falla en ese momento. Así no hay un OOM killer que mate procesos al azar.
 - **Si aun así falta**, el sistema avisa en el escritorio y propone cerrar programas de fondo. Nunca se toca el
   compositor ni los servicios del sistema.
-- **Límites por proceso**: quien lanza un proceso le puede poner un tope de memoria, igual que de CPU (S2).
+- **Límites por proceso**: quien lanza un proceso le puede poner un tope de memoria, igual que de CPU (S2). Desde el
+  2026-11-14 es un tope de verdad y no una reserva (ver "Cupos como topes").
 
 ## Lo que queda abierto
 
@@ -131,6 +132,51 @@ Cada controlador pide memoria para DMA diciendo qué periférico la usará, y el
    de S7 puede prometer de más dentro de un límite.
 3. ¿Enforcer integrado en la caja Amiga, activo siempre o solo al depurar? Recomendado: activo siempre, con avisos a
    un registro, porque cuesta poco.
+
+## Cupos como topes (2026-11-14)
+
+Decisión del usuario ("lo de cgroups es perfecto"), hecha en la rama `cupos-topes` (bitácora en
+`docs/bitacoras/cupos.md`). Hasta aquí, el presupuesto de un grupo era una **reserva**: `grupo_crear` lo descontaba
+del padre al crearlo, se usara o no. En la máquina de pruebas de 2 GB no cabían las cajas, y hubo que darle a la caja
+Amiga "32 MB más la cuarta parte de lo libre". Ahora es un **tope**, con la idea de `memory.max` de los cgroups de Linux
+(solo la idea: no se ha leído su código).
+
+- **Cobrar al usar.** Crear un grupo solo cobra al padre lo que ocupa el grupo (512 bytes). Cada cobro (objeto de
+  memoria, tablas, proceso, hilo, canal, temporizador...) suma a su grupo y a todos los de encima, hasta el raíz. Si
+  alguno pasaría de su tope, se deshace lo sumado y la llamada da `E_MEMORIA`. Soltar resta en toda la cadena. Sumas
+  atómicas sin orden de memoria y sin cerrojos, como el tiempo de CPU (llamada 52). Como mucho son 8 sumas (los niveles).
+- **Los topes pueden sumar más que la máquina.** Los de los hijos, más que el del padre y más que la RAM. Lo que no se
+  pasa es lo usado: el tope del raíz es la memoria libre para procesos al arrancar, y por debajo sigue la reserva del
+  kernel (32 MB). Esto es prometer de más, que la recomendación de arriba evitaba; la diferencia es que nada falla
+  después de concedido: cada petición se cobra al hacerse y, si no hay, falla en ese momento, como antes. Lo que se
+  pierde es la garantía de que un grupo tiene sitio para llegar a su tope: otro puede habérselo comido.
+- **Aviso de memoria baja.** Por eso hace falta saber cuándo queda poco. El kernel avisa (llamada 53) cuando lo libre
+  para procesos baja del 5 % de lo que había al arrancar, y otra vez cuando pasa del 10 % (el hueco evita un aviso en
+  cada página). Escucha `sesiones`, que tiene el permiso de memoria (una llave de arranque propia), y se lo dirá a las cajas para que suelten lo que
+  puedan. Primera versión: el aviso llega y se apunta en el registro. Pendiente: el globo de la caja Linux (devolver
+  páginas del invitado) y las cachés de la caja Amiga (las bibliotecas sin abrir, los lienzos que no se ven).
+
+- **El tope de la caja Amiga lo pone el kernel** (decisión del usuario del 2026-11-14), no la caja: un programa 68k
+  podría engañarla. Es el ajuste `memoria amiga` de `Prefs/cajas` (256 MB de serie) más los 32 MB fijos de la caja.
+  La caja nace con el de serie (288 MB); `sesiones`, que tiene la llave de su grupo, lo cambia (llamada 54) al darla
+  de alta y cada vez que el centro de control le dice el ajuste (solo se le acepta al centro, donde lo elige el
+  usuario; `sesiones` no puede leer los Prefs del usuario). Un
+  proceso no puede cambiar el tope de su grupo ni el de los de encima.
+
+### Si ni así basta (diseño, sin hacer)
+
+Sin matar a nadie todavía. Cuando se haga, será así:
+
+1. Primero se avisa (memoria baja) y se espera un rato a que las cajas suelten.
+2. Si lo libre baja de un segundo umbral (por ejemplo, el 2 %), `sesiones` elige a quién cerrar: el grupo que más gasta
+   (`grupo_uso`, lo usado con sus subgrupos) entre los de menor prioridad. Nunca un servicio del sistema (lo que lanza
+   `inicio`: compositor, archivos, sesiones, la consola...) ni la sesión de delante si hay otra.
+3. Antes de cerrarlo, se dice en el escritorio quién y por qué, y se le da un momento para guardar (un aviso por su
+   canal con `sesiones`).
+4. Se cierra con `grupo_matar`: todo lo cobrado vuelve en la cadena.
+
+Lo decide `sesiones`, no el kernel: el kernel solo cuenta y avisa. Así la política (prioridades, qué es del sistema)
+no vive en el kernel.
 
 ## Cómo encaja
 

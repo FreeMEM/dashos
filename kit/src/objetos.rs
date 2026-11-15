@@ -42,6 +42,25 @@ pub mod atr {
     pub const PRIMERA: Atr = 11;
     /// Cuántas filas se ven de una lista (lo que mide de alto en filas).
     pub const FILAS: Atr = 12;
+    /// Doble clic (`MUIA_Listview_DoubleClick`): dos clics seguidos sobre el mismo objeto y con el mismo valor (en una
+    /// lista, la misma fila), o Intro en una lista. Como `CLIC`, pasa a sí y vuelve a no. El doble clic solo se ve con
+    /// `Interfaz::raton_hora`, que sabe cuándo fue cada clic.
+    pub const DOBLE: Atr = 13;
+    /// El estilo (Material 3). En un botón: 0 relleno (la acción principal), 1 tonal, 2 de texto (las secundarias, como
+    /// Cancelar). En un texto: 0 cuerpo, 1 título, 2 secundario (más pequeño y más suave).
+    pub const ESTILO: Atr = 14;
+    /// Un desplegable con su menú abierto. Lo abre un clic, Intro, el espacio o Alt+abajo; lo cierra elegir, Esc o un
+    /// clic fuera. Un programa también puede abrirlo o cerrarlo.
+    pub const ABIERTO: Atr = 15;
+    /// La etiqueta de un campo (Material 3): dentro mientras está vacío y sin foco; si no, arriba, sobre el borde.
+    pub const ETIQUETA: Atr = 16;
+    /// El texto de ayuda bajo un campo. Si un campo tiene `AYUDA` o `ERROR` (aunque vacíos), reserva su línea.
+    pub const AYUDA: Atr = 17;
+    /// El error de un campo: si no está vacío, va en lugar de la ayuda, y el campo y su etiqueta en el color de error.
+    pub const ERROR: Atr = 18;
+    /// La fila visible de una lista que tiene el ratón encima (-1 o sin poner, ninguna; 0, la primera que se ve): ahí va
+    /// la capa de estado de Material 3. La pone `Interfaz` al mover el ratón.
+    pub const ENCIMA: Atr = 19;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -132,6 +151,10 @@ pub trait Clase {
     /// Si se le puede pulsar.
     fn pulsable(&self) -> bool {
         false
+    }
+    /// La rueda del ratón sobre él: `pasos` hacia abajo (positivo) o hacia arriba. Lo que cambia; por defecto, nada.
+    fn rueda(&self, _attrs: &BTreeMap<Atr, Valor>, _pasos: i32) -> Vec<(Atr, Valor)> {
+        Vec::new()
     }
     /// El ratón pulsado o arrastrado en (x, y) de su rectángulo `r`: los atributos que cambian.
     fn arrastrar(&self, _attrs: &BTreeMap<Atr, Valor>, _r: crate::lienzo::Rect, _x: i32, _y: i32) -> Vec<(Atr, Valor)> {

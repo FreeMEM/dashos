@@ -1,4 +1,4 @@
-//! Mapa del kernel por páginas en x86-64 (S21, X2): tablas de 4 niveles propias, como `mapa.rs` de ARM (C34).
+//! Mapa del kernel por páginas en x86-64 (S30, X2): tablas de 4 niveles propias, como `mapa.rs` de ARM (C34).
 //!
 //! Escrito con el manual de Intel (SDM, volumen 3, 4.5: paginación de 4 niveles). Todo cuelga de la última entrada del
 //! PML4 (la mitad alta, `mmu::KERNEL_VA`):
@@ -235,6 +235,14 @@ fn pt_pilas(v: usize) -> u64 {
     leer(PD_PILAS.load(Ordering::Acquire), (v - PILAS_VA) >> 21) & DIRECCION
 }
 
+/// Tablas de páginas hechas para las pilas de los hilos, que no se sueltan: cuántas hay depende del máximo de hilos
+/// vivos a la vez, no es una fuga (las pruebas que cuentan páginas libres las suman, como en ARM).
+static TABLAS_PILAS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+pub fn tablas_pilas() -> usize {
+    TABLAS_PILAS.load(Ordering::Relaxed)
+}
+
 /// Una pila nueva. `None` si no quedan ranuras o memoria. Poner entradas nuevas no pide vaciar ninguna TLB: la CPU no
 /// guarda las que no están presentes (SDM, 4.10.2.3).
 pub fn pila_nueva() -> Option<Pila> {
@@ -253,6 +261,7 @@ pub fn pila_nueva() -> Option<Pila> {
         pt = paginas().pagina(Zona::Normal)?;
         unsafe { core::ptr::write_bytes(mmu::virt(pt as usize) as *mut u8, 0, PAGINA as usize) };
         poner(pd, i2, pt | TABLA);
+        TABLAS_PILAS.fetch_add(1, Ordering::Relaxed);
     }
     for i in 0..pila.paginas.len() {
         let Some(p) = paginas().pagina(Zona::Normal) else {

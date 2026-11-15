@@ -91,7 +91,8 @@ fn principal() -> u64 {
         return 9;
     }
     // 10 (auditoría de la fase 4, A1): el periodo más corto es un tic. Uno de 1 µs, en tres avisos, no pasa de unas
-    // decenas de vencimientos (sin el tope serían decenas de miles).
+    // decenas de vencimientos (sin el tope serían decenas de miles). Hasta 100: con el anfitrión cargado, entre aviso y
+    // aviso pasan más tics (salió 31 con el tope en 30).
     let (a2, b2) = canal_crear();
     let r = temporizador_crear(b2, 1, 1);
     let mut suma = 0;
@@ -99,7 +100,7 @@ fn principal() -> u64 {
         suma += aviso(a2).1;
     }
     cerrar(r as u32);
-    if suma > 30 {
+    if suma > 100 {
         println!("  [tiempo] periodo de 1 µs: {} vencimientos en tres avisos", suma);
         return 10;
     }

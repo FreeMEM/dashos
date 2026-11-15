@@ -24,12 +24,22 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     crate::pruebas_hilos::prueba_reloj();
     kprintln!("C9: {} núcleos más en marcha: {}", nucleos, if nucleos == 3 { "bien" } else { "MAL" });
     prueba_mapa();
+    prueba_arranque();
+    prueba_gic_del_kernel();
+    prueba_pagina_cero();
+    prueba_vista();
+    prueba_coste_cobro();
     prueba_dma();
     crate::pruebas_hilos::prueba_hilos();
     prueba_procesos();
     prueba_pantalla(dtb);
     prueba_avisos();
     prueba_recoger();
+    prueba_sin_monton();
+    prueba_coste();
+    prueba_cortes();
+    prueba_lz4();
+    prueba_plazo_vencido();
     prueba_controlador(dtb);
     prueba_sd(dtb);
     prueba_usb();
@@ -40,10 +50,43 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_repartos();
     prueba_asid();
     prueba_el0();
+    prueba_topes();
     prueba_lanzador();
     prueba_reparto();
     prueba_dma_proceso();
+    prueba_hilos_usuario();
+    prueba_its();
     prueba_desborde();
+}
+
+/// S2 (R11): una orden que el ITS no lee no puede tener al núcleo esperando con el cerrojo y las interrupciones
+/// cerradas. Solo con GIC v3 (en `make prueba-virt`, que va con GIC=3); con el v2 no hay ITS y no sale nada.
+fn prueba_its() {
+    if !crate::gic::es_v3() {
+        return;
+    }
+    let Some(d) = dtb::Dtb::desde() else { return };
+    if !crate::its::iniciar(&d) {
+        kprintln!("S2 ITS: MAL, no arranca");
+        return;
+    }
+    let us = |c: u64| c * 1_000_000 / crate::reloj::frecuencia();
+    let lpi = crate::its::PRIMERA_LPI;
+    let t0 = crate::reloj::ahora();
+    crate::its::encender(lpi, true);
+    let normal = us(crate::reloj::ahora() - t0);
+    crate::its::ATASCAR.store(true, core::sync::atomic::Ordering::Relaxed);
+    let t0 = crate::reloj::ahora();
+    crate::its::encender(lpi, false);
+    let atascada = us(crate::reloj::ahora() - t0);
+    crate::its::ATASCAR.store(false, core::sync::atomic::Ordering::Relaxed);
+    let t0 = crate::reloj::ahora();
+    crate::its::encender(lpi, true);
+    let despues = us(crate::reloj::ahora() - t0);
+    let sin_msi = crate::its::msi(1).is_none();
+    let bien = atascada <= 2_000 && despues <= 100 && sin_msi;
+    kprintln!("S2 ITS: {}; una orden normal {} µs, una atascada vence en {} µs, después no espera ({} µs) ni da MSI: {}",
+        if bien { "bien" } else { "MAL" }, normal, atascada, despues, if sin_msi { "sí" } else { "no" });
 }
 
 /// C4: lo que el kernel necesita del árbol de dispositivos.
@@ -148,6 +191,11 @@ fn prueba_monton() {
     drop(mapa);
     let devueltas = memoria::paginas().libres() + monton::paginas_pequenas() >= libres;
     kprintln!("C7: montón {}", if suma == 49_995_000 && devueltas { "bien" } else { "MAL" });
+    // R10: el bloque de ChaCha20, como la RFC 8439; dos peticiones seguidas no dan lo mismo.
+    let (mut x, mut y) = ([0u8; 100], [0u8; 100]);
+    crate::azar::llenar(&mut x);
+    crate::azar::llenar(&mut y);
+    kprintln!("R10: azar con ChaCha20 {}", if crate::azar::bloque_como_la_rfc() && x != y && x.iter().any(|&b| b != 0) { "bien" } else { "MAL" });
 }
 
 
@@ -197,6 +245,7 @@ fn crear_proceso_opc(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usiz
     let mut e = Espacio::nuevo(crate::cupo::Cupo::raiz()).expect("prueba: sin espacio");
     let codigo = unsafe { core::slice::from_raw_parts(ini, fin as usize - ini as usize) };
     e.pagina_nueva(VA_CODIGO, Permiso::Codigo, codigo, 0).expect("prueba: sin memoria");
+    e.codigo_listo();
     let mut datos = alloc::vec![mensaje.len() as u8];
     datos.extend_from_slice(mensaje.as_bytes());
     e.pagina_nueva(VA_DATOS, Permiso::Datos, &datos, 0).expect("prueba: sin memoria");
@@ -415,6 +464,201 @@ fn prueba_avisos() {
     let con = medir_ida_y_vuelta(200);
     kprintln!("  ida y vuelta entre los núcleos 2 y 3: sin avisos {} µs, con avisos {} µs", sin, con);
     kprintln!("C17: avisos entre núcleos {}", if con > 0 && con * 10 < sin { "bien" } else { "MAL" });
+}
+
+/// S1: lanzar un proceso cuando falla cada una de las reservas del montón que hace por el camino, una a una (la 1.ª,
+/// luego la 2.ª...), hasta que ya ninguna falla. Ninguna puede tumbar el kernel: o se lanza igual, o vuelve
+/// `SinMemoria`. Y no se pierde memoria. El hijo recibe por su llave 1 la orden de salir con 0.
+fn prueba_sin_monton() {
+    use core::sync::atomic::Ordering::Relaxed;
+    let visibles = llamadas::SALIDAS_VISIBLES.swap(false, Relaxed);
+    let libres = || memoria::paginas().libres() + monton::paginas_pequenas();
+    let intento = |k: usize| -> (bool, bool) {
+        let (a, b) = objetos::Canal::nuevo();
+        let (c, lado) = extremo(&a);
+        let _ = c.escribir(lado, objetos::Mensaje { datos: alloc::vec![1, 0], llaves: alloc::vec::Vec::new(), marca: 0 });
+        let llaves = alloc::vec![b];
+        let d = crate::cerrojo::enmascarar_irq();
+        monton::fallar_reserva(k);
+        let r = crate::procesos::lanzar(HIJO, llaves, Some(2), crate::cupo::Cupo::raiz());
+        let sin_fallo = k == 0 || monton::reserva_pendiente() != 0;
+        monton::fallar_reserva(0);
+        crate::cerrojo::restaurar_irq(d);
+        (r.is_ok(), sin_fallo)
+    };
+    for _ in 0..20 {
+        intento(0); // calentar: el montón se queda páginas para sus clases de tamaño
+    }
+    esperar_tics(30);
+    let antes = libres();
+    let (mut errores, mut lanzados, mut k) = (0, 0, 1);
+    loop {
+        let (ok, sin_fallo) = intento(k);
+        if sin_fallo {
+            break; // ya no hay una reserva número k: se han probado todas
+        }
+        if ok { lanzados += 1 } else { errores += 1 }
+        k += 1;
+        if k > 2000 {
+            break;
+        }
+        if k % 16 == 0 {
+            esperar_tics(2);
+        }
+    }
+    esperar_tics(30);
+    let despues = libres();
+    llamadas::SALIDAS_VISIBLES.store(visibles, Relaxed);
+    let perdidas = antes.saturating_sub(despues);
+    kprintln!("  {} reservas al lanzar; fallando cada una: {} veces SinMemoria, {} lanzado igual; páginas perdidas {}",
+        k - 1, errores, lanzados, perdidas);
+    kprintln!("S1: lanzar sin montón {}", if k > 1 && k <= 2000 && perdidas <= 4 { "bien" } else { "MAL" });
+}
+
+/// S1: lo que se cobra por un proceso alcanza para lo que ocupa en el kernel con la tabla de llaves llena (un
+/// programa hostil la llena: `malo`, C31). Se llena una tabla hasta que no admite más y se suman el hilo, su estado de
+/// coma flotante, el proceso, su control y la pila del kernel.
+fn prueba_coste() {
+    let clase = |n: usize| if n <= 2048 { n.next_power_of_two().max(16) } else { n.div_ceil(4096) * 4096 };
+    let (a, _b) = objetos::Canal::nuevo();
+    let mut t = objetos::TablaLlaves::default();
+    let mut n = 0;
+    while t.instalar(a.clone()).is_ok() {
+        n += 1;
+    }
+    let tabla = t.bytes();
+    drop(t);
+    let resto = planificador::bytes_por_hilo() + clase(core::mem::size_of::<objetos::Proceso>())
+        + clase(core::mem::size_of::<objetos::Control>()) + crate::mapa::PILA;
+    let total = (tabla + resto) as u64;
+    kprintln!("  tabla llena: {} llaves en {} bytes; con hilo, proceso y pila {} bytes; se cobran {} (antes 65536)",
+        n, tabla, total, crate::cupo::COSTE_PROCESO);
+    let bien = n == objetos::MAX_TABLA && tabla as u64 <= crate::cupo::TABLA_LLENA && total <= crate::cupo::COSTE_PROCESO;
+    kprintln!("S1: coste de un proceso {}", if bien { "bien" } else { "MAL" });
+}
+
+/// Los programas comprimidos del paquete de arranque (`crate::lz4`): todos se descomprimen y dan su huella, y una
+/// entrada rota (cortada, con un byte cambiado, con un salto a antes del principio o con un largo enorme) da `None`,
+/// sin pánico.
+fn prueba_lz4() {
+    // Tres de los que comprime `build.rs` (los nombra `src/inicio.rs`, que no va en esta imagen).
+    let todos: [(&str, &[u8]); 3] = [
+        ("buzon", include_bytes!(concat!(env!("OUT_DIR"), "/buzon.lz4"))),
+        ("compositor", include_bytes!(concat!(env!("OUT_DIR"), "/compositor.lz4"))),
+        ("hola", include_bytes!(concat!(env!("OUT_DIR"), "/hola.lz4"))),
+    ];
+    let (mut bien, mut bytes, mut comprimidos) = (0, 0usize, 0usize);
+    for (_, c) in &todos {
+        if let Some(e) = crate::lz4::programa(c) {
+            bien += 1;
+            bytes += e.len();
+            comprimidos += c.len();
+        }
+    }
+    let c = todos.iter().map(|t| t.1).max_by_key(|c| c.len()).unwrap_or(&[]);
+    let mut rotos = 0;
+    let mut probados = 0;
+    // Cortado, por varios sitios.
+    for corte in [0, 3, 12, 13, c.len() / 2, c.len().saturating_sub(1)] {
+        probados += 1;
+        rotos += crate::lz4::programa(c.get(..corte).unwrap_or(&[])).is_none() as usize;
+    }
+    // Un byte cambiado en el bloque: o no cuadra el formato o no cuadra la huella.
+    for sitio in [12, 40, c.len() / 3, c.len() - 2] {
+        if let Some(b) = c.get(sitio) {
+            let mut x = c.to_vec();
+            x[sitio] = b ^ 0x5a;
+            probados += 1;
+            rotos += crate::lz4::programa(&x).is_none() as usize;
+        }
+    }
+    // A mano: un salto a antes del principio, un largo de 255 que no acaba, un tamaño que no es el dicho.
+    for (bloque, tam) in [(&[0x10u8, b'a', 0x09, 0x00][..], 10usize), (&[0xf0u8, 255, 255, 255][..], 100), (&[0x30u8, b'a', b'b', b'c'][..], 4)] {
+        probados += 1;
+        rotos += crate::lz4::bloque(bloque, tam).is_none() as usize;
+    }
+    // Y uno bueno con copia solapada: "ab" y repetir 6 desde 2 atrás = "abababab".
+    let solapada = crate::lz4::bloque(&[0x22, b'a', b'b', 0x02, 0x00, 0x00], 8);
+    kprintln!("  {} programas comprimidos: {} se descomprimen con su huella, {} → {} KB; rotos rechazados {} de {}",
+        todos.len(), bien, bytes / 1024, comprimidos / 1024, rotos, probados);
+    let ok = bien == todos.len() && !todos.is_empty() && rotos == probados && solapada.as_deref() == Some(&b"abababab"[..]);
+    kprintln!("S20: programas comprimidos con LZ4 {}", if ok { "bien" } else { "MAL" });
+}
+
+/// S2: lo que tarda de más en despertar un proceso que duerme 500 µs, en el núcleo 3, mientras otro proceso en ese
+/// mismo núcleo crea y suelta objetos de memoria de 4 MB (cada uno, 1.024 páginas a cero dentro de una llamada). Sin
+/// puntos de corte, la interrupción del temporizador espera a que acabe la llamada entera.
+fn prueba_cortes() {
+    let hijo = |orden: u8, n: u8| -> Option<alloc::sync::Arc<objetos::Control>> {
+        let (a, b) = objetos::Canal::nuevo();
+        let (c, lado) = extremo(&a);
+        let _ = c.escribir(lado, objetos::Mensaje { datos: alloc::vec![orden, n], llaves: alloc::vec::Vec::new(), marca: 0 });
+        lanzar_elf_en(HIJO, alloc::vec![b], 3, crate::cupo::Cupo::raiz())
+    };
+    let esperar = |c: &alloc::sync::Arc<objetos::Control>| {
+        let inicio = reloj::tics();
+        while c.estado.tomar().fin.is_none() && reloj::tics() < inicio + 3000 {
+            esperar_tics(1);
+        }
+        c.estado.tomar().fin
+    };
+    let visibles = llamadas::SALIDAS_VISIBLES.swap(false, core::sync::atomic::Ordering::Relaxed);
+    let solo = hijo(12, 100).and_then(|c| esperar(&c));
+    let carga = hijo(11, 60);
+    let con = hijo(12, 100).and_then(|c| esperar(&c));
+    let fin_carga = carga.and_then(|c| esperar(&c));
+    llamadas::SALIDAS_VISIBLES.store(visibles, core::sync::atomic::Ordering::Relaxed);
+    let us = |f: Option<objetos::Fin>| match f {
+        Some(objetos::Fin::Salida(n)) => [n & 0xffff, n >> 16 & 0xffff, n >> 32 & 0xffff, n >> 48],
+        _ => [u64::MAX; 4],
+    };
+    let (a, b) = (us(solo), us(con));
+    kprintln!("  despertar tarde, 100 esperas de 500 µs (mediana, p90, p99, máximo): solo {:?} µs; con 60 memorias de 4 MB al lado {:?} µs ({:?})",
+        a, b, fin_carga);
+    let cortes = planificador::CORTES.load(core::sync::atomic::Ordering::Relaxed);
+    let malos = planificador::CORTES_CON_CERROJO.load(core::sync::atomic::Ordering::Relaxed);
+    kprintln!("  puntos de corte abiertos {}; con un cerrojo tomado {}", cortes, malos);
+    // El p90 con la carga, por debajo de 1 ms, o de lo que dio solo más 1 ms: con el anfitrión cargado (QEMU con otros
+    // procesos), solo ya pasa de 1 ms; sin cortes, cada llamada de 4 MB añade la suya entera.
+    let bien = fin_carga == Some(objetos::Fin::Salida(0)) && (b[1] < 1000 || b[1] < a[1].saturating_add(1000)) && cortes > 0 && malos == 0;
+    kprintln!("S2: llamadas largas troceadas {}", if bien { "bien" } else { "MAL" });
+}
+
+/// Hilos que leen con un plazo de 1 µs, ya vencido al bloquearse, mientras el reloj los echa. Antes el planificador
+/// los sacaba de la cola de dormidos como listos, se elegían a sí mismos y seguían corriendo marcados "listo"; si el
+/// reloj los echaba entonces, no volvían a ninguna cola y se perdían (le pasaba a `guardian`, 1 de cada 8 arranques).
+static PLAZO_HECHOS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+extern "C" fn leer_con_plazo_vencido(_: usize) {
+    let (a, _b) = objetos::Canal::nuevo();
+    let (c, lado) = extremo(&a);
+    // Como la llamada 35 con un plazo de 1 µs, y dormir 0 µs (un plazo de una cuenta del reloj): al planificar ya ha
+    // vencido, y el hilo sale de los dormidos y se elige a sí mismo. Después, 12 ms de cuenta (como `guardian`, que
+    // pintaba tras leer): más que un tic, así que el reloj lo echa ahí seguro.
+    let us = (reloj::frecuencia() / 1_000_000).max(1);
+    let ms = reloj::frecuencia() / 1_000;
+    for _ in 0..15 {
+        let _ = c.leer_hasta(lado, reloj::ahora() + us);
+        planificador::dormir_us(0);
+        let hasta = reloj::ahora() + 12 * ms;
+        while reloj::ahora() < hasta {
+            core::hint::spin_loop();
+        }
+    }
+    PLAZO_HECHOS.fetch_add(1, core::sync::atomic::Ordering::Release);
+}
+
+fn prueba_plazo_vencido() {
+    for i in 0..4 {
+        planificador::crear(leer_con_plazo_vencido, 0, i % 4);
+    }
+    let inicio = reloj::tics();
+    while PLAZO_HECHOS.load(core::sync::atomic::Ordering::Acquire) < 4 && reloj::tics() < inicio + 1_000 {
+        esperar_tics(1);
+    }
+    let hechos = PLAZO_HECHOS.load(core::sync::atomic::Ordering::Acquire);
+    kprintln!("  4 hilos, 15 esperas con plazo vencido y 12 ms de cuenta tras cada una: acaban {} en {} tics", hechos, reloj::tics() - inicio);
+    kprintln!("K11: plazo vencido al bloquearse {}", if hechos == 4 { "bien" } else { "MAL" });
 }
 
 /// C18: crear y terminar procesos muchas veces sin que se pierda memoria.
@@ -813,6 +1057,179 @@ fn prueba_mapa() {
     kprintln!("C34: mapa del kernel con W^X y guardas {}", if bien { "bien" } else { "MAL" });
 }
 
+/// S6: el arranque endurecido. WXN puesto en SCTLR (la CPU no ejecuta nada que se pueda escribir), y la memoria
+/// que se da al montón y a las pilas llega a cero: se ensucian una pila y un bloque grande, se sueltan, y lo que se
+/// pide después (casi siempre las mismas páginas) no trae nada.
+fn prueba_arranque() {
+    let (sctlr, _, _) = mmu::estado();
+    let wxn = sctlr & (1 << 19) != 0;
+    let mut sucias = 0usize;
+    let mut mismas = 0;
+    for _ in 0..2 {
+        let pila = mapa::pila_nueva();
+        let Some(p) = pila.as_ref() else { break };
+        let fis = mapa::traducir_fisica(p.tope() - 8);
+        let abajo = p.tope() - mapa::PILA;
+        unsafe { core::ptr::write_bytes(abajo as *mut u8, 0xAA, mapa::PILA) };
+        drop(pila);
+        let otra = mapa::pila_nueva();
+        if let Some(q) = otra.as_ref() {
+            mismas += (mapa::traducir_fisica(q.tope() - 8) == fis) as usize;
+            let s = unsafe { core::slice::from_raw_parts((q.tope() - mapa::PILA) as *const u8, mapa::PILA) };
+            sucias += s.iter().filter(|&&b| b != 0).count();
+        }
+    }
+    let mut grande = alloc::vec![0xAAu8; 64 * 1024];
+    let antes = grande.as_ptr() as usize;
+    grande.fill(0x55);
+    drop(grande);
+    let l = core::alloc::Layout::from_size_align(64 * 1024, 1).unwrap();
+    let otra = unsafe { alloc::alloc::alloc(l) };
+    let misma_grande = otra as usize == antes;
+    if !otra.is_null() {
+        sucias += unsafe { core::slice::from_raw_parts(otra, l.size()) }.iter().filter(|&&b| b != 0).count();
+        unsafe { alloc::alloc::dealloc(otra, l) };
+    }
+    kprintln!("  WXN {}; pilas con las mismas páginas {} de 2, bloque grande el mismo {}; bytes sucios {}",
+        if wxn { "puesto" } else { "sin poner" }, mismas, misma_grande, sucias);
+    kprintln!("S6: arranque endurecido {}", if wxn && sucias == 0 { "bien" } else { "MAL" });
+}
+
+/// S4: lo que usa el kernel de la ventana de periféricos (el GIC) no se proyecta a ningún proceso, ni una página que
+/// lo pise; el PL011, que es de un controlador, sí.
+fn prueba_gic_del_kernel() {
+    let Some((gic, _)) = crate::placa::zona_del_kernel(0) else {
+        kprintln!("S4: el GIC del kernel MAL (no está apuntado)");
+        return;
+    };
+    let Some(mut e) = espacio::Espacio::nuevo(crate::cupo::Cupo::raiz()) else { return };
+    let va = 0x10_0000_0000u64;
+    let al_gic = e.proyectar_dispositivo(va, gic, 0x1000).is_err();
+    let pisando = e.proyectar_dispositivo(va, gic - 0x1000, 0x2000).is_err();
+    let serie = e.proyectar_dispositivo(va + 0x10_0000, (crate::placa::SERIE as u64) & !0xfff, 0x1000).is_ok();
+    kprintln!("  GIC en {:#x}: proyectarlo {}, una zona que lo pisa {}, el PL011 {}", gic,
+        if al_gic { "no" } else { "SÍ" }, if pisando { "no" } else { "SÍ" }, if serie { "sí" } else { "no" });
+    kprintln!("S4: el GIC del kernel {}", if al_gic && pisando && serie { "bien" } else { "MAL" });
+}
+
+/// H4 (S3): la página 0 de la caja Amiga. Un objeto de una página se proyecta en la dirección 0 solo de lectura y sin
+/// ejecutar; uno más grande, no; dos veces, no; y por el camino normal (`proyectar_memoria`) la dirección 0 y el resto
+/// de los primeros 64 KB siguen cerrados. El kernel no copia desde la página 0 (`para_copiar`). Quién puede pedirla (el
+/// permiso de la llamada 49) lo prueba `malo` (paso 38); que el 68k la lea y no pueda escribirla, la caja en
+/// `arranque-virt`.
+fn prueba_pagina_cero() {
+    let raiz = crate::cupo::Cupo::raiz();
+    let Some(mut e) = espacio::Espacio::nuevo(raiz.clone()) else { return };
+    let (Some(una), Some(dos)) = (memoria::Memoria::nueva(4096, &raiz), memoria::Memoria::nueva(8192, &raiz)) else { return };
+    let (una, dos) = (alloc::sync::Arc::new(una), alloc::sync::Arc::new(dos));
+    let grande = e.proyectar_pagina_cero(&dos).is_err();
+    let normal = (0..16).all(|i| e.proyectar_memoria(i * 0x1000, &una, espacio::Acceso::Leer, &[]).is_err());
+    let hecha = e.proyectar_pagina_cero(&una).is_ok();
+    let permisos = e.permisos_el0(0);
+    let otra = e.proyectar_pagina_cero(&una).is_err();
+    let resto = (1..16).all(|i| e.permisos_el0(i * 0x1000).is_none());
+    let copia = matches!(e.para_copiar(4, false), espacio::Copia::Falla);
+    let quitada = e.quitar_proyeccion(0, None, None) && e.permisos_el0(0).is_none();
+    kprintln!("  página 0: de dos páginas {}, por la vía normal {}, proyectada {}, permisos EL0 {:?}, otra vez {}",
+        if grande { "no" } else { "SÍ" }, if normal { "no" } else { "SÍ" }, if hecha { "sí" } else { "no" }, permisos,
+        if otra { "no" } else { "SÍ" });
+    let bien = grande && normal && hecha && permisos == Some((true, false, false)) && otra && resto && copia && quitada;
+    kprintln!("H4: la página 0 de la caja Amiga, solo de lectura y el resto de los 64 KB cerrado: {}", if bien { "bien" } else { "MAL" });
+}
+
+/// Cupos como topes: lo que cuesta cobrar. 10.000 objetos de memoria de una página creados y soltados en un grupo a tres
+/// niveles bajo el raíz (como lo que lanza `sesiones`), y 100.000 cobros sueltos de 4 KB. Lo mejor de tres vueltas, en
+/// µs, para comparar antes y después (`docs/bitacoras/cupos.md`).
+fn prueba_coste_cobro() {
+    let raiz = crate::cupo::Cupo::raiz();
+    let Some(g1) = raiz.hijo(64 << 20) else { return };
+    let Some(g2) = g1.hijo(32 << 20) else { return };
+    let Some(g3) = g2.hijo(16 << 20) else { return };
+    let us = |c: u64| c * 1_000_000 / reloj::frecuencia().max(1);
+    let (mut objetos, mut cobros) = (u64::MAX, u64::MAX);
+    for _ in 0..3 {
+        let t = reloj::ahora();
+        for _ in 0..10_000 {
+            let m = memoria::Memoria::nueva(4096, &g3);
+            core::hint::black_box(&m);
+        }
+        objetos = objetos.min(us(reloj::ahora() - t));
+        let t = reloj::ahora();
+        for _ in 0..100_000 {
+            let c = g3.cobrar(4096);
+            core::hint::black_box(&c);
+        }
+        cobros = cobros.min(us(reloj::ahora() - t));
+    }
+    kprintln!("  coste de cobrar: 10000 objetos de 4 KB en {} µs; 100000 cobros en {} µs; usado al final {}", objetos, cobros, g3.uso().1);
+}
+
+/// H9: las vistas de memoria (llamada 50), para que el compositor lea sin copia los búferes de un invitado. Una vista
+/// ve las páginas que se le piden de sus orígenes, en ese orden; un número fuera, una lista vacía o una vista como
+/// origen no valen; se cobra solo su lista, y si no cabe en el cupo, no se hace; soltar el origen con la vista viva no
+/// devuelve sus páginas (siguen viéndose, y nadie más las recibe) hasta soltar la vista, y entonces el cupo vuelve a
+/// cero; y solo se proyecta para leer. Lo que ve un proceso de la llamada (derechos, llaves, tablas malas) lo prueba
+/// `malo` (paso 39).
+fn prueba_vista() {
+    use alloc::sync::Arc;
+    let raiz = crate::cupo::Cupo::raiz();
+    let Some(c) = raiz.hijo(1 << 20) else { return };
+    let (Some(a), Some(b)) = (memoria::Memoria::nueva(3 * 4096, &c), memoria::Memoria::nueva(2 * 4096, &c)) else { return };
+    // Cada página empieza por su nombre: a0, a1, a2, b0, b1.
+    for (i, m) in [(0u8, &a), (1, &b)] {
+        for p in 0..m.paginas() {
+            m.escribir(p * 4096, &[b'a' + i, b'0' + p as u8]);
+        }
+    }
+    let (a, b) = (Arc::new(a), Arc::new(b));
+    let uso_origenes = c.uso().1;
+    let nombre = |m: &memoria::Memoria, p: usize| {
+        let mut n = [0u8; 2];
+        m.leer(p * 4096, &mut n);
+        n
+    };
+    let v = memoria::Memoria::vista(&[a.clone(), b.clone()], &[4, 0, 2, 2], &c);
+    let vista_bien = v.as_ref().is_ok_and(|v| {
+        v.es_vista() && v.paginas() == 4 && [*b"b1", *b"a0", *b"a2", *b"a2"].iter().enumerate().all(|(i, n)| nombre(v, i) == *n)
+    });
+    let Ok(v) = v else {
+        kprintln!("H9: vistas de memoria: MAL (no se hizo)");
+        return;
+    };
+    let cobrado = c.uso().1 == uso_origenes + memoria::coste_vista(4, 2);
+    let fuera = memoria::Memoria::vista(&[a.clone(), b.clone()], &[5], &c).err() == Some(memoria::FalloVista::Fuera)
+        && memoria::Memoria::vista(&[a.clone()], &[], &c).err() == Some(memoria::FalloVista::Fuera)
+        && memoria::Memoria::vista(&[a.clone()], &[u32::MAX], &c).err() == Some(memoria::FalloVista::Fuera);
+    let v = Arc::new(v);
+    let de_vista = memoria::Memoria::vista(&[v.clone()], &[0], &c).err() == Some(memoria::FalloVista::Origen);
+    // Un cupo que no llega a la lista: no se hace, y no queda nada cobrado.
+    let corto = c.hijo(300).is_some_and(|h| memoria::Memoria::vista(&[a.clone()], &[0; 16], &h).err() == Some(memoria::FalloVista::Memoria) && h.uso().1 == 0);
+    // Solo para leer.
+    let mut proyeccion = false;
+    if let Some(mut e) = espacio::Espacio::nuevo(raiz.clone()) {
+        let va = 0x7_0000_0000;
+        proyeccion = e.proyectar_memoria(va, &v, espacio::Acceso::Escribir, &[]).is_err()
+            && e.proyectar_memoria(va, &v, espacio::Acceso::Ejecutar, &[]).is_err()
+            && e.proyectar_memoria(va, &v, espacio::Acceso::Leer, &[]).is_ok()
+            && e.permisos_el0(va) == Some((true, false, false))
+            && e.quitar_proyeccion(va, None, None);
+    }
+    // El origen se suelta con la vista viva: sus páginas no vuelven al repartidor y la vista las sigue viendo.
+    let antes = memoria::paginas().libres();
+    drop(a);
+    let sigue = memoria::paginas().libres() == antes && nombre(&v, 1) == *b"a0" && nombre(&v, 2) == *b"a2";
+    // Al soltar la vista, vuelven las 3 páginas de `a` y lo cobrado por los dos.
+    drop(v);
+    let vuelven = memoria::paginas().libres() == antes + 3;
+    let uso_b = c.uso().1 == 2 * 4096;
+    drop(b);
+    let cero = c.uso().1 == 0;
+    kprintln!("  vistas: orden {}, cobro {}, fuera {}, de una vista {}, sin cupo {}, solo leer {}, origen suelto {}, páginas devueltas {}, cupo a cero {}",
+        vista_bien, cobrado, fuera, de_vista, corto, proyeccion, sigue, vuelven, uso_b && cero);
+    let bien = vista_bien && cobrado && fuera && de_vista && corto && proyeccion && sigue && vuelven && uso_b && cero;
+    kprintln!("H9: vistas de memoria con páginas de otro objeto, solo de lectura: {}", if bien { "bien" } else { "MAL" });
+}
+
 /// C38: con memoria por encima del primer GB, nada del kernel ni de los procesos queda al alcance del DMA de la SD y
 /// de la placa (el primer GB): la imagen del kernel está en su copia, y el montón, las pilas y la memoria de los
 /// procesos salen de arriba. El primer GB queda para los búferes de DMA. La copia no tiene alias en el mapa lineal.
@@ -829,7 +1246,7 @@ fn prueba_dma() {
     let pila = mapa::pila_nueva();
     let pila_f = pila.as_ref().and_then(|p| mapa::traducir_fisica(p.tope() - 8)).unwrap_or(0);
     drop(pila);
-    let usuario = memoria::paginas().pagina_usuario().unwrap_or(0);
+    let usuario = memoria::pagina_usuario().unwrap_or(0);
     let dma = memoria::paginas().pagina(memoria::Zona::Dma1G).unwrap_or(u64::MAX);
     unsafe {
         memoria::paginas().liberar(usuario, 1);
@@ -852,6 +1269,64 @@ static HIJO: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-s
 /// C41: llaves completas (`usuario/src/bin/llaves.rs`).
 static LLAVES: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/llaves");
 static TIEMPO: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/tiempo");
+
+/// S3, cupos como topes, desde el kernel: un cobro sube por toda la cadena y, si no cabe arriba, no queda nada a
+/// medias abajo; cien hermanos con topes de 1 TB caben (solo cuestan lo que ocupan); y la memoria llena de verdad: falla
+/// limpio, avisa de la memoria baja por el canal del oyente (llamada 53) y, soltada, avisa de que vuelve.
+fn prueba_topes() {
+    use crate::presion;
+    let raiz = crate::cupo::Cupo::raiz();
+    let Some(g1) = raiz.hijo(4 << 20) else { return };
+    let (Some(g2), Some(g3)) = (g1.hijo(64 << 20), g1.hijo(1 << 40).and_then(|x| x.hijo(1 << 40))) else { return };
+    let a = g2.cobrar(1 << 20);
+    let b = g3.cobrar(2 << 20);
+    let suben = a.is_some() && b.is_some() && g1.uso().1 >= 3 << 20 && g2.uso().1 == 1 << 20 && g3.uso().1 == 2 << 20;
+    // 2 MB más en g3 no caben en g1 (4 MB): no se cobra, y ni g3 ni su padre se quedan con nada de más.
+    let antes = (g1.uso().1, g3.uso().1);
+    let no_cabe = g3.cobrar(2 << 20).is_none() && (g1.uso().1, g3.uso().1) == antes;
+    drop((a, b));
+    let vuelven = g2.uso().1 == 0 && g3.uso().1 == 0;
+    let hermanos: alloc::vec::Vec<_> = (0..100).filter_map(|_| g1.hijo(1 << 40)).collect();
+    let cien = hermanos.len() == 100 && g1.uso().1 < 100 * 1024
+        && g3.es_o_cuelga_de(&g1) && g3.es_o_cuelga_de(&g3) && !g2.es_o_cuelga_de(&g3) && !g1.es_o_cuelga_de(&g2);
+    drop(hermanos);
+    // La memoria llena de verdad, con un oyente del aviso.
+    let (x, _y) = objetos::Canal::nuevo();
+    let objetos::Objeto::Extremo(p) = &x.objeto else { return };
+    let canal = p.canal().clone();
+    presion::escuchar(canal.clone(), 0, alloc::vec::Vec::new(), 7);
+    let nivel_de = |canal: &alloc::sync::Arc<objetos::Canal>| -> Option<u32> {
+        for _ in 0..100 {
+            presion::repartir();
+            if let Some(m) = canal.intentar_leer(1) {
+                return Some(u32::from_le_bytes(m.datos[0..4].try_into().ok()?)).filter(|_| m.marca == 7 && m.datos.len() == 24);
+            }
+            esperar_tics(1);
+        }
+        None
+    };
+    let primero = nivel_de(&canal);
+    let Some(g) = raiz.hijo(u64::MAX / 2) else { return };
+    let mut tomado = alloc::vec::Vec::new();
+    while let Some(m) = memoria::Memoria::nueva(16 << 20, &g) {
+        if tomado.try_reserve(1).is_err() {
+            break;
+        }
+        tomado.push(m);
+    }
+    let mb = tomado.len() * 16;
+    let queda = memoria::libres_para_procesos() >> 20;
+    presion::mirar();
+    let baja = presion::nivel() == 1 && nivel_de(&canal) == Some(1);
+    drop(tomado);
+    presion::mirar();
+    let normal = presion::nivel() == 0 && nivel_de(&canal) == Some(0) && g.uso().1 == 0;
+    presion::callar();
+    kprintln!("  topes: cadena {}, sin cobro a medias {}, devuelto {}, cien hermanos de 1 TB {}; memoria llena a {} MB (quedan {} MB), aviso {:?}, baja {}, de vuelta {}",
+        suben, no_cabe, vuelven, cien, mb, queda, primero, baja, normal);
+    let bien = suben && no_cabe && vuelven && cien && mb > 0 && queda < 64 && primero == Some(0) && baja && normal;
+    kprintln!("S3: cupos como topes y aviso de memoria baja {}", if bien { "bien" } else { "MAL" });
+}
 
 /// C43: las pruebas que son programas sueltos las lanza un proceso (`usuario/src/bin/lanzador.rs`), cada una en su
 /// grupo de 64 MB, y comprueba sus códigos de salida. El kernel solo le da el paquete con los ELF.
@@ -901,11 +1376,14 @@ fn prueba_lanzador() {
         paquete.extend_from_slice(elf);
     }
     llamadas::SALIDAS_VISIBLES.store(true, core::sync::atomic::Ordering::Relaxed);
+    // Las tablas de la zona de pilas no se devuelven (crecen con el máximo de hilos vivos a la vez): se cuentan aparte.
+    let tablas = crate::mapa::tablas_pilas();
     let libres = memoria::paginas().libres() + monton::paginas_pequenas();
     let Some(m) = memoria::Memoria::nueva(paquete.len(), &raiz) else { return };
     m.escribir(0, &paquete);
     let m = objetos::Llave::nueva(objetos::Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::LEER);
-    let Some(grupo) = raiz.hijo(256 << 20) else { return };
+    // Sin tope de verdad (1 TB): `grupos` llena la memoria de la máquina a propósito (S3). Ya no se aparta nada.
+    let Some(grupo) = raiz.hijo(1 << 40) else { return };
     let Some(control) = lanzar_elf_en(LANZADOR, alloc::vec![m], 2, grupo.clone()) else { return };
     let inicio = reloj::tics();
     // Con margen: con la máquina cargada, QEMU va mucho más lento.
@@ -920,13 +1398,14 @@ fn prueba_lanzador() {
     let mut despues = 0;
     while reloj::tics() < espera + 300 {
         esperar_tics(5);
-        despues = memoria::paginas().libres() + monton::paginas_pequenas();
+        despues = memoria::paginas().libres() + monton::paginas_pequenas() + (crate::mapa::tablas_pilas() - tablas);
         if despues >= libres {
             break;
         }
     }
     let usado = grupo.uso().1;
     kprintln!("  lanzador acabó: {:?}; usado en su grupo al final: {} bytes; páginas libres antes {}, después {}", fin, usado, libres, despues);
+    kprintln!("  tablas de pilas nuevas: {}", crate::mapa::tablas_pilas() - tablas);
     let bien = fin == Some(objetos::Fin::Salida(43)) && usado == 0 && despues >= libres && niveles == crate::cupo::MAX_PROFUNDIDAD as usize - 1;
     kprintln!("C43: pruebas de usuario lanzadas por un proceso {}", if bien { "bien" } else { "MAL" });
 }
@@ -997,6 +1476,108 @@ fn prueba_dma_proceso() {
     }
     let fin = control.estado.tomar().fin;
     kprintln!("C46: memoria DMA con permiso {}", if fin == Some(objetos::Fin::Salida(46)) { "bien" } else { "MAL" });
+}
+
+/// C52: hilos de usuario (`docs/diseño/hilos-de-usuario.md`), con `usuario/src/bin/hilos.rs`. Una víctima con hilos
+/// bloqueados de todas las formas; la prueba entera, que intenta unirse a un hilo de la víctima; un proceso cuyo hilo
+/// falla y otro cuyo hilo acaba el proceso. Al final se mata a la víctima. Cada uno en su grupo, que tiene que quedar a
+/// cero, y nada colgado.
+static HILOS_U: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hilos");
+
+fn esperar_fin(c: &objetos::Control, tics: u64) -> Option<objetos::Fin> {
+    let inicio = reloj::tics();
+    while c.estado.tomar().fin.is_none() && reloj::tics() < inicio + tics {
+        reloj::esperar_interrupcion();
+    }
+    c.estado.tomar().fin
+}
+
+/// Lo usado en el grupo cuando vuelve a cero, o lo que quede pasados 3 s.
+fn esperar_cero(g: &crate::cupo::Cupo) -> u64 {
+    let inicio = reloj::tics();
+    while g.uso().1 != 0 && reloj::tics() < inicio + 300 {
+        esperar_tics(2);
+    }
+    g.uso().1
+}
+
+/// Lanza `hilos` en un grupo nuevo de `bytes`, con la orden `orden` en su canal. Devuelve su control, su grupo y el lado
+/// del canal que queda aquí.
+fn lanzar_hilos(orden: &[u8], bytes: u64, nucleo: usize) -> Option<(alloc::sync::Arc<objetos::Control>, alloc::sync::Arc<crate::cupo::Cupo>, objetos::Llave)> {
+    let g = crate::cupo::Cupo::raiz().hijo(bytes)?;
+    let (mio, suyo) = objetos::Canal::nuevo();
+    let (c, lado) = extremo(&mio);
+    c.escribir(lado, objetos::Mensaje { datos: orden.to_vec(), llaves: alloc::vec::Vec::new(), marca: 0 }).ok()?;
+    let control = lanzar_elf_en(HILOS_U, alloc::vec![suyo], nucleo, g.clone())?;
+    Some((control, g, mio))
+}
+
+fn prueba_hilos_usuario() {
+    use objetos::Fin;
+    llamadas::SALIDAS_VISIBLES.store(false, core::sync::atomic::Ordering::Relaxed);
+    // Lo que cuesta un hilo cabe en lo que se cobra: el hilo, su FPU y su arranque, su registro en el proceso (en un
+    // vector que dobla), su sitio en la lista del proceso, en una cola de espera y en las colas de los cuatro núcleos.
+    let clase = |n: usize| if n <= 2048 { n.next_power_of_two().max(16) } else { n.div_ceil(4096) * 4096 };
+    let hilo = planificador::bytes_por_hilo() + 2 * clase(core::mem::size_of::<objetos::RegistroHilo>()) + 2 * 8 + 2 * 16 + 4 * 2 * 8;
+    let coste = hilo as u64 + crate::mapa::PILA as u64 <= crate::cupo::COSTE_HILO;
+    kprintln!("  un hilo de usuario ocupa {} bytes más su pila del kernel; se cobran {}", hilo, crate::cupo::COSTE_HILO);
+    let tablas = crate::mapa::tablas_pilas();
+    let libres = memoria::paginas().libres() + monton::paginas_pequenas();
+
+    // La víctima, en el núcleo 2: dice el número de uno de sus hilos.
+    let Some((victima, gv, canal_v)) = lanzar_hilos(b"v", 8 << 20, 2) else { return };
+    let (cv, lado_v) = extremo(&canal_v);
+    let inicio = reloj::tics();
+    let mut ajeno = None;
+    while ajeno.is_none() && reloj::tics() < inicio + 500 {
+        esperar_tics(1);
+        ajeno = cv.intentar_leer(lado_v).and_then(|m| m.datos.get(..8).map(|b| u64::from_le_bytes(b.try_into().unwrap_or([0; 8]))));
+    }
+    let ajeno = ajeno.unwrap_or(0);
+
+    // La prueba entera, en el núcleo 1, en un grupo de 4 MB: ahí topan los hilos sin fin.
+    let mut orden = alloc::vec![b'p'];
+    orden.extend_from_slice(&ajeno.to_le_bytes());
+    let Some((prueba, gp, _cp)) = lanzar_hilos(&orden, 4 << 20, 1) else { return };
+    let fin_prueba = esperar_fin(&prueba, 12000);
+    let usado_p = esperar_cero(&gp);
+
+    // Un hilo que falla se lleva el proceso entero; uno que llama a `proceso_salir`, también, con su código.
+    let Some((fallo, gf, _cf)) = lanzar_hilos(b"f", 4 << 20, 3) else { return };
+    let fin_fallo = esperar_fin(&fallo, 500);
+    let usado_f = esperar_cero(&gf);
+    let Some((salir, gs, _cs)) = lanzar_hilos(b"s", 4 << 20, 3) else { return };
+    let fin_salir = esperar_fin(&salir, 500);
+    let usado_s = esperar_cero(&gs);
+
+    // Matar a la víctima: todos sus hilos acaban, también los dormidos y el que gira.
+    let vivia = victima.estado.tomar().fin.is_none();
+    planificador::matar_proceso(&victima);
+    let fin_v = esperar_fin(&victima, 300);
+    let usado_v = esperar_cero(&gv);
+    drop((victima, prueba, fallo, salir, canal_v, _cp, _cf, _cs));
+    let mut despues = 0;
+    let espera = reloj::tics();
+    while reloj::tics() < espera + 300 {
+        esperar_tics(5);
+        despues = memoria::paginas().libres() + monton::paginas_pequenas() + (crate::mapa::tablas_pilas() - tablas);
+        if despues >= libres {
+            break;
+        }
+    }
+    llamadas::SALIDAS_VISIBLES.store(true, core::sync::atomic::Ordering::Relaxed);
+    kprintln!("  hilo ajeno {}; la prueba acabó {:?}, uno que falla {:?}, uno que acaba el proceso {:?}", ajeno, fin_prueba, fin_fallo, fin_salir);
+    kprintln!("  víctima viva hasta matarla {}, y luego {:?}; usado en los grupos al final: {}, {}, {}, {}", vivia, fin_v, usado_p, usado_f, usado_s, usado_v);
+    kprintln!("  páginas libres antes {}, después {}", libres, despues);
+    let bien = coste
+        && ajeno != 0
+        && fin_prueba == Some(Fin::Salida(52))
+        && fin_fallo == Some(Fin::Fallo)
+        && fin_salir == Some(Fin::Salida(77))
+        && vivia
+        && fin_v == Some(Fin::Matado)
+        && usado_p + usado_f + usado_s + usado_v == 0;
+    kprintln!("C52: hilos de usuario {}", if bien { "bien" } else { "MAL" });
 }
 
 /// C34, la última prueba: un hilo del kernel que se llama a sí mismo sin fin llega a la guarda de su pila. El kernel

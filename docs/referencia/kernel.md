@@ -55,12 +55,16 @@ Reglas comunes:
 
 ### Mapa de direcciones de un proceso
 
-El espacio de usuario va de 64 KB a 512 GB (`1 << 39`). Los primeros 64 KB no se proyectan nunca. Hoy está así:
+El espacio de usuario va de 64 KB a 512 GB (`1 << 39`). Los primeros 64 KB no se proyectan nunca, con una excepción:
+un proceso con el permiso de página 0 (la caja Amiga, H4) puede proyectar con la llamada 49 una página de solo lectura
+en la dirección 0 (ExecBase en la dirección 4); el resto de los 64 KB sigue cerrado también para él, y el kernel no
+copia nunca desde la página 0 ni hacia ella. Sin PAN (la A72 no lo tiene), un puntero nulo del kernel mientras corre la
+caja leería esa página en vez de fallar; escribir en ella, no. Hoy está así:
 
 | Tramo | Uso |
 |---|---|
 | 0 – 2 GB | Ejecutables `ET_EXEC` (desde `0x40_0000`) y su pila (hasta `0x8000_0000`) |
-| 0 – 4 GB | En la caja Amiga, la memoria del Amiga tal cual (S3). Ningún código nativo de la caja va aquí |
+| 0 – 4 GB | En la caja Amiga, la memoria del Amiga tal cual (S3). Ningún código nativo de la caja va aquí: es un PIE |
 | desde 4 GB | Libre. El runtime de Dash pone ahí su montón, con `memoria_crear` y `memoria_proyectar` |
 | 128 – 256 GB | Imagen de los PIE |
 | 256 – 384 GB | Pila de los PIE |
@@ -70,8 +74,11 @@ El programa decide dónde proyecta su memoria. El kernel no le busca sitio.
 
 ### Fin de un proceso
 
-- `salir(código)` termina el hilo, y con él el proceso.
-- Una excepción del programa termina el proceso, no el sistema. Por ejemplo, un fallo de página, una instrucción
+- `salir(código)` termina el hilo que llama. El proceso acaba con su último hilo, con el código de ese.
+- `proceso_salir(código)` (44) termina el proceso entero, con todos sus hilos.
+- Hilos de usuario: `docs/diseño/hilos-de-usuario.md`. Un hilo creado con `hilo_crear` cuesta 20 KB al grupo hasta
+  que alguien se une a él (o acaba el proceso). En x86-64, 24 KB: su estado de coma flotante (XSAVE) ocupa 4 KB.
+- Una excepción del programa, en cualquiera de sus hilos, termina el proceso entero, no el sistema. Por ejemplo, un fallo de página, una instrucción
   ilegal o una alineación incorrecta. El kernel escribe en la consola la clase de la excepción, la dirección de la
   instrucción y la dirección del fallo.
 - Al morir el último hilo se liberan la tabla de llaves, el espacio de direcciones y las páginas que solo usaba ese
@@ -83,10 +90,20 @@ Cada hilo tiene sus propios registros de coma flotante y SIMD: `q0`–`q31`, `FP
 y `FPCR` = 0, es decir, redondeo al más cercano y sin excepciones de coma flotante. El kernel los guarda solo cuando
 otro hilo del mismo núcleo usa la FPU (C28). No hay SVE.
 
+### Cachés
+
+Desde H4, EL0 puede leer `CTR_EL0` y limpiar o invalidar las cachés por dirección virtual (`dc cvau`, `dc cvac`,
+`dc civac`, `ic ivau`; `SCTLR_EL1.UCT` y `UCI`), como en Linux. La MMU lo comprueba con los permisos del proceso.
+Lo usa un JIT (ver la llamada 8). `dc ivac` y las operaciones por conjunto y vía siguen prohibidas: el proceso muere.
+
 ### Planificación
 
-Los procesos de usuario van en la clase justa: reparto por tiempo virtual, con un tic de 10 ms. La clase de plazos de
-S2 existe, pero hoy solo la usa el kernel. Un proceso corre en el núcleo donde se creó y no cambia de núcleo.
+Los procesos de usuario van en la clase justa: reparto por tiempo virtual, con un tic de 10 ms. Un hilo que despierta
+empieza como mucho medio tic por debajo del mínimo de su núcleo y, si va por delante del que corre, se adelanta al
+momento (M1 y M3, `docs/MULTITAREA_LOOP.md`). La clase de plazos de S2 la usan el kernel y el sonido (llamada 28, con
+el permiso de plazo que reparte `inicio`, S3). Lo prometido a la clase en un núcleo, contando los hilos que duermen o
+esperan, no pasa del 80 % (K8). Un
+proceso corre en el núcleo donde se creó y no cambia de núcleo.
 
 ### El programa de inicio
 
@@ -95,7 +112,9 @@ las únicas que da el kernel:
 
 - La 1: el paquete de arranque, un objeto de memoria de solo lectura. Dice qué es cada una de las demás llaves y trae
   los ELF de los servicios. Su formato está en `kernel/src/inicio.rs`.
-- Después, los permisos DMA (uno por aparato con DMA), el registro del sistema, la memoria de la VideoCore y, para
+- Después, los permisos DMA (uno por aparato con DMA), el registro del sistema, el permiso de plazo, el de máquinas
+  virtuales (H9), el de página 0 (H4), el de apagar (llamada 51), el del aviso de memoria (llamada 53), la memoria de
+  la VideoCore y, para
   cada aparato del árbol que conoce el kernel (serie, SD, USB, buzón de la VideoCore, y la V3D si contesta), sus
   registros (en páginas enteras) y su interrupción.
 
@@ -124,8 +143,8 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 4 | `canal_escribir` | `x0` llave, `x1` datos, `x2` longitud, `x3` tabla de llaves, `x4` cuántas | 0 |
 | 5 | `canal_leer` | `x0` llave, `x1` búfer, `x2` capacidad, `x3` tabla de llaves, `x4` capacidad de la tabla | `x0` bytes, `x1` llaves recibidas |
 | 6 | `cerrar` | `x0` llave | 0 |
-| 7 | `memoria_crear` | `x0` tamaño (hasta 4 MB) | Llave de un objeto de memoria |
-| 8 | `memoria_proyectar` | `x0` llave, `x1` dirección (alineada a 4 KB), `x2` permisos: 1 leer, 2 escribir | 0 |
+| 7 | `memoria_crear` | `x0` tamaño (hasta 16 MB) | Llave de un objeto de memoria |
+| 8 | `memoria_proyectar` | `x0` llave, `x1` dirección (alineada a 4 KB), `x2` permisos: 1 leer, 2 escribir, 4 ejecutar | 0 |
 | 9 | `registros_proyectar` | `x0` llave de registros, `x1` dirección (alineada a 4 KB) | 0 |
 | 10 | `interrupcion_asociar` | `x0` llave de interrupción, `x1` llave de un extremo de canal | 0 |
 | 11 | `interrupcion_terminar` | `x0` llave de interrupción | 0 |
@@ -135,9 +154,9 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 15 | `llave_duplicar` | `x0` llave, `x1` derechos, `x2` marca | Llave nueva |
 | 16 | `llave_revocable` | `x0` llave | `x0` copia revocable, `x1` revocador |
 | 17 | `revocar` | `x0` revocador | 0 |
-| 18 | `grupo_crear` | `x0` presupuesto en bytes | Llave de grupo |
+| 18 | `grupo_crear` | `x0` tope en bytes | Llave de grupo |
 | 19 | `grupo_matar` | `x0` llave de grupo | 0 |
-| 20 | `grupo_uso` | `x0` llave de grupo | `x0` límite, `x1` usado |
+| 20 | `grupo_uso` | `x0` llave de grupo | `x0` tope, `x1` usado con sus subgrupos, `x2` usado sin ellos |
 | 21 | `memoria_quitar` | `x0` dirección donde empieza una proyección | 0 |
 | 23 | `registro_leer` | `x0` llave del registro, `x1` búfer, `x2` capacidad | Bytes leídos |
 | 22 | `memoria_dma` | `x0` permiso DMA, `x1` tamaño | `x0` llave de memoria, `x1` dirección de bus |
@@ -145,7 +164,33 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 26 | `dma_liberar` | `x0` permiso DMA | Páginas devueltas |
 | 27 | `memoria_tamano` | `x0` llave de memoria (con derecho de leer) | Bytes que mide (páginas enteras) |
 | 24 | `temporizador_crear` | `x0` llave de un extremo de canal, `x1` primer plazo en µs, `x2` periodo en µs (0: una vez) | Llave del temporizador |
-| 29 | `puertos_permitir` | `x0` llave de puertos de E/S (solo x86) | 0 |
+| 28 | `plazo` | `x0` permiso de plazo (con escribir; no hace falta con capacidad 0), `x1` capacidad en µs (0: vuelve a la clase justa), `x2` periodo en µs (de 1 ms a 1 s) | 0, o `E_LIMITE` si no se admite |
+| 29 | `medir` | `x0` 0: núcleo de quien llama; 1, 2, 3: interrupciones, cambios de hilo o µs ociosos del núcleo `x1`; 4: hilos robados entre núcleos; 5, 6, 7: páginas de RAM, páginas libres y bytes del kernel; 8, 9, 10: hilos despertados que pasaron a correr, de ellos tras más de 100 µs, y µs de espera en total; 11: pasadas que dejaron seguir al que corría con uno recién despertado en la cola; 12: páginas del montón del kernel; 13: páginas que no estaban libres al arrancar (imagen del kernel, firmware, árbol); 14: los núcleos en marcha, un bit por núcleo; 15 y 16: bytes libres para procesos ahora y los que había al arrancar (lo que mira el aviso de memoria baja, llamada 53). El 3 cuenta también el rato ocioso de ahora (un núcleo dormido sin tic no parece ocupado) | El número; `E_ARGUMENTO` con un núcleo que no existe |
+| 30 | `dormir` | `x0` microsegundos (como mucho una hora) | 0, al despertar (antes si lo matan) |
+| 31 | `fijar` | `x0` 1: el hilo que llama no se mueve de su núcleo; 0: el reparto entre núcleos puede moverlo | 0 |
+| 32, 33 | — | Reservadas para la ida y vuelta con paso directo (K6) | |
+| 34 | `azar` | `x0` búfer, `x1` bytes (hasta 256) | `x0` bytes; `x1` 1 si son de calidad (el kernel tuvo semilla del firmware), 0 si no |
+| 35 | `canal_leer_plazo` | Como 5, pero `x4` lleva en sus 16 bits bajos cuántas llaves caben y en el resto el plazo en µs (0: sin plazo) | Como 5, o `E_PLAZO` si vence sin mensaje (K7) |
+| 36 | `proceso_avisar` | `x0` proceso (con leer), `x1` canal (con escribir) | 0. Cuando el proceso acabe (o ya, si acabó), el kernel escribe por el canal 16 bytes: clase y código como en `proceso_esperar` (u64 little-endian), con la marca de la llave del canal. Hasta 16 por proceso (`E_LIMITE`); con la cola llena, el aviso se pierde (K7) |
+| 37 | `proceso_numero` | `x0` proceso (con leer) | Su número de proceso en el kernel: no se repite, desde 1 (U6) |
+| 38 | `grupo_procesos` | `x0` grupo (con leer), `x1` dónde, `x2` cuántos caben (hasta 64) | Cuántos procesos vivos tiene el grupo; escribe sus números (u64) en `x1`. Solo con la llave del grupo (U6) |
+| 40 | `hilo_crear` | `x0` entrada, `x1` pila (alineada a 16), `x2` argumento, `x3` TLS | El número del hilo. Baja a EL0 en la entrada con SP = pila, x0 = argumento y TPIDR_EL0 = TLS. `E_ARGUMENTO` si la entrada no es código del proceso o la pila no es memoria suya que se pueda escribir; `E_MEMORIA` si no cabe en el grupo; `E_LIMITE` con 256 hilos sin unir; `E_CERRADO` si el proceso se está acabando |
+| 41 | `hilo_unir` | `x0` número de hilo | `x0` clase y `x1` código, como `proceso_esperar`, cuando acaba. Solo hilos de `hilo_crear` del mismo proceso, una vez: si no, `E_ARGUMENTO` |
+| 42 | `esperar` | `x0` palabra de 32 bits (alineada a 4), `x1` valor, `x2` plazo en µs (0: sin plazo) | 0 si lo despertaron; 1 si la palabra no valía eso (no duerme); `E_PLAZO`; `E_ARGUMENTO` si la palabra no es memoria normal que pueda leer |
+| 43 | `despertar` | `x0` palabra, `x1` cuántos como mucho | Cuántos despertó |
+| 44 | `proceso_salir` | `x0` código | No vuelve: acaba el proceso entero, con todos sus hilos |
+| 45 | `maquina_crear` | `x0` permiso de máquinas virtuales (con escribir), `x1` llave de memoria (leer y escribir) con la RAM del invitado, `x2` dirección física del invitado donde empieza (alineada a 4 KB), `x3` entrada, `x4` el x0 del invitado | Llave de la vCPU 0 de una máquina virtual nueva (H9). `E_NO_HAY` sin hipervisor |
+| 46 | `maquina_correr` | `x0` vCPU (con escribir), `x1` informe (104 bytes), `x2` respuesta a una lectura pendiente, `x3` bloque de interrupciones (80 bytes) o 0 | El motivo de la salida (1 a 7); el informe, en `x1`; el bloque, al día. `E_CERRADO` con la máquina parada o muerta |
+| 47 | `maquina_memoria` | `x0` vCPU (con escribir), `x1` llave de memoria (leer y escribir), `x2` dirección física del invitado | 0: el invitado ve también esa memoria (todas sus vCPU, aunque estén corriendo). `E_ARGUMENTO` si pisa otra |
+| 48 | `maquina_estado` | `x0` vCPU (con escribir), `x1` operación (0 leer registros, 1 escribirlos, 2 aborto externo, 3 proyectar la GICV, 4 otra vCPU, 5 reiniciarla, 6 patearla, 7 parar la máquina), `x2` dirección de 33 u64 (0 y 1), física del invitado (3), número de vCPU (4) o entrada (5), `x3` entrada (4) o x0 (5), `x4` x0 (4) | 0, la llave de la vCPU nueva (4) o un error: `E_LIMITE` si está corriendo, `E_ARGUMENTO` si no hubo acceso que abortar o el número de vCPU no vale, `E_NO_HAY` sin GIC virtual |
+| 50 | `memoria_vista` | `x0` tabla de llaves de memoria (los orígenes, con leer), `x1` cuántas (de 1 a 64), `x2` tabla de números de página (u32), `x3` cuántos (de 1 a 4096) | Llave de un objeto de memoria nuevo hecho con esas páginas de los orígenes, sin copiarlas, solo para leer (H9) |
+| 51 | `apagar` | `x0` permiso de apagar (con escribir), `x1` 0 apagar, 1 reiniciar | No vuelve si se pudo. Antes deja 300 ms para que la consola saque lo último del registro. Con PSCI (SYSTEM_OFF, SYSTEM_RESET) si el árbol lo trae (QEMU `virt`, UEFI, la Pi 5 con el BL31 de su firmware; en la Pi 5, que se corte la corriente lo decide su EEPROM, que no se toca); sin PSCI, en la Pi 4 y la Pi 3, con el perro guardián del bloque PM (apagar marca la partición 63 en PM_RSTS). `E_TIPO` si `x0` no es el permiso, `E_ARGUMENTO` con otro modo, `E_NO_HAY` si no se pudo |
+| 52 | `cpu_tiempo` | `x0` llave de grupo (con leer), o 0: el grupo propio | Microsegundos de CPU que han gastado los procesos del grupo y de sus subgrupos, vivos y muertos, desde que se creó (las dos clases, también los hilos de una vCPU). `E_LLAVE`, `E_TIPO` (no es un grupo) o `E_DERECHOS` (sin leer). Para el monitor del sistema (trasfondo): solo quien tiene la llave del grupo (`sesiones`, de lo que lanza) mide a otro |
+| 53 | `memoria_aviso` | `x0` permiso de memoria (con escribir), `x1` canal (con escribir) | 0. El aviso de memoria baja llega al otro lado del canal (S3). `E_LLAVE`, `E_TIPO` o `E_DERECHOS` |
+| 54 | `grupo_tope` | `x0` llave de grupo (con escribir), `x1` tope en bytes | 0. `E_DERECHOS` sin escribir o si es el grupo propio o uno de encima (S3) |
+| 55 | `maquina_globo` | `x0` vCPU (con escribir), `x1` 0 soltar, 1 reponer, `x2` tabla de direcciones físicas del invitado (u64, alineadas a 4 KB, en el orden de bytes del proceso), `x3` cuántas (de 1 a 256) | Cuántas páginas se soltaron o repusieron. El globo de la caja Linux (aviso-cajas): soltar quita la página de la etapa 2 y de las proyecciones de quien llama, vacía las TLB y la devuelve al sistema (y sus bytes al grupo del objeto); reponer pone una nueva a cero (cobrada a ese grupo). Solo memoria que no tiene nadie más: las páginas de un objeto que esté en otra máquina, otro proceso, un mensaje, una vista o tras una llave revocable se saltan. `E_ARGUMENTO` si una dirección no es de su RAM o no está alineada (no se toca nada), `E_TAMANO`, `E_MEMORIA` si no se pudo reponer ninguna, `E_NO_HAY` sin hipervisor en el núcleo |
+| 49 | `pagina_cero` | `x0` permiso de página 0 (con escribir), `x1` llave de memoria de una página (con leer; no revocable) | 0. La proyecta en la dirección 0, de solo lectura y sin ejecutar (H4). `E_TIPO` si `x0` no es el permiso, `E_TAMANO` si el objeto no mide una página, `E_ARGUMENTO` si ya hay página 0 o la llave es revocable |
+| 56 | `puertos_permitir` | `x0` llave de puertos de E/S (solo x86) | 0 |
 
 ### Detalles
 
@@ -178,12 +223,38 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   cierran y el otro lado se entera. Lo mismo pasa con un extremo que va dentro de un mensaje que ya nadie leerá.
 - **7, `memoria_crear`.** Páginas nuevas de 4 KB, todas a cero. La llave tiene todos los derechos. Los últimos
   32 MB libres son del kernel: al llegar ahí devuelve `E_MEMORIA`.
-  Ponerlas a cero es lo largo de la llamada: tras cada página abre un momento las interrupciones (X6), así que el
-  núcleo atiende el reloj y los aparatos mientras, y el tic puede pasar a otro hilo.
+  Ponerlas a cero es lo largo de la llamada: cada 64 páginas en ARM (S2) y tras cada página en x86-64 (X6) abre un
+  momento las interrupciones, así que el núcleo atiende el reloj y los aparatos mientras, y el tic puede pasar a otro
+  hilo.
+- **50, `memoria_vista`** (H9). Una vista: un objeto de memoria hecho con páginas de otros, en el orden que se pide,
+  para que el compositor lea sin copia los búferes de un invitado de la caja Linux (están en páginas sueltas de su
+  RAM).
+  - Los números de página cuentan seguidas las páginas de los orígenes, en el orden de la tabla: la 0 es la primera
+    del primero; tras la última del primero viene la primera del segundo. Una página puede salir varias veces. Las dos
+    tablas van en el orden de bytes del proceso.
+  - La llave nueva tiene leer y transferir, nada más: la vista se proyecta solo para leer (escribir da `E_DERECHOS`;
+    ejecutar, `E_ARGUMENTO`, también con otra llave), el kernel no escribe por ella y no vale como RAM de una máquina
+    (`maquina_crear` y `maquina_memoria` dan `E_ARGUMENTO`). Lo que se escriba en los orígenes se ve en ella al
+    momento.
+  - Mantiene vivos sus orígenes: aunque se suelten todas sus llaves y proyecciones, sus páginas no vuelven al sistema
+    (ni se dan a otro) hasta que se suelta la vista.
+  - Cupo: la vista cobra a quien la pide 256 bytes, más 8 por página y 8 por origen (su lista en el kernel). Las
+    páginas siguen cobradas al grupo de quien creó cada origen hasta que se suelte lo último que lo tiene, la vista
+    también.
+  - Errores: `E_TAMANO` con 0 orígenes o más de 64, o 0 páginas o más de 4096 (16 MB); `E_ARGUMENTO` si una tabla no
+    se puede leer, un número de página no está en los orígenes, o un origen es memoria DMA, otra vista o una llave
+    revocable (la vista seguiría viendo el objeto después de revocarla); `E_LLAVE`, `E_TIPO` (no es memoria) y
+    `E_DERECHOS` (sin leer) por cada origen; `E_MEMORIA` si no cabe en el cupo; `E_LIMITE` con la tabla de llaves
+    llena.
 - **8, `memoria_proyectar`.**
   - Proyecta el objeto entero a partir de la dirección. Si alguna página del tramo ya tiene algo, no proyecta nada y
     devuelve `E_ARGUMENTO`.
   - Permiso 3 es lectura y escritura, y nunca se ejecuta.
+  - Permiso 5 (o 4) es lectura y ejecución, nunca escritura (H4, para un JIT como el de la caja Amiga). Escribir y
+    ejecutar por la misma dirección (2 y 4 juntos) da `E_ARGUMENTO`. Un JIT proyecta el mismo objeto dos veces: para
+    escribir en una dirección y para ejecutar en otra. Tras escribir código, limpia la caché de datos por la dirección
+    de escribir (`dc cvau`) e invalida la de instrucciones por la de ejecutar (`ic ivau`), con `dsb ish` e `isb`.
+    La memoria de DMA no se ejecuta nunca (`E_ARGUMENTO`).
   - El mismo objeto proyectado en dos procesos es memoria compartida.
   - Sus páginas vuelven al sistema cuando no queda ninguna llave ni ninguna proyección.
 - **9, `registros_proyectar`.**
@@ -208,34 +279,75 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 - **Varios lectores.** Con copias de una llave, varios hilos pueden leer el mismo lado: cada mensaje lo recibe uno, y
   al cerrarse el otro lado se despiertan todos.
 - **15, `llave_duplicar`** (C41). Una copia del mismo objeto con los derechos pedidos que ya tenga la llave, nunca
-  más. Si la llave no tenía marca y `x2` no es 0, la copia lleva esa marca; con `x2` a 0 conserva la suya. Marcar con
+  más. Con el bit 8 en `x1`, la copia lleva la restricción "una vez"; si la original ya la tenía, la copia también. Si la llave no tenía marca y `x2` no es 0, la copia lleva esa marca; con `x2` a 0 conserva la suya. Marcar con
   otra una llave ya marcada da `E_DERECHOS`. Un lado de canal sigue abierto mientras quede alguna copia.
 - **16, `llave_revocable`.** Una copia que pasa por un intermediario, y el revocador de ese intermediario. Las copias
   que se hagan de la revocable también pasan por él. Cada intermediario cuesta 256 bytes del cupo. Como mucho hay 4
   intermediarios uno dentro de otro, contando los de los revocadores; el quinto da `E_LIMITE`.
-- **Grupos y cupos** (C42). Cada proceso es de un grupo con un presupuesto en bytes. Todo lo que crea se cobra ahí:
+- **Grupos y cupos** (C42; topes desde S3). Cada proceso es de un grupo con un tope en bytes. Todo lo que crea se cobra
+  ahí y en todos los grupos de encima, hasta el raíz:
   - un objeto de memoria, por sus páginas;
   - su espacio, por sus tablas y sus páginas de imagen y pila;
-  - cada proceso, 64 KB fijos (hilo, pila del kernel y tabla de llaves);
+  - cada proceso, unos 64 KB fijos: su tabla de llaves llena (41 KB; no crece más), la pila del kernel (16) y el hilo
+    con su estado de coma flotante, el proceso y lo que redondea el montón (8);
   - cada canal, unos 26 KB fijos (sus dos colas llenas).
 
-  Al agotarse, la llamada da `E_MEMORIA`. Lo cobrado vuelve al grupo cuando se suelta el objeto, aunque lo tenga otro
-  proceso. Los procesos que lanza el kernel son del grupo raíz, cuyo límite es la memoria libre para procesos al
-  arrancar, menos la reserva del kernel.
-- **18, `grupo_crear`.** Un subgrupo del propio con ese presupuesto, más 512 bytes del grupo en sí, que salen del
-  propio: si no cabe, `E_MEMORIA`. Se devuelve al propio cuando ya no queda nada cobrado al subgrupo. Como mucho hay 7
-  niveles bajo el raíz. Un grupo matado no admite procesos ni subgrupos nuevos.
+  Si algún grupo de la cadena pasaría de su tope, no se cobra nada y la llamada da `E_MEMORIA`; también si no queda
+  memoria física. El tope no aparta nada: los topes de los hijos pueden sumar más que el del padre y más que la RAM, y
+  lo que no se pasa nunca es lo usado de verdad. Lo cobrado vuelve, en toda la cadena, cuando se suelta el objeto, aunque
+  lo tenga otro proceso. Los procesos que lanza el kernel son del grupo raíz, cuyo tope es la memoria libre para
+  procesos al arrancar, menos la reserva del kernel. Las sumas son atómicas y sin cerrojos: dos cobros a la vez no pasan
+  de un tope; mientras uno que no cabe deshace lo sumado abajo, otro puede fallar por un momento.
+- **18, `grupo_crear`.** Un subgrupo del propio con ese tope. Del propio solo se cobran los 512 bytes del grupo en sí
+  (si no caben, `E_MEMORIA`), que vuelven cuando ya no queda nada cobrado al subgrupo. Un tope mayor que el del propio
+  vale, pero no sirve de nada: el del propio para antes. Como mucho hay 7 niveles bajo el raíz. Un grupo matado no admite
+  procesos ni subgrupos nuevos.
 - **12 con `x4`.** Con una llave de grupo con derecho de escribir, el proceso nuevo es de ese grupo; con 0, del de
   quien lo crea.
 - **19, `grupo_matar`.** Pide el derecho de escribir. Mata a todos los procesos del grupo y de sus subgrupos, y cierra
   los dos lados de todos los canales que crearon (C44), aunque tengan llaves en otros grupos: quien los use después
   recibe `E_CERRADO`. Así se suelta todo lo que el grupo dejó, también los ciclos entre canales.
-- **20, `grupo_uso`.** Pide el derecho de leer. Devuelve el presupuesto y lo usado.
+- **20, `grupo_uso`.** Pide el derecho de leer. Devuelve el tope (`x0`), lo usado por el grupo con sus subgrupos (`x1`)
+  y lo usado sin ellos (`x2`, lo suyo menos lo de cada subgrupo vivo; una foto que, con cobros a la vez, puede ir algo
+  por delante o por detrás). En la biblioteca, `grupo_uso` y `grupo_uso_propio`.
+- **54, `grupo_tope`** (S3). Cambia el tope de un grupo. Pide su llave con escribir, y que no sea el grupo de quien
+  llama ni uno de encima: un proceso no se sube su tope (la caja Amiga no cambia el suyo; se lo pone `sesiones`, que
+  tiene la llave de su grupo). Uno por debajo de lo usado vale: no se quita nada, y todo cobro falla hasta que lo usado
+  baje de él. Lo prueba `grupos` (pasos 36 a 39).
+- **53, `memoria_aviso`** (S3). El aviso de memoria baja. Pide el permiso de memoria (llave de arranque del tipo 11,
+  "memoria", que `inicio` manda solo a `sesiones`) y un canal con escribir; los avisos van al otro lado, con la marca de esa llave, y dejan de
+  llegar si se revoca. Hay un solo oyente: uno nuevo quita al anterior. Nada más pedirlo llega el nivel de ahora, y
+  después cada cambio: memoria baja cuando lo libre para procesos baja del 5 % de lo que había al arrancar, y normal
+  cuando vuelve a pasar del 10 %. Se mira al acabar cada llamada al sistema. El mensaje, de 24 bytes en little-endian:
+  el nivel (u32: 0 normal, 1 baja), 0 (u32), los bytes libres para procesos (u64) y los que había al arrancar (u64). Con
+  la cola llena, ese aviso se pierde. Lo prueba `prueba_topes` en `make prueba`.
+- **55, `maquina_globo`** (aviso-cajas, `docs/bitacoras/aviso-cajas.md`). El globo (virtio-balloon) de la caja Linux.
+  Con la llave de una vCPU (escribir) y una tabla de direcciones físicas del invitado (u64, alineadas a 4 KB, de su RAM;
+  de 1 a 256), suelta o repone esas páginas. Puede ser con sus vCPU en marcha.
+  - Soltar: la página sale de la etapa 2 y de las proyecciones del objeto en el proceso que llama (el servicio ve la
+    RAM del invitado), se vacían las TLB de ese VMID en todos los núcleos y la página vuelve al sistema; sus bytes se
+    devuelven al grupo que creó el objeto. Desde ahí, si el invitado la toca sale al servicio como un aparato que no
+    existe, y si la toca el servicio, es un fallo suyo (el de la caja no la toca: lleva la cuenta).
+  - Reponer: una página nueva a cero (limpia hasta la RAM: el invitado puede leerla sin caché) en su sitio, en la
+    etapa 2 y en esas proyecciones, cobrada al grupo del objeto. `E_MEMORIA` si no se pudo ninguna.
+  - Solo memoria que no tiene nadie más: el kernel cuenta las referencias del objeto y tienen que ser las de esta máquina,
+    las proyecciones y las llaves (sin intermediario) de quien llama, con su tabla de llaves y su espacio tomados. Las
+    páginas de un objeto que esté en otra máquina, en otro proceso, en un mensaje sin leer, en una vista o tras una llave
+    revocable se saltan. Una página soltada no está en ninguna vista nueva (`memoria_vista` da `E_ARGUMENTO`), no se
+    proyecta (queda un hueco) y el kernel no lee ni escribe por ella.
+  - `E_ARGUMENTO` si alguna dirección no está alineada o no es de su RAM (no se toca nada), `E_TAMANO` con 0 o más de
+    256, `E_TIPO`, `E_DERECHOS`, `E_NO_HAY` sin hipervisor en el núcleo. Lo prueba `caja-linux` (`prueba_globo`) en
+    `make arranque-virt-vm` y `-linux`.
+- **52, `cpu_tiempo`** (trasfondo). El planificador suma lo que corre cada hilo, en cada cambio, a su grupo y a todos los
+  de encima (sumas atómicas, sin cerrojos ni memoria). Lo del hilo que corre ahora entra en su siguiente cambio (como
+  mucho un tic tarde). El contador no baja nunca, ni al matar el grupo. Lo prueba `grupos` en `make prueba`: un hijo
+  que gira cuenta en su grupo y en el de arriba, no se pierde al matarlo, y sin leer, con otra llave o con una que no
+  existe, no se lee.
 - **17, `revocar`.** Pide el derecho de escribir en el revocador. Desde ese momento, la copia revocable y las suyas
   dan `E_LLAVE`, estén donde estén. El objeto se suelta: si era lo último que tenía un lado de canal, el lado se
   cierra. Si es memoria, se quitan las proyecciones que se hicieron con la copia revocable o con sus copias, en todos
   los procesos (C45); las hechas con la llave original siguen.
-- **29, `puertos_permitir`** (X6, solo x86-64). Con una llave de puertos de E/S (leer y escribir), el proceso puede
+- **56, `puertos_permitir`** (X6, solo x86-64; era la 29 hasta la fusión con `revision`, donde la 29 es `medir`). Con una llave de puertos de E/S (leer y escribir), el proceso puede
   usar esos puertos con `in` y `out` desde el anillo 3; los demás siguen terminándolo. Va al mapa de E/S de la TSS
   de cada núcleo, que se pone al cambiar a un hilo del proceso: vale ya en el hilo que llama, y en los demás hilos del
   proceso desde su próximo cambio. Solo puertos por debajo de 0x400 (`E_ARGUMENTO` si no). Solo el kernel crea estas
@@ -257,7 +369,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   aviso que se pudo entregar (casi siempre 1; más si la cola del canal estaba llena o el aviso llegó tarde). Así se
   distingue de una interrupción, que llega en 4 bytes. Pide el derecho de escribir en el canal (`E_DERECHOS`); otra
   llave que no sea de canal da `E_TIPO`; un plazo o un periodo de más de un día, `E_ARGUMENTO`. Cuesta 4 KB del cupo
-  del grupo. Resolución: el tic del sistema, 10 ms, que es también el periodo más corto; nunca avisa antes de tiempo.
+  del grupo. Resolución: la del contador de la CPU (M2); el periodo más corto, 100 µs. Nunca avisa antes de tiempo.
   Los avisos llevan la marca de la llave del canal con que se creó (C41); si esa llave era revocable y se revoca, el
   temporizador se para para siempre. Si la cola está llena, el aviso se cuenta para el siguiente; uno de una vez se
   reintenta en cada tic hasta que cabe. Se para al soltarse su última llave (`cerrar`, o al morir el proceso). Para
@@ -288,6 +400,60 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   - Si ya había acabado, contesta al momento, todas las veces que se pregunte.
   - La llave de proceso no mantiene viva la memoria del proceso: se libera cuando acaba.
 
+- **45 a 48, máquinas virtuales** (caja Linux, H9; `kernel/src/maquinas.rs`, `base/hiper.rs`). Solo si el kernel
+  arrancó en EL2 (en QEMU, `virtualization=on`); si no, `maquina_crear` da `E_NO_HAY`. El kernel deja en EL2 un
+  trozo pequeño que cambia de mundo, y sigue en EL1.
+  - Cada llave de máquina es una vCPU. Las de una máquina comparten su memoria, la etapa 2 y el VMID; cada una tiene
+    su MPIDR, sus registros, su GIC virtual (LR, VMCR, APR), su temporizador virtual y su FPU, y se corre desde un
+    hilo, a la vez que las demás en otros núcleos. Si en un núcleo corre una vCPU distinta de la última que corrió ahí
+    de la misma máquina, EL2 vacía antes lo de ese VMID de la TLB de ese núcleo.
+  - `maquina_crear`: la vCPU 0 de una máquina nueva, en EL1, con la MMU y las interrupciones apagadas, que empieza en
+    `x3` con `x4` en su x0 (el árbol de dispositivos de un kernel de Linux) y ve el objeto de memoria entero desde `x2`
+    (hasta 4 GB de direcciones del invitado). Se ve como el núcleo 0 (MPIDR 0x80000000). Con `maquina_memoria` ve más objetos, cada
+    uno desde su dirección (así pasa de los 16 MB de `memoria_crear`). La memoria se sigue pudiendo proyectar en el
+    proceso (así se carga el invitado), pero el invitado la lee sin caché mientras tenga la MMU apagada: lo escrito
+    después de crear la máquina puede no verlo. Ni memoria DMA ni una llave revocable (`E_ARGUMENTO`). Su vCPU y sus
+    tablas de la etapa 2 se cobran al grupo (unas 4 páginas para 64 KB). Como mucho 255 máquinas a la vez
+    (`E_LIMITE`). Se para y se suelta al cerrar su última llave (la de su última vCPU).
+  - `maquina_correr`: entra en el invitado hasta que sale. El informe son 13 u64 en little-endian: motivo, PC,
+    dirección, valor, tamaño, ESR, x1, x2, las cuentas del contador que pasó fuera del kernel, x3, el plazo del
+    temporizador virtual del invitado (CNTV_CVAL si está encendido y sin enmascarar; si no, todo unos), señales
+    (bit 0: hay una interrupción pendiente en sus registros de lista: un WFI no tiene que esperar) y los µs que durmió
+    en el kernel en sus WFI. Motivos:
+    1 HVC (valor = x0, tamaño = el número del HVC, y x1, x2 y x3; el PC ya está en la siguiente); 2 lectura en una dirección que no es su memoria
+    (dirección y tamaño; el `x2` de la siguiente llamada es lo que lee); 3 escritura ahí (dirección, valor y tamaño);
+    4 WFI; 5 lo sacó una interrupción del anfitrión (el reloj lo hace cada tic: un invitado no se queda con el
+    núcleo) o una patada; 6 una trampa o un fallo (ESR, PC y dirección): SMC, el temporizador físico, la depuración, la coma
+    flotante, un acceso que no se describe solo. Tras un 6 la máquina entera está muerta (todas sus vCPU salen) y
+    `maquina_correr` da `E_CERRADO`.
+    7: tocó un registro del sistema atrapado (depuración, contadores de rendimiento, el temporizador físico): dirección
+    = su codificación (los bits de op0, op2, op1, CRn y CRm del ESR), x1 = 1 si lee (el `x2` de la siguiente llamada
+    es lo que lee) o 0 si escribe (valor). Lo escrito nunca llega al registro de verdad.
+    Si otro hilo la está corriendo, `E_LIMITE`. En 2 y 3 el PC ya está en la instrucción siguiente.
+    El bloque de interrupciones (10 u64, con un GICv2 con extensiones de virtualización: el GIC-400 de la Pi 4, QEMU
+    `virt` con `virtualization=on`): [0] cuántos registros de lista llena el servicio (lo pone el kernel: todos menos
+    el último, que es del temporizador virtual; 0 sin GIC virtual), [1] cómo tiene el invitado la PPI 27 en su
+    distribuidor (lo pone el servicio: bit 0 habilitada, [15:8] prioridad, bit 16 grupo 1; bit 17, `ESPERAR_WFI`: un
+    WFI sin nada pendiente duerme el hilo en el kernel hasta el plazo del temporizador del invitado, y entonces vuelve
+    a entrar sin pasar por el servicio, hasta una patada o como mucho 100 ms) y desde [2] hasta 8
+    registros de lista (GICH_LRn): los pone el servicio y vuelven como los dejó el invitado. El kernel quita el bit
+    HW y los bits reservados, y deja a 0 uno sin estado. El temporizador virtual lo inyecta el kernel en su LR, con
+    HW y la PPI 27 física activa mientras está ahí: el EOI del invitado la desactiva. Con un LR con el bit EOI, la
+    interrupción de mantenimiento (PPI 25) saca al invitado cuando la termina.
+    La primera vez que el invitado usa la FPU sale por la trampa de CPTR_EL2, y desde ahí la vCPU tiene sus registros
+    de FP/SIMD, que se cargan y guardan en cada vuelta (los del hilo dueño de la FPU se guardan antes).
+  - `maquina_estado`: con la vCPU parada. 0 y 1 leen y escriben x0..x30, PC y PSTATE (de PSTATE, NZCV, DAIF y el
+    modo, que tiene que ser EL0t, EL1t o EL1h de AArch64; si no, EL1h). 2 cambia el último acceso a un aparato por un
+    aborto externo síncrono de datos en el vector de EL1 del invitado (ESR_EL1 con DFSC 0x10, FAR_EL1, ELR_EL1,
+    SPSR_EL1). 3 proyecta la GICV (8 KB, como aparato) en esa dirección del invitado, sin pisar su memoria (una vez
+    para todas sus vCPU: cada núcleo ve ahí su interfaz virtual). 4 da otra vCPU de la misma máquina: número `x2`
+    (su Aff0, menos de 8 y sin otra con ese número), que empieza en `x3` con `x4` en su x0. 5 deja la vCPU parada como
+    recién encendida (PSCI CPU_ON): en `x2`, con `x3` en x0, EL1h con DAIF enmascarado, la MMU apagada, los registros
+    de EL1, el temporizador y el GIC virtual a cero y sin FPU propia. 6 la patea: si corre en otro núcleo, una SGI
+    (la 2) a ese núcleo la saca; si duerme en un WFI, la despierta; si no, la próxima vez vuelve sin entrar (motivo 5).
+    7 para la máquina entera: todas sus vCPU salen y ya no entran (`E_CERRADO`). 6 y 7, desde cualquier hilo y con la
+    vCPU corriendo.
+
 ### Errores
 
 | Valor | Nombre | Cuándo |
@@ -296,15 +462,17 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | −2 | `E_LLAVE` | La llave no existe en la tabla |
 | −3 | `E_DERECHOS` | Falta un derecho: leer, escribir o transferir |
 | −4 | `E_CERRADO` | El otro extremo del canal está cerrado |
-| −5 | `E_TAMANO` | Demasiados datos o llaves, tamaño 0 o más de 4 MB |
+| −5 | `E_TAMANO` | Demasiados datos o llaves, tamaño 0 o más de 16 MB (4 MB en `memoria_dma`) |
 | −6 | `E_TIPO` | La llave es de otro tipo de objeto |
 | −7 | `E_MEMORIA` | No queda memoria para procesos |
 | −8 | `E_LIMITE` | Un límite: tabla de llaves llena, cola del canal llena o demasiadas proyecciones |
+| −9 | `E_PLAZO` | Venció el plazo de `canal_leer_plazo` sin mensaje (K7). `canal_leer` ya no dice `E_CERRADO` por falta de memoria: `E_MEMORIA` |
+| −10 | `E_NO_HAY` | Sin hipervisor: el kernel no arrancó en EL2 (`maquina_crear`, `maquina_correr`) |
 
 ### Topes de trabajo
 
 Una llamada corre entera sin que el kernel se interrumpa, así que cada una tiene un tope (desde C35):
-`memoria_crear` pide como mucho 4 MB y `escribir` toma como mucho 256 bytes. Para más, se llama varias veces.
+`memoria_crear` pide como mucho 16 MB (con puntos de corte cada 256 KB) y `escribir` toma como mucho 256 bytes. Para más, se llama varias veces.
 
 ### Límites
 
@@ -315,6 +483,7 @@ Son límites de forma, aparte del cupo de cada grupo.
 | Llaves en la tabla de un proceso | 1024 |
 | Mensajes esperando en un lado de un canal | 16 |
 | Proyecciones de objetos de memoria por proceso | 1024 |
+| Hilos de `hilo_crear` vivos o sin unir por proceso | 256 |
 | Memoria libre que solo usa el kernel | 32 MB |
 
 Con la cola llena, `canal_escribir` devuelve `E_LIMITE` y las llaves vuelven a sus números. Una interrupción que
@@ -332,6 +501,11 @@ lleva unos derechos:
 | Leer | 1 |
 | Escribir | 2 |
 | Transferir | 4 |
+| Una vez (restricción) | 8 |
+
+**Una vez** (S4 de `REVISION_ARQUITECTURA.md`) no es un derecho sino una restricción: la llave se puede transferir,
+pero llega a su nuevo dueño (por `canal_leer` o al nacer con `proceso_crear`) sin el derecho de transferir y sin esta
+marca. Al duplicar se hereda siempre: quien la tiene no se la puede quitar. `inicio` la pone en las llaves de aparato.
 
 Un proceso nuevo no tiene ninguna llave. Solo tiene las que le da quien lo lanza, y esas ocupan los números 1, 2,
 etc. El kernel solo lanza `inicio`, con las llaves de arranque; los controladores y demás servicios reciben las suyas
@@ -342,7 +516,7 @@ Tipos de objeto:
 | Objeto | Se crea con | Para |
 |---|---|---|
 | Extremo de canal | `canal_crear` | Mensajes y paso de llaves |
-| Memoria | `memoria_crear` | Proyectar y compartir |
+| Memoria | `memoria_crear`; `memoria_vista` (una vista: páginas de otras, solo para leer) | Proyectar y compartir |
 | Registros | Solo el kernel | Controladores fuera del kernel |
 | Memoria del firmware | Solo el kernel | La de la VideoCore, para el buzón, que da al compositor solo la pantalla (C50) |
 | Interrupción | Solo el kernel | Controladores fuera del kernel |
@@ -351,14 +525,20 @@ Tipos de objeto:
 | Permiso DMA | Solo el kernel | Crear memoria DMA (escribir) |
 | Registro | Solo el kernel | Sacar el registro del sistema (leer) |
 | Puertos de E/S | Solo el kernel, en x86 | Usarlos desde el proceso (`puertos_permitir`); la consola, COM1 (X6) |
+| Permiso de plazo | Solo el kernel (`inicio` lo reparte, S3) | Pedir la clase de plazo (escribir) |
+| Permiso de página 0 | Solo el kernel (`inicio` lo da a la caja Amiga, H4) | Proyectar la página 0 de solo lectura (escribir; llamada 49) |
 | Grupo | `grupo_crear` | Crear procesos en él y matarlo (escribir), ver su uso (leer) |
 | Temporizador | `temporizador_crear` | Avisos por un canal pasado un plazo; se para al cerrarlo |
+| Permiso de máquinas virtuales | Solo el kernel (`inicio` lo da a `caja-linux`) | Crear máquinas virtuales (escribir) |
+| Permiso de apagar | Solo el kernel (`inicio` lo manda a `sesiones`, sin derecho de transferirlo) | Apagar y reiniciar la máquina (escribir; llamada 51) |
+| vCPU de una máquina virtual | `maquina_crear` (la 0), `maquina_estado` 4 (las demás) | Correrla, darle más memoria a su máquina, patearla, pararla (escribir); la máquina se para al cerrar su última vCPU |
 
 ## Biblioteca de usuario en Rust
 
 `usuario/src/lib.rs` (crate `dashos`) envuelve las llamadas: `escribir`, `salir`, `canal_crear`, `canal_escribir`,
 `canal_leer`, `memoria_crear`, `memoria_proyectar`, `registros_proyectar`, `interrupcion_asociar` e
-`interrupcion_terminar`. También tiene `println!` y la macro `programa!(principal)`, que pone `_start` y el
+`interrupcion_terminar`. `dashos::hilos` tiene las de hilos (`crear`, `unir`, `esperar`, `despertar`,
+`proceso_salir`) y un `Cerrojo` hecho con la espera. También tiene `println!` y la macro `programa!(principal)`, que pone `_start` y el
 manejador de pánico.
 
 Los objetivos de compilación son dos:
@@ -370,13 +550,13 @@ Los programas Dash para DashOS se compilan con `./dash --dashos` en la rama `aar
 
 ### Registros que ve un proceso
 
-- `TPIDR_EL0` es de cada hilo: empieza a 0 y el kernel lo guarda y lo repone. `TPIDRRO_EL0` vale 0.
+- `TPIDR_EL0` es de cada hilo: empieza a 0 (o al TLS de `hilo_crear`) y el kernel lo guarda y lo repone. `TPIDRRO_EL0` vale 0.
 - Puede leer el contador virtual (`CNTVCT_EL0`) y su frecuencia. El temporizador físico, los demás temporizadores y
   los contadores de rendimiento terminan el proceso.
 - Saltar a una dirección del kernel termina el proceso.
 - Las FIQ van enmascaradas. Un SError mientras corre el proceso lo termina.
 
-## x86-64 (S21, X4 a X6)
+## x86-64 (S30, X4 a X6)
 
 En x86-64 (rama `x86`, `make -C kernel prueba-x86` y `make -C kernel arranque-x86`) un programa ve lo mismo que en ARM: las mismas llamadas con los
 mismos números, argumentos, resultados y errores, las mismas llaves y objetos, el mismo mapa de direcciones y los
@@ -386,14 +566,28 @@ mismos límites. Cambian los registros y lo que es de la CPU:
   (los de ARM `x0` a `x4`, en ese orden; `r10` en vez de `rcx`, que `syscall` usa para la vuelta). El resultado vuelve
   en `rax` (`x0` en ARM) y, en las llamadas que dan más, en `rdx` (`x1`) y `r8` (`x2`, la marca de `canal_leer`).
   `syscall` pisa `rcx` y `r11`; todos los demás registros vuelven como estaban. La llamada corre con las interrupciones
-  cerradas, como en ARM (salvo las pausas de `memoria_crear`, X6), y vuelve con `sysret`.
+  cerradas, como en ARM (salvo los puntos de corte de las llamadas largas: S2, X6), y vuelve con `sysret`.
 - **Ejecutable.** ELF64 de x86-64 (`e_machine` 62), solo little-endian: x86 no tiene big-endian. Lo demás, igual:
   `ET_EXEC` o `ET_DYN`, segmentos, pila y reglas de rechazo. Un PIE aplica él mismo sus `R_X86_64_RELATIVE`.
 - **Al arrancar.** `rsp` apunta al tope de la pila (alineado a 16, como pide el System V al entrar en un proceso) y
   `rip` a la entrada. `rdi` lleva la frecuencia del contador en Hz (lo que en ARM da `CNTFRQ_EL0`). Los demás
   registros valen cero y RFLAGS 0x202 (interrupciones abiertas).
-- **Espacio.** La mitad baja es PML4[0], los mismos 512 GB. En vez de ASID, PCID de 12 bits si la CPU lo tiene: como
-  mucho 4095 procesos vivos a la vez (el 0 es del kernel). Sin PCID, cada cambio de proceso vacía la TLB de usuario.
+- **Hilos de usuario** (llamadas 40 a 44, desde la fusión con `revision`). Como en ARM, con estas diferencias:
+  la entrada no tiene que estar alineada; el hilo empieza con `rdi` = argumento, la base de FS = TLS y `rsp` = pila
+  menos 8 (como tras un `call`: la entrada puede ser una función de C); y cuesta 24 KB al grupo, no 20 (su zona de
+  XSAVE). La prueba es la misma (`hilos`, C52 en `make -C kernel prueba-x86`).
+- **Lo que no hay todavía en x86.** Máquinas virtuales: las llamadas 45 a 48 y la 55 dan `E_NO_HAY` (no hay
+  hipervisor: sería VT-x o AMD-V), y no existe el permiso de máquinas. `apagar` (51) reinicia (puerto 0xCF9 y, si no,
+  el controlador del teclado), pero no apaga: da `E_NO_HAY` (haría falta leer `\_S5` del AML de ACPI). `hora` (39) da
+  0: no se lee el reloj del PC. `azar` (34) dice siempre que no es de calidad: no hay semilla del firmware (falta
+  RDRAND o RDSEED). No hay orden de bytes por proceso: todo es little-endian. Las llaves de arranque no traen los
+  permisos de página 0, de apagar ni del aviso de memoria (`inicio_x86.rs` no lanza `sesiones` ni la caja Amiga);
+  las llamadas 49, 53 y 54 sí están.
+- **Espacio.** La mitad baja es PML4[0], los mismos 512 GB. En vez de ASID, PCID de 12 bits; cada espacio tiene el
+  suyo (como mucho 4095 procesos vivos a la vez; el 0 es del kernel), pero **PCID va apagado de serie** (decisión del
+  usuario del 2026-11-15: ese camino no se ha probado en ninguna CPU): cada cambio de proceso vacía la TLB de
+  usuario. Se enciende al compilar el kernel con la opción `pcid` (`make -C kernel arranque-x86 PCID=1`), si la CPU
+  lo tiene.
 - **FPU y SIMD.** Cada hilo tiene los suyos: x87, SSE y AVX (y AVX-512 si la CPU lo tiene y cabe en 4 KB), guardados
   con XSAVE (FXSAVE si no hay). La primera vez: registros a cero, MXCSR 0x1F80 y control del x87 0x37F (redondeo al
   más cercano, sin excepciones). Se guardan solo cuando otro hilo del mismo núcleo usa la FPU (CR0.TS, como C28).
@@ -417,7 +611,7 @@ mismos límites. Cambian los registros y lo que es de la CPU:
   (0x010802, BAR 0) y el sonido de virtio (0x1af4:0x1059, BAR 4, más su configuración), cada uno con sus registros,
   un permiso DMA propio y su MSI (MSI-X si la tiene, en su primera entrada; si no, MSI). Sin INTx: en un PC su
   número sale del AML de ACPI (`_PRT`), que el kernel no lee. Además (X6): el registro y los puertos de COM1 (tipo
-  7, "puertos de E/S") para la consola, que es un proceso como en ARM; y la pantalla del GOP que deja el cargador en
+  12, "puertos de E/S"; era el 7 hasta la fusión con `revision`, donde el 7 es el permiso de plazo) para la consola, que es un proceso como en ARM; y la pantalla del GOP que deja el cargador en
   la `InfoArranque`, como memoria del firmware ("pantalla") y sus medidas ("pantalla-info"), con el mismo formato que
   el `simple-framebuffer` de `virt` (U4). El formato del GOP va al revés que el de ese nodo: 1 (B, G, R en memoria)
   es a8r8g8b8.
@@ -430,8 +624,8 @@ mismos límites. Cambian los registros y lo que es de la CPU:
   En ARM (`virt`) pasa lo mismo sin SMMU; en la Pi, el PCIe se limita al primer GB (C51).
 
 La biblioteca `usuario/` compila para `x86_64-unknown-none` (sin SSE en el código de Rust, como el kernel; la FPU se
-usa con ensamblador) con `-C relocation-model=static -C code-model=small`, y su `_start` de ensamblador guarda la
-frecuencia del contador. Los programas que tocan aparatos de la Pi no se compilan para x86. Las barreras para la
+usa con ensamblador) con `-C relocation-model=static -C code-model=small` y su propio guion de enlace
+(`usuario/enlace_x86.ld`: la GOT va con los datos), y su `_start` de ensamblador guarda la frecuencia del contador. Los programas que tocan aparatos de la Pi no se compilan para x86. Las barreras para la
 memoria que se comparte con un aparato están en `dashos::barrera` (`dmb` en ARM; en x86, una barrera del compilador o
 `mfence`).
 
@@ -453,6 +647,7 @@ memoria que se comparte con un aparato están en `dashos::barrera` (`dmb` en ARM
   mientras el aparato sigue en marcha.
 - El PCIe (C51): el VL805 alcanza todo el primer GB, también la memoria de la VideoCore; la llave de los registros
   del controlador PCIe no se da a ningún proceso.
-- Un proceso tiene un solo hilo, y no hay llamada para crear hilos.
+- Hilos de usuario sin "soltar" (detach), sin prioridad ni afinidad por hilo, y la CPU se reparte por hilo, no por
+  proceso.
 - El azar de los PIE sale del contador del sistema y no es criptográfico. En la Pi 4 habrá que sembrarlo con el
   generador por hardware (RNG200).

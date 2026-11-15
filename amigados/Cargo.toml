@@ -1,0 +1,12 @@
+[package]
+name = "dashos-amigados"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "Lectura de los sistemas de archivos de AmigaDOS (OFS y FFS) para montar ADF y HDF en DashOS (S20)"
+
+[lib]
+name = "amigados"
+path = "src/lib.rs"
+
+[dependencies]

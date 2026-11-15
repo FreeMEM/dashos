@@ -14,18 +14,20 @@ use crate::kprintln;
 pub const PAGINA: u64 = 4096;
 /// Páginas libres que solo puede usar el kernel: 32 MB.
 pub const RESERVA: usize = 8192;
-/// Hasta 8 GB, el máximo de una Pi 4: 2 M páginas, 256 KB de mapa.
-#[cfg(target_arch = "aarch64")]
+/// Hasta 8 GB, el máximo de una Pi 4: 2 M páginas, 256 KB de mapa. En `virt`, 16 GB (caja-linux-grandes: QEMU con
+/// highmem y 6 u 8 GB, para dar más RAM al invitado de la caja Linux): 4 M páginas, 512 KB de mapa.
+#[cfg(all(target_arch = "aarch64", not(feature = "virt")))]
 const MAX_PAGINAS: usize = (8u64 << 30) as usize / PAGINA as usize;
-/// En x86-64 (S21, X2), hasta 16 GB de direcciones físicas: 512 KB de mapa. Lo de arriba no se usa.
-#[cfg(target_arch = "x86_64")]
+/// En x86-64 (S30, X2), también hasta 16 GB de direcciones físicas. Lo de arriba no se usa.
+#[cfg(any(target_arch = "x86_64", feature = "virt"))]
 const MAX_PAGINAS: usize = (16u64 << 30) as usize / PAGINA as usize;
 const PALABRAS: usize = MAX_PAGINAS / 64;
-/// Lo que cubre el mapa lineal del kernel: 4 GB.
-#[cfg(target_arch = "aarch64")]
+/// Lo que cubre el mapa lineal del kernel: 4 GB; en `virt`, 16 (arranque.s y mapa.rs). En la Pi 4 de 8 GB, lo de
+/// arriba de los 4 GB sigue sin repartirse (sin probar en una placa de verdad).
+#[cfg(all(target_arch = "aarch64", not(feature = "virt")))]
 const MAPA_LINEAL: usize = (4u64 << 30) as usize / PAGINA as usize;
 /// En x86-64 el mapa lineal llega a toda la memoria que se reparte (`mapa.rs` de x86).
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", feature = "virt"))]
 const MAPA_LINEAL: usize = MAX_PAGINAS;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -88,6 +90,15 @@ pub fn paginas() -> GuardaIrq<'static, Paginas> {
     PAGINAS.tomar()
 }
 
+/// Una página para un proceso, a cero (ver `Paginas::pagina_usuario_sucia`). Se borra después de soltar el cerrojo
+/// del repartidor (S2).
+pub fn pagina_usuario() -> Option<u64> {
+    let p = paginas().pagina_usuario_sucia()?;
+    // Recién sacada del repartidor: nadie más la tiene, y el mapa lineal la ve entera.
+    unsafe { core::ptr::write_bytes(crate::mmu::virt(p as usize) as *mut u8, 0, PAGINA as usize) };
+    Some(p)
+}
+
 /// Páginas seguidas para tablas que lee un aparato del sistema, como el GIC (U6h): a cero, fuera de la caché, y para
 /// siempre (no se devuelven). Devuelve la dirección física.
 pub fn paginas_fijas(n: usize, alineacion: usize) -> Option<u64> {
@@ -140,6 +151,7 @@ impl Paginas {
                 self.libres_bajo += bajo as usize;
             }
         }
+        LIBRES_NORMALES.store(self.libres - self.libres_bajo, core::sync::atomic::Ordering::Relaxed);
     }
 
     fn marcar_tramo(&mut self, dir: u64, tam: u64, ocupada: bool) {
@@ -147,7 +159,7 @@ impl Paginas {
             self.pista = PALABRAS - 1;
         }
         let primera = (dir / PAGINA) as usize;
-        // Solo se reparte lo que ve el mapa lineal del kernel (4 GB, arranque.s). En una Pi de 8 GB, lo de arriba se
+        // Solo se reparte lo que ve el mapa lineal del kernel (4 GB, arranque.s; 16 en `virt`). En una Pi de 8 GB, lo de arriba se
         // queda sin usar hasta que el mapa del kernel se haga por páginas (S16, fase 2); antes se repartía y el kernel
         // caía al tocarlo (auditoría, bajos).
         let tope = if ocupada { MAX_PAGINAS } else { MAPA_LINEAL };
@@ -237,6 +249,9 @@ impl Paginas {
             (self.libres - self.libres_bajo) as u64 * PAGINA >> 20,
             if self.piso > 0 { "solo para DMA" } else { "compartido: no hay memoria por encima" }
         );
+        RESERVADAS_AL_ARRANCAR.store(self.total - self.libres, core::sync::atomic::Ordering::Relaxed);
+        LIBRES_NORMALES.store(self.libres - self.libres_bajo, core::sync::atomic::Ordering::Relaxed);
+        PARA_PROCESOS_AL_ARRANCAR.store((self.libres - self.libres_bajo).saturating_sub(RESERVA), core::sync::atomic::Ordering::Relaxed);
         kprintln!(
             "Memoria física: {} MB en total, {} MB libres; zonas DMA hasta {} MB y {} MB",
             self.total as u64 * PAGINA >> 20,
@@ -244,6 +259,20 @@ impl Paginas {
             self.limite_1g as u64 * PAGINA >> 20,
             self.limite_3g as u64 * PAGINA >> 20
         );
+    }
+
+    /// Aparta un tramo para que no se reparta (la pantalla del firmware, si cae en RAM del árbol). Justo tras `iniciar`.
+    /// Queda también como reserva: así se puede dar como memoria del firmware (`proyectar_firmware`).
+    pub fn apartar(&mut self, dir: u64, tam: u64) {
+        self.marcar_tramo(dir, tam, true);
+        if let Some(r) = self.reservadas.iter_mut().find(|r| r.1 == 0) {
+            *r = (dir, tam);
+        }
+    }
+
+    /// Los tramos de RAM del árbol (física, tamaño); los huecos van a (0, 0). Para la traducción de EL2 (hiper.rs).
+    pub(super) fn tramos_ram(&self) -> [(u64, u64); MAX_TRAMOS] {
+        self.ram
     }
 
     /// ¿El tramo cae entero fuera de la RAM que conoce el kernel? Para la memoria del firmware (C50).
@@ -263,6 +292,11 @@ impl Paginas {
         (self.libres - self.libres_bajo).saturating_sub(RESERVA) as u64 * PAGINA
     }
 
+    /// Fin (exclusivo, en bytes) de la RAM que reparte el kernel: hasta ahí llega el mapa lineal (mapa.rs).
+    pub fn fin_de_la_ram(&self) -> u64 {
+        self.max_pagina as u64 * PAGINA
+    }
+
     /// Si hay zona normal por encima del primer GB (C38).
     pub fn hay_zona_alta(&self) -> bool {
         self.piso > 0
@@ -270,6 +304,11 @@ impl Paginas {
 
     pub fn libres(&self) -> usize {
         self.libres
+    }
+
+    /// Páginas de RAM que conoce el kernel (M0, para medir la memoria ocupada).
+    pub fn total(&self) -> usize {
+        self.total
     }
 
     /// Reserva `n` páginas seguidas, alineadas a `alineacion` páginas, en la zona. Devuelve la dirección física.
@@ -361,15 +400,10 @@ impl Paginas {
     /// Una página para un proceso, a cero: su memoria, su imagen, su pila o sus tablas. Nunca toca las últimas
     /// `RESERVA` páginas libres, que quedan para el kernel (montón, pilas, hilos). Así un proceso que se come la
     /// memoria recibe un error, y el kernel sigue pudiendo trabajar (auditoría, hallazgo 8).
-    pub fn pagina_usuario(&mut self) -> Option<u64> {
-        let p = self.pagina_usuario_sin_borrar()?;
-        borrar_pagina(p);
-        Some(p)
-    }
-
-    /// Como `pagina_usuario`, pero sin ponerla a cero: quien la pide la borra antes de que la vea nadie (X6: así el
-    /// borrado va fuera del cerrojo del repartidor).
-    fn pagina_usuario_sin_borrar(&mut self) -> Option<u64> {
+    ///
+    /// Sin poner a cero: eso lo hace `pagina_usuario` ya fuera del cerrojo (S2), para que los demás núcleos no esperen
+    /// a que se borren 4 KB por cada página de un `memoria_crear` grande.
+    fn pagina_usuario_sucia(&mut self) -> Option<u64> {
         if self.libres - self.libres_bajo <= RESERVA {
             return None;
         }
@@ -433,24 +467,48 @@ impl PermisoDma {
     }
 }
 
-/// Páginas que `Memoria::nueva_con_pausas` borra entre pausa y pausa. Una: en QEMU sin KVM, la primera escritura en
-/// una página de la RAM del invitado tarda a veces más de un milisegundo (la reserva el anfitrión), y con 8 páginas
-/// entre pausa y pausa el temporizador llegaba hasta 7 ms tarde. La pausa cuesta unas pocas instrucciones.
-const PAGINAS_POR_PAUSA: usize = 1;
-
-/// Pone a cero una página recién sacada del repartidor: nadie más la tiene, y el mapa lineal la ve entera.
-fn borrar_pagina(p: u64) {
-    unsafe { core::ptr::write_bytes(crate::mmu::virt(p as usize) as *mut u8, 0, PAGINA as usize) };
-}
+/// Páginas que `Memoria::nueva_en_llamada` pide y borra entre un punto de corte y el siguiente (S2). En ARM, 64 (256 KB
+/// a cero). En x86-64, una (X6): en QEMU sin KVM, la primera escritura en una página de la RAM del invitado tarda a
+/// veces más de un milisegundo (la reserva el anfitrión), y con 8 páginas entre corte y corte el temporizador llegaba
+/// hasta 7 ms tarde. El corte cuesta unas pocas instrucciones.
+#[cfg(target_arch = "aarch64")]
+const PAGINAS_POR_CORTE: usize = 64;
+#[cfg(target_arch = "x86_64")]
+const PAGINAS_POR_CORTE: usize = 1;
 
 pub struct Memoria {
-    paginas: alloc::vec::Vec<u64>,
+    /// Las páginas físicas, en orden. Un 0 es una página soltada con el globo de una máquina (llamada 55): no está en
+    /// ninguna proyección ni en la etapa 2, y no cuenta en su grupo hasta que se repone.
+    paginas: alloc::vec::Vec<core::sync::atomic::AtomicU64>,
+    /// Cuántas hay soltadas (sus bytes ya se devolvieron al grupo uno a uno).
+    soltadas: core::sync::atomic::AtomicU64,
     /// Si es memoria DMA (C46): la dirección de bus de su primera página. Las páginas son seguidas.
     bus: Option<u64>,
     /// Si es memoria DMA, el permiso con que se hizo: al soltarse, sus páginas van a su cuarentena (M5).
     permiso: Option<alloc::sync::Arc<PermisoDma>>,
     /// Lo cobrado a su grupo (C42); se devuelve al soltarse, o al salir de la cuarentena si es DMA (M7).
     cargo: Option<crate::cupo::Cargo>,
+    /// Si es una vista (llamada 50): los objetos de los que salen sus páginas. Los mantiene vivos mientras ella viva,
+    /// así que sus páginas no vuelven al repartidor ni se dan a otro mientras alguien las vea por la vista. Una vista
+    /// no devuelve páginas al soltarse: lo hacen sus orígenes, cuando se suelta el último que los tiene.
+    origenes: alloc::vec::Vec<alloc::sync::Arc<Memoria>>,
+}
+
+/// Lo que no deja hacer una vista (llamada 50).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FalloVista {
+    /// Un origen es memoria DMA o es otra vista.
+    Origen,
+    /// Un número de página que no está en los orígenes.
+    Fuera,
+    /// No cabe en el cupo o en el montón.
+    Memoria,
+}
+
+/// Lo que cuesta una vista en el cupo de quien la pide: lo fijo, más su lista de páginas (8 bytes cada una) y de
+/// orígenes. No toma páginas nuevas.
+pub fn coste_vista(paginas: usize, origenes: usize) -> u64 {
+    256 + 8 * paginas as u64 + 8 * origenes as u64
 }
 
 impl Memoria {
@@ -462,27 +520,45 @@ impl Memoria {
     /// `tamano` bytes, redondeado a páginas. `None` si no hay memoria fuera de la reserva del kernel; entonces las
     /// páginas que ya se habían tomado vuelven al repartidor.
     pub fn nueva(tamano: usize, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
-        Self::nueva_con_pausas(tamano, cupo, &mut || {})
+        Self::nueva_cortando(tamano, cupo, &mut || {})
     }
 
-    /// Como `nueva`, pero llama a `pausa` cada `PAGINAS_POR_PAUSA` páginas, sin ningún cerrojo de aquí tomado (X6).
-    /// Para `memoria_crear`: poner a cero 4 MB tardaba en QEMU x86 hasta 25 ms con las interrupciones cerradas, y ahí
-    /// la llamada abre un momento las interrupciones (`cerrojo::ventana_irq`) tras cada página. Cada página se pide al repartidor y se
-    /// borra fuera de su cerrojo, antes de entrar en el objeto.
-    pub fn nueva_con_pausas(tamano: usize, cupo: &alloc::sync::Arc<crate::cupo::Cupo>, pausa: &mut dyn FnMut()) -> Option<Self> {
+    /// Cada página se pide al repartidor y se borra fuera de su cerrojo. `pausa` se llama cada `PAGINAS_POR_CORTE`.
+    fn nueva_cortando(tamano: usize, cupo: &alloc::sync::Arc<crate::cupo::Cupo>, pausa: &mut dyn FnMut()) -> Option<Self> {
         let n = tamano.div_ceil(PAGINA as usize);
         let cargo = cupo.cobrar(n as u64 * PAGINA)?;
-        let mut m = Self { paginas: alloc::vec::Vec::new(), bus: None, permiso: None, cargo: Some(cargo) };
+        let mut m = Self { paginas: alloc::vec::Vec::new(), soltadas: core::sync::atomic::AtomicU64::new(0), bus: None, permiso: None, cargo: Some(cargo), origenes: alloc::vec::Vec::new() };
         m.paginas.try_reserve_exact(n).ok()?;
-        for k in 0..n {
-            let p = paginas().pagina_usuario_sin_borrar()?;
-            borrar_pagina(p);
-            m.paginas.push(p);
-            if (k + 1) % PAGINAS_POR_PAUSA == 0 && k + 1 < n {
+        for i in 0..n {
+            if i % PAGINAS_POR_CORTE == PAGINAS_POR_CORTE - 1 {
                 pausa();
             }
+            m.paginas.push(core::sync::atomic::AtomicU64::new(pagina_usuario()?));
         }
         Some(m)
+    }
+
+    /// Como `nueva`, desde una llamada al sistema y sin cerrojos tomados: cada 64 páginas (256 KB a cero), un punto
+    /// de corte (S2). Un objeto de 4 MB ya no deja al núcleo sin interrupciones durante toda la llamada.
+    pub fn nueva_en_llamada(tamano: usize, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
+        Self::nueva_cortando(tamano, cupo, &mut crate::planificador::punto_de_corte)
+    }
+
+    /// Como `leer`, desde una llamada y sin cerrojos: un punto de corte cada 256 KB (S2).
+    pub fn leer_en_llamada(&self, desde: usize, buf: &mut [u8]) -> bool {
+        const TROZO: usize = 256 * 1024;
+        let mut hecho = 0;
+        while hecho < buf.len() {
+            let n = TROZO.min(buf.len() - hecho);
+            if !self.leer(desde + hecho, &mut buf[hecho..hecho + n]) {
+                return false;
+            }
+            hecho += n;
+            if hecho < buf.len() {
+                crate::planificador::punto_de_corte();
+            }
+        }
+        true
     }
 
     /// Memoria para DMA (C46): `tamano` bytes seguidos de la `zona`, a cero y fuera de la caché, cuya dirección de bus
@@ -510,9 +586,58 @@ impl Memoria {
         unsafe { core::ptr::write_bytes(k as *mut u8, 0, n * PAGINA as usize) };
         limpiar_cache(k, n * PAGINA as usize);
         for i in 0..n as u64 {
-            paginas.push(base + i * PAGINA);
+            paginas.push(core::sync::atomic::AtomicU64::new(base + i * PAGINA));
         }
-        Some(Self { paginas, bus: Some(base + desplazamiento_bus), permiso: Some(permiso.clone()), cargo: Some(cargo) })
+        Some(Self {
+            paginas,
+            soltadas: core::sync::atomic::AtomicU64::new(0),
+            bus: Some(base + desplazamiento_bus),
+            permiso: Some(permiso.clone()),
+            cargo: Some(cargo),
+            origenes: alloc::vec::Vec::new(),
+        })
+    }
+
+    /// Una vista (llamada 50): un objeto de memoria hecho con páginas de otros, sin copiarlas. `numeros` dice cuáles,
+    /// contando seguidas las páginas de los `origenes` en su orden (la 0 es la primera del primero). Una página puede
+    /// salir varias veces. Los orígenes no pueden ser memoria DMA (se proyecta sin caché) ni otras vistas (así no hay
+    /// cadenas que soltar). Solo se cobra lo que mide la lista ([`coste_vista`]); las páginas siguen cobradas al grupo
+    /// de quien creó cada origen, hasta que se suelte el último que lo tiene, la vista también.
+    pub fn vista(origenes: &[alloc::sync::Arc<Memoria>], numeros: &[u32], cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Result<Self, FalloVista> {
+        if origenes.iter().any(|o| o.bus.is_some() || o.es_vista()) {
+            return Err(FalloVista::Origen);
+        }
+        if numeros.is_empty() {
+            return Err(FalloVista::Fuera);
+        }
+        // Sin repetir orígenes: el mismo objeto dos veces solo cuenta una en la lista que se guarda.
+        let mut propios: alloc::vec::Vec<alloc::sync::Arc<Memoria>> = alloc::vec::Vec::new();
+        propios.try_reserve_exact(origenes.len()).map_err(|_| FalloVista::Memoria)?;
+        let mut paginas = alloc::vec::Vec::new();
+        paginas.try_reserve_exact(numeros.len()).map_err(|_| FalloVista::Memoria)?;
+        for &n in numeros {
+            let mut n = n as usize;
+            let mut fisica = None;
+            for o in origenes {
+                if n < o.paginas.len() {
+                    // Una página soltada por el globo (0) no se ve por una vista.
+                    fisica = Some(o.fisica(n)).filter(|&f| f != 0);
+                    if !propios.iter().any(|p| alloc::sync::Arc::ptr_eq(p, o)) {
+                        propios.push(o.clone());
+                    }
+                    break;
+                }
+                n -= o.paginas.len();
+            }
+            paginas.push(core::sync::atomic::AtomicU64::new(fisica.ok_or(FalloVista::Fuera)?));
+        }
+        let cargo = cupo.cobrar(coste_vista(numeros.len(), propios.len())).ok_or(FalloVista::Memoria)?;
+        Ok(Self { paginas, soltadas: core::sync::atomic::AtomicU64::new(0), bus: None, permiso: None, cargo: Some(cargo), origenes: propios })
+    }
+
+    /// Si es una vista: solo se proyecta para leer, y no vale como RAM de un invitado.
+    pub fn es_vista(&self) -> bool {
+        !self.origenes.is_empty()
     }
 
     /// La dirección de bus si es memoria DMA.
@@ -530,8 +655,12 @@ impl Memoria {
         self.copiar(desde, buf.len(), |pagina, en_buf, n| buf[en_buf..en_buf + n].copy_from_slice(&pagina[..n]))
     }
 
-    /// Escribe `datos` desde el byte `desde`. Falso si se sale del objeto.
+    /// Escribe `datos` desde el byte `desde`. Falso si se sale del objeto o es una vista.
     pub fn escribir(&self, desde: usize, datos: &[u8]) -> bool {
+        // Una vista es para leer (llamada 50): ni el kernel escribe por ella.
+        if self.es_vista() {
+            return false;
+        }
         self.copiar_mut(desde, datos.len(), |pagina, en_datos, n| pagina[..n].copy_from_slice(&datos[en_datos..en_datos + n]))
     }
 
@@ -541,12 +670,16 @@ impl Memoria {
             Some(fin) if fin <= self.paginas.len() * pag => {}
             _ => return false,
         }
+        // Si una página del tramo está soltada (globo), no se toca nada.
+        if largo > 0 && (desde / pag..=(desde + largo - 1) / pag).any(|i| self.fisica(i) == 0) {
+            return false;
+        }
         let mut hecho = 0;
         while hecho < largo {
             let pos = desde + hecho;
             let dentro = pos % pag;
             let n = (pag - dentro).min(largo - hecho);
-            f(self.paginas[pos / pag], dentro, hecho, n);
+            f(self.fisica(pos / pag), dentro, hecho, n);
             hecho += n;
         }
         true
@@ -568,17 +701,70 @@ impl Memoria {
         })
     }
 
-    pub(super) fn fisicas(&self) -> &[u64] {
-        &self.paginas
+    /// La física de la página `i` (0 si está soltada).
+    pub(super) fn fisica(&self, i: usize) -> u64 {
+        self.paginas[i].load(core::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Las físicas, en orden (0 las soltadas).
+    pub(super) fn fisicas(&self) -> impl Iterator<Item = u64> + '_ {
+        self.paginas.iter().map(|p| p.load(core::sync::atomic::Ordering::Acquire))
+    }
+
+    /// Globo (llamada 55): quita la página `i` del objeto y devuelve su física, que el que llama libera cuando ya no la
+    /// ve nadie (ni la etapa 2 ni las proyecciones, con las TLB vaciadas). Sus bytes vuelven al grupo. `None` si ya
+    /// estaba soltada o el objeto no es de los que se sueltan (DMA o vista).
+    ///
+    /// Quien llama garantiza que nadie más tiene el objeto: solo la máquina y el proceso que la pide (sus llaves y sus
+    /// proyecciones), con sus cerrojos tomados (`hiper::Espacio::globo`).
+    pub(super) fn soltar_pagina(&self, i: usize) -> Option<u64> {
+        if self.bus.is_some() || self.es_vista() {
+            return None;
+        }
+        let f = self.paginas.get(i)?.swap(0, core::sync::atomic::Ordering::AcqRel);
+        if f == 0 {
+            return None;
+        }
+        self.soltadas.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        if let Some(c) = &self.cargo {
+            c.cupo().devolver(PAGINA);
+        }
+        Some(f)
+    }
+
+    /// Globo: vuelve a poner en el hueco `i` (soltado) la página `fisica`, recién sacada y a cero. Cobra sus bytes al
+    /// grupo del objeto; falso si no caben (y entonces no pone nada) o si el hueco no estaba soltado.
+    pub(super) fn reponer_pagina(&self, i: usize, fisica: u64) -> bool {
+        let Some(p) = self.paginas.get(i) else { return false };
+        if p.load(core::sync::atomic::Ordering::Acquire) != 0 {
+            return false;
+        }
+        if let Some(c) = &self.cargo
+            && !c.cupo().cobrar_suelto(PAGINA)
+        {
+            return false;
+        }
+        p.store(fisica, core::sync::atomic::Ordering::Release);
+        self.soltadas.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+        true
+    }
+
+    /// Cuántas páginas tiene soltadas.
+    pub fn soltadas(&self) -> u64 {
+        self.soltadas.load(core::sync::atomic::Ordering::Relaxed)
     }
 }
 
 impl Drop for Memoria {
     fn drop(&mut self) {
+        if self.es_vista() {
+            // Sus páginas son de sus orígenes, que se sueltan después (con ellos, si era lo último que los tenía).
+            return;
+        }
         if let Some(permiso) = self.permiso.take() {
             // Memoria DMA: a la cuarentena de su permiso (M5). Son seguidas. Si no hay memoria para apuntarlas, se
             // quedan sin devolver: mejor perderlas que dárselas a otro con el aparato escribiendo.
-            if let Some(&base) = self.paginas.first() {
+            if let Some(base) = self.paginas.first().map(|p| p.load(core::sync::atomic::Ordering::Relaxed)) {
                 let mut c = permiso.cuarentena.tomar();
                 if c.try_reserve(1).is_ok() {
                     c.push((base, self.paginas.len(), self.cargo.take()));
@@ -586,8 +772,13 @@ impl Drop for Memoria {
             }
             return;
         }
+        // Las soltadas ya se devolvieron a su grupo: el cargo solo devuelve lo demás.
+        let soltadas = *self.soltadas.get_mut();
+        if let Some(c) = self.cargo.as_mut() {
+            c.descontar(soltadas * PAGINA);
+        }
         let mut p = paginas();
-        for &f in &self.paginas {
+        for f in self.paginas.iter_mut().map(|f| *f.get_mut()).filter(|&f| f != 0) {
             // Son nuestras, y ya no las proyecta nadie: cada espacio que las proyecta guarda un Arc.
             unsafe { p.liberar(f, 1) };
         }
@@ -601,7 +792,7 @@ fn limpiar_cache(_direccion: usize, _bytes: usize) {
     core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
 }
 
-/// x86-64 (S21, X2): el reparto desde el mapa de memoria de UEFI.
+/// x86-64 (S30, X2): el reparto desde el mapa de memoria de UEFI.
 #[cfg(target_arch = "x86_64")]
 impl Paginas {
     /// Prepara el reparto. `tramos` da la memoria (inicio, tamaño y si está libre); lo que no está libre cuenta como
@@ -649,6 +840,9 @@ impl Paginas {
         }
         self.limite_1g = ((limite_dma / PAGINA) as usize).min(self.max_pagina);
         self.limite_3g = self.limite_1g;
+        RESERVADAS_AL_ARRANCAR.store(self.total - self.libres, core::sync::atomic::Ordering::Relaxed);
+        LIBRES_NORMALES.store(self.libres - self.libres_bajo, core::sync::atomic::Ordering::Relaxed);
+        PARA_PROCESOS_AL_ARRANCAR.store((self.libres - self.libres_bajo).saturating_sub(RESERVA), core::sync::atomic::Ordering::Relaxed);
         kprintln!(
             "Memoria física: {} MB en total, {} MB libres; zona DMA de 32 bits hasta {} MB",
             self.total as u64 * PAGINA >> 20,
@@ -661,4 +855,28 @@ impl Paginas {
     pub fn max_fisica(&self) -> u64 {
         self.max_pagina as u64 * PAGINA
     }
+}
+
+/// Las páginas que no estaban libres al arrancar: la imagen del kernel con sus pilas, lo que reserva el firmware (su
+/// pantalla, sus tablas) y el árbol de dispositivos. Para contar en qué se va la memoria (llamada 29, contador 13).
+/// Páginas libres de la zona normal, copia sin cerrojo de las cuentas del repartidor: para mirar si queda poca
+/// memoria (`presion.rs`) en cada llamada sin tomar el cerrojo.
+static LIBRES_NORMALES: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+/// Páginas para procesos al arrancar (las libres de la zona normal menos la reserva del kernel).
+static PARA_PROCESOS_AL_ARRANCAR: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Bytes libres para procesos ahora (los de la zona normal menos la reserva del kernel), sin cerrojo.
+pub fn libres_para_procesos() -> u64 {
+    LIBRES_NORMALES.load(core::sync::atomic::Ordering::Relaxed).saturating_sub(RESERVA) as u64 * PAGINA
+}
+
+/// Bytes para procesos al arrancar: el tope del grupo raíz y la medida del aviso de memoria baja.
+pub fn para_procesos_al_arrancar() -> u64 {
+    PARA_PROCESOS_AL_ARRANCAR.load(core::sync::atomic::Ordering::Relaxed) as u64 * PAGINA
+}
+
+static RESERVADAS_AL_ARRANCAR: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+pub fn reservadas_al_arrancar() -> usize {
+    RESERVADAS_AL_ARRANCAR.load(core::sync::atomic::Ordering::Relaxed)
 }

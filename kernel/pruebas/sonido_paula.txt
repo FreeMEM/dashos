@@ -1,0 +1,10 @@
+# S19, fase 2: audio.device nativo (usuario/src/bin/paula_prueba.rs) por el servicio de sonido.
+~│   [sonido] salida por virtio-sonido: 8 ranuras de 256 cuadros a 48 kHz
+~│   [paula] canal 0: 440 Hz a la izquierda; canal 1: 660 Hz a la derecha, sin fin
+# A los 0,5 s, el robo: la escritura sin fin del canal 1 vuelve con ADIOERR_CHANNELSTOLEN (-12).
+~vuelve la petición 11 (canales 2): error -12
+~vuelve la petición 3 (canales 2): error 0
+~vuelve la petición 10 (canales 1): error 0
+~vuelve la petición 12 (canales 2): error 0
+~│   [paula] fin
+~│   [sonido] paula-prueba: flujo cerrado

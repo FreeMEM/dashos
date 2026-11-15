@@ -9,6 +9,7 @@
 
 // Deja el núcleo en EL1, en little-endian, y salta a \destino. Vale tanto si el firmware entra en EL2 como en EL1.
 .macro A_EL1 destino
+    msr     tpidr_el1, xzr              // K1: el hilo actual, ninguno hasta que haya planificador
     mrs     x2, CurrentEL
     lsr     x2, x2, #2
     cmp     x2, #2
@@ -32,9 +33,25 @@
     msr     S3_4_C12_C9_5, x2
     isb
 8:
+    // S6: no fiarse de lo que deje el firmware en EL2. CPTR_EL2 solo con sus bits RES1: ni la coma flotante ni los
+    // registros de control atrapan hacia EL2, donde no hay quien atienda. MDCR_EL2 a cero salvo HPMN (todos los
+    // contadores de rendimiento para EL1): la depuración y los contadores no atrapan hacia EL2.
+    mov     x2, #0x33ff
+    msr     cptr_el2, x2
+    mrs     x2, pmcr_el0
+    ubfx    x2, x2, #11, #5             // PMCR_EL0.N
+    msr     mdcr_el2, x2
 
     ldr     x2, =0x30D00800             // SCTLR_EL1: bits RES1, little-endian; MMU y cachés apagadas
     msr     sctlr_el1, x2
+
+    // El hipervisor (caja Linux, H9): una tabla de vectores de EL2 que solo sabe instalar la de verdad (hiper.s), y
+    // el VMID 0 para el kernel. x21 = 1 le dice a Rust que este núcleo arrancó en EL2.
+    adrp    x2, vectores_el2_arranque
+    add     x2, x2, :lo12:vectores_el2_arranque
+    msr     vbar_el2, x2
+    msr     vttbr_el2, xzr
+    mov     x21, #1
 
     mov     x2, #0x3c5                  // SPSR_EL2: EL1h con D, A, I y F enmascaradas
     msr     spsr_el2, x2
@@ -42,11 +59,21 @@
     msr     elr_el2, x2
     eret
 
-9:  mrs     x2, sctlr_el1               // el firmware ya nos dejó en EL1: little-endian aquí
-    bic     x2, x2, #(3 << 24)
+9:  mov     x21, #0                     // sin EL2: sin hipervisor
+    ldr     x2, =0x30D00800             // el firmware ya nos dejó en EL1: SCTLR conocido, no el suyo (S6)
     msr     sctlr_el1, x2
     isb
     b       \destino
+.endm
+
+// El número de núcleo (0 a 3) en \reg, desde MPIDR_EL1: Aff0 en la Pi 3 y la Pi 4 y en QEMU; Aff1 en las CPU que marcan
+// MT (el bit 24), como el Cortex-A76 de la Pi 5 (MPIDR 0x81000000, 0x81000100...). Usa x2.
+.macro NUCLEO reg
+    mrs     \reg, mpidr_el1
+    ubfx    x2, \reg, #8, #8
+    tst     \reg, #(1 << 24)
+    and     \reg, \reg, #0xff
+    csel    \reg, x2, \reg, ne
 .endm
 
 // Enciende la MMU con las tablas de __tabla_l1 (ya construidas por el núcleo 0) y salta a \destino_alto.
@@ -77,8 +104,23 @@
     .globl _start
 _start:
     mov     x20, x0                     // árbol de dispositivos
-    mrs     x1, mpidr_el1
-    and     x1, x1, #0xff
+.if PLACA_PI5
+    // La Pi 5: el kernel está enlazado para 0x80000 (config.txt pone kernel_address=0x80000). Si el firmware lo dejó en
+    // otro sitio por encima (0x200000 es lo de siempre para 64 bits), `reubicar` lo copia a 0x80000 y sigue allí.
+    adr     x1, _start
+    ldr     x2, =0x80000
+    cmp     x1, x2
+    b.ls    12f
+    adr     x3, reubicar_cerca          // reubicar está lejos (al final): por un registro
+    ldr     x4, [x3]
+    add     x3, x3, x4
+    br      x3
+    .balign 8                           // sin MMU, una lectura desalineada falla
+reubicar_cerca:
+    .quad   reubicar - reubicar_cerca
+12:
+.endif
+    NUCLEO  x1
     cbz     x1, 1f
 0:  wfe                                 // otro núcleo que entra por aquí: esperar
     b       0b
@@ -104,15 +146,58 @@ en_el1:
                                         // ejecuta por aquí; auditoría, hallazgo 12)
 .if PLACA_VIRT
     // QEMU virt (U3, placa.rs): el primer GB son aparatos y la RAM empieza en 1 GB. Bloques de 1 GB: el primero de
-    // dispositivo, los otros tres normales. Sin nivel 2.
+    // dispositivo, los demás normales hasta el GB 16. Sin nivel 2. Con highmem (caja-linux-grandes) la RAM de QEMU
+    // pasa de los 4 GB, y el mapa de verdad (mapa.rs) se hace con tablas sacadas de arriba de la RAM.
     ldr     x8, =0x0060000000000401     // bloque de dispositivo: válido, AttrIndx 0, AF, PXN y UXN
     str     x8, [x0, #0]
+    mov     x2, #1
+13: lsl     x5, x2, #30
+    orr     x5, x5, x4
+    str     x5, [x0, x2, lsl #3]
+    add     x2, x2, #1
+    cmp     x2, #16
+    b.ne    13b
+.elseif PLACA_PI3
+    // La Pi 3 (P3): el primer GB, por bloques de 2 MB (los periféricos desde 0x3F000000); el segundo, de dispositivo
+    // (los locales de los núcleos en 0x40000000; no hay RAM ahí); los otros dos, normales (sin nada).
+    orr     x5, x1, #3                  // entrada de tabla hacia el nivel 2
+    str     x5, [x0, #0]
+    ldr     x8, =0x0060000000000401     // bloque de dispositivo: válido, AttrIndx 0, AF, PXN y UXN
+    orr     x5, x8, #(1 << 30)
+    str     x5, [x0, #8]
+    orr     x5, x4, #(2 << 30)
+    str     x5, [x0, #16]
+    orr     x5, x4, #(3 << 30)
+    str     x5, [x0, #24]
+    mov     x2, #0
+    mov     x6, #0                      // dirección física del bloque
+    ldr     x7, =0x3F000000             // desde aquí, periféricos
+7:  cmp     x6, x7
+    csel    x9, x4, x8, lo
+    orr     x9, x9, x6
+    str     x9, [x1, x2, lsl #3]
+    add     x6, x6, #0x200000
+    add     x2, x2, #1
+    cmp     x2, #512
+    b.ne    7b
+.elseif PLACA_PI5
+    // La Pi 5 (placa.rs): RAM desde 0 (los cuatro primeros GB, normales) y los periféricos de la BCM2712 en los GB 64
+    // y 65 (0x10_0000_0000 a 0x10_8000_0000, el bus "soc" del árbol): bloques de 1 GB de dispositivo. El RP1 (detrás
+    // del PCIe) aún no.
+    str     x4, [x0, #0]
     orr     x5, x4, #(1 << 30)
     str     x5, [x0, #8]
     orr     x5, x4, #(2 << 30)
     str     x5, [x0, #16]
     orr     x5, x4, #(3 << 30)
     str     x5, [x0, #24]
+    ldr     x8, =0x0060000000000401     // bloque de dispositivo: válido, AttrIndx 0, AF, PXN y UXN
+    ldr     x5, =0x1000000000
+    orr     x5, x8, x5
+    str     x5, [x0, #(64 * 8)]
+    ldr     x5, =0x1040000000
+    orr     x5, x8, x5
+    str     x5, [x0, #(65 * 8)]
 .else
     str     x4, [x0, #0]
     orr     x5, x4, #(1 << 30)
@@ -151,9 +236,34 @@ en_alto:
     b       2b
 
 3:  mov     x0, x20                     // árbol de dispositivos (dirección física)
+    mov     x1, x21                     // 1 si arrancó en EL2
     bl      kmain
 4:  wfe
     b       4b
+
+.if PLACA_PI5
+// La copia de la imagen a 0x80000 (x1 = dónde está, por encima; x2 = 0x80000), hacia delante: el destino está por
+// debajo, así que nunca se pisa lo que falta por leer. Va al final de la imagen (enlace.ld, tras .data): el destino
+// acaba antes de llegar a estas instrucciones, que siguen intactas mientras se copia. Sin MMU: la copia va a la RAM.
+    .section .reubicar_codigo, "ax"
+reubicar:
+    ldr     x3, =__datos_fin            // lo que hay que copiar: hasta el final del fichero (la .bss no viene)
+    ldr     x4, =__kernel_inicio
+    sub     x3, x3, x4
+    add     x3, x3, x1                  // fin del origen
+    mov     x4, x2
+1:  ldp     x5, x6, [x1], #16
+    stp     x5, x6, [x4], #16
+    cmp     x1, x3
+    b.lo    1b
+    dsb     sy
+    ic      iallu
+    dsb     sy
+    isb
+    br      x2                          // a _start, ya en su sitio (x0 sigue siendo el árbol)
+    .ltorg
+    .previous
+.endif
 
 // cambiar_ttbr1(x0 = tabla nueva, x1 = tabla vacía, x2 = __tabla_l1; las tres físicas): pasa la mitad alta de este
 // núcleo a las tablas del mapa del kernel (mapa.rs, C34). Sigue la regla de romper antes de hacer: corre desde la
@@ -255,8 +365,7 @@ trasladar:
 // Entran aquí desde la tabla de espera del firmware, en EL2, little-endian y sin MMU (C9).
     .globl _secundario
 _secundario:
-    mrs     x19, mpidr_el1
-    and     x19, x19, #0xff             // número de núcleo
+    NUCLEO  x19                         // número de núcleo
     A_EL1   sec_el1
 sec_el1:
     MMU     sec_alto
@@ -275,6 +384,7 @@ sec_alto:
     sub     x1, x1, x2
     mov     sp, x1
     mov     x0, x19
+    mov     x1, x21                     // 1 si arrancó en EL2
     bl      kmain_secundario
 7:  wfe
     b       7b

@@ -1,0 +1,1989 @@
+# Revisión: implantar mejoras y usuarios (plan y bitácora)
+
+Encargo del usuario (2026-11-10): implantar `docs/REVISION_ARQUITECTURA.md` y `docs/diseño/S6b-usuarios-y-permisos.md`,
+con todas sus decisiones aprobadas, "como mejor creas", en loop. Papel de esta sesión: implementa (no lee Linux ni
+desensamblados).
+
+Worktree `.worktrees/revision`, rama `revision` (sale de `multitarea`). Commits locales: nada hacia fuera sin permiso.
+
+## Cómo se trabaja
+
+- Cada paso: medir antes si toca rendimiento (`make -C kernel medir`, `tools/medir.py`), cambiar, `make -C kernel
+  prueba` y `make -C kernel arranque-virt`, apuntar aquí y commit local.
+- Cada arreglo de seguridad o estabilidad entra con su prueba hostil, que falla antes y pasa después.
+- Emulador bajo `flock /run/user/1000/dash-emu-red.lock`. Parar solo procesos propios por PID.
+- Al 90 % de `~/.claude-ftapias/state/uso-7d-ftapias.txt` se para.
+- Quien cambie una llamada o una orden pone al día `docs/referencia/kernel.md` o `servicios.md` en el mismo commit.
+
+## Orden
+
+Primero lo que hace falta para probar (cliente hostil), luego lo pequeño y seguro, luego permisos en archivos (U1, que
+no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener el banco fiable (B1 a B3).
+
+| Paso | Qué | Puntos | Estado |
+|---|---|---|---|
+| R1 | Cliente hostil en las pruebas del arranque | B6 | hecho |
+| R2 | Servicios: mensajes vacíos, fugas de llaves, giros, topes de Wayland, tecla perdida | E1 a E5 | hecho |
+| R3 | Kernel: dormidos sin tope, temporizador puntual, interrupción con la cola llena, aviso perdido | K9 a K12, K15 | hecho (lo de placa, en la Pi) |
+| R4 | Llaves de aparato con derechos mínimos, USB hostil, foco del teclado, TIC del sonido | S4, S7, S8 | hecho |
+| R5 | Clase de plazo con llave y admisión que cuenta a los dormidos | S3, K8 | hecho |
+| R6 | Archivos con ficha: dueño, grupo y modo, raíces, ceder, administrar | U1, A13 | hecho |
+| R7 | Banco fiable | B1 a B4 | hecho |
+| R8 | Archivos, lo rápido: cerrar sin guardar, menos viajes | A1 a A6 | hecho |
+| R9 | Aviso de muerte y plazo al leer | K7 | hecho |
+| R10 | Azar de la placa y arranque endurecido | S5, S6 | hecho (falta RNG200 y probar en placa) |
+| R11 | Kernel sin pánicos por memoria y llamadas largas troceadas | S1, S2 | hecho |
+| R12 | Supervisión de servicios y biblioteca común | E6 a E9 | hecho (E8: cola de salida por cliente, medida de cuadros y sin daños repetidos) |
+| R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | hecho para ADF (FAT y ext4, cuando existan) |
+| R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | fichas, procesos, matar, lanzar desde el disco y tabla de nombres |
+| R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | hecho en pruebas, también por tiempo y con Super+L |
+| R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario (en una capa encima de todo) y guardar lo concedido |
+| R17 | `guardian` y `selector` | U5 | ceder asas, ventana del selector (elige el usuario, con cajones y doble clic), acciones de administrador |
+| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A7 (caché de páginas prestada); A8 (el asignador; la transacción abierta, medida, no compensa), A9, A10, A11, A12, A13 y A16 (NVMe); de A14, fechas, TRIM, lectura anticipada y tabla de particiones; A15 (varias órdenes NVMe a la vez y comprobar aparte, sobre una foto sujeta, sin parar el servicio) |
+| R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco), PID en el kernel y Permisos en el centro de control (S10c, C1) |
+
+K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
+
+## Bitácora
+
+### 2026-11-10
+
+- Decisiones del usuario apuntadas en S6, S6b, S4b, RESUMEN y en el informe. La sonda de medidas de `multitarea` se
+  quitó (parche guardado fuera del repo).
+- R1: `usuario/src/bin/hostil.rs`, en el arranque de `virt`. Ataca a archivos, sonido y compositor con mensajes vacíos y
+  160 mensajes de 8 llaves que no usan, y comprueba con un plazo de 3 s que cada uno sigue contestando.
+- R2: compositor (E1: mensaje vacío; E2: tope de 32 llaves esperando por conexión, cerrar las llaves de un trozo que
+  no se mete y de ADIÓS, esperar 1 ms si no puede leer), sonido (E2: cerrar las llaves de TIC, VOLUMEN y CERRAR;
+  esperar si no puede leer), Wayland (E3: 1.024 objetos y 16 pools por cliente, 32 daños por superficie juntados en
+  uno), USB (E4: los eventos que no caben esperan, en orden, y se reintentan). `make prueba` pasa también las pruebas
+  de PC de `wayland/` (25) y `sonido/` (8). E5 queda para R9: necesita la lectura con plazo de K7.
+- R3: K9 (dormidos en lista enlazada dentro del hilo: sin tope), K10 (el reloj va al último vencimiento que cabe en
+  la holgura del más urgente: un temporizador solo no llega tarde), K11 (una interrupción con la cola llena se
+  reintenta cada milisegundo), K12 (mirar pendientes otra vez con el cerrojo), K15 (la caché de instrucciones, una
+  vez por carga; comentario del montón). Quedan de K15 lo que hay que medir en placa.
+- R4: S4 con un bit nuevo, "una vez" (8): la llave llega sin el derecho de transferir. `inicio` lo pone en las llaves
+  de aparato; `malo` lo prueba (pasos 32 y 33). S7: tamaño de paquete USB solo 8 a 64, ranura del xHCI acotada,
+  cabeza de virtio-sonido acotada. S8: TIC solo del controlador; una ventana nueva no se lleva el teclado si en los
+  últimos 2 s se pulsó una tecla en la de otro programa (prueba de PC). Pendiente de S4: sacar el GIC de la ventana de
+  periféricos (valor bajo; toca `base`).
+- R5: K8 (lo prometido a la clase de plazo se cuenta por núcleo, con los que duermen) y S3 (la llamada 28 pide un
+  permiso de plazo, objeto nuevo que `inicio` da al sonido y a virtio-sonido; `malo` paso 34).
+- R6: archivos con fichas. `inicio` manda el alta (orden 100, sin marca) con usuario, grupo, derechos y cajón raíz
+  (`FICHAS`, provisional). Permisos de Unix sin paso libre para el 0, asa 0 = raíz del cliente, derecho de
+  administrar para volúmenes, instantáneas y comprobar, contraseña por la ventana, 64 clientes. El disco de pruebas
+  sale con dueños fijos (`archivos/herramientas`, `duenos`) y un `C/Privado` 0700. `hostil` es el 1001 encerrado en
+  `C`. Pendiente de U1: ceder asas (va con el selector, R17) y grupos adicionales.
+- A1 y A2 (R8, adelantados): cerrar ya no espera al disco; un guardado que falla se dice en el siguiente cerrar,
+  vaciar o guardar de quien tenía cambios, y el disco pasa a solo lectura hasta una comprobación limpia. Falta una
+  prueba que fuerce el fallo. A3: orden 28, leer por nombre (buscar, leer y cerrar en un viaje), probada en
+  `ficheros` y en `hostil`; sin medir aún.
+- R10, primera parte: el azar del kernel es ChaCha20 con la llave que cambia tras cada uso, sembrado con
+  `/chosen/rng-seed` y `kaslr-seed` del árbol (los ponen el firmware de la Pi y QEMU), que se borran del original.
+  Llamada 34, `azar`, que dice si es de calidad. Prueba del bloque con el vector de la RFC 8439 en el arranque. Con
+  él, archivos hace volúmenes cifrados (orden 23, a = 1 o 2); sin azar de calidad, -14. Falta el RNG200 de la Pi 4.
+- Pruebas en QEMU: esperando al emulador (lo tiene la batería de la 0.9.4-alfa de Tachyon, hasta las 18:00). Se
+  prueban en copias aparte (`.worktrees/r1-antes` sin arreglos, `.worktrees/r-prueba` con R2 a R5) y después el árbol
+  de trabajo.
+- Primeras pruebas (18:00 a 19:00). Sin arreglos (`r1-antes`), el hostil tumba el compositor (pánico en
+  `compositor.rs:350`, E1) y deja sin contestar al sonido (E2). Con R2 a R5, `make prueba` pasa (un C14 con 1.762 µs
+  de desviación fue ruido: en la vuelta siguiente pasó). Lo que salió:
+  - Las llaves de un programa van en el orden en que cada canal se nombra por primera vez en `PROGRAMAS`, no en el de
+    su lista: el hostil tenía archivos y sonido cambiados.
+  - Archivos suelta al cliente que no lee sus respuestas (cola llena): el hostil abre otra sesión tras inundar.
+  - Un volumen cifrado cerrado ya no se lista ni vacío: su raíz no se lee y no hay permisos que mirar. La raíz de un
+    volumen nace con su dueño (`create_volume_owned` en el fork de RedoxFS, `DASHFS_DUENO` en `dashfs-volume`).
+  - Con S8, Ajustes sale mientras se teclea en otra ventana y no se lleva el teclado: la prueba de virt le da el
+    teclado con un clic en (300, 300) cuando la salida dice que está en pantalla, y entonces maximiza.
+  - QEMU `virt` da 40 bytes de semilla (`rng-seed` y `kaslr-seed`): el azar es de calidad y los volúmenes cifrados se
+    hacen en DashOS.
+- El usuario pide (2026-11-10) medir según se cambia y poner al día el panel de medidas con cada medida.
+
+- Con todo lo de arriba más G2 (mapa de teclado), `make prueba` y `make arranque-virt` pasan enteros (2026-11-10,
+  tras la batería de Tachyon): hostil sin tumbar nada, FS10, A3, archivos con fichas, sonido sin huecos, captura del
+  compositor, disco leído en Linux. La prueba de UEFI ya es determinista (espera a Ajustes en pantalla, clic y
+  Super+Arriba/Abajo).
+- Gráficos G3 a G6 (detalle en `GRAFICOS_LOOP.md`): subsuperficies, capas del escritorio, bloqueo de sesión y
+  dmabuf, probados en el PC con swaybg, swaylock y alacritty (directo y por el puente).
+- R7, banco fiable: el orquestador se fija en su núcleo; eco y ping en los dos siguientes (el núcleo del orquestador
+  cuenta como ocupado y el kernel no pondría ahí un proceso nuevo); una carga fijada por núcleo que calcula hasta que
+  acaba la medida (bandera en memoria compartida). El ping hace 500 rondas de calentamiento, N seguidas (la media de
+  siempre, comparable con Linux) y N con el reloj en cada una (mediana, p99 y máximo, por histograma; leer el reloj
+  en cada ronda cuesta). 7 arranques; el JSON guarda mediana, mínimo y máximo, y `comparar` dice "dentro del ruido".
+  QEMU fijado con `taskset` a 6 núcleos libres del PC, uno por núcleo físico, y la carga del PC en el JSON (sin
+  fijar, la ida y vuelta sale un 12-16 % peor).
+- R9, K7: llamada 35, leer con plazo (`E_PLAZO`, -9); llamada 36, aviso de fin de proceso por canal (16 bytes:
+  clase y código, con la marca de la llave; hasta 16 por proceso). `canal_leer` ya no dice `E_CERRADO` sin memoria.
+  Pruebas: `malo` pasos 35 y 36 (plazo, plazo enorme, rechazos) y el lanzador pide el aviso de sus 7 pruebas antes y
+  después de acabar (7 de 7).
+- R8: A4, ventana de hasta 1 MB pedida en SESION (el hostil pide una enorme y le dan 1 MB). A6, RedoxFS prueba 4 KB
+  antes de comprimir un registro. Medido (7 arranques): escribir 8 MB por trozos de 1 MB 180 MB/s (78 con 64 KB),
+  leer 705 MB/s (405).
+- R11: S2, las páginas de usuario se ponen a cero fuera del cerrojo del repartidor (y se quitó un segundo borrado al
+  crear tablas y páginas). S1: los avisos de interrupción, temporizador y fin ya no hacen pánico sin montón. La parte
+  de reservar el hilo antes de dar las llaves se quitó: cualquier reserva de más en `procesos::lanzar` hacía la ida
+  y vuelta un 10 % más lenta en QEMU (seis medidas para acotarlo: no es la FPU, ni la línea de caché del hilo, ni el
+  asignador). Pendiente: entender por qué la colocación de esos objetos pesa tanto.
+- R12: E6, `inicio` vigila los servicios (los que leen algún canal): guarda una copia de sus llaves, pide su aviso de
+  fin y los relanza con el mismo canal tras 100, 200 y 400 ms; a la cuarta, los deja. Prueba en virt con `caida`,
+  que se cae a propósito y ve en su canal el mensaje que le deja `inicio`. Falta reenviar el directorio y las altas
+  a un servicio relanzado y avisar a quien dependía de él. E8, en parte: el compositor espera como mucho 5 ms a un
+  cliente con la cola llena y lo suelta; también a los que no leen sus eventos de entrada o de cuadro.
+- Medidas frente a `f9adec2` (7 y 3 arranques, `medir-antes.json`): sin carga, igual (dentro del ruido); con 4
+  cargas, la ida y vuelta 133 a 89 µs (-33 %) y las esperas tarde 825 a 50 (-94 %); temporizador con carga, p99 884
+  a 538 µs. Ficheros: crear 4K +7 %, escribir 8 MB +11 %, datos +4 %. `make prueba` y `make arranque-virt` pasan.
+- El banco de ficheros medía mal "crear_4k_sync" desde A1: decía que cerrar ya era como fsync, y cerrar ya no espera
+  al disco. Ahora vacía tras cada fichero, como `fs.c` en Linux: 345 ficheros/s (Linux 442; antes de A1, 375). Sin
+  vaciar, 1.006 (Linux sin fsync, 3.107).
+- E8, componer: por cada fila dañada, tramos entre los bordes de las ventanas; cada tramo empieza por la ventana opaca
+  (XRGB) más alta que lo cubre, o por el fondo: lo de debajo no se pinta. Un tramo ARGB del todo opaco se copia; si
+  no, se mezcla sin saltos (rojo y azul a la vez en un entero, exacto: se comparó con la fórmula vieja). Medido en el
+  PC (`medir_componer`, 800 x 600 entera con tres ventanas): 311 a 225 µs por cuadro (-28 %); la ventana a medias
+  sola, 182 a 107 µs. Dividir entre 255 o copiar fila a fila sin más no ganaba nada (el compilador ya lo hacía).
+  Falta de E8: componer con un temporizador de cuadro y el canal fijo con el buzón.
+- E6, lo que faltaba: al relanzar un servicio, `inicio` le vuelve a dar, tras el aviso de relanzado, la entrada del
+  directorio de cada cliente de sus canales y, al de archivos, sus altas (sin montón: un mapa de bits de clientes por
+  canal, y se rehacen desde el paquete de arranque). Prueba: `caida` tiene un cliente (`caida-cliente`) y cada
+  relanzado lo ve en su directorio. Falta avisar a los clientes de que su servicio volvió (sus sesiones se pierden).
+- R13: los ADF ya se leen en un proceso aparte (`imagen`, con solo el canal de archivos, y `inicio` lo relanza si
+  cae). Prueba hostil nueva (`amigados/tests/danadas.rs`, en `make prueba`): 20.000 copias del disquete de pruebas
+  con bytes cambiados al azar (sobre todo arranque, raíz y alrededores) y las sumas de los bloques rehechas, como
+  haría quien lo prepara a mala idea; se abren, se listan, se leen y se cuentan los libres. Ninguna tumba el lector;
+  la más lenta, 13 µs; 6.527 llegan a listarse. Los lectores de FAT y ext4 tendrán que ir igual y con la misma prueba.
+- R14, primera parte: el servicio `sesiones` (solo en `virt` de momento). `inicio` le da de alta, sin marca, cada
+  programa que lanza después de él: marca (el PID), usuario, grupo, nombre y una copia de la llave de su grupo de
+  recursos. Los programas piden por su canal la lista de procesos (por páginas de 7: un mensaje son 256 bytes) y
+  matar; solo se mata lo del mismo usuario, que sale de la marca de quien pide. Usuarios provisionales en `inicio`
+  (`usuario_de`): los de `FICHAS`, `presa` el 1001 y los servicios el 1 (nadie corre como 0). Prueba hostil: `hostil`
+  (1001) ve 20 procesos, no mata a `ficheros` (1000), sí a `presa` (1001), y un PID que no existe da -1. Como su canal
+  es el primero que se nombra, en `hostil` las llaves se corren una (sesiones 1, ventanas 2, archivos 3, sonido 4).
+  Falta de U2: lanzar desde disco, la tabla de nombres, repartir las llaves (hoy, `inicio`), la baja al morir un
+  proceso (con K7) y el grupo nuevo de un servicio relanzado.
+- U2, la baja: `inicio` pide para cada programa el aviso de fin (K7) hacia `sesiones`, con la marca de su ficha y el
+  bit alto puesto (ningún programa puede escribir con esa marca), y `sesiones` quita la ficha al llegar. En virt salen
+  las bajas de los que acaban (disco, ficheros, hola, tono-a con clase 2, que falla a propósito...). La prueba del
+  hostil ahora intenta matar al compositor (usuario 1), porque `ficheros` puede haber acabado ya, y comprueba que
+  `caida-cliente`, que acabó solo, ya no está en la lista.
+- U2: un servicio relanzado vuelve a tener ficha en `sesiones`, con su grupo nuevo, y su baja pedida otra vez. En
+  virt, `caida` sale tres veces como "vuelve, con su grupo nuevo".
+- A5, primera mitad: una transacción de RedoxFS ya no copia el asignador al empezar; lo copia la primera vez que
+  reserva o libera (`allocator: Option`). En el PC (`perfil`, 285 trozos libres), una transacción vacía pasa de
+  1,2 µs a 60 ns; escribir, igual. En QEMU (banco de ficheros, 7 arranques), todo dentro del ruido: con el disco de
+  pruebas recién hecho, el asignador es pequeño. Se notará con discos fragmentados. Falta la otra mitad: copiar de la
+  caché a la ventana sin pasar por un registro puesto a ceros.
+- E9: la mezcla del sonido en coma fija. Muestras en enteros con 1,0 = 32.768, volúmenes con 1,0 = 65.536 y el
+  remuestreo con 32 bits de fracción; solo convertir F32 y la API de volumen usan coma flotante. Medido en el servicio
+  (lo que tarda cada período con sonido, en `arranque-virt`): de 320 µs de media y 1.024 de peor a 20 µs y 285
+  (-94 %). Con 4 cargas (`sonido-carga`), 16 µs. Las pruebas de sonido (`arranque-virt`, `sonido-carga`,
+  `sonido-paula`) siguen sin huecos ni chasquidos; las 8 de PC del mezclador, adaptadas (comparan lo mismo pasando a
+  -1..1). Falta de E9: mezclar directo del anillo del cliente a la ranura de salida.
+- R18, K2 y K3: la tabla de llaves lleva la cuenta de sus huecos y desde dónde buscar (antes, `huecos` recorría hasta
+  1.024 entradas en cada lectura); un mensaje sin llaves no toma la tabla ni al escribir ni al leer. Medido (7
+  arranques, frente a r19): la ida y vuelta baja del 3 al 8 % en todas las variantes (entre núcleos, 64,1 a 59,7 µs;
+  con carga, 90,3 a 83,9), casi todo dentro de la dispersión pero en el mismo sentido. `malo` (llaves repetidas,
+  tabla llena, canales cerrados) y el hostil pasan.
+- K4, probado y deshecho: un montón por núcleo (un cerrojo por núcleo para los bloques pequeños, con lo soltado en
+  la lista de quien lo suelta) no gana nada en QEMU: la ida y vuelta queda igual o algo peor (de +1 a +15 %, dentro
+  del ruido). Cada mensaje se pide en un núcleo y se suelta en otro, así que los bloques van de una lista a otra; y
+  en QEMU el cerrojo único apenas se disputa. Queda para medirlo en la Pi (B5), con una caché de bloques de mensaje
+  de tamaño fijo como dice el informe y no como montón general. Copiar sin poner a cero antes (la otra parte de K4)
+  no se hizo: son 256 bytes como mucho.
+- K1, un trozo: `recoger()` (en cada llamada al kernel) ya no toma el cerrojo del núcleo si un indicador por núcleo
+  dice que no hay hilos muertos. Medido: dentro del ruido (-2 a +5 %); se deja porque quita un cerrojo por llamada,
+  que en placa con cuatro núcleos sí se disputa. Lo grande de K1 (hilo actual en TPIDR_EL1, proceso prestado sin
+  subir y bajar el Arc) sigue pendiente.
+- E7, primer trozo: `dashos::protocolo::archivos` (órdenes, estados, tipos, cabecera y ventanas) y
+  `dashos::protocolo::sesiones`, sacados de los servicios. Se quitaron 143 copias exactas de 6 programas (archivos,
+  ficheros, hostil, medir-fs, imagen, adf-prueba); las que no coinciden se quedan, y como un nombre local tapa al del
+  módulo, nada cambia sin querer. Pasan `arranque-virt`, `prueba` y el banco de ficheros (`fs-bien`). Falta lo grande
+  de E7: el bucle común de los servicios (leer con marca, cerrar llaves sobrantes, dormir en error, clientes por
+  marca, soltar al que no lee).
+- E7, el bucle común: `dashos::servicio::recibir` (leer con marca; si el canal se cerró, `Cerrado`; si no se pudo
+  leer, dormir 1 ms y `Nada`) y `cerrar_llaves`, usados por buzón, imagen, sesiones, compositor y sonido. `recibir`
+  exige búferes del máximo del kernel (256 bytes, 8 llaves). **Fallo hostil encontrado**: `sesiones` leía con 64
+  bytes y 4 llaves; un mensaje con 8 llaves (la inundación nueva del hostil) no se podía leer, se quedaba el primero
+  de la cola y el servicio ya no atendía a nadie. Además giraba sin dormir al fallar la lectura (E2). Con el tipo del
+  búfer en `recibir`, ningún servicio que lo use puede volver a caer. El hostil ahora inunda también `sesiones` y
+  luego comprueba que sigue contestando. Faltan archivos y NVMe (hacen trabajo entre leer y mirar el error).
+- R15 (U3), primera parte: `sesiones` es cliente del servicio de archivos (ficha con el derecho de administrar
+  volúmenes, raíz entera; no lee lo de nadie) y atiende ENTRAR y SALIR: abre o cierra el volumen cifrado del usuario,
+  con la contraseña por la ventana (A13) y borrada de su memoria tras usarla (regla 9). Solo los pide `guardian` (en
+  las pruebas, `entrada`, que hace de él). Disco de pruebas: volumen "Carla" (1001, "clave de Carla"). `sesiones`
+  va ahora tras archivos y `inicio` da de alta también lo lanzado antes; en el hostil, las llaves pasan a ventanas 1,
+  archivos 2, sesiones 3, sonido 4. Pruebas: `entrada` entra con contraseña mala (-12), con la buena (0) y sale (0);
+  el hostil intenta entrar como Carla con la contraseña buena y recibe -12. `ficheros` ve ahora dos volúmenes.
+  Falta de U3: la pantalla de `guardian` y el bloqueo de la sesión (compositor G5).
+- U3, volver de un bloqueo: orden 29 de archivos, COMPROBAR_CLAVE (RedoxFS `check_volume_password`: deriva la llave
+  y la tira, sin abrir ni tocar el volumen), y VOLVER en `sesiones`. Tras una contraseña mala, `sesiones` tarda
+  300 ms en contestar. `entrada` comprueba volver con una mala (-12) y con la buena (0) con el volumen abierto.
+- R16 (U4), primera parte: `sesiones` reparte llaves de servicios. `inicio` le da una copia sin marca de los
+  servicios que reparte (`REPARTE`, hoy solo `eco`, un servicio de prueba que contesta lo que le llega); con la
+  orden SERVICIO, si la ficha del programa tiene el permiso (`PERMISOS`, provisional), `sesiones` hace una copia
+  marcada con su número, que viaja una vez (UNA_VEZ: llega sin el derecho de transferir, regla 2), la hace revocable,
+  escribe su entrada en el directorio del servicio y se la da. DEJAR la revoca. Prueba: `pide` (con permiso) usa
+  `eco`, no puede regalar la llave (-3), renuncia y la llave ya no sirve (-2); el hostil la pide sin permiso: -2.
+  Falta de U4: los permisos declarados en el paquete (S8), preguntar al usuario (`guardian`) y guardarlo.
+- U1 (lo que faltaba) y R17 (U5), primera parte: orden 30 de archivos, CEDER. Un cliente con el derecho de repartir
+  (nuevo, `D_REPARTIR`) da a otro cliente (por su marca) una asa nueva para el nodo de una suya, con derechos de leer
+  y escribir que no pueden pasar de los que él tiene. Con una asa cedida se mira lo cedido, no los permisos del
+  fichero. Un `selector` de prueba (usuario 1000, con el derecho) cede a quien se lo pide la lectura de
+  `C/Privado/nota.txt` (0600, del 1000). Prueba hostil: el hostil (1001, encerrado en `C`) lee con esa asa, pero no
+  escribe en ella, no la cede (no tiene el derecho) y sigue sin abrir el fichero por su nombre. En el hostil, el
+  canal "selector" es la llave 5. Falta de U5: la ventana del selector y `guardian` con sus acciones de administrador.
+- R19 (U6), el registro de seguridad: `sesiones` apunta cada negativa (matar a otro usuario, la llave de un servicio
+  sin permiso, entrar o volver con contraseña mala o sin ser `guardian`) y cada proceso que muere por un fallo, con
+  quién y qué, en un anillo de 64 en memoria; REGISTRO lo da por páginas, solo a `guardian`. Prueba: `entrada` lee
+  6 entradas y encuentra los tres intentos del hostil; el hostil pide el registro y se le niega. Falta guardarlo en
+  el disco (cuando `sesiones` tenga su cajón), Prefs de usuarios, PID en el kernel y cambio rápido de usuario.
+- U2, lanzar desde el disco: LANZAR en `sesiones` (solo `guardian`; luego también el escritorio y el Shell). Busca el
+  fichero por el servicio de archivos, lo copia por la ventana a un objeto de memoria y lo crea con `proceso_crear_en`
+  en un grupo propio de 4 MB (sale del cupo de `sesiones`, de 16), con ficha: número desde 0x10000, el usuario de
+  quien lo pide y el nombre del fichero. El disco de pruebas trae `Programas/hola` (el `hola` que se construye).
+  Prueba: `entrada` lanza `Programas/hola` (sale su "hola desde Rust") y un texto (-1); el hostil no puede (-2).
+  Falta la tabla de nombres.
+- U2: lo que lanza `sesiones` nace con una llave, su canal con `sesiones` marcado con su número (S6b: "nace con una
+  llave"), y tiene baja con su aviso de fin. Para eso `inicio` da a `sesiones` su copia propia del canal sin marca.
+  El disco trae también `Programas/pide`: lanzado desde ahí, pide la llave de `eco` por el canal con que nació y
+  repite la prueba de U4 con su número nuevo (65537); llegan las bajas de `hola` (65536) y de `pide`.
+- R10, segunda parte (S6, arranque endurecido): al bajar de EL2, `CPTR_EL2` queda solo con sus bits RES1 y
+  `MDCR_EL2` a cero salvo HPMN (nada atrapa hacia EL2, donde no hay quien atienda); si el firmware entra ya en EL1,
+  SCTLR_EL1 se pone al valor conocido, no se hereda. Con el mapa del kernel puesto, cada núcleo enciende
+  SCTLR_EL1.WXN: la CPU no ejecuta nada que se pueda escribir, en EL1 ni en EL0 (antes no se puede: los bloques del
+  arranque se escriben y ejecutan). El montón pone a cero cada página nueva y cada bloque grande, y las pilas nuevas
+  salen a cero; `alloc_zeroed` no repite el borrado de lo grande. Prueba hostil (S6 en `pruebas.rs`): ensucia dos
+  pilas y un bloque de 64 KB, los suelta y pide otra vez; vuelven las mismas páginas (2 de 2 y el mismo bloque) y
+  sin un byte sucio; WXN puesto. Sin medir: el coste es un borrado de 4 KB por página nueva del montón y uno por
+  página de pila nueva, fuera de los caminos que se miden. Falta probarlo en la placa (con el firmware real).
+- R11, S1 (segunda parte): crear un hilo o un proceso ya no hace pánico sin montón. El hilo se reserva con
+  `Box::try_new` (feature `allocator_ext`); las colas `listos` y `muertos` de cada núcleo tienen siempre sitio para
+  todos los hilos que existen (contador `HILOS`, `asegurar_colas` al crear; no encogen), así el planificador nunca
+  pide memoria con las IRQ enmascaradas; la lista de hilos del proceso se reserva antes. `procesos::lanzar` usa
+  `Arc::try_new` y, si el hilo no se puede crear, suelta el proceso y devuelve `SinMemoria` (las llaves ya estaban en
+  su tabla y se cierran con él). El estado de coma flotante, si no hay memoria para él, mata al hilo en su vuelta a
+  EL0 en vez de tumbar el kernel. Prueba hostil (S1 en `pruebas.rs`, con un interruptor de fallos del montón por
+  núcleo que solo existe en las pruebas): lanza `hijo` haciendo fallar la reserva 1, luego la 2..., hasta que ya
+  no falla ninguna. La primera vuelta encontró un pánico (en la propia prueba); ahora: 11 reservas, las 11 dan
+  `SinMemoria`, 0 páginas perdidas. Sin probar: la falta de memoria para la coma flotante (no se puede provocar a
+  voluntad desde la prueba). Falta de S1: cobrar el tamaño real de la tabla de llaves y cupo para la raíz.
+- Medidas de S6 y S1 (7 arranques cada una, todas seguidas y con la misma carga del PC; `046cd57` medido otra vez
+  como base): S6 sale igual (-1 a -3 %, ruido). La primera versión de S1 ponía la ida y vuelta un 4 a 7 % más
+  lenta (mediana), con el cálculo igual. Causa: `asegurar_colas` hacía crecer `listos` y `muertos` en las clases
+  pequeñas del montón, y eso cambiaba dónde caían los demás objetos del kernel. Con las colas de una página (512
+  hilos) desde el arranque, fuera de esas clases: -1 a -5 % frente a la base, dentro del ruido; el kernel ocupa
+  32 KB más (3.456 a 3.488 KB). Seguramente es lo mismo que hizo un 10 % más lenta la reserva del hilo antes de
+  dar las llaves (R11, primera parte): el banco es muy sensible a la colocación de los objetos calientes en QEMU.
+  Lo pendiente es saber por qué; en la Pi real puede no pasar.
+- R11, S1 (lo que faltaba): la tabla de llaves crece al doble pero nunca pasa de `MAX_TABLA + 1` entradas
+  (`crecer`, con `try_reserve_exact`): llena ocupa 41 KB, no los 80 de antes (crecía a 2.048). `COSTE_PROCESO` ya
+  no es un número a ojo: la tabla llena (`TABLA_LLENA`, por el tamaño de `Option<Llave>`), la pila del kernel y
+  8 KB para el hilo, la coma flotante, el proceso y el redondeo del montón: 65.576 bytes. Prueba (S1 en
+  `pruebas.rs`): llena una tabla hasta que no admite más (1.024 llaves, 41.000 bytes) y suma lo demás con los
+  tamaños de verdad, redondeados a las clases del montón: 59.320, por debajo de lo cobrado. El cupo de la raíz ya
+  existía (la memoria libre para procesos menos la reserva del kernel, desde la fase 3): la revisión lo daba por
+  pendiente. Sin medir: el crecimiento es el mismo que antes hasta 1.024 llaves.
+- Fallo encontrado al preparar S2: un proceso que dormía 500 µs en los núcleos 2 o 3 despertaba a los 10 ms (mediana
+  9.570 µs; en los núcleos 0 y 1, 30). Al quedarse ocioso un núcleo mientras otro tiene carga, `vigilar_al_dormir`
+  reprogramaba su reloj a un tic entero y pisaba el despertar más próximo (un dormido, un plazo). Ahora programa el
+  menor de los dos. Después: mediana de 27 a 32 µs y máximo por debajo de 600 en los cuatro núcleos. El banco no lo
+  veía porque sus hijos van en los núcleos 0 y 1.
+- R11, S2 (puntos de corte): `planificador::punto_de_corte` abre un instante las interrupciones dentro de una llamada
+  larga, donde no hay cerrojos tomados ni una copia de usuario a medias; el temporizador puede entrar y expulsar al
+  hilo. La imagen de pruebas cuenta los cerrojos tomados por núcleo (`cerrojo::tomados`; en la normal no cuesta
+  nada) y un corte con alguno tomado no abre y se apunta. Cortes: `memoria_crear` cada 64 páginas
+  (`Memoria::nueva_en_llamada`) y la copia del binario en `proceso_crear` cada 256 KB (`leer_en_llamada`). Prueba
+  hostil (S2 en `pruebas.rs`, `hijo` con las órdenes 11 y 12): un proceso duerme 100 veces 500 µs en el núcleo 3
+  mientras otro, en el mismo núcleo, crea y suelta 60 objetos de 4 MB. Retraso al despertar (mediana, p90, p99,
+  máximo): antes 1.123, 1.176, 1.801 y 1.848 µs; después 90, 125, 253 y 631 (solo: 28, 49, 154 y 614). 976 cortes,
+  ninguno con cerrojo. Después, `elf::cargar_cortando` (`procesos::lanzar_en_llamada`, solo desde `proceso_crear`):
+  un corte cada 64 páginas de segmentos y pila. Sin prueba propia: los programas de las pruebas cargan menos de 64
+  páginas, así que ese corte no llega a abrirse en ellas. Queda `its.rs`, `encender` (solo al arrancar, en virt).
+  Banco (7 arranques, frente a S1): todo dentro del ruido. `make prueba` y `make arranque-virt` pasan.
+- U2, la tabla de nombres: orden 10 de `sesiones`, NOMBRES. Contesta la tabla de quien pide (por su marca): `SYS:` y
+  `Programas:` para todos, `Home:` en el volumen de su usuario si tiene cuenta (`CUENTAS` provisional: 1000 Ana,
+  1001 Carla) y `PROGDIR:` con el cajón de donde se lanzó, si salió del disco (la ficha lo guarda al LANZAR). Cada
+  entrada: nombre, volumen (vacío es el disco) y subcamino. La biblioteca (`protocolo::sesiones::Nombres`) la lee y
+  resuelve "Nombre:resto" sin distinguir mayúsculas, y no resuelve lo que intenta salir del subcamino ("/" al
+  principio, que en el Amiga es subir, o ".."). No es frontera de seguridad: lo que se alcanza lo deciden las raíces
+  del servicio de archivos. Prueba: `pide` lanzado del disco ve `PROGDIR:` = `Programas` y resuelve
+  `PROGDIR:pide`; lanzado por `inicio`, sin él; sin `Home:` (usuario 1); `PROGDIR:/hola`, `SYS:a/../../b` y un
+  camino sin dos puntos no se resuelven. `hostil` (1001) recibe su tabla: `Home:` es Carla, no Ana. Falta: las
+  raíces 0 a 15 en archivos (hoy una por cliente) para que cada nombre sea una raíz cedida, `RAM:T`, y las
+  asignaciones con capas (S4b).
+- U1, capa 2 de S6b (las raíces): en `archivos`, las asas 1 a 15 son raíces con tope (R, o R y W), además de la 0 de
+  la ficha; las de buscar y crear empiezan en 16. CEDER con un hueco en el segundo byte de b pone la asa como raíz
+  de otro (hueco libre o `SIN_SITIO`), y la marca `YO` deja a quien cede darse una raíz más estrecha. Por una raíz
+  manda el permiso del fichero y además el tope; lo abierto desde ella lo hereda (`topes`); escribir, crear,
+  borrar, renombrar (también en el destino), recortar, comentar y proteger piden la W del tope. Las raíces no se
+  cierran, se sueltan con el cliente y al volver a una instantánea de su volumen. Prueba: `selector` (dueño del
+  disco) se da `C` como raíz 1 de solo leer: por la asa de `C` de su raíz 0 crea y borra; por la 1 no crea, no borra,
+  no escribe lo que abre desde ella (tope heredado) y no la cierra; una segunda cesión al mismo hueco, -6. `hostil`
+  recibe `C` como raíz 2 de solo leer: lista, no crea ni la cierra, un hueco vacío da -5, no se da raíces (sin el
+  derecho de repartir) y otra cesión no pisa la suya. Sin medir: una búsqueda de más por petición en un mapa casi
+  siempre vacío. Falta que `sesiones` ceda las raíces de cada nombre de la tabla al lanzar (el programa aún no tiene
+  sesión de archivos cuando nace).
+- U2, nacer con raíces: `inicio` da a `sesiones` una copia sin marca del canal de archivos (su llave 5). Al LANZAR,
+  `sesiones` manda antes el alta del programa (orden 100, sin marca): su usuario, la raíz 0 en el cajón de donde
+  sale (`PROGDIR:`), la 1 el disco para leer (`SYS:`, `Programas:`) y la 2 su volumen para leer y escribir (`Home:`)
+  si tiene cuenta; y le da su llave de archivos marcada con su número (la segunda con que nace). `archivos` lee las
+  raíces de más del alta (hueco, tope, volumen y camino; la que no encuentra, la dice y sigue) y se las pone al
+  abrir la sesión. La tabla de nombres dice ahora en qué raíz está cada nombre (`SIN_RAIZ` para lo que no lanzó
+  `sesiones`: por volumen y subcamino desde su raíz 0). Prueba: `pide` lanzado del disco abre su sesión con esa
+  llave y por la tabla encuentra `PROGDIR:pide`, `Programas:hola` y `SYS:LEEME.txt`; por `SYS:` no crea (-12) ni
+  la cierra (-5). `hostil` manda un alta suya con el disco entero para escribir en el hueco 5: no le da nada (un
+  alta solo vale sin marca). Falta: `RAM:T` y raíces de cada paquete (S8).
+- U2/U3, lanzar como el usuario que entró: `sesiones` apunta quién tiene la sesión abierta (ENTRAR y SALIR de
+  `guardian`), y LANZAR lleva "como quién" (bytes 8 a 11): solo `guardian` y solo como un usuario que entró. No se
+  sale mientras siga vivo un programa de ese usuario lanzado por `sesiones` (-13). Orden nueva de archivos, BAJA
+  (101, sin marca): con la baja de lo que lanzó, `sesiones` le dice a archivos que suelte su sesión, sus asas y
+  raíces y su alta (sin ella, su raíz `Home:` dejaba el volumen ocupado para siempre). Prueba: `entrada` entra como
+  Carla y lanza `pide` como 1001: su tabla trae `Home:` en la raíz 2 y ahí crea y borra; lanzar como Ana (no entró)
+  da -2; salir da -13 tres veces mientras `pide` vive y 0 en cuanto acaba.
+- U6, el registro al disco: `sesiones` tiene su cajón, `Estado/Servicios/sesiones` (usuario 1, 0700; el disco de
+  pruebas lo hace con `duenos ... camino=`). Guarda el registro en `registro`: la cuenta (u64) y un anillo de 1.024
+  entradas de 40 bytes. Lo nuevo va al disco antes de esperar el siguiente mensaje; al arrancar lee lo que hubiera.
+  Si pierde la asa (volver a una instantánea del volumen suelta las de todos, y la prueba de `ficheros` lo hace),
+  reabre el fichero sin leerlo y reescribe lo que tiene en memoria. Pruebas: la comprobación del disco en Linux
+  (`disco_archivos.py --comprobar`) lee el registro y encuentra los tres intentos del hostil; `selector` (1000, el
+  dueño del resto del disco) no abre el registro ni lista el cajón (-12). Sin probar: leerlo al arrancar otra vez
+  (cada prueba arranca una vez con un disco nuevo).
+- U4, preguntar y guardar: `guardian` se apunta en `sesiones` para atender preguntas (orden 11, PREGUNTAS, con la
+  llave por la que se le pregunta). Si un programa pide un servicio sin permiso y `guardian` atiende, `sesiones` le
+  pregunta (número, usuario, programa y servicio) y deja la petición en espera sin parar a los demás; con la
+  respuesta (orden 12, solo de `guardian`), da la llave o -2. Lo concedido se apunta y se guarda en su cajón
+  (`permisos`, una línea "programa servicio"), y se lee al arrancar: no se vuelve a preguntar. `PERMISOS` fijos,
+  ahora vacío. Prueba: un `guardian` de prueba (programa nuevo en `virt`) contesta como el usuario: sí a `pide` con
+  `eco`, no a lo demás. Se le pregunta una vez por `pide` (las otras dos veces que corre, ya concedido) y una por el
+  hostil, que recibe -2. Falta: los permisos del paquete (S8) y la ventana de la pregunta (con el escritorio).
+- U4, retirar: orden 13, RETIRAR (solo `guardian`): quita "programa servicio" de lo concedido, reescribe el fichero
+  (TAMANO a 0 y lo que queda) y revoca las llaves de ese servicio que tenga ese programa (el permiso se va ya, no al
+  pedirlo otra vez). Prueba: `guardian`, al acabar, retira a `pide` el de `eco` (0) y otra vez (-1); el hostil lo
+  intenta y recibe -2 (y queda en el registro); en el disco, `permisos` queda vacío. Sin probar: revocar una llave
+  viva (en la prueba, `pide` ya la dejó). Para el usuario irá en `Prefs` (U6).
+- U5, acciones de administrador: orden 14, ADMINISTRAR, con una acción de la lista cerrada (`ACCIONES`; de momento
+  "comprobar", el disco, que hace `archivos`). `sesiones` pregunta a `guardian` (la acción va tras un "*" en la
+  pregunta) y espera, sin parar a nadie; `guardian` contesta con usuario y contraseña (orden 15). Vale si el
+  usuario es del grupo `admin` (`ADMIN`, provisional: Ana) y la contraseña es buena: la comprueba `sesiones` con
+  su volumen, sin abrirlo. Cada acción se confirma (sin plazo de gracia), la hace el servicio que la tiene a su
+  cargo y queda en el registro. La contraseña se borra de la memoria al usarla. Prueba: `pide` lanzado como Carla
+  la pide y `guardian` da la de Ana: 0, sin problemas en el disco; el hostil la pide dos veces y `guardian` da la de
+  Ana mal escrita y la buena de Carla (no es administradora): -2 las dos. Falta: las demás acciones (instalar,
+  cuentas, grupos, dueños, volúmenes, hora y red, claves) y la ventana de `guardian`.
+- U5: matar un proceso de otro usuario o del sistema es la acción "matar" (su número tras el nombre): con la
+  contraseña de un administrador, `sesiones` mata su grupo entero. Prueba: `pide` (como Carla) mata a `eco`, un
+  servicio del sistema, con la de Ana: 0, e `inicio` lo relanza (E6); el hostil intenta matar al compositor y
+  `guardian` da la de Carla: -2. `MATAR` a uno de otro usuario sigue dando -2 sin preguntar: quien quiera más pide
+  la acción.
+- U3, el bloqueo con su pantalla: `guardian` tiene el poder de escritorio en el compositor (solo él, por ahora) y, al
+  acabar sus preguntas, bloquea la sesión (G5) con una superficie de bloqueo dibujada con el kit: "Sesión
+  bloqueada", la frase que eligió la usuaria (S6b: así se sabe que es el sistema), su nombre, un punto por letra y
+  el aviso de contraseña mala. Lee el teclado con el mapa del kit y, con Intro, manda la contraseña a `sesiones`
+  (VOLVER) sin esperar: mientras llega la respuesta (tras una mala, `sesiones` tarda a propósito) sigue leyendo al
+  compositor, que suelta a quien deja de leer (E8). Pinta una vez por tanda de eventos (pintar tras cada tecla
+  llenaba la cola y el compositor lo soltaba). Con la buena, quita el bloqueo y espera un sync antes de seguir (si
+  no, el compositor podía soltarlo aún bloqueado: negro). `guardian` reintenta apuntarse en `sesiones`, que tarda en
+  arrancar. Prueba en virt: el guion de QEMU, al ver la pantalla, deja de teclear lo de siempre y escribe una
+  contraseña mala y la buena: desbloquea tras una mala y la captura final ve las ventanas otra vez; tres pasadas
+  seguidas bien. Captura en `docs/capturas/u3-bloqueo.png`. Arrancar dos veces con el mismo disco probó también lo
+  que faltaba de U6: `sesiones` leyó las 15 entradas del registro de la vez anterior. Falta: la pantalla de entrada,
+  bloquear a mano (tecla o tiempo) y la usuaria de verdad de la sesión, no una fija.
+- A5, la otra mitad: `read_record_into` lee un registro entero sin comprimir directamente al destino (la ventana del
+  cliente), sin el búfer de registro puesto a ceros. Solo si se lee entero desde su principio, no está en la caché
+  de escritura, el volumen no está sellado y mide justo lo pedido; si no, el camino de siempre. Descifra el disco
+  cifrado y comprueba la suma igual que `read_block` (con la caché de comprobados de F4). Prueba (RedoxFS,
+  `tests_a5`): datos al azar (no se comprimen) se leen igual entero y a trozos; con un byte cambiado en el disco, EIO
+  por los dos caminos. Medido (7 arranques, contra el mismo banco justo antes): leer 8 MB a trozos de 1 MB, 734 a
+  882 MB/s (+20 %); lo demás, dentro del ruido (a trozos de 64 KB no cambia: el trozo es menor que un registro).
+- A9, un disco hecho a mala idea no tumba `archivos`: la suma de cada bloque detecta un daño, no una manipulación
+  (quien prepara el disco rehace las sumas). Prueba nueva en RedoxFS, `tests_a9`, que hace de atacante: en 2000
+  discos cambia campos de nodos (tamaño, nivel de registro, banderas, tipo, bloques, bytes sueltos) con valores
+  extremos y los vuelve a sellar, o hace que el contenido al azar de un fichero se lea como un cajón; recorre, busca,
+  lee y comprueba todo atrapando pánicos. Encontró 41 pánicos, todos en el mismo sitio: el nivel de registro del
+  disco sin comprobar (`BLOCK_SIZE << nivel` daba 0 y una división por cero). Ahora `record_level_checked` da EIO
+  por encima de `RECORD_LEVEL` en todos los caminos de `transaction.rs`: 0 pánicos. Ataques dirigidos: un registro
+  comprimido rehecho con un largo falso (pánico por índice; ahora EIO) y un cajón dentro de sí mismo (mover un
+  cajón no acababa nunca en `check_not_inside`; ahora lleva visitados y un tope). Las dos pruebas fallan sin su
+  arreglo (comprobado). Además, una ranura de clave rota ya no hace pánico al abrir un disco cifrado (no abre). Lo
+  demás que señalaba la revisión (`BlockAddr::new`, `with_epoch`) solo recibe valores calculados, no del disco, y el
+  `count` de los registros de confirmación está acotado (255 bloques). Sin medir: una comparación por lectura.
+- A12, `sync_allocator` ya no cambia nada fuera de la transacción antes de confirmar: un bloque de una confirmación
+  diferida anterior (en `fs.fresh`) que la transacción suelta se apunta en `forget_on_commit`, y solo al confirmar
+  sale de `fresh` y el disco lo olvida. Los nacidos en la propia transacción se olvidan al momento (si falla, nadie
+  los usa). El TODO de liberar al fallar no era un fallo: lo reservado vive en la copia del asignador de la
+  transacción. Prueba (`tests_deferred`, con un disco que falla al escribir cuando se le pide): una transacción que
+  sobrescribe un fichero aún no duradero falla; el fichero se sigue leyendo como antes, y también tras `durable` y
+  reabrir, y el disco queda limpio. Sin el arreglo falla ya la primera lectura (el bloque se había olvidado). Sin
+  medir: solo cambia cuándo se hace.
+- A10, comprobar y reparar al arrancar: antes de atender a nadie, `archivos` comprueba los metadatos (sin leer los
+  datos) y, si hay algo mal, repara con `repair.rs` (una transacción: si se va la luz a medias, queda como estaba);
+  si algo queda sin arreglar, el disco va de solo lectura. Herramienta nueva, `estropear`, que pone a mano los
+  enlaces de un nodo. Prueba en virt: el disco de pruebas sale con los enlaces de `LEEME.txt` a 7, y su montaje
+  comprueba que el daño se ve; al arrancar, "1 problemas; reparado, quedan 0" (20 ms en un disco de 7 MB) y la
+  comprobación final desde Linux sale limpia. Falta: la reparación como acción de administrador con el servicio en
+  marcha (hoy reconstruir el árbol con asas abiertas no es seguro) y medir lo que tarda con un disco grande.
+- U4, la llave de plazo: `sesiones` reparte también el permiso de la clase de plazo (S3), como un servicio más (se
+  pregunta, se guarda, se deja y se retira), sin entrada de directorio porque no es un canal (`PERMISOS_KERNEL`).
+  `inicio` le da ese permiso con el derecho de transferir (a los demás, sus permisos llegan sin él): sus llaves se
+  corren un puesto (plazo 1, archivos 2, eco 3, su canal 4, propio 5, archivos sin marca 6). Si mandar una llave
+  falla, `sesiones` contesta -1 en vez de nada (el programa esperaba hasta su plazo). Prueba: `pide` la pide (el
+  usuario dice que sí), entra con ella en la clase de plazo, la deja y ya no entra; el hostil la pide y recibe -2
+  sin llave; `guardian` retira al final los dos permisos de `pide`. El guion de la pantalla de bloqueo teclea la
+  segunda contraseña cuando `guardian` ya dijo que la primera era mala, y más despacio (una vez se perdió una
+  tecla); `guardian` dice cuántas letras le llegan. Tres pasadas seguidas bien.
+- R4, lo que faltaba de S4: el kernel apunta en `placa` las zonas de la ventana de periféricos que usa él (el GIC con
+  todas sus partes, el ITS y, en la Pi 3, los controladores de la BCM2836), con los tamaños del árbol, y
+  `proyectar_dispositivo` se niega a proyectar a un proceso una página que las toque, aunque una llave de registros
+  la cubra. Prueba en el arranque (S4 en `pruebas.rs`): en un espacio de proceso, proyectar el distribuidor del GIC
+  y una zona que lo pisa da error; el PL011, que es de un controlador, sí se proyecta.
+- K1, lo grande: el planificador guarda en TPIDR_EL1 el hilo que corre en cada núcleo (en cada cambio y al iniciar el
+  núcleo; a 0 en el arranque), así que `actual()`, `debe_morir()`, `ttbr0_actual()` y el proceso actual se leen sin
+  enmascarar ni tomar el cerrojo del núcleo. `matar` es atómico (se sigue poniendo con el cerrojo de la cola del
+  hilo). Medido (7 arranques, contra el mismo banco justo antes): ida y vuelta entre núcleos 62,6 a 55,5 µs (-11 %),
+  en el mismo núcleo 76,2 a 66,6 (-13 %), con 4 cargas en el mismo núcleo 109 a 96 (-12 %); varias fuera del ruido.
+  Lo que prueba que matar sigue funcionando sin cerrojo: C39 y C43 (matar a uno que gira en otro núcleo).
+- La pantalla de bloqueo de `guardian`, más robusta: los glifos se rasterizan antes de bloquear, al teclear solo se
+  repinta la caja y el aviso, y tras pintar la primera vez pide un sync y dice "pintada: tiene el teclado"; el guion
+  de QEMU empieza a teclear entonces (antes, a veces tecleaba cuando la pantalla aún no tenía el teclado). Queda un
+  fallo intermitente: alguna vez (1 de cada 10 pasadas, con K1 y sin él) el compositor suelta a `guardian` por la cola
+  llena más de 5 ms (E8) mientras se teclea, y la pantalla queda negra y bloqueada (lo que debe pasar si el
+  bloqueador muere).
+- La causa: cada evento de entrada es un mensaje aparte (escribir la contraseña son unos 40 en 2 s), la cola de un
+  canal admite 16, y en un QEMU cargado basta con que `guardian` se quede sin CPU un tic. E8 está pensado contra
+  clientes cualquiera; `guardian` es del sistema, y soltarlo deja la sesión en negro. Ahora el compositor espera hasta
+  50 ms a un cliente con el poder de escritorio (`del_sistema`); a los demás, 5 como antes. Ocho pasadas seguidas
+  bien. Mejor aún sería juntar los eventos de un cliente en un mensaje (E8, pendiente).
+- E7 en `archivos` y `nvme`: mirados y no hace falta cambiarlos. Sus bucles ya cierran las llaves que sobran, duermen
+  si no pueden leer y acaban si se cierra el canal; pasarlos al módulo común sería solo cosmético (los dos tienen
+  algo propio en el bucle: el guardado con plazo y los anillos).
+- U3, bloquear a petición y para quien tiene la sesión: orden 16 de `sesiones`, BLOQUEAR. Solo de un programa cuyo
+  usuario tiene la sesión abierta; `sesiones` se lo pasa a `guardian` por su llave de preguntas ("*bloquear" con el
+  nombre del usuario). `guardian` bloquea con la frase y el nombre de ese usuario (antes, una usuaria fija), al
+  acabar su rato de preguntas (bloquear antes paraba las ventanas de otras pruebas). Prueba: `pide` sin cuenta (dos
+  veces) recibe -2; lanzado como Carla con su sesión abierta, 0, y `guardian` bloquea la de Carla y desbloquea con su
+  contraseña tras una mala. Además, `guardian` no se apuntaba alguna vez: al arrancar, las altas de `inicio` llenan la
+  cola de `sesiones` antes de que lea, y los reintentos se gastaban en el acto; ahora espera medio segundo entre
+  ellos, hasta 20 s. Cinco pasadas seguidas bien. Falta la tecla para bloquear (el escritorio) y bloquear por tiempo.
+- U3, la pantalla de entrada: la misma de bloqueo en otro modo (`pantalla(None)`): "Entrar en DashOS", primero el
+  nombre (se ve) y después la contraseña (puntos); la frase del usuario sale en cuanto se sabe quién es. Con Intro,
+  ENTRAR (sin esperar, como VOLVER); si falla, vuelve a pedir el nombre. `guardian` se despide del compositor y quita
+  la memoria de la pantalla al acabar cada una (si no, la segunda no tenía dónde ponerse). Al teclear se repinta solo
+  la franja que cambia: repintar la pantalla entera por tecla tardaba más de 50 ms en QEMU y el compositor lo
+  soltaba. Prueba: tras desbloquear, el guion escribe un usuario que no existe ("Nadie": -2, vuelve a pedir el
+  nombre) y después Ana con su contraseña: "entra Ana tras 1 intento malo". El límite de `arranque-virt` pasa de 60
+  a 80 s (acaba antes en cuanto salen todas las líneas). Cuatro pasadas seguidas bien. Captura en
+  `docs/capturas/u3-entrada.png`. Falta: que sea lo primero al arrancar (hoy, en la prueba, va al final para no parar
+  las demás ventanas).
+- A8, el asignador sin copia: la transacción ya no copia el asignador del sistema de archivos la primera vez que
+  reserva o libera; trabaja sobre él y apunta cada reserva y liberación en `undo`. Al confirmar, se borra el diario;
+  si la transacción se suelta sin confirmar (`Drop`), se deshace al revés (lo liberado se vuelve a reservar bloque a
+  bloque con `allocate_exact`). La reparación, que rehace el asignador entero, sigue con el suyo propio. Prueba
+  (`tests_deferred`): con guardado diferido y sin él, una transacción que crea, escribe y borra y luego falla (por su
+  cuenta, o al escribir en el disco) deja el asignador idéntico, lo viejo se lee y lo nuevo se crea después; el disco
+  sale limpio. (Al hacerla salió un falso perdido: en modo diferido, comprobar antes de `durable` ve la cuarentena
+  como perdida, como dice A11; con o sin el cambio. Se comprueba tras guardar.) Medido en el PC: con 285 trozos
+  libres (`perfil`), igual; con el disco fragmentado (`fragmentado`, 4.492 trozos libres), crear y escribir 144 a
+  114 µs (-21 %) y borrar 97 a 71 µs (-27 %). Falta de A8: la transacción abierta entre peticiones.
+- A8, sin recorridos en el asignador: al liberar, el hermano se calcula (índice más o menos el tamaño del nivel) y se
+  mira si está libre, en vez de recorrer el nivel entero; al reservar un bloque concreto, el único candidato es el
+  último libre que empieza antes que él (`range`). Y `allocate_exact` con un nivel que no es 0 da `None` en vez de
+  `assert` (A9). Prueba (`tests_a8`): 50 secuencias de 3.000 reservas, liberaciones y reservas exactas al azar dan los
+  mismos niveles que el algoritmo de antes, operación a operación. Medido en el PC con el disco fragmentado (4.492
+  trozos libres): crear y escribir 114 a 53 µs, borrar 71 a 33; con el diario de antes, desde 144 y 97: -63 % y
+  -66 %. Con el disco poco troceado (`perfil`), igual.
+- A8, rehacer el diario del asignador (cada 1.024 generaciones, `sync_allocator` compara cada trozo con todo el
+  diario: cuadrático): medido antes de tocarlo, con 4.492 trozos libres tarda 3,1 ms en el PC. No compensa cambiarlo.
+  Se queda la prueba (`tests_a8`): tras rehacerlo con el disco fragmentado y reabrir, el asignador sale igual.
+- A13 en `nvme`: antes, quien tuviera su llave veía el disco entero. Ahora cada cliente tiene un tramo de sectores,
+  por el nombre que le da `inicio` en el directorio (que `nvme` ya recibía y no usaba): la prueba `disco`, el primer
+  MB; `archivos`, desde el MB 1; nadie más. Sin tramo no se abre (-6), y cada lectura o escritura, también por el
+  anillo, se mira contra el tramo. Pruebas: `disco` no lee el primer sector de archivos ni uno que empieza dentro y
+  acaba fuera (-6); `hostil`, con una llave del canal "disco", no lo abre (-6) ni lee el sector 0. (Las llaves de
+  `hostil` se corrieron: siguen el orden en que se nombra cada canal por primera vez, y el disco va antes que archivos:
+  ventanas 1, disco 2, archivos 3, sesiones 4, sonido 5, selector 6.)
+- Dos fallos intermitentes de las pruebas, arreglados: `pide` pedía un 10 % de la clase de plazo, y si caía en el
+  núcleo de los servicios de sonido no cabía (el tope de lo prometido); ahora un 1 %. Y el compositor aún soltaba a
+  `guardian` 1 de cada 12 pasadas con 50 ms: ahora le espera hasta 250 (solo a él). Seis pasadas seguidas bien.
+- U6, el PID en el kernel: cada proceso que lanza `procesos::lanzar` tiene un número que no se repite (`Control::pid`,
+  desde 1). Llamada 37, `proceso_numero` (con la llave del proceso), y 38, `grupo_procesos`: los números de los
+  procesos vivos de un grupo, solo con la llave del grupo (así se ven también los hijos sin ficha en `sesiones`, como
+  pide S6b). Prueba en el lanzador (C43): cada prueba que lanza tiene número y está en la lista de su grupo, y con una
+  llave del tipo que no es (un grupo como proceso, o al revés) da -6: 7 de 7.
+- U3, bloquear por tiempo: el compositor da `ext_idle_notifier_v1` (el protocolo de Wayland, MIT, en
+  `wayland/protocolos/`) a los clientes de escritorio, de momento solo `guardian`. Cada aviso cuenta desde que se pide;
+  una tecla o el ratón lo reinician y, si ya avisó, mandan `resumed`; al vencer, `idled`, una vez. El compositor espera
+  sus mensajes como mucho hasta el siguiente vencimiento. Como mucho 16 avisos entre todos: más es un error de
+  protocolo. Pruebas: en la escena (`inactividad`: plazos, sin repetir, reinicio por tecla y ratón, destruir uno, de
+  más, y nada tras irse el cliente); y en virt, `guardian` pide un aviso de 2 s tras entrar Ana, el guion sigue
+  tecleando 3 s y luego para: el aviso llega a los 5,5 s (sin reinicio llegaría a los 2), bloquea la sesión de Ana y se
+  desbloquea con una mala y la buena.
+- Un fallo intermitente que salió al probarlo (2 de 6 pasadas, con el PC cargado): el compositor soltaba a `guardian`
+  en la pantalla de entrada. Era un abrazo mortal: el cliente esperaba sitio en la cola del compositor sin leer la
+  suya, y el compositor esperaba a que leyera para seguir. Subir el margen a 1 s no lo arreglaba. Ahora el cliente
+  (`ventana_cliente`), mientras espera sitio, recoge lo que le llega: 8 de 8 pasadas bien.
+- U3: la pantalla de `guardian` devuelve quién entró o desbloqueó, y el bloqueo por tiempo es para esa usuaria, no
+  para una fija. La tecla para bloquear queda para el escritorio (S10b): será él quien la atienda y pida BLOQUEAR.
+- A8, la transacción abierta entre peticiones: medida antes de hacerla, no compensa. En el PC (`perfil_agrupado`), 500
+  ficheros de 4 KB creados y borrados en una sola transacción frente a una por fichero: crear y escribir 47,9 frente a
+  48,2 µs (igual) y borrar 29,7 frente a 25,7 (-13 %). Por partes (`perfil_partes`): buscar un nombre en un cajón de
+  500 cuesta 6,8 µs, y buscar y cambiar un nodo 10,2: cerrar la transacción de un cambio pequeño, unos 3,5 µs (copiar
+  el camino del árbol, el diario del asignador y la cabecera). Borrar, 30 µs, es casi todo trabajo de la operación
+  (quitar la entrada del árbol de nombres, soltar los bloques del fichero), que agrupando no se ahorra. La estimación
+  de la revisión (de 1.932 hacia 3.000 o 4.000 borrados/s) era del asignador de antes, que copiaba entero en cada
+  transacción. No se hace; quedan las dos pruebas de medida.
+- U4, la pregunta al usuario: `guardian` ya no contesta solo. Pone una capa encima de todo (solo él puede: un programa
+  no puede pintar una igual por encima), en el centro, con el teclado: "¿Dejas que "pide" use "eco"?", S sí, N no. Lo
+  que se pulse en el primer segundo no cuenta (quien estaba escribiendo no contesta sin querer), y sin respuesta en
+  30 s es que no. Captura en `docs/capturas/u4-pregunta.png`. Prueba en virt: el guion de QEMU contesta que sí a
+  `pide`; al hostil le manda una "s" enseguida, que no cuenta, y luego "n": el hostil no recibe la llave. Al irse una
+  capa que tenía el teclado, vuelve a la ventana de arriba (antes se quedaba sin nadie).
+- `sesiones`: si ya se le está preguntando al usuario lo mismo (otra copia del programa pidió el mismo servicio), la
+  petición nueva espera esa respuesta en vez de preguntar otra vez. Se vio con tres copias de `pide` pidiendo `plazo` a
+  la vez: tres preguntas iguales. Y quien pide un servicio espera la respuesta hasta 35 s, no 2 (contesta una persona).
+- E8, cola de salida por cliente en el compositor: si la cola de canal de un cliente está llena, lo suyo se guarda
+  (`canal::ColaSalida`) y se reintenta en cada vuelta, sin esperar ni parar a los demás. Se le suelta si guarda más de
+  64 KB o si no lee nada en 1 s (5 s a `guardian`). Antes se le esperaba 5 ms (250 a `guardian`) con todo parado.
+  Prueba en el PC (`cola_de_salida`): orden, uno que lee poco a poco sigue, uno que no lee se suelta a su plazo, y uno
+  que recibe mucho, al pasar de 64 KB, con sus llaves fuera.
+- `ventana_cliente`: al acabar, cierra su canal y las llaves sin usar, y `guardian` cierra la memoria de cada pantalla y
+  de cada pregunta. Antes las dejaba abiertas: una pantalla o una pregunta más, unas llaves menos en su tabla.
+- Un fallo del planificador, de antes de esta revisión, que destapó la pregunta: un hilo que se bloquea con un plazo
+  que ya ha vencido al planificar (leer con 1 µs, dormir 0) sale de los dormidos como listo, se elige a sí mismo y sigue
+  corriendo, pero marcado "listo". Si en ese rato le echa el reloj, el planificador solo vuelve a encolar al que consta
+  como corriendo: el hilo no vuelve a ninguna cola y no corre nunca más. Le pasaba a `guardian` 1 de cada 8 arranques
+  (leía con 1 µs y luego pintaba, más que un tic); el compositor lo soltaba por no leer y la pantalla de entrada se
+  quedaba sin nadie. Se buscó con avisos temporales en el kernel (un hilo vigilado decía "listo en el núcleo 0 hace
+  47 s" sin estar en ninguna cola). Arreglo: si sigue el mismo, vuelve a constar como corriendo. Prueba hostil en
+  `make prueba` (K11): 4 hilos que esperan 15 veces con el plazo vencido y calculan 12 ms tras cada espera; sin el
+  arreglo no acaba ninguno, con él los 4. (No se nota en las medidas: solo pasaba cuando el reloj echaba al hilo justo
+  en ese rato, y quien entra en el planificador cada pocos µs retrasa el tic.)
+- `make arranque-virt`: límite de 80 a 110 s, por las preguntas (unos 8 s más) y el PC cargado. La pasada buena tarda
+  unos 72 s.
+- U5, la ventana del selector: quien pide un fichero ya no recibe uno fijo. `selector` lista `C/Privado` (que el que
+  pide no puede ver) y enseña una ventana "Abrir" con el kit: la lista, sin nada elegido, y Cancelar. El usuario elige
+  con las flechas e Intro, o con el ratón; solo eso se cede, para leer. Un Intro sin nada elegido no abre nada (así un
+  Intro de quien estaba escribiendo no abre lo primero), y sin elegir en un minuto, o con Cancelar, no se cede nada.
+  Su ventana se lleva el teclado aunque se esté escribiendo: el compositor marca a `guardian` y a `selector` como del
+  sistema (por el nombre que da `inicio`; nadie más puede llamarse así), y la regla de S8 no los frena (prueba
+  `ventana_del_sistema_toma_el_teclado`). `selector` recibe ahora el canal "ventanas" (llave 1). Prueba en virt: el
+  guion pulsa Intro sin elegir (no pasa nada), flecha abajo e Intro; el hostil recibe la asa y lee `nota.txt`, sin
+  poder escribir ni ceder. Captura en `docs/capturas/u5-selector.png`. Falta: elegir carpeta (hoy solo `C/Privado`) y
+  el doble clic.
+- U5: la ventana del selector dice quién pide ("\"hostil\" quiere abrir un fichero"), por el nombre que da `inicio` a
+  cada marca del canal "selector" (lo que diga quien pide no cuenta). Una marca sin nombre sale como "un programa".
+  Prueba en virt: la línea "ventana de abrir en pantalla, para hostil". Captura nueva.
+- C14 (clase de plazo, en `make prueba`) sigue fallando de vez en cuando: 1 de 7 pasadas hoy, con una activación un
+  tic tarde (9.985 µs); las otras, de 43 a 726 µs. Ya pasaba antes (1 de 11 en MULTITAREA_LOOP). No viene del arreglo
+  del planificador: el hilo de plazo espera su periodo sin plazo de despertar, y el arreglo solo cambia al que sale de
+  los dormidos y se elige a sí mismo. Queda por mirar.
+- E8, la medida que faltaba: el compositor dice cada 10 s cuántos cuadros ha compuesto, cuánto tiempo y cuántos píxeles
+  dañados. En la prueba de virt se compone poco (3 a 7 cuadros por segundo): lo que pesaba no era cuántas veces, sino
+  cuánto. Con la pantalla de bloqueo, cada tecla repintaba 4 pantallas enteras: al dar otra vez el mismo búfer, la
+  superficie entera tres veces (antes, el sitio de antes y el de ahora, que eran el mismo), y la pantalla de bloqueo
+  entera en cada commit. Ahora la superficie entera solo si cambia el búfer o el sitio, la de bloqueo solo la primera
+  vez, y al componer, un daño dentro de otro no se compone dos veces. Prueba en el PC (`mismo_bufer_solo_su_dano`):
+  el mismo búfer con un píxel dañado compone 1 píxel, y se ve; otro búfer, entero. Medido en virt (3 arranques, por
+  cada 10 s): pantallas de bloqueo y entrada, de 5.359 ms componiendo y 81 Mpx a 425 ms y 6,9 Mpx (-92 %); el bloqueo
+  por tiempo, de 3.122 ms a 238 (-92 %); al salir las ventanas, de 166 a 135 ms (-19 %). Los cuadros, iguales. Sin
+  panel: no hay medida de Linux con la que comparar. El temporizador de cuadro no compensa con este ritmo de cuadros.
+- E8, copiar a la pantalla por filas (en vez de una escritura volátil por píxel): medido en virt, igual (dentro del
+  ruido): en QEMU pesa componer, no copiar. No se hace.
+- Un fallo de 1 en 11 arranques: faltó la línea de `entrada` "lanzar como Carla..., salir después". Sin la salida
+  guardada no se sabe la causa; la sospecha es la espera de salir (20 s a que el `pide` lanzado como Carla suelte su
+  volumen), que desde U4 puede esperar a que el usuario conteste una pregunta. Ahora espera hasta 40 s. Sin
+  comprobar que fuera eso: 10 arranques seguidos bien después (8 antes del cambio y 2 con él).
+- C14, mirado un rato más: en 10 pasadas, una con una activación un tic tarde (9.994 µs), y en esa el periodo del hilo
+  de plazo no se renovó más tarde que en las buenas. O sea, el reloj despierta a tiempo y el hilo pierde el turno por
+  otra cosa (un núcleo ocupado con las interrupciones cerradas, o el reparto). Sin resolver; queda para cuando haya
+  medidas en la placa (B5), donde un tic tarde importaría para el sonido.
+- A7, la caché de páginas compartida (el usuario eligió la opción "más limpia": rehacer la caché para poder prestarla,
+  sin tener los datos dos veces). `archivos` guarda los datos de los ficheros de 512 KB o más por fichero, ya
+  descomprimidos y descifrados, en trozos de 512 KB; cada trozo es un objeto de memoria propio (24 MB en total, 48
+  trozos, que se crean según hacen falta). Esos datos ya no entran en la caché de bloques (RedoxFS avisa al disco de
+  que lee datos de un fichero, `Disk::reading_data`; la caché de bloques baja de 40 a 16 MB y guarda metadatos y
+  ficheros pequeños): el servicio no pide más memoria que antes. LEER de un fichero grande sale de ahí. La orden nueva
+  PRESTAR (31) da al programa hasta 4 llaves revocables, solo de leer, de los trozos; el programa los proyecta y lee
+  sin viajes (`dashos::prestados`). Siguen al día: ESCRIBIR copia también al trozo y TAMANO pone ceros. Dejan de valer
+  al cerrar la asa, al pasar el programa de 8 prestados (los suyos más viejos; quien suelta antes de pedir, como
+  `prestados`, no lo nota) y al volver a una instantánea, comprobar, o quitar o cerrar un volumen. Al crear un nodo
+  se olvidan los trozos de su número (puede ser el de uno borrado). Un trozo prestado no se quita de la caché; si
+  todo está prestado, LEER va por RedoxFS como antes.
+- Pruebas: en `ficheros` (puede escribir), un fichero de 600 KB se lee entero dos veces con un viaje; lo escrito
+  después se ve sin viajar; tras recortar, lo de después son ceros; un fichero nuevo tras borrar el anterior no enseña
+  lo viejo; uno pequeño y un cajón no se prestan. Hostil (en `hostil`, con un `C/datos.bin` nuevo de 600 KB): no
+  proyecta lo prestado para escribir; lo prestado es el fichero y tras su final hay ceros; pidiendo sin soltar no se
+  queda con más de 8 (el primero deja de valer); tras cerrar la asa nada vale; ni cajón, ni fichero pequeño, ni asa
+  cerrada.
+- Kernel: al quitar una proyección de más de 4 páginas, una sola invalidación de la TLB de todo el proceso (antes, más
+  de 32). Con 32 avisos por trozo, quitar los 16 trozos de 8 MB costaba 8,8 ms en QEMU (cada aviso para a todos los
+  núcleos); con uno, 1,7 ms. En una placa la diferencia será mucho menor.
+- Tamaño del trozo, medido: con 128 KB lo prestado iba a 830-880 MB/s, como LEER; seis llamadas al kernel por trozo
+  (prestar, revocar, proyectar, quitar, cerrar...), unos 10 µs cada una en QEMU, pesaban más que copiar. Con 512 KB,
+  cuatro veces menos.
+- Medido (`make medir-fs`, 5 arranques, medianas, antes → después): leer 8 MB otra vez por LEER en trozos de 64 KB,
+  442 → 816 MB/s (+85 %); con lo prestado, copiando a un búfer de 64 KB como `read` en Linux, 1.477 MB/s (Linux,
+  1.652; 3,3 veces lo de antes), en 4 viajes; en trozos de 1 MB, 1.734. Peor: leer por LEER en trozos de 1 MB justo
+  después de escribir, 886 → 577 MB/s (-35 %): esa primera lectura llena la caché de páginas (una copia más y, la
+  primera vez, crear los objetos de memoria). Creo que pesa sobre todo lo segundo, sin comprobar. Lo demás, igual
+  (dentro del ruido). Panel al día (paso A7).
+- Falta: leer sin viaje entre dos lecturas que no caben en 8 trozos (hoy, un programa que relee 8 MB pide otra vez);
+  proyectar ficheros (mmap) sobre esto; y medirlo en la placa.
+- A11, el comprobador y la cuarentena: con el guardado diferido, lo soltado espera en cuarentena hasta guardar y
+  `check` lo contaba como perdido. Ahora lo cuenta como libre pendiente (la del sistema de archivos y la de la
+  transacción). Si la cuarentena miente, lo dice: un bloque en uso sale como "en uso pero libre", uno que el
+  asignador ya tiene libre sale con un problema nuevo (`QuarantineFree`, se liberaría dos veces) y uno fuera del
+  disco, como fuera. COMPROBAR ya no guarda antes. Y la reparación guarda antes de rehacer el asignador: sin eso, al
+  guardar después habría soltado otra vez lo de la cuarentena (en la prueba, 71 bloques libres dos veces).
+- Pruebas (`tests_deferred`): comprobar antes de guardar sale limpio y con los mismos usados y libres que después;
+  la cuarentena con un bloque en uso, uno ya libre y uno fuera del disco da cada vez su problema; reparar con
+  cuarentena deja el disco limpio. Las tres fallan sin el cambio. En `ficheros`, antes de FS8 se escribe y borra un
+  fichero de 300 KB y se comprueba en seguida: bien. Que en ese momento la cuarentena tuviera algo es lo esperable,
+  pero no está comprobado dentro de QEMU. RedoxFS: 146 pruebas bien.
+- A14, las fechas: el kernel sabe la hora del calendario. Al arrancar lee el reloj de la placa si hay uno que sepa
+  leer (hoy, el PL031 de QEMU `virt`; la Pi 4 no tiene) y la guarda como base del contador; antes de 2024 no se la
+  cree (reloj sin pila). La llamada 39 la da en nanosegundos desde 1970, 0 si no se sabe; con otros valores, error
+  (ponerla, cuando venga de la red, pedirá una llave). `archivos` pone esa hora a lo que crea, escribe, recorta, a
+  las instantáneas y a los volúmenes; una por petición, y solo en las que cambian algo. Ya no hay `AHORA = 0`.
+- Pruebas: en `ficheros`, un fichero nuevo lleva la hora de antes de pedirlo (hasta 2 s después); sin hora, 0. Hostil:
+  la llamada con otros valores no pone la hora, y la hora no va hacia atrás. Desde fuera: `ver --fecha` (nuevo) lee
+  en Linux la fecha de `Escrito/hola.txt` del disco de la prueba, y tiene que ser de los últimos 10 minutos. Antes
+  del cambio, 0.
+- Medido (`make medir-fs`, 5 arranques, medianas), con la llamada y sin ella, uno tras otro con el PC igual de
+  cargado: todo dentro del ruido, con subidas y bajadas de hasta un 5 %; escribir 8 MB en trozos de 64 KB, 79,1 a
+  76,8 MB/s (-3 %), y con guardado, 25,6 a 23,1 (-10 %, con los rangos solapados). Una llamada por escritura de 64 KB
+  pesa menos del 1 %. Comparado con las medidas de A7 bajaba hasta un 10 %, también en lecturas que no piden la hora:
+  era el PC (dos emuladores de otras sesiones a la vez).
+- Falta de A14: ponerla desde la red (con permiso), el controlador de la tarjeta SD, TRIM, la tabla de particiones y
+  la lectura anticipada.
+- A14, el descarte (TRIM): el disco NVMe tiene la orden 6, descartar, con las mismas comprobaciones que leer y escribir
+  (en el anillo también); la hace con Dataset Management si el disco lo admite (ONCS) y, si no, contesta bien sin
+  hacer nada. RedoxFS tiene `Disk::discard`: al guardar (`durable`), con la cabecera ya en el disco, avisa de lo que
+  sale de la cuarentena, juntando los bloques seguidos. `archivos` lo manda en el envío del guardado siguiente,
+  delante de sus escrituras (el servicio los hace por orden: si un bloque soltado se vuelve a escribir antes, se
+  descarta y después se escribe). La primera versión los mandaba en el momento, con un viaje más por guardado: guardar
+  un fichero de 4 KB costaba un 12 % más y borrar con guardado un 16 %; así, un 5,5 % y un 8 % (`make medir-fs`, 5
+  arranques, con y sin, uno tras otro; los rangos no se tocan). Lo que queda es el descarte en sí: en QEMU, cada tramo
+  es un `fallocate` en el PC. En la placa habrá que medirlo (algunas tarjetas descartan despacio) y quizá juntar
+  más. Linux, por defecto, no descarta al borrar (lo hace `fstrim` de vez en cuando): la comparación con Linux de esas
+  dos medidas no es del todo igual.
+- No deja ver nada nuevo de los volúmenes cifrados: qué bloques están libres ya se ve en el registro del asignador,
+  que va sin cifrar (`AllocList`, `Seal::None`).
+- Pruebas: RedoxFS (`discard_after_durable`, con un disco que pone a cero lo descartado al momento): nada se descarta
+  antes de guardar, lo descartado se vuelve a usar y, tras un corte, todo está. Descartar antes de tiempo (al entrar
+  en cuarentena) rompe esa y otras siete pruebas de cortes. En el disco en bruto (`disco`): 4 KB escritos y
+  descartados se leen como ceros; fuera de su tramo, cero sectores, fuera del disco y más de lo que cabe, rechazados.
+  En `ficheros`, 256 KB que no se comprimen, borrados y guardados; desde Linux, `disco_archivos.py` comprueba que no
+  queda ni un trozo en la imagen. Sin `discard=unmap` en QEMU estaban los 64 trozos de 4 KB; con él, ninguno.
+  `make arranque-virt` y `medir-fs` llevan ahora `discard=unmap`. RedoxFS: 147 pruebas bien.
+- A14, la lectura anticipada: `archivos` lee del disco por el anillo, y cuando una lectura de datos de un fichero
+  empieza donde acabó la anterior y es de un tramo entero (64 KB), deja pedido el tramo siguiente en la otra mitad de
+  la ventana del disco (que pasa de 64 a 128 KB): el disco lo lee mientras RedoxFS mira el actual. Lo leído por
+  adelantado deja de valer si se escribe algo suyo, y cada guardado lo recoge antes de usar la ventana. Además, al
+  leer del disco, un bloque escrito y sin guardar se toma de la caché y no se pisa (antes se podía pisar con lo del
+  disco si una lectura lo abarcaba; no se vio que pasara, RedoxFS no lo hace).
+- Medido: la prueba de siempre, "leer 8 MB por primera vez", casi no va al disco (el fichero se acaba de escribir y
+  sus bloques siguen en la caché de bloques: 24 lecturas de 64 KB de 128). Medida nueva, `leer_8mb_disco`: 8 MB que ya
+  estaban en el disco al arrancar (`previo.bin`, lo pone `tools/medir.py`), sin nada en ninguna caché. Con y sin, uno
+  tras otro, 5 arranques: 225 a 279 MB/s (+24 %, los rangos no se tocan). Lo demás, dentro del ruido. Linux no tiene
+  esta medida en el banco.
+- Visto al depurar: al abrir, RedoxFS lee el anillo de cabeceras bloque a bloque (256 lecturas de 4 KB, unos 25 ms en
+  QEMU en cada arranque). Siguiente candidato. `tools/medir.py` guarda la salida entera de una vuelta con
+  `MEDIR_TEXTO=fichero`.
+- Prueba (en `ficheros`): `C/frio.bin` (1 MB de xorshift, puesto en la imagen: frío de verdad) se lee a trozos de 64
+  KB escribiendo y guardando otro fichero entre trozo y trozo; sale entero y bien. Con una traza temporal: en esa
+  prueba la lectura anticipada se usa 13 veces y una vez se tira por un guardado. `disco` comprueba el nuevo borde de
+  la ventana (128 KB).
+- Abrir RedoxFS lee el anillo de cabeceras de una vez (1 MB en una lectura, que `archivos` hace en 16 de 64 KB) en vez
+  de una lectura por casilla (256 de 4 KB). Abrir, medido en `make arranque-virt` (ahora sale en el mensaje "RedoxFS
+  abierto"), 3 arranques: 39,5, 39,0 y 41,6 ms antes; 20,2, 23,7 y 20,9 después (-48 %). Prueba hostil
+  (`header_ring_hostile`): basura en casillas vacías y en tres viejas, y una cabecera falsa con una generación enorme y
+  la suma mal: abre la buena más nueva, con todo. (Al escribirla salió que romper la cabecera más nueva cuando ya se
+  guardó del todo no deja volver a la anterior: sus bloques soltados ya se descartaron. No es un caso de corte de luz:
+  un corte durante su escritura sí vuelve a la anterior, y eso lo prueban `single_flush_*`.) RedoxFS: 148 pruebas.
+- Abrir RedoxFS, mirado más (traza temporal): de lo que queda, casi todo es la primera lectura del disco; no hay más
+  que rascar ahí por ahora.
+- A16, NVMe tras un plazo vencido: al esperar una terminada, si llega la de una orden anterior que venció su plazo (su
+  identificador no casa), se descarta y se sigue esperando la propia. Antes se tomaba por la de la orden en curso y
+  desde ahí todo daba error: un tropiezo del disco era definitivo. Prueba hostil (en `disco`): la orden 7, solo para
+  probar, lee como la 1 pero sin esperar la terminada (vence el plazo en el acto, y la terminada llega tarde). Tres
+  veces seguidas: las tres vencen, el servicio descarta las tres terminadas tardías (sale en el registro) y después
+  leer y escribir siguen dando lo que toca; fuera de su tramo, también rechazada. No se probó con el código de antes
+  (que con una terminada de otra orden devolvía error).
+
+### 2026-11-11 (tras reiniciar shiva)
+
+- A15, los huecos del disco: mirado. Desde A13 solo abren el disco los programas con tramo (`disco` y `archivos`), y
+  `inicio` da a cada programa la misma marca al relanzarlo (su número más 1): vuelve a su hueco y no se pierden. Lo
+  que sí fallaba: el relanzado pedía su anillo y el servicio se lo negaba ("ya tiene uno"), así que iba sin anillo,
+  más lento. Ahora un anillo nuevo sustituye al viejo: se quita, con lo que tuviera a medias, y deja de atenderse.
+  Prueba hostil (en `disco`): pedir el anillo otra vez da uno nuevo con el que 16 lecturas van bien, y una lectura
+  puesta en el viejo, con aviso, no se atiende en 50 ms. Lo demás de A15 (varias órdenes NVMe a la vez, COMPROBAR
+  por trozos) sigue pendiente.
+- A7, la causa de la bajada al leer en trozos de 1 MB justo después de escribir (886 a 577 MB/s), comprobada: es
+  crear la memoria de los trozos de la caché de páginas la primera vez. Con los 48 trozos creados al arrancar (solo de
+  prueba), 3 arranques con y sin: leer en trozos de 1 MB tras escribir, 515 a 791 MB/s (+53 %); leer del disco en
+  frío, 214 a 317 (+48 %); lo demás, igual. Con trazas: crear un trozo cuesta unos 215 µs (crear la memoria 150-250,
+  proyectarla unos 22, la copia de solo leer unos 11) y llenarlo unos 510; en `medir-fs` los 48 se crean durante la
+  medida, así que cada lectura de 8 MB paga 16 creaciones. Cuando ya existen se reutilizan sin ese coste.
+- Poner las páginas a cero con `dc zva` (de línea en línea) en vez de byte a byte: probado, no cambia nada (leer en
+  trozos de 1 MB, 564 sin y 554 con, en el ruido); lo caro de crear no es poner a cero. Descartado. (Con él, una de
+  cuatro pasadas de `make prueba` falló en el paso 13 de `grupos`, el cupo del grupo no volvía a 0 en el acto tras
+  matarlo; no se vio sin él en una pasada; sin investigar, queda apuntado.)
+- No se cambia: crear los trozos al arrancar quitaría ese coste a costa de 24 MB desde el arranque (hoy se crean
+  según hacen falta) y unos 10 ms más de arranque en QEMU. Para decidir con el usuario. Otra vía: abaratar
+  `memoria_crear` en el kernel (hoy pide las páginas de una en una, con el cerrojo del repartidor cada vez).
+- El fallo del paso 13 de `grupos`, mirado: era una carrera que ya estaba. Lo de un proceso que acaba se devuelve
+  cuando su núcleo recoge sus restos (`planificador::recoger`, en la siguiente llamada al kernel de ese núcleo o al
+  quedar ocioso), no al acabar; la prueba miraba el uso del grupo en el acto tras matarlo y, rara vez, el núcleo del
+  hijo aún no lo había recogido (con `dc zva` cambió el reparto de tiempos y salió). No es una fuga: la memoria sigue
+  ocupada de verdad hasta entonces. La prueba espera ahora hasta 200 ms a que vuelva a 0 (y falla si no). Sin cambios
+  en el kernel, 3 pasadas bien; con la prueba nueva, 2 más.
+- La prueba de A16 también fallaba a veces: QEMU a veces acaba la lectura en el acto y el plazo no vence (una vez
+  venció 1 de 3). La línea esperada pedía "3 de 3"; ahora basta con que venza una vez, y la cuenta va en otra línea.
+- Por qué cuesta crear un trozo de 512 KB, medido dentro del kernel (traza temporal): 122 µs de mediana, de ellos 115
+  de poner las 128 páginas a cero. En QEMU cada escritura se emula, y `dc zva` no lo abarata (visto antes). Sacar las
+  páginas en tandas de 64 con una sola toma del cerrojo del repartidor: 164 µs frente a 161, nada; deshecho. (Probado
+  también sin poner a cero, solo para medir: `archivos` no abre RedoxFS, cuenta con memoria nueva a cero.) Lo que
+  quedaría es tener páginas ya a cero, preparadas por los núcleos ociosos: en esta medida ganaría como mucho un 13 % en
+  la primera lectura, a cambio de tocar el repartidor del kernel. No se hace; en la placa, poner a cero 512 KB cuesta
+  mucho menos que en QEMU, y habrá que medirlo allí.
+- A14, la tabla de particiones. Antes el sistema de archivos empezaba siempre en el MB 1. Ahora el servicio de disco
+  lee la tabla al arrancar (`usuario/src/particiones.rs`, nuevo): MBR (la partición de DashOS, tipo 0x7F) o GPT (tipo
+  d0a18dbf-bbf4-4b0e-8627-ce5006b50017, con los CRC de la cabecera y de la lista; la copia del final no se mira). De
+  ahí salen los tramos: `archivos`, la partición de DashOS; `disco`, el primer MB sin llegar a la primera partición
+  (con GPT, nada). Y cada cliente ve su tramo como su disco entero: el servicio suma el principio del tramo, la
+  respuesta da los sectores del tramo y no se puede ni nombrar lo de fuera (antes, -6 fuera del tramo; ahora, -2
+  fuera del disco). `archivos` ya no lleva el MB fijo (`INICIO` fuera). Los discos de prueba y de `medir-fs` llevan un
+  MBR con la partición desde el MB 1; `ver` acepta `tabla` en vez del desplazamiento y `--comprobar` lo usa.
+- Ante una tabla que no cuadra no se adivina: con entradas fuera del disco, de longitud cero, que tapan el sector 0,
+  que se pisan, dos de DashOS, más de 128 en uso, cabecera rara o CRC que no casa, nadie recibe tramo, ni la prueba en
+  bruto (que escribe). Con la lista estropeada, el fallo es el CRC aunque una entrada tampoco valga.
+- Pruebas hostiles: 8 en `archivos/herramientas` (`cargo test`, ahora en `make prueba`): MBR y GPT buenas (sectores de
+  512 y 4096, arranque FAT delante como en la Pi), 8 MBR rotos, 14 cabeceras GPT rotas con su CRC rehecho, entradas
+  fuera, pisadas y repetidas, un disco que no se deja leer y 20 000 tablas estropeadas al azar (nunca un pánico; lo que
+  se acepta cabe en el disco). Quitando una a una tres comprobaciones (CRC de la lista, pisadas, sector 0), cada vez
+  falla una prueba. En `disco`: ve 2048 sectores, el primero de `archivos` y uno que cruza dan -2, y también uno tan
+  grande que al sumarle el principio del tramo daría la vuelta. En QEMU, a mano, un disco con dos entradas pisadas: el
+  servicio dice "la tabla de particiones no vale (Pisadas): no se abre a nadie", `disco` y `archivos` no abren, el
+  sistema sigue (el compositor compone) y el disco sale igual que entró, byte a byte.
+- Rendimiento: no cambia el camino (una suma por orden); `make medir-fs VUELTAS=1` funciona con el disco nuevo y da lo
+  de siempre (leer del disco en frío 265 MB/s, en el ruido de 279).
+- A7, la caché de páginas se crea al arrancar (lo decidió el usuario, 2026-11-11): `archivos` crea los 48 trozos de
+  512 KB (24 MB) antes de atender a nadie (`Paginas::crear_todos`); si no hay memoria para todos, los que falten se
+  crean según hagan falta, como antes. Cuesta 11 ms de arranque en QEMU (línea nueva en `arranque_virt.txt`). Medido
+  con `make medir-fs VUELTAS=3`, antes y después: leer en trozos de 1 MB, 541 a 749 MB/s (+38 %); leer 8 MB por primera
+  vez, 343 a 410 (+20 %, por encima de Linux, 401); del disco en frío, 277 a 300 (+8,5 %); lo demás, dentro de ±4 %,
+  el ruido. Panel de medidas al día (fila A7b y el grupo Ficheros con esta medida).
+- A15, varias órdenes NVMe a la vez. Antes el servicio de disco atendía el anillo de una en una, esperando cada
+  terminada. Ahora junta hasta 8 envíos seguidos (lecturas, escrituras y descartes) y los manda al disco a la vez,
+  cada uno con su lista de páginas (`M_LISTA`, 512 bytes por orden) y su tramo de descarte; las terminadas van al
+  anillo en su orden cuando acaba el lote. Un lote se corta en lo que tiene que ir detrás (`choca`: el mismo sector y
+  uno escribe o descarta; el mismo sitio de la ventana y uno lee) y en vaciar, que va solo y con nada en vuelo. Si una
+  terminada no llega a tiempo, las que faltan dan error y su terminada tardía se descarta (A16). La cola del NVMe ya
+  no se puede desbordar: se lleva por dónde va el controlador (la cabeza que dice cada terminada) y, llena, se
+  contesta "sin sitio". `Nvme::orden` queda como `enviar` más `terminada`.
+- Prueba hostil (en `disco`, nueva línea): 21 envíos de una vez que se pisan a propósito (escribir y leer el mismo
+  sector, dos escrituras seguidas, descartar y escribir, dos lecturas al mismo sitio de la ventana, escribir desde un
+  sitio y leer encima, y 8 lecturas tras una escritura de 8 sectores): todo bien y en orden. Quitando la regla de
+  orden, la prueba da MAL; con una traza, los lotes salen de 2 a 8 (42 de 8 en un arranque).
+- Medido, 5 vueltas con y 5 sin, seguidas (el PC con carga 4 de otras sesiones; con 3 vueltas, la lectura prestada
+  pareció bajar un 15 %, y con 5 sale igual, 1492 las dos: era ruido): leer del disco en frío, 257 a 299 MB/s
+  (+16 %); crear 4 KB guardado, 320 a 336 (+5 %); escribir guardando cada trozo, 20,8 a 25,3 (las vueltas de antes,
+  muy dispersas); lo demás, igual. Poco, porque `archivos` casi nunca tiene más de dos cosas en el anillo; servirá
+  cuando haya varios clientes y con discos de verdad, que sí trabajan en paralelo.
+- De A15 queda COMPROBAR por trozos (un comprobador que se pueda parar entre vueltas del bucle sin perder la foto del
+  disco; hoy son 19 ms al arrancar con 7 MB, y crecerá con el disco) y, de fondo, hilos en el servicio (fase 8). Los
+  topes: `nvme` admite 4 clientes y solo hay dos con tramo; `archivos`, 64.
+- U5, lo que faltaba del selector: cajones y doble clic. La ventana empieza en `C` (lo del usuario) y enseña el camino
+  ("C/Privado"); elegir un cajón entra en él, "../" vuelve, y por encima de `C` no se sube (en `C` no hay esa fila).
+  Va por asas: cada cajón abierto se guarda, y lo elegido se busca por la asa de su cajón y su nombre, en un solo
+  paso, y se mira su tipo en ese momento (pudo cambiar desde que se listó): solo un fichero se cede. No se enseñan
+  los nombres ".", "..", vacíos o con '/', ':' o '|': '|' separa las filas de la lista del kit, y uno con ese
+  carácter correría las de después, con lo que se cedería otro fichero del que se ve (en el disco de prueba,
+  `C/raro|nombre.txt`; la ventana dice "1 nombres raros sin enseñar"). Hasta 32 cajones de hondo.
+- El doble clic, en el kit, como en MUI (`atr::DOBLE`, `MUIA_Listview_DoubleClick`): dos clics seguidos sobre el
+  mismo objeto y con el mismo valor (en una lista, la misma fila) en 500 ms, con la hora de los eventos de Wayland
+  (`Interfaz::raton_hora`); Intro en una lista también lo da. El selector abre con `DOBLE`: un clic solo marca la
+  fila. Prueba en el kit (`doble_clic_en_una_lista`, y las del kit van ahora en `make prueba`): sin hora no hay doble,
+  ni en filas distintas, ni con 600 ms; el tercer clic no hace otro con el segundo; vale con la hora dando la vuelta;
+  e Intro. En virt, el guion: Intro sin nada, flecha abajo e Intro (entra en `C/Privado`), Fin e Intro (cede
+  `nota.txt`); el hostil la lee y nada más. El doble clic con el ratón de verdad no se prueba en QEMU (el guion no
+  sabe dónde queda la ventana). Captura nueva en `docs/capturas/u5-selector.png`.
+
+### 2026-11-12
+
+- R11 (S2), lo que quedaba: `its.rs`. Cada orden al ITS se esperaba con hasta un millón de lecturas, con su cerrojo y
+  las interrupciones cerradas, y se llega desde un programa (asociar o soltar una interrupción, `its::encender`).
+  Medido en QEMU con GIC v3 y una orden que el ITS no lee: 195 ms así. Ahora la espera tiene tope de 1 ms (`PLAZO_US`;
+  un ITS lee sus órdenes en microsegundos) y, si vence o la cola se para, el ITS queda por roto: no se le manda nada
+  más y sus MSI se niegan (`msi` da nada), en lugar de seguir con una cola de la que no se sabe por dónde va. La espera
+  de "quieto" al arrancar, con tope de 10 ms. Prueba hostil (`prueba_its`, solo con GIC v3): arranca el ITS, enciende
+  una LPI (unos 82 µs en QEMU), atasca la siguiente orden (no mueve CWRITER: `its::ATASCAR`, solo en la imagen de
+  pruebas) y mide: vence en 1.048 µs (antes, 195.127, y después seguía dando MSI con la cola descolocada); la
+  siguiente no espera (8 µs) y no hay MSI. `make prueba-virt` va ahora con GIC=3 (el v2 lo prueban `make prueba` y
+  `make arranque-virt`); 3 pasadas, todas con la línea bien. `make arranque-virt` también arranca con GIC=3 (probado a
+  mano antes del cambio: ITS, MSI-X de xHCI y NVMe y todo lo demás, salvo el sonido, que no se puso).
+- En esas pasadas salieron dos fallos sueltos que no tocan el ITS: C14 (el de siempre, 1 de 4) y el paso 5 de
+  `grupos`, la misma carrera que el 13 (lo de un proceso que acaba se devuelve al grupo cuando su núcleo lo recoge).
+  El 5 espera ahora como el 13, hasta 200 ms (`vuelve_a_cero`).
+- C14, el fallo de vez en cuando, con causa: `crear_plazo` ponía el hilo de plazo en la cola de su núcleo (el 1, con
+  tres hilos justos ocupados) sin avisarle, y el núcleo no lo veía hasta su siguiente tic, hasta 10 ms después, casi
+  al final del primer periodo. Al acabar ese primer turno el periodo ya se había renovado, así que le tocaba otro en
+  el acto (primer hueco, 1 ms en lugar de 10) y el tercero llegaba antes de tiempo. La prueba se saltaba el primer
+  hueco, pero el segundo salía con 455 a 948 µs de desviación, al borde del tope de 1.000. Medido con una traza
+  temporal (C14 repetida 30 veces en un arranque): antes, el primer hueco de 1 ms en las 29 rondas limpias y la peor
+  desviación de 455 a 948 µs; con el aviso (`gic::avisar` con `SGI_PLANIFICAR` al crear), primer hueco de 10 ms y peor
+  desviación de 11 a 507 µs (casi todas por debajo de 50; las de 300 a 500 son retrasos sueltos de QEMU que el
+  siguiente compensa). La prueba mide ahora desde el primer hueco (con el fallo de antes daría unos 9.000 µs). Si el
+  "un tic tarde" (9.985 µs) visto antes venía de aquí no se ha podido ver: no se repitió. `make prueba` 5 veces bien
+  (C14: 108 y 96 µs de desviación en las dos últimas), `make arranque-virt` bien.
+- El usuario pidió (2026-11-12) un centro de control tan potente como el de DMS (Dux Modular Shell), y capturas de
+  todo lo de la interfaz. Diseño en `docs/diseño/S10c-centro-de-control.md`. La pieza de R19 que quedaba, Prefs de
+  permisos, se hace como su primera fase (C1): la ventana de Ajustes con la categoría Permisos. Va la siguiente.
+- S10c, fase C1: el centro de control, `centro` (`usuario/src/bin/centro.rs`). Una ventana con el kit: a la izquierda
+  las categorías, a la derecha la elegida. De momento, **Permisos**: lo concedido a cada programa ("pide · eco") y
+  quitarlo, con el botón Quitar o con Supr (se revoca en el acto); Esc o Cerrar la cierran. Por su canal "centro" solo
+  se le pide que abra una categoría ("abrir permisos", el enlace directo de S10c); si el pedido trae llave, contesta al
+  cerrarse. `sesiones` gana la orden 17, CONCEDIDOS (por páginas de 7), y RETIRAR se deja también al centro: las dos,
+  solo para quien `inicio` llama "centro" o "guardian" (y "entrada", que hace de guardian en las pruebas). `centro` va
+  en la tabla de `inicio` antes que `guardian`: el primero que nombra un canal es su servidor.
+- Prueba en virt: `guardian` retira él el permiso de `plazo` y, 3 s después de avisarlo, pide al centro abrir Permisos
+  y espera a que se cierre (lo siguiente es bloquear la sesión). El guion deja de teclear al ver el aviso, así la
+  ventana se lleva el teclado (S8); dentro, flecha abajo y Supr, y Esc. El centro enseña 1 concedido, lo quita (0;
+  quedan 0) y se cierra; el disco acaba con el fichero de permisos vacío, como antes. Hostil: el cliente hostil pide
+  CONCEDIDOS y recibe -2 y 16 bytes sin nada. Captura en `docs/capturas/s10c-centro-permisos.png`. El ratón (clic en
+  Quitar) no se prueba en QEMU: el guion no sabe dónde queda la ventana.
+- S10c, C1, segunda categoría: **Seguridad**, el registro de `sesiones` (negativas y fallos, lo último primero, con
+  "hecho", "negado" o "error N"), solo de lectura (Quitar, apagado). El registro lo leía solo `guardian`; ahora también
+  el centro (`REGISTRO`, con la lista `VEN_PERMISOS`). Se cambia de categoría en la barra lateral (Tab para llegar a
+  ella con el teclado). Prueba en virt: tras quitar el permiso, Tab y flecha abajo; el centro dice "Seguridad, con
+  negativas del hostil: sí; 18 entradas". El hostil sigue sin poder leer el registro (su prueba de antes). Pendiente:
+  con varias sesiones, que cada usuario vea solo lo suyo (hoy hay una sesión cada vez). Captura en
+  `docs/capturas/s10c-centro-seguridad.png`.
+- S10c, C1, tercera categoría: **Acerca de** (como la de DMS): la versión, cuánto lleva encendido, la fecha y hora
+  (UTC, del reloj de la placa de A14, pasada a fecha con el algoritmo de días civiles de Howard Hinnant, de dominio
+  público) y cuántos procesos hay (la cabecera de `PROCESOS`). Solo se lee. Prueba en virt: una flecha abajo más tras
+  Seguridad; el centro dice "Acerca de: DashOS, versión 0.0.1; Encendido hace 0 min 54 s; Fecha y hora: 2026-11-11
+  23:50 (UTC); Procesos en marcha: 15". Captura en `docs/capturas/s10c-centro-acerca.png`.
+- S10c, C1, cuarta categoría: **Discos**, de solo lectura: cuánto mide el disco del sistema, cuánto está ocupado y
+  cuánto libre (INFO de `archivos`). El centro recibe el canal "archivos" con una ficha mínima (usuario 1000, sin
+  derechos, encerrado en `C`); comprobar el disco y las instantáneas, que piden administrador, quedan para cuando la
+  prueba no tenga a `guardian` esperando al centro (las dos cosas se esperarían). Ojo, lo que costó un arranque: las
+  llaves de un programa van en el orden en que se nombró cada canal en todo el sistema, no en el de su lista; con
+  "archivos", las del centro pasan a ser ventanas 1, archivos 2, sesiones 3 y centro 4. Prueba en virt: "Discos:
+  Disco del sistema: 7,0 MB; Ocupado: 2,5 MB (36 %); Libre: 4,4 MB". Captura en `docs/capturas/s10c-centro-discos.png`.
+- S10c, la prueba hostil del propio centro: el cliente hostil recibe el canal "centro" (su llave 5; las de sonido y
+  selector pasan a 6 y 7, por el orden en que se nombran los canales) y le manda seis pedidos que no valen (una
+  categoría con camino, "abrir" solo, vacío, 200 bytes de basura, la buena con algo detrás, la buena con mayúscula),
+  cada uno con su llave de vuelta, una inundación de 160 mensajes con 8 llaves cada uno y otro pedido malo después.
+  El centro contesta -1 a todos sin abrir ventana (antes contestaba 0 a cualquiera con llave) y sigue contestando
+  tras la inundación; de los pedidos malos solo dice los tres primeros. Después, `guardian` lo abre bien, como antes.
+- S10c, el principio de C3: **Apariencia** en el centro. Modo claro u oscuro y color de acento (violeta, azul, verde,
+  naranja); el esquema sale del color con `Tema::desde_color` del kit (Material 3) y se elige con Intro o doble clic
+  (`atr::DOBLE` en la lista de la derecha; en Permisos, Intro ya no quita nada: eso es Supr). Se ve en el acto, de
+  momento solo en la ventana del centro: llevarlo a todos los programas pide un servicio de tema, y guardarlo, un sitio
+  en Prefs. Prueba en el kit (`contraste_con_cualquier_color`, en `make prueba`): con 8 colores escogidos (negro,
+  blanco y amarillo puro incluidos) y 300 al azar, en claro y en oscuro, cada texto sobre su fondo da 4,5:1 o más
+  (WCAG AA). En virt: Tab a la lista, dos abajo e Intro; "Apariencia: oscuro, color Violeta" y la ventana se repinta
+  oscura. Captura en `docs/capturas/s10c-centro-apariencia.png`.
+- S10c, la apariencia se guarda: en `Prefs/apariencia` desde la raíz del centro (`C/Prefs/apariencia` en el disco), una
+  línea como "oscuro violeta". Si no están, el centro crea el cajón (0700) y el fichero (0600). Se lee al abrir la
+  ventana; si no está o no se entiende (no es UTF-8, otro modo, un color que no existe, algo de más, más de 64 bytes),
+  se queda la de serie. La sesión con `archivos` va en `Sesion`, con su ventana proyectada mientras dura. Pruebas: el
+  disco de prueba trae la preferencia en basura (bytes que no son UTF-8 y "magenta"), y el centro dice "no se
+  entiende; se queda la de serie"; al elegir el modo oscuro la guarda (15 bytes), la relee bien, y el disco leído en
+  Linux tiene "oscuro violeta". El hostil (otro usuario, encerrado en `C`) no la abre (-12). El guion del selector
+  baja dos veces para llegar a `Privado`: `Prefs` va antes.
+- El ratón, probado de verdad en virt: el compositor dice dónde coloca cada ventana nueva ("ventana de centro en
+  (168, 168)", `Escena::recien_colocadas`) y el centro dónde queda su lista ("lista en (136, 101)"). El guion lleva el
+  puntero a la esquina y de ahí, en pasos de 100, a la cuarta fila de Apariencia, y hace doble clic: "Apariencia:
+  oscuro, color Azul; guardada: 0 (12 bytes); releída: sí", y el disco acaba con "oscuro azul". Es el primer doble clic
+  con el ratón de QEMU (hasta ahora, solo Intro y la prueba del kit). Con esto se podrá probar también el doble clic
+  del selector y los botones (Quitar).
+- U5, el doble clic del selector con el ratón de QEMU: el selector dice dónde queda su lista y, al ceder, si se eligió
+  "con doble clic" o "con Intro" (lo último que llegó, botón o tecla). El guion entra en `C/Privado` con el teclado y
+  dentro lleva el puntero a `nota.txt`: un clic (la captura se hace entonces: la fila marcada y la ventana aún abierta,
+  así que un clic no abre) y, casi un segundo después, doble clic. "El usuario elige C/Privado/nota.txt con doble
+  clic". Si el ratón fallara, el guion acaba con Fin e Intro y la línea diría "con Intro": la prueba lo vería.
+  Captura nueva en `docs/capturas/u5-selector.png`.
+- S10c, los botones con el ratón: el centro dice dónde queda el botón Quitar y, al quitar, si fue "con el botón" o
+  "con Supr". El guion hace clic en la fila de `pide · eco` y luego en Quitar: "quita a pide el permiso de eco con el
+  botón: 0; quedan 0" (si el ratón fallara, acaba con Supr y la línea no casaría).
+- U3, lo que faltaba: bloquear con una tecla, Super+L. El compositor la atiende él (no llega a la ventana) y da en el
+  acto los avisos de inactividad pendientes (`Escena::bloquear_ya`), como si hubiera vencido su plazo; `guardian`, que
+  espera el suyo, bloquea igual que por tiempo. Con la sesión bloqueada no hace nada. Prueba en virt: tras el bloqueo
+  por tiempo, `guardian` pide un aviso de 60 s; el guion pulsa Super+L y el aviso llega a los 1,6 s; pantalla de
+  bloqueo, una contraseña mala y la de Ana: "bloqueo con la tecla: bien". Un programa no puede fingir Super+L: la
+  entrada solo llega del USB, y la tecla no se reparte. Sin ventana con el teclado no se miran los modificadores, así
+  que entonces Super+L no hace nada (casi nunca: siempre hay una con el teclado); queda apuntado.
+- Super+L sin ninguna ventana con el teclado: antes no hacía nada (no se miraban los modificadores). Ahora se llevan
+  también entonces y Super+L bloquea igual. Prueba en el compositor (`super_l_bloquea_ya`, con y sin ventana): un aviso
+  de 60 s pedido sale en el acto con Super+L, la L no llega a la ventana, y una L sin Super es una L y no bloquea.
+- A15, COMPROBAR medido (en `medir-fs`, 3 arranques, sobre los 29 MB ocupados del disco del banco): sin los datos,
+  1.655 MB/s (la estructura: depende más de cuántos ficheros que de los MB); con los datos, 160 MB/s, 182 ms. Mientras
+  dura, `archivos` no atiende a nadie. Echando cuentas: una tarjeta de 64 GB con 20 GB ocupados tardaría unos 2 min en
+  QEMU, y en la Pi, leyendo la SD a 40-90 MB/s, de 4 a 8 min con todo el sistema de ficheros parado. Así que COMPROBAR
+  con datos tiene que ir por trozos (o en otro proceso, sobre una instantánea) antes de que se use con discos de verdad;
+  sin datos, aguanta. Solo cambia `medir-fs` (no está en las imágenes de `make prueba` ni de `make arranque-virt`, que
+  no se han pasado en este paso).
+- S10c, categoría **Pantallas** (solo de lectura): el centro se suscribe a `wl_output` y enseña lo que dice el
+  compositor: nombre, tamaño, frecuencia y escala. El nombre se corta a lo que trae el mensaje (y a 32 letras). Prueba
+  en virt: "Pantallas: Pantalla DASHOS-1: 800 × 600; Frecuencia: 60,000 Hz; Escala: 1". Elegir la resolución, el
+  brillo y el modo noche (DMS) esperan a la pantalla de verdad (HVS, G7).
+- S10c, el centro cambia de tamaño: con Super+Arriba el compositor le pide la pantalla entera, y el centro hace un
+  búfer nuevo de esa medida (en la otra dirección, sin soltar el que se ve hasta tenerlo; tope 1920 × 1200) y vuelve a
+  colocar; con Super+Abajo, a su tamaño. Como Ajustes (K7). La barra lateral tiene ya una fila por categoría (con
+  cinco filas, la sexta empujaba a Permisos fuera de la vista). Prueba en virt: "el compositor pide 800x600" y "vuelve
+  a 560x420". Capturas en `docs/capturas/s10c-centro-maximizado.png` y `s10c-centro-apariencia.png`.
+- S10c (C3), el tema llega a todos los programas: protocolo propio `dashos_tema_v1` (`wayland/protocolos/
+  dashos-tema-v1.xml`, tablas regeneradas). El compositor guarda el tema (color y modo), lo dice al enlazar y, cuando
+  cambia, a todos los suscritos (`Escena::avisos_tema`, con tope de 64); cambiarlo (`poner`) solo lo deja al cliente que
+  `inicio` llama "centro" (`PONEN_TEMA`); a otro, error de protocolo y nada cambia. El centro lo pone al abrir (el
+  guardado) y al elegir; Ajustes (K7) lo sigue y se repinta. Pruebas: en el compositor, `el_tema_del_sistema` (llega
+  al enlazar; un cliente cualquiera que pone da error y no cambia nada; el centro lo cambia y llega a los tres
+  suscritos; al irse, fuera de la lista). En virt: "[ajustes] tema del sistema: oscuro, color 0061a4", y la captura
+  final enseña Ajustes en oscuro azul (la comprobación de la captura acepta ese esquema; los colores, del kit:
+  superficie 0x111418, primario 0x9fcaff). Captura en `docs/capturas/s10c-tema-del-sistema.png`. Falta que lo sigan
+  el selector y `guardian`, y los programas de Linux por el puente.
+- Un fallo suelto de `make prueba` al pasar lo del tema (no tiene que ver: 2 pasadas más, bien): `padre` salía con 18,
+  su paso 18 (matar a un hijo bloqueado leyendo, esperarlo y ver que su canal está cerrado). La misma carrera que el 5 y
+  el 13 de `grupos`: lo de un proceso muerto se suelta cuando su núcleo lo recoge, no al acabar. Ahora espera hasta
+  200 ms a que el canal esté cerrado. `make prueba` bien después. (El commit del tema se hizo con aquel fallo delante,
+  porque la orden siguió; queda dicho aquí.)
+- S10c, el ataque al tema en virt: el hostil se suscribe a `dashos_tema_v1` y pone un tema; el compositor le manda el
+  error de protocolo (sobre el objeto del tema) y lo suelta; por otra conexión, el tema sigue siendo el de serie.
+  "poner el tema sin ser el centro da error: sí; el tema sigue: sí". (Primero falló por la prueba: el hostil tenía
+  abierta la conexión anterior y el compositor solo atiende una por programa; la cierra antes.)
+- Fallo abierto (S10c): que el selector siga el tema del sistema (enlazar `dashos_tema_v1` y repintarse al recibirlo,
+  como Ajustes) rompe la prueba de arranque 3 de 3 veces, y sin el cambio pasa: se pierde el primer Intro del selector
+  ("Intro sin nada elegido" no sale), su doble clic acaba "con Intro" y, después, el clic y las teclas de Ajustes caen
+  en otro sitio (sale "Cancelado" y falta "el campo dice: DashOSa"). No es el número de objeto (43 o 60, lo mismo), ni
+  errores de protocolo (no hay). Sospecha: algo del orden de los eventos al abrir la ventana del selector (el tema llega
+  antes del configure) que deja la entrada del compositor desfasada para lo que viene detrás. Sin investigar más:
+  el cambio, guardado en `docs/medidas/selector_tema.diff`, no entra. El selector sale con el tema de serie.
+- El fallo abierto del selector con el tema, resuelto: la causa era el tiempo. El usuario de DashOS se compila sin
+  FPU (`softfloat`) y `Tema::desde_color` (paletas HCT, potencias en coma flotante) cuesta en QEMU de 178 a 336 ms
+  (medido en Ajustes). El selector lo calculaba al abrir su ventana, con el tema que llega al enlazar, y en ese rato no
+  atendía: se perdía el primer Intro y lo de después se desfasaba. Ahora `Tema::del_sistema` da el esquema de
+  referencia ya hecho para el violeta de serie (90 µs) y calcula los demás. Con eso el selector sigue el tema y la
+  prueba pasa (2 arranques). Queda que un color que no sea el de serie sigue costando unos 330 ms al cambiarlo; si
+  molesta, el centro podría mandar el esquema calculado en vez del color, o el cálculo pasar a enteros.
+- S10c, el tema de cualquiera de los acentos del centro, al momento: el kit lleva la tabla de los cuatro acentos
+  (`ACENTOS`) en claro y oscuro, calculada en el PC con `desde_color`; `Tema::del_sistema` la usa (y calcula los demás
+  colores). La prueba `tabla_igual_que_el_calculo` la compara con el cálculo (si `desde_color` cambia, falla y la tabla
+  se rehace). El centro toma los acentos del kit. Medido en Ajustes, cambiar al azul oscuro: de 331.914 µs a 68 µs.
+- S10c, C1 completo: en Discos, "Comprobar el disco (pide administrador)". Con Intro o doble clic el centro pide a
+  `sesiones` la acción de administrador "comprobar" (U5); `sesiones` se la pregunta a `guardian`, que pide la
+  contraseña de un administrador, y la hace `archivos`. El centro enseña "Comprobado: N problemas". Lo que lo impedía
+  en la prueba: `guardian` esperaba, bloqueado, a que se cerrara el centro; ahora, mientras espera, sigue atendiendo
+  las acciones de administrador (en la prueba, a "centro" le contesta como Ana, como a `pide`). Prueba en virt: Tab,
+  Fin e Intro; "centro pide comprobar: contesta como Ana" y "Comprobar el disco: 0, 0 problemas". Las negativas
+  (contraseña mala, de quien no es administradora) ya las prueba el hostil por la misma acción. Captura nueva en
+  `docs/capturas/s10c-centro-discos.png`.
+- Tanda de estabilidad con todo lo de la noche (centro de control, tema del sistema, Super+L, discos por tabla, NVMe a
+  la vez): `make prueba` 3 de 3 y `make arranque-virt` 2 de 2, bien.
+- A15, cómo hacer COMPROBAR sin parar a todos (solo plan; con datos va a 160 MB/s y en una SD grande serían minutos):
+  1. **Dentro de `archivos`, a trozos.** Una instantánea interna fija la cabecera de ese momento (sus bloques no se
+     reusan mientras viva) y el comprobador recorre esa foto con una pila propia en vez de recursión, unos cientos de
+     nodos por vuelta del bucle; entre trozo y trozo, el servicio atiende a los demás. Lo que se escribe mientras
+     tanto no estorba: es otra foto. Pide reescribir el recorrido de `dashfs::check` como iterador.
+  2. **En otro proceso, `comprobador`.** `archivos` hace la instantánea y le da un tramo del disco solo para leer
+     (el servicio de disco necesitaría tramos de solo lectura); el comprobador lee con la biblioteca de RedoxFS, como
+     `ver`, en otro núcleo, y contesta con el informe. `archivos` no se para nada y, si el comprobador cae o tarda,
+     no arrastra a nadie (como el lector de discos ajenos, R13).
+  Recomendación: la 2 para los datos (es lo lento: lectura y CRC, que van mejor en otro núcleo, y el servicio de disco
+  ya atiende varias órdenes a la vez), y dejar la comprobación de la estructura dentro, que va a 1.655 MB/s. Antes:
+  tramos de solo lectura en el servicio de disco (con su prueba hostil: escribir por ellos da -6).
+- A15, primer paso del comprobador aparte: el servicio de disco tiene tramos de solo lectura. Un tercer cliente con
+  nombre, `comprobador`, recibe la misma partición que `archivos`, pero `preparar` le niega escribir y descartar (-6);
+  leer y vaciar, sí. El programa `comprobador` (nuevo, `usuario/src/bin/comprobador.rs`) de momento abre el disco, lee
+  la cabecera (firma DashFS), intenta escribirla encima y descartarla, y la vuelve a leer igual. Prueba en virt:
+  "14336 sectores, firma DashFS; escribir -6, descartar -6, fuera -2: bien" (sin la comprobación, escribir daría 0).
+  Siguiente: que recorra una instantánea con la biblioteca de RedoxFS y que `archivos` le pase el trabajo.
+- U5: en el selector, Retroceso sube al cajón de arriba (como elegir "../"; en la raíz no hace nada: no hay arriba).
+  Prueba en virt: dentro de `C/Privado`, Retroceso ("sube a C, 5 entradas") y se vuelve a entrar.
+- A15, segundo paso del comprobador, intentado y deshecho: abrir RedoxFS en su proceso, solo para leer (un `Disk` sobre
+  el servicio de disco, como `ver`). Lee el anillo de cabeceras (16 lecturas de 64 KB, bien) y se queda dentro de
+  `FileSystem::open` sin error ni salida. No es la memoria (con 64 MB de grupo, igual). Sin mirar: si es por abrir
+  mientras `archivos` escribe (en `ver` el disco está quieto) o algo de la apertura sin `cleanup`. Para la próxima:
+  probarlo con el disco quieto (al final de la prueba) y con trazas dentro de `FileSystem::open`.
+  Corrección: la traza de aquella prueba solo imprimía las lecturas de los bloques 0 a 2, así que no se sabe si se
+  quedaba quieto o seguía leyendo bloques más altos (despacio o en bucle) hasta que la prueba acabó a los 110 s. Lo
+  primero la próxima vez: trazar todas las lecturas (o contarlas) y el tiempo. Tras el anillo, `open` lee la
+  cabecera elegida (`committed`) y después lo que haga falta del asignador.
+  Medido después, contando todas las lecturas: tras el anillo hace menos de 50 y se queda parado (no lee en bucle);
+  no da error ni acaba. Candidatos: una petición al servicio de disco que no se contesta (el comprobador espera sin
+  plazo) o algo de `committed`. Deshecho otra vez; para retomarlo, plazo en cada petición y traza en `committed`.
+  Pista importante: con un `println!` en cada lectura del comprobador, `FileSystem::open` termina (3 lecturas: la
+  cabecera, el anillo y un bloque de la última transacción, y la raíz se lee bien); sin él, se queda parado 2 de 2,
+  y ninguna petición al disco vence su plazo de 2 s. Depende del tiempo: huele a carrera, quizá en el servicio de
+  disco al intercalar las peticiones por canal de este cliente con los lotes del anillo de `archivos` (A15), o en el
+  propio comprobador. Deshecho; retomarlo con eso.
+  Hipótesis (sin comprobar): en modo rápido se para con menos de 50 lecturas y sin que venza ninguna petición, así
+  que da vueltas sin leer. Encaja con un bucle sin fin al recorrer la cadena del asignador sobre una vista a medio
+  escribir (`archivos` escribe a la vez y el comprobador no tiene instantánea): un ciclo en la cadena. Si es así, es
+  también un fallo de robustez ante discos rotos: la apertura debería poner tope a la cadena. Probarlo con un disco
+  con la cadena en ciclo a propósito (`estropear`, en archivos/herramientas) y `ver`.
+  Mirado después: cada salto de la cadena comprueba el resumen (seahash) del bloque al que apunta (`read_block`), así
+  que un ciclo no se forma sin que esa comprobación falle: la hipótesis queda casi descartada. Sigue sin saberse dónde
+  da vueltas; lo próximo, trazas por fases dentro de `open_inner` (anillo, `committed`, `reset_allocator`).
+- S10c: Permisos sin nada concedido dice "Ningún programa tiene permisos concedidos" en vez de una lista vacía (Quitar
+  sobre esa fila no hace nada). Prueba en virt: tras quitar el último, "lo que se ve" es ese texto.
+- U5: el selector enseña el tamaño de cada fichero ("nota.txt · 18 bytes"; KB y MB según el tamaño, del campo
+  tamaño de cada entrada de LISTAR) y dice lo que enseña al entrar en un cajón. Captura nueva.
+  Acotado: con una pausa de 0,5 ms antes de cada lectura (en vez del aviso) también abre, en 22 ms. Sin pausa, se
+  para, y ninguna petición vence su plazo. Es el ritmo: peticiones seguidas sin respiro dejan algo atascado. Puede ser
+  una espera perdida (kernel: el canal o el temporizador del plazo; o el servicio de disco al intercalar canal y
+  anillo). No se tapa con la pausa: es lo primero que hay que mirar al retomar A15, con una traza en memoria (sin
+  imprimir, que cambia el ritmo) de cada petición y su respuesta.
+  Y luego: con solo un aviso antes de abrir (sin pausas), esta vez abrió. No es determinista; la pausa solo cambiaba
+  la suerte. Apunta más a leer mientras `archivos` escribe, sin instantánea (lo que el plan ya pide), que a una espera
+  perdida; sin demostrar. El guion acepta ahora `DIAG_TEXTO` y `DIAG_ESPERA` para volcar los registros de las CPU
+  (QEMU, `info registers -a`) cuando sale una línea dada: con eso se verá dónde está el comprobador cuando se pare.
+- A15, la causa de los fallos del comprobador: 1.000 aperturas de RedoxFS desde el comprobador (5 arranques de 200
+  seguidas) no se pararon ni una vez; el 2,5 % dieron EIO, y no del servicio de disco (ninguna lectura falló), sino de
+  `reset_allocator` ("bloque que no está libre"): el comprobador lee la cadena del asignador de una cabecera mientras
+  `archivos` ya ha reusado bloques que esa cabecera aún nombra. Es leer sin instantánea, como decía el plan.
+  Hecho: `FileSystem::hold` y `release` en RedoxFS. Mientras se sujeta, lo que `durable` devolvería al asignador
+  espera aparte (`held`), así que cualquier cabecera hecha durable desde `hold` sigue entera en el disco por mucho
+  que se escriba; `release` lo devuelve y deja al disco olvidarlo (A14). Solo en modo diferido; sujetar dos veces da
+  EBUSY. El compactado del registro del asignador espera a que no haya nada sujeto, y `check` cuenta lo sujeto como
+  libre pendiente, igual que la cuarentena. Pruebas: la foto aguanta 40 rondas de borrar, escribir y hacer durable;
+  sin `hold` esas mismas rondas la rompen (la prueba sirve); soltar deja el mismo espacio libre que no haber sujetado,
+  también al reabrir; sin modo diferido da EINVAL. 152 pruebas de RedoxFS bien.
+  Siguiente: las órdenes SUJETAR y SOLTAR en `archivos` (solo administrar; se suelta sola si el cliente se va o si el
+  espacio libre baja mucho, para que sujetar no llene el disco) y el comprobador con su alta, que abre la foto.
+- A15: las órdenes SUJETAR (32) y SOLTAR (33) en `archivos`, solo con el derecho de administrar y una a la vez
+  (EN_USO). Se suelta sola si quien sujeta se va, y si el espacio libre baja de 1/16 del disco: entonces su SOLTAR da
+  LLENO (lo que leyó después puede no valer). Pruebas en virt: `ficheros` sujeta, escribe, guarda y borra, comprueba
+  (limpio: lo sujeto cuenta como libre pendiente), suelta, y soltar otra vez da NO_EXISTE. Hostil: sujetar y no soltar
+  mientras se escriben, guardan y borran 64 ficheros de 256 KB sin comprimir (16 MB en una partición de 7 MB): el
+  servicio suelta solo, ninguna escritura se queda sin sitio y SOLTAR da LLENO; `hostil` (sin administrar) recibe
+  PROTEGIDO al sujetar y al soltar. Aprendido al hacer la prueba: lo creado y borrado entre dos guardados no se sujeta
+  (ninguna foto lo nombra) y se reusa enseguida, como debe.
+  Siguiente: el comprobador con su alta en `archivos` (derecho de administrar), que sujeta, abre la foto con RedoxFS
+  por su tramo de solo lectura, la recorre y suelta.
+- A15: el comprobador aparte lee una foto sujeta. Tiene alta en `archivos` (usuario 1, derecho de administrar,
+  encerrado en `C`) y se lanza tras `archivos`, que sirve ese canal. Sujeta (si otro sujeta, espera hasta 10 s), abre
+  la foto con RedoxFS por su tramo de solo lectura, la recorre entera (estructura, sin los datos) 200 veces mientras el
+  servicio sigue, y suelta. Antes, sin sujetar, 200 aperturas fallaban un 2,5 %; ahora, 200 de 200 limpias.
+  `ficheros` espera también si el comprobador tiene el disco sujeto.
+  Dos fallos encontrados por el camino: (1) RedoxFS no cabe en 64 KB de pila (cayó al cerrar la transacción con una
+  falta de página bajo la pila): 1 MB, como `archivos`. (2) Al caerse el comprobador, el disco seguía sujeto: `sesiones`
+  solo avisaba a `archivos` de la muerte de lo que lanza ella, no de lo de `inicio`. Ahora avisa de todos (la marca es
+  la misma en los dos). Probado con el comprobador cayéndose a propósito (pila de 64 KB): `ficheros` sujeta bien
+  después de su baja; antes esperaba 10 s y daba MAL.
+  Siguiente: COMPROBAR con datos (FS8) por el comprobador, con el informe de vuelta a quien lo pide (el centro).
+- A15, medido: el comprobador recorre la foto con los datos (cada bloque leído y su resumen comprobado) en el disco
+  del arranque: 1.580 KB ocupados en 23 ms, 65 MB/s. No se puede comparar con los 160 MB/s de COMPROBAR dentro de
+  `archivos` (medir-fs, otro disco con mucho más dato): aquí casi todo es abrir (unos 15 ms de las 200 vueltas sin
+  datos). Además, cada bloque de 4 KB es una petición al servicio de disco: leer por delante (ventanas de 64 KB) es lo
+  primero si al medir en un disco grande sale lento. Pendiente: medirlo en el disco de medir-fs, y llevar el
+  COMPROBAR con datos del centro al comprobador, con el informe de vuelta.
+- A15, medido en el disco de medir-fs (8 MB al azar al arrancar), con el comprobador metido a mano en ese arranque
+  (no se queda: sujetar a la vez altera las medidas): con los datos, 8.224 KB en 84 ms, 94 MB/s; dentro de `archivos`,
+  160 a 220 MB/s. Más lento porque pide cada bloque de 4 KB por separado (leer por delante lo mejoraría), pero no para
+  al servicio, que era lo que se buscaba.
+  Hallado al medir: (1) el disco de medir-fs no tiene `C` y sin raíz no hay alta: el comprobador va con la raíz del
+  disco (no lee nada por `archivos`) y reintenta la sesión 2 s, porque el alta llega por otro canal. (2) medir-fs llena
+  el disco mientras está sujeto y `archivos` lo suelta por falta de sitio, como se diseñó: 56 de 200 vueltas limpias y
+  luego EIO. El comprobador lo dice ahora como "interrumpido por falta de sitio" (SOLTAR da LLENO), no como un fallo
+  del disco, y hace la comprobación con datos lo primero. `tools/medir.py` guarda la salida entera con MEDIR_SALIDA.
+- A15: el comprobador lee por delante: lo pequeño (un bloque, casi siempre) sale de 64 KB leídos de una vez desde ahí,
+  guardados mientras dura esa apertura (lo que nombra la cabecera abierta ya está escrito y no cambia mientras se
+  sujeta). Medido en el disco de medir-fs, con los datos: antes 94 MB/s (una medida), ahora 110 y 132 MB/s (dos); de
+  un 17 a un 40 % más. Dentro de `archivos`, 160 a 220.
+  Pero el recorrido sin datos (las 200 vueltas del arranque) pasó de 3.139 a 4.106 ms, un 30 % más lento: los
+  metadatos saltan de un sitio a otro y cada bloque traía 64 KB. Probado leer por delante solo los bloques de datos
+  (con el aviso `reading_data` puesto en `check`): no gana nada (88 y 91 MB/s), lo ganado era en los metadatos de la
+  pasada con datos. Queda así: por delante solo en la pasada con los datos (120 y 128 MB/s) y no en el recorrido sin
+  datos; RedoxFS sin tocar.
+- A15: "Comprobar el disco" (la acción de administrador, desde el centro o `pide`) la hace ya el comprobador aparte,
+  con los datos, sin parar al servicio de archivos. El comprobador, tras su prueba del arranque, sirve el canal
+  "comprobar" (`dashos::protocolo::comprobar`; solo `sesiones` tiene llave): sujeta, recorre la foto, suelta y contesta
+  estado, problemas y KB ocupados (LLENO si el servicio soltó a medias). En virt: 0 problemas, 1.660 KB en 52 ms, por
+  `pide` y por el centro. Antes era COMPROBAR dentro de `archivos` y sin los datos.
+  Tropiezo: `inicio` da las llaves de canal en el orden en que cada canal aparece por primera vez en la lista de
+  `kernel/src/inicio.rs`, no en el de la lista del programa. "comprobar" sale antes que "eco" y "sesiones", así que en
+  `sesiones` es la 3 y las demás se corren (eco 4, la suya 5). Con los números mal, `sesiones` no atendía a nadie.
+  Pendiente: `sesiones` espera la respuesta sin plazo (si el comprobador tarda, como hasta 10 s esperando a sujetar,
+  `sesiones` no atiende entretanto); y que el centro enseñe los KB y los problemas.
+- A15: `sesiones` espera al comprobador con plazo, 20 s (hasta 10 s esperando a que otro suelte el disco, y el
+  recorrido); si vence, contesta EN_USO y sigue. Probado con el comprobador retrasado 25 s a propósito (quitado
+  después): "el comprobador no contesta en 20 s", y la respuesta tardía del comprobador va a un canal ya cerrado sin
+  estorbar. Pendiente: durante esos 20 s `sesiones` no atiende a nadie; lo bueno sería no esperar (contestar a quien
+  pidió cuando llegue la respuesta, como las preguntas pendientes).
+- S10c/A15: el centro dice el resultado de "Comprobar el disco" en llano: "Comprobado, datos incluidos: sin
+  problemas", "Comprobado: N problemas", "El disco está ocupado: inténtalo otra vez" (EN_USO, el plazo de `sesiones`),
+  "Interrumpido: queda poco sitio en el disco" (LLENO) y "No se comprobó: hace falta un administrador". Captura nueva.
+- A15: `sesiones` ya no espera al comprobador. Le pide la comprobación con una llave de vuelta a su propio canal
+  (marca 1 << 62, que no tiene ningún programa) y sigue atendiendo; cuando llega la respuesta, contesta a quien la
+  pidió (con el registro, como antes). Una a la vez (otra mientras tanto, EN_USO). Un temporizador (marca 1 << 62 | 1)
+  la despierta a los 20 s si no ha llegado: EN_USO a quien la pidió, y lo que conteste el comprobador después se tira.
+  Probado con el comprobador retrasado 25 s a propósito (quitado después): mientras esperaba, `sesiones` atendió
+  "matar a eco" de `pide`, y a los 20 s contestó EN_USO por el temporizador.
+- S10c: `guardian` sigue el tema del sistema en las pantallas de bloqueo y de entrada: se enlaza a `dashos_tema_v1`
+  (solo para leerlo; ponerlo sigue siendo cosa del centro) y repinta al cambiar. Superficie, texto, primario para la
+  frase de quien entra, contorno en la caja y el rojo de error de Material 3 para claro u oscuro. Antes, colores
+  fijos. `CAPTURA_BLOQUEO=fichero.ppm` en `tools/prueba_uefi.sh` saca la primera pantalla de `guardian`. Captura
+  nueva.
+- S10c: también la capa de las preguntas de permisos de `guardian` sigue el tema (llega al enlazar, antes que la
+  configuración de la capa; con el borde en el primario). Captura nueva: en ese momento del arranque, el tema claro.
+- S10c, C2 primer paso: Super+A pide el panel rápido. Evento nuevo `panel` en `dashos_tema_v1`; el compositor lo manda
+  solo a los suscritos que pueden poner el tema (el centro), y la A no llega a la ventana (también sin ventana con el
+  teclado, como Super+L). Prueba hostil en la escena (`super_a_pide_el_panel`): otro suscrito no lo recibe, sin Super
+  es una A, y si el centro se va nadie lo recibe. El centro, de momento, lo apunta.
+  Hallado: el centro solo habla con el compositor mientras su ventana está abierta (espera en su canal hasta que
+  `guardian` le pide abrir una categoría). Para el panel hace falta alguien enlazado siempre: o el centro mantiene su
+  conexión con el compositor también cerrado, o un programa `panel` aparte en `PONEN_TEMA` (para el modo noche). Lo
+  segundo separa mejor (el panel no ve los permisos); es lo que haría salvo que el usuario diga otra cosa.
+- S10c, C2 segundo paso: el estado del tema sigue siendo del centro. Por su canal acepta "modo oscuro" y "modo claro"
+  solo de `panel` (por el nombre que da el directorio de `inicio`, que ahora apunta), también con la ventana cerrada:
+  guarda la apariencia con el color que hubiera y la pone en el compositor con una conexión de un momento (hasta su
+  sync). Hostil: pedir "modo oscuro" da -1 y no cambia nada. Siguiente: el programa `panel` (capa en una esquina, con
+  Super+A; `abren_panel` en el compositor en vez de `ponen_tema`).
+- S10c, C2 tercer paso: el programa `panel` (usuario/src/bin/panel.rs). Con Super+A (el compositor se lo dice solo a
+  él: `abren_panel`, por nombre, en vez del centro) abre una capa arriba a la derecha, en la capa de encima, con el
+  teclado a demanda (no se lo quita a nadie sin un clic, S8), y la cierra con otro Super+A. Un mosaico: el modo oscuro.
+  No pone el tema él: se lo pide al centro, que lo pone y lo guarda. Sigue el tema del sistema. Prueba en virt (al
+  final, cuando `guardian` acaba sus bloqueos: con la sesión bloqueada Super+A no hace nada): abre, clic en el
+  mosaico (claro), otro (oscuro), cierra; el disco acaba con "oscuro azul". Capturas nuevas.
+  Hallado por el camino: (1) el centro guardaba el modo antes de ponerlo; si poner fallaba, el disco decía una cosa y
+  la pantalla otra. Ahora pone primero y guarda solo si se puso. (2) Una conexión del centro al compositor justo
+  después de cerrar otra a veces no entra (el compositor aún no ha soltado la anterior): unos intentos. (3) El guion
+  para la máquina en cuanto ve todas las líneas esperadas: lo nuevo necesita las suyas. El arranque de virt pasa a
+  130 s de tope.
+  Falta de C2: más mosaicos (volumen, brillo, no molestar, bloquear, salir) y el modo de edición.
+- S10c, C2: el mosaico Bloquear del panel. Petición nueva `bloquear` en `dashos_tema_v1`: hace lo de Super+L (el
+  aviso de inactividad pendiente, ya) y el compositor solo se la acepta al panel (`abren_panel`); a otro, error de
+  protocolo y nada (prueba `bloquear_desde_el_panel` en la escena). El panel se cierra y la pide. En virt no se pulsa:
+  cuando se prueba el panel, `guardian` ya acabó y no hay quién bloquee. Captura nueva.
+- S10c, C2: el mosaico del volumen en el panel ("−" y "+" de 10 en 10 %). El mezclador tiene un volumen general sobre
+  la mezcla entera, con rampa a lo largo del período como el de cada flujo; a 100 % y sin cambiar no hace nada (un
+  `if` por período). Prueba en `sonido`: baja sin escalón, al 25 % da un cuarto del pico, a 0 silencio. El servicio
+  acepta la orden nueva `GENERAL` (13) solo de `panel`; `hostil` la manda a 0 y recibe "no le toca" (si colara, la
+  prueba del sonido del arranque lo vería). En virt: "−" (90 %) y "+" (100 %). El panel va ahora tras el servicio de
+  sonido en `inicio` (puesto antes, se quedaba él de servidor del canal "sonido" y no había sonido). Captura nueva.
+- U5: elegir carpeta en el selector. Con el pedido "carpeta", la misma ventana ("Elegir carpeta") enseña solo los
+  cajones y un botón "Elegir esta carpeta"; la elegida se cede como raíz 3, para leer y escribir (para guardar ahí).
+  En una raíz siguen valiendo los permisos del fichero y su tope. Prueba en virt: el hostil pide carpeta, el guion
+  entra en C/Privado y pulsa el botón con el ratón; llega el hueco 3, y como Privado es 0700 de Ana y el hostil es otro
+  usuario, por ella no lista, no ve `nota.txt`, no crea, ni sube con "../". Sin probar en virt: un programa del mismo
+  usuario guardando por ahí (ninguno de la prueba tiene a la vez el selector y el usuario 1000).
+  Hallado: los botones del kit no toman el teclado (Tab no llega a ellos); con teclado, el selector solo se maneja por
+  la lista. Pendiente del kit: el foco del teclado también en los botones. Y en el guion: el hostil pide la carpeta
+  justo tras el primer flujo; hasta que sale la ventana, nada de la actividad de fondo (sus clics caían en Cancelar).
+- Kit, Material 3 de verdad (el usuario, 2026-11-12: "los botones y ventanas ... que se supone que son material se ven
+  horribles"). Primer arreglo, en el kit para que mejore todo: tonos de contenedor de superficie (bajo, normal, alto)
+  y contenedor secundario, sacados de la superficie hacia su texto (guardan el matiz del acento, sin más tabla);
+  `atr::ESTILO`: botón relleno, tonal o de texto, y texto de título (22, medium) o secundario (14, suave); la lista
+  sobre un contenedor de esquinas de 12, sin marco, y la elegida en el contenedor secundario redondeado; los botones a
+  su medida (no se estiran) y, con un hueco delante, al final de la fila. Selector (460 de ancho, Cancelar de texto) y
+  centro (título, explicación, Quitar tonal, Cerrar de texto) los usan. Capturas de antes y después.
+  Falta: esquinas y sombra de las ventanas (en el compositor, tocando la composición por tramos de E8: medir), el
+  centro maximizado deja un hueco arriba (el contenido va centrado), el panel rápido con estos tonos, y el foco del
+  teclado en los botones.
+- Kit/S10c: el panel rápido con los tonos de Material 3: sobre el contenedor de superficie con esquinas de 28 (lo de
+  fuera, transparente: su búfer es ARGB y el lienzo premultiplica), título de 22, mosaicos de esquinas de 20, el
+  encendido en el primario y los demás en el contenedor alto. Captura de antes y después (oscuro y claro).
+  De paso: con el PC muy cargado por otras sesiones (media de 81), la prueba del comprobador del arranque pasó de 3 a
+  31 s y `ficheros`, que esperaba 10 s a que soltara el disco, daba MAL. Ahora 50 vueltas y 30 s de espera.
+  Con la carga alta, `make prueba` dio también C14, S2 y C32 MAL (miden tiempos); con la carga baja, bien. El pánico
+  de "pila del kernel desbordada" de ese registro es la prueba C34, a propósito.
+- Kit: ventanas con esquinas redondeadas (16). `Interfaz::esquinas` deja transparentes, con el borde suavizado, las
+  esquinas por fuera del redondeo (`Lienzo::esquinas_transparentes`, premultiplicado); centro, Ajustes y selector
+  pasan a búferes ARGB y lo usan, y maximizados van en ángulo recto. El compositor mezcla solo los tramos con
+  transparencia: medido en el arranque, de 46 a 48 µs por kilopíxel compuesto, frente a 39 a 60 en arranques de antes
+  (dentro del ruido, con el PC cargado). Captura. Falta la sombra (en el compositor): sin ella, dos ventanas del mismo
+  color se funden al solaparse.
+- Compositor: sombra bajo cada ventana (Material 3, elevación baja: 4 abajo, 14 de difuminado, esquinas de 16, alfa
+  70 bajo la ventana). Es una capa más en la composición por tramos (E8), justo debajo de su ventana, nunca opaca; el
+  alfa sale de la distancia al rectángulo redondeado con raíz entera (sin FPU). Para no dejar restos sin tocar cada
+  sitio que daña una ventana, la escena recuerda dónde pintó sombras y daña lo que cambia. `Escena::sombras` (las
+  pruebas de colores exactos, sin; el compositor, con). Prueba `la_sombra_de_una_ventana`: oscurece justo debajo,
+  nada lejos, y al irse la ventana vuelve el fondo.
+  Medido: la primera versión hacía componer un 70 % más caro (80 a 100 µs por kilopíxel frente a 47): las ventanas
+  del kit, ARGB por sus esquinas, no contaban como opacas y se pintaba debajo, sombra incluida, toda su superficie.
+  Ahora un tramo ARGB del todo opaco también tapa: de 45 a 54 µs por kilopíxel, como sin sombra (dentro del ruido).
+  `captura_ventanas.py` acepta el color oscurecido por una sombra (hasta alfa 70) cerca de los bordes.
+- Kit: en una fila, lo alto (más de una línea: una lista, una columna) va arriba; lo de una línea (hasta 64), centrado
+  como antes (alinea textos y botones). Al maximizar el centro, la lista y su columna bajaban al medio y dejaban un
+  hueco arriba. Prueba `lo_alto_de_una_fila_arriba`. Capturas del centro maximizado y en tamaño normal.
+- Kit: los botones toman el foco del teclado (Tab llega a ellos; Intro o espacio los pulsan; anillo de foco de
+  Material 3, 3 de grosor y 2 por fuera) y Mayúsculas+Tab va hacia atrás. Prueba `botones_con_el_teclado`. En el
+  guion, los Tab que volvían de la lista de la derecha del centro a las categorías son ahora Mayúsculas+Tab (con los
+  botones en medio, Tab iría a Quitar). `captura_ventanas.py` acepta dos sombras sumadas cerca de las dos ventanas de
+  prueba (según el orden en que salgan, un punto queda bajo las dos).
+- Guardian: la caja de la contraseña en el contenedor alto de Material 3, sin marco (con error, borde rojo). Captura.
+- 2026-11-12, 09:40: el usuario quita el tope del 90 % esta semana y pide más velocidad. Cuatro ramas en paralelo,
+  cada una en su worktree desde c1ec269: `kit-material` (resto de controles con Material 3 y Ajustes), `panel-c2`
+  (modo de edición del panel rápido), `usuarios-u6` (cambio rápido de usuario) y `hilos` (hilos de usuario en el
+  kernel). Cada una apunta en docs/bitacoras/<rama>.md; se fusionan aquí cuando pasan las pruebas.
+- Fusionada `panel-c2` (modo de edición del panel rápido, guardado por el centro en C/Prefs/panel; detalle en
+  docs/bitacoras/panel-c2.md). Arreglado de paso lo que destapó: el centro abría una conexión de un momento con el
+  compositor para poner el modo y no se despedía; la siguiente le llegaba como la misma y el compositor la cortaba
+  ("número de objeto nuevo malo"); mis reintentos lo tapaban. Ahora manda `TROZO_ADIOS` al acabar: el error ya no
+  sale. Las pruebas de `panel_mosaicos.rs` van en `make prueba`. `ficheros` dice qué paso falla de "A15 sujetar"
+  cuando sale MAL (a veces, con el PC cargado). Con los QEMU de los agentes la media llega a 30 y C14 y S2 fallan
+  por tiempo: repetido con algo menos de carga, bien.
+- Fusionadas `hilos` (hilos de usuario: llamadas 40 a 44, espera tipo futex, C52; docs/bitacoras/hilos.md),
+  `kit-material` (casilla, deslizador y desplegable de Material 3, anillo de foco solo con teclado, Ajustes como
+  diálogo; docs/bitacoras/kit-material.md) y `usuarios-u6` (cambio rápido de usuario, paso 1, con prueba hostil;
+  docs/bitacoras/usuarios-u6.md). Decisiones de las tres, pendientes del usuario, en sus diseños.
+  La prueba hostil del tema exigía el de serie y, con el PC cargado, el centro ya había puesto el suyo: ahora solo
+  exige que no sea el del hostil. El arranque de virt pasa a 200 s de tope (el guion para antes si todo sale): con
+  otra sesión moviendo nueve Amiberry, la media pasó de 90 y no llegaba al panel.
+- Tras fusionar las tres ramas, el arranque se quedaba en el primer bloqueo comprobando contraseñas vacías: con el PC
+  cargado, Ana se bloqueaba mientras esperaba la ventana de elegir carpeta, y los Intro de reintento del guion para el
+  selector caían en la pantalla de bloqueo. Ahora, con una sesión bloqueada, los pasos del selector del guion no
+  mandan teclas y esperan. Con todo fusionado: `make prueba` y `make arranque-virt` bien (media de 30 a 50).
+- Fusionadas `kit-menus` (menú del desplegable, fila actual en la lista, campo con etiqueta, ayuda y error, papel
+  secundario; docs/bitacoras/kit-menus.md) y `escritorio` (la barra de la pantalla con zona exclusiva, título, hora y
+  botón del panel, y el lanzador con búsqueda que lanza por `sesiones`; docs/bitacoras/escritorio.md). La rama
+  `escritorio` arregló de paso un fallo de seguridad: `sesiones` reconocía a guardian, entrada y centro por el nombre de
+  su ficha, y lo lanzado desde el disco se llama como su fichero; ahora esos nombres solo valen si los da `inicio`.
+  Pruebas de `lanzables.rs` en `make prueba`. Con todo: `make prueba` y `make arranque-virt` bien.
+- Fusionadas `u6-paso2` (compositor y sonido por sesiones, permisos por programa y usuario; docs/bitacoras/u6-paso2.md)
+  y `red` (red con cable en virt: virtio-net, servicio con smoltcp, DHCP, TCP, protocolo; docs/bitacoras/red.md). Al
+  fusionar u6-paso2, dos comprobaciones de guardian por nombre volvieron a la forma insegura: pasadas a `es()` (solo el
+  nombre que da `inicio`). El paso del desplegable de Ajustes en el guion lo intenta hasta tres veces.
+  ESTADO AL PARAR (cupo al 98 %, PC con media de 45 por otra sesión): `make prueba` bien; `make arranque-virt` sobre
+  aa21966 + el reintento, dos vueltas, cada una con un fallo distinto: (1) "[ficheros] A15 sujetar sin soltar": 53
+  rondas y SOLTAR sin respuesta (i32::MIN; `archivos` no cayó y sí soltó por falta de sitio: mirar por qué se pierde la
+  respuesta); (2) el menú de Ajustes no se abrió y "[guardian] Super+L no bloqueó". La última vuelta entera en verde fue
+  la de la fusión de `escritorio` (antes de u6-paso2 y red). Lo primero al retomar: repetir con el PC sin carga y, si
+  sigue, buscar el choque entre ramas (la barra y el lanzador, las sesiones del compositor y Super+L).
+  Sin fusionar, en sus ramas: `fondo-c3` (fondo con PNG y colores del fondo, protocolo del tema v2; choca con
+  `escritorio` en el guion y en captura_ventanas.py: en (5, 60) usar `fondo_en`), `workbench` y `avisos` (solo diseño en
+  sus bitácoras: pararon por el cupo antes del código).
+- Fallos del arranque tras las fusiones, buscados con cuatro arranques a la vez (uno en `revision` y tres en worktrees
+  `prueba1..3` con el mismo commit), con el PC cargado por otra sesión:
+  (1) `ficheros`: con el servicio atareado, su cola se llenaba y la petición se daba por fallida; las respuestas se
+  desacompasaban (A15 "sujetar" y "sin soltar" con i32::MIN). Ahora reintenta la escritura (3aac5ff).
+  (2) `guardian` anunciaba "esperando" antes de que el compositor creara el aviso de inactividad: un Super+L temprano
+  se perdía. Ahora un sync antes (d900c04).
+  (3) El guion: con el PC lento, Ajustes salía después del selector y el clic del paso de Ajustes le quitaba el
+  teclado al selector; sus teclas iban a Ajustes y el paso del selector esperaba sin fin, sin dejar pasar a los de
+  detrás (el menú, Super+L a tiempo). Ahora el paso de Ajustes espera al selector (cb7941b). Se vio apuntando el
+  estado del guion cada 5 s.
+  (4) La línea esperada del lanzador exigía "3 programas" y el disco trae ya 4 (`cambio`): sin número.
+  Con los cuatro, las cuatro vueltas pasan todo lo demás.
+- C14 (clase de plazo) fallaba a menudo con el PC cargado: la desviación máxima del periodo salía de 2 y 12 ms por un
+  parón del anfitrión, no del planificador (la mediana, 253 µs). Ahora mide máxima, mediana y cuántas pasan de 1 ms, y
+  admite hasta un 25 % fuera con la mediana por debajo de 1 ms (con 70 de carga salió un 14 %). Concesión a QEMU en un
+  PC cargado: en la Pi (B5), el criterio estricto.
+- Guion: mientras el selector espera teclas, los pasos del centro no teclean (en la rama del fondo, Apariencia dura
+  más y los dos tecleaban a la vez; el selector caducaba al minuto).
+
+### 2026-11-12 13:30: el fallo de "Destello", arreglado en el guion
+- Causa (la vio el agente del Workbench): `guardian` deja pendiente el bloqueo que pide `pide` ("se bloquea la sesión de
+  Carla") hasta acabar sus 40 s de preguntas. Desde cf29d2e el guion lo contaba como bloqueo ya, no tecleaba al selector
+  y su ventana se quedaba un minuto encima del menú de Ajustes.
+- Arreglo: el bloqueo cuenta cuando se cumple ("sesión bloqueada" o la pantalla pintada); el paso del menú espera a que
+  el selector acabe; tras el menú, el cursor va abajo a la derecha (de la rama `avisos`, 000496e).
+- Tres arranques a la vez (revision, prueba1, prueba2): los tres BIEN enteros.
+- Centro, "Acerca de": "Memoria en uso" (llamada 29, contadores 5, 6 y 7). Con el arranque de pruebas: 141,7 MB de
+  2048, el núcleo 8,4 MB. Sin reparto por programa todavía.
+- Cargador: con DASHOS_PANTALLA=ANCHOxALTO al compilar pide ese modo al GOP. El firmware de QEMU (ramfb) solo da
+  640x480, 800x600 y 1024x768; Full HD tendrá que ir por virtio-gpu (rama multimonitor).
+
+### 2026-11-12 13:50: fondo (C3), avisos (S10) y Workbench (S10) en revision
+- Juntados en `fusion-fondo` y avanzada `revision` hasta 967289a. Choques: `CON_CAPAS` = panel, barra, workbench, fondo;
+  `inicio` lanza fondo y workbench; el disco de pruebas lleva los fondos y `DeCarla/`; el guion, los pasos de los dos.
+- Pruebas que hubo que poner al día: la apariencia guardada pasa a 202 bytes y 29 campos (13 colores por modo), y el
+  punto de "restos" de la captura va a (640, 500), fuera de la columna de iconos del Workbench (de 696 a la derecha).
+- `make prueba` BIEN; wayland 49 y kit 60 bien; `make arranque-virt` en tres vueltas a la vez: todo BIEN.
+- Decisiones provisionales de las dos ramas, para el usuario: docs/bitacoras/avisos.md y docs/bitacoras/workbench.md
+  (capa de iconos en una columna a la derecha, Home = cajón C, orden DUENO 34 en archivos, el compositor no pone
+  ventanas medio fuera, avisos de una sesión de detrás solo en el historial).
+
+### 2026-11-12 14:05: memoria por proceso (orden MEMORIA de `sesiones`)
+- `sesiones` contesta MEMORIA (20): por cada proceso que se ve (la misma vista que PROCESOS), nombre, usuario, límite
+  de su grupo en KB y lo que tiene cobrado. El centro enseña en Acerca de los tres que más gastan y la lista entera en
+  la consola.
+- Hostil: Carla (`cambio`, con Ana detrás) ve 20 procesos, los 20 con su memoria, 0 de otra persona.
+- Medida, arranque de pruebas: en uso 160,8 MB (núcleo 9,4); los 24 procesos que ve el centro, 114,4 MB: archivos
+  34,2 (su caché de páginas, 24 MB), fondo 10,1, barra 6,4 y el resto de los que tienen ventana entre 4,2 y 5,5 MB.
+- Causa de los 4 MB: el montón (`usuario/src/monton.rs`) pide trozos de 4 MB, y el kernel da todas las páginas de un
+  objeto de memoria al crearlo. Un programa que usa 200 KB gasta 4 MB. Siguiente: trozos que crecen (256 KB, y doblando).
+- `make prueba` BIEN; `make arranque-virt` tres vueltas a la vez, todo BIEN.
+
+### 2026-11-12 14:25: el montón crece por trozos de 128 KB a 4 MB
+- `usuario/src/monton.rs`: el trozo siguiente es tan grande como lo que ya hay, entre 128 KB y 4 MB (tope, 256 MB).
+- Medida (arranque de pruebas, igual en las tres vueltas): en uso 160,8 → 139,3 MB; los 24 procesos que ve el centro,
+  114,4 → 92,9 MB. Bajan los que usaban poco: ventana-a 4,3 → 0,4, sonido 4,2 → 0,3, compositor 4,6 → 2,6, red 4,2 →
+  2,2. Los del kit siguen en 4,4-6,4 MB: gastan de verdad (siguiente, mirar en qué).
+- `make prueba` BIEN; arranque-virt, dos de tres vueltas BIEN. La otra: el selector se quedó sin teclas cuando el
+  centro de control abrió su ventana encima (3 s tras abrirse el selector, con el PC cargado) y se rindió al minuto
+  ("nadie eligió en un minuto"); el menú de Ajustes, que espera al centro cerrado, no llegó. Es del guion, como los
+  fallos de antes: pendiente que el centro no se abra mientras el selector espera.
+
+### 2026-11-12 14:20: el selector sobrevive a una vuelta a instantánea; umbrales que dependían de la carga
+- Causa real de "nadie eligió en un minuto": la prueba `ficheros` (FS9) vuelve el disco a una instantánea y `archivos`
+  suelta las asas de todos en ese volumen; si el selector estaba abierto, su cajón daba ASA_MALA (-5) a cada Intro.
+  Ahora `Camino::reabrir` vuelve a abrir el camino por sus nombres desde `C` y repite la búsqueda ("el cajón ya no
+  valía ...; abierto otra vez", visto en una vuelta). También le sirve a un usuario tras volver a una instantánea.
+- Guion: el reintento del selector baja tres (no dos: `Fondos` va antes que `Prefs` y `Privado`) y antes pulsa arriba a la
+  izquierda del selector, donde el centro no lo tapa.
+- S2 (`kernel/src/pruebas.rs`): el p90 con carga vale si es < 1 ms o < el p90 sin carga + 1 ms (con el anfitrión a
+  carga 70, sin nada al lado ya daba 1588 µs). C49 paso 10 (`tiempo`): hasta 100 vencimientos (salió 31 con tope 30).
+- `make prueba` BIEN; arranque-virt: revision BIEN entero; prueba1 y prueba2, todo BIEN salvo chasquidos del sonido
+  (2 y 96 saltos), con carga 47-72 en el anfitrión.
+
+### 2026-11-12 14:30: el escritorio a 1920 × 1080 en QEMU
+- Cargador: con DASHOS_PANTALLA=ANCHOxALTO al compilar, pide ese modo al GOP; si el firmware no lo tiene (el de QEMU
+  solo da 640x480, 800x600 y 1024x768), programa la ramfb por fw_cfg (fichero "etc/ramfb", por DMA) sobre páginas
+  reservadas. Solo para ver el escritorio a otro tamaño; sin la variable, nada cambia.
+- Lo que fallaba a 1920 × 1080 y se arregló:
+  - Un objeto de memoria podía tener 4 MB; una pantalla son 8,3. El tope pasa a 16 MB (crear tiene puntos de corte
+    desde S2); el de DMA sigue en 4. Hostil `malo` 28: 16 MB + 4 KB da E_TAMANO y 16 MB justos se dan.
+  - Barra y panel: "sin compositor" (su cola llena al arrancar, el compositor tarda más en componer): conectar
+    reintenta 5 s.
+  - Fondo: imagen en el montón más dos juegos de franjas, unos 27 MB: su cupo pasa de 16 a 48 MB.
+- Queda: `guardian` "sin memoria para la pantalla" a 1920 × 1080 (su cupo, 16 MB). Capturas mandadas al usuario.
+- `make prueba` BIEN; arranque-virt (800 × 600) en dos vueltas, todo BIEN.
+
+### 2026-11-12 14:40: `guardian` a 1920 × 1080
+- Su cupo pasa de 16 a 32 MB: la pantalla de bloqueo y de entrada es de pantalla entera (8,3 MB) y no cabía con su
+  montón y la capa de las preguntas. A 1920 × 1080 ya pinta ("pantalla de bloqueo en pantalla (1920x1080)").
+- `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN.
+
+### 2026-11-12 14:50: los colores del fondo, unas 4 veces más rápido
+- `kit/src/color.rs`: lo que no cambia en las bisecciones sale de ellas (seno, coseno y p1 de cada matiz; las dos
+  potencias fijas de la visión), las condiciones de visión se calculan una vez por esquema (`Visto`) y las bisecciones
+  dan 36 pasos en J (antes 60) y 14 en el croma (antes 30).
+- Comprobado en el PC: los mismos 1560 colores (60 colores base, claro y oscuro, 13 por esquema), con 3,2 veces menos
+  evaluaciones (876 600 → 274 248). Con 32 y 12 pasos ya cambian dos colores en una unidad: hay margen.
+- En virt (el centro, "esquemas claro y oscuro en"): ondas 936 → 194-236 ms, atardecer 822-828 → 188-208 ms.
+- `make prueba` BIEN; kit 60 bien; arranque-virt en dos vueltas, todo BIEN.
+
+### 2026-11-12 15:00: multimonitor y memoria del kit en revision
+- Fusionadas las ramas `multimonitor` (virtio-gpu en su proceso, compositor con varias salidas, `make arranque-virt-2`;
+  docs/bitacoras/multimonitor.md) y `kit-memoria` (texto sin `fontdue`, con `ttf-parser` y un rasterizador propio;
+  el montón crece la mitad de lo que tiene; la barra con `Lamina`; guardian con lienzo pequeño;
+  docs/bitacoras/kit-memoria.md). Choques: el guion (se quedan los arreglos de revision), la cascada (la de
+  multimonitor, que también mete dentro la ventana), el global `wl_output` (uno por pantalla) con el tema en versión 2,
+  y conectar al compositor (5 s de reintentos, y si no, aviso y llaves sueltas).
+- Memoria del arranque de pruebas: en uso 160,8 (esta mañana) → 112,2 MB; los 24 procesos que ve el centro, 114,4 →
+  66,2 MB; los del kit, de 4,4-6,4 a 0,6-1,6 MB cada uno.
+- `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN; arranque-virt-2 BIEN (las dos cabezas).
+- Decisiones del usuario pendientes de las dos ramas, en sus bitácoras (cabeza sin monitor a 1024 × 768, segunda
+  pantalla en negro al bloquear, la cascada mete dentro las ventanas, el clic que quita el teclado a la pregunta de
+  permisos, el rasterizador propio en vez de `fontdue`, las líneas del montón en la consola).
+
+### 2026-11-12 15:10: el fondo pinta por franjas, sin la pantalla entera en el montón
+- `kit::imagen`: `cubrir_filas` (las filas desde y0 que caben en el destino) y `para_cubrir` (la reducción de una
+  imagen muy grande, una vez); `cubrir` pasa por ellas. Prueba nueva `por_filas_igual_que_entera` (también con una
+  imagen que se reduce y un último trozo más corto).
+- `fondo` pinta cada franja en la memoria que va al compositor: ya no tiene la pantalla entera en el montón (que no
+  devuelve memoria).
+- Medida (lo cobrado al grupo de `fondo`): a 800 × 600, 8,8 → 6,6 MB (total de los procesos que ve el centro, 66,2 →
+  63,9); a 1920 × 1080, 20,7 → 12,7 MB.
+- `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN; a 1920 × 1080, sin fallos de memoria.
+
+### 2026-11-12 15:25: programas sin tabla de símbolos (la imagen del kernel, 1,8 MB menos)
+- De los 9,4 MB del kernel en memoria, 9 eran `.rodata`: los ELF de los programas del paquete de arranque de `inicio`
+  (`include_bytes!`), cada uno con su tabla de símbolos, que nada lee al cargarlos (buscado en el kernel, `usuario` y
+  `tools`). `usuario/Cargo.toml`: `strip = "symbols"` en release.
+- Medida: archivos 917 → 627 KB, compositor 670 → 435, centro 549 → 430; `.rodata` del kernel 9,08 → 7,26 MB; el
+  núcleo en Acerca de, 9,4 → 7,6 MB; en uso, 102,9 MB (esta mañana, 160,8).
+- `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN.
+
+### 2026-11-12 15:40: en qué se va la memoria, contado
+- Llamada 29: contador 12 (páginas del montón del kernel) y 13 (las que no estaban libres al arrancar: imagen del
+  kernel con sus pilas, firmware y su pantalla, árbol). El centro las enseña en Acerca de.
+- Arranque de pruebas: en uso 102,9 MB = 18,4 reservados al arrancar (de ellos, 7,6 la imagen del kernel) + 0,4 del
+  montón del kernel + 63,9 de los 24 procesos que ve el centro + unos 20 sin repartir. Sin medir: lo más probable es
+  lo que el centro no ve (`inicio`, que guarda copias de los programas para relanzarlos, `sesiones`, y la sesión de
+  Carla).
+- `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN.
+
+### 2026-11-12 15:55: `inicio` suelta lo que no necesita de los programas
+- Los ELF del arranque estaban tres veces: en la imagen del kernel, en el paquete (llave 1 de `inicio`) y en la copia
+  que hace `inicio` de cada uno para lanzarlo. Ahora la copia se suelta en lo que no es un servicio vigilado (no se
+  relanza), y al acabar de lanzar, el paquete se cambia por un objeto pequeño con solo sus cabeceras (1768 bytes) en
+  la misma dirección (los nombres y canales a los que apuntan `Servicio::cab` y `lector`), y se cierra la llave 1.
+- Medida: en uso 102,9 → 92,8 MB. Relanzar sigue: `caida` y `eco` se relanzan después de soltar el paquete.
+- `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN; arranque-virt-2 BIEN.
+
+### 2026-11-12 16:05: los programas del arranque, comprimidos en la imagen del kernel (S20)
+- `kernel/build.rs` comprime con LZ4 (formato de bloque, `lz4_flex` solo en el build) cada programa que nombra
+  `src/inicio.rs` con `programa!("...")`: tamaño, huella FNV-1a de 64 bits y bloque. `src/lz4.rs` los descomprime al
+  montar el paquete de arranque: escrito aquí desde la descripción del formato, sin `unsafe`, mirando cada límite;
+  una entrada rota da `None`. Si un programa no se descomprime o no da su huella, el arranque lo dice y no sigue.
+- Hostil (S20, `make prueba`): tres programas se descomprimen con su huella; cortados por seis sitios, con un byte
+  cambiado en cuatro, con un salto a antes del principio, un largo de 255 sin fin y un tamaño que no es el dicho: todos
+  rechazados, sin pánico; una copia solapada da lo que debe.
+- Medida: `.rodata` del kernel 7,26 → 3,16 MB; el núcleo en Acerca de 7,6 → 3,7 MB; reservado al arrancar 18,4 → 14,5;
+  en uso 92,8 → 84,8 MB (esta mañana, 160,8).
+- `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN; arranque-virt-2 BIEN.
+
+### 2026-11-12 16:15: la rueda del ratón
+- El controlador USB ya pasaba la rueda (cuarto byte del informe, `hid.rs`), pero el compositor la tiraba: ahora
+  `Escena::rueda` la manda a quien tiene el puntero (no arrastrando una ventana) como `wl_pointer.axis` en el eje
+  vertical (15 por paso), con `axis_source` y `axis_discrete` (o `axis_value120` desde la versión 8) antes. En HID la
+  rueda hacia delante es positiva y en Wayland el eje crece hacia abajo: se cambia el signo.
+- Pruebas: en el PC, sin nada bajo el cursor no llega a nadie, llega a la ventana de debajo con el signo de Wayland y un
+  valor fuera de lo normal se queda en 127. En virt, el guion la gira sobre el historial de avisos (10): "la rueda lo
+  lleva a la fila 2, 3, 2, 1" (en el monitor de QEMU, `dz` negativo es hacia abajo).
+- `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN; arranque-virt-2 BIEN.
+
+### 2026-11-12 16:25: la rueda en las listas del kit
+- `Clase::rueda` (por defecto, nada); la lista desplaza `PRIMERA` sin cambiar la elegida, sin pasar del principio ni
+  del final. `Interfaz::rueda(x, y, pasos)`: al primer objeto de debajo que se mueve (con un menú abierto, nada).
+  `kit::controles::pasos_rueda`: los pasos de un `wl_pointer.axis` (15 por paso). Centro, selector y Workbench se la
+  pasan.
+- Prueba del kit (62 bien): dos abajo sin cambiar la elegida; arriba se queda en la primera; abajo, en la última que
+  deja llena la lista; fuera de la lista, nada. En virt no la gira el guion sobre estas listas (sí sobre el historial
+  de la barra): sin probar ahí.
+- `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN.
+
+### 2026-11-12 16:35: lo grande del montón vuelve al kernel
+- `usuario/src/monton.rs`: un pedido de 256 KB a 16 MB (alineado como mucho a 4 KB) va en su propio objeto de memoria,
+  en una de 1024 ranuras de 16 MB desde 0x78_0000_0000; al soltarlo se quita, se cierra la llave y vuelve al kernel.
+  Sin ranura o sin memoria del kernel, va al montón como antes. El montón sigue sin devolver lo pequeño.
+- Hostil (`hostil`): tres bloques de unos 3 MB van aparte, se leen enteros, uno pequeño sigue en el montón, y al
+  soltarlos lo reservado vuelve a lo de antes.
+- Medida: en uso 84,8 → 77,3 MB; fondo 6,6 → 2,6, comprobador 5,7 → 2,1; los procesos que ve el centro, 63,9 → 56,4.
+  El compositor sigue en 2,6 MB (no pide lo grande por cuadro). Sin medida de antes del tiempo de componer.
+- `red_prueba`: la petición mal formada tras la ráfaga reintenta si la cola del servicio está llena (con el PC cargado
+  salió una vez sin respuesta: 13 rechazos en vez de 14).
+- `make prueba` BIEN; arranque-virt, cuatro vueltas BIEN (una antes del arreglo de `red_prueba` falló por eso);
+  arranque-virt-2 BIEN.
+
+### 2026-11-12 16:45: el bloqueo en todas las pantallas
+- `guardian` pide una superficie de bloqueo por cada `wl_output` (ext-session-lock la pide por salida): la principal
+  con la pantalla de siempre y las demás (hasta 3) del color de la superficie del tema; al desbloquear se destruyen y
+  su memoria se suelta (también si sale por otro camino: `Otras` la suelta al acabar). Antes la segunda quedaba en negro.
+- Prueba: `make arranque-virt-2` espera "pantalla de bloqueo también en la otra salida 1 (1024x768)" al bloquearse la
+  sesión. Falta una salida que aparezca con la sesión ya bloqueada.
+- `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN; arranque-virt-2 BIEN.
+- Pendiente apuntado: el controlador de virtio-gpu sigue sin su interrupción (habría que leer su registro ISR, la
+  capacidad 3); solo es de QEMU.
+
+### 2026-11-12 16:55: cuánto tarda el arranque
+- Marcas desde el encendido: el kernel ("DashOS en marcha ... (a los N ms del encendido)"), `inicio` ("todo lanzado")
+  y el compositor ("primer cuadro con ventanas"), una vez cada una.
+- En QEMU `virt` (TCG, con el PC poco cargado): el kernel empieza a los 6049 ms (todo eso es el firmware EDK2),
+  `inicio` acaba de lanzar a los 6329 y el primer cuadro con ventanas sale a los 6405: DashOS tarda 0,36 s desde que
+  entra el kernel hasta el escritorio, con las pruebas del arranque (que `inicio` espera una a una) dentro.
+- `make prueba` BIEN; arranque-virt BIEN.
+
+### 2026-11-12 17:05: pulido de Material 3 (rama `kit-pulido`) en revision
+- Escala de tipos de Material 3 (título 24 normal), diálogos con margen 24 y huecos fijos, casilla con etiqueta, lista
+  de navegación (centro), la pregunta de permiso de `guardian` como diálogo de M3 (440 × 208, esquinas 28, las
+  respuestas con su tecla). Detalle y capturas en docs/bitacoras/kit-pulido.md.
+- Pendiente del usuario: el deslizador (M3 de 2024, barra con raya; o el de 2022, con bola).
+- `make prueba` BIEN; kit 64 y wayland 59 bien; arranque-virt en dos vueltas BIEN; arranque-virt-2 BIEN; a 1920 ×
+  1080 sin fallos.
+
+### 2026-11-12 17:20: la sombra con las esquinas de cada superficie
+- El compositor pintaba todas las sombras con esquinas de 16; las capas del pulido (panel, avisos, la pregunta) tienen
+  28 y por sus esquinas asomaba la sombra. Ahora `radio_de` mide el radio en la diagonal de la esquina de arriba a la
+  izquierda de cada superficie con alfa (lo transparente es ≈ 0,293 · r); las opacas siguen con 16.
+- Prueba en el PC (`radio_de_las_esquinas`): esquinas de 12, 16 y 28 dibujadas píxel a píxel, medidas a 2 como mucho;
+  sin esquina, 0. Captura del panel: esquinas limpias.
+- `make prueba` BIEN; wayland 60 bien; arranque-virt en dos vueltas BIEN; arranque-virt-2 BIEN.
+
+### 2026-11-12 17:30: la fila bajo el ratón, la CPU al arrancar y S24
+- Kit: `atr::ENCIMA` (la fila visible de una lista con el ratón encima, la pone `Interfaz`) y la capa de estado de
+  Material 3 (8 % del color del texto) en esa fila. Prueba del kit: encima de la segunda fila, 1; fuera, -1 (64 bien).
+- Kernel: al arrancar dice qué CPU es y si admite big-endian en EL0 y páginas de 4 KB (`MIDR_EL1`,
+  `ID_AA64MMFR0_EL1`). En QEMU virt: "CPU: fabricante 0x41, pieza 0xd08 Cortex-A72; big-endian en EL0: sí (y en EL1);
+  páginas de 4 KB: sí".
+- `docs/diseño/S24-ordenadores-arm.md`: CM5, RTX Spark, portátiles Snapdragon X y Mac (pedido del usuario), con lo
+  que hay, lo que falta y el orden recomendado; tres decisiones para el usuario.
+- `make prueba` BIEN; arranque-virt: revision BIEN dos veces; prueba1 falló dos veces por lo mismo: `hostil` muere en
+  la prueba de préstamos (A7) leyendo lo prestado ("excepción de clase 0x24 ... FAR 0x41_0007_6d9b"): a mitad de leer
+  se le retira el préstamo. No fue la vuelta a instantánea de `ficheros` (ya había acabado); queda por ver quién lo
+  retira (¿Comprobar el disco del centro, `olvidar_todo`?). Pendiente.
+
+### 2026-11-12 18:00: las cajas, en revision (pedido del usuario: "ponte con la caja Amiga y la de Linux")
+- Caja Amiga, primer paso de H4 (rama `caja-amiga`): el JIT de Emu68 en un proceso de usuario big-endian (`caja/`, C
+  sin libc); un programa 68k suma de 1 a 100.000 y escribe en la consola por una dos.library mínima llamada por línea
+  A (`$A0FF <n> RTS`). Hostiles: función que no existe rechazada, línea A desconocida, bucle sin fin cortado a los
+  300 ms, escritura fuera de su memoria (el kernel mata solo la caja). Kernel: proyectar para ejecutar (permiso 4),
+  nunca escribir y ejecutar a la vez, doble proyección del mismo objeto; `malo` 37 lo prueba. Se compila solo si está
+  el clon de `third_party/Emu68` (no va en git), y ya está copiado en los worktrees que compilan.
+- U7 (rama `caja-amiga-u7`): parches 0012 (dos fallos del giro) y 0013 (el indirecto con desplazamiento negativo
+  salía de los 4 GB, también en big-endian), aplicados a los clones; pruebas t4 y t5; los 7 programas dan lo mismo en
+  los dos órdenes; coste en little-endian de 0 a 21 % más instrucciones ARM.
+- exec.library nativa (rama `caja-amiga-exec`): crate `caja/exec/`, 95 pruebas, sin enchufar aún.
+- Caja Linux (rama `caja-linux-virtio`): crate `caja-linux/vmm/` (virtio-mmio, consola, disco, red, PL011, GIC,
+  PSCI, DTB y cargador), 34 pruebas; Linux 6.18 arranca en QEMU con ese DTB y esa carga (invitado fuera de git).
+- Decisiones del usuario pendientes: cinco de la caja Amiga (docs/bitacoras/caja-amiga.md), las de exec, U7 y la
+  caja Linux en sus bitácoras.
+- `make prueba` BIEN; arranque-virt en cuatro vueltas BIEN; arranque-virt-2 BIEN; jit-host comparar BIEN.
+
+### 2026-11-12 18:20: archivos ya no vacía lo de todos por una orden rechazada
+- Causa de la muerte de `hostil` en la prueba de préstamos: en `atender_orden`, las órdenes que cambian un volumen
+  entero (VOLVER, DESCARTAR, QUITAR_VOLUMEN, CERRAR_VOLUMEN, COMPROBAR) vaciaban la caché de páginas y retiraban lo
+  prestado a todos, y la de nodos se olvidaba, antes de mirar el derecho de administrar. Un programa cualquiera que
+  pedía COMPROBAR (y se le rechazaba) dejaba a los demás sin sus trozos prestados a media lectura: un fallo de
+  seguridad (de denegación de servicio), no solo de la prueba. Ahora las dos limpiezas van tras esa comprobación.
+- Hostil: con lo prestado proyectado, `hostil` pide COMPROBAR sin el derecho (PROTEGIDO) y después lee el trozo
+  entero; antes moría ahí ("excepción de clase 0x24" en lo prestado).
+- `make prueba` BIEN; arranque-virt en dos vueltas BIEN, con "A7 préstamos: bien" y `hostil` acabando con clase 0.
+
+### 2026-11-12 19:10: la caja Linux hasta busybox, en revision; archivos olvida solo el volumen que cambia
+- Fusionada `caja-linux-2`: hipervisor en EL2, máquinas virtuales con llave (llamadas 45 a 48), GIC virtual y
+  temporizador virtual del invitado, PSCI, el crate `caja-linux/vmm` en el servicio; Linux 6.18 (tinyconfig, fuera de
+  git) arranca hasta busybox, lee y escribe su disco virtio-blk y apaga por PSCI (`make arranque-virt-linux`).
+  Detalle en docs/bitacoras/caja-linux.md.
+- Archivos: VOLVER, QUITAR_VOLUMEN y CERRAR_VOLUMEN olvidan la caché de páginas y lo prestado solo de su volumen, y
+  después de hacerse bien; COMPROBAR, todo, solo si reparó algo; DESCARTAR (borrar una instantánea) nada. Antes, que
+  Carla cerrara su volumen (o el centro comprobara el disco) dejaba sin sus trozos a quien leía del sistema: `hostil`
+  fallaba en "no proyecta lo prestado".
+- `make prueba` BIEN; arranque-virt en tres vueltas BIEN; arranque-virt-vm, arranque-virt-linux y arranque-virt-2 BIEN.
+
+### 2026-11-12 19:20: la caja Amiga carga ejecutables hunk de verdad, en revision
+- Fusionada `caja-amiga-hunk`: cargador hunk (`caja/hunk.c`, de la documentación pública; 39 ficheros hostiles,
+  9216 cortes y 200.000 mutaciones sin fugas, con ASan y UBSan en el PC), la página 0 de solo lectura con ExecBase en 4
+  (permiso de página 0, solo para la caja), una exec provisional (`caja/exec_minima.c`) y `saludo.exe`, compilado con
+  `m68k-amigaos-gcc`: tres hunks, 21 reubicaciones, OpenLibrary de dos, primos y una tabla, en 6 ms.
+- Choque con la caja Linux: las dos usaban la llamada 45 y el tipo de llave 8. La página 0 pasa a la llamada 49 y al
+  tipo 9 (caja, `malo`, pruebas, referencia y bitácora al día).
+- `make prueba` BIEN (y "BIEN: cargador hunk"); arranque-virt en dos vueltas BIEN; arranque-virt-vm,
+  arranque-virt-linux y arranque-virt-2 BIEN.
+- Pendiente del usuario: el Enforcer que avisa y sigue (hoy una dirección prohibida mata la caja) y que la A72 no tenga
+  PAN. El oráculo con FS-UAE, cuando el emulador quede libre.
+
+### 2026-11-12 19:25: la caja Linux, paso 3, en revision
+- Fusionada `caja-linux-3`: el permiso de máquinas lo reparte `sesiones` (a la caja del sistema sin preguntar; en la Pi
+  4, sin `sesiones`, aún lo da `inicio`), la memoria de la caja se calcula con la RAM (objeto "sistema"), la caja va en
+  la imagen de la Pi 4; una ventana de terminal de 80 × 25 (Roboto Mono, emulador en `usuario/src/terminal.rs`) con
+  hvc0 donde se teclea; la red del invitado por un puente de tramas del servicio de red (su MAC, 10.0.2.16).
+  Captura mandada al usuario. Choque en `kernel/src/inicio.rs` (la llave de la página 0 de la caja Amiga): resuelto.
+- `make prueba` BIEN; arranque-virt en dos vueltas BIEN; arranque-virt-vm, arranque-virt-linux (uname -a desde la
+  terminal) y arranque-virt-2 BIEN.
+
+### 2026-11-12 20:15: Arch Linux ARM en la caja Linux, en revision
+- Fusionada `caja-linux-arch`: el rootfs oficial de Arch Linux ARM (firma comprobada) en una partición propia del NVMe
+  con un tipo nuevo (la caja nunca ve una partición de Linux cualquiera), hecho sin root con `mke2fs -d`; kernel propio
+  de 7 MB (`Image-arch`, con lo que piden systemd, glibc y pacman: Landlock); un PL031 en el crate para la hora.
+  systemd 261 en marcha, root entra en la terminal del escritorio a los 16 s, red por DHCP (10.0.2.16) y
+  `pacman -Sy` baja los cuatro índices (`make arranque-virt-arch`; antes `tools/caja_linux_invitado.py preparar-arch`).
+  Captura mandada al usuario.
+- Pendiente: `pacman -S` (pide `pacman-key --init`), lo escrito tras reiniciar, la memoria de 512 MB (en QEMU virt
+  DashOS ve 3 GB), la Pi 4. Dos decisiones del usuario: entrar como root o como usuario; quitar el kernel de Arch.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch y -2: BIEN.
+
+### 2026-11-12 20:25: Linux con 4 vCPU, en revision
+- Fusionada `caja-linux-vcpu`: cada llave de máquina es una vCPU (su GIC virtual, temporizador y FPU) y comparten la
+  memoria del invitado; operaciones 4 a 7 de `maquina_estado` (crear vCPU, reiniciarla para CPU_ON, patearla, parar
+  la máquina). El servicio lleva un hilo por vCPU, PSCI CPU_ON/CPU_OFF/AFFINITY_INFO y SGI entre vCPU. Linux sube
+  4 CPU; 4 trabajos a la vez van 3,5 veces más rápido que seguidos. El WFI duerme el hilo en el kernel.
+- Hostil (`usuario/invitados/smp.s`): CPU_ON a una vCPU que no existe o dos veces, rechazado; tormenta de SGI y vCPU
+  en bucle con todo enmascarado: la máquina se para con ella dentro y los hilos terminan.
+- Choques resueltos con la rama de Arch: Arch arranca también con 4 vCPU.
+- Pendiente: la tormenta de SGI frena 100-240 veces a la vCPU que la recibe; un solo cerrojo en el servicio;
+  CPU_SUSPEND contesta en el acto; FPU de cada vCPU sin cobrarse al grupo; número fijo de vCPU; la Pi 4.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch y -2: BIEN.
+
+### 2026-11-12 22:45: caja Amiga con exec, dos, graphics e intuition de Rust y una ventana, en revision
+- Fusionada `caja-amiga-union`: las bibliotecas de Rust enchufadas a la caja por `caja/pegamento/` (la caja sigue en
+  C por los registros del 68k que reserva el JIT); fuera `exec_minima.c`. Cada programa es un proceso de exec y la
+  caja suelta lo que deje. dos va sobre `archivos` (`SYS:`, solo lectura). `ventana.exe` (m68k-amigaos-gcc) abre su
+  ventana con `OpenWindowTags` como una ventana más del compositor, dibuja, lee `SYS:LEEME.txt` y recibe
+  `IDCMP_CLOSEWINDOW` por un clic de verdad. Captura mandada al usuario.
+- Hostil: `hostil.exe`, 67 llamadas nativas malas, 54 avisos; la caja y el compositor siguen. El JIT ya olvida lo
+  traducido entre programas cargados en la misma dirección. Oráculo FS-UAE: misma salida (la ventana 1 píxel más alta
+  allí por topaz/9).
+- Fuera de la caja: carrera del compositor con la zona de la barra y el primer configure del Workbench; la caja va
+  la última en `inicio`; guiones con el clic en el gadget.
+- Siete decisiones del usuario en `docs/bitacoras/caja-amiga.md` (fuente, varias tareas 68k, SetFunction, LoadSeg...).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch y -2: BIEN.
+
+### 2026-11-12 23:20: ventanas de Linux en el escritorio de DashOS (H9), en revision
+- Fusionada `caja-linux-wayland`: virtio-vsock en `caja-linux/vmm` (bajo el cerrojo de la caja, vale con 4 vCPU);
+  el `puente` de G1, estático para aarch64, corre en Arch como servicio de systemd en `/run/wayland-0`; en DashOS,
+  `wayland/src/puente.rs` y `usuario/src/puente_caja.rs`: cada programa de Linux es una subconexión del compositor
+  (solo de "caja-linux", hasta 32, sin capas ni bloqueo). Se copian las filas dañadas de los búferes del invitado.
+- `ventana_wayland` (cliente propio con wl_shm) y foot (de los paquetes de Arch) salen como ventanas, con teclado y
+  ratón: `make arranque-virt-wayland`. 65-75 cuadros por segundo de 320×240 enteros dañados (QEMU sin aceleración),
+  primer cuadro a los 50 ms. Captura de foot mandada al usuario. `preparar-arch` mete 14 paquetes ya instalados.
+- Hostil: vsock con cabeceras, tamaños, créditos y órdenes falsos; puente con memorias falsas, de 16 EB o 1 TB,
+  300 memorias (pasan 24), 90 clientes (pasan 32), Wayland roto y tramas basura: todo cortado y luego funciona.
+- Pendiente: sin copias (objeto de memoria con páginas de otro), portapapeles, xdg-decoration, pools de más de
+  64 MB, GPU/dmabuf, GTK4 y Firefox, `delete_id` de pools sucesores, un aviso visto una vez al acabar.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2 y -wayland: BIEN.
+
+### 2026-11-13 00:00: búferes de Linux sin copia (llamada 50 `memoria_vista`), en revision
+- Fusionada `caja-linux-sincopia`: llamada 50 del kernel, objeto de memoria de solo lectura con páginas de otros
+  (mantiene vivos sus orígenes; sin vistas de vistas, DMA ni revocables; hasta 64 orígenes y 4096 páginas). El
+  puente de Arch fija el memfd del cliente y manda sus páginas físicas (pagemap); `puente_caja` las comprueba contra
+  la RAM del invitado y da la vista al compositor; si no, copia como antes.
+- Medidas (QEMU sin aceleración, PC cargado): 320×240 de 61 a 94 cuadros por segundo; 1280×720 de 10,8 a 34 (3,1
+  veces); CPU del puente por cuadro de 42 a 4,9 ms en la grande.
+- Hostil: paso 39 de `malo` (escribir o ejecutar por la vista, llaves falsas, tablas rotas, cupo, origen soltado con
+  la vista viva) y `puente --hostil` con vistas fuera de la RAM, sin alinear, de 1 TB, 300 vistas.
+- El disco de Arch con el puente nuevo hay que regenerarlo (`preparar-arch`); el de esta rama, en
+  `~/.cache/dashos-caja-linux-sincopia`.
+- `make prueba` BIEN; arranque-virt (el sonido salió MAL una vez con la carga del PC a 14; repetido, BIEN), -vm,
+  -linux, -arch, -2 y -wayland: BIEN.
+
+### 2026-11-13 00:45: GPU para la caja Linux (virtio-gpu 2D y estudio S25), en revision
+- Fusionada `caja-linux-gpu`: estudio `docs/diseño/S25-gpu-caja-linux.md` (para la Pi 4, V3D mediada: Linux usa su
+  v3d y Mesa sin cambios, DashOS atrapa la MMU del hub, el GMP y la energía y le da una tabla sombra que solo apunta a
+  su RAM, porque la BCM2711 no tiene IOMMU; debajo, virtio-gpu 2D; más tarde, contexto nativo; Venus/virgl
+  descartados). Aparato virtio-gpu 2D en `caja-linux/vmm` (pantalla del invitado en una ventana de DashOS,
+  `pantalla_caja.rs`) y la lógica de la tabla sombra probada en el PC (sin V3D real).
+- Medidas (QEMU, todo por CPU): `cuadros_gl` 640×480 por Wayland 9-12 cuadros/s, por la pantalla de virtio-gpu
+  17-20; `es2gears_wayland` 18-24; `vkcube` (lavapipe) 100 cuadros en 9,4 s. linux-dmabuf no se hizo: en QEMU Mesa
+  cae en llvmpipe con wl_shm; hace falta con la V3D en la Pi.
+- Hostil: órdenes rotas, recursos enormes, ids 0/repetidos/inexistentes, respaldos fuera de la RAM del invitado; tabla
+  sombra con entradas a 0 o fuera, MMU apagada, zonas sin traducir.
+- Kernel y disco de Arch para todo lo fusionado en `~/.cache/dashos-caja-linux-fusion` (pasar `ARCH_IMAGE` y
+  `ARCH_DISCO`, o rehacer `preparar-arch` en la caché compartida).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland y -gpu (nueva): BIEN.
+
+### 2026-11-13 01:10: Pi 5, la tarjeta del primer arranque, en revision
+- Fusionada `pi5`: el firmware de la EEPROM carga `kernel_2712.img` (sin UEFI de terceros). Diagnóstico en la
+  pantalla del firmware (buzón o simple-framebuffer): placa, MIDR, `ID_AA64MMFR0_EL1`, prueba real de big-endian en
+  EL0 (un programa big-endian lee 0x11 de 0x11223344 con E0E), memoria, núcleos y la caja Amiga con `saludo.exe`.
+  Segundo kernel con el escritorio en la pantalla del firmware, sin teclado ni ratón. `make tarjeta-pi5` hace
+  `~/.cache/dashos-pi5/dashos-pi5.img`; hoja para el usuario en `docs/PI5_PRIMER_ARRANQUE.md` (microSD, HDMI 0,
+  no grabar el SSD prestado, la EEPROM no se toca).
+- Arreglos de todas las placas: número de núcleo de Aff1 si MPIDR marca MT (Cortex-A76); la imagen se copia sola a
+  0x80000 si el firmware la deja más arriba; `Cupo::raiz()` se esperaba a sí mismo con el repartidor de páginas tomado.
+- Nada probado en una Pi 5 real (QEMU no la emula). El USB (RP1 tras PCIe) lo lleva la rama `pi5-usb`.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag y -escritorio: BIEN;
+  `make tarjeta-pi5` sale.
+
+### 2026-11-13 01:30: programas de Dash en la caja Amiga, en revision
+- Fusionada `caja-amiga-dash`: corren seis programas de Dash (FreeMEMLang), por el camino directo y por `--gcc`:
+  `caja/pruebas68k/dash/caja_texto.dash`, dos tests de FreeMEMLang tal cual, `examples/hola.dash` y
+  `caja_ventana.dash` (EventLoop con On Close y On Timer, clic en su gadget). Todos acaban con 0, sin avisos ni
+  memoria perdida. Los compila `caja/Makefile` si está `~/Projects/FreeMEMLang/dash` (no van en git). Captura
+  mandada al usuario; oráculo FS-UAE igual en las primeras versiones (las finales, sin pasar: cerrojo ocupado).
+- Añadido: `pr_CLI` en cada proceso; exec con charcos, semáforos, SetExcept, StackSwap y dispositivos; crates
+  `caja/utility` y `caja/timer` (timer.device); intuition con GimmeZeroZero; detector de listas en círculo.
+- Pendiente: excepciones del 68k sin el manejador de Dash, Ctrl-C en bucles (código 68k desde una función nativa),
+  GadTools/ReAction/MUI/asl/diskfont/layers, `BorderRPort`. Decisión del usuario: las líneas de Dash en
+  `arranque_virt.txt` piden FreeMEMLang instalado (o un fichero aparte).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag y -escritorio: BIEN.
+
+### 2026-11-13 04:40: USB de la Pi 5 (PCIe, RP1, dos xHCI) y un arreglo del cliente de red, en revision
+- Fusionada `pi5-usb`: `kernel/src/rp1.rs` mira el PCIe de la BCM2712, el RP1 y sus dos xHCI (8 pruebas contra un
+  modelo falso); el controlador xhci pasa a `usuario/src/xhci_comun.rs` con `xhci0` y `xhci1`, sondeo cada 10 ms,
+  comprobación del DMA con una orden vacía. Tercer kernel en la tarjeta (`dashos-usb.img`) que cuenta cada paso en el
+  panel, y el escritorio de la Pi 5 con USB. `config.txt` con `pciex4_reset=0`. Supuestos (registros del PCIe como en
+  la Pi 4, lo que deja el firmware) escritos en `docs/bitacoras/pi5.md`. Prueba nueva `make arranque-virt-usb`.
+- Arreglo: `red_cliente::conectar` con la cola del servicio llena (E_LIMITE, el servicio atrasado con el PC cargado)
+  espera y reintenta dentro del plazo; antes salía como SIN_DIRECCION y `red-gloton` fallaba dos veces seguidas.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN;
+  `make tarjeta-pi5` sale.
+
+### 2026-11-13 08:00: decisiones del usuario (aspecto de las cajas y malware de Amiga)
+- S26, todas como se recomendaron: todo "como DashOS" de serie (también la caja Amiga); paleta del fondo de serie;
+  con "Original", el modo claro/oscuro del sistema; bordes Amiga con "como DashOS": la barra de intuition pintada
+  como Material con el mismo tamaño, más sombra y esquinas del compositor; topaz de serie y Roboto solo por programa;
+  bastan las excepciones por programa.
+- S28, todas como se recomendaron: el modelo por capas, con prioridad en sacar la caja de los 4 GB (los programas en
+  modo usuario ya los hizo `caja-amiga-gadtools`); `Caja:` para el cajón del programa y `Work:` para los ficheros del
+  usuario; cambiar o borrar ejecutables, iconos y guiones pregunta con `guardian` y se recuerda por programa;
+  papelera e instantánea del cajón en cada arranque; aviso sin firmas de un bloque de arranque no estándar al montar
+  un ADF; modo usuario con excepción por programa.
+
+### 2026-11-13 09:00: decisiones del usuario sobre el escritorio al estilo DMS (S27)
+Todas como se recomendaron: ventanas libres de serie en el primer espacio y columnas tipo niri con un clic por
+espacio; espacios en vertical (arriba/abajo cambian de espacio, los lados recorren las columnas); barra translúcida al
+88 %; la barra enseña como poco 3 espacios y hasta el más alto con ventanas; lanzador en lista hasta que haya
+iconos; el volumen sube un 5 % por tecla; lanzador con Super sola y con Super+Espacio. Sigue la oleada 2 (rama
+`escritorio-dms`) cuando haya sitio (como mucho 3 agentes a la vez).
+
+### 2026-11-13 09:15: GTK sin bordes propios, portapapeles, GadTools, aspecto común y arreglos de pruebas, en revision
+- Fusionadas `caja-linux-apps` (xdg-decoration con la barra de DashOS, portapapeles en los dos sentidos y la
+  primaria, xdg_popup y lo que piden los programas grandes, hostiles; el puente aparta los pools de Mesa con número
+  repetido: es2gears y cuadros_gl ya no se cortan), `caja-amiga-gadtools` (código 68k desde funciones nativas,
+  tc_TrapCode, tc_ExceptCode y Ctrl-C, programas en modo usuario, gadtools.library con sus doce gadgets, menús con el
+  botón derecho, EasyRequest, todo pintado por un rasgo `Tema`) y `aspecto-cajas` (S26: tema del fondo para todo,
+  `dashos_tema_v1` v3, agente `dashos-aspecto` en Arch que hace el tema GTK, plumas Material para la caja Amiga).
+- Arreglos de pruebas: arch, wayland y gpu sobre su copia del disco (`target/disco-arch.img`, con reflink); el hostil
+  "sin-fin: le cortaron la tubería" sale de lo esperado (inestable, se apunta en medidas; pendiente de explicar).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
+
+### 2026-11-13 09:25: decisión del usuario: cinco temas
+Habrá cinco temas configurados para elegir: Claro, Oscuro, AOS4 (al estilo de AmigaOS 4), MOS (al estilo de MorphOS)
+y Magic WB (al estilo de MagicWB). Sirven para el escritorio y para las cajas ("como DashOS" pinta con el tema
+elegido; Claro y Oscuro con la paleta del fondo de S26). Los tres retro se inspiran en su aspecto (colores,
+degradados, relieve, tipo de barra) y se dibujan aquí: sin copiar iconos, patrones ni imágenes de esos sistemas.
+Va en el rasgo `Tema` de GadTools/intuition y en el kit de DashOS.
+
+### 2026-11-13 09:45: el escritorio al estilo DMS (S27, oleada 1), en revision
+- Fusionada `escritorio-dms`: barra flotante con píldoras (lanzador, espacios, título; reloj con fecha en el centro;
+  avisos y estado a la derecha), espacios de trabajo 1-9 en el compositor (Super+número, Super+Mayús+número, clic
+  en la barra), lanzador en el centro con hasta 1000 programas, OSD del volumen; arreglo del compositor: al cerrar la
+  ventana con el teclado, el teclado pasa a la de arriba. Estudio `docs/diseño/S27-escritorio-dms.md` con 7 oleadas.
+- Choque con S26 en `dashos_tema_v1`: la 3 queda para el aspecto de las cajas y los espacios y el volumen pasan a la
+  4 (tablas regeneradas; las tres listas de globales del compositor anuncian la 4; la barra y el panel la enlazan).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN
+  (arranque-virt y -2 tras el arreglo de las listas de globales).
+
+### 2026-11-13 10:20: defensa contra el malware de Amiga (S28), en revision
+- Fusionada `caja-amiga-malware`: siete virus de laboratorio (`caja/pruebas68k/malware/`) dentro de `arranque-virt`,
+  que no consiguen nada fuera de lo permitido (el disco atacado se comprueba desde Linux byte a byte); guardia de
+  ficheros en `caja/dos` (ejecutables, iconos, guiones, Disk-Validator y bloques de arranque; SYS: de solo lectura
+  volumen a volumen); la caja deshace al acabar cada programa lo que tocó en tablas de saltos, ExecBase y vectores;
+  la memoria soltada se pone a cero; `archivos` conserva las raíces de volumen al volver a una instantánea (la caja y
+  el Workbench perdían SYS:); aviso sin firmas del bloque de arranque al montar un ADF; la guardia que pregunta,
+  primera parte (lo contestado se recuerda por programa; sin preguntador, se niega).
+- Pendiente de S28: la pregunta de verdad por `guardian`, papelera e instantánea del cajón, la caja fuera de los 4 GB.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -2, -wayland, -gpu, -diag, -escritorio, -usb: BIEN; -arch BIEN a la
+  segunda (la primera se quedó tras `pacman -Sy`: la red de fuera).
+
+### 2026-11-13 13:00: malware de Linux y DashOS (S29), GTK4 y Firefox en la caja, en revision
+- Fusionada `seguridad-malware`: estudio S29; marca de la caja Linux que el programa no puede quitar ni imitar (borde
+  ámbar, pestaña "LINUX", "Linux · " en la barra; `wayland/src/marca.rs`); pegar solo con tecla o clic de hace menos
+  de 5 s; cortafuegos de la caja en el servicio de red (Internet sí, red local no salvo DNS, DHCP y ping a la
+  puerta; sin ARP falso ni multidifusión); `espia` (malware de laboratorio nativo) no consigue nada. 11 preguntas
+  para el usuario en el estudio.
+- Fusionada `caja-linux-grandes`: GTK4 en la caja (el fallo era memoria: glycin; zram en `Image-arch` y
+  `dashos-zram.service`), QEMU de `-wayland` con 8 GB y `highmem=on` (ECAM y MMIO abajo), el kernel ve hasta 16 GB
+  en virt, el invitado hasta 2 GB (512 MB con la regla de hoy); Firefox abre en 20-44 s con 512 MB; botón de
+  maximizar y borde para redimensionar en la barra de DashOS. Pendiente: Firefox no responde a teclado y ratón;
+  decisión del usuario sobre 1 GB con 8 GB o más.
+- La imagen de los programas grandes, rehecha con todo lo unido en `~/.cache/dashos-caja-linux-apps` (la de antes, en
+  `-viejo`). Lo esperado de `-wayland` sigue la marca ("Linux · " en los títulos).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -gpu, -diag, -escritorio y -usb: BIEN; -wayland: con la
+  imagen nueva solo faltaban los dos títulos con la marca, corregidos y comprobados contra esa misma salida (sin
+  volver a correr los 70 minutos).
+
+### 2026-11-13 13:20: GadTools con el aspecto de DashOS (tema Material), en revision
+- Fusionada `gadtools-material`: el rasgo `Tema` de `caja/intuition` tiene `Material` junto a `Clasico`; los doce
+  gadgets, menús, EasyRequest, DrawBevelBox y los bordes de ventana de intuition se pintan con los colores del tema
+  del fondo, en los mismos rectángulos que el clásico; "como DashOS" → Material, "original" → Clasico, con
+  excepciones por programa (nombre de la tarea); al cambiar el tema o el modo con la ventana abierta se repinta.
+  Hostiles del pintor arreglaron desbordes en código compartido (`mando`, `celdas`) y un bucle del gris clásico.
+  Capturas comparadas mandadas al usuario.
+- Pendiente: esquinas redondeadas de las ventanas Amiga (la caja manda XRGB), gadget de zoom, gadgets de intuition
+  que no son de GadTools, DrawInfo con plumas de 3.x, escalar las ventanas Amiga en Full HD, y los temas AOS4, MOS y
+  Magic WB (otra implementación de `Tema`).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
+
+### 2026-11-13 14:30: escritorio al estilo DMS, oleada 2 (centro de control), en revision
+- Fusionada `escritorio-dms` (oleada 2): panel rápido como centro de control (cabecera con quien está delante y
+  cuánto lleva encendido, deslizadores de volumen y brillo, rejilla con Red, Modo oscuro y Bloquear); `sesiones`
+  contesta `DELANTE` solo al panel y a la barra; el panel pregunta el estado de la red; la píldora de la barra
+  enseña el estado real por `dashos_tema_v1` v5 (`estado`, solo del panel). Sin menú de apagado: no hay forma de
+  apagar. Dos preguntas del usuario: llamada de apagar/reiniciar (solo `sesiones`) y canal de solo lectura del
+  estado de la red para el panel.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
+
+### 2026-11-13 15:20: la caja Amiga fuera de los 4 GB del 68k (S28), en revision
+- Fusionada `caja-amiga-4gb`: parche de Emu68 `0014-direcciones-de-64-bits.patch` (M68K_Exception, Load96bit y
+  Store96bit con movz/movk; **se aplica a mano** en `third_party/Emu68` de cada worktree, como los demás); la caja es
+  un PIE estático enlazado en 0 que se reubica sola (`caja/entrada.S`) y el cargador de DashOS la pone entre 128 y
+  256 GB; el 68k solo ve la página 0 y su memoria de 4 MB (comprobado con la llamada 42 sobre los 4 GB bajos);
+  arreglado un fallo antiguo (x29 sin guardar alrededor de `MainLoop`: un Ctrl-C a un programa en Wait mataba la
+  caja). Sin coste medible (6 ms `saludo.exe`, 248 ms los de Dash).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN;
+  `make tarjeta-pi5` sale.
+
+### 2026-11-13 16:30: ventanas Amiga a 2x/3x y Firefox con ratón y teclado, en revision
+- Fusionada `caja-amiga-escala`: la caja escala sus ventanas por un factor entero al mandarlas al compositor (vecino
+  más cercano, solo lo dañado; el programa no se entera; el ratón se divide entre el factor). `auto`: 3x desde
+  3200x1800, 2x desde 1600x900, 1x por debajo; `escala amiga` y `escala-programa` en `Prefs/cajas` (sin fila en
+  Ajustes todavía). Pendiente: el clic en la tercera opción del mx con el tema clásico no llega (también a 1x).
+- Fusionada `firefox-entrada`: el compositor guarda las regiones de entrada (`wl_region`, `set_input_region`, con
+  tope de 512 trozos) y el ratón ya no cae en una subsuperficie fuera de su región; Firefox recibe clics y teclas
+  (barra de direcciones, tecleo, Intro). Variante corta: `CAJA_SOLO=firefox`.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
+
+### 2026-11-13 16:20: el usuario cambia dos decisiones de S26 para la caja Amiga
+Tras ver GadTools con el tema Material a 2x: "no me gusta cómo se ven las fuentes ni la barra de la ventana; no se ven
+integradas con el escritorio; debería ser más Material Design". Con "como DashOS": la letra de los controles,
+menús y barra (intuition, GadTools, requesters) pasa a ser la de DashOS, dibujada a la resolución real de la
+pantalla (no topaz ampliada); la barra de la ventana Amiga pasa a ser la de DashOS (la del compositor, como las
+ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `amiga-integrada`.
+
+### 2026-11-13 16:30: decisiones del usuario, "el resto como recomiendas"
+- **Apagar y reiniciar** (S27): llamada nueva del kernel que solo tiene `sesiones`; el panel la pide; confirmación de
+  `guardian` si hay otras sesiones abiertas.
+- **Estado de la red para el panel** (S27): canal de solo lectura del estado; el panel pierde la llave del canal
+  "red" que le dejaría abrir conexiones.
+- **Memoria del invitado Linux**: 1 GB en máquinas de 8 GB o más (256 MB con 2 GB, 512 MB con 4 GB, 1 GB con 8 GB+).
+- **Malware de Linux y DashOS** (S29), las 11 como se recomendaron: red de la caja con NAT en vez del puente de
+  tramas; la red local como permiso preguntado (`red-local`, `red-escuchar`); aviso al leer el portapapeles y permiso
+  por caja; marca con color fijo por caja; instantáneas del disco de la caja Linux (una al día y antes de
+  actualizar, midiendo en la Pi); instantáneas de `Home:` cada hora; cerrar la sesión aunque un programa no quiera
+  (avisar, esperar, matar); cupos de disco por usuario y por aplicación con reserva del sistema; fuzzing guiado de
+  los aparatos de la caja en cada cambio (partir `caja-linux` más adelante); la frase secreta en todas las ventanas
+  de `guardian`; límite de CPU y caudal por caja y el puerto 25 cerrado.
+- **Escala de las ventanas Amiga**: la regla automática vale (3x desde 3200x1800, 2x desde 1600x900, 1x debajo), sin
+  1,5x ni 4x; fila "Ampliar ventanas Amiga" en Ajustes.
+- **Virus de laboratorio `memoria`**: basta con preguntar con `TypeOfMem`; la prueba de verdad es la del kernel.
+- **GadTools con el tema Material**: no le convence la letra ni la barra (ver la entrada anterior, rama
+  `amiga-integrada`).
+
+### 2026-11-13 17:00: la guardia de la caja Amiga pregunta de verdad, y la papelera (S28), en revision
+- Fusionada `caja-amiga-guardia`: cambiar o borrar ejecutables, iconos, guiones de arranque o bloques de arranque
+  pregunta por `sesiones` (llave nueva 4 de la caja, permisos `ejec:`, `icono:`, `guion:`, `disco:`) a `guardian`
+  ("Programa de Amiga ... ¿Lo dejas?", Siempre / Esta vez / No); "siempre" se guarda con los demás permisos y se
+  retira en el centro. Papelera de la caja en `Estado/Servicios/caja-amiga.papelera` (servicio `archivos`). La
+  instantánea del cajón no: las de RedoxFS son por volumen (hará falta un volumen propio para la caja).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
+
+### 2026-11-13 17:10: guardian, "Siempre" y "Sí" con Mayúsculas y S, y botones con la tecla destacada
+- Decisiones del usuario: "Siempre" (ficheros de la caja) y "Sí" (permisos de servicios) piden Mayúsculas y S; una
+  "s" suelta no da ningún permiso. Las respuestas son botones tonales de Material con la palabra dentro y su tecla
+  subrayada en el color primario; "Mayús" pequeño dentro del botón cuando hace falta. El guion contesta `shift-s`.
+- `make prueba` BIEN; arranque-virt, -vm y -2: BIEN (lo demás no toca `guardian`).
+
+### 2026-11-13 17:40: esquinas menos redondeadas
+- Decisión del usuario ("los vértices de las ventanas, que no sean tan redondeados"): `kit::tema::RADIO_VENTANA` = 8
+  (Ajustes, centro, Workbench, selector, también al desmaximizar) y `RADIO_DIALOGO` = 12 (preguntas de `guardian`,
+  panel rápido); `decoracion::RADIO_MARCO` (barra de las ventanas de Linux) de 12 a 8. Antes 16, 24 y 28.
+- `cargo test` de kit y wayland; `make prueba` BIEN; arranque-virt, -2 y -escritorio: BIEN. Captura Full HD.
+
+### 2026-11-13 18:10: apagar y reiniciar, red de solo lectura, 1 GB, fila de escala, en revision
+- Fusionada `decisiones-1311`: llamada 51 `apagar` (PSCI en virt, UEFI y Pi 5; perro guardián PM en Pi 4/3, sin
+  probar en placa) con permiso propio que `inicio` manda a `sesiones`; orden `APAGAR` solo del panel, con pregunta de
+  `guardian` si hay otras sesiones (Mayús+S); menú de encendido en el panel (Apagar, Reiniciar, Cerrar sesión,
+  Bloquear); `arranque-virt` reinicia al final y comprueba el segundo arranque. Canal "red-estado" de solo lectura
+  para el panel. `memoria_invitado`: 1 GB con 8 GB o más. Fila "Ampliar ventanas Amiga" en Apariencia.
+- Sin probar: Apagar y Cerrar sesión desde el panel; el apagado en una Pi de verdad.
+- `make prueba` BIEN; arranque-virt (con reinicio), -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
+
+### 2026-11-13, tarde: explorador y orden de la red Amiga
+
+- El usuario: "nos hace falta un explorador tipo Nautilus". Agente en `.worktrees/explorador` (rama `explorador`, desde
+  130bfcb de fusion-fondo): programa `explorador` con barra lateral, migas, rejilla y lista, selección y teclado,
+  copiar/mover/renombrar/papelera, arrastrar, pestañas, búsqueda; órdenes nuevas de `archivos` con su prueba hostil.
+- `bsdsocket.library` en la caja Amiga (con DNS, UDP y escuchar en la pila de DashOS): después de ReAction, lo decidió
+  el usuario.
+- Marca de las cajas: pestaña de las ventanas sin barra de DashOS pintada con el kit (130bfcb, en fusion-fondo; tanda
+  en marcha). G1 mira el azul más abajo (la esquina la tapa la pestaña).
+- Unido a revision (efeefed): `amiga-integrada` (barra de DashOS en las ventanas Amiga "como DashOS", Roboto a
+  resolución real en GadTools, menús y EasyRequest), la marca "68K" como pastilla dentro de la barra (sin solapas) y
+  la pestaña de las ventanas sin barra pintada con el kit. Tanda completa (prueba, av, gpu, diag, escritorio,
+  tarjeta, usb, linux, arch, vm, 2, wayland): todo rc=0 sobre 130bfcb. Prueba hostil nueva:
+  `tests_s29::pestana_del_compositor` (medidas falsas, esquina transparente).
+- Iconos, decidido por el usuario ("me gusta tu plan"): (1) Material Symbols Rounded (Apache 2.0) como fuente
+  recortada para los símbolos de la interfaz; (2) colección propia de DashOS (unos 60: carpetas, tipos de fichero,
+  volúmenes, aparatos) que toma el color del fondo, y temas de Linux (norma freedesktop) instalables por el usuario,
+  ninguno de serie (Papirus es GPL, Adwaita CC-BY-SA); falta ver si hay un pintor de SVG sin std; (3) leer los
+  `.info` de la caja Amiga (clásicos, NewIcons, GlowIcons, PNG de OS4/MOS) y los iconos de los programas de la caja
+  Linux. Solo el formato: ninguna colección de Amiga en el repo; los temas retro, dibujados aquí. Va después del
+  explorador.
+- Orden decidido por el usuario (2026-11-13): tras ReAction, primero cargar bibliotecas y clases de disco (`LIBS:`,
+  `Classes:`, como ramlib) y montar el AmigaOS del usuario (su HDF o carpeta, solo lectura, como capa: lo nativo manda;
+  sus bibliotecas que no tocan el chipset rellenan lo que falte); después `bsdsocket.library`. Meta: Tachyon 68k con
+  MUI 5 y AmiSSL en la caja, apuntando cada LVO que falte.
+- S29: puerto 25 hacia fuera cerrado (a13959e). make prueba bien; arranque-virt-arch bien, con "[red] cortafuegos de
+  la caja Linux: corta correo al puerto 25 (hacia fuera, TCP 10.0.2.16:44586 → 1.1.1.1:25)"; arranque-virt bien a la
+  segunda (la primera, con dos agentes probando a la vez, las ventanas de prueba salieron oscurecidas en la captura:
+  algo delante en ese instante; sin relación con el cambio, a vigilar si se repite).
+- `caja-amiga-reaction` (BOOPSI y ReAction; pestaña 68K a la derecha en el aspecto original; campos seguidos) y
+  `explorador` (programa `explorador` tipo Nautilus; el Workbench le pasa los dobles clics) unidos en fusion-fondo
+  (2d7cfb0; conflicto en kernel/Makefile: las dos capturas y TIEMPO_VIRT 600). Tanda completa en marcha.
+- Compositor: set_min_size/set_max_size respetados (85a5f0b, prueba hostil `tamano_minimo_y_maximo`).
+- El agente de la caja Amiga sigue con bibliotecas de disco (`LIBS:`), el AmigaOS del usuario como capa y lo que pidan
+  las demos de MUI (rama `caja-amiga-libs`).
+- Pendiente de decidir: experimento de Wine con Box64/FEX en la caja Arch (juegos de Windows; Proton de verdad necesita
+  Vulkan en la caja, S25).
+- Trasfondo nativo, integrado en el escritorio (panel en `fondo`, indicadores en la barra, "Monitor del sistema" y
+  ajustes en el centro de control; privacidad: lo de otros usuarios, sumado): el usuario lo quiere DESPUÉS de que acabe
+  el agente de la caja Amiga. Worktree `.worktrees/trasfondo` (rama `trasfondo`, desde 2d7cfb0) ya creado; el agente
+  se lanzó por error y se paró a los pocos minutos: al reanudarlo, el encargo completo está en la conversación (o
+  rehacerlo desde la última fusión).
+- Unido a revision: BOOPSI y ReAction (caja-amiga-reaction) y el explorador (explorador), tanda completa sobre 2d7cfb0
+  todo rc=0 (prueba, av, gpu, diag, escritorio, tarjeta, usb, linux, arch, vm, 2, wayland; wayland ya con
+  set_min_size/set_max_size).
+- `tools/qemu_a_mano.sh`: DashOS en QEMU con ventana para que el usuario lo use. Es la imagen de las pruebas (lanza
+  sus programas de prueba, bloquea a los 3 s): falta una imagen "para usar" (solo el sistema, sin pruebas ni bloqueo
+  rápido, teclado español). En el primer intento del usuario, a guardian le llegaron "qd" como nombre y contraseñas
+  vacías: sin saber aún si fue la prueba que pisaba o el teclado.
+- USB: tableta (f130f00): `xhci` reconoce un puntero absoluto por su descriptor de informe (`usuario/src/hid_informe.rs`,
+  prueba hostil `descriptores_hostiles`) y el compositor lleva el cursor al punto (evento 3). `tools/qemu_a_mano.sh`
+  usa `usb-tablet`: el ratón de QEMU en ventana va donde el del PC (el usuario no podía moverse bien). Probado por QMP
+  sin ventana; make prueba y arranque-virt bien.
+- Pendientes del usuario: imagen "para usar" (antes o después del Trasfondo). Renombrar dashfs-* y
+  `archivos/dashfs` a dashfs: APROBADO por el usuario (2026-11-13); se hace al acabar el agente de la caja Amiga.
+- Imagen para usar (f51aded y siguiente): `make virt-uso` / `tools/qemu_a_mano.sh`; sin pruebas ni caja Amiga (aún
+  corre sus virus de laboratorio); guardian con entrada de verdad. Fallo cazado: mirar la llave 4 tras `canal_crear`
+  daba "uso" también en la imagen de pruebas (arranque-virt MAL en Ajustes); ahora se mira lo primero. arranque-virt
+  bien y la de uso entra como Ana. Falta: fondo de pantalla en la de uso, la caja Amiga con arranque normal.
+- `caja-amiga-libs` (ramlib, AmigaOS del usuario como capa, registro de lo que falta, keymap y layers nativas): hecha,
+  por unir. Bloqueos para Tachyon: MUI tumba la caja (JIT de Emu68 en un longjmp del Init de muimaster) y la caja
+  tiene 4 MB para el 68k (Tachyon pide 30-40). Propuesta al usuario: memoria según el programa, tope en Ajustes
+  (256 MB por defecto).
+- RedoxFS → DashFS en el código (486d053): `archivos/dashfs`, crate `dashfs`, herramientas `dashfs-*`; formato igual.
+- El usuario: "continúa con lo pendiente" (2026-11-13, noche). Trasfondo nativo reanudado (agente, worktree
+  `trasfondo` en 486d053). Memoria de la caja Amiga: va lo recomendado, según el programa con tope en Ajustes (256 MB
+  de serie); pendiente de hacer (toca la caja). MUI (fallo del JIT) después.
+- El usuario (2026-11-13, noche): "párate cuando vayas por el 98 %, no antes". El tope de esta semana pasa del 90 al 98 %.
+- Unido a revision (1d915f8): caja-amiga-libs (ramlib, AmigaOS del usuario, keymap y layers nativas) junto con el renombrado a dashfs; tanda completa sobre 3f9f7ae todo rc=0, y en revision make prueba y arranque-virt bien. Tabla de avance de la web corregida a petición del usuario (en la sesión de la web, sin commit).
+- Unido a revision (52347e3): caja-amiga-libs, segunda parte. La memoria del 68k crece según el programa, con tope en
+  Ajustes ("memoria amiga", 256 MB de serie). El cupo de la caja es 32 MB más 1/4 de la memoria libre, hasta 256 MB.
+  mathieeesingbas nativa: MUI 5 abre (la demo Class1 sale vacía, faltan ganchos y recorte de layers) y Tachyon 68k
+  abre su ventana sin botones ni texto. Hace falta una máquina con más de 2 GB para que quepa. Tanda completa todo rc=0.
+- Trasfondo (rama `trasfondo`): hecho y con todas las variantes bien salvo arranque-virt. El tramo Ajustes / ventana
+  Amiga / explorador del guion depende del ritmo; el agente lo está ordenando en secuencia.
+- Trasfondo (rama `trasfondo`, último commit con el plan B): hecho y bonito (capturas Full HD mandadas), con todas las
+  variantes bien salvo `make arranque-virt`. Con el guion de revision, en esa rama el clic del guion en (400, 130) no da
+  el teclado ni a la ventana Amiga ni a Ajustes (la barra no enseña "68K · Ventana Amiga" ni "Ajustes"), y falta
+  "[ajustes] el compositor pide 800x560". No es el guion: es algo de la rama (¿qué superficie recibe ese clic? ¿la red
+  antes del fondo cambia la cascada?). SIN UNIR hasta arreglarlo. La prueba con clics del monitor irá en un objetivo
+  aparte. guardian (prueba) ya espera al centro por evento (35670fb).
+  Pistas apuntadas (2026-11-14, 05:30): en la rama, ventana-a y ventana-b salen en orden inverso en la cascada (la red
+  antes del fondo cambia el ritmo); el panel del fondo es capa de nivel 0 en (16, 84) y `Escena::raices` pone las capas
+  0 y 1 debajo de las ventanas, así que no debería comerse clics de ventanas (comprobado leyendo el código, no
+  probado). Siguiente paso: registrar en el compositor quién recibe el clic del guion en (400, 130) y comparar.
+  Descartado (05:50): con el panel del fondo apagado (`DE_SERIE.mostrar = false`) falla igual; la capa de la barra
+  no cambia de tamaño. Queda: el orden de arranque (la red antes del fondo), la prueba hostil del monitor (cien
+  peticiones a `sesiones`) o el ritmo de la barra midiendo. Siguiente: probar con la red en su sitio de antes.
+- **Trasfondo unido a revision** (fdeab11): panel del monitor en el fondo, CPU y memoria en la barra con su lista,
+  "Monitor del sistema" y "Panel del escritorio" en Ajustes; llamada 52 `cpu_tiempo`, orden `MONITOR` de `sesiones`;
+  lo de otros usuarios y el sistema, sumado; los programas del escritorio no se cierran desde el monitor. Lo que
+  rompía arranque-virt era la prueba hostil del monitor al principio de `hostil` (cargaba a `sesiones` cuando contesta
+  los permisos de las demás pruebas): ahora va la última. Además, la comprobación de la captura no mira lo que cae sobre
+  el panel, y `guardian` (prueba) espera al centro por evento con tope de 60 s. Tanda completa sobre 7091afd: todo bien
+  salvo av y virt2, arreglados en fdeab11 y repetidos (bien). La prueba con clics de la barra y del monitor, pendiente
+  (objetivo aparte).
+- El usuario aprueba cambiar los cupos de los grupos de reserva a tope, como los cgroups de Linux (2026-11-14): cobrar al usar, topes que pueden sumar más que la máquina, presión de memoria (avisar a las cajas, luego cerrar con aviso). Agente en `.worktrees/cupos-topes`. Aclarado al usuario: ninguna caja reserva un núcleo (un núcleo a la vez es un techo de la caja Amiga, no una reserva).
+- MUI (rama `caja-amiga-mui`, 6352004 y 870a64c, sin unir): ventanas de refresco simple con IDCMP_REFRESHWINDOW, GetDisplayInfoData y WeighTAMatch. MUI sigue sin pintar: hace BeginRefresh/EndRefresh sin dibujar nada en medio; decide no pintar antes de llegar a graphics. Sospechosos: la Layer de la ventana o su DamageList, Screen/ViewPort/ColorMap, o CreateNewProc. Falta NewRegion y lo demás de regiones (lo pide Tachyon). Con MEMORIA=3G Tachyon carga. El agente paró por la cuota.
+- **Cupos como topes unidos a revision** (e8f0910, rama `cupos-topes`): los grupos cobran al usar y el cupo es un tope
+  (como los cgroups); topes de serie: sesiones 512 MB, programas 64 MB, caja Amiga 288 MB, caja Linux invitado + 66 MB.
+  Llamada 53 (aviso de memoria baja, `kernel/src/presion.rs`) con permiso propio (llave tipo 11 "memoria", solo para
+  `sesiones`); llamada 54 `grupo_tope` (no vale sobre el grupo propio ni los de encima). El tope de la caja Amiga lo
+  pone el núcleo y `sesiones` lo ajusta a "memoria amiga" + 32 MB con lo que le dice el centro (no puede leer los
+  Prefs del usuario). red-prueba reintenta con la cola llena (salían 12 rechazos en vez de 13). Tanda completa sobre
+  e8f0910: todo bien (el fallo anterior de wayland no se repitió: suelto). Pendiente: que el aviso llegue a las cajas
+  (globo de Linux, cachés Amiga) y cerrar con aviso al que se pase.
+- **Aviso de memoria a las cajas unido a revision** (c59772d, rama `aviso-cajas`; detalle en `docs/bitacoras/aviso-cajas.md`):
+  con memoria baja, la caja Linux infla un globo (virtio-balloon propio, una cuarta parte de la RAM del invitado) y
+  devuelve esas páginas al sistema (llamada 55, solo memoria que no comparte nadie); la caja Amiga llama a los
+  manejadores de AddMemHandler y devuelve lo crecido que sobra. Solo `sesiones` puede pedirlo. Programa de prueba
+  `presion` (llena la memoria cuando una caja dice que tiene algo que soltar). `Image-caja` de serie rehecha con
+  `CONFIG_VIRTIO_BALLOON` (`tools/caja_linux_invitado.py preparar`). Tanda completa sobre c59772d: todo rc=0 salvo
+  wayland, que falló en Firefox ("FALTA: título: Linux · Index of file:///usr/local/share/dashos/"): la barra de
+  direcciones recibió "are/dashos/", se perdieron las primeras teclas. Repetido con `CAJA_SOLO=firefox` dos veces
+  sobre c59772d (MAL y BIEN) y una sobre 16940f0 a la vez (BIEN): fallo suelto del guion, no del aviso. El agente
+  decía que en -linux salían MAL ramlib y adf-prueba: no se repite (linux rc=0).
+  Pendiente: hacer firme el paso de Firefox del guion (esperar a que la barra tenga el foco, o mirar lo tecleado y
+  repetir); `presion` acaba a los 15 min y `inicio` lo relanza como si hubiera caído (3 veces, ruido en los registros
+  largos); el globo no suelta las páginas con vistas del puente de Wayland (sin probar con Arch inflado); los
+  manejadores Amiga no se llaman al llegar al tope del grupo; cerrar con aviso al que se pase (S3).
+- Revisión del formato de paquetes compartido (v2) hecha para la sesión que lo lleva; quedan por decidir con el
+  usuario: perfil de máquina de la caja Amiga (S4), vocabulario de máquina de aarch64-dashos, la caja de instalación
+  de S8 y paquetes firmados frente a índices (S6/S8).
+- **MUI pinta: unido a revision** (8e26184, rama `caja-amiga-mui`; detalle en `docs/bitacoras/caja-amiga.md`, sección
+  del 2026-11-14). Causa: la capa de la ventana no tenía `ClipRect`, y sin ella MUI da la ventana por tapada (sin ella,
+  Class1 hace 0 líneas; con ella, 96). Cada capa lleva ya su `LayerInfo` y una `DamageList` de verdad. Además: regiones
+  de graphics con prueba hostil, capas sueltas (`CreateUpfrontLayer`...), `InstallClipRegion`,
+  `BltMaskBitMapRastPort`, relleno de áreas, `DoubleClick`, objetos con nombre de utility; la memoria de píxeles de la
+  caja crece en vez de 8 MB fijos (Tachyon la llenaba y tiraba la caja); exec ya no cuenta mal las aperturas de locale
+  y diskfont; `WeighTAMatch` sin comparar nombres; menús con submenú en círculo sin colgarse. Tachyon (`MEMORIA=3G`)
+  enseña su página de inicio sin iconos ni logo. Tanda completa sobre 8e26184: todo rc=0 (Firefox de wayland bien).
+  Pendiente, por orden: `CreateNewProc` (varias tareas 68k a la vez; lo piden muimaster y datatypes: sin él no hay
+  imágenes en Tachyon), y cybergraphics, picasso96api, icon, workbench, screennotify, input.device.
+- `presion` escucha siempre: antes acababa a los 15 min y, como lee un canal, `inicio` lo vigilaba como servicio y lo
+  relanzaba tres veces como caído (ruido en wayland). make prueba y arranque-virt bien; presion sigue provocando el
+  aviso (la caja Amiga devuelve memoria). Que ya no se relanza solo se ve en las pruebas largas (wayland): sin mirar aún.
+- **Procesos 68k unidos a revision** (cd40efd, rama `caja-amiga-procesos`; detalle en `docs/bitacoras/caja-amiga.md`,
+  2026-11-14 noche): varias tareas 68k a la vez con planificador propio en el hilo de Emu68 (turnos de 80 ms, reloj
+  cada 20 ms), `CreateNewProc`/`CreateProc`, datatypes.library abre. Tanda completa todo rc=0 (av a la segunda: el
+  fallo suelto del explorador). Las cuatro decisiones del agente, aprobadas por el usuario (en S4). Por unir:
+  1d88b46 (`MatchFirst`/`MatchNext`/`MatchEnd` y `AddDataTypes REFRESH` al arrancar), sin probar aún con el AmigaOS
+  del usuario.
+- Decisiones del usuario (2026-11-15) sobre lo abierto del formato de paquetes, escritas en S4, S8 y S6b: perfil de
+  la caja (lo dice ella), vocabulario aarch64 (ARMv8.0, 16 KB, `hypervisor` y memoria), instaladores con capa de
+  captura, firma de fichero opcional con sus reglas.

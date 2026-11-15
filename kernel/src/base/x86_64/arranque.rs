@@ -1,4 +1,4 @@
-//! Lo que deja el cargador UEFI en x86-64 (S21, X1): la `InfoArranque`, con el mapa de memoria de UEFI, la RSDP de
+//! Lo que deja el cargador UEFI en x86-64 (S30, X1): la `InfoArranque`, con el mapa de memoria de UEFI, la RSDP de
 //! ACPI y la pantalla del GOP.
 //!
 //! La misma estructura está en `uefi/src/x86_64.rs`: si cambia allí, cambia aquí (y `VERSION`). Todo está en memoria

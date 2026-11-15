@@ -10,5 +10,5 @@ name = "kit"
 path = "src/lib.rs"
 
 [dependencies]
-fontdue = { version = "0.9", default-features = false, features = ["hashbrown"] }
+ttf-parser = { version = "0.25", default-features = false, features = ["no-std-float"] }
 libm = "0.2"

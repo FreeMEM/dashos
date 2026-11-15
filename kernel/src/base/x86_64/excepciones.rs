@@ -1,4 +1,4 @@
-//! Excepciones en x86-64 (S21, X2): GDT, TSS, IDT y el tratamiento en Rust.
+//! Excepciones en x86-64 (S30, X2): GDT, TSS, IDT y el tratamiento en Rust.
 //!
 //! Escrito con el manual de Intel (SDM, volumen 3: 3.4.5, descriptores de segmento; 6.14, interrupciones en modo de
 //! 64 bits; 7.7, la TSS de 64 bits) y el de AMD (APM, volumen 2, 6.1: `syscall` y `sysret`).
@@ -343,6 +343,8 @@ extern "C" fn llamada_x86(m: &mut Marco) {
     // PAN por software, como en ARM (C34): dentro del kernel la mitad baja está vacía; SMAP, además, si lo hay.
     super::espacio::activar_vacio();
     crate::llamadas::atender(m);
+    // Lo que un despertar en este núcleo dejó apuntado durante la llamada (M6b), como en ARM.
+    crate::planificador::replanificar_si_toca();
     volver_al_anillo3(m);
 }
 

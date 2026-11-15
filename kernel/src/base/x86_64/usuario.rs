@@ -1,4 +1,4 @@
-//! Copias desde y hacia la memoria del proceso actual en x86-64 (S21, X4), como `../usuario.rs` en ARM (C31, C34).
+//! Copias desde y hacia la memoria del proceso actual en x86-64 (S30, X4), como `../usuario.rs` en ARM (C31, C34).
 //!
 //! Las hace `copiar_usuario_x86` (vectores.s) con `rep movsb`, entre `stac` y `clac` si hay SMAP. Mientras dura la
 //! copia, y solo entonces, la mitad baja es la del proceso (PAN por software, como en ARM). La CPU comprueba cada

@@ -1,4 +1,4 @@
-//! Memoria virtual del kernel en x86-64 (S21, X2). La misma interfaz que `mmu.rs` de ARM.
+//! Memoria virtual del kernel en x86-64 (S30, X2). La misma interfaz que `mmu.rs` de ARM.
 //!
 //! El reparto de la mitad alta es el de ARM (39 bits, `KERNEL_VA`), dentro de la última entrada del PML4:
 //!

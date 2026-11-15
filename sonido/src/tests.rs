@@ -14,30 +14,33 @@ fn f32_estereo(cuadros: &[[f32; 2]]) -> Vec<u8> {
     cuadros.iter().flat_map(|c| c.iter().flat_map(|x| x.to_le_bytes())).collect()
 }
 
+/// Un cuadro del mezclador (coma fija, E9) en coma flotante, de -1 a 1: para medir en las pruebas.
+type Real = [f32; 2];
+
 /// Mezcla `cuadros` en períodos de 256 y devuelve la salida.
-fn mezclar(m: &mut Mezclador, cuadros: usize) -> Vec<Cuadro> {
+fn mezclar(m: &mut Mezclador, cuadros: usize) -> Vec<Real> {
     let mut todo = Vec::new();
-    let mut p = [[0.0f32; 2]; 256];
+    let mut p = [[0i32; 2]; 256];
     while todo.len() < cuadros {
         m.mezclar(&mut p);
-        todo.extend_from_slice(&p);
+        todo.extend(p.iter().map(|c| c.map(|x| x as f32 / UNO as f32)));
     }
     todo.truncate(cuadros);
     todo
 }
 
 /// La frecuencia por los cruces por cero hacia arriba del canal izquierdo.
-fn frecuencia(s: &[Cuadro]) -> f64 {
+fn frecuencia(s: &[Real]) -> f64 {
     let cruces: Vec<usize> = (1..s.len()).filter(|&i| s[i - 1][0] < 0.0 && s[i][0] >= 0.0).collect();
     let (a, b) = (cruces[0], *cruces.last().unwrap());
     (cruces.len() - 1) as f64 * SALIDA as f64 / (b - a) as f64
 }
 
-fn pico(s: &[Cuadro]) -> f32 {
+fn pico(s: &[Real]) -> f32 {
     s.iter().map(|c| c[0].abs().max(c[1].abs())).fold(0.0, f32::max)
 }
 
-fn salto(s: &[Cuadro]) -> f32 {
+fn salto(s: &[Real]) -> f32 {
     s.windows(2).map(|w| (w[1][0] - w[0][0]).abs().max((w[1][1] - w[0][1]).abs())).fold(0.0, f32::max)
 }
 
@@ -47,18 +50,18 @@ fn formatos() {
     let mono16 = Formato { muestra: Muestra::I16, canales: 1, frecuencia: 48_000 };
     // Un cuadro y medio: el medio se queda.
     assert_eq!(convertir(&mono16, &[0x00, 0x40, 0x00], &mut cola), 2);
-    assert_eq!(cola.pop_front(), Some([0.5, 0.5]));
+    assert_eq!(cola.pop_front(), Some([UNO / 2, UNO / 2]));
     let est32 = Formato { muestra: Muestra::I32, canales: 2, frecuencia: 48_000 };
     let b: Vec<u8> = [i32::MIN, 0x4000_0000].iter().flat_map(|x| x.to_le_bytes()).collect();
     assert_eq!(convertir(&est32, &b, &mut cola), 8);
-    assert_eq!(cola.pop_front(), Some([-1.0, 0.5]));
+    assert_eq!(cola.pop_front(), Some([-UNO, UNO / 2]));
     let estf = Formato { muestra: Muestra::F32, canales: 2, frecuencia: 48_000 };
     assert_eq!(convertir(&estf, &f32_estereo(&[[f32::NAN, 7.0]]), &mut cola), 8);
-    assert_eq!(cola.pop_front(), Some([0.0, 1.0]));
+    assert_eq!(cola.pop_front(), Some([0, UNO]));
     assert!(!Formato { muestra: Muestra::I16, canales: 3, frecuencia: 48_000 }.valido());
     assert!(!Formato { muestra: Muestra::I16, canales: 2, frecuencia: 1000 }.valido());
-    assert_eq!(a_i16([1.5, -1.5]), [32767, -32767]);
-    assert_eq!(a_i16([0.5, 0.0]), [16384, 0]);
+    assert_eq!(a_i16([UNO * 3 / 2, -UNO * 3 / 2]), [32767, -32767]);
+    assert_eq!(a_i16([UNO / 2, 0]), [16384, 0]);
 }
 
 /// Un tono de 1 kHz a 44,1 kHz sale a 1 kHz a 48 kHz, con su nivel.
@@ -132,6 +135,25 @@ fn volumen_sin_escalon() {
     let despues = mezclar(&mut m, 512);
     assert!(salto(&despues) <= limite * 1.05);
     assert_eq!(pico(&despues[256..]), 0.0);
+}
+
+/// C2: el volumen general baja la mezcla entera sin escalón, y a 1 la deja igual.
+#[test]
+fn volumen_general() {
+    let mut m = Mezclador::nuevo(SALIDA);
+    let a = m.abrir(Formato { muestra: Muestra::I16, canales: 1, frecuencia: SALIDA }).unwrap();
+    m.escribir(a, &i16_mono(SALIDA, 100.0, 0.9, 0.5));
+    let antes = mezclar(&mut m, 512);
+    let limite = salto(&antes[256..]);
+    let pico_antes = pico(&antes[256..]);
+    m.volumen_general(0.25);
+    let despues = mezclar(&mut m, 512);
+    assert!(salto(&despues) <= limite * 1.05, "escalón al bajar");
+    let otra = mezclar(&mut m, 512);
+    assert!((pico(&otra) - pico_antes * 0.25).abs() < 0.01, "{} frente a {}", pico(&otra), pico_antes * 0.25);
+    m.volumen_general(0.0);
+    mezclar(&mut m, 512);
+    assert_eq!(pico(&mezclar(&mut m, 512)), 0.0);
 }
 
 /// Quedarse sin muestras a mitad cuenta como falta; un flujo que aún no empezó, no.

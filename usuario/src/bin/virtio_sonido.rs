@@ -255,8 +255,8 @@ fn control(c: &mut Cola, peticion: &[u32], largo: u32) -> u32 {
 }
 
 fn principal() -> u64 {
-    // Lo primero, antes de crear llaves: con llave 5, la 4 es la interrupción y la 5 el canal "sonido"; si no, el
-    // canal es la 4.
+    // Lo primero, antes de crear llaves: la 4 es el permiso de la clase de plazo (S3); con llave 6, la 5 es la
+    // interrupción y la 6 el canal "sonido"; si no, el canal es la 5.
     let existe = |k: u32| {
         let copia = dashos::llave_duplicar(k, dashos::LEER, 0);
         if copia > 0 {
@@ -264,7 +264,7 @@ fn principal() -> u64 {
         }
         copia > 0
     };
-    let (irq, servicio) = if existe(5) { (Some(4u32), 5u32) } else { (None, 4u32) };
+    let (irq, servicio) = if existe(6) { (Some(5u32), 6u32) } else { (None, 5u32) };
     if dashos::registros_proyectar(2, VA) != 0 || dashos::registros_proyectar(3, VA_CFG) != 0 {
         println!("  [virtio-sonido] sin registros");
         return 1;
@@ -368,7 +368,7 @@ fn principal() -> u64 {
     }
     println!("  [virtio-sonido] suena el flujo {} para el servicio", flujo);
     // La clase de plazo (S2, A6): hasta 1 ms de CPU cada período de 5,3 ms.
-    if dashos::plazo(1_000, 5_333) != 0 {
+    if dashos::plazo(4, 1_000, 5_333) != 0 {
         println!("  [virtio-sonido] sin clase de plazo: va en la justa");
     }
     // Cada búfer que vuelve se llena con el siguiente período del servicio (o silencio, si no lo tiene: un vacío) y se
@@ -404,6 +404,11 @@ fn principal() -> u64 {
         let mut alguno = false;
         while let Some(cabeza) = tx.devuelta() {
             let r = (cabeza / 2) as usize;
+            // La cabeza la devuelve el aparato: una que no es de las nuestras caería fuera de la memoria de DMA (S7).
+            if r >= RANURAS || cabeza % 2 != 0 {
+                errores += 1;
+                continue;
+            }
             let base = M_BUFERES + r * TAM_RANURA;
             if dma32(base + ESTADO) != BIEN {
                 errores += 1;

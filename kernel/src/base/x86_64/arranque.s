@@ -1,4 +1,4 @@
-// DashOS: entrada del kernel en x86-64 (S21, X1 y X2). Sintaxis de Intel (la de `global_asm!` en x86).
+// DashOS: entrada del kernel en x86-64 (S30, X1 y X2). Sintaxis de Intel (la de `global_asm!` en x86).
 //
 // El cargador UEFI (uefi/src/x86_64.rs) salta aquí en modo largo, a la dirección física de la entrada, con las
 // interrupciones cerradas, las tablas de páginas del firmware (memoria física 1:1) y en rdi la dirección física de la

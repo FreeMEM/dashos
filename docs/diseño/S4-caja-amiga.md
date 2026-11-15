@@ -1,5 +1,10 @@
 # S4. La caja Amiga
 
+> **2026-11-13.** El malware del Amiga y cómo se defiende la caja (guardia de ficheros, raíces, lo que deja un
+> programa deshecho, virus de laboratorio): [S28](S28-malware-amiga.md).
+
+> **2026-11-10.** Las pantallas (Workbench, públicas, propias y clonadas, modos y menús), juntas en [S23](S23-pantallas-amiga.md).
+
 > **Nota del 2026-11-03 por la tarde.** El usuario decidió que lo nativo sea little-endian y solo la caja Amiga
 > big-endian. Donde este documento dice big-endian para lo nativo, manda `PLAN.md`.
 
@@ -180,6 +185,22 @@ Reescribir todas las bibliotecas de AmigaOS 3.1 lleva tiempo. Mientras tanto hay
 5. Varias cajas, con un puente para ARexx y el portapapeles.
 6. Mientras falten bibliotecas nativas, se cargan las del Kickstart del usuario, si las tiene.
 7. Lo que toca el chipset va a un emulador completo empaquetado.
+
+## Decidido el 2026-11-15: qué máquina dice ser la caja (para los paquetes, S8)
+
+Un paquete Amiga puede pedir una máquina (`68060`, `FPU`, `AGA`, `RTG`) o traer un fichero por procesador. Quien
+contesta es la caja, no un texto fijo: `Paq` le pregunta su perfil y la caja dice lo que tiene de verdad.
+
+- Hoy: 68040 con coprocesador matemático (lo que ya pone en `AttnFlags`: 68010 a 68040, 68881, 68882 y FPU40), sin
+  68060, sin MMU, sin chips del Amiga (ni `AGA` ni `ECS`, ni memoria chip) y con la memoria del ajuste "memoria amiga".
+- `RTG` no se dice hasta que haya cybergraphics o picasso96api. `MUI` y `TCP/IP`, solo si están instalados.
+- Si el perfil cambia (llega cybergraphics), `Paq` vuelve a elegir las variantes de lo instalado.
+- Sin comprobar: qué procesador declara Emu68 por dentro (registros del 68k); lo mirado es lo que la caja enseña a
+  los programas por exec.
+
+Y los procesos (aprobado por el usuario el 2026-11-14; cambia el punto 2): un solo hilo de emulación por caja con
+planificador propio, no un hilo del kernel por tarea; las tareas que crea un programa mueren con él; lo que deja una
+tarea hija al acabar pasa a quien la creó; una tarea hija que cae se quita y el programa sigue.
 
 ## Lo que queda abierto
 

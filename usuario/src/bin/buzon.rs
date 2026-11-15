@@ -78,11 +78,6 @@ fn permitida(c: Cliente, etiqueta: u32) -> bool {
         || (c == Cliente::Gpu && DE_LA_GPU.contains(&etiqueta))
 }
 
-/// Espera un tic sin gastar CPU (un temporizador de una vez).
-fn esperar_un_tic() {
-    dashos::dormir_us(10_000);
-}
-
 /// Dónde empieza el buzón 0 dentro de su página (0x7E00B880 en el bus de la VideoCore).
 const DESPLAZAMIENTO: usize = 0x880;
 
@@ -156,7 +151,6 @@ fn memoria_vc(mensaje: *mut u32, bus: u64) -> Option<(u32, u32)> {
     (leer(1) == 0x8000_0000).then(|| (leer(5), leer(6)))
 }
 
-const E_CERRADO: i64 = -4;
 const MAX_CLIENTES: usize = 16;
 
 fn principal() -> u64 {
@@ -178,16 +172,11 @@ fn principal() -> u64 {
     let mut buf = [0u8; 256];
     let mut ll = [0u32; 8];
     loop {
-        let (n, k, marca) = dashos::canal_leer_marca(4, &mut buf, &mut ll);
-        if n == E_CERRADO {
-            return 0; // los clientes cerraron el canal
-        }
-        if n < 0 {
-            // Sin sitio en la tabla o sin memoria: el mensaje vuelve a la cola. Se espera un tic antes de intentarlo
-            // otra vez, para no girar (B16).
-            esperar_un_tic();
-            continue;
-        }
+        let (n, k, marca) = match dashos::servicio::recibir(4, &mut buf, &mut ll) {
+            dashos::servicio::Recibido::Mensaje { n, k, marca } => (n, k, marca),
+            dashos::servicio::Recibido::Cerrado => return 0,
+            dashos::servicio::Recibido::Nada => continue,
+        };
         // Las llaves de más, fuera.
         for &l in ll.iter().take(k).skip(1) {
             dashos::cerrar(l);

@@ -33,8 +33,18 @@
 //! | 25 | registros_recortar(llave de registros o del firmware, desde, tamaño) -> llave |
 //! | 26 | dma_liberar(permiso DMA) -> páginas devueltas de su cuarentena |
 //! | 27 | memoria_tamano(llave de memoria) -> bytes |
-//! | 28 | plazo(capacidad µs, periodo µs): el hilo pasa a la clase de plazo (0, vuelve a la justa) |
-//! | 29 | puertos_permitir(llave de puertos): en x86, el proceso puede usar esos puertos de E/S (X6) |
+//! | 28 | plazo(permiso de plazo, capacidad µs, periodo µs): el hilo pasa a la clase de plazo (0, vuelve a la justa) |
+//! | 40 | hilo_crear(entrada, pila, argumento, tls) -> número del hilo |
+//! | 41 | hilo_unir(número) -> (clase, código), como proceso_esperar |
+//! | 42 | esperar(dirección, valor, plazo µs) -> 0 despertado, 1 la palabra no valía eso |
+//! | 43 | despertar(dirección, cuántos) -> cuántos despertó |
+//! | 44 | proceso_salir(código): acaba el proceso entero |
+//! | 45 | maquina_crear(permiso, memoria, dirección física del invitado, entrada, x0) -> llave de máquina virtual (H9) |
+//! | 46 | maquina_correr(máquina, informe, valor, interrupciones) -> motivo: entra en el invitado hasta que sale |
+//! | 47 | maquina_memoria(máquina, memoria, dirección física del invitado): más RAM para el invitado |
+//! | 48 | maquina_estado(máquina, operación, argumento, a, b): registros, aborto, GICV, otra vCPU, reiniciarla, patearla, parar |
+//! | 51 | apagar(permiso, modo): 0 apaga la máquina, 1 la reinicia; no vuelve si se pudo |
+//! | 56 | puertos_permitir(llave de puertos): en x86, el proceso puede usar esos puertos de E/S (X6; antes de fusionar `revision` era la 29) |
 //!
 //! `proceso_crear` lleva en x4 una llave de grupo donde crear el proceso, o 0 para el propio (C42).
 
@@ -60,10 +70,17 @@ const E_TIPO: u64 = -6i64 as u64;
 const E_MEMORIA: u64 = -7i64 as u64;
 /// Un límite por proceso o por canal: tabla de llaves llena, cola llena o demasiadas proyecciones.
 const E_LIMITE: u64 = -8i64 as u64;
+/// Venció el plazo de una lectura (K7).
+const E_PLAZO: u64 = -9i64 as u64;
+/// Sin hipervisor (H9): el kernel no arrancó en EL2, así que no hay máquinas virtuales.
+const E_NO_HAY: u64 = -10i64 as u64;
 /// Topes de trabajo por llamada (C35, S16 E): la llamada corre entera con las IRQ enmascaradas. Poner a cero 4 MB
 /// lleva menos de un milisegundo en la Pi 4, y desde X6 se para tras cada página a atender las interrupciones; 256 bytes por la serie a 115200 baudios, unos 22 ms (provisional, hasta
 /// la consola como servicio).
-const MAX_MEMORIA: u64 = 4 << 20;
+/// Un objeto de memoria, hasta 16 MB (una pantalla de 2560 × 1440 a 32 bits): crearlo tiene puntos de corte cada
+/// 256 KB (S2), así que el tamaño no alarga lo que se pasa con las IRQ enmascaradas. La de DMA, 4 MB seguidos.
+const MAX_MEMORIA: u64 = 16 << 20;
+const MAX_DMA: u64 = 4 << 20;
 const MAX_ESCRIBIR: u64 = 256;
 
 fn error_espacio(e: crate::espacio::Error) -> u64 {
@@ -131,7 +148,13 @@ pub fn atender(marco: &mut Marco) {
         #[cfg(feature = "pruebas")]
         99 => crate::mapa::traducir(a[0] as usize).0 as u64,
         4 => canal_escribir(a[0] as u32, a[1], a[2], a[3], a[4]),
-        5 => canal_leer(marco, a[0] as u32, a[1], a[2], a[3], a[4]),
+        5 => canal_leer(marco, a[0] as u32, a[1], a[2], a[3], a[4], 0),
+        // K7: leer con plazo. El quinto argumento lleva en sus 16 bits bajos cuántas llaves caben y en el resto el
+        // plazo en microsegundos.
+        35 => canal_leer(marco, a[0] as u32, a[1], a[2], a[3], a[4] & 0xffff, a[4] >> 16),
+        36 => proceso_avisar(a[0] as u32, a[1] as u32),
+        37 => proceso_numero(a[0] as u32),
+        38 => grupo_procesos(a[0] as u32, a[1], a[2]),
         6 => cerrar(a[0] as u32),
         7 => memoria_crear(a[0]),
         8 => memoria_proyectar(a[0] as u32, a[1], a[2]),
@@ -155,15 +178,77 @@ pub fn atender(marco: &mut Marco) {
         26 => dma_liberar(a[0] as u32),
         27 => memoria_tamano(a[0] as u32),
         // A6 (S19): el hilo que llama pasa a la clase de plazo (capacidad y periodo en microsegundos), o vuelve a la
-        // justa con capacidad 0. E_LIMITE si su núcleo ya tiene prometido demasiado o los números no valen.
-        28 => if planificador::plazo_actual(a[0], a[1]) { 0 } else { E_LIMITE },
-        29 => puertos_permitir(a[0] as u32),
+        // justa con capacidad 0. Desde S3 pide una llave de permiso de plazo en a[0] (para volver a la justa, no).
+        // E_LIMITE si su núcleo ya tiene prometido demasiado o los números no valen.
+        28 => plazo(a[0] as u32, a[1], a[2]),
+        // A14: la hora del calendario en nanosegundos desde 1970 (UTC); 0 si no se sabe. a[0] = 0; los demás valores,
+        // reservados (ponerla pedirá una llave de permiso).
+        39 => match a[0] {
+            0 => crate::reloj::hora(),
+            _ => E_ARGUMENTO,
+        },
+        // R10 (S5): hasta 256 bytes al azar en a[0], a[1] bytes; x1 = 1 si vienen de una semilla de verdad.
+        34 => azar(marco, a[0], a[1]),
+        // Hilos de usuario (docs/diseño/hilos-de-usuario.md).
+        40 => hilo_crear(a[0], a[1], a[2], a[3]),
+        41 => hilo_unir(marco, a[0]),
+        42 => esperar(a[0], a[1], a[2]),
+        43 => despertar(a[0], a[1]),
+        44 => proceso_salir(a[0]),
+        // La caja Linux (H9): máquinas virtuales.
+        #[cfg(target_arch = "aarch64")]
+        45 => maquina_crear(a[0] as u32, a[1] as u32, a[2], a[3], a[4]),
+        #[cfg(target_arch = "aarch64")]
+        46 => maquina_correr(a[0] as u32, a[1], a[2], a[3]),
+        #[cfg(target_arch = "aarch64")]
+        47 => maquina_memoria(a[0] as u32, a[1] as u32, a[2]),
+        #[cfg(target_arch = "aarch64")]
+        48 => maquina_estado(a[0] as u32, a[1], a[2], a[3], a[4]),
+        // x86-64: sin hipervisor todavía (sería VT-x o AMD-V): no hay máquinas virtuales.
+        #[cfg(target_arch = "x86_64")]
+        45..=48 | 55 => E_NO_HAY,
+        // H4 (S3): la página 0 de la caja Amiga, con su permiso en a[0] y el objeto de memoria (una página) en a[1].
+        49 => pagina_cero(a[0] as u32, a[1] as u32),
+        50 => memoria_vista(a[0], a[1], a[2], a[3]),
+        // Apagar (a[1] = 0) o reiniciar (1) la máquina, con el permiso de apagar en a[0] (solo lo tiene `sesiones`).
+        51 => apagar(a[0] as u32, a[1]),
+        // Trasfondo: el tiempo de CPU de un grupo (con su llave, con leer) o, con 0, del grupo de quien llama.
+        52 => cpu_tiempo(a[0] as u32),
+        // Cupos como topes (S3): el aviso de memoria baja a un canal, con el permiso de apagar (solo `sesiones`).
+        53 => memoria_aviso(a[0] as u32, a[1] as u32),
+        // S3: cambiar el tope de un grupo (con su llave, con escribir; no el propio ni los de encima).
+        54 => grupo_tope(a[0] as u32, a[1]),
+        // Aviso a las cajas: el globo de una máquina (a[0] una vCPU con escribir; a[1] 0 soltar, 1 reponer; a[2] tabla
+        // de direcciones del invitado en u64; a[3] cuántas, hasta 256).
+        #[cfg(target_arch = "aarch64")]
+        55 => maquina_globo(a[0] as u32, a[1], a[2], a[3]),
+        // M2b (docs/MULTITAREA_LOOP.md): dormir a[0] microsegundos (como mucho una hora), sin canal ni temporizador.
+        30 => {
+            planificador::dormir_us(a[0].min(3_600_000_000));
+            0
+        }
+        // Fijar el hilo que llama a su núcleo (a[0] = 1) o soltarlo (0): no lo moverá el reparto entre núcleos (M4).
+        31 => {
+            planificador::fijar_actual(a[0] != 0);
+            0
+        }
+        // M0 (docs/MULTITAREA_LOOP.md): para medir. 0 = el núcleo en que corre quien llama; 1, 2 y 3 = interrupciones,
+        // cambios de hilo y microsegundos ociosos del núcleo a[1]; 4 = hilos robados entre núcleos; 5, 6 y 7 = páginas
+        // de RAM, páginas libres y bytes del kernel. Nada de otros procesos.
+        29 => match a[0] {
+            0 => crate::nucleos::numero() as u64,
+            q => planificador::contador(q, a[1] as usize).unwrap_or(E_ARGUMENTO),
+        },
+        // X6 (solo x86): los puertos de E/S de una llave de puertos, para el proceso que llama.
+        56 => puertos_permitir(a[0] as u32),
         n => {
             kprintln!("  [hilo {}] llamada desconocida {}", planificador::actual_id(), n);
             E_ARGUMENTO
         }
     };
     marco.poner_x0(r);
+    // Si lo libre para procesos ha cruzado el umbral del aviso de memoria baja (S3): dos lecturas si no.
+    crate::presion::mirar();
 }
 
 fn escribir_consola(p: u64, n: u64) -> u64 {
@@ -231,7 +316,8 @@ fn canal_escribir(h: u32, datos: u64, largo: u64, llaves: u64, n_llaves: u64) ->
     // Las llaves que viajan salen de la tabla de quien manda. Hacen falta derechos de transferir.
     let numeros = llaves_de_bytes(&tabla, proc_.big_endian);
     let mut viajan = Vec::new();
-    {
+    // Sin llaves que viajen, la tabla ni se toma (K3).
+    if !numeros.is_empty() {
         let mut t = proc_.llaves.tomar();
         for (i, &n) in numeros.iter().enumerate() {
             // Una llave repetida en la tabla es un error, no un pánico (auditoría, hallazgo 6).
@@ -265,12 +351,13 @@ fn canal_escribir(h: u32, datos: u64, largo: u64, llaves: u64, n_llaves: u64) ->
                 objetos::Error::Cerrado => E_CERRADO,
                 objetos::Error::Llena => E_LIMITE,
                 objetos::Error::SinMemoria => E_MEMORIA,
+                objetos::Error::Plazo => E_PLAZO,
             }
         }
     }
 }
 
-fn canal_leer(marco: &mut Marco, h: u32, buf: u64, cap: u64, llaves: u64, cap_llaves: u64) -> u64 {
+fn canal_leer(marco: &mut Marco, h: u32, buf: u64, cap: u64, llaves: u64, cap_llaves: u64, plazo_us: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let Some(bytes_llaves) = cap_llaves.checked_mul(4) else { return E_ARGUMENTO };
     if tramo(buf, cap).is_none() || tramo(llaves, bytes_llaves).is_none() {
@@ -282,8 +369,17 @@ fn canal_leer(marco: &mut Marco, h: u32, buf: u64, cap: u64, llaves: u64, cap_ll
     }
     let Objeto::Extremo(punta) = origen.objeto else { return E_TIPO };
     let (canal, lado) = (punta.canal().clone(), punta.lado());
-    let m = match canal.leer(lado) {
+    let vence = if plazo_us == 0 {
+        0
+    } else {
+        let cuentas = (plazo_us as u128 * crate::reloj::frecuencia() as u128 / 1_000_000).min(u64::MAX as u128 / 4) as u64;
+        crate::reloj::ahora().saturating_add(cuentas.max(1))
+    };
+    let m = match canal.leer_hasta(lado, vence) {
         Ok(m) => m,
+        // Cada cosa con su error: falta de memoria no es un canal cerrado (K7).
+        Err(objetos::Error::Plazo) => return E_PLAZO,
+        Err(objetos::Error::SinMemoria) => return E_MEMORIA,
         Err(_) => return E_CERRADO,
     };
     // Si no cabe o no se puede escribir donde dice el proceso, el mensaje vuelve a la cola, intacto (C31).
@@ -296,6 +392,12 @@ fn canal_leer(marco: &mut Marco, h: u32, buf: u64, cap: u64, llaves: u64, cap_ll
         return E_ARGUMENTO;
     }
     let largo = m.datos.len() as u64;
+    // Sin llaves en el mensaje, ni se toma la tabla ni se escribe nada en la del proceso (K3).
+    if m.llaves.is_empty() {
+        marco.poner_x1(0);
+        marco.poner_x2(m.marca);
+        return largo;
+    }
     let mut t = proc_.llaves.tomar();
     if t.huecos() < m.llaves.len() {
         drop(t);
@@ -320,6 +422,10 @@ fn canal_leer(marco: &mut Marco, h: u32, buf: u64, cap: u64, llaves: u64, cap_ll
         return error;
     }
 
+    // Las que se podían transferir una vez ya no se pueden pasar más (S4).
+    for &n in &numeros {
+        t.llegada(n);
+    }
     marco.poner_x1(numeros.len() as u64);
     marco.poner_x2(marca);
     largo
@@ -341,10 +447,8 @@ fn memoria_crear(tamano: u64) -> u64 {
     if proc_.llaves.tomar().huecos() == 0 {
         return E_LIMITE;
     }
-    // Sin cerrojos tomados: el borrado de las páginas se para cada poco para atender las interrupciones (X6).
-    let Some(m) = objetos::Memoria::nueva_con_pausas(tamano as usize, &proc_.cupo, &mut crate::cerrojo::ventana_irq) else {
-        return E_MEMORIA;
-    };
+    // Sin cerrojos tomados aquí: puede cortar (S2).
+    let Some(m) = objetos::Memoria::nueva_en_llamada(tamano as usize, &proc_.cupo) else { return E_MEMORIA };
     let llave = objetos::Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::TODOS);
     match proc_.llaves.tomar().instalar(llave) {
         Ok(n) => n as u64,
@@ -357,16 +461,22 @@ fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
     let Some((l, por)) = proc_.llaves.tomar().ver_con_intermediarios(h) else { return E_LLAVE };
     let Objeto::Memoria(m) = l.objeto else { return E_TIPO };
     let escribir = permisos & 2 != 0;
-    // Permiso 4, ejecutar (X7a, solo x86): leer y ejecutar, nunca a la vez que escribir. Un JIT proyecta el mismo
-    // objeto dos veces, una para escribir y otra para ejecutar. En ARM aún no: EL0 no puede limpiar la caché de
-    // instrucciones (SCTLR_EL1.UCI), así que lo escrito no se ejecutaría con seguridad.
+    // H4: el bit 2 es ejecutar (lo pide el JIT de la caja Amiga). Escribir y ejecutar por la misma dirección, nunca
+    // (W^X): para eso se proyecta el mismo objeto dos veces.
     let ejecutar = permisos & 4 != 0;
-    if ejecutar && (escribir || cfg!(not(target_arch = "x86_64"))) {
+    if escribir && ejecutar {
         return E_ARGUMENTO;
     }
     if escribir && l.derechos & objetos::ESCRIBIR == 0 || l.derechos & objetos::LEER == 0 {
         return E_DERECHOS;
     }
+    let acceso = if ejecutar {
+        crate::espacio::Acceso::Ejecutar
+    } else if escribir {
+        crate::espacio::Acceso::Escribir
+    } else {
+        crate::espacio::Acceso::Leer
+    };
     // Si la llave es revocable, la proyección se apunta en sus intermediarios antes de hacerla, y después se mira si
     // la revocaron entre medias: así o la ve quien revoca, o la quitamos aquí (C45).
     // Se apunta como pendiente; al acabar, hecha o retirada (A4).
@@ -379,18 +489,7 @@ fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
         }
     }
     let via: Vec<usize> = por.iter().map(|r| r.id()).collect();
-    let hecho = {
-        let mut e = proc_.espacio.tomar();
-        #[cfg(target_arch = "x86_64")]
-        if ejecutar {
-            e.proyectar_memoria_ejecutable(va, &m, &via)
-        } else {
-            e.proyectar_memoria(va, &m, escribir, &via)
-        }
-        #[cfg(not(target_arch = "x86_64"))]
-        e.proyectar_memoria(va, &m, escribir, &via)
-    };
-    if let Err(err) = hecho {
+    if let Err(err) = proc_.espacio.tomar().proyectar_memoria(va, &m, acceso, &via) {
         for r in &por {
             r.retirar_proyeccion(&proc_, va);
         }
@@ -404,6 +503,117 @@ fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
         return E_LLAVE;
     }
     0
+}
+
+/// La llamada 45 (H4, S3): proyecta en la dirección 0, de solo lectura, un objeto de memoria de una página. Solo con el
+/// permiso de página 0, que da el kernel a `inicio` y este a la caja Amiga: la caja guarda ahí el puntero a ExecBase
+/// (dirección 4) y escribe el objeto por otra dirección. Una llave revocable de memoria no vale (la página 0 no se
+/// apunta en intermediarios).
+fn pagina_cero(permiso: u32, h: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let m = {
+        let t = proc_.llaves.tomar();
+        let Some(p) = t.ver(permiso) else { return E_LLAVE };
+        let Objeto::PermisoPaginaCero = p.objeto else { return E_TIPO };
+        if p.derechos & objetos::ESCRIBIR == 0 {
+            return E_DERECHOS;
+        }
+        let Some((l, por)) = t.ver_con_intermediarios(h) else { return E_LLAVE };
+        let Objeto::Memoria(m) = l.objeto else { return E_TIPO };
+        if !por.is_empty() {
+            return E_ARGUMENTO;
+        }
+        if l.derechos & objetos::LEER == 0 {
+            return E_DERECHOS;
+        }
+        m
+    };
+    if m.paginas() != 1 {
+        return E_TAMANO;
+    }
+    match proc_.espacio.tomar().proyectar_pagina_cero(&m) {
+        Ok(()) => 0,
+        Err(e) => error_espacio(e),
+    }
+}
+
+/// La llamada 51 (decisión del usuario del 2026-11-13): apaga (`modo` 0) o reinicia (1) la máquina. Solo con el
+/// permiso de apagar, que da el kernel a `inicio` y este a `sesiones`: el panel se lo pide a `sesiones`, que pregunta
+/// antes si hay otras sesiones abiertas. Si se puede, no vuelve; si no (sin PSCI ni perro guardián), `E_NO_HAY`.
+fn apagar(permiso: u32, modo: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    {
+        let t = proc_.llaves.tomar();
+        let Some(p) = t.ver(permiso) else { return E_LLAVE };
+        let Objeto::PermisoApagar = p.objeto else { return E_TIPO };
+        if p.derechos & objetos::ESCRIBIR == 0 {
+            return E_DERECHOS;
+        }
+    }
+    let reiniciar = match modo {
+        0 => false,
+        1 => true,
+        _ => return E_ARGUMENTO,
+    };
+    kprintln!("kernel: {} la máquina (llamada 51)", if reiniciar { "se reinicia" } else { "se apaga" });
+    // Un rato para que la consola saque lo último del registro (esto y lo de quien lo pidió) por el puerto serie.
+    planificador::dormir_us(300_000);
+    crate::nucleos::apagar(reiniciar);
+    kprintln!("kernel: no se pudo {} la máquina", if reiniciar { "reiniciar" } else { "apagar" });
+    E_NO_HAY
+}
+
+/// Orígenes de una vista, como mucho (la RAM de un invitado de 1 GB en trozos de 16 MB).
+const MAX_ORIGENES: u64 = 64;
+
+/// La llamada 50: una vista, un objeto de memoria hecho con páginas de otros (`origenes`, una tabla de llaves de
+/// memoria con derecho de leer) sin copiarlas. `paginas` es una tabla de números de página de 32 bits que cuentan
+/// seguidas las páginas de los orígenes en su orden; en el orden de bytes del proceso, como las de llaves. La llave
+/// nueva solo puede leer y transferir; la vista no se proyecta para escribir ni ejecutar, ni vale como RAM de una
+/// máquina. Mantiene vivos sus orígenes. Para que el compositor lea sin copia los búferes de un invitado (H9).
+fn memoria_vista(origenes: u64, n_origenes: u64, paginas: u64, n_paginas: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    if n_origenes == 0 || n_origenes > MAX_ORIGENES || n_paginas == 0 || n_paginas > MAX_MEMORIA / crate::memoria::PAGINA {
+        return E_TAMANO;
+    }
+    let (Some(tabla), Some(lista)) = (leer_usuario(origenes, 4 * n_origenes as usize), leer_usuario(paginas, 4 * n_paginas as usize))
+    else {
+        return E_ARGUMENTO;
+    };
+    let numeros = llaves_de_bytes(&tabla, proc_.big_endian);
+    let paginas = llaves_de_bytes(&lista, proc_.big_endian);
+    let mut fuentes = Vec::new();
+    if fuentes.try_reserve_exact(numeros.len()).is_err() {
+        return E_MEMORIA;
+    }
+    {
+        let t = proc_.llaves.tomar();
+        for &n in &numeros {
+            let Some((l, por)) = t.ver_con_intermediarios(n) else { return E_LLAVE };
+            // Una llave revocable no vale: la vista seguiría viendo el objeto después de revocarla.
+            if !por.is_empty() {
+                return E_ARGUMENTO;
+            }
+            let Objeto::Memoria(m) = l.objeto else { return E_TIPO };
+            if l.derechos & objetos::LEER == 0 {
+                return E_DERECHOS;
+            }
+            fuentes.push(m);
+        }
+        if t.huecos() == 0 {
+            return E_LIMITE;
+        }
+    }
+    let m = match objetos::Memoria::vista(&fuentes, &paginas, &proc_.cupo) {
+        Ok(m) => m,
+        Err(crate::memoria::FalloVista::Memoria) => return E_MEMORIA,
+        Err(_) => return E_ARGUMENTO,
+    };
+    let llave = objetos::Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::LEER | objetos::TRANSFERIR);
+    match proc_.llaves.tomar().instalar(llave) {
+        Ok(n) => n as u64,
+        Err(_) => E_LIMITE,
+    }
 }
 
 /// Lo que mide un objeto de memoria, en bytes (W7): para no fiarse de lo que diga quien lo manda. Pide poder leerlo.
@@ -578,7 +788,7 @@ fn proceso_crear(h: u32, tamano: u64, llaves: u64, n_llaves: u64, grupo: u32) ->
         return E_MEMORIA;
     }
     binario.resize(tamano as usize, 0);
-    if !m.leer(0, &mut binario) {
+    if !m.leer_en_llamada(0, &mut binario) {
         return E_TAMANO;
     }
     let numeros = llaves_de_bytes(&tabla, proc_.big_endian);
@@ -586,7 +796,7 @@ fn proceso_crear(h: u32, tamano: u64, llaves: u64, n_llaves: u64, grupo: u32) ->
         Ok(v) => v,
         Err(e) => return e,
     };
-    match crate::procesos::lanzar(&binario, viajan, None, cupo) {
+    match crate::procesos::lanzar_en_llamada(&binario, viajan, None, cupo) {
         Ok((control, _)) => {
             let llave = objetos::Llave::nueva(Objeto::Proceso(control.clone()), objetos::TODOS);
             let instalada = proc_.llaves.tomar().instalar(llave);
@@ -624,6 +834,80 @@ fn proceso_matar(h: u32) -> u64 {
     0
 }
 
+/// K7: cuando acabe el proceso de la llave `hp` (con derecho de leer), escribir su fin por el canal `hc` (con derecho
+/// de escribir), con la marca de esa llave. Si ya acabó, el aviso sale ya. Hasta `MAX_AVISOS` por proceso.
+/// Llamada 37 (U6): el número del proceso de la llave `h` (con derecho de leer).
+fn proceso_numero(h: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Proceso(c) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::LEER == 0 {
+        return E_DERECHOS;
+    }
+    c.pid
+}
+
+/// Llamada 38 (U6): los números de los procesos vivos del grupo de la llave `h`, hasta `max` u64 en `ptr`. Devuelve
+/// cuántos hay (pueden ser más de los que caben). Solo con la llave del grupo: quien no la tiene no los ve.
+fn grupo_procesos(h: u32, ptr: u64, max: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Grupo(g) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::LEER == 0 {
+        return E_DERECHOS;
+    }
+    let max = (max as usize).min(64);
+    let mut v = Vec::new();
+    let total = g.pids(&mut v, max);
+    let bytes: Vec<u8> = v.iter().flat_map(|p| p.to_le_bytes()).collect();
+    if !bytes.is_empty() && !escribir_usuario(ptr, &bytes) {
+        return E_ARGUMENTO;
+    }
+    total as u64
+}
+
+fn proceso_avisar(hp: u32, hc: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let t = proc_.llaves.tomar();
+    let Some(l) = t.ver(hp) else { return E_LLAVE };
+    let Objeto::Proceso(c) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::LEER == 0 {
+        return E_DERECHOS;
+    }
+    let Some((canal, via)) = t.ver_con_intermediarios(hc) else { return E_LLAVE };
+    drop(t);
+    let Objeto::Extremo(p) = canal.objeto else { return E_TIPO };
+    if canal.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    let mut vias = Vec::new();
+    if vias.try_reserve(via.len()).is_err() {
+        return E_MEMORIA;
+    }
+    vias.extend(via.iter().map(|r| r.vigia()));
+    let aviso = objetos::AvisoFin { canal: p.canal().clone(), lado: p.lado(), marca: canal.marca, via: vias };
+    let ya = {
+        let mut e = c.estado.tomar();
+        match e.fin {
+            Some(f) => Some(f),
+            None => {
+                if e.avisos.len() >= objetos::MAX_AVISOS {
+                    return E_LIMITE;
+                }
+                if e.avisos.try_reserve(1).is_err() {
+                    return E_MEMORIA;
+                }
+                e.avisos.push(aviso);
+                return 0;
+            }
+        }
+    };
+    if let Some(f) = ya {
+        aviso.mandar(f);
+    }
+    0
+}
+
 fn proceso_esperar(marco: &mut Marco, h: u32) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
@@ -655,6 +939,36 @@ fn proceso_esperar(marco: &mut Marco, h: u32) -> u64 {
 /// `marca` (C41). Con marca 0 se queda la que tenga. Una llave marcada no se puede volver a marcar con otra: así quien
 /// la recibe no puede hacerse pasar por otro. La copia es del mismo objeto: un lado de canal sigue abierto mientras
 /// quede una.
+/// La llamada 34 (R10): bytes al azar del generador del kernel.
+fn azar(marco: &mut Marco, dir: u64, largo: u64) -> u64 {
+    if largo > 256 {
+        return E_TAMANO;
+    }
+    let mut b = [0u8; 256];
+    crate::azar::llenar(&mut b[..largo as usize]);
+    let bien = escribir_usuario(dir, &b[..largo as usize]);
+    b.fill(0);
+    core::hint::black_box(&b);
+    if !bien {
+        return E_ARGUMENTO;
+    }
+    marco.poner_x1(crate::azar::de_calidad() as u64);
+    largo
+}
+
+/// La llamada 28 (S3): la clase de plazo, solo con el permiso.
+fn plazo(h: u32, capacidad_us: u64, periodo_us: u64) -> u64 {
+    if capacidad_us != 0 {
+        let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+        let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+        let Objeto::PermisoPlazo = l.objeto else { return E_TIPO };
+        if l.derechos & objetos::ESCRIBIR == 0 {
+            return E_DERECHOS;
+        }
+    }
+    if planificador::plazo_actual(capacidad_us, periodo_us) { 0 } else { E_LIMITE }
+}
+
 fn llave_duplicar(h: u32, derechos: u64, marca: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     // Declarada antes que la guarda de la tabla, para soltarse después de ella (B5).
@@ -672,7 +986,9 @@ fn llave_duplicar(h: u32, derechos: u64, marca: u64) -> u64 {
     if marca != 0 && l.marca != 0 && marca != l.marca {
         return E_DERECHOS;
     }
-    let nueva = objetos::Llave { objeto: l.objeto, derechos: l.derechos & derechos as u32, marca: if marca != 0 { marca } else { l.marca } };
+    // Los derechos, como mucho los de la original; la restricción `UNA_VEZ`, si la pide quien duplica o ya la tenía (S4).
+    let una_vez = (l.derechos | derechos as u32) & objetos::UNA_VEZ;
+    let nueva = objetos::Llave { objeto: l.objeto, derechos: (l.derechos & derechos as u32 & objetos::TODOS) | una_vez, marca: if marca != 0 { marca } else { l.marca } };
     match t.instalar(nueva) {
         Ok(n) => n as u64,
         Err(_) => E_LIMITE,
@@ -715,13 +1031,14 @@ fn revocar(h: u32) -> u64 {
     0
 }
 
-/// Un subgrupo del grupo propio con `presupuesto` bytes, que salen del propio (C42).
-fn grupo_crear(presupuesto: u64) -> u64 {
+/// Un subgrupo del grupo propio con un tope de `tope` bytes (C42; desde S3, un tope y no una reserva: del propio solo
+/// sale lo que ocupa el grupo en sí).
+fn grupo_crear(tope: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     if proc_.llaves.tomar().huecos() == 0 {
         return E_LIMITE;
     }
-    let Some(g) = proc_.cupo.hijo(presupuesto) else { return E_MEMORIA };
+    let Some(g) = proc_.cupo.hijo(tope) else { return E_MEMORIA };
     match proc_.llaves.tomar().instalar(objetos::Llave::nueva(Objeto::Grupo(g), objetos::TODOS)) {
         Ok(n) => n as u64,
         Err(_) => E_LIMITE,
@@ -748,7 +1065,57 @@ fn grupo_uso(marco: &mut Marco, h: u32) -> u64 {
     }
     let (limite, usado) = g.uso();
     marco.poner_x1(usado);
+    marco.poner_x2(g.uso_propio());
     limite
+}
+
+/// Llamada 54 (S3): pone `tope` al grupo de `h` (con escribir). El propio grupo y los de encima, no (`E_DERECHOS`): un
+/// proceso no se sube su tope. Por debajo de lo usado vale: no se quita nada y los cobros fallan hasta que baje.
+fn grupo_tope(h: u32, tope: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Grupo(g) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::ESCRIBIR == 0 || proc_.cupo.es_o_cuelga_de(&g) {
+        return E_DERECHOS;
+    }
+    g.poner_tope(tope);
+    0
+}
+
+/// Llamada 53 (S3): el aviso de memoria baja, al otro lado del canal de `hc` (con escribir). Pide el permiso de memoria
+/// (`permiso`, con escribir), que el kernel da a `inicio` y este solo a `sesiones`. Hay un solo oyente: el nuevo quita
+/// al anterior. Nada más pedirlo llega el nivel de ahora.
+fn memoria_aviso(permiso: u32, hc: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let (p, canal) = {
+        let t = proc_.llaves.tomar();
+        (t.ver(permiso), t.ver_con_intermediarios(hc))
+    };
+    let (Some(p), Some((canal, via))) = (p, canal) else { return E_LLAVE };
+    let (Objeto::PermisoMemoria, Objeto::Extremo(e)) = (p.objeto, canal.objeto) else { return E_TIPO };
+    if p.derechos & objetos::ESCRIBIR == 0 || canal.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    crate::presion::escuchar(e.canal().clone(), e.lado(), via.iter().map(|r| r.vigia()).collect(), canal.marca);
+    0
+}
+
+/// Llamada 52 (trasfondo): microsegundos de CPU que han gastado los procesos del grupo `h` y de sus subgrupos, vivos y
+/// muertos, desde que se creó. Con `h` = 0, los del grupo de quien llama (sin llave: es lo suyo). Solo con la llave del
+/// grupo y el derecho de leer: nadie mide a otro sin que se la den (`sesiones` tiene las de lo que lanza).
+fn cpu_tiempo(h: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let cuentas = if h == 0 {
+        proc_.cupo.cpu()
+    } else {
+        let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+        let Objeto::Grupo(g) = l.objeto else { return E_TIPO };
+        if l.derechos & objetos::LEER == 0 {
+            return E_DERECHOS;
+        }
+        g.cpu()
+    };
+    (cuentas as u128 * 1_000_000 / crate::reloj::frecuencia().max(1) as u128).min(i64::MAX as u128) as u64
 }
 
 /// Memoria para DMA (C46), con una llave de permiso DMA con derecho de escribir: hasta 4 MB seguidos de la zona del
@@ -760,7 +1127,7 @@ fn memoria_dma(marco: &mut Marco, h: u32, tamano: u64) -> u64 {
     if l.derechos & objetos::ESCRIBIR == 0 {
         return E_DERECHOS;
     }
-    if tamano == 0 || tamano > MAX_MEMORIA {
+    if tamano == 0 || tamano > MAX_DMA {
         return E_TAMANO;
     }
     if proc_.llaves.tomar().huecos() == 0 {
@@ -848,4 +1215,381 @@ fn registro_leer(h: u32, buf: u64, cap: u64) -> u64 {
         return E_ARGUMENTO;
     }
     n as u64
+}
+
+/// Llamada 40: un hilo más en el proceso (docs/diseño/hilos-de-usuario.md). Baja a EL0 en `entrada` con SP = `pila`,
+/// x0 = `arg` y TPIDR_EL0 = `tls`. La entrada tiene que ser código del proceso y la pila, memoria suya que se puede
+/// escribir: si no, error, no un hilo que muere al nacer. Se cobra `COSTE_HILO` al grupo hasta que alguien se una a él.
+fn hilo_crear(entrada: u64, pila: u64, arg: u64, tls: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    // Las instrucciones de ARM van alineadas a 4; las de x86, a nada.
+    if (cfg!(target_arch = "aarch64") && entrada % 4 != 0) || pila % 16 != 0 || pila < 16 {
+        return E_ARGUMENTO;
+    }
+    {
+        let e = proc_.espacio.tomar();
+        if !e.ejecutable(entrada) || !matches!(e.para_copiar(pila - 16, true), crate::espacio::Copia::Directa(_)) {
+            return E_ARGUMENTO;
+        }
+    }
+    {
+        let e = proc_.control.estado.tomar();
+        if e.matado || e.fin_pendiente.is_some() {
+            return E_CERRADO;
+        }
+        if e.registro.len() >= objetos::MAX_HILOS {
+            return E_LIMITE;
+        }
+    }
+    let Some(cargo) = proc_.cupo.cobrar(crate::cupo::COSTE_HILO) else { return E_MEMORIA };
+    let Some(pila_kernel) = crate::mapa::pila_nueva() else { return E_MEMORIA };
+    drop(proc_);
+    planificador::crear_hilo_usuario(entrada, pila, arg, tls, pila_kernel, cargo).unwrap_or(E_MEMORIA)
+}
+
+/// Llamada 41: espera a que acabe el hilo `id`, creado con `hilo_crear` en este mismo proceso, y da cómo acabó: clase
+/// en x0 y código en x1, como `proceso_esperar`. Un número que no está en el registro del proceso (de otro proceso, del
+/// kernel, ya unido, el propio) es un error: nunca se espera a un hilo ajeno.
+fn hilo_unir(marco: &mut Marco, id: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    if id == planificador::actual_id() {
+        return E_ARGUMENTO;
+    }
+    let c = proc_.control.clone();
+    drop(proc_);
+    loop {
+        let mut e = c.estado.tomar();
+        // Si lo despertaron para matarlo, nadie lo quitó de la cola: se quita él.
+        e.unen.quitarme();
+        let Some(i) = e.registro.iter().position(|r| r.id == id) else { return E_ARGUMENTO };
+        if let Some(fin) = e.registro[i].fin {
+            // Fuera del registro, y con él lo cobrado, que se devuelve al soltarlo (fuera del cerrojo).
+            let r = e.registro.swap_remove(i);
+            drop(e);
+            drop(r);
+            let (clase, codigo) = fin.valores();
+            marco.poner_x1(codigo);
+            return clase;
+        }
+        if planificador::debe_morir() {
+            return E_CERRADO;
+        }
+        if !e.unen.apuntarme() {
+            return E_MEMORIA;
+        }
+        // Las IRQ están enmascaradas en toda llamada: se puede bloquear soltando el cerrojo.
+        planificador::bloquear_soltando(e);
+    }
+}
+
+/// Llamada 42: duerme mientras la palabra de 32 bits de `va` valga `valor`, como mucho `plazo_us` (0: sin plazo; como
+/// mucho una hora). 0 si lo despertaron; 1 si la palabra no valía eso (no ha dormido).
+fn esperar(va: u64, valor: u64, plazo_us: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    if valor > u32::MAX as u64 {
+        return E_ARGUMENTO;
+    }
+    match crate::espera::esperar(&proc_, va, valor as u32, plazo_us.min(3_600_000_000)) {
+        crate::espera::Resultado::Despertado => 0,
+        crate::espera::Resultado::OtroValor => 1,
+        crate::espera::Resultado::Plazo => E_PLAZO,
+        crate::espera::Resultado::Matado => E_CERRADO,
+        crate::espera::Resultado::SinMemoria => E_MEMORIA,
+        crate::espera::Resultado::Direccion => E_ARGUMENTO,
+    }
+}
+
+/// Llamada 43: despierta hasta `n` hilos que esperan en la palabra de `va`. Cuántos.
+fn despertar(va: u64, n: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    match crate::espera::despertar(&proc_, va, n.min(usize::MAX as u64) as usize) {
+        Some(k) => k as u64,
+        None => E_ARGUMENTO,
+    }
+}
+
+/// Llamada 44: acaba el proceso entero con `codigo`. Los demás hilos mueren como al matarlo, pero el proceso acaba
+/// como "salió con este código".
+fn proceso_salir(codigo: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let control = proc_.control.clone();
+    // Sin referencias de más al proceso: este hilo no vuelve, y lo que no suelte aquí no se soltaría nunca.
+    drop(proc_);
+    {
+        let mut e = control.estado.tomar();
+        if e.fin_pendiente.is_none() {
+            e.fin_pendiente = Some(objetos::Fin::Salida(codigo));
+        }
+    }
+    planificador::matar_proceso(&control);
+    drop(control);
+    if codigo != 0 || SALIDAS_VISIBLES.load(core::sync::atomic::Ordering::Relaxed) {
+        kprintln!("  [hilo {}] acaba su proceso con código {}", planificador::actual_id(), codigo);
+    }
+    SALIDAS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    planificador::terminar_actual(objetos::Fin::Salida(codigo));
+}
+
+/// Una máquina virtual (H9) con el permiso `hp` (escribir) y el objeto de memoria `hm` (leer y escribir; ni DMA ni
+/// revocable) como su RAM, que el invitado ve desde `ipa`; empieza en `entrada`, en EL1, con la MMU apagada y `x0` en
+/// su x0 (el árbol de dispositivos de un kernel de Linux). Lo que
+/// cuestan su vCPU y sus tablas se cobra al grupo. Sin hipervisor, `E_NO_HAY`.
+#[cfg(target_arch = "aarch64")]
+fn maquina_crear(hp: u32, hm: u32, ipa: u64, entrada: u64, x0: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let (permiso, memoria) = {
+        let t = proc_.llaves.tomar();
+        let Some(p) = t.ver(hp) else { return E_LLAVE };
+        let Some(m) = t.ver_con_intermediarios(hm) else { return E_LLAVE };
+        (p, m)
+    };
+    let Objeto::PermisoMaquina = permiso.objeto else { return E_TIPO };
+    if permiso.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    let (m, por) = memoria;
+    let derechos = m.derechos;
+    // Revocar quita las proyecciones, no la etapa 2 de un invitado: una llave revocable no vale.
+    if !por.is_empty() {
+        return E_ARGUMENTO;
+    }
+    let Objeto::Memoria(m) = m.objeto else { return E_TIPO };
+    let rw = objetos::LEER | objetos::ESCRIBIR;
+    if derechos & rw != rw {
+        return E_DERECHOS;
+    }
+    if !crate::base::hiper::hay() {
+        return E_NO_HAY;
+    }
+    if proc_.llaves.tomar().huecos() == 0 {
+        return E_LIMITE;
+    }
+    let maquina = match crate::maquinas::Maquina::nueva(m, ipa, entrada, x0, &proc_.cupo) {
+        Ok(v) => v,
+        Err(e) => return error_hiper(e),
+    };
+    let Ok(maquina) = alloc::sync::Arc::try_new(maquina) else { return E_MEMORIA };
+    match proc_.llaves.tomar().instalar(objetos::Llave::nueva(Objeto::Maquina(maquina), objetos::TODOS)) {
+        Ok(n) => n as u64,
+        Err(_) => E_LIMITE,
+    }
+}
+
+/// Corre la vCPU `h` (escribir) hasta que el invitado sale, y escribe el informe en `informe` (13 u64 en
+/// little-endian, `maquinas::PALABRAS`). `valor` contesta a una lectura de aparato pendiente. `irq`, si no es 0, es el
+/// bloque de interrupciones (`maquinas::IRQ_PALABRAS` u64): se lee antes de entrar y se escribe al volver. Devuelve el
+/// motivo.
+#[cfg(target_arch = "aarch64")]
+fn maquina_correr(h: u32, informe: u64, valor: u64, irq: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Maquina(m) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    // Antes de entrar, que se pueda escribir el informe: si no, lo que dijo el invitado se perdería.
+    let vacio = [0u8; 8 * crate::maquinas::PALABRAS];
+    if !escribir_usuario(informe, &vacio) {
+        return E_ARGUMENTO;
+    }
+    let mut bloque = [0u64; crate::maquinas::IRQ_PALABRAS];
+    if irq != 0 {
+        let Some(b) = leer_usuario(irq, 8 * crate::maquinas::IRQ_PALABRAS) else { return E_ARGUMENTO };
+        for (i, v) in bloque.iter_mut().enumerate() {
+            *v = u64::from_le_bytes(b[8 * i..8 * i + 8].try_into().unwrap_or([0; 8]));
+        }
+    }
+    match m.correr(valor, (irq != 0).then_some(&mut bloque)) {
+        Ok(inf) => {
+            let mut b = [0u8; 8 * crate::maquinas::PALABRAS];
+            for (i, v) in inf.iter().enumerate() {
+                b[8 * i..8 * i + 8].copy_from_slice(&v.to_le_bytes());
+            }
+            if !escribir_usuario(informe, &b) {
+                return E_ARGUMENTO;
+            }
+            if irq != 0 {
+                let mut b = [0u8; 8 * crate::maquinas::IRQ_PALABRAS];
+                for (i, v) in bloque.iter().enumerate() {
+                    b[8 * i..8 * i + 8].copy_from_slice(&v.to_le_bytes());
+                }
+                if !escribir_usuario(irq, &b) {
+                    return E_ARGUMENTO;
+                }
+            }
+            inf[0]
+        }
+        Err(crate::maquinas::Error::NoHay) => E_NO_HAY,
+        Err(crate::maquinas::Error::Ocupada) => E_LIMITE,
+        Err(crate::maquinas::Error::Muerta) => E_CERRADO,
+    }
+}
+
+/// Operaciones sobre la vCPU `h` (escribir) y su máquina:
+///   0 leer sus registros (x0..x30, PC y PSTATE: 33 u64 en little-endian) en `arg`, con ella parada;
+///   1 escribirlos desde `arg` (PSTATE saneado: AArch64, EL0 o EL1), con ella parada;
+///   2 un aborto externo para el invitado en lugar del último acceso a un aparato (`E_ARGUMENTO` si no lo hubo);
+///   3 proyectar la GICV del GIC virtual en la dirección física del invitado `arg`, para todas sus vCPU (`E_NO_HAY` sin
+///     GIC virtual);
+///   4 otra vCPU de la misma máquina: la número `arg` (su Aff0 en el MPIDR, menos de 8 y sin otra con ese número), que
+///     empieza en `a` con x0 = `b`; devuelve su llave (`E_ARGUMENTO` si el número no vale o ya está);
+///   5 reiniciarla, parada, como recién encendida en `arg` con x0 = `a` (PSCI CPU_ON);
+///   6 patearla: que salga de su invitado en cuanto pueda (desde otro hilo; si no corre, la próxima vez no entra);
+///   7 parar la máquina entera: todas sus vCPU salen y ya no entran (`E_CERRADO`).
+#[cfg(target_arch = "aarch64")]
+fn maquina_estado(h: u32, op: u64, arg: u64, a: u64, b: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Maquina(m) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    const N: usize = crate::base::hiper::REGISTROS;
+    let error = |e| match e {
+        crate::maquinas::Error::NoHay => E_NO_HAY,
+        crate::maquinas::Error::Ocupada => E_LIMITE,
+        crate::maquinas::Error::Muerta => E_CERRADO,
+    };
+    match op {
+        0 => match m.registros() {
+            Ok(r) => {
+                let mut b = [0u8; 8 * N];
+                for (i, v) in r.iter().enumerate() {
+                    b[8 * i..8 * i + 8].copy_from_slice(&v.to_le_bytes());
+                }
+                if escribir_usuario(arg, &b) { 0 } else { E_ARGUMENTO }
+            }
+            Err(e) => error(e),
+        },
+        1 => {
+            let Some(b) = leer_usuario(arg, 8 * N) else { return E_ARGUMENTO };
+            let mut r = [0u64; N];
+            for (i, v) in r.iter_mut().enumerate() {
+                *v = u64::from_le_bytes(b[8 * i..8 * i + 8].try_into().unwrap_or([0; 8]));
+            }
+            match m.poner_registros(&r) {
+                Ok(()) => 0,
+                Err(e) => error(e),
+            }
+        }
+        2 => match m.aborto() {
+            Ok(true) => 0,
+            Ok(false) => E_ARGUMENTO,
+            Err(e) => error(e),
+        },
+        3 => match m.proyectar_gicv(arg, &proc_.cupo) {
+            Ok(()) => 0,
+            Err(e) => error_hiper(e),
+        },
+        4 => {
+            if proc_.llaves.tomar().huecos() == 0 {
+                return E_LIMITE;
+            }
+            let otra = match m.otra(arg, a, b, &proc_.cupo) {
+                Ok(v) => v,
+                Err(e) => return error_hiper(e),
+            };
+            let Ok(otra) = alloc::sync::Arc::try_new(otra) else { return E_MEMORIA };
+            match proc_.llaves.tomar().instalar(objetos::Llave::nueva(Objeto::Maquina(otra), objetos::TODOS)) {
+                Ok(n) => n as u64,
+                Err(_) => E_LIMITE,
+            }
+        }
+        5 => match m.reiniciar(arg, a) {
+            Ok(()) => 0,
+            Err(e) => error(e),
+        },
+        6 => {
+            m.patear();
+            0
+        }
+        7 => {
+            m.parar();
+            0
+        }
+        _ => E_ARGUMENTO,
+    }
+}
+
+/// Más RAM para el invitado de la máquina `h` (escribir): el objeto de memoria `hm` (leer y escribir; ni DMA ni
+/// revocable), visto desde `ipa`, sin pisar lo que ya ve. Para un invitado de más de 16 MB, el tope de `memoria_crear`.
+#[cfg(target_arch = "aarch64")]
+fn maquina_memoria(h: u32, hm: u32, ipa: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let (l, memoria) = {
+        let t = proc_.llaves.tomar();
+        let Some(l) = t.ver(h) else { return E_LLAVE };
+        let Some(m) = t.ver_con_intermediarios(hm) else { return E_LLAVE };
+        (l, m)
+    };
+    let Objeto::Maquina(maquina) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    let (m, por) = memoria;
+    if !por.is_empty() {
+        return E_ARGUMENTO;
+    }
+    let derechos = m.derechos;
+    let Objeto::Memoria(m) = m.objeto else { return E_TIPO };
+    let rw = objetos::LEER | objetos::ESCRIBIR;
+    if derechos & rw != rw {
+        return E_DERECHOS;
+    }
+    match maquina.anadir(m, ipa, &proc_.cupo) {
+        Ok(()) => 0,
+        Err(e) => error_hiper(e),
+    }
+}
+
+/// Llamada 55 (`docs/bitacoras/aviso-cajas.md`): el globo de una máquina. Con la llave de una vCPU (escribir), suelta
+/// (`op` 0) o repone (1) las páginas del invitado cuyas direcciones (u64, alineadas a 4 KB) están en la tabla `tabla`
+/// (`n`, de 1 a 256). Solo memoria que tiene nadie más que la máquina y quien llama (ver `hiper::Espacio::globo`): las
+/// páginas de otra se saltan. Devuelve cuántas se hicieron.
+#[cfg(target_arch = "aarch64")]
+fn maquina_globo(h: u32, op: u64, tabla: u64, n: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    if n == 0 || n > crate::base::hiper::MAX_GLOBO as u64 {
+        return E_TAMANO;
+    }
+    if op > 1 {
+        return E_ARGUMENTO;
+    }
+    // La tabla se copia antes de tomar los cerrojos (copiar del proceso toma su espacio).
+    let Some(bytes) = leer_usuario(tabla, 8 * n as usize) else { return E_ARGUMENTO };
+    // En el orden de bytes del proceso, como las tablas de llaves.
+    let ipas: Vec<u64> = bytes
+        .chunks_exact(8)
+        .map(|c| {
+            let c: [u8; 8] = c.try_into().unwrap();
+            if proc_.big_endian { u64::from_be_bytes(c) } else { u64::from_le_bytes(c) }
+        })
+        .collect();
+    let llaves = proc_.llaves.tomar();
+    let Some(l) = llaves.ver(h) else { return E_LLAVE };
+    let Objeto::Maquina(maquina) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    // Con la tabla de llaves y el espacio tomados, nadie del proceso puede sacar otra referencia al objeto mientras se
+    // cuenta y se suelta (orden de los cerrojos: llaves, espacio y la etapa 2, como en el resto).
+    let mut espacio = proc_.espacio.tomar();
+    let cuenta = |m: &alloc::sync::Arc<crate::memoria::Memoria>| llaves.cuantas_de_memoria(m);
+    let r = maquina.globo(&ipas, op == 0, &mut espacio, &cuenta);
+    drop(espacio);
+    drop(llaves);
+    match r {
+        Ok(k) => k as u64,
+        Err(e) => error_hiper(e),
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+fn error_hiper(e: crate::base::hiper::Error) -> u64 {
+    match e {
+        crate::base::hiper::Error::NoHay => E_NO_HAY,
+        crate::base::hiper::Error::Argumento => E_ARGUMENTO,
+        crate::base::hiper::Error::Memoria => E_MEMORIA,
+        crate::base::hiper::Error::Limite => E_LIMITE,
+    }
 }

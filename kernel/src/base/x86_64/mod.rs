@@ -1,4 +1,4 @@
-//! Todo lo inseguro del kernel en x86-64 (S21). Mismas reglas que `base` en ARM (`../mod.rs`): cada función pública
+//! Todo lo inseguro del kernel en x86-64 (S30). Mismas reglas que `base` en ARM (`../mod.rs`): cada función pública
 //! es segura de llamar con cualquier argumento, o es `unsafe fn`.
 //!
 //! - X1: la entrada desde el cargador UEFI (`arranque.s`), lo que deja el cargador (`arranque.rs`), el puerto serie

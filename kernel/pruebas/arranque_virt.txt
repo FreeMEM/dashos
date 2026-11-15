@@ -3,11 +3,14 @@
 DashOS: fuera de los servicios de arranque
 DashOS 0.0.1
 Orden de bytes: little-endian
+# A14: la hora del calendario, del PL031 de virt.
+~Hora: del reloj de la placa
 Memoria física:
 DashOS en marcha con 4 núcleos.
 │   [inicio] consola lanzado en su grupo, con 2 llaves
 │   hola desde Rust en EL0 (DashOS, little-endian)
-│   [inicio] todo lanzado; se queda esperando
+│   [inicio] paquete de arranque suelto: quedan sus cabeceras (
+│   [inicio] todo lanzado; se queda vigilando los servicios
 # U6: el xHCI del PCIe (con highmem=off, por debajo de 4 GB), con un teclado y un ratón.
 # U6g y U6h: por MSI-X, con GICv2 por el marco GICv2m (desde la SPI 80) y con GICv3 por el ITS (desde la LPI 8192),
 # con árbol y con ACPI. Sin ninguno de los dos, la INTx (U6e) o, con ACPI, el temporizador.
@@ -25,16 +28,30 @@ DashOS en marcha con 4 núcleos.
 ~│   [nvme] sector 1: "DashOS: sector 1", firma 0x0000
 # U6i: el NVMe espera sus órdenes con su interrupción.
 ~│   [nvme] avisos por su interrupción
+~│   [nvme] descartar: sí
+~│   [nvme] particiones: MBR; DashOS, sectores 2048 a 16383
 # U6f: el servicio de disco, con un cliente de prueba.
-~│   [disco] abierto: 16384 sectores de 512 bytes
+~│   [disco] abierto: 2048 sectores de 512 bytes
 ~│   [disco] leer: bien; escribir y releer: bien; cruzando páginas: bien; rechazos: bien; vaciar: bien
+~│   [disco] descartar: bien; rechazos al descartar: bien
+~│   [disco] plazo vencido: bien; después sigue bien: bien
 # U6l: el anillo de peticiones en memoria compartida.
 ~│   [disco] anillo: 16 lecturas y un rechazo: bien
+# A15: varias órdenes del anillo en el disco a la vez; lo que se pisa, en su orden.
+~│   [disco] anillo con órdenes a la vez, en su orden: bien
+~│   [disco] anillo otra vez: el nuevo va: bien; el viejo ya no se atiende: bien
+# A15: el comprobador aparte, con la partición de DashOS solo para leer (escribir y descartar, -6).
+~│   [comprobador] la partición de DashOS, solo para leer: 14336 sectores, firma DashFS; escribir -6, descartar -6, fuera -2: bien
 # FS1: el servicio de archivos abre el RedoxFS que empieza en el MB 1 del disco, sin escribir nada.
 ~│   [archivos] RedoxFS abierto: 7168 KB,
 # FS3: un cliente del protocolo de ficheros por el canal "archivos".
-~│   [ficheros] raíz (3 entradas, fin bien): C/ LEEME.txt Prefs/
+~│   [archivos] comprobado al arrancar: 1 problemas; reparado, quedan 0
+# A7: la memoria de la caché de páginas, creada al arrancar (24 MB).
+~│   [archivos] caché de páginas: 48 trozos de 512 KB creados
+~│   [ficheros] raíz (7 entradas, fin bien): C/ DeCarla/ Estado/ Imagenes/ LEEME.txt Prefs/ Programas/
 ~│   [ficheros] LEEME.txt (19 bytes): "DashOS lee RedoxFS"
+# A3 (docs/REVISION_LOOP.md): buscar, leer y cerrar en un viaje.
+~│   [ficheros] A3 leer por nombre: bien
 ~│   [ficheros] C/grande.txt: 313890 bytes, 25000 líneas: bien
 ~│   [ficheros] datos: bien; volumen: 7168 KB,
 ~│   [ficheros] rechazos: bien; desde un cajón: bien
@@ -42,10 +59,31 @@ DashOS en marcha con 4 núcleos.
 ~│   [ficheros] escribir 200 KB: bien; releer: bien; ocupa sitio: bien
 ~│   [ficheros] recortar: bien; renombrar y mover: bien; borrar abierto: bien
 ~│   [ficheros] hola.txt: bien; rechazos al escribir: bien
+~│   [ficheros] A7 páginas prestadas: bien
 ~│   [ficheros] FS6 mayúsculas: bien; FS7 comentario: bien, en la lista: bien; bits: bien
+~│   [ficheros] A14 fechas: bien
+~│   [ficheros] A14 lectura anticipada: bien
+~│   [ficheros] A14 descarte: bien
 ~│   [ficheros] FS8 comprobación: bien
+~│   [comprobador] A15 la foto: bien
+~│   [ficheros] A15 sujetar: bien
+~│   [archivos] queda poco sitio: se suelta el disco sujeto
+~│   [ficheros] A15 sujetar sin soltar: bien
 ~│   [ficheros] FS9 instantáneas: bien
 ~│   [ficheros] FS10 volúmenes: bien
+# S20, fase 1: un ADF (FFS internacional, kernel/pruebas/disquete.adf.gz) montado como volumen de solo lectura por el
+# servicio imagen, que lo lee por el de archivos.
+~│   [imagen] Disquete montado: FFS internacional, 1760 bloques
+# S28: su bloque de arranque, sin firmas (no arranca: el ADF de la prueba no es de arranque).
+~│   [imagen] Disquete: bloque de arranque: no arranca (sin DOS o con la suma mal): Kickstart no lo ejecuta
+~│   [adf-prueba] montar: bien (1760 bloques, FFS bien, internacional bien); sin montar: bien; otra vez: bien
+~│   [adf-prueba] volumen Disquete: 880 KB,
+~│   [adf-prueba] raíz (3 entradas, fin bien): C/ Cajón/ LEEME.txt
+~│   [adf-prueba] LEEME.txt (42 bytes): bien; comentario "léeme primero"
+~│   [adf-prueba] C/grande.txt: 
+~│   [adf-prueba] cajón/ÑANDÚ.txt: bien; sin escribir: bien; no borrar: bien
+~│   [adf-prueba] escribir: bien; crear: bien
+~│   [adf-prueba] comprobación: 0 problemas: bien
 # U4: la pantalla de UEFI (ramfb), del cargador al compositor por el árbol y por inicio.
 ~pantalla del firmware: 800x600 en
 ~│   [compositor] pantalla de UEFI de 800x600 a 32 bits, un búfer
@@ -54,12 +92,17 @@ DashOS en marcha con 4 núcleos.
 ~│   [ventana-b] 30 cuadros: bien
 ~│   [compositor] Wayland: 2 ventanas en pantalla
 # K7: una aplicación con el kit de interfaz, la tercera en la cascada.
-~│   [ajustes] ventana del kit en pantalla (360x250)
-# Se lleva el teclado al salir, con el foco en su campo: las "a" de la prueba van al campo hasta el clic.
+~│   [ajustes] ventana del kit en pantalla (360x408)
+# Sale cuando ya se teclea en otra ventana, así que no se lleva el teclado al salir (S8); lo coge con un clic, con el
+# foco en su campo: las "a" de la prueba van al campo.
 ~│   [ajustes] el campo dice: DashOSa
-# El compositor maximiza Ajustes (Super+Arriba) y la devuelve (Super+Abajo): la ventana del kit cambia de tamaño.
-~│   [ajustes] el compositor pide 800x600
-~│   [ajustes] vuelve a 360x250
+# El compositor maximiza Ajustes (Super+Arriba) y la devuelve (Super+Abajo): la ventana del kit cambia de tamaño. Con la
+# barra de la pantalla (S10, 40 de alto con su zona exclusiva), maximizada queda debajo: 800x560.
+~│   [ajustes] el compositor pide 800x560
+~│   [ajustes] vuelve a 360x408
+# El desplegable de Ajustes: un clic lo abre (el menú, dentro de la ventana) y otro, en la segunda opción, la elige.
+~│   [ajustes] menú abierto; la segunda opción en (
+~│   [ajustes] el desplegable dice: Destello
 # W8: el cursor entra en una ventana; el clic le da el teclado y le llega la "a".
 ~│   [ventana] ratón dentro
 ~│   [ventana] tecla 30 recibida
@@ -73,3 +116,664 @@ DashOS en marcha con 4 núcleos.
 ~│   [sonido] tono-a ya no está: su flujo sale con fundido
 ~│   [sonido] tono-a: flujo cerrado
 ~│   [sonido] tono-b: flujo cerrado
+# R1 (docs/REVISION_LOOP.md): un cliente hostil manda mensajes vacíos y cientos de mensajes con 8 llaves a archivos, al
+# sonido y al compositor; cada uno tiene que seguir contestando a una petición normal.
+~│   [hostil] A14 hora: bien
+~│   [hostil] montón: lo grande va aparte y vuelve al kernel al soltarlo: bien
+~│   [hostil] archivos sigue: sí
+# R6: el hostil es otro usuario (1001), encerrado en C/: no sale, no entra en C/Privado, no escribe lo ajeno.
+~│   [hostil] archivos, permisos: bien
+~│   [hostil] A7 préstamos: bien
+~│   [hostil] sonido sigue: sí
+# S10c: el tema del sistema no lo cambia cualquiera.
+~│   [hostil] compositor: poner el tema sin ser el centro da error: sí; el tema sigue: sí
+# S26: el centro pone al arrancar lo guardado (aquí, basura: la paleta del fondo de serie; sin fondo, el violeta) y la
+# caja Amiga lo recibe del compositor y saca las plumas de Material para sus programas.
+~│   [centro] al arrancar: tema claro, color Paleta del fondo (sin calcular) (6750a4), programas de las cajas como DashOS; en el compositor: sí
+~│   [caja-amiga] tema de DashOS: programas Amiga como DashOS, claro, color 6750a4; plumas: fondo fef7ff, texto 1d1b20, relleno 6750a4
+# S26: ni el aspecto de los programas de las cajas (dashos_tema_v1, versión 3).
+~│   [hostil] compositor: cambiar el aspecto de las cajas sin ser el centro da error: sí; sigue como DashOS: sí
+# S10: un programa cualquiera no puede ponerse de barra (sin el poder de escritorio, las capas ni se ven) ni pedir el
+# panel rápido.
+~│   [hostil] compositor: sin el poder de escritorio no hay capas (ni se anuncian ni se enlazan): sí; pedir el panel rápido da error: sí
+# S27: ni cambiar de espacio de trabajo como la barra.
+~│   [hostil] compositor: cambiar de espacio de trabajo sin ser la barra da error: sí
+# S27, oleada 2: ni dar el estado de la red y del volumen como el panel, ni saber quién está delante.
+~│   [hostil] compositor: dar el estado de la red y del volumen sin ser el panel da error: sí
+~│   [hostil] sesiones: quién está delante, sin ser el panel ni la barra: -2 y nada
+# Apagar y reiniciar (decisión del usuario del 2026-11-13): solo `sesiones` tiene el permiso del kernel (llamada 51),
+# que le manda `inicio`, y solo el panel se lo puede pedir.
+~│   [sesiones] tiene el permiso de apagar
+# S3: con él, sesiones escucha el aviso de memoria baja del kernel (llamada 53).
+~│   [sesiones] escucha el aviso de memoria baja
+# aviso-cajas: solo las cajas del sistema escuchan el aviso de memoria baja (por un canal que solo tiene `sesiones`, que
+# es quien les pide que suelten); otro programa no se apunta, su canal se cierra sin usar y no puede decir que soltó.
+~│   [hostil] sesiones: escuchar el aviso de memoria baja sin ser una caja (su canal, cerrado sin usar: sí) o decir que soltó: -2
+~│   [sesiones] caja-amiga escucha el aviso de memoria baja
+~│   [caja-amiga] escucha el aviso de memoria baja
+~│   [hostil] sesiones: apagar, reiniciar o cerrar la sesión sin ser el panel: -2
+~│   [hostil] apagar la máquina sin el permiso: 0 de 128 funcionaron: bien
+# S27, oleada 2: el panel sabe la red y quién está delante, y la barra recibe el estado por el compositor.
+# Decisión del usuario del 2026-11-13: el panel sabe el estado por "red-estado", que solo da eso; con esa llave no se
+# abre una conexión (el hilo del estado del servicio de red la rechaza).
+~│   [panel] con la llave del estado de la red, abrir una conexión: no se puede (bien)
+~│   [red] por el canal del estado solo se contesta ESTADO: orden 1 rechazada
+~│   [panel] red: conectada (10.0.2.15)
+~│   [panel] delante: 
+~│   [barra] estado: red conectada, volumen
+~│   [hostil] compositor sigue: sí
+# S10c: el centro de control rechaza lo que no sea abrir una categoría, también tras una inundación.
+~│   [hostil] centro: pedidos malos rechazados sin abrir nada, y sigue contestando tras la inundación: bien
+# C2: los mosaicos del panel rápido solo los lee y los guarda el panel: al hostil, -1 a todo.
+~│   [hostil] centro: los mosaicos del panel sin ser el panel: -1 y nada
+# U2: sesiones, primera parte. Un programa del usuario 1001 no mata a uno del 1000, y sí a uno suyo.
+~│   [sesiones] en marcha, con el servicio de archivos
+# U3: entrar abre el volumen cifrado del usuario y salir lo cierra; solo puede pedirlo `guardian` (aquí, `entrada`).
+~│   [entrada] Carla: contraseña mala -12, buena 0, volver con mala -12 y con buena 0, salir 0: bien
+~│   [sesiones] hostil pide entrar como Carla: -12
+# U4: la llave de un servicio solo con permiso; marcada, sin poder regalarla y revocable.
+~│   [sesiones] pide pide eco: el usuario dice sí (0)
+~│   [pide] U4: bien
+~│   [pide] llave de plazo: pedirla 0, entrar en la clase true, dejarla 0, después entra false: bien
+# U4: la pregunta, en una capa encima de todo; lo pulsado en el primer segundo no cuenta.
+~│   [guardian] ¿pide puede usar eco? El usuario dice sí
+~│   [guardian] tecla 's' antes de tiempo: no cuenta
+# U6, paso 2: lo concedido es por programa y usuario: a `pide` se le pregunta una vez por servicio y usuario.
+~│   [guardian] preguntas de pide, una por servicio y usuario: bien
+~│   [guardian] retirar a pide el permiso de plazo 0, otra vez -1: bien
+# S10c, C1: el centro de control abre Permisos (lo pide `guardian`, como un clic); el usuario quita el de eco de pide.
+# La apariencia guardada está en basura: se queda la de serie.
+~│   [centro] apariencia guardada: no se entiende; se queda la de serie
+~│   [centro] Permisos en pantalla: 1 concedidos
+~│   [centro] quita a pide el permiso de eco con el botón: 0; quedan 0
+~│   [centro] Permisos, lo que se ve: Ningún programa tiene permisos concedidos
+# Y Seguridad: el registro de sesiones, con lo que se le negó al hostil.
+~│   [centro] Seguridad, con negativas del hostil: sí;
+# Discos: el disco de pruebas, 7 MB (sin derechos: solo INFO).
+~│   [centro] Discos: Disco del sistema: 7,0 MB; Ocupado: 
+# Y comprobar el disco desde ahí: acción de administrador; `guardian` contesta (en la prueba, como Ana).
+~│   [guardian] centro pide comprobar: contesta como Ana
+# S10c: la pantalla de bloqueo y la de entrada siguen el tema del sistema (el del centro: oscuro, del fondo, C3).
+~│   [guardian] tema del sistema: oscuro, color c44e68
+# C2: los mosaicos guardados del panel están rotos en el disco (uno repetido y otro que no existe): el centro y el
+# panel se quedan los de serie.
+~│   [centro] panel guardado: un mosaico repetido; se queda el de serie
+~│   [panel] mosaicos: oscuro bloquear volumen (el centro: 2)
+# C2: el panel rápido. Super+A lo abre; un clic en el mosaico apaga el modo oscuro y otro lo enciende (lo pone y lo
+# guarda el centro, que solo se lo acepta al panel); Super+A lo cierra.
+~│   [panel] abierto; mosaico a
+~│   [centro] modo claro (lo pide el panel), guardado: 0
+~│   [centro] modo oscuro (lo pide el panel), guardado: 0
+~│   [sonido] volumen general: 90 % (lo pide panel)
+~│   [sonido] volumen general: 100 % (lo pide panel)
+# C2, el modo de edición del panel: quitar Bloquear y Hecho (lo guarda el centro, que lo relee; el panel ya no lo
+# enseña); otra vez Editar, ponerlo (va al final), subirlo y Hecho: como estaba. El disco acaba con los de serie.
+~│   [panel] quita bloquear
+~│   [centro] panel: oscuro volumen (lo pide el panel), guardado: 0; releído: sí
+~│   [panel] se ven: oscuro volumen;
+~│   [panel] pone bloquear
+~│   [panel] sube bloquear
+~│   [centro] panel: oscuro bloquear volumen (lo pide el panel), guardado: 0; releído: sí
+~│   [sonido] hostil pide el volumen general: no le toca
+~│   [panel] cerrado
+# S10: la barra de la pantalla, arriba a todo lo ancho con su zona exclusiva (las ventanas, debajo). La hora se mueve
+# (la prueba dura más de un minuto).
+~│   [barra] en pantalla: 800x40, zona exclusiva 40
+~│   [barra] la hora se mueve: 
+# En medio, el título de la ventana con el teclado (el compositor solo se lo dice a la barra); con la sesión bloqueada,
+# ninguno.
+~│   [barra] título: Centro de control
+~│   [barra] título: (ninguno)
+# El lanzador: su botón lo abre con los programas de Programas/; "ho" deja hola, e Intro lo lanza por `sesiones`, como
+# la persona que está delante (Ana). Super sola lo abre otra vez y Esc lo cierra.
+~│   [barra] lanzador abierto: 
+~│   [barra] busca "ho": hola
+~│   [sesiones] barra lanza Programas/hola: 0 (proceso 
+~│   [barra] lanza Programas/hola: 0 (proceso 
+~│   [barra] lanzador cerrado
+# S27: Super+2 cambia de espacio de trabajo (la barra lo enseña) y un clic en el 1 de la barra vuelve; las teclas del
+# volumen en ráfaga sacan un solo OSD, que las junta.
+~│   [compositor] espacios: se ve el 2
+~│   [barra] espacios: se ve el 2 de 3; el 1 en
+~│   [barra] pide el espacio 1
+~│   [panel] OSD abierto: volumen
+~│   [panel] OSD cerrado: 7 pulsaciones; volumen
+# S10: el Workbench de Ana. Sus raíces: el disco solo para leer (Sistema) y `C` (Home, provisional). No lista el cajón
+# de `sesiones` ni el de Carla, no abre sus ficheros, no crea por Sistema ni sube por encima de Home; y los nombres con
+# '|' o ':' no salen.
+~│   [workbench] raíces: Sistema solo para leer 0, Home para leer y escribir 0
+~│   [workbench] lo ajeno: listar el cajón de sesiones -12, abrir su registro -12; listar DeCarla -12, abrir su fichero -12; crear por Sistema -12; ".." desde Home no se abre: bien
+~│   [workbench] nombres raros: 1 sin enseñar en Home, 1 en Sistema/Imagenes; "..", "a/b", "x:y" no se buscan: bien
+# Sus iconos, en una capa de abajo (una columna a la derecha, bajo la barra); el de Home, con la sesión de Ana abierta.
+~│   [compositor] capa de workbench en (696, 40)
+~│   [workbench] en pantalla: 104x560, icono de Sistema en (
+~│   [workbench] icono de Home en (
+# El explorador de archivos (como Nautilus): de Ana, con sus raíces (Sistema para leer, Home y el cajón de la caja
+# Amiga). Lo de Carla no se lista ni se copia, no sube con "..", no crea por Sistema, ni él ni el servicio aceptan "." y
+# ".." como nombres, y nada se mete dentro de sí mismo. Crea su papelera en Home.
+~│   [explorador] raíces: Sistema solo para leer 0, Home 0, Amiga 0; ventana del servicio de 256 KB
+~│   [explorador] lo ajeno: listar DeCarla Some(-12), abrir su carta -12, copiarla no; ".." desde Home no; crear por Sistema -12; renombrar a ".." -1 (servicio -1), crear ".." -1; Privado dentro de sí no (servicio
+~): bien
+~│   [explorador] papelera en Home/.Papelera: lista
+~│   [explorador] listo: espera a que el Workbench le pida abrir algo
+# Con el ratón y el teclado (el guion, al final): el doble clic en el icono de Sistema del Workbench lo abre; DeCarla
+# no se lista; Programas y hola (lo lanza `sesiones`, como Ana); sus Propiedades (por Sistema no se cambian).
+~│   [workbench] pide al explorador que abra Sistema: 0
+~│   [explorador] el Workbench pide abrir Sistema
+~│   [explorador] ventana 1 en Sistema: 
+~│   [explorador] no abre Sistema/DeCarla: -12
+~│   [explorador] ventana 1 en Sistema/Programas: 
+~│   [sesiones] explorador lanza Programas/hola: 0 (proceso 
+~│   [explorador] lanza Programas/hola: 0 (proceso 
+~│   [explorador] Propiedades de Sistema/Programas/hola (ventana 1): Programa · 
+~, dueño 1000 (tú), grupo 1000, modo 755, bits 0x0, comentario ""; se puede cambiar: no
+# La carpeta personal, Privado como lista ordenada por tamaño, y las Propiedades de nota.txt: comentario nuevo y el bit
+# de archivado (el disco lo comprueba).
+~│   [explorador] ventana 1 en Home/Privado: 1 elemento (0 nombres raros sin enseñar): nota.txt
+~│   [explorador] ventana 1 como lista: nota.txt 18 bytes Texto
+~│   [explorador] ventana 1: por Tamano, de menos a más: nota.txt
+~│   [explorador] Propiedades de Home/Privado/nota.txt (ventana 1): Texto · 18 bytes, dueño 1000 (tú), grupo 1000, modo 600, bits 0x0, comentario ""; se puede cambiar: sí
+~│   [explorador] guarda Home/Privado/nota.txt: comentario "nota de Ana": 0, protección bits 0x1 modo 600: 0
+# Escribir busca en la carpeta y en las de dentro.
+~│   [explorador] búsqueda de "nota" acabada: 1 resultados: Home/Privado/nota.txt
+# Carpeta nueva (Ctrl+Mayús+N) y un nombre que no vale; copiar dos ficheros (Ctrl+flechas, Ctrl+espacio, Ctrl+C) y
+# pegarlos en ella; cambiar el nombre (F2) dejando la extensión; a la papelera (Supr) y restaurar desde ella.
+~│   [explorador] crea la carpeta Home/Viaje: 0
+~│   [explorador] ventana 1: el nombre ".." no vale: "." y ".." no valen como nombre
+~│   [explorador] copia 2 elementos: datos.bin, grande.txt
+~│   [explorador] acabado: Copiar 2 elementos a Viaje: 2 de 2 elementos, 928290 bytes
+~│   [explorador] cambia el nombre de Home/Viaje/grande.txt a "texto grande.txt": 0
+~│   [explorador] acabado: Mover "texto grande.txt" a la papelera: 1 de 1 elementos
+~│   [explorador] ventana 1 en Papelera: 1 elemento (0 nombres raros sin enseñar): texto grande.txt
+~│   [explorador] acabado: Restaurar "texto grande.txt": 1 de 1 elementos
+# Las miniaturas de los PNG de Fondos, una pestaña (Ctrl+T, Ctrl+W), otra ventana (Ctrl+N) con un camino escrito que
+# no vale (sube con "..") y otro que sí; se mueve por su barra y se arrastra datos.bin de ella a la primera (Privado).
+~│   [explorador] miniatura de Home/Fondos/
+~│   [explorador] ventana 1: pestaña nueva (2 pestañas)
+~│   [explorador] ventana 2: camino escrito "Home/../DeCarla": no vale
+~│   [explorador] ventana 2: camino escrito "Home/Viaje": va a Home/Viaje
+~│   [explorador] suelta en la ventana 1: mueve a Home/Privado
+~│   [explorador] acabado: Mover "datos.bin" a Privado: 1 de 1 elementos
+~│   [explorador] sin ventanas abiertas
+# El botón del panel rápido lo abre, como Super+A (el compositor solo se lo acepta a la barra).
+~│   [barra] pide el panel rápido
+~│   [panel] abierto por 2.ª vez
+# S10: los avisos. El servicio guarda 50, como mucho 8 de un programa y 10 por minuto de cada uno; la barra se suscribe.
+~│   [avisos] en marcha: historial de 50, 8 por programa, 10 por minuto
+~│   [avisos] la barra se suscribe:
+~│   [barra] avisos: suscrita;
+# Un programa cualquiera con la llave: avisa con su nombre de verdad (aunque mande una entrada de directorio o un
+# AVISO_PERSONA falsos o diga ser guardian), los mensajes mal hechos se rechazan, los bytes raros se limpian, y al
+# inundar topa con su ritmo. El servicio sigue.
+~│   [avisador] un aviso: 0 (sale como avisador): bien
+~│   [avisador] hacerse pasar por guardian o Sistema: sale como avisador: bien
+~│   [avisador] mal hechos rechazados 6 de 6, bytes raros guardados limpios, y sigue: bien
+~│   [avisos] avisador: demasiados avisos seguidos; los siguientes no se guardan
+~│   [avisador] inundar: 100 mandados,
+~demasiados: bien
+# U6: el `cambio` de Ana avisa con su sesión detrás: se guarda sin salir a Carla, y vuelve con ella.
+~│   [cambio] Ana, detrás: avisa 0
+~│   [avisos] cambio avisa con su sesión detrás (usuario
+~│   [avisos] vuelve delante el usuario
+# Un programa del disco, lanzado desde la barra como Ana, con permiso fijo para avisar: sale el toast, con punto en la
+# campana, y un clic lo cierra. La campana abre el historial (lo de avisa, lo de cambio guardado y lo del avisador, que
+# no tapa a los demás); "Borrar todo" lo vacía y la campana lo cierra.
+~│   [sesiones] barra lanza Programas/avisa: 0
+~│   [avisa] avisa: 0 (número
+~sale como avisa)
+~│   [barra] aviso de avisa: "Copia terminada" (urgencia 1); campana con punto
+~│   [barra] aviso cerrado: con un clic
+~sin leer; de avisa, cambio, avisador; Borrar todo en
+# La rueda del ratón (USB, por el compositor como `wl_pointer.axis`) mueve la lista del historial.
+~│   [barra] historial: la rueda lo lleva a la fila 3 de
+~│   [barra] borrar todo: 0, quedan 0
+~│   [barra] historial cerrado
+~│   [centro] Comprobar el disco: 0, 0 problemas
+# Pantallas: lo que dice el compositor de la de virt (ramfb, 800x600).
+~│   [centro] Pantallas: Pantalla DASHOS-1: 800 × 600; Frecuencia: 60,000 Hz; Escala: 1
+# Apariencia (C3): modo oscuro, y la ventana se repinta con el esquema oscuro.
+~│   [centro] Apariencia: Modo claro · elegido
+# S26: la de serie es la paleta del fondo; aquí, sin fondo aún (el guardado es el enorme), sin calcular.
+~│   [centro] Apariencia: oscuro, color Paleta del fondo (sin calcular); guardada: 0 (13 bytes); releída: sí
+# Con el ratón: doble clic en "Color fijo azul" (dos clics en la misma fila, en menos de 500 ms).
+~│   [centro] Apariencia: oscuro, color Azul; guardada: 0 (12 bytes); releída: sí
+# Y el tema llega a los demás programas por el compositor (dashos_tema_v1): Ajustes se repinta.
+~│   [ajustes] tema del sistema: oscuro, color 0061a4
+# C3: el fondo de escritorio (`fondo`, una capa de fondo). En el disco, Prefs/fondo dice enorme.png (una cabecera de
+# 40000 × 40000): no se lee y se queda el color liso.
+~│   [fondo] enorme.png: demasiado grande (40000 × 40000); se queda el color liso
+# Desde Apariencia, ondas.png (960 × 600, escalada para cubrir los 800 × 600 de la pantalla): el fondo la pone y saca
+# su color semilla (Material You); el centro guarda el fondo.
+~│   [fondo] ondas.png en pantalla: 960 × 600 escalada a 800 × 600 en 1 franja; semilla 3d6f88
+~│   [centro] Fondo ondas.png: en pantalla (960 × 600, 
+# "Paleta del fondo": el centro calcula una vez los esquemas de la semilla, los guarda con la apariencia y los da al
+# compositor, que los reparte: Ajustes, que estaba abierta, los usa sin calcular.
+~│   [centro] colores del fondo: semilla 3d6f88, esquemas claro y oscuro en 
+~│   [centro] Apariencia: oscuro, color Del fondo; guardada: 0 (202 bytes); releída: sí
+~│   [ajustes] tema del sistema: oscuro, color 3d6f88, esquema del centro (
+# Hostil: una imagen rota (su CRC no cuadra) no tumba a nadie: se quedan el fondo y el tema de antes.
+~│   [fondo] rota.png: un trozo está roto (su CRC no cuadra); se queda ondas.png
+~│   [centro] Fondo rota.png: no se pone (-3); se queda el de antes y el tema también
+# Otro fondo con el color del fondo elegido: el tema sale del nuevo, y Ajustes lo sigue.
+~│   [fondo] atardecer.png en pantalla: 640 × 480 escalada a 800 × 600 en 1 franja; semilla c44e68
+~│   [centro] Fondo atardecer.png: en pantalla (640 × 480, 
+~│   [centro] colores del fondo: semilla c44e68, esquemas claro y oscuro en 
+~│   [ajustes] tema del sistema: oscuro, color c44e68, esquema del centro (
+# La fila "Ampliar ventanas Amiga" (decisión del usuario del 2026-11-13): de automático a 1x, en `Prefs/cajas`.
+~│   [centro] Ampliar ventanas Amiga: 1x; guardado: 0 (30 bytes); releído: sí
+# La fila "Memoria de la caja Amiga" (decisión del usuario del 2026-11-13: crece según el programa, hasta este tope;
+# de serie, 256 MB): a 512 MB, en `Prefs/cajas`.
+~│   [centro] Memoria de la caja Amiga: 512 MB; guardado: 0 (48 bytes); releído: sí; tope del grupo: 0
+# S3: el tope del grupo de la caja lo pone el kernel; se lo pide `sesiones`, que relee Prefs/cajas.
+~│   [sesiones] caja-amiga: tope de 288 MB (memoria amiga 256): 0
+# Cuando el centro cambia el ajuste, la caja de pruebas ya acabó: sesiones lo guarda y lo pondrá al lanzarla.
+~│   [sesiones] caja-amiga: no está en marcha; memoria amiga 512 al lanzarla
+# Y Acerca de: versión, encendido, fecha y hora (del reloj de virt, A14), procesos, memoria en uso y lo que más gasta
+# (la orden MEMORIA de `sesiones`; la lista entera, en la consola).
+~│   [centro] Acerca de: DashOS, versión 0.0.1; Encendido hace 
+~; Lo que más gasta: 
+~│   [centro] memoria por proceso (
+# Carla (`cambio`, con Ana detrás) no ve nada de Ana, tampoco en MEMORIA: todos los que ve, con su memoria.
+~), 0 de otra persona; matar a ciegas 
+~ muertos, 0 dicen que existen: bien
+# Super+Arriba la maximiza (un búfer nuevo de lo que deja la barra) y Super+Abajo la devuelve.
+~│   [centro] el compositor pide 800x560
+~│   [centro] vuelve a 560x420
+~│   [centro] cerrado
+~│   [guardian] pide al centro abrir Permisos: 0, y se cerró: sí
+~│   [guardian] acciones de administrador: de pide 2, del hostil 3: bien
+~│   [pide] bloquear sin tener sesión: -2
+~│   [pide] bloquear la sesión de Carla: 0
+~│   [guardian] se bloquea la sesión de Carla
+~│   [guardian] pantalla de bloqueo en pantalla
+~│   [guardian] desbloqueado con la contraseña buena tras 1 mala: bien
+~│   [guardian] entra Ana tras 1 intento malo: bien
+# U6: el cambio rápido de usuario (docs/diseño/U6-cambio-rapido.md). Con Ana dentro, `guardian` lanza `cambio` como
+# ella y bloquea su sesión; en la pantalla, Esc, y entra Carla con Ana detrás. El `cambio` de Carla no ve ni mata los
+# procesos de Ana, no es Ana ante `sesiones` y no llega a su volumen ni a su fichero. El de Ana sigue en marcha detrás,
+# sin preguntar ni bloquear. Vuelve Ana (Esc en el bloqueo de Carla) y su fichero tiene todo.
+# U6, paso 2: el `cambio` de Ana abre una ventana (la captura el guion: `tools/captura_cambio.py`), suena por el
+# servicio de sonido y pide el permiso de plazo, que Ana le concede (en la prueba contesta `guardian`).
+~│   [cambio] Ana: ventana en pantalla: true
+~│   [cambio] Ana: suena por el servicio de sonido: true (0)
+~│   [cambio] Ana: pide plazo 0 (se pregunta a Ana), lo deja 0
+~│   [guardian] cambio de usuario: entra Carla (0 intentos malos); Ana sigue detrás
+# Con Carla delante, el compositor no enseña ni da entrada a lo de Ana, y su tono suena en silencio.
+~│   [compositor] sesiones de detrás: [1000]
+~│   [sonido] cambio: en silencio, su sesión está detrás
+~│   [sesiones] delante, la sesión de Carla; detrás, 1
+~│   [sesiones] cambio pide eco desde una sesión de detrás: no se pregunta
+~│   [cambio] Ana, detrás: escribe true, pedir eco -2, bloquear -2: bien
+~0 muertos, 0 dicen que existen: bien
+~│   [cambio] Carla, como Ana: entrar -12, volver -12, salir -12, lanzar -2: bien
+~│   [cambio] Carla, lo de Ana: abrir su volumen -12, verlo -12, cerrarlo -12; su fichero, por 0 caminos: bien
+# El permiso que Ana concedió a `cambio` no vale para el de Carla: se le pregunta a ella (y dice que no).
+~│   [cambio] Carla: pide plazo (concedido a cambio como Ana) -2: bien
+~│   [cambio] Carla delante (1), con Ana detrás: nada de Ana a su alcance: bien
+~│   [guardian] cambio de usuario: entra Ana (0 intentos malos); Carla sigue detrás
+~│   [sesiones] delante, la sesión de Ana; detrás, 1
+# Detrás, a la ventana de Ana no le llegó nada del teclado ni del ratón (el guion tecleaba y pulsaba en la sesión de
+# Carla), sus avisos de frame llegaron a ritmo bajo, y su tono se siguió leyendo sin sonar.
+~su ventana, 0 teclas, 0 del ratón, 0 veces el foco y 
+~ KB escritos: bien
+~│   [sonido] cambio: suena otra vez; en silencio se leyeron 
+~│   [compositor] sesiones de detrás: [1001]
+~│   [cambio] Ana vuelve delante: su fichero sigue, con lo escrito detrás: bien
+~│   [guardian] U6: el permiso de plazo de cambio, preguntado como Ana 1 y como Carla 1: bien
+~│   [guardian] cambio rápido: Ana, Carla y otra vez Ana: bien
+~│   [guardian] U6: retirar a cambio el permiso de plazo: 0; a pide el de eco: 
+~│   [guardian] S28: retirar a caja-amiga el permiso ejec:actualiza: 0
+# Hostil: un programa del disco llamado como el panel rápido no tiene sus poderes (son por el nombre que da `inicio`).
+~│   [cambio] lanzado del disco como panel: 
+~, 0 de escritorio; pedir el bloqueo da error: true: bien
+# U3: bloquear por tiempo: el compositor avisa cuando nadie toca teclado ni ratón (ext_idle_notifier_v1).
+~│   [guardian] esperando 2000 ms sin entrada
+~│   [guardian] sin entrada durante 2 s: aviso tras
+~│   [guardian] bloqueo por tiempo: bien
+# U3: bloquear con la tecla: Super+L da el aviso de inactividad en el acto (uno de 60 s llega en uno o dos).
+~│   [guardian] esperando 60000 ms sin entrada
+~│   [guardian] Super+L: se bloquea la sesión de Ana tras
+~│   [guardian] bloqueo con la tecla: bien
+~│   [pide] acción de administrador (comprobar el disco): 0 con 0 problemas: bien
+# A15: la hace el comprobador aparte, con los datos, sin parar al servicio de archivos.
+~│   [comprobador] pedido con los datos: 0 (0 problemas
+~│   [sesiones] pide mata a eco (usuario 1), con permiso de administrador
+~│   [pide] raíces: PROGDIR:pide 0, Programas:hola 0, SYS:LEEME.txt 0; crear por SYS: -12, cerrarla -5: bien
+~│   [pide] U2, tabla de nombres con PROGDIR: bien
+~│   [pide] Home: crea 0 y borra 0 en el volumen de Carla: bien
+~│   [entrada] lanzar como Carla (entró) 0, como Ana (no entró) -2, salir después 0: bien
+~│   [sesiones] hostil pide eco: el usuario dice no (-2)
+~│   [selector] el registro de sesiones: abrirlo -12, listar su cajón -12: bien
+~│   [selector] raíz de solo lectura: por ella no crea, ni escribe lo que abre, ni borra, ni la cierra: bien
+# U5: el selector cede la lectura de un fichero; con esa asa se lee y nada más.
+# U5: lo cedido lo elige el usuario en la ventana del selector, que empieza en C y no enseña el nombre con '|' (en
+# la prueba, el guion: Intro sin nada, flecha abajo e Intro para entrar en Privado, y Fin e Intro para nota.txt).
+# S10c: el selector también sigue el tema del sistema (aquí, aún el de serie).
+~│   [selector] tema del sistema: claro, color 6750a4
+~│   [selector] ventana de abrir en pantalla, para hostil: C (1 nombres raros sin enseñar),
+~│   [selector] Intro sin nada elegido: no abre nada
+~│   [selector] entra en C/Privado, 1 entradas: ../; nota.txt  ·  18 bytes
+# Retroceso sube a C, y se vuelve a entrar.
+~│   [selector] sube a C, 
+~│   [selector] entra en C/Privado, 1 entradas: ../; nota.txt  ·  18 bytes
+~│   [selector] el usuario elige C/Privado/nota.txt con doble clic: se cede solo para leer: 0
+# U5: la carpeta para guardar, elegida por el usuario: raíz 3 para leer y escribir; el hostil crea y borra ahí y no
+# sube por encima (lo comprueba antes de decir "selector: bien").
+~│   [selector] ventana de elegir carpeta en pantalla
+~│   [selector] el usuario elige la carpeta C/Privado: se cede para leer y escribir: 0 (hueco 3)
+~│   [hostil] selector: bien
+~│   [hostil] disco NVMe sin tramo: abrir -6, leer el sector 0 -1: bien
+# U6: el registro de seguridad apunta lo que se niega; solo lo lee `guardian`.
+# U2: lanzar un programa del disco (solo `guardian`; el hostil no puede).
+~│   [entrada] lanzar del disco: Programas/hola 0
+~un texto -
+~): bien
+~│   [sesiones] hostil lanza Programas/hola: -2
+# Lo lanzado nace con su canal con `sesiones` (marcado con su número) y tiene baja al acabar.
+~│   [sesiones] pide pide eco: 
+~│   [sesiones] baja de hola (proceso 65536, clase 0)
+~│   [sesiones] baja de pide (proceso 65537, clase 0)
+~│   [entrada] registro de seguridad: 
+~las del hostil (matar, servicio, entrar): bien
+~│   [sesiones] hostil (usuario 1001) no puede matar a compositor (usuario 1)
+~│   [sesiones] baja de caida-cliente (clase 0)
+~│   [sesiones] vuelve caida, con su grupo nuevo
+~│   [sesiones] hostil mata a presa (los dos, usuario 1001)
+~│   [hostil] sesiones: ve 
+~no mata al compositor (otro usuario), sí a presa (el suyo); los que acabaron, fuera
+# E6: inicio vigila los servicios. Uno que se cae a propósito vuelve con el mismo canal, tres veces, y se deja.
+~│   [caida] arranca y cae a propósito
+~│   [inicio] caida acabó (clase 0, código 3): se relanza (vez 1)
+~│   [caida] relanzado, con 1 cliente en el directorio; cae a propósito
+~│   [inicio] caida acabó (clase 0, código 3): se relanza (vez 3)
+~│   [inicio] caida acabó (clase 0, código 3): se deja tras 3 relanzados
+# S13: la red con cable. El controlador de virtio-net (en un concentrador con la red de usuario de QEMU y con
+# `tools/red_basura.py`), el servicio con smoltcp y su dirección por DHCP.
+~virtio-red: en el PCIe 0:
+~│   [virtio-red] MAC 52:54:00:12:34:56; colas de 128 y 64; avisos 
+~│   [red] DHCP: 10.0.2.15/24, puerta 10.0.2.2, DNS 10.0.2.3
+# Lo que no le toca a un programa con permiso (decir que es el controlador, tocar conexiones ajenas, mal formados), se
+# rechaza.
+~│   [red-prueba] hacerse pasar por el controlador o tocar lo ajeno: 
+~[-1, -1, -7]: bien
+# Un glotón abre conexiones sin fin: el servicio le da 8 y después "límite"; mientras, el eco de 4 MB al azar con el PC
+# (`tools/red_eco.py`) vuelve igual. Caudal y tiempo de ida y vuelta, en la línea "caudal" y en la de "ida y vuelta".
+~│   [red-gloton] tope en 8 conexiones; 50 intentos más dan -3: bien
+~│   [red-prueba] eco de 4 MB al azar: vuelve igual: bien
+~│   [red-prueba] con el glotón en su tope (
+~conexiones abiertas): bien
+~│   [red-gloton] cerradas las 8; otra vez abre: bien
+~│   [red-prueba] puerto cerrado: rechazada: bien
+# El PC manda basura (cortas, largas, enormes, IPv4 y ARP rotas): el controlador y el servicio siguen.
+~│   [red-prueba] basura del PC tirada; eco después: bien
+# Sin la llave del canal "red" no hay red.
+~│   [sin-red] sin la llave: 1024 llaves probadas, llegan 0; por un canal propio sí: bien
+# H4, primer paso de la caja Amiga (`caja/`, docs/bitacoras/caja-amiga.md): el JIT de Emu68 en un proceso big-endian.
+# Un programa 68k suma de 1 a 100.000 y escribe por una dos.library nativa (PutStr, VPrintf, Output y Write, cada una
+# una línea A $A0FF en su tabla de saltos); la caja comprueba la suma.
+~│   [caja-amiga] hola desde un programa 68k, por la dos.library nativa
+~│   [caja-amiga] suma de 1 a 100000 en el 68k: 705082704
+~│   [caja-amiga] Write() en Output(): bien
+~│   [caja-amiga] el 68k dio 705082704 (esperado 705082704) con 4 llamadas nativas
+# Hostiles: una función nativa que no existe se rechaza y el programa sigue; una línea A que no es una llamada acaba
+# el programa por su excepción; un bucle sin fin lo corta el vigilante de la caja (el sistema sigue mientras); y
+# escribir fuera de la memoria del 68k mata la caja, y nada más.
+~│   [caja-amiga] funcion 999 rechazada; el programa 68k sigue
+~│   [caja-amiga] línea A desconocida: excepción 10 del 68k, 1 rechazada, 1 llamada buena: bien
+~vueltas (vector 31): bien
+# Segundo paso: la página 0, de solo lectura, con ExecBase en la dirección 4 (el permiso de página 0, llamada 49); un
+# ejecutable hunk de AmigaOS hecho con m68k-amigaos-gcc, cargado con sus reubicaciones en memoria de AllocMem, que abre
+# la dos.library con OpenLibrary y escribe; el mismo fichero cortado y estropeado no rompe la caja ni pierde memoria; y
+# escribir en la dirección 4 mata la caja.
+# H5: exec, dos, graphics e intuition son las nativas en Rust (`caja/pegamento/`); cada programa es un proceso de exec.
+# S28: el cajón de la caja (raíz 0 de su ficha, para escribir) es `Caja:`; el disco va aparte, para leer (raíz 1), y es
+# `SYS:`. La caja comprueba, por debajo de su guardia, que el servicio niega escribir en el disco.
+~│   [caja-amiga] Caja: su cajón, para escribir; el servicio niega escribir en SYS: aunque la caja lo pida (Protegido): bien
+~│   [caja-amiga] exec, dos, graphics e intuition nativas (Rust): ExecBase $
+~│   [caja-amiga] SYS: sobre el servicio de archivos (la raíz de su ficha, de solo lectura); compositor: conectada por Wayland
+~tablas de saltos y de los vectores de ExecBase; lo que cambie un programa se deshace al acabar
+~solo de lectura; otra vez o en los primeros 64 KB, rechazada: bien
+~│   [caja-amiga] saludo.exe: 3 hunks (código 612, datos 32, BSS 1008 bytes) en $
+~│   [caja-amiga] hunk: hola desde un ejecutable de AmigaOS (m68k-amigaos-gcc)
+~│   [caja-amiga] hunk: 168 primos por debajo de 1000, el ultimo 997 (tres hunks)
+~│   [caja-amiga] hunk: tabla 31415926, dos.library abierta (v36 o mas: 1)
+~│   [caja-amiga] hunk: Write() en Output(): bien
+~│   [caja-amiga] saludo.exe acabó con 0 (vector -1), 7 llamadas nativas
+~sin memoria perdida: bien
+~│   [caja-amiga] hunk hostil: 9216 cortes y 21000 mutaciones de saludo.exe (1000 con AllocMem)
+# H5: una ventana Amiga en el escritorio. ventana.exe lee SYS:LEEME.txt por dos.library (el servicio de archivos
+# debajo), abre una ventana con OpenWindowTags, dibuja fuera (nada) y dentro (rectángulos, líneas, texto) y espera; el
+# guion pulsa su gadget de cerrar (IDCMP_CLOSEWINDOW de verdad). La captura, con CAPTURA_AMIGA (target/amiga.ppm).
+~│   [caja-amiga] ventana: SYS:LEEME.txt, leido por dos.library: "DashOS lee RedoxFS" (18 bytes)
+~│   [caja-amiga] ventana: abierta (320x159, dentro 320x150), dibujada; espera IDCMP_CLOSEWINDOW
+~│   [compositor] ventana de caja-amiga en (
+~│   [caja-amiga] ventana Amiga en pantalla (320x159, con la barra de DashOS): Ventana Amiga: 68k en DashOS
+~│   [caja-amiga] ventana: IDCMP_CLOSEWINDOW recibido
+~│   [caja-amiga] ventana.exe acabó con 0 (cerrada con su gadget)
+# Hostil: punteros malos a OpenWindow, OpenWindowTagList, las de dibujo, dos y exec. Fallan todas; la caja suelta lo
+# que el programa dejó y el compositor sigue contestando.
+~│   [caja-amiga] hostil: 61 llamadas malas, 0 funcionaron; el programa sigue vivo
+~el compositor contesta con 0 ventanas de la caja abiertas: bien
+# S28 (docs/diseño/S28-malware-amiga.md): siete virus de laboratorio (caja/pruebas68k/malware/), uno por familia del
+# malware del Amiga: bloque de arranque, enlace, parches de exec y dos, residentes, guiones de arranque, troyanos y la
+# memoria de otros. Cada intento que debe fallar falla; lo permitido se dice. La caja deshace lo que dejan cambiado
+# (tablas de saltos, ExecBase, vectores del 68k) y, al final, comprueba que sus parches y su código residente no los
+# usó nadie más. El disco lo mira después tools/disco_archivos.py. Nada de la caja al alcance del 68k (decisión 1): la
+# caja, un PIE por encima de 128 GB, pregunta al kernel página a página por los 4 GB bajos (solo la página 0 y los 4 MB
+# del 68k; nada en $7000_0000, donde estuvo).
+~│   [caja-amiga] malware: arranque: OpenDevice trackdisk.device unidad 0: no se abre (error -1)
+~│   [caja-amiga] malware: arranque: OpenDevice scsi.device unidad 0: no se abre (error -1)
+~│   [caja-amiga] malware: arranque: abrir DF0:: no (IoErr 218)
+~│   [caja-amiga] malware: arranque: lee el bloque de arranque de SYS:Imagenes/disquete.adf (4 bytes, DOS\3): leer se puede
+~│   [caja-amiga] malware: arranque: escribir su bloque de arranque en SYS:Imagenes/disquete.adf: no (IoErr 214)
+~│   [caja-amiga] malware: arranque: escribir LAMER! en el bloque 100 de SYS:Imagenes/disquete.adf: no (IoErr 214)
+~│   [caja-amiga] malware: arranque: escribir su bloque de arranque en Caja:Discos/disco.adf: no (IoErr 223)
+~│   [caja-amiga] malware: arranque: escribir en el byte 1000 de Caja:Discos/disco.adf: no (IoErr 223)
+~│   [caja-amiga] malware: arranque: vaciar Caja:Discos/disco.adf (MODE_NEWFILE): no (IoErr 223)
+~│   [caja-amiga] malware: arranque: 0 conseguidos de lo que no se debe
+~│   [caja-amiga] malware arranque.exe: 0 conseguidos (vector -1), 5 negativas de la guardia (1 preguntas: el usuario dice no), 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
+~│   [caja-amiga] malware: enlace: SYS:Programas/hola empieza por $7f454c46: no es un ejecutable de AmigaOS
+~│   [caja-amiga] malware: enlace: pegarse al final de SYS:Programas/hola: no (IoErr 214)
+~│   [caja-amiga] malware: enlace: Caja:C/saludo empieza por $000003f3: un ejecutable de AmigaOS
+~│   [caja-amiga] malware: enlace: pegarse al final de Caja:C/saludo: no (IoErr 223)
+~│   [caja-amiga] malware: enlace: escribirse al principio de Caja:C/saludo: no (IoErr 223)
+~│   [caja-amiga] malware: enlace: vaciar y reescribir Caja:C/saludo (MODE_NEWFILE): no (IoErr 223)
+~│   [caja-amiga] malware: enlace: esconder el original: renombrar Caja:C/saludo: no (IoErr 223)
+~│   [caja-amiga] malware: enlace: borrar Caja:C/saludo: no (IoErr 222)
+~│   [caja-amiga] malware: enlace: cambiar la proteccion de Caja:C/saludo: no (IoErr 223)
+~│   [caja-amiga] malware: enlace: crear un ejecutable nuevo en su cajon (Caja:C/saludo.nuevo; nadie lo arranca solo): si (permitido)
+~│   [caja-amiga] malware: enlace: pegarse a Caja:C/saludo.nuevo despues de cerrarlo: no (IoErr 223)
+~│   [caja-amiga] malware: enlace: 0 conseguidos de lo que no se debe
+~│   [caja-amiga] malware enlace.exe: 0 conseguidos (vector -1), 8 negativas de la guardia (1 preguntas: el usuario dice no), 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
+~│   [caja-amiga] malware: parche: 5 parches con SetFunction (OpenLibrary, OldOpenLibrary, DoIO, Open, LoadSeg) y 1 a mano en la tabla (Write)
+~│   [caja-amiga] malware: parche: dentro de su programa sus parches se usan (como en el Amiga): 2 veces
+~│   [caja-amiga] malware: parche: 0 conseguidos de lo que no se debe
+~│   [caja-amiga] malware parche.exe: 0 conseguidos (vector -1), 0 negativas de la guardia (0 preguntas: sin preguntas), 0 avisos del Enforcer; deshecho: 6 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
+~│   [caja-amiga] malware: residente: ColdCapture, CoolCapture, WarmCapture, KickMemPtr y KickTagPtr en ExecBase: escritos (es la memoria de su caja; nada los usa)
+~│   [caja-amiga] malware: residente: vectores 4 y 31 del 68k (en $100000) cambiados: si, dentro de su programa
+~│   [caja-amiga] malware: residente: Supervisor() no entra en supervisor (la caja no lo tiene)
+~│   [caja-amiga] malware: residente: ColdReboot() vuelve sin reiniciar nada
+~│   [caja-amiga] malware: residente: su codigo residente no corrio nunca
+~│   [caja-amiga] malware: residente: 0 conseguidos de lo que no se debe
+~│   [caja-amiga] malware residente.exe: 0 conseguidos (vector -1), 0 negativas de la guardia (0 preguntas: sin preguntas), 3 avisos del Enforcer; deshecho: 0 entradas de tablas, 2 grupos de ExecBase, 2 vectores del 68k: bien
+~│   [caja-amiga] malware: guion: abrir S:Startup-Sequence para escribir: no (IoErr 218)
+~│   [caja-amiga] malware: guion: crear SYS:S/Startup-Sequence: no (IoErr 205)
+~│   [caja-amiga] malware: guion: poner su SYS:L/Disk-Validator: no (IoErr 205)
+~│   [caja-amiga] malware: guion: anadir una linea a Caja:S/Startup-Sequence: no (IoErr 223)
+~│   [caja-amiga] malware: guion: escribir al principio de Caja:S/Startup-Sequence: no (IoErr 223)
+~│   [caja-amiga] malware: guion: sustituir Caja:S/Startup-Sequence (MODE_NEWFILE): no (IoErr 223)
+~│   [caja-amiga] malware: guion: crear Caja:S/User-Startup: no (IoErr 223)
+~│   [caja-amiga] malware: guion: crear Caja:Disk-Validator: no (IoErr 223)
+~│   [caja-amiga] malware: guion: renombrar Caja:S/Startup-Sequence: no (IoErr 223)
+~│   [caja-amiga] malware: guion: borrar Caja:S/Startup-Sequence: no (IoErr 222)
+~│   [caja-amiga] malware: guion: renombrar Caja:S/inocente a Caja:S/User-Startup: no (IoErr 223)
+~│   [caja-amiga] malware: guion: 0 conseguidos de lo que no se debe
+~│   [caja-amiga] malware guion.exe: 0 conseguidos (vector -1), 8 negativas de la guardia (1 preguntas: el usuario dice no), 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
+~│   [caja-amiga] malware: troyano: borrar SYS:LEEME.txt: no (IoErr 214)
+~│   [caja-amiga] malware: troyano: borrar SYS:Imagenes/disquete.adf: no (IoErr 214)
+~│   [caja-amiga] malware: troyano: borrar SYS:Programas/hola: no (IoErr 214)
+~│   [caja-amiga] malware: troyano: vaciar SYS:C/grande.txt: no (IoErr 214)
+~│   [caja-amiga] malware: troyano: renombrar SYS:Programas: no (IoErr 214)
+~│   [caja-amiga] malware: troyano: Format de Caja:: no (IoErr 236)
+~│   [caja-amiga] malware: troyano: Format de SYS:: no (IoErr 236)
+~│   [caja-amiga] malware: troyano: Relabel de SYS:: no (IoErr 236)
+~│   [caja-amiga] malware: troyano: Inhibit de SYS:: no (IoErr 236)
+~│   [caja-amiga] malware: troyano: borrar Caja:C/saludo: no (IoErr 222)
+~│   [caja-amiga] malware: troyano: borrar Caja:Discos/disco.adf: no (IoErr 222)
+~│   [caja-amiga] malware: troyano: borrar Caja:S/Startup-Sequence: no (IoErr 222)
+~│   [caja-amiga] malware: troyano: borrar Caja:C/saludo.info: no (IoErr 222)
+~│   [caja-amiga] malware: troyano: cambiar la herramienta de Caja:C/saludo.info: no (IoErr 223)
+~│   [caja-amiga] malware: troyano: borrar un fichero de datos de su cajon (Caja:datos.txt; va a la papelera): si (permitido)
+~│   [caja-amiga] malware: troyano: crear y borrar dos veces Caja:basura.txt y uno de nombre largo (a la papelera, sin pisarse): si (permitido)
+~│   [caja-amiga] malware: troyano: 0 conseguidos de lo que no se debe
+~│   [caja-amiga] malware troyano.exe: 0 conseguidos (vector -1), 10 negativas de la guardia (1 preguntas: el usuario dice no), 4 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
+~│   [caja-amiga] malware: memoria: otros programas corriendo en su caja: 0 (cada caja corre los suyos; otra caja u otro proceso no se ven)
+~│   [caja-amiga] malware: memoria: restos de ventana.exe en la memoria de la caja (4 MB del 68k): 0
+~│   [caja-amiga] malware: memoria: el ejecutable nativo de la caja, antes en $70000000: nada (TypeOfMem 0; no lee)
+~│   [caja-amiga] malware: memoria: la caja, toda por encima de 4 GB (0 direcciones suyas por debajo); en los 4 GB del 68k, el kernel no ve más que la página 0 y la memoria del 68k (0 de 65471 trozos de 64 KB con algo de más; en $70000000, nada;
+~│   [caja-amiga] malware: memoria: 0 conseguidos de lo que no se debe
+~│   [caja-amiga] malware memoria.exe: 0 conseguidos (vector -1), 0 negativas de la guardia (0 preguntas: sin preguntas), 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
+~│   [caja-amiga] malware: tras los siete, los parches de parche.exe se usaron 2 veces (las 2 de su programa), el código residente 0, y ExecBase sin vectores de reinicio: bien
+# S28, decisión del usuario del 2026-11-13: la guardia pregunta al usuario en vez de negar. La caja lo pide a
+# `sesiones` (un permiso sin llave, `ejec:<programa>`), que se lo pregunta a `guardian`; el guion contesta que no a
+# cada virus (la primera vez: tras un no, nada más de ese programa). Un programa honrado, actualiza.exe, reescribe
+# Caja:C/viejo (un ejecutable) tres veces: "solo esta vez", "siempre" (lo guarda `sesiones`) y la tercera ya lo
+# recuerda `sesiones` sin preguntar al usuario. tools/disco_archivos.py mira después que quedó en la versión 4, y que
+# lo borrado por el troyano está en la papelera de la caja (fuera de su alcance).
+~│   [caja-amiga] guardia: enlace.exe quiere cambiar "saludo" (ejecutable): se pregunta (ejec:enlace): el usuario dice no
+~│   [guardian] la caja Amiga: ¿enlace.exe puede cambiar saludo? El usuario dice no
+~│   [sesiones] caja-amiga pide ejec:actualiza: 0 (el usuario dice sí, solo esta vez)
+~│   [caja-amiga] actualiza: Caja:C/viejo de la version 1 a la 2: hecho
+~│   [caja-amiga] actualiza.exe, vuelta 1: 1 preguntas (el usuario dice sí, solo esta vez): actualizado: bien
+~│   [caja-amiga] actualiza.exe, vuelta 2: 1 preguntas (el usuario dice sí, siempre): actualizado: bien
+~│   [caja-amiga] actualiza.exe, vuelta 3: 1 preguntas (sí, lo recuerda sesiones): actualizado: bien
+~│   [caja-amiga] actualiza: Caja:C/viejo de la version 3 a la 4: hecho
+~│   [guardian] preguntas de la caja Amiga (guardia de ficheros): 6, a 2 dijo que sí
+# Programas de Dash (el lenguaje de ~/Projects/FreeMEMLang), compilados al hacer la caja (`caja/Makefile`; sin `dash`,
+# no están y estas líneas faltan): texto.exe y texto_gcc.exe (`caja/pruebas68k/dash/caja_texto.dash`, directo y por C
+# con libnix, que abre utility.library), hola.exe (`examples/hola.dash`: ventana y Delay) y ventana.exe
+# (`caja_ventana.dash`: dibuja y espera a que el guion pulse su gadget de cerrar). Su salida lleva "dash: " delante; es
+# la misma que en FS-UAE con el Kickstart 3.1 (el oráculo, docs/bitacoras/caja-amiga.md).
+~│   [caja-amiga] dash: hola desde Dash
+~│   [caja-amiga] dash: suma de cuadrados 333833500, fib(20) 6765, 14285 y 5, -3
+~│   [caja-amiga] dash: hola, DashOS (12 letras), trozo [DashOS], busca 6
+~│   [caja-amiga] dash: a-b-c AMIGA ff
+~│   [caja-amiga] dash: lista 5, suma 25, ultima 7, palabras uno tres cinco
+~│   [caja-amiga] dash: dicc 3: 2 3 false
+~│   [caja-amiga] dash: punto (13, 3), 50 puntos, el ultimo (50, 100)
+~│   [caja-amiga] dash: reloj: time_delay(10) tarda unos 200 ms
+~│   [caja-amiga] dash: adios desde Dash
+~│   [caja-amiga] Dash texto.exe acabó con 0 (vector -1)
+~0 avisos, 0 bloques sin soltar: bien
+~│   [caja-amiga] Dash texto_gcc.exe acabó con 0 (vector -1)
+# Dos pruebas de FreeMEMLang tal cual (tests/test_interp_comillas.dash y test_lista_listas_literal.dash): su salida es
+# la de sus líneas "# expect-out", las que comprueba FreeMEMLang en FS-UAE.
+~│   [caja-amiga] dash: a xyxy b 2 c
+~│   [caja-amiga] dash: llaves {1: 2} y "comillas"
+~│   [caja-amiga] dash: 33 # y #
+~│   [caja-amiga] dash: fin
+~│   [caja-amiga] Dash test_interp_comillas acabó con 0 (vector -1)
+~│   [caja-amiga] dash: a 40
+~│   [caja-amiga] dash: b 47
+~│   [caja-amiga] dash: b igual
+~│   [caja-amiga] dash: 7 x
+~│   [caja-amiga] dash: suma 9
+~│   [caja-amiga] Dash test_lista_listas_literal acabó con 0 (vector -1)
+~│   [caja-amiga] dash: Starting Dash...
+~│   [caja-amiga] dash: Window 'Hola Dash' opened.
+~│   [caja-amiga] ventana Amiga en pantalla (400x150, con la barra de DashOS): Hola Dash
+~│   [caja-amiga] dash: Closing window and exiting.
+~│   [caja-amiga] Dash hola.exe acabó con 0 (vector -1)
+~│   [caja-amiga] dash: ventana abierta y dibujada; espera a que la cierren
+~│   [caja-amiga] ventana Amiga en pantalla (360x170, con la barra de DashOS): Dash en DashOS
+~│   [caja-amiga] dash: cerrada con su gadget
+~│   [caja-amiga] Dash ventana.exe acabó con 0 (vector -1)
+~│   [caja-amiga] gadtools.library nativa (Rust)
+~│   [caja-amiga] boopsi: 0 fallos
+~│   [caja-amiga] boopsi.exe acabó con 0, 
+~│   [caja-amiga] ramlib: Suma(40, 2) = 42: bien
+~│   [caja-amiga] ramlib: 0 fallos
+~│   [caja-amiga] ramlib.exe acabó con 0, 
+~│   [caja-amiga] capa.exe acabó con 0, 
+# La memoria del 68k crece según la pidan, hasta el tope (aquí uno de prueba, 48 MB): glotona.c pide sin fin.
+~│   [caja-amiga] glotona: 0 fallos
+# S3: con los cupos como topes, la para su tope de prueba (48 MB) y no el cupo (antes llegaba a 15).
+~│   [caja-amiga] glotona: 46 MB antes de quedarse sin sitio
+# aviso-cajas: con la memoria del 68k crecida y libre, memh.c pone un manejador de memoria baja (AddMemHandler) y la caja
+# dice a `presion` que tiene algo que soltar; `presion` llena la memoria de DashOS hasta que el kernel avisa, `sesiones`
+# mide lo que tiene cobrado la caja y se lo pide; la caja llama al manejador (suelta su caché de 2 MB) y devuelve lo
+# crecido que está libre. `sesiones` vuelve a medir: tiene que haber bajado.
+~│   [presion] caja-amiga tiene algo que soltar: se llena la memoria
+~│   [sesiones] memoria baja: quedan
+~│   [sesiones] caja-amiga: tiene
+~│   [caja-amiga] memh: su manejador se llamo 1 veces y solto 2048 KB de cache
+~│   [caja-amiga] memoria baja: 1 manejadores del 68k (1 llamadas); la memoria del 68k pasa de
+~│   [sesiones] caja-amiga suelta memoria con el aviso: bien
+~│   [caja-amiga] memh.exe acabó con 0,
+~│   [caja-amiga] gadtools: atributos (nivel 60, ciclo 2, casilla 1), entero 42, ItemAddress y UserData del menu 2: bien
+~│   [caja-amiga] gadtools: ventana abierta y dibujada (12 gadgets); espera clics
+~│   [caja-amiga] gadtools.exe acabó con
+~│   [caja-amiga] anidado: Open 68k desde exec: bien (abierta 1 vez)
+~│   [caja-amiga] anidado: Open que se abre a si misma: 16 niveles, 15 abiertas dentro
+~│   [caja-amiga] anidado: Open que vuelve con la pila mas abajo: sigue
+~│   [caja-amiga] anidado: tc_ExceptCode 2 veces, A1 = $1234
+~│   [caja-amiga] anidado: CallHookPkt da 1320 (esperado 1320)
+~│   [caja-amiga] anidado: tc_TrapCode propio recupera la instruccion ilegal: bien
+~│   [caja-amiga] anidado-a acabó por el vector -1 (D0 0)
+~│   [caja-amiga] anidado-b acabó por el vector -2
+~│   [caja-amiga] anidado-c acabó por el vector 4
+~│   [caja-amiga] anidado-d acabó por el vector 4
+~│   [caja-amiga] Dash ctrl_c.exe acabó con 5 (vector -1)
+~│   [caja-amiga] Dash ctrl_c_gcc.exe acabó con 5 (vector -1)
+~│   [caja-amiga] Dash test_ctrl_c_for acabó con 5 (vector -1)
+~│   [caja-amiga] dash: Error: instrucción ilegal (excepción 4)
+~│   [caja-amiga] Dash test_trap_illegal acabó con 20 (vector -1)
+# Varias tareas 68k a la vez en el hilo del JIT (procesos.c): Wait y Signal, puertos, prioridades, Forbid, Delay y el
+# turno entre tareas (a); miles de tareas, tareas que no acaban, un puerto borrado con mensajes, RemTask de otra (b); una
+# tarea que quita la del programa (c); tareas y un proceso que caen por una excepción y se quitan solos (d). Y
+# CreateNewProc (con NP_Entry, NP_Seglist, CreateProc; NULL y etiquetas absurdas dan 0).
+~│   [caja-amiga] procesos: Wait y Signal entre dos tareas: bien
+~│   [caja-amiga] procesos: 0 fallos (modo a)
+~│   [caja-amiga] procesos-a acabó por el vector -1 (D0 0)
+~│   [caja-amiga] procesos: CreateNewProc con NP_Entry: bien
+~│   [caja-amiga] procesos: NP_Seglist y CreateProc: bien
+~│   [caja-amiga] procesos: miles de tareas: bien
+~│   [caja-amiga] procesos: CreateNewProc con etiquetas absurdas o NULL da 0: bien
+~│   [caja-amiga] procesos: 0 fallos (modo b)
+~│   [caja-amiga] procesos-b acabó por el vector -1 (D0 0)
+~│   [caja-amiga] una tarea quita la del programa: el programa acaba
+~│   [caja-amiga] procesos-c acabó por el vector 31
+~│   [caja-amiga] procesos: un proceso que cae se quita: bien
+~│   [caja-amiga] procesos-d acabó por el vector -1 (D0 0)
+# Una tarea que no llama a nada pierde el testigo con el reloj de la caja (la interrupción de nivel 6 cada 20 ms), y la
+# medida del cambio de tarea (e).
+~│   [caja-amiga] procesos: una tarea que no llama a nada no se queda con la caja: bien
+~│   [caja-amiga] procesos-e acabó por el vector -1 (D0 0)
+~│   [caja-amiga] procesos: medida: 
+~│   [caja-amiga] dash: Error: división por cero (excepción 5)
+~│   [caja-amiga] Dash test_trap_divzero acabó con 20 (vector -1)
+~│   [caja-amiga] ventana Amiga en pantalla (320x200, con la barra de DashOS): GadTools Test
+~│   [caja-amiga] dash: ventana 1
+~│   [caja-amiga] dash: nombre: Amiga, sonido: 1
+~│   [caja-amiga] dash: fin
+~│   [caja-amiga] Dash test_doc_reaction acabó con 0 (vector -1)
+~│   [caja-amiga] Dash test_reaction acabó con 
+~(FAR 0x4); se termina
+~│   [inicio] caja-amiga acabó: clase 2, código 0
+# S29 (docs/diseño/S29-malware-linux-y-dashos.md): el malware de laboratorio de DashOS, un programa cualquiera con
+# ventanas. No pasa de su cupo de memoria, no ve ni enlaza protocolos para capturar la pantalla, mandar teclas o leer el
+# portapapeles sin foco, no se hace pasar por la caja Linux y, sin ventana, no oye nada de lo que se teclea (contraseñas
+# de `guardian` incluidas) ni del ratón, ni ve títulos ajenos; y no cambia el portapapeles sin foco.
+~│   [espia] llenar la memoria: se para en 
+~el cupo de su grupo; lo suelta y vuelve a pedir: bien
+~de espiar anunciados, 0 de 
+~enlaces por número aceptados: bien
+~│   [espia] hacerse pasar por la caja Linux (subconexión): sin respuesta true, el compositor sigue true: bien
+~contraseñas): 0 teclas, 0 veces el foco, 0 del ratón, 0 ofertas del portapapeles, 0 títulos ajenos; poner el portapapeles sin foco, cancelado: true: bien
+~│   [espia] malware de laboratorio: no consiguió nada: bien
+# Trasfondo nativo (lo que no necesita clics; la prueba con clics de la barra y del monitor en Ajustes queda para un
+# objetivo aparte): el panel en el fondo, lo que gasta y la prueba hostil del monitor de `sesiones`.
+~│   [fondo] panel en pantalla: 300 × 
+~│   [fondo] panel: gasta 
+~│   [hostil] monitor: solo lo suyo con nombre, lo ajeno sumado, sin cerrar lo ajeno y sin dejarse pedir muy deprisa: bien
+~│   [barra] CPU y memoria: 

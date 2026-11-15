@@ -1,0 +1,16 @@
+# El USB de la Pi 5 en QEMU virt (`make arranque-virt-usb`, docs/bitacoras/pi5.md): sin RP1, el panel lo dice y sigue;
+# el xHCI de QEMU hace de `xhci0`, sin compositor, y cada tecla (TECLAS=1 manda una "a" cada medio segundo) y cada
+# movimiento del ratón salen en el registro y en el panel.
+DashOS 0.0.1
+~por el simple-framebuffer del árbol
+DashOS en marcha con 4 núcleos.
+rp1: sin PCIe de la BCM2712
+~[xhci0] xHCI 1.00: 8 puertos
+~[xhci0] DMA bien: contesta a una orden vacía
+~[xhci0] puerto 5: PORTSC
+~[xhci0] puerto 5: ranura 1, concentrador, aparato
+~[xhci0] puerto 5 ruta 1: ranura 2, teclado, aparato 0627:0001, clase 0, interfaz 3/1/1
+~[xhci0] versión 1.00, 8 puertos; HID de arranque: 1 teclado y 1 ratón
+~[xhci0] avisos cada 10 ms
+~[xhci0] tecla: uso 0x04 (a) pulsada
+~[xhci0] ratón: botones

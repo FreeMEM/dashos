@@ -10,28 +10,36 @@ pub mod cerrojo;
 pub mod cpu;
 pub mod espacio;
 pub mod excepciones;
+pub mod hiper;
 pub mod mapa;
 pub mod memoria;
 pub mod mmio;
 pub mod mmu;
 pub mod monton;
 pub mod nucleos;
+pub mod pantalla;
 pub mod planificador;
 pub mod usuario;
 
 pub mod placa;
 // Para arranque.s, en el mismo bloque: qué tablas de arranque se hacen (placa.rs).
-#[cfg(not(feature = "virt"))]
-core::arch::global_asm!(".equ PLACA_VIRT, 0", include_str!("arranque.s"));
+#[cfg(not(any(feature = "virt", feature = "pi3", feature = "pi5")))]
+core::arch::global_asm!(".equ PLACA_VIRT, 0", ".equ PLACA_PI3, 0", ".equ PLACA_PI5, 0", include_str!("arranque.s"));
 #[cfg(feature = "virt")]
-core::arch::global_asm!(".equ PLACA_VIRT, 1", include_str!("arranque.s"));
+core::arch::global_asm!(".equ PLACA_VIRT, 1", ".equ PLACA_PI3, 0", ".equ PLACA_PI5, 0", include_str!("arranque.s"));
+#[cfg(feature = "pi3")]
+core::arch::global_asm!(".equ PLACA_VIRT, 0", ".equ PLACA_PI3, 1", ".equ PLACA_PI5, 0", include_str!("arranque.s"));
+#[cfg(feature = "pi5")]
+core::arch::global_asm!(".equ PLACA_VIRT, 0", ".equ PLACA_PI3, 0", ".equ PLACA_PI5, 1", include_str!("arranque.s"));
 core::arch::global_asm!(include_str!("contexto.s"));
 core::arch::global_asm!(include_str!("copia.s"));
 
-/// Entrada desde arranque.s en el núcleo 0, con la dirección física del árbol de dispositivos que dejó el firmware.
+/// Entrada desde arranque.s en el núcleo 0, con la dirección física del árbol de dispositivos que dejó el firmware y
+/// si arrancó en EL2 (el hipervisor, H9).
 #[unsafe(no_mangle)]
-extern "C" fn kmain(dtb: usize) -> ! {
+extern "C" fn kmain(dtb: usize, el2: u64) -> ! {
     ARBOL.store(dtb, core::sync::atomic::Ordering::Relaxed);
+    hiper::arranco_en(0, el2);
     crate::kmain(dtb)
 }
 
@@ -80,6 +88,24 @@ mod spin_once {
 /// El árbol de dispositivos que dejó el firmware, como bytes. `None` si no empieza por la marca del FDT o dice medir
 /// más de 2 MB. El firmware lo deja en memoria normal, que el kernel ve por el mapa lineal y que el repartidor de
 /// páginas reserva (`memoria.rs`): nadie más lo escribe.
+/// Pone a cero `largo` bytes del árbol original desde `off` (R10: la semilla del azar, que no debe quedar al alcance
+/// del DMA ni pasar a la copia). Solo antes de `copiar_arbol`: después, la copia no se toca.
+pub fn borrar_del_arbol(off: usize, largo: usize) {
+    if COPIA_ARBOL.get().is_some() {
+        return;
+    }
+    let Some(arbol) = arbol_de_dispositivos() else { return };
+    if off.checked_add(largo).is_none_or(|fin| fin > arbol.len()) {
+        return;
+    }
+    let p = arbol.as_ptr() as *mut u8;
+    for i in off..off + largo {
+        // SAFETY: dentro del árbol del firmware (comprobado arriba), que es RAM del kernel y nadie más lee a la vez:
+        // se llama al arrancar, en un solo núcleo, antes de copiarlo.
+        unsafe { p.add(i).write_volatile(0) };
+    }
+}
+
 pub fn arbol_de_dispositivos() -> Option<&'static [u8]> {
     if let Some(copia) = COPIA_ARBOL.get() {
         return Some(copia);

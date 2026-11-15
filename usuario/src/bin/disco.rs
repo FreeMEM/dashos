@@ -19,6 +19,8 @@ const ABRIR: u32 = 0;
 const LEER: u32 = 1;
 const ESCRIBIR: u32 = 2;
 const VACIAR: u32 = 5;
+const DESCARTAR: u32 = 6;
+const LEER_SIN_ESPERA: u32 = 7;
 
 struct Respuesta {
     estado: i32,
@@ -95,12 +97,44 @@ fn principal() -> u64 {
     let escrito = estado(ESCRIBIR, 1, 2, 4096) == 0 && estado(LEER, 1, 2, 8192) == 0 && (0..t).all(|i| byte(8192 + i) == byte(4096 + i));
     // 4 KB desde la mitad de una página: la segunda página va por PRP2.
     let cruzando = estado(LEER, (4096 / t) as u32, 0, 2048) == 0 && empieza(2048, b"DashOS: sector 0") && empieza(2048 + 2 * t, texto);
-    // Lo que se debe rechazar: fuera del disco (-2) y fuera de la ventana (-3).
-    let rechazos = estado(LEER, 1, a.sectores, 0) == -2 && estado(LEER, 2, 0, (64 * 1024 - t) as u32) == -3 && estado(LEER, 1, 0, 2) == -3;
+    // Lo que se debe rechazar: fuera del disco (-2) y fuera de la ventana (-3). Su disco es su tramo, el primer MB hasta
+    // la partición de DashOS (A13; desde A14 lo ve como su disco entero): ni el primer sector de archivos ni uno que
+    // empieza dentro y acaba fuera, ni uno tan grande que, sumado al principio del tramo, daría la vuelta.
+    let mb = (1u64 << 20) / t as u64;
+    let rechazos = a.sectores == mb && estado(LEER, 1, a.sectores, 0) == -2 && estado(LEER, 2, 0, (128 * 1024 - t) as u32) == -3
+        && estado(LEER, 1, 0, 2) == -3 && estado(LEER, 1, mb, 0) == -2 && estado(LEER, 2, mb - 1, 0) == -2
+        && estado(LEER, 8, u64::MAX - 3, 0) == -2 && estado(LEER, 1, u64::MAX, 0) == -2;
     // Vaciar la caché del disco (FS2).
     let vaciado = estado(VACIAR, 0, 0, 0) == 0;
     let si = |b: bool| if b { "bien" } else { "MAL" };
     println!("  [disco] leer: {}; escribir y releer: {}; cruzando páginas: {}; rechazos: {}; vaciar: {}", si(leidos), si(escrito), si(cruzando), si(rechazos), si(vaciado));
+    // A14, descartar (TRIM): como leer y escribir, nada fuera de su tramo ni del disco, ni cero sectores. Lo suyo, sí:
+    // 4 KB escritos y descartados se leen como ceros (QEMU, con discard=unmap).
+    let ocho = (4096 / t) as u32;
+    poner(4096, &[0x5A; 4096]);
+    let descartado = estado(ESCRIBIR, ocho, 8, 4096) == 0
+        && estado(DESCARTAR, ocho, 8, 0) == 0
+        && estado(LEER, ocho, 8, 8192) == 0
+        && (0..4096).all(|i| byte(8192 + i) == 0);
+    let no_descarta = estado(DESCARTAR, 1, mb, 0) == -2 && estado(DESCARTAR, 2, mb - 1, 0) == -2 && estado(DESCARTAR, 0, 8, 0) == -2
+        && estado(DESCARTAR, 1, a.sectores, 0) == -2 && estado(DESCARTAR, u32::MAX, 8, 0) == -2
+        && estado(LEER, 2, 0, 0) == 0 && empieza(0, b"DashOS: sector 0");
+    println!("  [disco] descartar: {}; rechazos al descartar: {}", si(descartado), si(no_descarta));
+    // A16: tres lecturas que vencen su plazo (el servicio no espera su terminada; llega tarde, como de un disco que
+    // tropieza). Después, todo sigue bien: lecturas y escrituras con lo que toca. Antes, el disco quedaba inservible.
+    let vencidas = (0..3).filter(|_| estado(LEER_SIN_ESPERA, 8, 0, 32768) == -4).count();
+    poner(4096, &[0; 512]);
+    poner(4096, b"DashOS: sector 3, tras el plazo");
+    let sigue = (0..5).all(|_| {
+        poner(8192, &[0xEE; 1024]);
+        estado(LEER, 2, 0, 8192) == 0 && empieza(8192, b"DashOS: sector 0") && empieza(8192 + t, b"DashOS: sector 1")
+    }) && estado(ESCRIBIR, 1, 3, 4096) == 0
+        && estado(LEER, 1, 3, 8192) == 0
+        && empieza(8192, b"DashOS: sector 3, tras el plazo")
+        && estado(LEER_SIN_ESPERA, 1, mb, 0) == -2;
+    // QEMU a veces acaba la lectura en el acto y el plazo no vence: basta con que venza una vez.
+    println!("  [disco] plazo vencido: {}; después sigue bien: {}", si(vencidas > 0), si(sigue));
+    println!("  [disco] (plazo vencido {} de 3 veces)", vencidas);
     // El anillo, con su propio canal: por él llegan la respuesta y después los avisos de terminadas.
     let (l2, v2) = dashos::canal_crear();
     let Some(r) = pedir(l2, v2, ANILLO, 0, 0, 0).filter(|r| r.estado == 0) else {
@@ -114,11 +148,45 @@ fn principal() -> u64 {
     let (avisos, esperas, bien) = probar_anillo(l2);
     println!("  [disco] anillo: 16 lecturas y un rechazo: {}", si(bien));
     println!("  [disco] (anillo con {} avisos al servicio y {} esperas)", avisos, esperas);
+    // A15: pedir el anillo otra vez, como un cliente relanzado (con la misma marca). Antes se negaba; ahora se da uno
+    // nuevo, que va, y el viejo deja de atenderse.
+    let (l3, v3) = dashos::canal_crear();
+    let otro = pedir(l3, v3, ANILLO, 0, 0, 0).filter(|r| r.estado == 0).and_then(|r| r.ventana).is_some_and(|m| dashos::memoria_proyectar(m, VA_ANILLO2, true) == 0);
+    BASE.store(VA_ANILLO2, core::sync::atomic::Ordering::Relaxed);
+    poner(16384, &[0; 2048]);
+    let nuevo = otro && probar_anillo(l3).2;
+    // A15: el servicio manda a la vez lo que puede del anillo; lo que se pisa tiene que salir en el orden del anillo.
+    let ordenado = otro && probar_orden(l3);
+    println!("  [disco] anillo con órdenes a la vez, en su orden: {}", si(ordenado));
+    BASE.store(VA_ANILLO, core::sync::atomic::Ordering::Relaxed);
+    {
+        use core::sync::atomic::Ordering::*;
+        // Una lectura más en el viejo, con aviso: nadie la atiende.
+        let e = 64 + 32 * (17 % 32);
+        palabra(e).store(LEER, Relaxed);
+        palabra(e + 4).store(1, Relaxed);
+        palabra(e + 8).store(0, Relaxed);
+        palabra(e + 12).store(0, Relaxed);
+        palabra(e + 16).store(0, Relaxed);
+        palabra(e + 20).store(7, Relaxed);
+        palabra(4).store(18, Release);
+        let mut p = [0u8; 24];
+        p[..4].copy_from_slice(&MIRAR.to_le_bytes());
+        dashos::canal_escribir(1, &p, &[]);
+    }
+    dashos::dormir_us(50_000);
+    let viejo_fuera = palabra(12).load(core::sync::atomic::Ordering::Acquire) == 17;
+    println!("  [disco] anillo otra vez: el nuevo va: {}; el viejo ya no se atiende: {}", si(nuevo), si(viejo_fuera));
     0
 }
 
+/// Dónde está proyectado el anillo que se usa (A15: después se pide otro).
+static BASE: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(VA_ANILLO);
+const VA_ANILLO2: usize = 0x42_0000_0000;
+
 fn palabra(off: usize) -> &'static core::sync::atomic::AtomicU32 {
-    unsafe { &*((VA_ANILLO + off) as *const core::sync::atomic::AtomicU32) }
+    let base = BASE.load(core::sync::atomic::Ordering::Relaxed);
+    unsafe { &*((base + off) as *const core::sync::atomic::AtomicU32) }
 }
 
 /// Pone en el anillo lecturas de los sectores `0..n` (más una fuera del disco si `malo`), avisa si el servicio
@@ -168,3 +236,87 @@ fn probar_anillo(lectura: u32) -> (u32, u32, bool) {
     bien &= empieza(16384, b"DashOS: sector 0") && empieza(16384 + 512, b"DashOS: sector 1") && empieza(16384 + 1024, b"DashOS: sector 2");
     (avisos, esperas, bien)
 }
+
+/// A15: 21 envíos de una vez en el anillo que se usa, que el servicio puede mandar al disco a la vez. Los que se pisan
+/// (el mismo sector, y uno escribe o descarta; el mismo sitio de la ventana, y uno lee) tienen que hacerse en el orden
+/// del anillo: escribir y leer lo escrito, dos escrituras seguidas del mismo sector, descartar y escribir, dos lecturas
+/// al mismo sitio, escribir desde un sitio y leer encima. Y 8 lecturas sueltas tras una escritura de 8 sectores.
+fn probar_orden(lectura: u32) -> bool {
+    use core::sync::atomic::{fence, Ordering::*};
+    let sector = |t: &[u8]| {
+        let mut s = [0u8; 512];
+        s[..t.len()].copy_from_slice(t);
+        s
+    };
+    poner(32768, &sector(b"orden: A"));
+    poner(33280, &sector(b"orden: B"));
+    poner(33792, &sector(b"orden: C"));
+    poner(34304, &sector(b"orden: D"));
+    for k in 0..8u8 {
+        poner(46080 + 512 * k as usize, &sector(&[b'p', b'a', b'r', b' ', b'0' + k]));
+    }
+    poner(40960, &[0xEE; 4096]);
+    poner(50176, &[0xEE; 4096]);
+    let mut envios = [(0u32, 0u32, 0u64, 0usize); 21];
+    let fijos = [
+        (ESCRIBIR, 1, 100, 32768),
+        (LEER, 1, 100, 40960),
+        (ESCRIBIR, 1, 100, 33280),
+        (LEER, 1, 100, 41472),
+        (DESCARTAR, 1, 101, 0),
+        (ESCRIBIR, 1, 101, 33792),
+        (LEER, 1, 101, 41984),
+        (LEER, 1, 0, 42496),
+        (LEER, 1, 1, 42496),
+        (ESCRIBIR, 1, 102, 34304),
+        (LEER, 1, 0, 34304),
+        (LEER, 1, 102, 43008),
+        (ESCRIBIR, 8, 110, 46080),
+    ];
+    envios[..13].copy_from_slice(&fijos);
+    for k in 0..8 {
+        envios[13 + k] = (LEER, 1, 110 + k as u64, 50176 + 512 * k);
+    }
+    let (sq0, cq0) = (palabra(4).load(Relaxed), palabra(8).load(Relaxed));
+    for (i, &(orden, cuantos, primero, off)) in envios.iter().enumerate() {
+        let e = 64 + 32 * (sq0.wrapping_add(i as u32) % 32) as usize;
+        palabra(e).store(orden, Relaxed);
+        palabra(e + 4).store(cuantos, Relaxed);
+        palabra(e + 8).store(primero as u32, Relaxed);
+        palabra(e + 12).store((primero >> 32) as u32, Relaxed);
+        palabra(e + 16).store(off as u32, Relaxed);
+        palabra(e + 20).store(200 + i as u32, Relaxed);
+    }
+    let total = envios.len() as u32;
+    palabra(4).store(sq0.wrapping_add(total), Release);
+    fence(SeqCst);
+    let mut p = [0u8; 24];
+    p[..4].copy_from_slice(&MIRAR.to_le_bytes());
+    dashos::canal_escribir(1, &p, &[]);
+    let mut buf = [0u8; 8];
+    let mut ll = [0u32; 1];
+    loop {
+        palabra(20).store(1, SeqCst);
+        fence(SeqCst);
+        if palabra(12).load(Acquire).wrapping_sub(cq0) >= total {
+            break;
+        }
+        // Sin respuesta, la prueba se queda aquí y falta su línea (como en `probar_anillo`).
+        dashos::canal_leer(lectura, &mut buf, &mut ll);
+    }
+    // Las terminadas, en el orden del anillo y todas bien.
+    let mut bien = true;
+    for i in 0..total {
+        let c = 2048 + 16 * (cq0.wrapping_add(i) % 32) as usize;
+        bien &= palabra(c).load(Relaxed) == 200 + i && palabra(c + 4).load(Relaxed) == 0;
+    }
+    palabra(8).store(cq0.wrapping_add(total), Release);
+    bien && empieza(40960, b"orden: A")
+        && empieza(41472, b"orden: B")
+        && empieza(41984, b"orden: C")
+        && empieza(42496, b"DashOS: sector 1")
+        && empieza(43008, b"orden: D")
+        && empieza(34304, b"DashOS: sector 0")
+        && (0..8u8).all(|k| empieza(50176 + 512 * k as usize, &[b'p', b'a', b'r', b' ', b'0' + k]))
+}
+

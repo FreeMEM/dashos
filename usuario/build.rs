@@ -11,6 +11,9 @@ fn main() {
         println!("cargo:rustc-link-arg-bin=relevo=-zstack-size=1048576");
     }
     println!("cargo:rerun-if-env-changed=RELEVO_LIB_DIR");
+    // A15: el comprobador recorre el disco con la misma biblioteca.
+    println!("cargo:rustc-link-arg-bin=comprobador=-zstack-size=1048576");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=enlace.ld");
+    println!("cargo:rerun-if-changed=enlace_x86.ld");
 }

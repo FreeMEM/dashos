@@ -5,7 +5,7 @@
 //! del árbol de dispositivos con las zonas que UEFI se queda (como `/memreserve/`), sale de los servicios de arranque,
 //! apaga la MMU y salta al kernel con el árbol en `x0`.
 //!
-//! En x86-64 (S21, X1) el mismo programa sale como `EFI/BOOT/BOOTX64.EFI`; lo propio de x86 está en `x86_64.rs`.
+//! En x86-64 (S30, X1) el mismo programa sale como `EFI/BOOT/BOOTX64.EFI`; lo propio de x86 está en `x86_64.rs`.
 //!
 //! Escrito con la especificación de UEFI 2.10 (tablas del sistema y de servicios de arranque, protocolo de texto) y la
 //! de devicetree (cabecera FDT).
@@ -97,8 +97,8 @@ struct ServiciosArranque {
 /// EFI_GRAPHICS_OUTPUT_PROTOCOL (UEFI 2.10, 12.9): solo lo que hace falta para saber dónde está la pantalla.
 #[repr(C)]
 struct Gop {
-    _consultar_modo: Reservado,
-    _poner_modo: Reservado,
+    consultar_modo: extern "efiapi" fn(*const Gop, u32, *mut usize, *mut *const InfoGop) -> Estado,
+    poner_modo: extern "efiapi" fn(*const Gop, u32) -> Estado,
     _blt: Reservado,
     modo: *const ModoGop,
 }
@@ -138,10 +138,109 @@ struct Pantalla {
     formato: u32,
 }
 
-fn buscar_pantalla(bs: &ServiciosArranque) -> Option<Pantalla> {
+/// fw_cfg de QEMU `virt` (docs/specs/fw_cfg.rst de QEMU): datos (+0), selector (+8, 16 bits) y DMA (+16, 64 bits), en
+/// big-endian.
+#[cfg(target_arch = "aarch64")]
+const FW_CFG: usize = 0x0902_0000;
+
+/// Solo para ver el escritorio a otro tamaño en QEMU (DASHOS_PANTALLA): la ramfb (fichero "etc/ramfb" de fw_cfg) a
+/// `ancho` x `alto`, XRGB8888, sobre páginas reservadas (van al árbol como zona reservada, como las del firmware).
+/// `None` si no hay ramfb o no se puede.
+#[cfg(target_arch = "aarch64")]
+fn ramfb(bs: &ServiciosArranque, c: &mut Consola, ancho: u32, alto: u32) -> Option<Pantalla> {
+    let selector = |s: u16| unsafe { core::ptr::write_volatile((FW_CFG + 8) as *mut u16, s.to_be()) };
+    let byte = || unsafe { core::ptr::read_volatile(FW_CFG as *const u8) };
+    // El directorio de ficheros (selector 0x19): cuántos (32 bits) y entradas de 64 bytes (tamaño 32, selector 16,
+    // reservado 16, nombre 56).
+    selector(0x19);
+    let mut n = [0u8; 4];
+    n.iter_mut().for_each(|b| *b = byte());
+    let mut sel = None;
+    for _ in 0..u32::from_be_bytes(n).min(512) {
+        let mut e = [0u8; 64];
+        e.iter_mut().for_each(|b| *b = byte());
+        let fin = e[8..].iter().position(|&x| x == 0).unwrap_or(56);
+        if &e[8..8 + fin] == b"etc/ramfb" {
+            sel = Some(u16::from_be_bytes([e[4], e[5]]));
+        }
+    }
+    let sel = sel?;
+    let tamano = ancho as u64 * alto as u64 * 4;
+    let mut base = DEBAJO_DE_4GB;
+    // Por debajo de 4 GB, memoria 0 (reservada).
+    if (bs.reservar_paginas)(POR_DEBAJO_DE, 0, tamano.div_ceil(4096) as usize, &mut base) != BIEN {
+        return None;
+    }
+    unsafe { core::ptr::write_bytes(base as *mut u8, 0, tamano as usize) };
+    // RAMFBCfg: dirección (64), formato (XR24), flags, ancho, alto y bytes por línea (32 cada uno).
+    #[repr(C, align(8))]
+    struct Cfg([u8; 28]);
+    let mut cfg = Cfg([0; 28]);
+    cfg.0[0..8].copy_from_slice(&base.to_be_bytes());
+    cfg.0[8..12].copy_from_slice(&0x3432_5258u32.to_be_bytes());
+    cfg.0[16..20].copy_from_slice(&ancho.to_be_bytes());
+    cfg.0[20..24].copy_from_slice(&alto.to_be_bytes());
+    cfg.0[24..28].copy_from_slice(&(ancho * 4).to_be_bytes());
+    // FWCfgDmaAccess: control (selector << 16, elegir 0x08 y escribir 0x10), largo y dirección. Se manda al escribir
+    // la mitad baja de su dirección.
+    #[repr(C, align(16))]
+    struct Dma {
+        control: u32,
+        largo: u32,
+        dir: u64,
+    }
+    let dma = Dma { control: ((sel as u32) << 16 | 0x18).to_be(), largo: 28u32.to_be(), dir: (&cfg as *const Cfg as u64).to_be() };
+    let p = &dma as *const Dma as u64;
+    unsafe {
+        core::ptr::write_volatile((FW_CFG + 16) as *mut u32, ((p >> 32) as u32).to_be());
+        core::ptr::write_volatile((FW_CFG + 20) as *mut u32, (p as u32).to_be());
+    }
+    for _ in 0..10_000_000 {
+        let control = u32::from_be(unsafe { core::ptr::read_volatile(&dma.control) });
+        if control & !1 == 0 {
+            if control & 1 != 0 {
+                break;
+            }
+            let _ = writeln!(c, "DashOS: ramfb a {}x{} en {:#x}", ancho, alto, base);
+            return Some(Pantalla { base, tamano, ancho, alto, por_linea: ancho, formato: 1 });
+        }
+    }
+    let _ = writeln!(c, "DashOS: la ramfb no acepta {}x{}", ancho, alto);
+    None
+}
+
+fn buscar_pantalla(bs: &ServiciosArranque, c: &mut Consola) -> Option<Pantalla> {
     let mut gop: *const Gop = core::ptr::null();
     if (bs.localizar_protocolo)(&GUID_GOP, core::ptr::null(), &mut gop) != BIEN || gop.is_null() {
         return None;
+    }
+    // Con DASHOS_PANTALLA=ANCHOxALTO al compilar, se pide ese modo si el firmware lo tiene (para ver el escritorio a
+    // otro tamaño; las pruebas cuentan con el de serie, 800 × 600 en QEMU).
+    if let Some((ancho, alto)) = option_env!("DASHOS_PANTALLA").and_then(|t| t.split_once('x')).and_then(|(a, b)| Some((a.parse::<u32>().ok()?, b.parse::<u32>().ok()?))) {
+        let max = unsafe { (*(*gop).modo).max_modo };
+        let _ = writeln!(c, "DashOS: el firmware da {} modos de pantalla", max);
+        for m in 0..max {
+            let mut tam = 0usize;
+            let mut info: *const InfoGop = core::ptr::null();
+            if (unsafe { (*gop).consultar_modo })(gop, m, &mut tam, &mut info) == BIEN && !info.is_null() {
+                let i = unsafe { &*info };
+                if i.ancho == ancho && i.alto == alto {
+                    let e = (unsafe { (*gop).poner_modo })(gop, m);
+                    let _ = writeln!(c, "DashOS: modo {} de {} ({}x{}) pedido: {}", m, max, ancho, alto, if e == BIEN { "puesto" } else { "rechazado" });
+                    break;
+                }
+            }
+        }
+        // Sin ese modo en el firmware (el de QEMU, por ramfb, solo da 640x480, 800x600 y 1024x768): en `virt`, se
+        // programa la ramfb a ese tamaño por fw_cfg, con memoria propia.
+        #[cfg(target_arch = "aarch64")]
+        let actual = unsafe { &*(*(*gop).modo).info };
+        #[cfg(target_arch = "aarch64")]
+        if (actual.ancho, actual.alto) != (ancho, alto) {
+            if let Some(p) = ramfb(bs, c, ancho, alto) {
+                return Some(p);
+            }
+        }
     }
     let modo = unsafe { &*(*gop).modo };
     let info = unsafe { &*modo.info };
@@ -238,9 +337,13 @@ const DIRECCION_NUCLEO: u64 = 0x4020_0000;
 const MARGEN_NUCLEO: usize = 2 << 20;
 
 // Reservar páginas (UEFI 2.10, 7.2): tipos de reserva y de memoria.
+/// Por debajo de la dirección que se pasa (caja-linux-grandes: con highmem, QEMU `virt` tiene RAM por encima de los 4
+/// GB y UEFI reparte desde arriba; el árbol y la pantalla se quedan por debajo).
 #[cfg(target_arch = "aarch64")]
-const EN_CUALQUIER_SITIO: u32 = 0;
+const POR_DEBAJO_DE: u32 = 1;
 const EN_ESA_DIRECCION: u32 = 2;
+#[cfg(target_arch = "aarch64")]
+const DEBAJO_DE_4GB: u64 = 0xFFFF_FFFF;
 #[cfg(target_arch = "aarch64")]
 const DATOS_DEL_CARGADOR: u32 = 2;
 const PAGINA: usize = 4096;
@@ -502,7 +605,7 @@ extern "efiapi" fn principal(imagen: *const c_void, st: *const TablaSistema) -> 
         }
     };
     let _ = writeln!(c, "DashOS: árbol de dispositivos en {:#x}, {} bytes", arbol, tam_arbol);
-    let pantalla = buscar_pantalla(bs);
+    let pantalla = buscar_pantalla(bs, &mut c);
     match pantalla {
         Some(p) => {
             let _ = writeln!(c, "DashOS: pantalla del firmware de {}x{} ({} por línea, formato {}) en {:#x}, {} KB", p.ancho, p.alto, p.por_linea, p.formato, p.base, p.tamano / 1024);
@@ -522,8 +625,8 @@ extern "efiapi" fn principal(imagen: *const c_void, st: *const TablaSistema) -> 
     let _ = writeln!(c, "DashOS: kernel de {} bytes en {:#x}", NUCLEO.len(), dir);
     // Sitio para la copia del árbol, con hueco para 128 zonas reservadas más.
     let capacidad = tam_arbol as usize + 16 * 128 + 64 + 256 + 64;
-    let mut copia = 0u64;
-    if (bs.reservar_paginas)(EN_CUALQUIER_SITIO, DATOS_DEL_CARGADOR, capacidad.div_ceil(PAGINA), &mut copia) != BIEN {
+    let mut copia = DEBAJO_DE_4GB;
+    if (bs.reservar_paginas)(POR_DEBAJO_DE, DATOS_DEL_CARGADOR, capacidad.div_ceil(PAGINA), &mut copia) != BIEN {
         let _ = writeln!(c, "DashOS: sin memoria para el árbol");
         return 1;
     }
@@ -554,6 +657,15 @@ extern "efiapi" fn principal(imagen: *const c_void, st: *const TablaSistema) -> 
                 n += 1;
             }
         }
+        // La pantalla del firmware, también reservada (multimonitor): con virtio-gpu, la de UEFI sale de memoria de los
+        // servicios de arranque, que queda libre al salir; sin reservarla, el kernel podría dar a otro esa memoria
+        // mientras el compositor aún pinta en ella (hasta que llega el controlador de virtio-gpu).
+        if let Some(p) = pantalla.as_ref().filter(|p| p.tamano > 0)
+            && n < reservas.len() {
+                let desde = p.base & !(PAGINA as u64 - 1);
+                reservas[n] = (desde, (p.base + p.tamano).div_ceil(PAGINA as u64) * PAGINA as u64 - desde);
+                n += 1;
+            }
         let Some(nuevo) = copiar_arbol(arbol as *const u8, copia as *mut u8, capacidad, &reservas[..n], pantalla.as_ref()) else { break };
         if (bs.salir_servicios)(imagen, llave) == BIEN {
             // Desde aquí, sin firmware: solo el hardware.

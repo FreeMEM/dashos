@@ -1,4 +1,4 @@
-//! Espacios de direcciones de los procesos en x86-64 (S21, X4). La misma interfaz que `../espacio.rs` de ARM (C11, S3).
+//! Espacios de direcciones de los procesos en x86-64 (S30, X4). La misma interfaz que `../espacio.rs` de ARM (C11, S3).
 //!
 //! Escrito con el manual de Intel (SDM, volumen 3: 4.5, paginación de 4 niveles; 4.10.1, PCID; 4.10.4, invalidar la
 //! TLB).
@@ -66,6 +66,27 @@ const SIN_VACIAR: u64 = 1 << 63;
 
 fn nx() -> u64 {
     if super::cpu::hay_nx() { super::mapa::NX } else { 0 }
+}
+
+/// Lo que dice `para_copiar` de una página del proceso (como en ARM).
+pub enum Copia {
+    /// Se puede copiar aquí, por el mapa lineal del kernel.
+    Directa(*mut u8),
+    /// El anillo 3 no puede (o no está proyectada): la copia falla.
+    Falla,
+    /// Se puede, pero no por el mapa lineal (registros de un aparato): por el camino de `usuario.rs`.
+    Lenta,
+}
+
+/// Cómo se proyecta un objeto de memoria (`proyectar_memoria`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Acceso {
+    /// Solo leer.
+    Leer,
+    /// Leer y escribir; nunca se ejecuta.
+    Escribir,
+    /// Leer y ejecutar; nunca se escribe por esta dirección (H4 y X7a: la memoria de código de un JIT).
+    Ejecutar,
 }
 
 #[derive(Clone, Copy)]
@@ -138,9 +159,8 @@ pub const VA_LIMITE: u64 = 1 << 39;
 
 /// Una tabla nueva, a cero. Es memoria del proceso: no entra en la reserva del kernel.
 fn tabla_nueva() -> Result<u64, Error> {
-    let p = paginas().pagina_usuario().ok_or(Error::SinMemoria)?;
-    unsafe { core::ptr::write_bytes(mmu::virt(p as usize) as *mut u8, 0, PAGINA as usize) };
-    Ok(p)
+    // `pagina_usuario` ya la da a cero.
+    crate::memoria::pagina_usuario().ok_or(Error::SinMemoria)
 }
 
 fn entrada(tabla: u64, i: usize) -> *mut u64 {
@@ -152,6 +172,10 @@ fn indices(va: u64) -> [usize; 4] {
 }
 
 impl Espacio {
+    /// En ARM quita de la caché de instrucciones el código recién cargado (K15). En x86 la caché de instrucciones
+    /// sigue sola a las escrituras: nada que hacer.
+    pub fn codigo_listo(&mut self) {}
+
     /// Un espacio vacío. `None` si no quedan PCID o memoria.
     pub fn nuevo(cupo: alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
         if !cupo.cobrar_suelto(PAGINA) {
@@ -218,11 +242,71 @@ impl Espacio {
         Some(entrada(tabla, ix[3]))
     }
 
+    /// Para copiar sin cambiar de espacio y para mirar permisos (como en ARM, M6a): dónde ve el kernel la página de
+    /// `va`, por el mapa lineal, si el anillo 3 puede leerla (y escribirla, con `escribir`). Solo memoria normal; con
+    /// registros de un aparato, `Lenta`. Hay que tener el espacio tomado mientras se usa lo que devuelve.
+    pub fn para_copiar(&self, va: u64, escribir: bool) -> Copia {
+        if !(VA_MINIMA..VA_LIMITE).contains(&va) {
+            return Copia::Falla;
+        }
+        let Some(e) = self.hoja(va) else { return Copia::Falla };
+        let v = unsafe { e.read_volatile() };
+        if v & PRESENTE == 0 || v & USUARIO == 0 || (escribir && v & ESCRITURA == 0) {
+            return Copia::Falla;
+        }
+        let fisica = v & DIRECCION;
+        if v & (PCD | PWT) != 0 || !super::mapa::se_ve(fisica, PAGINA) {
+            return Copia::Lenta;
+        }
+        Copia::Directa((mmu::virt(fisica as usize) + (va % PAGINA) as usize) as *mut u8)
+    }
+
+    /// ¿Puede el anillo 3 ejecutar en `va`? Para la entrada de un hilo nuevo (llamada 40).
+    pub fn ejecutable(&self, va: u64) -> bool {
+        if !(VA_MINIMA..VA_LIMITE).contains(&va) {
+            return false;
+        }
+        let Some(e) = self.hoja(va) else { return false };
+        // SAFETY: `hoja` da una entrada de una tabla de este espacio, que vive mientras lo tengamos tomado.
+        let v = unsafe { e.read_volatile() };
+        v & PRESENTE != 0 && v & USUARIO != 0 && v & super::mapa::NX == 0
+    }
+
+    /// La palabra de 32 bits de `va` para la espera de hilos (llamadas 42 y 43), como en ARM: su valor, leído de una
+    /// vez, y una clave que la nombra (su dirección en el mapa lineal, la misma para dos procesos que comparten la
+    /// página). `None` si no está alineada a 4, el anillo 3 no puede leerla o no es memoria normal.
+    pub fn palabra(&self, va: u64) -> Option<(u32, usize)> {
+        if va % 4 != 0 {
+            return None;
+        }
+        let Copia::Directa(k) = self.para_copiar(va, false) else { return None };
+        // SAFETY: `k` está en el mapa lineal, dentro de una página proyectada en este espacio (que tenemos tomado),
+        // alineada a 4. Una carga atómica: la escriben a la vez los hilos del proceso.
+        let v = unsafe { (*(k as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+        Some((v, k as usize))
+    }
+
+    /// Los permisos de la entrada de `va` para el anillo 3: (leer, escribir, ejecutar). Para las pruebas.
+    #[cfg(feature = "pruebas")]
+    pub fn permisos_el0(&self, va: u64) -> Option<(bool, bool, bool)> {
+        let e = self.hoja(va)?;
+        let v = unsafe { e.read_volatile() };
+        if v & PRESENTE == 0 || v & USUARIO == 0 {
+            return None;
+        }
+        Some((true, v & ESCRITURA != 0, v & super::mapa::NX == 0))
+    }
+
     /// La entrada de nivel 1 de `va`, creando las tablas que falten.
     fn hoja_o_crear(&mut self, va: u64) -> Result<*mut u64, Error> {
         if !(VA_MINIMA..VA_LIMITE).contains(&va) {
             return Err(Error::Direccion);
         }
+        self.hoja_o_crear_en(va)
+    }
+
+    /// Como `hoja_o_crear`, sin mirar `VA_MINIMA`: solo para la página 0 de la caja Amiga (`proyectar_pagina_cero`).
+    fn hoja_o_crear_en(&mut self, va: u64) -> Result<*mut u64, Error> {
         let ix = indices(va);
         let mut tabla = self.pml4;
         for &i in &ix[..3] {
@@ -285,38 +369,56 @@ impl Espacio {
         Ok(())
     }
 
-    /// Proyecta un objeto de memoria entero desde `va`, de lectura y escritura o de solo lectura; nunca se ejecuta.
-    /// O todo o nada. El espacio guarda el objeto mientras esté proyectado (C18).
-    pub fn proyectar_memoria(&mut self, va: u64, m: &alloc::sync::Arc<super::memoria::Memoria>, escribir: bool, via: &[usize]) -> Result<(), Error> {
-        let permiso = match (escribir, m.bus().is_some()) {
-            (true, true) => Permiso::DatosSinCache,
-            (true, false) => Permiso::Datos,
-            (false, true) => Permiso::SoloLecturaSinCache,
-            (false, false) => Permiso::SoloLectura,
-        };
-        self.proyectar_objeto(va, m, permiso, via)
-    }
-
-    /// Proyecta un objeto de memoria entero desde `va` para leerlo y ejecutarlo, nunca para escribirlo (X7a: la memoria
-    /// de código de un JIT, que escribe por otra proyección del mismo objeto). La memoria de DMA no se ejecuta nunca.
-    /// En x86 la caché de instrucciones sigue sola a las escrituras: no hace falta nada más.
-    pub fn proyectar_memoria_ejecutable(&mut self, va: u64, m: &alloc::sync::Arc<super::memoria::Memoria>, via: &[usize]) -> Result<(), Error> {
-        if m.bus().is_some() {
+    /// La página 0 de la caja Amiga (H4, llamada 49), como en ARM: un objeto de una sola página en la dirección 0, de
+    /// solo lectura y nunca ejecutable. Lo demás de los primeros 64 KB sigue sin proyectarse. Dentro del kernel la mitad
+    /// baja está vacía y SMAP cierra lo del anillo 3: un puntero nulo del kernel sigue fallando.
+    pub fn proyectar_pagina_cero(&mut self, m: &alloc::sync::Arc<super::memoria::Memoria>) -> Result<(), Error> {
+        if m.paginas() != 1 || m.bus().is_some() {
             return Err(Error::Direccion);
         }
-        self.proyectar_objeto(va, m, Permiso::Codigo, via)
+        if self.proyectados.len() >= MAX_PROYECCIONES {
+            return Err(Error::Limite);
+        }
+        self.proyectados.try_reserve(1).map_err(|_| Error::SinMemoria)?;
+        let e = self.hoja_o_crear_en(0)?;
+        if unsafe { e.read_volatile() } & PRESENTE != 0 {
+            return Err(Error::Ocupada);
+        }
+        let f = m.fisica(0);
+        if f == 0 {
+            return Err(Error::Direccion);
+        }
+        unsafe { e.write_volatile((f & DIRECCION) | PRESENTE | USUARIO | ACCEDIDA | nx()) };
+        self.proyectados.push((0, m.clone(), [0; VIAS]));
+        Ok(())
     }
 
-    fn proyectar_objeto(&mut self, va: u64, m: &alloc::sync::Arc<super::memoria::Memoria>, permiso: Permiso, via: &[usize]) -> Result<(), Error> {
+    /// Proyecta un objeto de memoria entero desde `va`: de solo lectura, de lectura y escritura o (H4, X7a: la memoria
+    /// de código de un JIT) de lectura y ejecución, nunca de escritura y ejecución a la vez. El mismo objeto puede
+    /// estar proyectado para escribir en una dirección y para ejecutar en otra. O todo o nada. El espacio guarda el
+    /// objeto mientras esté proyectado (C18). En x86 la caché de instrucciones sigue sola a las escrituras.
+    pub fn proyectar_memoria(&mut self, va: u64, m: &alloc::sync::Arc<super::memoria::Memoria>, acceso: Acceso, via: &[usize]) -> Result<(), Error> {
         if via.len() > VIAS {
             return Err(Error::Limite);
+        }
+        // La memoria de DMA no se ejecuta nunca: la escribe un aparato. Una vista (llamada 50), solo se lee.
+        if acceso == Acceso::Ejecutar && m.bus().is_some() || acceso != Acceso::Leer && m.es_vista() {
+            return Err(Error::Direccion);
         }
         if self.proyectados.len() >= MAX_PROYECCIONES {
             return Err(Error::Limite);
         }
         self.proyectados.try_reserve(1).map_err(|_| Error::SinMemoria)?;
         self.preparar(va, m.paginas() as u64)?;
-        for (i, &p) in m.fisicas().iter().enumerate() {
+        let permiso = match (acceso, m.bus().is_some()) {
+            (Acceso::Escribir, true) => Permiso::DatosSinCache,
+            (Acceso::Escribir, false) => Permiso::Datos,
+            (Acceso::Leer, true) => Permiso::SoloLecturaSinCache,
+            (Acceso::Leer, false) => Permiso::SoloLectura,
+            (Acceso::Ejecutar, _) => Permiso::Codigo,
+        };
+        // Las páginas soltadas por el globo de una máquina (0) no se proyectan; en x86 no hay máquinas todavía.
+        for (i, p) in m.fisicas().enumerate().filter(|&(_, p)| p != 0) {
             let _ = self.proyectar(va + i as u64 * PAGINA, p, permiso);
         }
         let mut vias = [0usize; VIAS];
@@ -393,14 +495,14 @@ impl Espacio {
     pub fn pagina_nueva(&mut self, va: u64, permiso: Permiso, contenido: &[u8], desplazamiento: usize) -> Result<(), Error> {
         self.propias.try_reserve(1).map_err(|_| Error::SinMemoria)?;
         self.cobrar()?;
-        let Some(p) = paginas().pagina_usuario() else {
+        let Some(p) = crate::memoria::pagina_usuario() else {
             self.descobrar();
             return Err(Error::SinMemoria);
         };
         let k = mmu::virt(p as usize);
         // La página es nuestra (recién sacada del repartidor) y la mitad alta la ve entera por el mapa lineal.
+        // Ya viene a cero (`pagina_usuario`).
         let pagina = unsafe { core::slice::from_raw_parts_mut(k as *mut u8, PAGINA as usize) };
-        pagina.fill(0);
         let desde = desplazamiento.min(pagina.len());
         let n = contenido.len().min(pagina.len() - desde);
         pagina[desde..desde + n].copy_from_slice(&contenido[..n]);

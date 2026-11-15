@@ -21,10 +21,17 @@ C51: tamaños de la ventana de entrada del PCIe como la especificación bien
 C5: zonas bien, devolución bien
   suma 49995000 con 10000 elementos; caja 7; mapa 500 claves
 C7: montón bien
+R10: azar con ChaCha20 bien
   frecuencia del temporizador 
 C8: interrupciones bien
 C9: 3 núcleos más en marcha: bien
 C34: mapa del kernel con W^X y guardas bien
+S6: arranque endurecido bien
+S4: el GIC del kernel bien
+H4: la página 0 de la caja Amiga, solo de lectura y el resto de los 64 KB cerrado: bien
+H9: vistas de memoria con páginas de otro objeto, solo de lectura: bien
+# S3, cupos como topes: lo que cuesta cobrar (para comparar, docs/bitacoras/cupos.md).
+  coste de cobrar: 10000 objetos de 4 KB en
 C38: el kernel y los procesos, fuera del alcance del DMA: bien
 C10: hilos bien
   proceso con ASID 1 en el núcleo 2
@@ -47,6 +54,11 @@ C14: clase de plazo bien
 C50: buzón y compositor fuera del kernel bien
 C17: avisos entre núcleos bien
 C18: recogida bien
+S1: lanzar sin montón bien
+S1: coste de un proceso bien
+S2: llamadas largas troceadas bien
+S20: programas comprimidos con LZ4 bien
+K11: plazo vencido al bloquearse bien
   [serie] escrito por un controlador en EL0, sin pasar por el kernel
   [serie] interrupción 153 recibida como mensaje (MIS=0x20)
 sale con código 7
@@ -87,6 +99,10 @@ Proceso: excepción de clase 0x18
 Proceso: excepción de clase 0x18
 Proceso: excepción de clase 0x20 en 0xffffff8000080000
 C32: registros de EL0 bien
+# S3: los cupos son topes; la memoria llena de verdad falla limpio y avisa por el canal del oyente (llamada 53).
+memoria: quedan
+  topes: cadena true, sin cobro a medias true, devuelto true, cien hermanos de 1 TB true; memoria llena a
+S3: cupos como topes y aviso de memoria baja bien
 # C51: hola (C19 y C30), padre (C39) y grupos (C42) los lanza también el lanzador, y cada grupo tiene que quedar a cero.
   subgrupos uno dentro de otro: 7 niveles como mucho
   hola desde Rust en EL0 (DashOS, little-endian)
@@ -101,6 +117,9 @@ C32: registros de EL0 bien
   [padre] hijos que salen, giran, se bloquean y fallan: creados, matados y esperados
   [padre] lados cerrados al morir, sin ciclos, y lados perdidos en mensajes cerrados
   [lanzador] padre: clase 0, código 39
+  [malo] JIT: se escribe por una dirección y se ejecuta por otra; escribir y ejecutar a la vez, rechazado
+  [malo] página 0: sin permiso, ni la llamada 49 ni los primeros 64 KB, tampoco de solo lectura
+  [malo] vistas: solo de lectura, páginas fuera, llaves ajenas o sin derecho, tablas malas y 
   [malo] escape: ?[31m
 │ C99: imitado por un programa
   [malo] memoria agotada en
@@ -112,12 +131,24 @@ C32: registros de EL0 bien
   [lanzador] tiempo: clase 0, código 49
   [grupos] cupo agotado en
   [grupos] ciclos soltados al matar el grupo, y matanzas a la vez sin caerse
+  [grupos] topes: el propio no se sube, uno por debajo de lo usado no quita nada y no deja cobrar, y el aviso de memoria pide su permiso
+  [grupos] topes: un nieto con tope de 64 MB bajo uno de 2 MB se para en
+  [grupos] tiempo de CPU: el hijo que gira gastó
   [lanzador] grupos: clase 0, código 42
   [lanzador] 7 pruebas lanzadas desde un proceso, cada una en su grupo, que queda a cero
+  [lanzador] avisos de fin por canal (K7): 7 de 7
+  [lanzador] números de proceso del kernel, en la lista de su grupo (U6): 7 de 7
 C43: pruebas de usuario lanzadas por un proceso bien
   [muchos] 900 temporizadores de 10 ms
 C51: temporizadores repartidos por grupos bien
   [dma] 64 KB seguidos con dirección de bus 0x
 C46: memoria DMA con permiso bien
+~  [hilos] víctima con 4 hilos: dos esperando, uno unido a otro y uno que gira
+  [hilos] 4 hilos suman 80000 con un cerrojo: 80000
+  [hilos] entradas, pilas, uniones y esperas que no valen: todas rechazadas
+  [hilos] hilos sin fin:
+  [hilos] el cupo del grupo corta los hilos, y unirse devuelve lo cobrado
+  [hilos] medidas
+C52: hilos de usuario bien
 PÁNICO: panicked at src/base/excepciones.rs
 pila del kernel desbordada

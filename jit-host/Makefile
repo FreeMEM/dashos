@@ -50,6 +50,14 @@ all: $(B)/jit-host
 run: $(B)/jit-host
 	$(QEMU) $(B)/jit-host $(PRUEBA)
 
+# U7: el banco en little-endian; y los programas de pruebas68k en los dos órdenes, contra la referencia
+run-le:
+	$(MAKE) ORDEN=le run
+comparar:
+	$(MAKE) ORDEN=be all
+	$(MAKE) ORDEN=le all
+	python3 comparar.py
+
 $(B)/%.o: $(EMU68)/src/%.c | $(B)
 	$(CC) $(CFLAGS) -c $< -o $@
 $(B)/%.o: $(EMU68)/src/%.cpp | $(B)
@@ -81,4 +89,4 @@ $(B):
 
 clean:
 	rm -rf build build-le
-.PHONY: all clean run
+.PHONY: all clean run run-le comparar

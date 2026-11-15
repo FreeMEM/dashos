@@ -2,9 +2,9 @@
 
 Encargo del usuario (2026-11-14): "ponte en modo loop y empieza con la parte de ingeniería (diseño, etc,
 repositorios) y luego a implementar". La cuota semanal se renueva el lunes 2026-11-16 por la noche; **con el 80 % de
-uso, se para**. Diseño en `docs/diseño/S21-x86.md`.
+uso, se para**. Diseño en `docs/diseño/S30-x86.md`.
 
-Dos líneas a la vez (decisión 4 de S21):
+Dos líneas a la vez (decisión 4 de S30):
 
 - **Línea A, DashOS en x86-64** (tareas `X`). Rama `x86` de `~/Projects/dashos`, en `.worktrees/x86`. Otra sesión
   trabaja en `main`: aquí solo se añade, sin mover lo de ARM más de lo imprescindible, para que la fusión sea fácil.
@@ -71,7 +71,7 @@ Dos líneas a la vez (decisión 4 de S21):
   intérprete y con el JIT, con la misma salida que en Linux. El cargador avisa con `relevo_invalidate`.
 - [ ] X7 **Caja Amiga en x86** con el intérprete de RelevoJIT (necesita R3 y la caja Amiga en `main`).
 - [ ] X8 **La caja con el JIT** de RelevoJIT (necesita R6).
-- [ ] X9 **Un PC de verdad**, arrancando desde USB (necesita la máquina; decisión 5 de S21).
+- [ ] X9 **Un PC de verdad**, arrancando desde USB (necesita la máquina; decisión 5 de S30).
 
 ## Bloqueos
 
@@ -81,7 +81,7 @@ Dos líneas a la vez (decisión 4 de S21):
 
 ### 2026-11-14 19:xx — Puesta en marcha
 
-Rama `x86` desde `main` (3170b53) en `.worktrees/x86`, con S21 y las decisiones del día en `PLAN.md`. RelevoJIT
+Rama `x86` desde `main` (3170b53) en `.worktrees/x86`, con S30 y las decisiones del día en `PLAN.md`. RelevoJIT
 creado en `~/Projects/RelevoJIT` (MPL-2.0, diseño en `docs/DISEÑO.md`). Uso semanal al empezar: 34 %.
 
 ### 2026-11-14 — X1: arranque en x86-64
@@ -331,3 +331,87 @@ puertos (`include/relevo_port.h`, `src/port/`, `tests/port_libc.c`, `tests/runbi
 `src/fpx_trans.c` y `src/interp/ops_fpu.c`. Sin probar. Se retoma con un solo agente cuando la ventana se renueve.
 RelevoJIT: R7 fusionado (JIT 15 a 30 veces el intérprete en enteros).
 
+
+### 2026-11-15 — Fusión de `revision` en `x86`
+
+Lo pidió la revisión de arquitectura (S31, hallazgo 1) y lo decidió el usuario. Se fusionó `revision` en su commit
+f9878b8 (633 commits: la caja Amiga, los hilos de usuario, las máquinas virtuales, el permiso de ejecutar, los cupos
+como topes, el robo de trabajo entre núcleos, el escritorio entero). `revision` siguió avanzando después: eso queda
+para la siguiente fusión. 19 ficheros con conflictos.
+
+Cómo quedó lo común:
+
+- **Planificador** (`base/planificador.rs`): el de `revision`, con lo de cada arquitectura detrás de `cfg` como antes.
+  Nuevo en x86: el hilo que corre se apunta en la zona del núcleo (`gs:[24]`, lo que en ARM es TPIDR_EL1); los avisos
+  entre núcleos van todos por `avisar_nucleo`; `EstadoFp` tiene `nuevo`, `guardar` y `cargar` en las dos; `punto_de_corte`
+  usa `cerrojo::ventana_irq` en x86; `replanificar_si_toca` tras cada `syscall`. El arreglo de X4 (soltar el proceso antes
+  de apuntar su fin) se conserva sobre el `terminar_actual` de `revision`, en las dos arquitecturas.
+- **Memoria**: `pagina_usuario` y `nueva_en_llamada` de `revision`. Las pausas de X6 pasan a ser sus puntos de corte:
+  cada 64 páginas en ARM (como en `revision`) y cada página en x86 (la medida de X6 sigue pasando). `iniciar_tramos`
+  pone los contadores nuevos (aviso de memoria baja).
+- **Espacio de x86** (`base/x86_64/espacio.rs`): `Acceso` (leer, escribir o ejecutar; el JIT escribe por una proyección
+  y ejecuta por otra), `para_copiar`, `ejecutable`, `palabra` (la espera de los hilos), la página 0 y las vistas.
+- **Llamadas**: `puertos_permitir` pasa de la 29 a la **56** (la 29 es `medir` en `revision`), y el tipo de llave de
+  arranque "puertos de E/S", del 7 al 12 (el 7 es el permiso de plazo). `hilo_crear` en x86: entrada sin alinear, pila
+  como tras un `call`, y cuesta 24 KB (la zona de XSAVE mide 4 KB).
+- **`usuario/`**: guion de enlace propio para x86 (`enlace_x86.ld`; con la GOT en `.data`, el `hilos` de ARM no
+  cargaba). `llamada3` en x86 para las llamadas con tres resultados. Lo que tenía ensamblador de ARM y se compila en
+  x86 (`archivos`, `hijo`, `malo`, `hilos`, `xhci_comun`, `nvme`) va por `dashos::contador`, `frecuencia`, `barrera` o
+  con `cfg`.
+- **`inicio` en x86**: el sonido y su controlador reciben el permiso de plazo, como en ARM.
+- **Pruebas**: `prueba_plazo` (C14) es la de `revision`, en `pruebas_hilos.rs`. En x86, nuevas: C52, hilos de usuario,
+  con el mismo programa que ARM. Cambiadas por el ocioso sin tic y el robo de trabajo: el temporizador del APIC y C28
+  ocupan los demás núcleos con hilos del kernel. C43 cuenta las tablas de pilas, como en ARM. `arranque-x86` usa un
+  guion de teclas corto (`TECLAS=simple`) y comprobaciones básicas del disco y de la captura
+  (`--comprobar-basico`, `--sin-barra`): las de `arranque-virt` piden el escritorio entero.
+
+Los dos cambios pequeños del usuario:
+
+- **PCID apagado de serie** en x86. Se enciende al compilar: `make -C kernel arranque-x86 PCID=1` (opción `pcid`).
+- **Documentos renumerados**: `S21-x86.md` es `S30-x86.md` y `S22-revision-arquitectura.md` es
+  `S31-revision-arquitectura.md` (en `revision` ya había hasta S29). Referencias al día en el código y los documentos.
+
+Solo para ARM por ahora (en x86 no existe o está cerrado con `cfg`):
+
+- Máquinas virtuales (`maquinas.rs`, `base/hiper.rs`, EL2): en x86 las llamadas 45 a 48 y la 55 dan `E_NO_HAY`.
+- La caja Amiga (`caja/`, Emu68, proceso big-endian) y el orden de bytes por proceso. Es X7.
+- La caja Linux, `sesiones`, `guardian`, la barra, el centro, el explorador, la red: `inicio_x86.rs` no los lanza.
+- Apagar (llamada 51): en x86 solo reinicia. La hora (39) da 0. El azar no tiene semilla del firmware.
+- Los aparatos de las placas: `bcm2836`, `rp1`, `pcie`, `dtb`, `gic`, `its`, el diagnóstico de la Pi 5, la ramfb.
+
+X7a (el WIP): se conservan la opción `relevo` de `usuario/Cargo.toml` y lo de `usuario/build.rs`. Fuera: el `[[bin]]`
+`relevo` (su fichero no existía en la rama) y `proyectar_memoria_ejecutable` / `memoria_proyectar_ejecutable`, que
+sustituye lo de `revision` (permiso 4 de `memoria_proyectar`, `memoria_proyectar_codigo`), ya probado en x86 (`malo`).
+
+Emu68 en este worktree: `third_party/Emu68` clonado del clon local (af63580) con los 14 parches aplicados, para que
+`make -C kernel` compile la caja de ARM.
+
+Un tropiezo que conviene saber: `reloj::programar` leía el contador una vez más en cada decisión del planificador (la
+medida del retraso del temporizador, de X6). Con eso, `make arranque-virt` fallaba siempre en el mismo sitio (tres
+líneas del arrastre del explorador): `test_trap_divzero` de la caja Amiga ya no llegaba a enseñar su ventana "Cero"
+antes de morir, la cascada de ventanas se corría un sitio y el guion soltaba el fichero en la ventana que no era. Es
+una carrera de microsegundos entre el programa 68k y el compositor, que el guion no aguanta (las bitácoras de
+`revision` ya la apuntan como fallo suelto). La medida va ahora solo en x86 y el camino de ARM queda como en
+`revision`. Con `revision` sola (f9878b8, en una copia aparte), `arranque-virt` pasaba.
+
+Comprobado (QEMU, en la máquina de desarrollo, con otras QEMU de otras sesiones a la vez):
+
+- ARM: `make -C kernel prueba` BIEN (con las pruebas de PC de Wayland, sonido, amigados, archivos, kit, caja Linux,
+  el cargador hunk, el puente y `esperado.txt` en `raspi4b`). `make -C kernel arranque-virt` BIEN (la salida, el
+  reinicio, el disco, la captura, el sonido y el cambio de usuario). `make -C kernel arranque-virt-vm` (la caja
+  Linux con EL2) BIEN. `make -C kernel arranque` (la imagen normal en `raspi4b`) falla, y ya fallaba igual en
+  `revision` sola (f9878b8): falta "llave 5: memoria del firmware de vc" (`pruebas/arranque.txt` se quedó atrás al
+  añadir llaves a `inicio`).
+- x86: `make -C kernel prueba-x86` BIEN (todo lo de X2 a X6, más C52 y, dentro de C43, el JIT por dos proyecciones, la
+  página 0, las vistas, los topes de los grupos y el aviso de memoria). `make -C kernel arranque-x86` BIEN (la salida,
+  el disco con TRIM, la captura y el sonido).
+
+No comprobado: las demás variantes de `revision` (`-2`, `-linux`, `-arch`, `-wayland`, `-gpu`, `-diag`, `-usb`,
+`pi5`), que piden imágenes de fuera de git o no tocan nada de lo fusionado a mano; el oráculo (FS-UAE); una Pi; un PC;
+`PCID=1` (ni QEMU sin KVM ni el KVM de esta máquina dan PCID). Una vuelta de `prueba-x86` falló en tres pruebas de
+tiempos (avisos entre núcleos, despertar un proceso, `memoria_crear`) con la máquina cargada; la siguiente, sin
+cambiar nada, pasó.
+
+Queda para después: la caja Amiga en x86 (X7, con RelevoJIT); el reloj del PC y una semilla para el azar (RDRAND);
+apagar por ACPI; máquinas virtuales en x86; `sesiones` y el resto del escritorio en `inicio_x86.rs`; mover lo de ARM a
+`base/aarch64/` y partir el planificador (S31); y lo que `revision` ha avanzado desde f9878b8.

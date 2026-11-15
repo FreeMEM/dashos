@@ -22,6 +22,9 @@ pub const PRIMERO_DEL_SERVIDOR: u32 = 0xFF00_0000;
 pub const INVALID_OBJECT: u32 = 0;
 pub const INVALID_METHOD: u32 = 1;
 pub const NO_MEMORY: u32 = 2;
+/// Lo más de objetos vivos de un cliente (E3): una aplicación normal usa unas decenas; sin tope, un cliente agotaría
+/// la memoria del compositor.
+pub const MAX_OBJETOS: usize = 1024;
 pub const IMPLEMENTATION: u32 = 3;
 
 /// Un global que se anuncia: su nombre (número), su interfaz y la versión más alta que se sirve.
@@ -81,7 +84,13 @@ pub struct Conexion {
     pub roto: Option<ErrorProtocolo>,
     siguiente_propio: u32,
     pub serie: u32,
+    /// Sus `wl_registry` (multimonitor): a ellos se anuncian los globales que llegan o se van después (una salida
+    /// nueva). Con tope: un cliente que pide registros sin parar no hace crecer esto.
+    pub registros: Vec<u32>,
 }
+
+/// Lo más de `wl_registry` que se apuntan por conexión.
+pub const MAX_REGISTROS: usize = 8;
 
 impl Default for Conexion {
     fn default() -> Self {
@@ -94,6 +103,7 @@ impl Default for Conexion {
             roto: None,
             siguiente_propio: PRIMERO_DEL_SERVIDOR,
             serie: 0,
+            registros: Vec::new(),
         }
     }
 }
@@ -189,6 +199,9 @@ impl Conexion {
                 _ => {
                     // get_registry: los globales, uno por evento.
                     let id = args[0].uint();
+                    if self.registros.len() < MAX_REGISTROS {
+                        self.registros.push(id);
+                    }
                     for g in globales {
                         self.salida
                             .empezar(id, wl_registry::ev::GLOBAL)
@@ -233,6 +246,9 @@ impl Conexion {
         if id == 0 || id >= PRIMERO_DEL_SERVIDOR || self.objetos.contains_key(&id) {
             return Err(ErrorProtocolo::new(1, INVALID_OBJECT, "número de objeto nuevo malo"));
         }
+        if self.objetos.len() >= MAX_OBJETOS {
+            return Err(ErrorProtocolo::new(1, NO_MEMORY, "demasiados objetos"));
+        }
         self.objetos.insert(id, Objeto { interfaz: i, version });
         Ok(())
     }
@@ -241,6 +257,24 @@ impl Conexion {
     pub fn quitar(&mut self, id: u32) {
         if self.objetos.remove(&id).is_some() && id < PRIMERO_DEL_SERVIDOR {
             self.salida.empezar(1, wl_display::ev::DELETE_ID).uint(id).fin();
+        }
+    }
+
+    /// Un global nuevo (multimonitor: una salida que llega), a cada registro del cliente.
+    pub fn anunciar_global(&mut self, g: &Global) {
+        for &r in &self.registros {
+            if self.objetos.contains_key(&r) {
+                self.salida.empezar(r, wl_registry::ev::GLOBAL).uint(g.nombre).texto(Some(g.interfaz.name)).uint(g.version).fin();
+            }
+        }
+    }
+
+    /// Un global que se va (una salida que se desconecta), a cada registro del cliente.
+    pub fn retirar_global(&mut self, nombre: u32) {
+        for &r in &self.registros {
+            if self.objetos.contains_key(&r) {
+                self.salida.empezar(r, wl_registry::ev::GLOBAL_REMOVE).uint(nombre).fin();
+            }
         }
     }
 

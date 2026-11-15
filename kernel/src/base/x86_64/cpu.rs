@@ -1,4 +1,4 @@
-//! La CPU en x86-64: CPUID, registros de control, MSR y las defensas de hardware (S21, X2).
+//! La CPU en x86-64: CPUID, registros de control, MSR y las defensas de hardware (S30, X2).
 //!
 //! Escrito con el manual de Intel (SDM, volumen 3: 2.5, registros de control; 4.6, SMEP y SMAP) y el de AMD (APM,
 //! volumen 2: EFER).
@@ -178,8 +178,12 @@ pub fn encender_defensas() -> Funciones {
     }
     poner_cr0((cr0() | CR0_WP | CR0_MP | CR0_NE | CR0_TS) & !CR0_EM);
     let mut cr4 = (cr4() | CR4_OSFXSR | CR4_OSXMMEXCPT) & !(CR4_TSD | CR4_PCE);
+    // PCID apagado de serie (decisión del usuario del 2026-11-15, revisión de arquitectura, hallazgo 9): ni QEMU sin
+    // KVM ni el KVM de la máquina de desarrollo lo dan, así que ese camino no se ha ejecutado nunca, y un fallo ahí da
+    // a un proceso la memoria de otro. Se enciende al compilar con la opción `pcid` (`make ... PCID=1`), para probarlo
+    // en una CPU de verdad. Sin él, cada cambio de CR3 vacía la TLB de usuario.
     // PCIDE pide que CR3 lleve el PCID 0 al encenderlo: aquí CR3 es el de las tablas del arranque o el del kernel.
-    if f.pcid && cr3() & 0xfff == 0 {
+    if cfg!(feature = "pcid") && f.pcid && cr3() & 0xfff == 0 {
         cr4 |= CR4_PCIDE;
         PCID.store(true, Ordering::Relaxed);
     }

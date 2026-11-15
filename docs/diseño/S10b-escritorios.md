@@ -452,6 +452,7 @@ tiene una prueba que se puede repetir sin manos: QEMU con su monitor (QMP) manda
 | E1 | Compositor que habla Wayland sobre canales: `xdg-shell` y memoria compartida | Dos clientes de prueba en Rust, cada uno con su ventana; captura por QMP comparada con la esperada | H3 |
 | E2 | Poderes por conexión y capas | Una barra de prueba reserva su franja y las ventanas se apartan. Un cliente sin el poder no ve el protocolo; si lo pide igual, se le corta | H3 |
 | E3 | Lista de ventanas, órdenes y canal de órdenes con estado y cambios atómicos | Un guion abre tres ventanas, el dock de prueba las ve y activa la segunda; se comprueba el foco | H3-H5 |
+| E3b | Disposiciones en el compositor y mosaico y flotantes sin modos (S10): mosaico con desplazamiento, flotante, maestro y pila, rejilla y monóculo por pantalla; arrastrar saca del mosaico y devuelve con guía; encajar en los bordes; los diálogos nacen flotando; recordar por aplicación; teclas para todo. Por dentro, "decidir dónde va" separado de "dibujar" (sección 5). Añadida por el usuario el 2026-11-10, para usar el escritorio a diario cuanto antes | Un guion abre cinco ventanas y un diálogo: cuatro en la tira y el diálogo flotando; arrastra una fuera (flota donde se suelta) y la devuelve (encaja en la columna marcada); con la tecla, lo mismo. Capturas por QMP comparadas con las esperadas | H3-H5 |
 | E4 | Bloqueo con campo propio | Bloquear, matar el escritorio, mandar la contraseña por QMP: se desbloquea. El registro demuestra que el escritorio no recibió ninguna tecla | H5 |
 | E5 | Vigilancia, escritorio mínimo y atajo de rescate | Matar el escritorio tres veces: sale el mínimo y las ventanas siguen. Una capa que tapa todo se quita con el atajo | H5 |
 | E6 | Servicios de avisos y apariencia; cambio de escritorio en caliente | Un aviso mandado antes del cambio aparece en el historial del segundo escritorio de prueba | H5-H7 |
@@ -511,7 +512,7 @@ Decidido por el usuario el 2026-11-08: todas como se recomienda ("vale a todo").
 - Con S6: poderes por aplicación y panel para quitarlos; la marca del canal; ventanas del sistema dibujadas por el
   compositor.
 - Con S7: la caja Linux solo reenvía ventanas normales.
-- Con S8: un escritorio y un tema son paquetes; Hangar los puede vender.
+- Con S8: un escritorio y un tema son paquetes; Hangar los puede ofrecer.
 - Con S9: el compositor habla Wayland sobre canales; los planos del HVS y la GPU son suyos.
 - Con S10: lo amplía. Cambian el bloqueo (campo del compositor), Workbench (programa aparte), los módulos
   (procesos) y el estado (en servicios). Se mantienen las pantallas, la mezcla de mosaico y flotantes, Prefs y el

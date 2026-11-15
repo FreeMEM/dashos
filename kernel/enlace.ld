@@ -18,6 +18,10 @@ SECTIONS
     . = ALIGN(4096);
     __rodata_fin = .;
     .data : ALIGN(4096) { *(.data .data.*) }
+    /* La Pi 5 (arranque.s): la copia de la imagen a 0x80000, al final de lo que viene en el fichero. */
+    .reubicar : ALIGN(16) { KEEP(*(.reubicar_codigo)) }
+    /* Hasta aquí llega el fichero de la imagen (lo que copia arranque.s en la Pi 5 si el firmware la deja en otro sitio). */
+    __datos_fin = .;
     .bss (NOLOAD) : ALIGN(16) { __bss_inicio = .; *(.bss .bss.*) *(COMMON) . = ALIGN(16); __bss_fin = .; }
     /* Tablas de páginas del arranque: nivel 1 y un nivel 2 para el cuarto GB. */
     .tablas (NOLOAD) : ALIGN(4096) { __tabla_l1 = .; . += 4096; __tabla_l2_g3 = .; . += 4096; }

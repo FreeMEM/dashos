@@ -67,7 +67,32 @@ donde las instantáneas hacen el trabajo.
 - **Declarativo**: cada servicio es un fichero corto con su programa, su usuario (S6), sus capacidades, sus
   dependencias y su clase de planificador (S2). Viven en `SYS:Servicios` y en `Paquetes:*/Servicios`.
 - **En paralelo**, como launchd o systemd. Lo que no hace falta para el escritorio no lo retrasa.
-- **Bajo demanda**: la caja Linux, la impresión y similares no arrancan hasta que alguien los usa (S7).
+- **Bajo demanda**: la caja Linux, la impresión y similares no arrancan hasta que alguien los usa (S7). Salvo que
+  se activen para arrancar con el sistema, como la caja Linux con servidores dentro (abajo).
+- **La orden `servicio`**, como `systemctl`: `servicio activar <nombre>` (arranca con el sistema), `servicio
+  desactivar`, `servicio parar`, `servicio arrancar`, `servicio estado` y `servicio registro`. Activar, desactivar y
+  parar uno del sistema son acciones de administrador (S6b). Lo mismo en `Prefs/Servicios`.
+
+### La caja Linux como servicio (2026-11-10)
+
+Decidido por el usuario: para tener servidores (nginx, postgres, apache) o contenedores (Docker, Podman) dentro de la
+caja Linux que arranquen al reiniciar.
+
+- **`servicio activar caja-linux`**: la caja arranca con el sistema, en paralelo con lo demás, sin retrasar el
+  escritorio. El gestor la vigila: si la máquina virtual cae, la relanza con espera creciente.
+- **Dentro, systemd como siempre**: `systemctl enable --now nginx`, y los contenedores de Podman con sus unidades de
+  systemd (quadlet). DashOS no se mete en lo que pasa dentro.
+- **Apagado ordenado**: al apagar o reiniciar DashOS, el gestor le pide a la caja que se apague (por virtio) y le da
+  tiempo, para que postgres y compañía cierren bien. Solo si no contesta, se para.
+- **Memoria reservada**: la caja que arranca con el sistema tiene su memoria fija, que se elige al activarla, además
+  del globo de S7. Para servidores, Pi 4 o Pi 5 de 4 u 8 GB.
+- **Publicar puertos**: la caja tiene su dirección privada detrás del servicio de red (S13), como WSL. Para que se
+  llegue a ella desde la red, se publica un puerto (`servicio publicar caja-linux 80`, o en `Prefs/Red`): el
+  servicio de red pasa lo que llega a ese puerto de DashOS al de la caja. Escuchar es un permiso aparte del
+  cortafuegos (S6b), así que publicar es una acción de administrador. Más adelante, un modo puente que dé a la caja
+  su propia dirección en la red.
+- **Los datos**: en el disco virtual de la caja, que es rápido. `Home:` compartido (virtio-fs, S7) sirve para
+  ficheros, no para bases de datos.
 - **Vigilancia**: si un servicio se cae, se reinicia, con espera creciente. Si se cae muchas veces seguidas, se
   avisa en el escritorio.
 - **Registro**: lo que dicen los servicios va a un registro en memoria, que se guarda en disco con calma.

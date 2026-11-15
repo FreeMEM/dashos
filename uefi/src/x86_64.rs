@@ -1,4 +1,4 @@
-//! El cargador en x86-64 (S21, X1): el mismo programa de UEFI, como `EFI/BOOT/BOOTX64.EFI`.
+//! El cargador en x86-64 (S30, X1): el mismo programa de UEFI, como `EFI/BOOT/BOOTX64.EFI`.
 //!
 //! Lleva dentro el kernel compilado para `x86_64-unknown-none`, como ELF. Pone sus segmentos en su dirección física
 //! (la de carga, `p_paddr`: desde X2 la virtual está en la mitad alta),
@@ -189,7 +189,7 @@ extern "efiapi" fn principal(imagen: *const c_void, st: *const TablaSistema) -> 
     info.version = VERSION;
     info.rsdp = tabla_config(st, &GUID_ACPI2).or_else(|| tabla_config(st, &GUID_ACPI1)).unwrap_or(0) as u64;
     let _ = writeln!(c, "DashOS: RSDP de ACPI en {:#x}", info.rsdp);
-    match buscar_pantalla(bs) {
+    match buscar_pantalla(bs, &mut c) {
         Some(p) => {
             let _ = writeln!(c, "DashOS: pantalla del firmware de {}x{} ({} por línea, formato {}) en {:#x}, {} KB", p.ancho, p.alto, p.por_linea, p.formato, p.base, p.tamano / 1024);
             (info.pantalla_base, info.pantalla_tamano) = (p.base, p.tamano);

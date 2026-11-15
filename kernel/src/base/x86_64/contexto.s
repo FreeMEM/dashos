@@ -1,4 +1,4 @@
-// DashOS: cambio de contexto entre hilos del kernel en x86-64 (S21, X3). Sintaxis de Intel. Como contexto.s de ARM.
+// DashOS: cambio de contexto entre hilos del kernel en x86-64 (S30, X3). Sintaxis de Intel. Como contexto.s de ARM.
 //
 // cambiar_contexto(viejo: *mut Contexto (rdi), nuevo: *const Contexto (rsi))
 //   Mete en la pila los registros que la convención de llamada obliga a conservar (rbp, rbx, r12 a r15), guarda rsp

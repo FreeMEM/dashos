@@ -1,0 +1,17 @@
+[package]
+name = "dashos-caja-intuition"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "graphics.library e intuition.library nativas de la caja Amiga (S4, S23): RastPort y BitMap de AmigaOS 3.1, dibujo en mapas de 32 bits y planares, texto, paletas, ventanas como ventanas del compositor e IDCMP"
+
+[lib]
+name = "caja_intuition"
+path = "src/lib.rs"
+
+[dependencies]
+caja_exec = { package = "dashos-caja-exec", path = "../exec" }
+
+[dev-dependencies]
+# Para probar los textos nítidos con la letra de verdad (Roboto del kit), como en la caja.
+kit = { package = "dashos-kit", path = "../../kit" }

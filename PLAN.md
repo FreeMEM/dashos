@@ -159,7 +159,7 @@ lo que queda decidido. El detalle está en el documento de cada tarea, en `docs/
 - (S7) ¿Caja Linux solo desde 4 GB de RAM? **sí.**
 - (S8) ¿Nombre de la orden de paquetes? **`Paq`.**
 - (S8) ¿Sistema base como imagen firmada y paquetes por encima, como Silverblue? **sí.**
-- (S8) ¿Hangar como tienda encima de `Paq`, con una arquitectura de DashOS en su catálogo? **sí (se decide en el proyecto Hangar).**
+- (S8) ¿Hangar como catálogo encima de `Paq`, con una arquitectura de DashOS en su catálogo? **sí (se decide en el proyecto Hangar).**
 - (S9) ¿Gráficos por fases: pantalla del firmware, controlador propio del HVS y HDMI, y la GPU al final? **sí.**
 - (S9) ¿Wayland como protocolo propio del compositor, sobre canales de DashOS? **sí.**
 - (S10) ¿Escritorios virtuales como "pantallas" del Amiga, con el gesto de arrastrar? **sí.**
@@ -305,6 +305,14 @@ resumido, en `docs/diseño/RESUMEN.md`.
   (`ID_AA64MMFR0_EL1`, campos `BigEnd` y `BigEndEL0`). Si no, la caja necesita el modo del JIT que da la vuelta a
   los bytes (decisión del 2026-11-04); el resto del sistema va igual. Lo mismo para cualquier otra placa ARM y para
   los Snapdragon X de los portátiles (sin comprobar).
+  - Dato del 2026-11-12 (lo buscó la sesión "telegram" a petición del usuario): el manual técnico del Cortex-A76
+    (Arm, doc 100798, registro `ID_AA64MMFR0_EL1`) da `BigEnd` = 1, mixed-endian con `SCTLR_ELx.EE` y
+    `SCTLR_EL1.E0E` configurables, y `BigEndEL0` = 0, que con `BigEnd` = 1 no quita el big-endian en EL0. Así que
+    la caja Amiga big-endian debería ir en la Pi 5 sin el modo que da la vuelta a los bytes. Falta leerlo en una
+    Pi 5 real: la línea "CPU: ..." del arranque ya dice si hay big-endian en EL0. Fuente:
+    https://support.arm.com/documentation/100798/0401/AArch64-System-registers/ID-AA64MMFR0-EL1--AArch64-Memory-Model-Feature-Register-0--EL1
+  - Para leerlo (2026-11-12, rama `pi5`): una imagen para la Pi 5 que lo pinta en la pantalla y lo prueba de verdad
+    con un programa big-endian en EL0, y corre la caja Amiga (`docs/PI5_PRIMER_ARRANQUE.md`, `docs/bitacoras/pi5.md`).
 - Comprobar que "DashOS" no choca con otro proyecto conocido antes de publicar.
 
 ## Herramientas
@@ -372,9 +380,25 @@ resumido, en `docs/diseño/RESUMEN.md`.
 - **RAD: y las imágenes del Amiga (S20, `docs/diseño/S20-rad-adf-hdf.md`):** RAD: como disco DashFS en memoria
   reservada, un volumen cifrado por usuario, que aguanta caídas y el reinicio en caliente propio, con copia opcional a
   la tarjeta; ADF y HDF montables como volúmenes, con copia al escribir (guardar o tirar los cambios al desmontar).
-- **El negocio va en el marketplace de Dash** (Hangar, S8): DashOS es una arquitectura más de su catálogo, y los
-  programas de pago de DashOS se venden ahí.
+- **El catálogo de programas es Hangar** (S8): DashOS es una arquitectura más de su catálogo.
 
+
+## Decisiones del usuario del 2026-11-12 (caja Linux)
+
+Las cuatro que dejó abiertas el primer paso de la caja Linux (`docs/bitacoras/caja-linux.md`, rama `caja-linux`), como
+se recomendaban:
+
+- **El permiso de máquinas virtuales lo reparte `sesiones`** como permiso de aplicación (S6b): se ve y se quita en el
+  centro de control y queda en el registro de seguridad. `inicio` solo se lo da a `sesiones`. A la caja Linux del
+  sistema se le concede sin preguntar; a cualquier otro programa, se le pregunta a quien está delante.
+- **La caja Linux va en la imagen de la Pi 4, no en la de la Pi 3.** La Cortex-A72 y el GIC-400 de la Pi 4 tienen
+  virtualización; la Pi 3 tiene otro controlador de interrupciones (QA7) sin ella, y 1 GB. En la Pi 4 solo se activa
+  si el firmware entra en EL2.
+- **El hipervisor no se apaga.** Sin invitados no debe atrapar nada ni costar; se mide en la Pi y, si cuesta, se
+  vuelve a mirar.
+- **La memoria de la caja Linux se calcula:** la del invitado más unos 32 MB del servicio. La del invitado se puede
+  cambiar; de serie, 256 MB con 2 GB de RAM y 512 MB con 4 GB o más (Firefox pedirá más: `maquina_memoria` la añade).
+  Los 96 MB de hoy valen hasta entonces.
 ## Decisiones del usuario del 2026-11-14
 
 - **Nombre público futuro: UsirOS** (Usir es el nombre egipcio de Osiris: lo despedazaron, Isis reunió sus pedazos y
@@ -391,7 +415,7 @@ resumido, en `docs/diseño/RESUMEN.md`.
   no están resueltos ni en Linux. En x86 la caja Amiga va siempre con el modo U7 (dar la vuelta a los bytes), y el JIT
   68k se escribe nuevo: Emu68 no se puede portar. **El JIT de x86 va en un proyecto aparte en GitHub**, para que lo
   use más gente; DashOS lo usa como usa Emu68. Se llama **RelevoJIT**, con licencia MPL-2.0, y es una biblioteca.
-  Diseño y decisiones en `docs/diseño/S21-x86.md`:
+  Diseño y decisiones en `docs/diseño/S30-x86.md`:
   - Intérprete y JIT, con los registros del 68k en memoria y cargados en registros de x86 por bloque.
   - U7 (dar la vuelta a los bytes) pasa a ser el modo por defecto también en ARM.
   - El kernel x86 y el JIT avanzan a la vez. De momento en QEMU; después, gráficos de Intel, AMD y NVIDIA.
@@ -400,8 +424,8 @@ resumido, en `docs/diseño/RESUMEN.md`.
 
 ## Decisiones del usuario del 2026-11-15
 
-Tras la revisión de arquitectura (`docs/diseño/S22-revision-arquitectura.md`, a renumerar: en `revision` ya hay otro
-S21 y otro S22) y la de RelevoJIT (`~/Projects/RelevoJIT/docs/REVISION.md`). Prioridades: compatibilidad,
+Tras la revisión de arquitectura (`docs/diseño/S31-revision-arquitectura.md`; antes S22, renumerado al fusionar
+`revision`, que ya tenía otro S22) y la de RelevoJIT (`~/Projects/RelevoJIT/docs/REVISION.md`). Prioridades: compatibilidad,
 estabilidad y velocidad, por ese orden.
 
 - **La rama `x86` se pone al día con `revision`** antes de seguir (la caja Amiga, los hilos de usuario y el permiso

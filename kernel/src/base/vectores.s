@@ -50,8 +50,12 @@ vectores_el1:
 
 // La pila del kernel se ha desbordado: x0 = el SP que no cabía.
 desbordada:
-    mrs     x1, mpidr_el1
+    mrs     x1, mpidr_el1               // el número de núcleo: Aff0, o Aff1 si marca MT (la Pi 5; arranque.s)
+    ubfx    x2, x1, #8, #8
+    tst     x1, #(1 << 24)
     and     x1, x1, #0xff
+    csel    x1, x2, x1, ne
+    and     x1, x1, #3
     ldr     x2, =pila_emergencia_fin
     sub     x2, x2, x1, lsl #12
     mov     sp, x2

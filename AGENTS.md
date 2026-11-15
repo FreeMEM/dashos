@@ -31,6 +31,8 @@ Lee `PLAN.md` antes de empezar. Ahí están las decisiones tomadas, las piezas y
    un directorio propio con su licencia, y solo hablan con DashOS por canales. Ahí sí se lee y se copia Linux; de ahí
    no sale nada hacia el kernel ni hacia los ficheros MPL. Quien reparta DashOS con ellos ofrece su código fuente. El
    firmware que cargan lleva su propia licencia: se comprueba que se puede repartir antes de meterlo.
+   Lo mismo para los emuladores de chips con licencia GPL (reSID para el SID, S19b; usuario, 2026-11-10): cada uno en
+   su proceso, en la zona GPL, y solo por canales con el servicio de sonido.
 
 ## Oráculo
 
@@ -57,6 +59,8 @@ las pruebas no valen como oráculo.
 - `docs/spec/`: especificaciones de la sala limpia, una por función o por grupo.
 - `jit-host/`: el JIT de Emu68 solo, como programa Linux big-endian. `make -C jit-host run` lo prueba con
   `qemu-aarch64_be`.
+- `caja/`: la caja Amiga (H4): el JIT de Emu68 en un programa de usuario big-endian de DashOS, en C. La compila
+  `make -C kernel` si está `third_party/Emu68`; `inicio` la lanza en `make -C kernel arranque-virt`.
 - `toolchains/`: ficheros de CMake y envoltorios para las toolchains de Bootlin. `toolchains/LEEME.md` explica cómo
   compilar Emu68.
 - `patches/emu68/`: parches sobre Emu68 (MPL). `third_party/Emu68` es un clon que no va en git.

@@ -12,39 +12,11 @@
 #![no_main]
 
 use dashos::println;
+use dashos::protocolo::archivos::*;
 
 dashos::programa!(principal);
 
 const VA: usize = 0x40_0000_0000;
-const SESION: u32 = 0;
-const BUSCAR: u32 = 1;
-const LEER: u32 = 2;
-const LISTAR: u32 = 4;
-const DATOS: u32 = 5;
-const CERRAR: u32 = 6;
-const ESCRIBIR: u32 = 3;
-const CREAR: u32 = 7;
-const BORRAR: u32 = 8;
-const RENOMBRAR: u32 = 9;
-const TAMANO: u32 = 10;
-const VACIAR: u32 = 11;
-const INFO: u32 = 12;
-const COMENTARIO: u32 = 13;
-const COMENTAR: u32 = 14;
-const PROTEGER: u32 = 15;
-const COMPROBAR: u32 = 16;
-const INSTANTANEAS: u32 = 17;
-const TOMAR: u32 = 18;
-const DESCARTAR: u32 = 19;
-const VOLVER: u32 = 20;
-const VOLUMEN: u32 = 21;
-const VOLUMENES: u32 = 22;
-const HACER_VOLUMEN: u32 = 23;
-const QUITAR_VOLUMEN: u32 = 24;
-const ABRIR_VOLUMEN: u32 = 25;
-const CERRAR_VOLUMEN: u32 = 26;
-const PROTEGIDO: i32 = -12;
-const EN_USO: i32 = -13;
 // Bits del Amiga (`AmigaBits` de DashFS).
 const ARCHIVO: u64 = 1;
 const GUION: u64 = 4;
@@ -58,6 +30,9 @@ struct R {
     b: u64,
     c: u64,
 }
+
+/// Si ya se dijo que el servicio no admitía una petición (una vez basta).
+static AVISADO_LLENO: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 struct Cliente {
     lectura: u32,
@@ -85,10 +60,35 @@ impl Cliente {
         p[24..28].copy_from_slice(&(nombre.len() as u32).to_le_bytes());
         p[32..32 + nombre.len()].copy_from_slice(nombre.as_bytes());
         let malo = R { estado: i32::MIN, asa: 0, a: 0, b: 0, c: 0 };
-        if dashos::canal_escribir(1, &p[..32 + nombre.len()], &[]) != 0 {
-            return malo;
+        // Con el servicio atareado (el PC cargado), su cola puede estar llena: se reintenta un rato en vez de dar la
+        // petición por fallida (si no, la siguiente respuesta que llega es de otra y todo se desacompasa).
+        let mut intentos = 0;
+        loop {
+            let e = dashos::canal_escribir(1, &p[..32 + nombre.len()], &[]);
+            if e == 0 {
+                break;
+            }
+            if e == dashos::E_CERRADO || intentos >= 2000 {
+                return malo;
+            }
+            if intentos == 0 && !AVISADO_LLENO.swap(true, core::sync::atomic::Ordering::Relaxed) {
+                println!("  [ficheros] el servicio de archivos no admite la petición ({}): se reintenta", e);
+            }
+            intentos += 1;
+            dashos::dormir_us(1_000);
         }
         self.leer_respuesta(&mut []).map_or(malo, |r| r.0)
+    }
+
+    /// Abre un volumen cifrado: la contraseña va por la ventana, no en el mensaje (A13); el servicio la borra de ahí.
+    fn abrir_volumen(&self, nombre: &str, clave: &str) -> R {
+        self.ventana_mut()[..clave.len()].copy_from_slice(clave.as_bytes());
+        let r = self.pedir(ABRIR_VOLUMEN, 0, 0, clave.len() as u64, nombre);
+        if self.ventana()[..clave.len()].iter().any(|&b| b != 0) {
+            println!("  [ficheros] la contraseña sigue en la ventana");
+            return R { estado: i32::MIN, asa: 0, a: 0, b: 0, c: 0 };
+        }
+        r
     }
 
     fn ventana(&self) -> &[u8] {
@@ -103,6 +103,86 @@ impl Cliente {
 /// El byte `i` de los datos de prueba de 200 KB.
 fn dato(i: u64) -> u8 {
     (i.wrapping_mul(2654435761) >> 13) as u8
+}
+
+const VA_PRESTADOS: usize = 0x41_0000_0000;
+
+/// Escribe `tam` bytes de `dato(i + sal)` en `nombre` del cajón `dir`; su asa.
+fn hacer(c: &Cliente, dir: u32, nombre: &str, tam: u64, sal: u64) -> Option<u32> {
+    let f = c.pedir(CREAR, dir, 1, 0, nombre);
+    if f.estado != 0 {
+        return None;
+    }
+    let mut off = 0;
+    while off < tam {
+        let n = (tam - off).min(64 * 1024);
+        for (i, b) in c.ventana_mut()[..n as usize].iter_mut().enumerate() {
+            *b = dato(off + i as u64 + sal);
+        }
+        if c.pedir(ESCRIBIR, f.asa, off, n, "").a != n {
+            return None;
+        }
+        off += n;
+    }
+    Some(f.asa)
+}
+
+/// Lee `asa` entero con lo prestado y lo compara con `dato(i + sal)` (con `cambio` puesto encima).
+fn igual(pr: &mut dashos::prestados::Prestados, lectura: u32, asa: u32, tam: u64, sal: u64, cambio: (u64, &[u8])) -> bool {
+    let mut b = [0u8; 4096];
+    let mut off = 0;
+    while off < tam {
+        let Some(n) = pr.leer(1, lectura, asa, off, &mut b[..]) else { return false };
+        if n == 0 {
+            return false;
+        }
+        for (i, &x) in b[..n].iter().enumerate() {
+            let j = off + i as u64;
+            let quiero = if j >= cambio.0 && j < cambio.0 + cambio.1.len() as u64 { cambio.1[(j - cambio.0) as usize] } else { dato(j + sal) };
+            if x != quiero {
+                println!("  [ficheros] A7: en {} hay {} y no {}", j, x, quiero);
+                return false;
+            }
+        }
+        off += n as u64;
+    }
+    off == tam
+}
+
+fn prestadas(c: &Cliente, dir: u32) -> bool {
+    const TAM: u64 = 600 * 1024;
+    let Some(asa) = hacer(c, dir, "presta.bin", TAM, 0) else { return false };
+    let mut pr = dashos::prestados::Prestados::nuevo(VA_PRESTADOS);
+    let mut partes = [false; 6];
+    partes[0] = igual(&mut pr, c.lectura, asa, TAM, 0, (0, &[])) && igual(&mut pr, c.lectura, asa, TAM, 0, (0, &[])) && pr.viajes == 1;
+    // Escribir por el protocolo: lo prestado ya lo tiene, sin otro viaje.
+    c.ventana_mut()[..10].copy_from_slice(b"0123456789");
+    partes[1] = c.pedir(ESCRIBIR, asa, 530_000, 10, "").a == 10 && igual(&mut pr, c.lectura, asa, TAM, 0, (530_000, b"0123456789")) && pr.viajes == 1;
+    // Recortar a 540.000: lo de después, ceros (aunque se lea con el tamaño de antes).
+    let mut b = [1u8; 64];
+    partes[2] = c.pedir(TAMANO, asa, 540_000, 0, "").estado == 0
+        && pr.leer(1, c.lectura, asa, 600_000, &mut b).is_some()
+        && b.iter().all(|&x| x == 0);
+    // Cerrar, borrar y hacer otro: lo nuevo, no lo de antes.
+    pr.cerrar_asa(asa);
+    let otro = c.pedir(CERRAR, asa, 0, 0, "").estado == 0 && c.pedir(BORRAR, dir, 0, 0, "presta.bin").estado == 0;
+    let nuevo = if otro { hacer(c, dir, "presta2.bin", TAM, 7) } else { None };
+    partes[3] = nuevo.is_some_and(|n| igual(&mut pr, c.lectura, n, TAM, 7, (0, &[])));
+    if let Some(n) = nuevo {
+        pr.cerrar_asa(n);
+        c.pedir(CERRAR, n, 0, 0, "");
+        c.pedir(BORRAR, dir, 0, 0, "presta2.bin");
+    }
+    // Uno pequeño no se presta: `None`, y se lee con LEER.
+    let h = c.pedir(BUSCAR, dir, 0, 0, "hola.txt");
+    partes[4] = h.estado == 0 && pr.leer(1, c.lectura, h.asa, 0, &mut b).is_none();
+    c.pedir(CERRAR, h.asa, 0, 0, "");
+    // Un cajón tampoco.
+    partes[5] = pr.leer(1, c.lectura, dir, 0, &mut b).is_none();
+    if !partes.iter().all(|&p| p) {
+        println!("  [ficheros] A7 por partes: {:?}", partes);
+    }
+    partes.iter().all(|&p| p)
 }
 
 fn principal() -> u64 {
@@ -154,6 +234,12 @@ fn principal() -> u64 {
     let f = c.pedir(BUSCAR, 0, 0, 0, "LEEME.txt");
     let l = c.pedir(LEER, f.asa, 0, 4096, "");
     println!("  [ficheros] LEEME.txt ({} bytes): {:?}", f.a, core::str::from_utf8(&c.ventana()[..l.a as usize]).unwrap_or("?").trim_end());
+    // A3: lo mismo en un viaje (la asa de arriba sigue abierta: la usan los rechazos), desde el byte 7, y lo que no existe.
+    let ln = c.pedir(LEER_NOMBRE, 0, 7, 4096, "LEEME.txt");
+    let a3 = ln.estado == 0 && ln.a == 12 && ln.c == 19 && ln.asa == 0 && &c.ventana()[..12] == b"lee RedoxFS\n"
+        && c.pedir(LEER_NOMBRE, 0, 0, 4096, "no-existe").estado == -2
+        && c.pedir(LEER_NOMBRE, 0, 0, 4096, "C").estado == -4;
+    println!("  [ficheros] A3 leer por nombre: {}", si(a3));
 
     // C/grande.txt por trozos de 64 KB: las líneas "línea 0", "línea 1"...
     let g = c.pedir(BUSCAR, 0, 0, 0, "C/grande.txt");
@@ -270,6 +356,11 @@ fn principal() -> u64 {
         && c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
     println!("  [ficheros] hola.txt: {}; rechazos al escribir: {}", si(hola), si(rechazos));
 
+    // A7: páginas prestadas. Un fichero de 600 KB (dos trozos) se lee entero dos veces con un solo viaje; lo que se
+    // escribe después se ve sin viajar; al recortar, lo de después son ceros; un fichero nuevo que pueda tener el número
+    // de uno borrado no enseña lo viejo; y uno pequeño no se presta.
+    println!("  [ficheros] A7 páginas prestadas: {}", si(prestadas(&c, dir.asa)));
+
     // FS6: la raíz no distingue mayúsculas.
     let mayus = c.pedir(BUSCAR, 0, 0, 0, "leeme.TXT");
     let mayusculas = mayus.estado == 0 && mayus.a == 19 && c.pedir(CERRAR, mayus.asa, 0, 0, "").estado == 0;
@@ -319,10 +410,170 @@ fn principal() -> u64 {
         si(bits)
     );
 
+    // A11: lo recién borrado espera en cuarentena hasta guardar. COMPROBAR ya no guarda antes: lo cuenta como libre
+    // pendiente, no como perdido.
+    let escrito = c.pedir(BUSCAR, 0, 0, 0, "Escrito");
+    if let Some(a) = hacer(&c, escrito.asa, "a11.bin", 300 * 1024, 3) {
+        c.pedir(CERRAR, a, 0, 0, "");
+        c.pedir(BORRAR, escrito.asa, 0, 0, "a11.bin");
+    }
+    c.pedir(CERRAR, escrito.asa, 0, 0, "");
+    // A14: lo creado lleva la hora del sistema (la de antes de pedirlo, o hasta 2 s después); sin hora, 0.
+    let h = dashos::hora_ns() / 1_000_000_000;
+    let escrito = c.pedir(BUSCAR, 0, 0, 0, "Escrito");
+    let fecha = match hacer(&c, escrito.asa, "fecha.bin", 100, 0) {
+        Some(a) => {
+            let d = c.pedir(DATOS, a, 0, 0, "");
+            c.pedir(CERRAR, a, 0, 0, "");
+            c.pedir(BORRAR, escrito.asa, 0, 0, "fecha.bin");
+            d.estado == 0 && if h == 0 { d.b == 0 } else { d.b >= h && d.b <= h + 2 }
+        }
+        None => false,
+    };
+    c.pedir(CERRAR, escrito.asa, 0, 0, "");
+    println!("  [ficheros] A14 fechas: {}{}", si(fecha), if h == 0 { " (sin hora)" } else { "" });
+    // A14, lectura anticipada: C/frio.bin (1 MB de xorshift, de la imagen: frío de verdad), leído a trozos de 64 KB
+    // mientras se escribe y se guarda otro fichero entre trozo y trozo (cada guardado recoge lo leído por adelantado y
+    // lo da por no válido). Tiene que salir entero y bien.
+    let frio = c.pedir(BUSCAR, 0, 0, 0, "C/frio.bin");
+    let escrito = c.pedir(BUSCAR, 0, 0, 0, "Escrito");
+    let otro = c.pedir(CREAR, escrito.asa, 1, 0, "entre.bin");
+    let mut x: u64 = 0x2545_F491_4F6C_DD1D;
+    let mut adelanto = frio.estado == 0 && otro.estado == 0;
+    let mut off = 0u64;
+    while adelanto && off < 1 << 20 {
+        let r = c.pedir(LEER, frio.asa, off, 64 * 1024, "");
+        adelanto &= r.estado == 0 && r.a == 64 * 1024;
+        for &b in &c.ventana()[..r.a as usize] {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            adelanto &= b == x as u8;
+        }
+        off += r.a;
+        c.ventana_mut()[..4096].fill(off as u8);
+        adelanto &= c.pedir(ESCRIBIR, otro.asa, off, 4096, "").a == 4096 && c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
+    }
+    c.pedir(CERRAR, frio.asa, 0, 0, "");
+    c.pedir(CERRAR, otro.asa, 0, 0, "");
+    c.pedir(BORRAR, escrito.asa, 0, 0, "entre.bin");
+    c.pedir(CERRAR, escrito.asa, 0, 0, "");
+    println!("  [ficheros] A14 lectura anticipada: {}", si(adelanto));
+    // A14, TRIM: 256 KB que no se comprimen (xorshift), borrados y guardados. El disco los descarta; desde fuera,
+    // `disco_archivos.py` comprueba que ya no están en la imagen.
+    let escrito = c.pedir(BUSCAR, 0, 0, 0, "Escrito");
+    let f = c.pedir(CREAR, escrito.asa, 1, 0, "descarte.bin");
+    let mut x: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut trim = f.estado == 0;
+    for off in (0..256 * 1024u64).step_by(64 * 1024) {
+        for b in c.ventana_mut()[..64 * 1024].iter_mut() {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            *b = x as u8;
+        }
+        trim &= c.pedir(ESCRIBIR, f.asa, off, 64 * 1024, "").a == 64 * 1024;
+    }
+    trim &= c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
+    c.pedir(CERRAR, f.asa, 0, 0, "");
+    trim &= c.pedir(BORRAR, escrito.asa, 0, 0, "descarte.bin").estado == 0 && c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
+    c.pedir(CERRAR, escrito.asa, 0, 0, "");
+    println!("  [ficheros] A14 descarte: {}", si(trim));
     // FS8: el disco entero, datos incluidos, tras todo lo anterior: ni un problema, ni un bloque perdido.
     let k = c.pedir(COMPROBAR, 0, 1, 0, "");
     let texto = core::str::from_utf8(&c.ventana()[..k.b as usize]).unwrap_or("?");
     println!("  [ficheros] FS8 comprobación: {}{}", si(k.estado == 0 && k.a == 0 && k.c > 0), texto.trim_end());
+    // A15: sujetar el disco, escribir y borrar mientras tanto (lo borrado espera sin reusarse; comprobar lo cuenta como
+    // libre pendiente) y soltar. Dos veces no se sujeta, ni se suelta lo que no se sujeta.
+    // Si lo tiene sujeto el comprobador (otro proceso), se espera a que suelte (hasta 30 s: con el PC cargado, su
+    // prueba del arranque pasó de 3 a 31 s).
+    let sujetar = || {
+        let mut e = c.pedir(SUJETAR, 0, 0, 0, "").estado;
+        for _ in 0..3000 {
+            if e != EN_USO {
+                break;
+            }
+            dashos::dormir_us(10_000);
+            e = c.pedir(SUJETAR, 0, 0, 0, "").estado;
+        }
+        e
+    };
+    let primero = sujetar();
+    let segundo = c.pedir(SUJETAR, 0, 0, 0, "").estado;
+    let mut sujeto = primero == 0 && segundo == EN_USO;
+    let mut escribir_bien = true;
+    let escrito = c.pedir(BUSCAR, 0, 0, 0, "Escrito");
+    for vuelta in 0..3 {
+        if let Some(a) = hacer(&c, escrito.asa, "a15.bin", 200 * 1024, vuelta) {
+            // Guardado antes de borrar, para que lo borrado quede sujeto.
+            escribir_bien &= c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
+            c.pedir(CERRAR, a, 0, 0, "");
+        } else {
+            escribir_bien = false;
+        }
+        escribir_bien &= c.pedir(BORRAR, escrito.asa, 0, 0, "a15.bin").estado == 0 && c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
+    }
+    c.pedir(CERRAR, escrito.asa, 0, 0, "");
+    let comprobar_1 = c.pedir(COMPROBAR, 0, 0, 0, "");
+    let soltar_1 = c.pedir(SOLTAR, 0, 0, 0, "").estado;
+    let soltar_2 = c.pedir(SOLTAR, 0, 0, 0, "").estado;
+    let comprobar_2 = c.pedir(COMPROBAR, 0, 0, 0, "");
+    sujeto = sujeto && escribir_bien && comprobar_1.a == 0 && soltar_1 == 0 && soltar_2 == NO_EXISTE && comprobar_2.a == 0;
+    if !sujeto {
+        // Para saber cuál falla (sale a veces con el PC cargado).
+        println!("  [ficheros] A15 sujetar: sujetar {} y {}, escribir {}, comprobar {} ({} problemas), soltar {} y {}, comprobar {} ({})",
+            primero, segundo, escribir_bien, comprobar_1.estado, comprobar_1.a, soltar_1, soltar_2, comprobar_2.estado, comprobar_2.a);
+    }
+    println!("  [ficheros] A15 sujetar: {}", si(sujeto));
+    // A15, hostil: sujetar y no soltar mientras se escribe, guarda y borra mucho más de lo que cabe. El servicio suelta solo al
+    // quedar poco sitio: ninguna escritura se queda sin sitio y el SOLTAR de después dice LLENO.
+    let escrito = c.pedir(BUSCAR, 0, 0, 0, "Escrito");
+    let mut lleno = sujetar() == 0;
+    let mut x: u64 = 0x2545_F491_4F6C_DD1D;
+    let mut rondas = 0;
+    // El primer paso que falla y su estado, para el mensaje.
+    let mut fallo: Option<(&str, i64)> = None;
+    while lleno && rondas < 64 {
+        let f = c.pedir(CREAR, escrito.asa, 1, 0, "a15b.bin");
+        if f.estado != 0 && fallo.is_none() {
+            fallo = Some(("crear", f.estado as i64));
+        }
+        lleno &= f.estado == 0;
+        for off in (0..256 * 1024u64).step_by(64 * 1024) {
+            for b in c.ventana_mut()[..64 * 1024].iter_mut() {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                *b = x as u8;
+            }
+            let w = c.pedir(ESCRIBIR, f.asa, off, 64 * 1024, "");
+            if w.a != 64 * 1024 && fallo.is_none() {
+                fallo = Some(("escribir", w.estado as i64));
+            }
+            lleno &= w.a == 64 * 1024;
+        }
+        // Guardado antes de borrarlo: si no, sus bloques son nuevos (ninguna foto los nombra) y se reusan sin esperar.
+        let v = c.pedir(VACIAR, 0, 0, 0, "").estado;
+        if v != 0 && fallo.is_none() {
+            fallo = Some(("guardar", v as i64));
+        }
+        lleno &= v == 0;
+        c.pedir(CERRAR, f.asa, 0, 0, "");
+        let b = c.pedir(BORRAR, escrito.asa, 0, 0, "a15b.bin").estado;
+        let v2 = c.pedir(VACIAR, 0, 0, 0, "").estado;
+        if (b != 0 || v2 != 0) && fallo.is_none() {
+            fallo = Some(("borrar y guardar", (b as i64) << 32 | (v2 as u32 as i64)));
+        }
+        lleno &= b == 0 && v2 == 0;
+        rondas += 1;
+    }
+    c.pedir(CERRAR, escrito.asa, 0, 0, "");
+    let soltar = c.pedir(SOLTAR, 0, 0, 0, "").estado;
+    let lleno = lleno && soltar == LLENO && c.pedir(COMPROBAR, 0, 0, 0, "").a == 0;
+    if !lleno {
+        println!("  [ficheros] A15 sujetar sin soltar: {} rondas, soltar {}, primer fallo {:?}", rondas, soltar, fallo);
+    }
+    println!("  [ficheros] A15 sujetar sin soltar: {}", si(lleno));
 
     // FS9: una instantánea, un fichero nuevo, volver a ella (el fichero ya no está y las asas de antes no valen) y
     // descartarla. El disco queda como estaba, sin un problema.
@@ -344,17 +595,21 @@ fn principal() -> u64 {
         si(tomada && nuevo.estado == 0 && en_lista && vuelta && descartada && limpio)
     );
 
-    // FS10: el volumen cifrado "Ana", que el disco trae cerrado y vacío. Vacío se lista (no hay nada que descifrar:
-    // la estructura está a la vista, como en ZFS); con algo dentro y cerrado, no.
+    // FS10: el volumen cifrado "Ana", que el disco trae cerrado y vacío. Cerrado no se lista, ni vacío: su raíz no se
+    // puede leer, y sin ella no hay permisos que mirar (R6; antes, vacío se listaba).
     let lista = c.pedir(VOLUMENES, 0, 0, 0, "");
     let v = c.ventana();
-    let listado = lista.estado == 0 && lista.a == 1 && v[8] == 1 && v[9] == 3 && &v[10..13] == b"Ana";
+    // Dos volúmenes: "Ana" y "Carla" (U3).
+    let listado = lista.estado == 0 && lista.a == 2 && v[8] == 1 && v[9] == 3 && &v[10..13] == b"Ana";
     let raiz = c.pedir(VOLUMEN, 0, 0, 0, "Ana");
     let l = c.pedir(LISTAR, raiz.asa, 0, 0, "");
-    let cerrado = raiz.estado == 0 && l.estado == 0 && l.a == 0;
+    let cerrado = raiz.estado == 0 && l.estado == PROTEGIDO;
+    if !cerrado {
+        println!("  [ficheros] Ana cerrado: raíz {}, listar {} con {}", raiz.estado, l.estado, l.a);
+    }
     // Con otra contraseña no se abre; con la suya, sí.
-    let abierto = c.pedir(ABRIR_VOLUMEN, 0, 0, 0, "Ana\0otra").estado == PROTEGIDO
-        && c.pedir(ABRIR_VOLUMEN, 0, 0, 0, "Ana\0clave de Ana").estado == 0
+    let abierto = c.abrir_volumen("Ana", "otra").estado == PROTEGIDO
+        && c.abrir_volumen("Ana", "clave de Ana").estado == 0
         && c.pedir(VOLUMENES, 0, 0, 0, "").estado == 0
         && c.ventana()[8] == 3;
     let f = c.pedir(CREAR, raiz.asa, ARCHIVO, 0, "secreto.txt");
@@ -367,7 +622,7 @@ fn principal() -> u64 {
     let raiz = c.pedir(VOLUMEN, 0, 0, 0, "Ana");
     let sin_llave = c.pedir(BUSCAR, raiz.asa, 0, 0, "secreto.txt").estado == PROTEGIDO
         && c.pedir(LISTAR, raiz.asa, 0, 0, "").estado == PROTEGIDO;
-    let releido = c.pedir(ABRIR_VOLUMEN, 0, 0, 0, "Ana\0clave de Ana").estado == 0 && {
+    let releido = c.abrir_volumen("Ana", "clave de Ana").estado == 0 && {
         let h = c.pedir(BUSCAR, raiz.asa, 0, 0, "secreto.txt");
         let l = c.pedir(LEER, h.asa, 0, 64, "");
         let bien = l.a == 14 && &c.ventana()[..14] == b"solo para Ana\n";
@@ -386,9 +641,31 @@ fn principal() -> u64 {
         && c.pedir(CERRAR, t.asa, 0, 0, "").estado == 0
         && c.pedir(QUITAR_VOLUMEN, 0, 0, 0, "Temporal").estado == 0
         && c.pedir(VOLUMEN, 0, 0, 0, "Temporal").estado == -2;
+    // R10: uno cifrado hecho aquí, con llaves del azar del kernel: abierto al hacerlo, se escribe, se cierra, no se abre
+    // con otra contraseña y sí con la suya, y se quita.
+    c.ventana_mut()[..10].copy_from_slice(b"clave Beto");
+    let hecho = c.pedir(HACER_VOLUMEN, 0, 2, 10, "Beto");
+    let cifrado_aqui = if hecho.estado == -14 {
+        println!("  [ficheros] FS10 cifrado hecho aquí: sin azar de calidad");
+        true
+    } else {
+        let b = c.pedir(VOLUMEN, 0, 0, 0, "Beto");
+        let f = c.pedir(CREAR, b.asa, ARCHIVO, 0, "x");
+        let bien = hecho.estado == 0
+            && c.ventana()[..10].iter().all(|&x| x == 0)
+            && f.estado == 0
+            && c.pedir(CERRAR, f.asa, 0, 0, "").estado == 0
+            && c.pedir(CERRAR, b.asa, 0, 0, "").estado == 0
+            && c.pedir(CERRAR_VOLUMEN, 0, 0, 0, "Beto").estado == 0
+            && c.abrir_volumen("Beto", "otra").estado == PROTEGIDO
+            && c.abrir_volumen("Beto", "clave Beto").estado == 0
+            && c.pedir(QUITAR_VOLUMEN, 0, 0, 0, "Beto").estado == 0;
+        println!("  [ficheros] FS10 cifrado hecho aquí: {}", si(bien));
+        bien
+    };
     // Lo deja cerrado, y el disco sin un problema.
     let limpio = c.pedir(CERRAR_VOLUMEN, 0, 0, 0, "Ana").estado == 0 && c.pedir(COMPROBAR, 0, 1, 0, "").a == 0;
-    let partes = [listado, cerrado, abierto, escrito, cerrado_otra_vez, sin_llave, releido, quitado, limpio];
+    let partes = [listado, cerrado, abierto, escrito, cerrado_otra_vez, sin_llave, releido, quitado, limpio, cifrado_aqui];
     println!("  [ficheros] FS10 volúmenes: {}", si(partes.iter().all(|&p| p)));
     if !partes.iter().all(|&p| p) {
         // Cuál falla, en el orden de arriba.

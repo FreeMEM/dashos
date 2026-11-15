@@ -1,4 +1,4 @@
-//! Los núcleos en x86-64 (S21, X3): su número, el arranque de los demás (INIT y SIPI, con un trampolín por debajo de
+//! Los núcleos en x86-64 (S30, X3): su número, el arranque de los demás (INIT y SIPI, con un trampolín por debajo de
 //! 1 MB), los avisos entre núcleos y el vaciado de la TLB en todos.
 //!
 //! Escrito con el manual de Intel (SDM, volumen 3: 8.4, el arranque de varios procesadores; 4.10.5, la coherencia de
@@ -23,10 +23,12 @@ struct PorNucleo {
     rsp_usuario: u64,
     /// gs:[16]: el tope de la pila del kernel del hilo que corre, como RSP0 de la TSS (X4).
     pila_kernel: u64,
+    /// gs:[24]: el hilo que corre en este núcleo (lo que en ARM guarda TPIDR_EL1, K1).
+    hilo: u64,
 }
 
 static mut POR_NUCLEO: [PorNucleo; MAX_NUCLEOS] =
-    [const { PorNucleo { numero: 0, rsp_usuario: 0, pila_kernel: 0 } }; MAX_NUCLEOS];
+    [const { PorNucleo { numero: 0, rsp_usuario: 0, pila_kernel: 0, hilo: 0 } }; MAX_NUCLEOS];
 
 /// Los ID de APIC de cada núcleo y cuáles están en marcha (un bit por núcleo).
 static APIC_IDS: [AtomicU32; MAX_NUCLEOS] = [const { AtomicU32::new(0) }; MAX_NUCLEOS];
@@ -37,6 +39,19 @@ pub fn numero() -> u32 {
     let n: u64;
     unsafe { core::arch::asm!("mov {}, gs:[0]", out(reg) n, options(nostack, preserves_flags, readonly)) };
     n as u32
+}
+
+/// El hilo que corre en este núcleo, como lo apuntó el planificador (`poner_hilo_actual`); 0 antes de que lo haya. Una
+/// sola instrucción: aunque el hilo pase a otro núcleo justo después, lo leído sigue siendo él.
+pub fn hilo_actual() -> usize {
+    let h: usize;
+    unsafe { core::arch::asm!("mov {}, gs:[24]", out(reg) h, options(nostack, preserves_flags, readonly)) };
+    h
+}
+
+/// Apunta el hilo que va a correr en este núcleo. Lo llama el planificador, con las interrupciones cerradas.
+pub(super) fn poner_hilo_actual(h: usize) {
+    unsafe { core::arch::asm!("mov gs:[24], {}", in(reg) h, options(nostack, preserves_flags)) };
 }
 
 /// Pone la zona del núcleo `n` en la base de GS. Después de cargar la GDT, que pone GS a 0.
@@ -289,4 +304,27 @@ extern "C" fn kmain_secundario_x86(n: u64) -> ! {
     crate::kprintln!("  núcleo {} en marcha (APIC {}{})", n, apic::id(), if apic::x2apic() { ", x2APIC" } else { "" });
     EN_MARCHA.fetch_or(1 << n, Ordering::AcqRel);
     crate::planificador::ocioso();
+}
+
+/// Apaga (`reiniciar` falso) o reinicia la máquina (llamada 51). Reiniciar: el registro de control de reinicio de los
+/// PC (puerto 0xCF9: reinicio completo) y, si sigue aquí, el controlador del teclado (0x64, orden 0xFE). Apagar pide
+/// leer el AML de ACPI (`\_S5`), que no se lee todavía: no hace nada. Si vuelve, es que no se pudo.
+pub fn apagar(reiniciar: bool) {
+    if !reiniciar {
+        return;
+    }
+    // Lo escrito, que salga antes por el puerto serie.
+    let hasta = crate::reloj::ahora() + crate::reloj::frecuencia() / 50;
+    while crate::reloj::ahora() < hasta {
+        core::hint::spin_loop();
+    }
+    unsafe {
+        core::arch::asm!("out dx, al", in("dx") 0xcf9u16, in("al") 0x02u8, options(nomem, nostack, preserves_flags));
+        core::arch::asm!("out dx, al", in("dx") 0xcf9u16, in("al") 0x06u8, options(nomem, nostack, preserves_flags));
+    }
+    let hasta = crate::reloj::ahora() + crate::reloj::frecuencia() / 10;
+    while crate::reloj::ahora() < hasta {
+        core::hint::spin_loop();
+    }
+    unsafe { core::arch::asm!("out dx, al", in("dx") 0x64u16, in("al") 0xfeu8, options(nomem, nostack, preserves_flags)) };
 }

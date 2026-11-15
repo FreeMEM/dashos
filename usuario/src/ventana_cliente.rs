@@ -12,6 +12,17 @@ use wayland::tablas::{
 use wayland::{Escritor, leer_args};
 
 pub const VENTANAS: u32 = 1;
+/// La llave del canal "ventanas" que usa `Cliente`: la 1, salvo que el programa diga otra (`usar_llave`; la caja Linux,
+/// que tiene antes sus datos).
+static LLAVE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(VENTANAS);
+
+pub fn usar_llave(llave: u32) {
+    LLAVE.store(llave, core::sync::atomic::Ordering::Relaxed);
+}
+
+fn llave() -> u32 {
+    LLAVE.load(core::sync::atomic::Ordering::Relaxed)
+}
 pub const VA: usize = 0x40_0000_0000;
 pub const CUADROS: u32 = 30;
 
@@ -35,16 +46,67 @@ pub const AVISO: u32 = 100;
 pub struct Cliente {
     respuesta: u32,
     pub juntador: Juntador,
+    /// S10: la marca de la puerta (0, sin puerta) y cuántos mensajes han llegado por ella sin atender.
+    puerta: u64,
+    pub timbres: u32,
+}
+
+/// Al acabar, se cierran su canal y las llaves que llegaron sin usar: si no, quien se conecta muchas veces (`guardian`,
+/// una por pantalla y por pregunta) llena su tabla de llaves.
+impl Drop for Cliente {
+    fn drop(&mut self) {
+        while let Some(l) = self.juntador.tomar_llave() {
+            dashos::cerrar(l);
+        }
+        dashos::cerrar(self.respuesta);
+    }
 }
 
 impl Cliente {
     /// Se conecta al compositor por el canal "ventanas" (llave 1).
     pub fn conectar() -> Option<Cliente> {
+        Self::conectar_con_puerta(0).map(|(c, _)| c)
+    }
+
+    /// S10: como `conectar`, y además una "puerta": una copia del extremo por el que escribe el compositor, marcada con
+    /// `marca` (que no sea 0), para que otro servicio (los avisos, con la barra) toque el timbre en el mismo canal que
+    /// se espera. Un proceso solo espera en un canal. Lo que llega con esa marca no se mezcla con lo del compositor:
+    /// se cuenta en `timbres`, y `evento_plazo` vuelve al llegar. La copia viaja una vez y solo sirve para escribir.
+    pub fn conectar_con_puerta(marca: u64) -> Option<(Cliente, u32)> {
         let (mio, suyo) = dashos::canal_crear();
-        if dashos::canal_escribir(VENTANAS, &[TROZO_CONECTAR], &[suyo]) != 0 {
+        let puerta = if marca != 0 { dashos::llave_duplicar(suyo, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, marca) } else { 0 };
+        // Con el compositor atareado (al arrancar, con muchos clientes a la vez y una pantalla grande), su cola puede
+        // estar llena: se reintenta hasta 5 s en vez de rendirse. Si no, se dice por qué y se sueltan las llaves.
+        let mut intentos = 0;
+        let r = loop {
+            let e = dashos::canal_escribir(llave(), &[TROZO_CONECTAR], &[suyo]);
+            if e == 0 || e == dashos::E_CERRADO || intentos >= 5_000 {
+                break e;
+            }
+            intentos += 1;
+            dashos::dormir_us(1_000);
+        };
+        if r != 0 {
+            dashos::println!("  [ventanas] no se puede conectar al compositor: {}", r);
+            for l in [mio, suyo] {
+                dashos::cerrar(l);
+            }
+            if puerta > 0 {
+                dashos::cerrar(puerta as u32);
+            }
             return None;
         }
-        Some(Cliente { respuesta: mio, juntador: Juntador::new() })
+        Some((Cliente { respuesta: mio, juntador: Juntador::new(), puerta: if puerta > 0 { marca } else { 0 }, timbres: 0 }, puerta.max(0) as u32))
+    }
+
+    /// Si lo leído con la marca `marca` llegó por la puerta: se cuenta y se cierran sus llaves.
+    fn por_la_puerta(&mut self, marca: u64, llaves: &[u32]) -> bool {
+        if self.puerta == 0 || marca != self.puerta {
+            return false;
+        }
+        self.timbres = self.timbres.saturating_add(1);
+        llaves.iter().for_each(|&l| { dashos::cerrar(l); });
+        true
     }
 
     /// Los globales del compositor (nombre, interfaz, versión), con un sync.
@@ -69,12 +131,66 @@ impl Cliente {
 
     pub fn mandar(&mut self, e: &Escritor) {
         for t in canal::trocear(e).expect("mensajes propios bien formados") {
-            // Con la cola llena, se espera un poco y se reintenta.
+            // Con la cola llena, se espera un poco y se reintenta. Mientras, se recoge lo que mande el compositor: si
+            // no, él puede estar esperando a que leamos para seguir leyendo su cola, y nosotros a que la lea para
+            // escribir; al segundo nos suelta (E8). Así se quedaba sin pantalla de entrada `guardian`, 1 de cada 3
+            // pasadas de la prueba con el PC cargado.
             for _ in 0..1000 {
-                if dashos::canal_escribir(VENTANAS, &t.bytes, &t.llaves) == 0 {
+                if dashos::canal_escribir(llave(), &t.bytes, &t.llaves) == 0 {
                     break;
                 }
-                dormir();
+                if !self.recoger() {
+                    dormir();
+                }
+            }
+        }
+    }
+
+    /// Lee un trozo que haya llegado, sin esperar, y lo guarda para `evento`. `false` si no había nada. Quien espera a
+    /// otro servicio lo llama mientras tanto (la barra, a `sesiones`): así el compositor no le suelta por no leer.
+    pub fn recoger(&mut self) -> bool {
+        let mut buf = [0u8; canal::MAX_CANAL];
+        let mut ll = [0u32; canal::MAX_LLAVES];
+        let (n, k, marca) = dashos::canal_leer_plazo(self.respuesta, &mut buf, &mut ll, 1);
+        if n < 0 {
+            return false;
+        }
+        if self.por_la_puerta(marca, &ll[..k]) {
+            return true;
+        }
+        if n == 0 {
+            return false;
+        }
+        if buf[0] == TROZO_DATOS && self.juntador.meter(&buf[1..n as usize], &ll[..k]).is_ok() {
+            return true;
+        }
+        ll[..k].iter().for_each(|&l| { dashos::cerrar(l); });
+        true
+    }
+
+    /// Como `evento`, esperando como mucho `us` microsegundos: `Ok(None)` si no llegó nada (U3: `guardian` espera a la
+    /// vez a `sesiones` sin dejar de leer al compositor, que suelta a quien no lee).
+    pub fn evento_plazo(&mut self, us: u64) -> Result<Option<(u32, u16, Vec<u8>)>, ()> {
+        loop {
+            if let Ok(Some(m)) = self.juntador.siguiente() {
+                return Ok(Some((m.objeto, m.orden, m.cuerpo)));
+            }
+            let mut buf = [0u8; canal::MAX_CANAL];
+            let mut ll = [0u32; canal::MAX_LLAVES];
+            let (n, k, marca) = dashos::canal_leer_plazo(self.respuesta, &mut buf, &mut ll, us.max(1));
+            if n == dashos::E_PLAZO {
+                return Ok(None);
+            }
+            if n >= 0 && self.por_la_puerta(marca, &ll[..k]) {
+                return Ok(None);
+            }
+            if n <= 0 {
+                dashos::println!("  [ventanas] no se pudo leer del compositor: {}", n);
+                return Err(());
+            }
+            if buf[0] == TROZO_DATOS && self.juntador.meter(&buf[1..n as usize], &ll[..k]).is_err() {
+                dashos::println!("  [ventanas] demasiado por juntar del compositor");
+                return Err(());
             }
         }
     }
@@ -87,7 +203,10 @@ impl Cliente {
             }
             let mut buf = [0u8; canal::MAX_CANAL];
             let mut ll = [0u32; canal::MAX_LLAVES];
-            let (n, k) = dashos::canal_leer(self.respuesta, &mut buf, &mut ll);
+            let (n, k, marca) = dashos::canal_leer_marca(self.respuesta, &mut buf, &mut ll);
+            if n >= 0 && self.por_la_puerta(marca, &ll[..k]) {
+                continue;
+            }
             if n <= 0 {
                 return None;
             }
@@ -95,6 +214,51 @@ impl Cliente {
                 self.juntador.meter(&buf[1..n as usize], &ll[..k]).ok()?;
             }
         }
+    }
+}
+
+/// Memoria para los búferes de una superficie, con su `wl_shm_pool`, proyectada en `va`. Para lo que se abre y se cierra
+/// (el lanzador, un aviso): se pide al abrirlo y se suelta al cerrarlo, en vez de tenerla siempre (kit-memoria: la
+/// barra tenía 2,1 MB para la barra a 3840 de ancho, el lanzador, el aviso y el historial, se vieran o no).
+pub struct Lamina {
+    llave: u32,
+    va: usize,
+    pub pool: u32,
+    pub tamano: usize,
+}
+
+impl Lamina {
+    /// Crea `tamano` bytes, los proyecta en `va` y pone en `e` el `create_pool` del objeto `pool` (el compositor lee con
+    /// una copia de solo lectura de la llave).
+    pub fn nueva(e: &mut Escritor, tamano: usize, va: usize, pool: u32) -> Option<Lamina> {
+        let m = dashos::memoria_crear(tamano);
+        if (m as i32) <= 0 {
+            return None;
+        }
+        let copia = dashos::llave_duplicar(m, dashos::LEER | dashos::TRANSFERIR, 0);
+        if dashos::memoria_proyectar(m, va, true) != 0 || copia <= 0 {
+            if copia > 0 {
+                dashos::cerrar(copia as u32);
+            }
+            dashos::memoria_quitar(va);
+            dashos::cerrar(m);
+            return None;
+        }
+        e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(pool).llave(copia as u32).int(tamano as i32).fin();
+        Some(Lamina { llave: m, va, pool, tamano })
+    }
+
+    /// Los primeros `n` puntos (como mucho, los que caben).
+    pub fn px(&mut self, n: usize) -> &mut [u32] {
+        unsafe { core::slice::from_raw_parts_mut(self.va as *mut u32, n.min(self.tamano / 4)) }
+    }
+
+    /// Pone en `e` el `destroy` del pool y suelta la memoria: sus páginas vuelven cuando el compositor suelte también su
+    /// copia (al destruirse el pool y sus búferes).
+    pub fn soltar(self, e: &mut Escritor) {
+        e.empezar(self.pool, wl_shm_pool::req::DESTROY).fin();
+        dashos::memoria_quitar(self.va);
+        dashos::cerrar(self.llave);
     }
 }
 

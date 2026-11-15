@@ -1,0 +1,14 @@
+[package]
+name = "dashos-caja-vhost-prueba"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "Banco de pruebas en el PC: el virtio-blk de caja-linux/vmm servido por vhost-user a QEMU, para que lo use el controlador de un Linux de verdad"
+
+[dependencies]
+caja_vmm = { package = "dashos-caja-vmm", path = "../vmm" }
+libc = "0.2"
+
+[[bin]]
+name = "vhost-blk"
+path = "src/main.rs"

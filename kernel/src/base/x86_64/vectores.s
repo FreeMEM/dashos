@@ -1,4 +1,4 @@
-// DashOS: entradas de las excepciones de la CPU en x86-64 (S21, X2). Sintaxis de Intel.
+// DashOS: entradas de las excepciones de la CPU en x86-64 (S30, X2). Sintaxis de Intel.
 //
 // Un vector por excepción (0 a 31). Los que no traen código de error meten un 0, para que el marco sea siempre igual;
 // luego el número del vector. La entrada común guarda los 15 registros generales y llama a `excepcion_x86` con el

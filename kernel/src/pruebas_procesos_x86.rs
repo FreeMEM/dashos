@@ -1,4 +1,4 @@
-//! Las pruebas de procesos en x86-64 (S21, X4): las de `pruebas.rs` de ARM que no tocan hardware de la Pi, con los
+//! Las pruebas de procesos en x86-64 (S30, X4): las de `pruebas.rs` de ARM que no tocan hardware de la Pi, con los
 //! programas de usuario compilados para x86-64 (`usuario/`, `make usuario-x86`) y los de ensamblador de
 //! `usuario_x86.s`. Mismos números de prueba y mismos textos que en ARM donde la prueba es la misma; las propias de x86
 //! dicen "X4".
@@ -68,6 +68,7 @@ pub fn ejecutar() {
     prueba_anillo3();
     prueba_lanzador();
     prueba_reparto();
+    prueba_hilos_usuario();
 }
 
 fn bien(b: bool) -> &'static str {
@@ -375,13 +376,19 @@ fn prueba_fpu() {
     llamadas::SALIDAS_VISIBLES.store(true, Ordering::Relaxed);
     let salidas = llamadas::SALIDAS.load(Ordering::Relaxed);
     let cambios = planificador::fp_cambios();
+    // Desde la fusión con `revision`, un núcleo sin trabajo se lleva un hilo del núcleo más cargado (robo de trabajo,
+    // M4), y los dos procesos no se turnarían en el núcleo 2. Como en las pruebas de ARM, donde los tres hilos de C10
+    // siguen girando: el núcleo 1 con tres hilos del kernel (el más cargado, y esos no se mueven) y el 3 con uno.
+    crate::pruebas::ocupar(&[1, 1, 1, 3]);
+    let inicio = reloj::tics();
     if !lanzar_elf(FPU_A, alloc::vec::Vec::new(), 2) || !lanzar_elf(FPU_B, alloc::vec::Vec::new(), 2) {
+        crate::pruebas::desocupar();
         return;
     }
-    let inicio = reloj::tics();
     while llamadas::SALIDAS.load(Ordering::Relaxed) < salidas + 2 && reloj::tics() < inicio + 1000 {
         reloj::esperar_interrupcion();
     }
+    crate::pruebas::desocupar();
     let n = planificador::fp_cambios() - cambios;
     kprintln!("  la FPU cambió de dueño {} veces en {} tics", n, reloj::tics() - inicio);
     kprintln!("C28: FPU por hilo {}", if n >= 4 { "bien" } else { "MAL (pocos cambios: los procesos no se turnaron)" });
@@ -529,6 +536,8 @@ fn prueba_lanzador() {
         paquete.extend_from_slice(elf);
     }
     llamadas::SALIDAS_VISIBLES.store(true, Ordering::Relaxed);
+    // Las tablas de la zona de pilas no se devuelven (crecen con el máximo de hilos vivos a la vez): se cuentan aparte.
+    let tablas = crate::mapa::tablas_pilas();
     let libres = memoria::paginas().libres() + monton::paginas_pequenas();
     let Some(m) = memoria::Memoria::nueva(paquete.len(), &raiz) else { return };
     m.escribir(0, &paquete);
@@ -545,7 +554,7 @@ fn prueba_lanzador() {
     let mut despues = 0;
     while reloj::tics() < espera + 300 {
         esperar_tics(5);
-        despues = memoria::paginas().libres() + monton::paginas_pequenas();
+        despues = memoria::paginas().libres() + monton::paginas_pequenas() + (crate::mapa::tablas_pilas() - tablas);
         if despues >= libres {
             break;
         }
@@ -592,4 +601,101 @@ fn prueba_reparto() {
     let bienes = llegados.iter().all(|l| l.is_some_and(|ms| ms < 150));
     kprintln!("  uno de 100 ms de otro servicio llegó a los {:?} ms, y otro del mismo servicio, a los {:?} ms", llegados[0], llegados[1]);
     kprintln!("C51: temporizadores repartidos por grupos {}", bien(bienes));
+}
+
+/// C52: hilos de usuario (llamadas 40 a 44, `docs/diseño/hilos-de-usuario.md`), con el programa `hilos`: la misma
+/// prueba que en ARM (`pruebas.rs`). Llegó al fusionar `revision`.
+static HILOS_U: &[u8] = programa_x86!("hilos");
+
+fn esperar_fin(c: &objetos::Control, tics: u64) -> Option<objetos::Fin> {
+    let inicio = reloj::tics();
+    while c.estado.tomar().fin.is_none() && reloj::tics() < inicio + tics {
+        reloj::esperar_interrupcion();
+    }
+    c.estado.tomar().fin
+}
+
+fn esperar_cero(g: &crate::cupo::Cupo) -> u64 {
+    let inicio = reloj::tics();
+    while g.uso().1 != 0 && reloj::tics() < inicio + 300 {
+        esperar_tics(2);
+    }
+    g.uso().1
+}
+
+fn lanzar_hilos(orden: &[u8], bytes: u64, nucleo: usize) -> Option<(alloc::sync::Arc<objetos::Control>, alloc::sync::Arc<crate::cupo::Cupo>, objetos::Llave)> {
+    let g = crate::cupo::Cupo::raiz().hijo(bytes)?;
+    let (mio, suyo) = objetos::Canal::nuevo();
+    let (c, lado) = extremo(&mio);
+    c.escribir(lado, objetos::Mensaje { datos: orden.to_vec(), llaves: alloc::vec::Vec::new(), marca: 0 }).ok()?;
+    let control = lanzar_elf_en(HILOS_U, alloc::vec![suyo], nucleo, g.clone())?;
+    Some((control, g, mio))
+}
+
+fn prueba_hilos_usuario() {
+    use objetos::Fin;
+    llamadas::SALIDAS_VISIBLES.store(false, Ordering::Relaxed);
+    // Lo que cuesta un hilo cabe en lo que se cobra: el hilo, su FPU y su arranque, su registro en el proceso (en un
+    // vector que dobla), su sitio en la lista del proceso, en una cola de espera y en las colas de los cuatro núcleos.
+    let clase = |n: usize| if n <= 2048 { n.next_power_of_two().max(16) } else { n.div_ceil(4096) * 4096 };
+    let hilo = planificador::bytes_por_hilo() + 2 * clase(core::mem::size_of::<objetos::RegistroHilo>()) + 2 * 8 + 2 * 16 + 4 * 2 * 8;
+    let coste = hilo as u64 + crate::mapa::PILA as u64 <= crate::cupo::COSTE_HILO;
+    kprintln!("  un hilo de usuario ocupa {} bytes más su pila del kernel; se cobran {}", hilo, crate::cupo::COSTE_HILO);
+    let tablas = crate::mapa::tablas_pilas();
+    let libres = memoria::paginas().libres() + monton::paginas_pequenas();
+
+    // La víctima, en el núcleo 2: dice el número de uno de sus hilos.
+    let Some((victima, gv, canal_v)) = lanzar_hilos(b"v", 8 << 20, 2) else { return };
+    let (cv, lado_v) = extremo(&canal_v);
+    let inicio = reloj::tics();
+    let mut ajeno = None;
+    while ajeno.is_none() && reloj::tics() < inicio + 500 {
+        esperar_tics(1);
+        ajeno = cv.intentar_leer(lado_v).and_then(|m| m.datos.get(..8).map(|b| u64::from_le_bytes(b.try_into().unwrap_or([0; 8]))));
+    }
+    let ajeno = ajeno.unwrap_or(0);
+
+    // La prueba entera, en el núcleo 1, en un grupo de 4 MB: ahí topan los hilos sin fin.
+    let mut orden = alloc::vec![b'p'];
+    orden.extend_from_slice(&ajeno.to_le_bytes());
+    let Some((prueba, gp, _cp)) = lanzar_hilos(&orden, 4 << 20, 1) else { return };
+    let fin_prueba = esperar_fin(&prueba, 12000);
+    let usado_p = esperar_cero(&gp);
+
+    // Un hilo que falla se lleva el proceso entero; uno que llama a `proceso_salir`, también, con su código.
+    let Some((fallo, gf, _cf)) = lanzar_hilos(b"f", 4 << 20, 3) else { return };
+    let fin_fallo = esperar_fin(&fallo, 500);
+    let usado_f = esperar_cero(&gf);
+    let Some((salir, gs, _cs)) = lanzar_hilos(b"s", 4 << 20, 3) else { return };
+    let fin_salir = esperar_fin(&salir, 500);
+    let usado_s = esperar_cero(&gs);
+
+    // Matar a la víctima: todos sus hilos acaban, también los dormidos y el que gira.
+    let vivia = victima.estado.tomar().fin.is_none();
+    planificador::matar_proceso(&victima);
+    let fin_v = esperar_fin(&victima, 300);
+    let usado_v = esperar_cero(&gv);
+    drop((victima, prueba, fallo, salir, canal_v, _cp, _cf, _cs));
+    let mut despues = 0;
+    let espera = reloj::tics();
+    while reloj::tics() < espera + 300 {
+        esperar_tics(5);
+        despues = memoria::paginas().libres() + monton::paginas_pequenas() + (crate::mapa::tablas_pilas() - tablas);
+        if despues >= libres {
+            break;
+        }
+    }
+    llamadas::SALIDAS_VISIBLES.store(true, Ordering::Relaxed);
+    kprintln!("  hilo ajeno {}; la prueba acabó {:?}, uno que falla {:?}, uno que acaba el proceso {:?}", ajeno, fin_prueba, fin_fallo, fin_salir);
+    kprintln!("  víctima viva hasta matarla {}, y luego {:?}; usado en los grupos al final: {}, {}, {}, {}", vivia, fin_v, usado_p, usado_f, usado_s, usado_v);
+    kprintln!("  páginas libres antes {}, después {}", libres, despues);
+    let bien = coste
+        && ajeno != 0
+        && fin_prueba == Some(Fin::Salida(52))
+        && fin_fallo == Some(Fin::Fallo)
+        && fin_salir == Some(Fin::Salida(77))
+        && vivia
+        && fin_v == Some(Fin::Matado)
+        && usado_p + usado_f + usado_s + usado_v == 0;
+    kprintln!("C52: hilos de usuario {}", if bien { "bien" } else { "MAL" });
 }

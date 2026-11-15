@@ -1,0 +1,808 @@
+{
+ "medianas": {
+  "dormilon dormir_ms=2000": {
+   "dormir_ms": 2000.0,
+   "hueco_max_us": 10508.0,
+   "huecos_us": 504980.0,
+   "nucleo": 2.0,
+   "unidades_dormilon": 1337476.0
+  },
+  "empieza": {},
+  "fin": {},
+  "ida-vuelta lenguaje=c juntos=0 carga=0": {
+   "carga": 0.0,
+   "juntos": 0.0,
+   "lenguaje": "c",
+   "ns": 90171.0,
+   "nucleos": "3-1",
+   "rondas": 20000.0
+  },
+  "ida-vuelta lenguaje=c juntos=1 carga=0": {
+   "carga": 0.0,
+   "juntos": 1.0,
+   "lenguaje": "c",
+   "ns": 108567.0,
+   "nucleos": "2-2",
+   "rondas": 20000.0
+  },
+  "ida-vuelta lenguaje=dash juntos=0 carga=0": {
+   "carga": 0.0,
+   "juntos": 0.0,
+   "lenguaje": "dash",
+   "ns": 91400.0,
+   "nucleos": "9-9",
+   "rondas": 20000.0
+  },
+  "ida-vuelta lenguaje=rust juntos=0 carga=0": {
+   "carga": 0.0,
+   "juntos": 0.0,
+   "lenguaje": "rust",
+   "ns": 90254.0,
+   "nucleos": "3-1",
+   "rondas": 20000.0
+  },
+  "ida-vuelta lenguaje=rust juntos=0 carga=4": {
+   "carga": 4.0,
+   "juntos": 0.0,
+   "lenguaje": "rust",
+   "ns": 122245.0,
+   "nucleos": "3-1",
+   "rondas": 5000.0
+  },
+  "ida-vuelta lenguaje=rust juntos=1 carga=0": {
+   "carga": 0.0,
+   "juntos": 1.0,
+   "lenguaje": "rust",
+   "ns": 107893.0,
+   "nucleos": "2-2",
+   "rondas": 20000.0
+  },
+  "ida-vuelta lenguaje=rust juntos=1 carga=4": {
+   "carga": 4.0,
+   "juntos": 1.0,
+   "lenguaje": "rust",
+   "ns": 200537.0,
+   "nucleos": "3-3",
+   "rondas": 5000.0
+  },
+  "ociosos": {
+   "ocio0": 998.0,
+   "ocio1": 996.0,
+   "ocio2": 998.0,
+   "ocio3": 997.0,
+   "tics0": 101.0,
+   "tics1": 99.0,
+   "tics2": 99.0,
+   "tics3": 99.0
+  },
+  "reparto lenguaje=c n=4": {
+   "cambios": 208.0,
+   "hueco_max_us": 20134.0,
+   "justo": 499.0,
+   "lenguaje": "c",
+   "max": 4810574.0,
+   "min": 2403246.0,
+   "ms": 2000.0,
+   "n": 4.0,
+   "nucleos": "3,1,2,3",
+   "total": 14423975.0
+  },
+  "reparto lenguaje=dash n=4": {
+   "cambios": 205.0,
+   "hueco_max_us": 20000.0,
+   "justo": 497.0,
+   "lenguaje": "dash",
+   "max": 4153075.0,
+   "min": 2062982.0,
+   "ms": 2000.0,
+   "n": 4.0,
+   "nucleos": "9,9,9,9",
+   "total": 12461475.0
+  },
+  "reparto lenguaje=rust n=1": {
+   "cambios": 4.0,
+   "hueco_max_us": 677.0,
+   "justo": 1000.0,
+   "lenguaje": "rust",
+   "max": 5267185.0,
+   "min": 5267185.0,
+   "ms": 2000.0,
+   "n": 1.0,
+   "nucleos": 1.0,
+   "total": 5267185.0
+  },
+  "reparto lenguaje=rust n=2": {
+   "cambios": 7.0,
+   "hueco_max_us": 1075.0,
+   "justo": 983.0,
+   "lenguaje": "rust",
+   "max": 4872286.0,
+   "min": 4792585.0,
+   "ms": 2000.0,
+   "n": 2.0,
+   "nucleos": "2,3",
+   "total": 9664871.0
+  },
+  "reparto lenguaje=rust n=3": {
+   "cambios": 7.0,
+   "hueco_max_us": 1316.0,
+   "justo": 997.0,
+   "lenguaje": "rust",
+   "max": 4848395.0,
+   "min": 4837650.0,
+   "ms": 2000.0,
+   "n": 3.0,
+   "nucleos": "1,2,3",
+   "total": 14528850.0
+  },
+  "reparto lenguaje=rust n=4": {
+   "cambios": 202.0,
+   "hueco_max_us": 20138.0,
+   "justo": 499.0,
+   "lenguaje": "rust",
+   "max": 4862050.0,
+   "min": 2429087.0,
+   "ms": 2000.0,
+   "n": 4.0,
+   "nucleos": "1,2,3,1",
+   "total": 14593237.0
+  },
+  "reparto lenguaje=rust n=5": {
+   "cambios": 405.0,
+   "hueco_max_us": 20135.0,
+   "justo": 497.0,
+   "lenguaje": "rust",
+   "max": 4884002.0,
+   "min": 2451784.0,
+   "ms": 2000.0,
+   "n": 5.0,
+   "nucleos": "2,3,1,2,3",
+   "total": 14745483.0
+  },
+  "reparto lenguaje=rust n=6": {
+   "cambios": 602.0,
+   "hueco_max_us": 20537.0,
+   "justo": 980.0,
+   "lenguaje": "rust",
+   "max": 2440577.0,
+   "min": 2406644.0,
+   "ms": 2000.0,
+   "n": 6.0,
+   "nucleos": "1,2,3,1,2,3",
+   "total": 14550580.0
+  },
+  "reparto lenguaje=rust n=8": {
+   "cambios": 607.0,
+   "hueco_max_us": 40199.0,
+   "justo": 655.0,
+   "lenguaje": "rust",
+   "max": 2459770.0,
+   "min": 1607482.0,
+   "ms": 2000.0,
+   "n": 8.0,
+   "nucleos": "1,2,3,1,2,3,1,2",
+   "total": 14721820.0
+  },
+  "temporizador us=1000 carga=0": {
+   "carga": 0.0,
+   "max_us": 9359.0,
+   "p50_us": 9085.0,
+   "p99_us": 9323.0,
+   "us": 1000.0,
+   "veces": 100.0
+  },
+  "temporizador us=1000 carga=4": {
+   "carga": 4.0,
+   "max_us": 9896.0,
+   "p50_us": 9066.0,
+   "p99_us": 9320.0,
+   "us": 1000.0,
+   "veces": 100.0
+  }
+ },
+ "vueltas": [
+  {
+   "dormilon dormir_ms=2000": {
+    "dormir_ms": "2000",
+    "hueco_max_us": "10508",
+    "huecos_us": "504734",
+    "nucleo": "2",
+    "unidades_dormilon": "1324715"
+   },
+   "empieza": {},
+   "fin": {},
+   "ida-vuelta lenguaje=c juntos=0 carga=0": {
+    "carga": "0",
+    "juntos": "0",
+    "lenguaje": "c",
+    "ns": "99215",
+    "nucleos": "3-1",
+    "rondas": "20000"
+   },
+   "ida-vuelta lenguaje=c juntos=1 carga=0": {
+    "carga": "0",
+    "juntos": "1",
+    "lenguaje": "c",
+    "ns": "114135",
+    "nucleos": "2-2",
+    "rondas": "20000"
+   },
+   "ida-vuelta lenguaje=dash juntos=0 carga=0": {
+    "carga": "0",
+    "juntos": "0",
+    "lenguaje": "dash",
+    "ns": "98550",
+    "nucleos": "9-9",
+    "rondas": "20000"
+   },
+   "ida-vuelta lenguaje=rust juntos=0 carga=0": {
+    "carga": "0",
+    "juntos": "0",
+    "lenguaje": "rust",
+    "ns": "97394",
+    "nucleos": "3-1",
+    "rondas": "20000"
+   },
+   "ida-vuelta lenguaje=rust juntos=0 carga=4": {
+    "carga": "4",
+    "juntos": "0",
+    "lenguaje": "rust",
+    "ns": "129771",
+    "nucleos": "3-1",
+    "rondas": "5000"
+   },
+   "ida-vuelta lenguaje=rust juntos=1 carga=0": {
+    "carga": "0",
+    "juntos": "1",
+    "lenguaje": "rust",
+    "ns": "113430",
+    "nucleos": "2-2",
+    "rondas": "20000"
+   },
+   "ida-vuelta lenguaje=rust juntos=1 carga=4": {
+    "carga": "4",
+    "juntos": "1",
+    "lenguaje": "rust",
+    "ns": "200537",
+    "nucleos": "3-3",
+    "rondas": "5000"
+   },
+   "ociosos": {
+    "ocio0": "998",
+    "ocio1": "996",
+    "ocio2": "998",
+    "ocio3": "997",
+    "tics0": "101",
+    "tics1": "97",
+    "tics2": "98",
+    "tics3": "97"
+   },
+   "reparto lenguaje=c n=4": {
+    "cambios": "208",
+    "hueco_max_us": "20113",
+    "justo": "497",
+    "lenguaje": "c",
+    "max": "4840731",
+    "min": "2409853",
+    "ms": "2000",
+    "n": "4",
+    "nucleos": "3,1,2,3",
+    "total": "14490445"
+   },
+   "reparto lenguaje=dash n=4": {
+    "cambios": "201",
+    "hueco_max_us": "21000",
+    "justo": "497",
+    "lenguaje": "dash",
+    "max": "4145945",
+    "min": "2062982",
+    "ms": "2000",
+    "n": "4",
+    "nucleos": "9,9,9,9",
+    "total": "12426511"
+   },
+   "reparto lenguaje=rust n=1": {
+    "cambios": "4",
+    "hueco_max_us": "870",
+    "justo": "1000",
+    "lenguaje": "rust",
+    "max": "4916272",
+    "min": "4916272",
+    "ms": "2000",
+    "n": "1",
+    "nucleos": "1",
+    "total": "4916272"
+   },
+   "reparto lenguaje=rust n=2": {
+    "cambios": "7",
+    "hueco_max_us": "999",
+    "justo": "980",
+    "lenguaje": "rust",
+    "max": "4611387",
+    "min": "4523474",
+    "ms": "2000",
+    "n": "2",
+    "nucleos": "2,3",
+    "total": "9134861"
+   },
+   "reparto lenguaje=rust n=3": {
+    "cambios": "7",
+    "hueco_max_us": "1336",
+    "justo": "995",
+    "lenguaje": "rust",
+    "max": "4925383",
+    "min": "4902760",
+    "ms": "2000",
+    "n": "3",
+    "nucleos": "1,2,3",
+    "total": "14731170"
+   },
+   "reparto lenguaje=rust n=4": {
+    "cambios": "202",
+    "hueco_max_us": "20138",
+    "justo": "497",
+    "lenguaje": "rust",
+    "max": "4862050",
+    "min": "2418044",
+    "ms": "2000",
+    "n": "4",
+    "nucleos": "1,2,3,1",
+    "total": "14593237"
+   },
+   "reparto lenguaje=rust n=5": {
+    "cambios": "406",
+    "hueco_max_us": "20961",
+    "justo": "497",
+    "lenguaje": "rust",
+    "max": "4884002",
+    "min": "2431096",
+    "ms": "2000",
+    "n": "5",
+    "nucleos": "2,3,1,2,3",
+    "total": "14709734"
+   },
+   "reparto lenguaje=rust n=6": {
+    "cambios": "602",
+    "hueco_max_us": "20151",
+    "justo": "986",
+    "lenguaje": "rust",
+    "max": "2438379",
+    "min": "2406644",
+    "ms": "2000",
+    "n": "6",
+    "nucleos": "1,2,3,1,2,3",
+    "total": "14550580"
+   },
+   "reparto lenguaje=rust n=8": {
+    "cambios": "613",
+    "hueco_max_us": "40199",
+    "justo": "659",
+    "lenguaje": "rust",
+    "max": "2430027",
+    "min": "1602873",
+    "ms": "2000",
+    "n": "8",
+    "nucleos": "1,2,3,1,2,3,1,2",
+    "total": "14611593"
+   },
+   "temporizador us=1000 carga=0": {
+    "carga": "0",
+    "max_us": "9359",
+    "p50_us": "9085",
+    "p99_us": "9323",
+    "us": "1000",
+    "veces": "100"
+   },
+   "temporizador us=1000 carga=4": {
+    "carga": "4",
+    "max_us": "9977",
+    "p50_us": "9066",
+    "p99_us": "9381",
+    "us": "1000",
+    "veces": "100"
+   }
+  },
+  {
+   "dormilon dormir_ms=2000": {
+    "dormir_ms": "2000",
+    "hueco_max_us": "10536",
+    "huecos_us": "505309",
+    "nucleo": "2",
+    "unidades_dormilon": "1345734"
+   },
+   "empieza": {},
+   "fin": {},
+   "ida-vuelta lenguaje=c juntos=0 carga=0": {
+    "carga": "0",
+    "juntos": "0",
+    "lenguaje": "c",
+    "ns": "90171",
+    "nucleos": "3-1",
+    "rondas": "20000"
+   },
+   "ida-vuelta lenguaje=c juntos=1 carga=0": {
+    "carga": "0",
+    "juntos": "1",
+    "lenguaje": "c",
+    "ns": "108091",
+    "nucleos": "2-2",
+    "rondas": "20000"
+   },
+   "ida-vuelta lenguaje=dash juntos=0 carga=0": {
+    "carga": "0",
+    "juntos": "0",
+    "lenguaje": "dash",
+    "ns": "90850",
+    "nucleos": "9-9",
+    "rondas": "20000"
+   },
+   "ida-vuelta lenguaje=rust juntos=0 carga=0": {
+    "carga": "0",
+    "juntos": "0",
+    "lenguaje": "rust",
+    "ns": "89252",
+    "nucleos": "3-1",
+    "rondas": "20000"
+   },
+   "ida-vuelta lenguaje=rust juntos=0 carga=4": {
+    "carga": "4",
+    "juntos": "0",
+    "lenguaje": "rust",
+    "ns": "122245",
+    "nucleos": "3-1",
+    "rondas": "5000"
+   },
+   "ida-vuelta lenguaje=rust juntos=1 carga=0": {
+    "carga": "0",
+    "juntos": "1",
+    "lenguaje": "rust",
+    "ns": "107893",
+    "nucleos": "2-2",
+    "rondas": "20000"
+   },
+   "ida-vuelta lenguaje=rust juntos=1 carga=4": {
+    "carga": "4",
+    "juntos": "1",
+    "lenguaje": "rust",
+    "ns": "220351",
+    "nucleos": "3-3",
+    "rondas": "5000"
+   },
+   "ociosos": {
+    "ocio0": "1000",
+    "ocio1": "999",
+    "ocio2": "998",
+    "ocio3": "999",
+    "tics0": "101",
+    "tics1": "99",
+    "tics2": "99",
+    "tics3": "99"
+   },
+   "reparto lenguaje=c n=4": {
+    "cambios": "208",
+    "hueco_max_us": "20134",
+    "justo": "499",
+    "lenguaje": "c",
+    "max": "4810574",
+    "min": "2403246",
+    "ms": "2000",
+    "n": "4",
+    "nucleos": "3,1,2,3",
+    "total": "14423975"
+   },
+   "reparto lenguaje=dash n=4": {
+    "cambios": "205",
+    "hueco_max_us": "20000",
+    "justo": "491",
+    "lenguaje": "dash",
+    "max": "4166488",
+    "min": "2047376",
+    "ms": "2000",
+    "n": "4",
+    "nucleos": "9,9,9,9",
+    "total": "12461475"
+   },
+   "reparto lenguaje=rust n=1": {
+    "cambios": "4",
+    "hueco_max_us": "677",
+    "justo": "1000",
+    "lenguaje": "rust",
+    "max": "5326778",
+    "min": "5326778",
+    "ms": "2000",
+    "n": "1",
+    "nucleos": "1",
+    "total": "5326778"
+   },
+   "reparto lenguaje=rust n=2": {
+    "cambios": "7",
+    "hueco_max_us": "1408",
+    "justo": "983",
+    "lenguaje": "rust",
+    "max": "4872286",
+    "min": "4792585",
+    "ms": "2000",
+    "n": "2",
+    "nucleos": "2,3",
+    "total": "9664871"
+   },
+   "reparto lenguaje=rust n=3": {
+    "cambios": "9",
+    "hueco_max_us": "1316",
+    "justo": "997",
+    "lenguaje": "rust",
+    "max": "4848395",
+    "min": "4837650",
+    "ms": "2000",
+    "n": "3",
+    "nucleos": "1,2,3",
+    "total": "14528850"
+   },
+   "reparto lenguaje=rust n=4": {
+    "cambios": "210",
+    "hueco_max_us": "10307",
+    "justo": "499",
+    "lenguaje": "rust",
+    "max": "4881219",
+    "min": "2436855",
+    "ms": "2000",
+    "n": "4",
+    "nucleos": "1,2,3,1",
+    "total": "14639261"
+   },
+   "reparto lenguaje=rust n=5": {
+    "cambios": "393",
+    "hueco_max_us": "20135",
+    "justo": "502",
+    "lenguaje": "rust",
+    "max": "4883998",
+    "min": "2452897",
+    "ms": "2000",
+    "n": "5",
+    "nucleos": "2,3,1,2,3",
+    "total": "14745483"
+   },
+   "reparto lenguaje=rust n=6": {
+    "cambios": "602",
+    "hueco_max_us": "20799",
+    "justo": "979",
+    "lenguaje": "rust",
+    "max": "2440577",
+    "min": "2391015",
+    "ms": "2000",
+    "n": "6",
+    "nucleos": "1,2,3,1,2,3",
+    "total": "14493758"
+   },
+   "reparto lenguaje=rust n=8": {
+    "cambios": "606",
+    "hueco_max_us": "40330",
+    "justo": "655",
+    "lenguaje": "rust",
+    "max": "2459770",
+    "min": "1612726",
+    "ms": "2000",
+    "n": "8",
+    "nucleos": "1,2,3,1,2,3,1,2",
+    "total": "14747519"
+   },
+   "temporizador us=1000 carga=0": {
+    "carga": "0",
+    "max_us": "9640",
+    "p50_us": "9100",
+    "p99_us": "9444",
+    "us": "1000",
+    "veces": "100"
+   },
+   "temporizador us=1000 carga=4": {
+    "carga": "4",
+    "max_us": "9326",
+    "p50_us": "9085",
+    "p99_us": "9255",
+    "us": "1000",
+    "veces": "100"
+   }
+  },
+  {
+   "dormilon dormir_ms=2000": {
+    "dormir_ms": "2000",
+    "hueco_max_us": "10490",
+    "huecos_us": "504980",
+    "nucleo": "2",
+    "unidades_dormilon": "1337476"
+   },
+   "empieza": {},
+   "fin": {},
+   "ida-vuelta lenguaje=c juntos=0 carga=0": {
+    "carga": "0",
+    "juntos": "0",
+    "lenguaje": "c",
+    "ns": "89406",
+    "nucleos": "3-1",
+    "rondas": "20000"
+   },
+   "ida-vuelta lenguaje=c juntos=1 carga=0": {
+    "carga": "0",
+    "juntos": "1",
+    "lenguaje": "c",
+    "ns": "108567",
+    "nucleos": "2-2",
+    "rondas": "20000"
+   },
+   "ida-vuelta lenguaje=dash juntos=0 carga=0": {
+    "carga": "0",
+    "juntos": "0",
+    "lenguaje": "dash",
+    "ns": "91400",
+    "nucleos": "9-9",
+    "rondas": "20000"
+   },
+   "ida-vuelta lenguaje=rust juntos=0 carga=0": {
+    "carga": "0",
+    "juntos": "0",
+    "lenguaje": "rust",
+    "ns": "90254",
+    "nucleos": "3-1",
+    "rondas": "20000"
+   },
+   "ida-vuelta lenguaje=rust juntos=0 carga=4": {
+    "carga": "4",
+    "juntos": "0",
+    "lenguaje": "rust",
+    "ns": "120116",
+    "nucleos": "3-1",
+    "rondas": "5000"
+   },
+   "ida-vuelta lenguaje=rust juntos=1 carga=0": {
+    "carga": "0",
+    "juntos": "1",
+    "lenguaje": "rust",
+    "ns": "107828",
+    "nucleos": "2-2",
+    "rondas": "20000"
+   },
+   "ida-vuelta lenguaje=rust juntos=1 carga=4": {
+    "carga": "4",
+    "juntos": "1",
+    "lenguaje": "rust",
+    "ns": "180457",
+    "nucleos": "3-3",
+    "rondas": "5000"
+   },
+   "ociosos": {
+    "ocio0": "998",
+    "ocio1": "996",
+    "ocio2": "997",
+    "ocio3": "997",
+    "tics0": "102",
+    "tics1": "99",
+    "tics2": "100",
+    "tics3": "99"
+   },
+   "reparto lenguaje=c n=4": {
+    "cambios": "208",
+    "hueco_max_us": "20167",
+    "justo": "501",
+    "lenguaje": "c",
+    "max": "4753460",
+    "min": "2385298",
+    "ms": "2000",
+    "n": "4",
+    "nucleos": "3,1,2,3",
+    "total": "14287132"
+   },
+   "reparto lenguaje=dash n=4": {
+    "cambios": "207",
+    "hueco_max_us": "20000",
+    "justo": "498",
+    "lenguaje": "dash",
+    "max": "4153075",
+    "min": "2071918",
+    "ms": "2000",
+    "n": "4",
+    "nucleos": "9,9,9,9",
+    "total": "12469344"
+   },
+   "reparto lenguaje=rust n=1": {
+    "cambios": "4",
+    "hueco_max_us": "0",
+    "justo": "1000",
+    "lenguaje": "rust",
+    "max": "5267185",
+    "min": "5267185",
+    "ms": "2000",
+    "n": "1",
+    "nucleos": "1",
+    "total": "5267185"
+   },
+   "reparto lenguaje=rust n=2": {
+    "cambios": "7",
+    "hueco_max_us": "1075",
+    "justo": "992",
+    "lenguaje": "rust",
+    "max": "4877726",
+    "min": "4841484",
+    "ms": "2000",
+    "n": "2",
+    "nucleos": "2,3",
+    "total": "9719210"
+   },
+   "reparto lenguaje=rust n=3": {
+    "cambios": "7",
+    "hueco_max_us": "1315",
+    "justo": "998",
+    "lenguaje": "rust",
+    "max": "4821085",
+    "min": "4814804",
+    "ms": "2000",
+    "n": "3",
+    "nucleos": "1,2,3",
+    "total": "14452301"
+   },
+   "reparto lenguaje=rust n=4": {
+    "cambios": "202",
+    "hueco_max_us": "20177",
+    "justo": "501",
+    "lenguaje": "rust",
+    "max": "4845163",
+    "min": "2429087",
+    "ms": "2000",
+    "n": "4",
+    "nucleos": "1,2,3,1",
+    "total": "14556902"
+   },
+   "reparto lenguaje=rust n=5": {
+    "cambios": "405",
+    "hueco_max_us": "20099",
+    "justo": "497",
+    "lenguaje": "rust",
+    "max": "4931886",
+    "min": "2451784",
+    "ms": "2000",
+    "n": "5",
+    "nucleos": "2,3,1,2,3",
+    "total": "14834759"
+   },
+   "reparto lenguaje=rust n=6": {
+    "cambios": "586",
+    "hueco_max_us": "20537",
+    "justo": "980",
+    "lenguaje": "rust",
+    "max": "2459526",
+    "min": "2410502",
+    "ms": "2000",
+    "n": "6",
+    "nucleos": "1,2,3,1,2,3",
+    "total": "14587999"
+   },
+   "reparto lenguaje=rust n=8": {
+    "cambios": "607",
+    "hueco_max_us": "40158",
+    "justo": "651",
+    "lenguaje": "rust",
+    "max": "2468303",
+    "min": "1607482",
+    "ms": "2000",
+    "n": "8",
+    "nucleos": "1,2,3,1,2,3,1,2",
+    "total": "14721820"
+   },
+   "temporizador us=1000 carga=0": {
+    "carga": "0",
+    "max_us": "9356",
+    "p50_us": "9074",
+    "p99_us": "9323",
+    "us": "1000",
+    "veces": "100"
+   },
+   "temporizador us=1000 carga=4": {
+    "carga": "4",
+    "max_us": "9896",
+    "p50_us": "9066",
+    "p99_us": "9320",
+    "us": "1000",
+    "veces": "100"
+   }
+  }
+ ]
+}

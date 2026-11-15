@@ -1,4 +1,4 @@
-/* DashOS: guion de enlace del kernel en x86-64 (S21, X1 y X2).
+/* DashOS: guion de enlace del kernel en x86-64 (S30, X1 y X2).
  *
  * El cargador UEFI (uefi/src/x86_64.rs) pone cada segmento en su dirección física (la de AT, desde 1 MB, que OVMF deja
  * libre) y salta a la entrada en su dirección física. Las direcciones virtuales son las de la imagen del kernel en los

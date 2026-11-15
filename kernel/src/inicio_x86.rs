@@ -36,8 +36,9 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("disco", elf!("disco"), &[], &["disco"]),
     ("archivos", elf!("archivos"), &[], &["disco", "archivos"]),
     ("ficheros", elf!("ficheros"), &[], &["archivos"]),
-    ("sonido", elf!("sonido"), &[], &["sonido"]),
-    ("virtio-sonido", elf!("virtio-sonido"), &[("dma-vsonido", PERMISO_DMA), ("virtio-sonido", REGISTROS), ("vsonido-cfg", REGISTROS), ("virtio-sonido", INTERRUPCION | OPCIONAL)], &["sonido"]),
+    // Desde la fusión con `revision`, el sonido y su controlador reciben el permiso de plazo (S3), como en ARM.
+    ("sonido", elf!("sonido"), &[("plazo", PLAZO)], &["sonido"]),
+    ("virtio-sonido", elf!("virtio-sonido"), &[("dma-vsonido", PERMISO_DMA), ("virtio-sonido", REGISTROS), ("vsonido-cfg", REGISTROS), ("plazo", PLAZO), ("virtio-sonido", INTERRUPCION | OPCIONAL)], &["sonido"]),
     ("tono-a", elf!("tono-a"), &[], &["sonido"]),
     ("tono-b", elf!("tono-b"), &[], &["sonido"]),
     // Dos clientes de Wayland de prueba (W7) y una aplicación con el kit (K7), como en ARM.
@@ -54,8 +55,10 @@ const REGISTRO: u32 = 4;
 const FIRMWARE: u32 = 5;
 /// Un objeto de memoria con datos, de solo lectura (las medidas de la pantalla).
 const DATOS: u32 = 6;
+/// El permiso de pedir la clase de plazo (S3), como en `inicio.rs`.
+const PLAZO: u32 = 7;
 /// Puertos de E/S (X6): los de COM1, para la consola.
-const PUERTOS: u32 = 7;
+const PUERTOS: u32 = 12;
 /// COM1: la UART 16550 de un PC, ocho puertos desde 0x3F8.
 const COM1: (u32, u32) = (0x3f8, 8);
 const OPCIONAL: u32 = 0x100;
@@ -141,6 +144,8 @@ pub fn lanzar(a: &crate::base::acpi::Acpi) -> bool {
     // La consola (X6): el registro del sistema y los puertos de COM1, como el registro y el PL011 en ARM.
     apuntar(&mut llaves, "registro", REGISTRO, Llave::nueva(Objeto::Registro, DERECHOS));
     apuntar(&mut llaves, "serie", PUERTOS, Llave::nueva(Objeto::Puertos { primero: COM1.0, cuantos: COM1.1 }, DERECHOS));
+    // El permiso de plazo (S3): para el sonido y su controlador.
+    apuntar(&mut llaves, "plazo", PLAZO, Llave::nueva(Objeto::PermisoPlazo, DERECHOS));
     // La pantalla del GOP (X6): su memoria, como memoria del firmware (fuera de la RAM), y sus medidas.
     if let Some((pantalla, info)) = pantalla_del_gop() {
         apuntar(&mut llaves, "pantalla", FIRMWARE, Llave::nueva(pantalla, DERECHOS));

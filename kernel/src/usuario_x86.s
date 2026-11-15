@@ -288,7 +288,7 @@ eco_fin:
     .globl puertos_inicio, puertos_fin
 puertos_inicio:
     mov edi, 1
-    mov eax, 29                         // puertos_permitir(1)
+    mov eax, 56                         // puertos_permitir(1)
     syscall
     mov edi, 1
     test rax, rax

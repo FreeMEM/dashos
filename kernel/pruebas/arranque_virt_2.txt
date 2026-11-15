@@ -1,0 +1,32 @@
+# Multimonitor: el arranque de virt con una virtio-gpu de dos cabezas (`make arranque-virt-2`). Lo mismo que
+# `arranque_virt.txt` hasta el escritorio, y lo propio de las dos pantallas. El guion para en cuanto salen todas.
+DashOS: fuera de los servicios de arranque
+DashOS en marcha con 4 núcleos.
+│   [inicio] todo lanzado; se queda vigilando los servicios
+# El controlador de virtio-gpu (virtio 1.2, 5.7) lee las dos cabezas: la 0 con su monitor (800x600) y la 1 sin él
+# (QEMU sin ventana), que se usa igual a 1024x768. Cada una con su recurso y su memoria, al compositor.
+~virtio-gpu: en el PCIe 0:
+~│   [virtio-gpu] 2 salidas; se usan 2
+~│   [virtio-gpu] cabeza 0: 800x600, conectada, en 1 trozos
+~│   [virtio-gpu] cabeza 1: 1024x768, sin monitor (se usa igual), en 1 trozos
+~│   [virtio-gpu] 2 cabezas para el compositor
+# El compositor deja la pantalla de UEFI y pone las dos, una al lado de otra.
+~│   [compositor] pantalla de UEFI de 800x600 a 32 bits, un búfer
+~│   [compositor] 2 salidas del controlador gráfico: DASHOS-1 800x600 en (0, 0), DASHOS-2 1024x768 en (800, 0)
+# El escritorio de siempre, en la principal (sin el guion de siempre: nadie teclea en él).
+~│   [compositor] Wayland: 2 ventanas en pantalla
+~│   [ajustes] ventana del kit en pantalla (360x408)
+~│   [barra] en pantalla: 800x40, zona exclusiva 40
+# El cursor pasa a la segunda; Super+Mayúsculas+Derecha lleva Ajustes allí; maximizada llena la segunda (sin barra:
+# 1024x768); Super+Mayúsculas+Izquierda la trae.
+~│   [compositor] el cursor pasa a DASHOS-2
+~│   [compositor] ventana de ajustes a DASHOS-2 en (
+~│   [ajustes] el compositor pide 1024x768
+~│   [compositor] ventana de ajustes a DASHOS-1 en (
+# El centro de control enseña las dos pantallas.
+~│   [centro] Pantallas: Pantalla DASHOS-1: 800 × 600, a la izquierda; Pantalla DASHOS-2: 1024 × 768, a la derecha; Frecuencia: 60,000 Hz; Escala: 1
+# Y los hostiles no lo tumban.
+~│   [hostil] compositor sigue: sí
+# Al bloquearse la sesión (por estar quieta: `guardian` pide el aviso de inactividad), la otra pantalla también tiene su
+# superficie de bloqueo (ext-session-lock pide una por salida), del color de la superficie del tema.
+~│   [guardian] pantalla de bloqueo también en la otra salida 1 (1024x768)

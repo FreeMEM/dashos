@@ -11,6 +11,6 @@ build-std-features = ["compiler-builtins-mem"]
 rustflags = ["-C", "force-frame-pointers=yes"]
 
 [target.x86_64-unknown-none]
-# x86-64 (S21, X1): `cargo build --target x86_64-unknown-none` (make arranque-x86). Sin PIE: el kernel va en su
+# x86-64 (S30, X1): `cargo build --target x86_64-unknown-none` (make arranque-x86). Sin PIE: el kernel va en su
 # dirección (enlace_x86.ld, que pone build.rs).
 rustflags = ["-C", "force-frame-pointers=yes", "-C", "relocation-model=static"]

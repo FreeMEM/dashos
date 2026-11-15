@@ -73,6 +73,8 @@ fn principal() -> u64 {
         datos += u32_en(PAQUETE + 4 + CABECERA * i + 4) as usize;
     }
     let mut lanzadas = 0;
+    let mut avisados = 0;
+    let mut con_pid = 0;
     let mut zona = 0;
     for i in 0..n {
         let cab = PAQUETE + 4 + CABECERA * i;
@@ -99,12 +101,42 @@ fn principal() -> u64 {
             k = 2;
             nuestro = a;
         }
-        let g = grupo_crear(64 << 20);
+        // Un tope de 64 MB; `grupos`, sin tope de verdad (1 TB): llena la memoria de la máquina a propósito (S3).
+        let g = grupo_crear(if nombre == "grupos" { 1 << 40 } else { 64 << 20 });
         let p = if g > 0 { proceso_crear_en(g as u32, m, tamano, &suyas[..k]) } else { g };
         if p <= 0 {
             return 100 + i as u64;
         }
+        // U6: su número en el kernel, y la lista de su grupo (con la llave del grupo) lo trae. Con llaves del tipo que no
+        // es, error de tipo (-6).
+        let pid = dashos::proceso_numero(p as u32);
+        let mut lista = [0u64; 8];
+        let en_grupo = dashos::grupo_procesos(g as u32, &mut lista);
+        let pids_bien = pid > 0 && en_grupo >= 1 && lista[..(en_grupo as usize).min(8)].contains(&(pid as u64))
+            && dashos::proceso_numero(g as u32) == -6 && dashos::grupo_procesos(p as u32, &mut lista) == -6;
+        if pids_bien {
+            con_pid += 1;
+        } else {
+            println!("  [lanzador] {}: número {}, en su grupo {} {:?}", nombre, pid, en_grupo, &lista[..2]);
+        }
+        // K7: aviso de fin por un canal, pedido antes de acabar y después (ese sale al momento).
+        let (av_a, av_b) = canal_crear();
+        let pedido = dashos::proceso_avisar(p as u32, av_a);
         let (clase, codigo) = proceso_esperar(p as u32);
+        let despues = dashos::proceso_avisar(p as u32, av_a);
+        let mut bien_aviso = pedido == 0 && despues == 0;
+        for _ in 0..2 {
+            let mut b = [0u8; 16];
+            let (n, _, _) = dashos::canal_leer_plazo(av_b, &mut b, &mut [], 1_000_000);
+            let c = u64::from_le_bytes(b[..8].try_into().unwrap());
+            let d = u64::from_le_bytes(b[8..].try_into().unwrap());
+            bien_aviso &= n == 16 && c == clase as u64 && d == codigo;
+        }
+        cerrar(av_a);
+        cerrar(av_b);
+        if bien_aviso {
+            avisados += 1;
+        }
         if nuestro != 0 {
             cerrar(nuestro);
         }
@@ -122,5 +154,7 @@ fn principal() -> u64 {
         lanzadas += 1;
     }
     println!("  [lanzador] {} pruebas lanzadas desde un proceso, cada una en su grupo, que queda a cero", lanzadas);
+    println!("  [lanzador] avisos de fin por canal (K7): {} de {}", avisados, lanzadas);
+    println!("  [lanzador] números de proceso del kernel, en la lista de su grupo (U6): {} de {}", con_pid, lanzadas);
     43
 }

@@ -1,4 +1,4 @@
-//! Los IOAPIC (S21, X3): llevan las interrupciones de los aparatos (las ISA y las de PCI sin MSI) a un núcleo.
+//! Los IOAPIC (S30, X3): llevan las interrupciones de los aparatos (las ISA y las de PCI sin MSI) a un núcleo.
 //!
 //! Escrito con la hoja de datos del 82093AA (IOAPIC de Intel: IOREGSEL e IOWIN, el registro de versión y la tabla de
 //! redirección) y la especificación de ACPI 6.5 (5.2.12.5, los cambios de las interrupciones ISA). Cada IOAPIC lleva

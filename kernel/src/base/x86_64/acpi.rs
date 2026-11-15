@@ -1,4 +1,4 @@
-//! Las tablas de ACPI que necesita el kernel en x86-64 (S21, X3): la MADT (núcleos, APIC local, IOAPIC y cambios de
+//! Las tablas de ACPI que necesita el kernel en x86-64 (S30, X3): la MADT (núcleos, APIC local, IOAPIC y cambios de
 //! las interrupciones ISA), la del HPET y la FADT (el temporizador de gestión de energía, por si no hay HPET). Desde
 //! X5, la MCFG: dónde está el espacio de configuración del PCIe (ECAM).
 //!

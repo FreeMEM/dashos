@@ -129,9 +129,9 @@ Cada uno es un proceso aparte, y se monta desde `DEVS:DOSDrivers` (S4b).
 
 ## Fuentes
 
-- RedoxFS: [libro de Redox](https://doc.redox-os.org/book/redoxfs.html),
-  [README](https://gitlab.redox-os.org/ashton/redoxfs/-/blame/50b4ebfcd55166bb2c9ec4da4626b2a6560c3f20/README.md) y
-  [docs.rs](https://docs.rs/crate/redoxfs/^0.5.0).
+- RedoxFS: [libro de Redox](https://doc.redox-os.org/book/dashfs.html),
+  [README](https://gitlab.redox-os.org/ashton/dashfs/-/blame/50b4ebfcd55166bb2c9ec4da4626b2a6560c3f20/README.md) y
+  [docs.rs](https://docs.rs/crate/dashfs/^0.5.0).
 - `ext4-view`: [lib.rs](https://lib.rs/crates/ext4-view) y [docs.rs](https://docs.rs/crate/ext4-view/latest).
 - Sin AES en la Pi 4: [foro de OpenWrt](https://forum.openwrt.org/t/raspberry-pi-4-released/39444?page=2),
   [parche de Yocto](https://patchwork.yoctoproject.org/comment/233) y

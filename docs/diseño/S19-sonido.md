@@ -1,5 +1,7 @@
 # S19. El sonido
 
+> **2026-11-10.** Lo de estudio (grafo, MIDI, chips como instrumentos, plugins) está en [S19b](S19b-sonido-de-estudio.md).
+
 Del 2026-11-09. Lo pidió el usuario ese día. Es análisis y diseño: no hay código. Orden decidido por el usuario: el
 sonido se programa detrás de los gráficos (el compositor que habla Wayland y el kit de interfaz).
 

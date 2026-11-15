@@ -1,4 +1,4 @@
-// DashOS: el trampolín de los demás núcleos en x86-64 (S21, X3). Sintaxis de Intel.
+// DashOS: el trampolín de los demás núcleos en x86-64 (S30, X3). Sintaxis de Intel.
 //
 // No se ejecuta aquí: nucleos.rs lo copia a una página libre por debajo de 1 MB y llena sus datos. La SIPI hace
 // empezar al núcleo en modo real en esa página (CS = página × 256, IP = 0). De ahí (SDM, volumen 3, 9.9: el paso a

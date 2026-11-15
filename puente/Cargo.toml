@@ -1,0 +1,22 @@
+[package]
+name = "dashos-puente"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "El puente de Wayland para la caja Linux y el compositor de DashOS en el PC (G0, G1 de docs/GRAFICOS_LOOP.md)"
+
+[dependencies]
+wayland = { package = "dashos-wayland", path = "../wayland" }
+libc = "0.2"
+
+[lib]
+name = "dashos_puente"
+path = "src/lib.rs"
+
+[[bin]]
+name = "compositor-pc"
+path = "src/bin/compositor_pc.rs"
+
+[[bin]]
+name = "puente"
+path = "src/bin/puente.rs"

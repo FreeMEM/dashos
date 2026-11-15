@@ -1,4 +1,4 @@
-//! Las pruebas del arranque en x86-64 (S21, X2 a X4). Solo entran con la opción `pruebas` (`make -C kernel
+//! Las pruebas del arranque en x86-64 (S30, X2 a X4). Solo entran con la opción `pruebas` (`make -C kernel
 //! prueba-x86`). Cada una dice "bien" o "MAL" por el puerto serie; la última (el desborde de la pila) para el núcleo.
 //!
 //! Las de X2 van antes de repartir nada más (cuentan la memoria libre); las de X3, con los cuatro núcleos en marcha.
@@ -300,13 +300,42 @@ fn prueba_tsc() {
     kprintln!("X3: TSC calibrado contra el HPET {}", bien(us_tsc.abs_diff(us_ref) * 50 < us_ref));
 }
 
-/// El temporizador del APIC de cada núcleo a 100 Hz: en 500 ms del HPET, unas 50 interrupciones en cada uno.
+/// Cuántas veces se ha pedido parar a los hilos que giran: cada uno gira hasta que cambia.
+static GIROS: AtomicU64 = AtomicU64::new(0);
+
+extern "C" fn girar(vuelta: usize) {
+    while GIROS.load(Ordering::Relaxed) == vuelta as u64 {
+        core::hint::spin_loop();
+    }
+}
+
+/// Un hilo del kernel que gira en cada uno de esos núcleos, hasta `desocupar`. Desde la fusión con `revision`, un núcleo
+/// ocioso duerme sin tic (M5) y se lleva hilos de procesos de los demás (M4): las pruebas que cuentan con que un núcleo
+/// lata, o con que dos procesos compartan uno, ocupan antes los otros. Los hilos del kernel no cambian de núcleo.
+pub fn ocupar(nucleos: &[usize]) {
+    let vuelta = GIROS.load(Ordering::Relaxed) as usize;
+    for &n in nucleos {
+        planificador::crear(girar, vuelta, n);
+    }
+}
+
+pub fn desocupar() {
+    GIROS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// El temporizador del APIC de cada núcleo a 100 Hz: en 500 ms del HPET, unas 50 interrupciones en cada uno. Los
+/// demás núcleos, ocupados (`ocupar`): ociosos dormirían sin tic.
 fn prueba_temporizador(n: u32) {
     let nucleos = n as usize + 1;
+    for i in 1..nucleos {
+        ocupar(&[i]);
+    }
+    esperar_ref_ms(50);
     let antes: [u64; nucleos::MAX_NUCLEOS] = core::array::from_fn(apic::interrupciones_reloj);
     esperar_ref_ms(500);
     let despues: [u64; nucleos::MAX_NUCLEOS] = core::array::from_fn(apic::interrupciones_reloj);
     let cuentas: alloc::vec::Vec<u64> = (0..nucleos).map(|i| despues[i] - antes[i]).collect();
+    desocupar();
     kprintln!("  interrupciones del reloj en 500 ms, por núcleo: {:?}", cuentas);
     let todo = nucleos == 4 && cuentas.iter().all(|&c| (45..=55).contains(&c));
     kprintln!("X3: temporizador del APIC a 100 Hz en cada núcleo {}", bien(todo));

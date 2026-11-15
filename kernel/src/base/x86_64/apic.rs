@@ -1,4 +1,4 @@
-//! El APIC local de cada núcleo (S21, X3): x2APIC si la CPU lo tiene, si no xAPIC por memoria. Su temporizador, las
+//! El APIC local de cada núcleo (S30, X3): x2APIC si la CPU lo tiene, si no xAPIC por memoria. Su temporizador, las
 //! interrupciones entre núcleos (IPI), el reparto de los vectores de 32 a 255 y el apagado de los 8259.
 //!
 //! Escrito con el manual de Intel (SDM, volumen 3, capítulo 11: 11.4, el APIC local; 11.5, sus LVT y su temporizador;

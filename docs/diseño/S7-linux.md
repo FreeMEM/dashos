@@ -79,7 +79,8 @@ después de probar el otro.
 
 - **Hipervisor en el kernel de DashOS**: un trozo pequeño en EL2 y la gestión en un proceso, como crosvm en ChromeOS.
 - **Dispositivos virtio**: disco, red, consola, `vsock` para hablar con DashOS, `virtio-fs` para compartir ficheros y
-  `virtio-gpu` en modo de dibujo por CPU.
+  `virtio-gpu` en modo de dibujo por CPU (hecho en 2D; la GPU de verdad para el invitado, en S25: la V3D mediada en
+  la Pi 4).
 - **Ventanas**: dentro de la máquina virtual corre un compositor intermediario, como Sommelier en ChromeOS. Reenvía
   cada ventana de Wayland al compositor de DashOS, que la muestra como una ventana más, con mosaico y escritorios
   virtuales (S10). Para programas de X11, XWayland dentro de la caja.
@@ -91,6 +92,8 @@ después de probar el otro.
 - **Memoria**: la máquina virtual pide memoria al arrancar y la devuelve cuando no la usa (globo virtio). Se
   recomienda para Pi 4 de 4 y 8 GB. En las de 1 y 2 GB es posible, pero justo.
 - **Arranque bajo demanda**: la caja Linux no arranca con el sistema, sino al abrir el primer programa de Linux.
+  Para servidores y contenedores, se activa como servicio y arranca con el sistema, con memoria reservada, apagado
+  ordenado y puertos publicados (S14, "La caja Linux como servicio", decidido el 2026-11-10).
 
 ### Más adelante, quizá A
 
@@ -105,12 +108,27 @@ con licencia MPL-2.0 como DashOS, es la referencia para escribirla en Rust. No e
 - **El hipervisor** es trabajo del kernel (S1) y de los controladores virtio (S12).
 - **Los permisos** de la caja Linux siguen S6: la caja entera es una aplicación, como la caja Amiga.
 
+## Lo que trae la caja de serie (2026-11-10)
+
+Decidido por el usuario:
+
+- **Arch Linux ARM**, con pacman para la línea de órdenes, las bibliotecas y los servidores.
+- **Flatpak de serie**, con Flathub, para las aplicaciones de escritorio: tienen versión para ARM, no dependen de la
+  distribución y van encerradas con permisos. Lo que una aplicación de Flatpak pide (red, ficheros, cámara) se enlaza
+  con los permisos de DashOS (S6b): la caja Linux es una aplicación, y lo que pase de sus permisos lo pregunta DashOS.
+- **Docker y Podman** se instalan con pacman: dentro hay un kernel de Linux de verdad, con namespaces y cgroups.
+- **La terminal como la del usuario**: zsh con Oh My Zsh, el tema `agnosterzak`, `zsh-autosuggestions` y
+  `zsh-syntax-highlighting`, `lsd` en vez de `ls` y `fastfetch` al abrir, con una fuente con los símbolos que usa el
+  tema (una Nerd Font). Terminator como terminal, con sus ventanas en el escritorio de DashOS por Wayland. Es la
+  configuración por defecto de la caja; cada usuario la cambia en su `~/.zshrc`.
+- Lo instalado en la caja aparece en el lanzador de DashOS y en el escaparate de Hangar (S8).
+
 ## Lo que queda abierto
 
 1. ¿Este orden: biblioteca POSIX nativa, después caja Linux en máquina virtual, y la capa de llamadas solo si hace
    falta? Recomendado: sí.
-2. ¿Qué distribución dentro de la caja Linux? Arch Linux ARM usa pacman, como tus máquinas con CachyOS. Debian es la
-   más probada en la Pi. Recomendado: Arch Linux ARM, por pacman y por familiaridad.
+2. ¿Qué distribución dentro de la caja Linux? **Decidido por el usuario (2026-11-10): Arch Linux ARM**, con pacman,
+   como sus máquinas con CachyOS.
 3. ¿La caja Linux solo en Pi 4 de 4 y 8 GB, o también en las de 2 GB con avisos? Recomendado: de 4 GB en adelante.
 
 ## Cómo encaja

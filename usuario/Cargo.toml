@@ -6,22 +6,32 @@ license = "MPL-2.0"
 
 [features]
 # El servicio de archivos (FS1): RedoxFS y el montón. La caja big-endian no lo compila.
-archivos = ["monton", "dep:redoxfs", "dep:syscall"]
+archivos = ["monton", "dep:dashfs", "dep:syscall"]
 monton = ["dep:linked_list_allocator"]
 # El compositor que habla Wayland y sus clientes de prueba (W7).
 ventanas = ["monton", "dep:wayland", "dep:kit"]
 # El servicio de sonido (S19, A4).
-sonido = ["monton", "dep:sonido"]
+sonido = ["monton", "dep:sonido", "dep:audiodevice"]
+# Las imágenes de disco del Amiga (S20): el servicio que monta un ADF.
+imagenes = ["monton", "dep:amigados"]
+# El servicio de red (S13): la pila TCP/IP smoltcp (0BSD), solo con lo que usa.
+red = ["monton", "dep:smoltcp"]
+# La caja Linux (H9): los aparatos de la máquina virtual (virtio, PL011, distribuidor del GIC, PSCI, DTB).
+caja = ["monton", "dep:caja-vmm"]
 # RelevoJIT en un proceso de x86-64 (X7a): enlaza librelevo.a sin libc (RELEVO_LIB_DIR, ver build.rs).
 relevo = ["monton"]
 
 [dependencies]
 linked_list_allocator = { version = "0.10.6", default-features = false, optional = true }
-redoxfs = { path = "../archivos/redoxfs", default-features = false, optional = true }
+dashfs = { path = "../archivos/dashfs", default-features = false, optional = true }
 syscall = { package = "redox_syscall", version = "0.9.5", default-features = false, optional = true }
 wayland = { package = "dashos-wayland", path = "../wayland", optional = true }
 kit = { package = "dashos-kit", path = "../kit", optional = true }
 sonido = { package = "dashos-sonido", path = "../sonido", optional = true }
+audiodevice = { package = "dashos-audiodevice", path = "../audiodevice", optional = true }
+amigados = { package = "dashos-amigados", path = "../amigados", optional = true }
+caja-vmm = { package = "dashos-caja-vmm", path = "../caja-linux/vmm", optional = true }
+smoltcp = { version = "0.14.0", default-features = false, optional = true, features = ["alloc", "medium-ethernet", "proto-ipv4", "proto-dhcpv4", "socket-tcp", "socket-tcp-reno", "socket-dhcpv4"] }
 
 [lib]
 name = "dashos"
@@ -61,6 +71,13 @@ test = false
 [profile.release]
 panic = "abort"
 opt-level = "s"
+# Sin tabla de símbolos: los programas van dentro de la imagen del kernel (el paquete de arranque de `inicio`) y nada
+# la lee al cargarlos; con ella, la imagen pasaba de 9 MB.
+strip = "symbols"
+# Las dependencias (RedoxFS, seahash, lz4 del servicio de archivos), para ir rápido: con "s", crear un fichero costaba
+# en DashOS cuatro veces lo que el mismo RedoxFS bajo QEMU en modo usuario (paso F10 de docs/MULTITAREA_LOOP.md).
+[profile.release.package."*"]
+opt-level = 3
 [profile.dev]
 panic = "abort"
 
@@ -77,6 +94,11 @@ test = false
 [[bin]]
 name = "tls"
 path = "src/bin/tls.rs"
+test = false
+
+[[bin]]
+name = "hilos"
+path = "src/bin/hilos.rs"
 test = false
 
 [[bin]]
@@ -146,6 +168,116 @@ test = false
 required-features = ["ventanas"]
 
 [[bin]]
+name = "hostil"
+path = "src/bin/hostil.rs"
+
+# S29: malware de laboratorio (docs/diseño/S29-malware-linux-y-dashos.md).
+[[bin]]
+name = "espia"
+path = "src/bin/espia.rs"
+
+[[bin]]
+name = "caida"
+path = "src/bin/caida.rs"
+
+[[bin]]
+name = "sesiones"
+path = "src/bin/sesiones.rs"
+
+[[bin]]
+name = "guardian"
+path = "src/bin/guardian.rs"
+required-features = ["ventanas"]
+
+[[bin]]
+name = "panel"
+path = "src/bin/panel.rs"
+required-features = ["ventanas"]
+
+[[bin]]
+name = "barra"
+path = "src/bin/barra.rs"
+required-features = ["ventanas"]
+
+[[bin]]
+name = "workbench"
+path = "src/bin/workbench.rs"
+required-features = ["ventanas"]
+
+[[bin]]
+name = "explorador"
+path = "src/bin/explorador.rs"
+required-features = ["ventanas"]
+
+[[bin]]
+name = "presa"
+path = "src/bin/presa.rs"
+
+[[bin]]
+name = "entrada"
+path = "src/bin/entrada.rs"
+
+[[bin]]
+name = "eco"
+path = "src/bin/eco.rs"
+
+# S10: el servicio de avisos (las notificaciones), su prueba hostil y un programa del disco que avisa.
+[[bin]]
+name = "avisos"
+path = "src/bin/avisos.rs"
+test = false
+
+[[bin]]
+name = "avisador"
+path = "src/bin/avisador.rs"
+test = false
+
+[[bin]]
+name = "avisa"
+path = "src/bin/avisa.rs"
+test = false
+
+[[bin]]
+name = "espera"
+path = "src/bin/espera.rs"
+test = false
+
+[[bin]]
+name = "pide"
+path = "src/bin/pide.rs"
+
+[[bin]]
+name = "comprobador"
+path = "src/bin/comprobador.rs"
+test = false
+required-features = ["archivos"]
+
+[[bin]]
+name = "centro"
+path = "src/bin/centro.rs"
+test = false
+required-features = ["ventanas"]
+
+[[bin]]
+name = "fondo"
+path = "src/bin/fondo.rs"
+test = false
+required-features = ["ventanas"]
+
+[[bin]]
+name = "selector"
+path = "src/bin/selector.rs"
+test = false
+required-features = ["ventanas"]
+
+# U6: la prueba del cambio rápido de usuario (en el disco); desde el paso 2, con su ventana.
+[[bin]]
+name = "cambio"
+path = "src/bin/cambio.rs"
+test = false
+required-features = ["ventanas", "sonido"]
+
+[[bin]]
 name = "ventana-a"
 path = "src/bin/ventana_a.rs"
 test = false
@@ -154,6 +286,57 @@ required-features = ["ventanas"]
 [[bin]]
 name = "virtio-sonido"
 path = "src/bin/virtio_sonido.rs"
+test = false
+
+# La red (S13): el controlador de virtio-net, el servicio con la pila y sus pruebas.
+# El multimonitor: el controlador de virtio-gpu, con varias cabezas.
+[[bin]]
+name = "virtio-gpu"
+path = "src/bin/virtio_gpu.rs"
+test = false
+
+[[bin]]
+name = "virtio-red"
+path = "src/bin/virtio_red.rs"
+test = false
+
+[[bin]]
+name = "red"
+path = "src/bin/red.rs"
+test = false
+required-features = ["red"]
+
+[[bin]]
+name = "red-prueba"
+path = "src/bin/red_prueba.rs"
+test = false
+
+[[bin]]
+name = "red-gloton"
+path = "src/bin/red_gloton.rs"
+test = false
+
+[[bin]]
+name = "sin-red"
+path = "src/bin/sin_red.rs"
+test = false
+
+# La caja Linux (H9): el servicio de las máquinas virtuales y un programa sin su permiso.
+[[bin]]
+name = "caja-linux"
+path = "src/bin/caja_linux.rs"
+test = false
+required-features = ["caja", "ventanas"]
+
+[[bin]]
+name = "sin-maquina"
+path = "src/bin/sin_maquina.rs"
+test = false
+
+# aviso-cajas: provoca el aviso de memoria baja para ver que las cajas sueltan memoria (solo en las pruebas).
+[[bin]]
+name = "presion"
+path = "src/bin/presion.rs"
 test = false
 
 [[bin]]
@@ -210,6 +393,16 @@ path = "src/bin/xhci.rs"
 test = false
 
 [[bin]]
+name = "xhci0"
+path = "src/bin/xhci0.rs"
+test = false
+
+[[bin]]
+name = "xhci1"
+path = "src/bin/xhci1.rs"
+test = false
+
+[[bin]]
 name = "archivos"
 path = "src/bin/archivos.rs"
 test = false
@@ -221,7 +414,35 @@ path = "src/bin/ficheros.rs"
 test = false
 
 [[bin]]
-name = "relevo"
-path = "src/bin/relevo.rs"
+name = "imagen"
+path = "src/bin/imagen.rs"
 test = false
-required-features = ["relevo"]
+required-features = ["imagenes"]
+
+[[bin]]
+name = "adf-prueba"
+path = "src/bin/adf_prueba.rs"
+test = false
+
+[[bin]]
+name = "paula-prueba"
+path = "src/bin/paula_prueba.rs"
+test = false
+required-features = ["sonido"]
+
+# El banco de medidas de la multitarea (M0, docs/MULTITAREA_LOOP.md): el orquestador y el hijo en Rust.
+[[bin]]
+name = "medir"
+path = "src/bin/medir.rs"
+test = false
+
+[[bin]]
+name = "medir-hijo"
+path = "src/bin/medir_hijo.rs"
+test = false
+
+# Paso F (docs/MULTITAREA_LOOP.md): el banco del sistema de archivos, por el servicio "archivos".
+[[bin]]
+name = "medir-fs"
+path = "src/bin/medir_fs.rs"
+test = false

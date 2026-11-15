@@ -16,11 +16,10 @@ el terreno:
 
 ## Qué es Hangar hoy
 
-Hangar es una tienda de software para AmigaOS 3.x, en desarrollo y privada (`~/Proyectos/hangar`). Tiene dos
+Hangar es el catálogo y gestor de programas para AmigaOS 3.x, en desarrollo. Tiene dos
 piezas: un cliente para el Amiga, escrito en Dash con MUI, y un servicio en internet, en Rust con PostgreSQL. El
 servicio recoge el catálogo de Aminet y otras fuentes, con fichas e imágenes. El cliente busca, instala con recibo,
-actualiza, desinstala y ejecuta, y permite comprar programas de pago. Los programas gratis se bajan de su sitio
-original; los de pago, del servicio, solo para quien los compró.
+actualiza, desinstala y ejecuta. Los programas se bajan de su sitio original.
 
 ## Lo que aprendieron otros
 
@@ -73,7 +72,7 @@ Nombre provisional. Es una orden en `C:` y un servicio del sistema:
 | Clase | De dónde sale | Dónde se instala | Quién lo gestiona |
 |---|---|---|---|
 | Nativo de DashOS | Repositorio de DashOS y Hangar | `Paquetes:` o `Home:` | `Paq` |
-| Amiga 68k | Hangar (Aminet, GitHub, autores, de pago) | `Paquetes:Amiga/<programa>` o donde el usuario elija | `Paq`, con el recibo de Hangar |
+| Amiga 68k | Hangar (Aminet, GitHub, autores) | `Paquetes:Amiga/<programa>` o donde el usuario elija | `Paq`, con el recibo de Hangar |
 | Linux | La distribución de la caja Linux (S7) | Dentro de la caja Linux | El gestor de la distribución, por ejemplo pacman de Arch Linux ARM |
 
 - **Programas Amiga**: muchos traen un guion de `Installer`. Se ejecuta dentro de la caja, con el `Installer` del
@@ -83,11 +82,13 @@ Nombre provisional. Es una orden en `C:` y un servicio del sistema:
 
 ### Hangar en DashOS
 
-**Hangar es la tienda y `Paq` es el motor.** Hangar no instala por su cuenta: le pide a `Paq` que lo haga.
+**Hangar es el catálogo y `Paq` es el motor.** Hangar no instala por su cuenta: le pide a `Paq` que lo haga.
 
-- **El escaparate**: fichas con imágenes, búsqueda, novedades, valoraciones y compras. Lo que Hangar ya hace.
-- **Un catálogo, tres mundos**: nativos de DashOS, programas Amiga y, si se quiere, los de la caja Linux.
-- **De pago**: el servicio de Hangar entrega el paquete a quien lo compró, firmado con la clave de Hangar.
+- **El escaparate**: fichas con imágenes, búsqueda, novedades y valoraciones. Lo que Hangar ya hace.
+- **Un solo escaparate, tres mundos** (decidido por el usuario, 2026-11-10): nativos de DashOS (`Paq`), programas
+  Amiga y los de la caja Linux (Flatpak para las aplicaciones de escritorio y pacman para lo demás), juntos en las
+  mismas búsquedas y fichas. Por debajo, cada mundo con su gestor: Hangar le pide a `Paq`, a Flatpak o a pacman que
+  instale, y enseña el resultado. Quien quiera usa `pacman` o `flatpak` a mano en la terminal de la caja.
 - **El cliente de Hangar que hoy es para el Amiga ya funcionaría en DashOS el primer día**, dentro de la caja Amiga:
   es un programa 68k con MUI. Cuando el backend ARM de Dash exista, el mismo código se compila en nativo.
 
@@ -101,12 +102,50 @@ del proyecto Hangar, que tiene abierta la pregunta de qué sistemas cubre. Este 
 - `SYS:` se actualiza al reiniciar. Se avisa, nunca se fuerza.
 - Las actualizaciones de seguridad se marcan como tales en el índice.
 
+## Decidido el 2026-11-15 (formato de paquetes 2, lo que quedaba abierto)
+
+**La máquina de un paquete Amiga** es la caja, con el perfil que ella dice (S4).
+
+**Vocabulario de máquina de `aarch64-dashos`.** Mínimo de procesador: ARMv8.0-A. Lo que un programa puede mirar al
+arrancar (cifrado, LSE y demás extensiones) no se declara: lo detecta él y elige su camino. Todo binario de DashOS se
+enlaza para páginas de 16 KB, que valen también con 4 KB: así no hay paquetes aparte para el Mac. Se declara solo lo
+que no se arregla al arrancar: `hypervisor` (hay EL2 para cajas) y la memoria mínima (`4GB`). Lo demás se añade
+cuando un programa de verdad lo pida; una palabra que un `Paq` viejo no conoce es un error, y no instala.
+
+**Instaladores Amiga (`installer`).** No se le prohíbe escribir fuera de su cajón (casi todos copian a `LIBS:` y tocan
+`S:User-Startup`, y abortarían): corre en una caja de instalación aparte, sin red y con tope de tiempo, sobre una
+capa de captura que no toca el sistema. Al acabar, `Paq` reparte lo capturado: lo del cajón elegido, al cajón del
+paquete; lo de `C:`, `LIBS:`, `DEVS:`, `FONTS:` y `LOCALE:`, a las capas del paquete (la lista cerrada de S4b); de
+`S:User-Startup` solo las líneas `Assign`, que pasan a ser sus asignaciones; lo demás se descarta y se enseña. Hace
+falta el `Installer` del AmigaOS del usuario (DashOS no lo trae): sin él, el paquete se instala como cajón.
+
+**Firmas.** Lo que baja de un repositorio va comprobado por el índice firmado, que lleva la huella de cada paquete.
+La firma del fichero (`PKG-FILE-2`) es opcional y sirve para lo suelto (un USB, lo entregado fuera):
+
+- solo cuenta si la clave está en la lista del usuario; con una clave desconocida es como sin firma;
+- un paquete suelto firmado no lleva serie ni caducidad: nunca sustituye a una versión más nueva sin preguntar;
+- lo suelto tiene identidad propia (no la del repositorio): aunque se llame igual, no hereda lo concedido (S6b);
+- sin firma válida es un "suelto" de S6b: se instala solo si el usuario lo confirma, y pregunta todo.
+
+## Decidido el 2026-11-15 (2): el reparto con Hangar
+
+- **Instala `Paq`.** Resuelve, baja, verifica y guarda la base; el cliente de Hangar en DashOS es la cara: enseña y
+  pide. El cliente 68k dentro de la caja Amiga instala por su cuenta en `Work:` de la caja, fuera de `Paq`.
+- **Dónde escribe `Paq`**: `Paquetes:` para lo de todos y `Home:` para lo del usuario. En DashOS un `drawer` nunca va
+  a `Work:`. (S6b:185 le daba solo `Paquetes:`: falta su fila para la instalación de usuario.)
+- **El código común del formato** (`pkg2`: versiones, requisitos, manifiesto, índice, firmas, resolutor), con la
+  especificación y sus vectores, sale a un repositorio abierto con MPL-2.0; lo usan `Paq`, los clientes y el
+  servicio. Los clientes de Hangar son GPL y abiertos; el servicio web es privado.
+- Por limpiar en estos diseños (texto de antes del 15/11): "paquetes firmados" (S8, S6, S29, RESUMEN), "la clave de
+  Hangar" (S8, S6, S29), identidad solo por nombre (S6b), Installer "dentro de la caja" (S8). La clave de `SYS:` no
+  está en la lista de `Paq`: falta decirlo en S6 y S14.
+
 ## Lo que queda abierto
 
 1. ¿Nombre de la orden: `Paq`, u otro?
 2. ¿Sistema base como imagen firmada, y paquetes solo por encima, como Silverblue? Recomendado: sí. La otra opción es
    que todo sean paquetes, como Arch, que es más flexible pero menos seguro de actualizar.
-3. ¿Hangar como tienda y catálogo encima de `Paq`, con una arquitectura nueva de DashOS en su catálogo? Recomendado:
+3. ¿Hangar como catálogo encima de `Paq`, con una arquitectura nueva de DashOS en su catálogo? Recomendado:
    sí. Toca decidirlo en el proyecto Hangar.
 
 ## Cómo encaja
