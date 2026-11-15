@@ -65,6 +65,8 @@ prueba: $(PRUEBAS)
 	cd ../usuario && rustc --edition 2024 --test src/monitor.rs -o target/monitor_pruebas && ./target/monitor_pruebas -q
 	@# El explorador de archivos: la lógica y los trabajos largos contra un servicio de archivos falso (hostiles incluidos).
 	cd ../usuario && rustc --edition 2024 --test src/explorador/pruebas.rs -o target/explorador_pruebas && ./target/explorador_pruebas -q
+	@# Paso 2 de las asignaciones: la tabla de nombres, resolver, capas, heredar y lo hostil, contra un servicio falso.
+	cd ../usuario && rustc --edition 2024 --test src/asignaciones.rs -o target/asignaciones_pruebas && ./target/asignaciones_pruebas -q
 	@# S28: la pregunta de la guardia de ficheros de la caja Amiga (permisos sin llave, detalle, nombres raros).
 	cd ../usuario && rustc --edition 2024 --test src/preguntas_ficheros.rs -o target/preguntas_ficheros_pruebas && ./target/preguntas_ficheros_pruebas -q
 	../puente/pruebas/g0.sh

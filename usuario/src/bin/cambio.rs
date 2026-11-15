@@ -30,6 +30,7 @@ extern crate alloc;
 mod sonido_cliente;
 
 use alloc::vec::Vec;
+use dashos::asignaciones::{self as asig, Cambio};
 use dashos::println;
 use dashos::protocolo::archivos as a;
 use dashos::protocolo::sesiones as s;
@@ -156,6 +157,105 @@ impl Archivos {
     fn ventana(&self) -> &'static mut [u8] {
         unsafe { core::slice::from_raw_parts_mut(VA_VENTANA as *mut u8, 4096) }
     }
+
+    /// Una orden, con la respuesta entera (para las asignaciones, que listan).
+    fn orden_toda(&self, orden: u32, asa: u32, x: u64, y: u64, nombre: &[u8]) -> asig::Resp {
+        let mut p = [0u8; 256];
+        let largo = nombre.len().min(224);
+        p[0..4].copy_from_slice(&orden.to_le_bytes());
+        p[4..8].copy_from_slice(&asa.to_le_bytes());
+        p[8..16].copy_from_slice(&x.to_le_bytes());
+        p[16..24].copy_from_slice(&y.to_le_bytes());
+        p[24..28].copy_from_slice(&(largo as u32).to_le_bytes());
+        p[32..32 + largo].copy_from_slice(&nombre[..largo]);
+        let mut r = [0u8; 32];
+        if dashos::canal_escribir(ARCHIVOS, &p[..32 + largo], &[]) != 0 || dashos::canal_leer_plazo(self.lectura, &mut r, &mut [], 3_000_000).0 != 32 {
+            return asig::Resp { e: i32::MIN, ..Default::default() };
+        }
+        let u = |i: usize| u64::from_le_bytes(r[i..i + 8].try_into().unwrap());
+        asig::Resp { e: i32::from_le_bytes(r[0..4].try_into().unwrap()), asa: u32::from_le_bytes(r[4..8].try_into().unwrap()), a: u(8), b: u(16), c: u(24) }
+    }
+}
+
+/// El servicio de archivos para `dashos::asignaciones`.
+struct PorNombres<'a>(&'a Archivos);
+
+impl asig::Fs for PorNombres<'_> {
+    fn pedir(&mut self, orden: u32, asa: u32, x: u64, y: u64, nombre: &[u8]) -> asig::Resp {
+        self.0.orden_toda(orden, asa, x, y, nombre)
+    }
+
+    fn ventana(&self) -> &[u8] {
+        unsafe { core::slice::from_raw_parts(VA_VENTANA as *const u8, a::VENTANA) }
+    }
+}
+
+/// Paso 2 de las asignaciones: lanzada por `guardian` como Ana, su tabla de nombres trae sus volúmenes (`SYS:`, `Home:`,
+/// `RAM:`, `Work:`), su `PROGDIR:` y las asignaciones de la sesión. `C:` es `Home:C` y `SYS:C`: lo de `SYS:C` se lee por
+/// ahí; crear no va a `SYS:` (solo leer), sino a `Home:C` en cuanto existe; listar une las dos. `T:` es `RAM:T`. Y lo que
+/// asigna lo ve al pedir la tabla otra vez; lo que tapa un volumen, pone una raíz o hace un bucle, no.
+fn nombres_ana(arch: &Archivos) -> bool {
+    let Some(t) = asig::pedir_tabla(SESIONES) else {
+        println!("  [cambio] Ana: sin tabla de nombres: MAL");
+        return false;
+    };
+    let mut vols = alloc::string::String::new();
+    for v in t.volumenes() {
+        vols.push_str(core::str::from_utf8(v.nombre).unwrap_or("?"));
+        vols.push_str(": ");
+    }
+    let mut fs = PorNombres(arch);
+    let cerrar = |fs: &mut PorNombres, r: Result<(asig::Resp, usize), i32>| -> Result<usize, i32> {
+        r.map(|(x, capa)| {
+            fs.0.orden(a::CERRAR, x.asa, 0, 0, b"");
+            capa
+        })
+    };
+    let leer_sys = asig::mirar(&mut fs, &t, b"C:grande.txt").map(|r| r.1);
+    let en_sys = asig::crear(&mut fs, &t, b"C:nuevo", a::FICHERO);
+    let en_sys = cerrar(&mut fs, en_sys);
+    let home_c = asig::crear(&mut fs, &t, b"Home:C", a::CAJON);
+    let home_c = cerrar(&mut fs, home_c);
+    let nuevo = asig::crear(&mut fs, &t, b"C:nuevo", a::FICHERO);
+    let nuevo = cerrar(&mut fs, nuevo);
+    let (mut de_home, mut de_sys, mut repetidos) = (0, 0, 0);
+    let listado = asig::listar(&mut fs, &t, b"C:", |capa, e| {
+        match (capa, e.nombre) {
+            (0, b"nuevo") => de_home += 1,
+            (1, b"grande.txt") => de_sys += 1,
+            (_, b"nuevo") | (_, b"grande.txt") => repetidos += 1,
+            _ => {}
+        }
+        true
+    });
+    let temporal = asig::crear(&mut fs, &t, b"T:cambio.tmp", a::FICHERO);
+    let temporal = cerrar(&mut fs, temporal);
+    // Y se borra: el cajón de RAM: está en el disco (provisional) y la prueba del disco lo mira.
+    let t_ = fs.0.orden(a::BUSCAR, s::RAIZ_RAM as u32, 0, 0, b"T");
+    let borrado = t_.0 == a::BIEN && fs.0.orden(a::BORRAR, t_.1, 0, 0, b"cambio.tmp").0 == a::BIEN;
+    fs.0.orden(a::CERRAR, t_.1, 0, 0, b"");
+    let asignar = asig::asignar_en_sesiones(SESIONES, Cambio::Poner, b"Trabajo=Home:C");
+    let tapar = asig::asignar_en_sesiones(SESIONES, Cambio::Poner, b"SYS=Home:");
+    let raiz = asig::asignar_en_sesiones(SESIONES, Cambio::Poner, b"Casa=@2");
+    let uno = asig::asignar_en_sesiones(SESIONES, Cambio::Poner, b"Uno=Dos:");
+    let bucle = asig::asignar_en_sesiones(SESIONES, Cambio::Poner, b"Dos=Uno:");
+    let t2 = asig::pedir_tabla(SESIONES);
+    let trabajo = t2.as_ref().map(|t2| asig::mirar(&mut fs, t2, b"trabajo:nuevo").map(|r| r.1));
+    let sin_malas = t2.as_ref().is_some_and(|t2| t2.buscar(b"Casa").is_none() && t2.buscar(b"Dos").is_none() && t2.buscar(b"SYS").is_some_and(|l| l.volumen));
+    let bien = vols == "SYS: Home: RAM: Work: " && t.buscar(b"PROGDIR").is_some() && leer_sys == Ok(1)
+        && matches!(en_sys, Err(a::PROTEGIDO) | Err(a::SOLO_LECTURA)) && matches!(home_c, Ok(0) | Err(a::YA_EXISTE))
+        && matches!(nuevo, Ok(0) | Err(a::YA_EXISTE)) && listado.is_ok() && de_home == 1 && de_sys == 1 && repetidos == 0
+        && temporal == Ok(0) && borrado && asignar == 0 && tapar == a::PROTEGIDO && raiz == a::MAL_FORMADO && uno == 0
+        && bucle == asig::BUCLE && trabajo == Some(Ok(0)) && sin_malas;
+    println!(
+        "  [cambio] Ana: asignaciones: {}C: lee de SYS: {:?}, crea en SYS: {:?}, Home:C {:?}, crea en C: {:?}, lista {:?} ({} de Home, {} de SYS, {} de más), T: {:?} {}; asigna {} {} {} {} {}, Trabajo: {:?}",
+        vols, leer_sys, en_sys, home_c, nuevo, listado, de_home, de_sys, repetidos, temporal, borrado, asignar, tapar, raiz, uno, bucle, trabajo
+    );
+    println!("  [cambio] Ana: asignaciones por nombre: {}", if bien { "bien" } else { "MAL" });
+    bien
+}
+
+impl Archivos {
 
     fn escribir(&self, asa: u32, desde: u64, datos: &[u8]) -> i32 {
         self.ventana()[..datos.len()].copy_from_slice(datos);
@@ -515,7 +615,7 @@ fn principal() -> u64 {
         return 1;
     };
     let bien = match &vol[..vol.iter().position(|&c| c == 0).unwrap_or(16)] {
-        b"Ana" => testigo(&arch, raiz),
+        b"Ana" => nombres_ana(&arch) & testigo(&arch, raiz),
         b"Carla" => espia(&arch, raiz),
         _ => {
             println!("  [cambio] Home: de nadie conocido: MAL");

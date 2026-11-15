@@ -257,6 +257,10 @@ Las fichas provisionales están en `usuario/src/bin/inicio.rs` (`FICHAS`). Con e
 Un mensaje sin marca que no sea un alta se tira.
 Todo va en little-endian.
 
+Lo que lanza `sesiones` nace con sus raíces en el alta (paso 2 de las asignaciones): 0 el cajón de donde salió, 1 el
+disco para leer, y si su usuario tiene cuenta, 2 su volumen, 3 `Estado/RAM/<cuenta>` (su `RAM:`, provisional) y 4
+`Work` (su `Work:`, provisional), las dos para leer y escribir.
+
 **Petición**: 32 bytes de cabecera y, detrás, el nombre en UTF-8 (hasta 224 bytes; el mensaje entero, hasta 256).
 
 | Bytes | Campo |
@@ -390,6 +394,8 @@ de respuesta:
 | 8 registro | `guardian` | El registro de seguridad, por páginas |
 | 9 lanzar | `guardian`; la barra y el Workbench (S10) | Un programa del disco, como quien pide o como un usuario que entró; nace con su canal con `sesiones`, su llave de archivos y sus raíces. La barra y el Workbench solo lanzan de `Programas/` (un nombre, sin cajones), siempre como la persona que está delante; sin nadie delante, -2 |
 | 10 nombres | cualquiera | Su tabla de nombres (`SYS:`, `Programas:`, `Home:`, `PROGDIR:`), con la raíz de cada uno |
+| 30 asignaciones | cualquiera | Su tabla de nombres entera (paso 2, `bitacoras/asignaciones.md`), por páginas de 248 bytes desde el byte que diga (u32): cuánto mide (u32), cuántos van (u32) y el texto, que lee `dashos::asignaciones::Tabla`. Volúmenes según sus raíces (lo que lanza `sesiones`, y el Workbench y el explorador, que se ceden las mismas): `SYS:` 1, y con cuenta `Home:` 2, `RAM:` 3 y `Work:` 4; `PROGDIR:` 0 si salió del disco; y sus asignaciones: las de la sesión (S4b) o las heredadas del que lo lanzó si es de su mismo usuario |
+| 31 asignar | cualquiera | Cambia una de sus asignaciones (u32 cambio: 0 poner, 1 añadir detrás, 2 delante, 3 quitar; u32 largo; "Nombre=capa,capa"). Solo capas con nombre: ni raíces (`@n`), ni el nombre de un volumen o `PROGDIR`, ni caminos que suben, ni bucles (-30). Lo que lance después lo hereda. Contesta un i32 |
 | 11 preguntas | `guardian` | La llave por la que se le pregunta: permisos, acciones de administrador y bloquear |
 | 12 respuesta, 13 retirar | `guardian` | Sí o no a un permiso (lo concedido se guarda; S28: 2 es "sí, solo esta vez", sin guardarlo); quitar uno concedido (se borra y se revocan sus llaves) |
 | 14 administrar | cualquiera | Una acción de la lista cerrada ("comprobar", "matar"), con la contraseña de un administrador que pide `guardian`. Desde una sesión de detrás, -2 (U6) |

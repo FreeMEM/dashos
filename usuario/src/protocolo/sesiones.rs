@@ -57,6 +57,29 @@ pub const NOMBRES: u32 = 10;
 pub const ENTRADA_NOMBRE: usize = 48;
 pub const MAX_NOMBRES: usize = 5;
 pub const SIN_RAIZ: u8 = 0xff;
+/// De un programa (paso 2 de las asignaciones, `docs/bitacoras/asignaciones.md`): su tabla de nombres entera, por
+/// páginas (orden, desde qué byte u32). Contesta cuánto mide (u32), cuántos bytes van (u32) y hasta
+/// `POR_PAGINA_ASIGNACIONES` bytes del texto desde ahí. El texto lo lee `dashos::asignaciones::Tabla`: volúmenes
+/// (según las raíces que `sesiones` le dio), `PROGDIR` y las asignaciones, heredadas de quien lo lanzó.
+pub const ASIGNACIONES: u32 = 30;
+pub const POR_PAGINA_ASIGNACIONES: usize = 248;
+/// De un programa: cambiar una de sus asignaciones (orden, cambio u32 (`dashos::asignaciones::Cambio`: 0 poner, 1
+/// añadir detrás, 2 añadir delante, 3 quitar), largo u32, "Nombre=capa,capa" o "Nombre"). Solo capas con nombre, ni
+/// volúmenes ni `PROGDIR`; lo que deja un bucle, no. Lo que lance después lo hereda. Contesta un i32: 0, o el error
+/// (`dashos::asignaciones::Error::estado`).
+pub const ASIGNAR: u32 = 31;
+/// Los huecos de raíz del servicio de archivos de cada volumen (la tabla de nombres dice "`SYS:` es la raíz 1"). Así los
+/// da `sesiones` a lo que lanza (`PROGDIR:` es la 0, el cajón de donde salió), y así se los cede el escritorio
+/// (Workbench, explorador). `RAM:` y `Work:`, provisionales: cajones del disco (`Estado/RAM/<cuenta>` y `Work`).
+pub const RAIZ_PROGDIR: u8 = 0;
+pub const RAIZ_SYS: u8 = 1;
+pub const RAIZ_HOME: u8 = 2;
+pub const RAIZ_RAM: u8 = 3;
+pub const RAIZ_WORK: u8 = 4;
+/// El cajón de `RAM:` de una cuenta, desde la raíz del disco (provisional: no hay aún disco en memoria).
+pub const CAMINO_RAM: &str = "Estado/RAM/";
+/// El cajón de `Work:`, desde la raíz del disco (provisional: no es aún un disco aparte).
+pub const CAMINO_WORK: &str = "Work";
 /// De `guardian` (U4): mándame las preguntas por esta llave (la segunda del mensaje). Contesta 0.
 pub const PREGUNTAS: u32 = 11;
 /// De `guardian`: la respuesta a una pregunta (orden, número de la pregunta u32, 1 sí o 0 no u32). Contesta 0.

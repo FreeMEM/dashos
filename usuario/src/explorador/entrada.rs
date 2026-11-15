@@ -80,7 +80,7 @@ fn atender_pedido(app: &mut App, m: &[u8], marca: u64) {
     let Some((&raiz, nombres)) = resto.split_first() else { return };
     let raiz = raiz as u32;
     let mut lugar = Lugar::raiz(raiz);
-    let valido = (1..=3).contains(&raiz)
+    let valido = (RAIZ_SISTEMA..=RAIZ_AMIGA).contains(&raiz)
         && (nombres.is_empty()
             || nombres.split(|&b| b == 0).all(|n| match core::str::from_utf8(n) {
                 Ok(n) if nombre_valido(n) && lugar.nombres.len() < MAX_HONDO => {

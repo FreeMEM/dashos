@@ -2069,3 +2069,11 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   base de datos de pantallas y pantallas propias. Tachyon pinta en color los iconos de su barra (el logo sigue vacío:
   es un PNG que decodifica él). Tanda completa sobre 33a26a3: todo rc=0. Sigue el agente en la rama con lo pendiente:
   paletas y plumas de pantallas propias, pantallas públicas, 8 bits chunky, ventanas y Workbench sin copia, el logo.
+- **Paso 2 hecho en lo principal: asignaciones con nombre en lo nativo** (rama `asignaciones`, bitácora
+  `docs/bitacoras/asignaciones.md`). `dashos::asignaciones` (tabla de volúmenes y asignaciones con capas, resolver,
+  abrir, crear en la primera capa que deja, listar uniendo capas); `sesiones` guarda la tabla de cada proceso, monta
+  las de la sesión de S4b y los hijos heredan las del padre (órdenes 30 `ASIGNACIONES` y 31 `ASIGNAR`; `ASIGNAR` no
+  pone raíces ni tapa volúmenes); lo que lanza nace con `RAM:` y `Work:` (provisionales, cajones del disco); el disco de
+  pruebas tiene los cajones de `SYS:`; el Workbench y el explorador enseñan `SYS:`, `Home:`, `RAM:`, `Work:` y el
+  explorador resuelve los caminos con nombre por su tabla. Pendientes del usuario y lo que falta por pasar, en la
+  bitácora.

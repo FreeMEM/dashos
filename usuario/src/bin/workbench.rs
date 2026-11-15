@@ -12,7 +12,9 @@
 //!   no por una raíz de solo lectura.
 //!
 //! Raíces (S6b): la ficha es de Ana (1000) con el derecho de repartir, como el selector. Al empezar se cede a sí mismo
-//! el disco solo para leer (raíz 1, "Sistema") y `C` para leer y escribir (raíz 2, "Home"), y solo va por ellas. `Home`
+//! las raíces de sus volúmenes, en los mismos huecos que da `sesiones` (`RAIZ_*` del protocolo): el disco solo para leer
+//! (`SYS:`), `C` para leer y escribir (`Home:`), su `RAM:` y `Work:`; y solo va por ellas. Los iconos del escritorio son
+//! los volúmenes de su tabla de nombres (paso 2 de las asignaciones, `ASIGNACIONES` de `sesiones`), con su nombre. `Home`
 //! es `C` de forma provisional: el `Home:` de verdad es el volumen cifrado de Ana, y abrir un volumen por su nombre
 //! pide el derecho de administrar; tendrá que cedérselo `sesiones` al entrar. El icono de `Home` sale solo mientras la
 //! sesión de Ana está abierta (`ACTIVA` de `sesiones`).
@@ -75,9 +77,13 @@ const VA_ARCHIVOS: usize = 0x50_0000_0000;
 const VA_VENTANAS: usize = 0x60_0000_0000;
 const HUECO_VENTANA: usize = 16 << 20;
 const MAX_VENTANAS: usize = 8;
-/// Las raíces que se cede (S6b, capa 2).
-const RAIZ_SISTEMA: u32 = 1;
-const RAIZ_HOME: u32 = 2;
+/// Las raíces que se cede (S6b, capa 2), en los huecos de cada volumen del protocolo.
+const RAIZ_SISTEMA: u32 = s::RAIZ_SYS as u32;
+const RAIZ_HOME: u32 = s::RAIZ_HOME as u32;
+const RAIZ_RAM: u32 = s::RAIZ_RAM as u32;
+const RAIZ_WORK: u32 = s::RAIZ_WORK as u32;
+/// Los volúmenes de siempre, si `sesiones` no da la tabla: nombre y raíz.
+const VOLUMENES_DE_SIEMPRE: [(&str, u32); 4] = [("SYS", RAIZ_SISTEMA), ("Home", RAIZ_HOME), ("RAM", RAIZ_RAM), ("Work", RAIZ_WORK)];
 const BOTON_IZQUIERDO: u32 = 0x110;
 const BOTON_DERECHO: u32 = 0x111;
 const KEY_ESC: u32 = 1;
@@ -167,17 +173,17 @@ impl Archivos {
     /// una instantánea del volumen (la prueba FS9 de `ficheros`), el servicio suelta las asas y las raíces de todos.
     fn pedir(&self, c: &mut Cliente, orden: u32, asa: u32, x: u64, y: u64, nombre: &[u8]) -> Resp {
         let r = self.pedir_una(c, orden, asa, x, y, nombre);
-        if r.e == a::ASA_MALA && (asa == RAIZ_SISTEMA || asa == RAIZ_HOME) {
-            let (s, h) = self.ceder_raices(c);
-            println!("  [workbench] sus raíces ya no valían (se volvió a una instantánea): Sistema {}, Home {}", s, h);
+        if r.e == a::ASA_MALA && (RAIZ_SISTEMA..=RAIZ_WORK).contains(&asa) {
+            let [s, h, ..] = self.ceder_raices(c);
+            println!("  [workbench] sus raíces ya no valían (se volvió a una instantánea): SYS: {}, Home: {}", s, h);
             return self.pedir_una(c, orden, asa, x, y, nombre);
         }
         r
     }
 
-    /// Se cede a sí mismo sus raíces (S6b, capa 2): el disco solo para leer, como "Sistema", y `C` para leer y escribir,
-    /// como "Home". El estado de cada una.
-    fn ceder_raices(&self, c: &mut Cliente) -> (i32, i32) {
+    /// Se cede a sí mismo sus raíces (S6b, capa 2): el disco solo para leer, como `SYS:`; `C` para leer y escribir, como
+    /// `Home:`; y su `RAM:` y `Work:` (provisionales, cajones del disco). El estado de cada una.
+    fn ceder_raices(&self, c: &mut Cliente) -> [i32; 4] {
         let mut ceder = |camino: &[u8], derechos: u64, hueco: u32| {
             let r = self.pedir_una(c, a::BUSCAR, 0, 0, 0, camino);
             if r.e != a::BIEN {
@@ -187,7 +193,7 @@ impl Archivos {
             self.pedir_una(c, a::CERRAR, r.asa, 0, 0, b"");
             e
         };
-        (ceder(b"", 4, RAIZ_SISTEMA), ceder(b"C", 4 | 2, RAIZ_HOME))
+        [ceder(b"", 4, RAIZ_SISTEMA), ceder(b"C", 4 | 2, RAIZ_HOME), ceder(b"Estado/RAM/Ana", 4 | 2, RAIZ_RAM), ceder(s::CAMINO_WORK.as_bytes(), 4 | 2, RAIZ_WORK)]
     }
 
     fn pedir_una(&self, c: &mut Cliente, orden: u32, asa: u32, x: u64, y: u64, nombre: &[u8]) -> Resp {
@@ -494,12 +500,11 @@ struct Lugar {
 }
 
 impl Lugar {
+    /// Como en el Amiga: "SYS:", "SYS:Programas", "Home:Privado/nota.txt".
     fn texto(&self) -> String {
-        let mut t = String::from(if self.raiz == RAIZ_SISTEMA { "Sistema" } else { "Home" });
-        for n in &self.nombres {
-            t.push('/');
-            t.push_str(n);
-        }
+        let mut t = String::from(nombre_volumen(self.raiz));
+        t.push(':');
+        t.push_str(&self.nombres.join("/"));
         t
     }
 
@@ -671,13 +676,44 @@ struct Escritorio {
     encima: Option<usize>,
     ultimo: Option<(usize, u32)>,
     home: bool,
+    /// Los volúmenes de su tabla de nombres: nombre y raíz.
+    volumenes: Vec<(&'static str, u32)>,
+}
+
+/// El nombre del volumen de una raíz (para los títulos y los caminos).
+fn nombre_volumen(raiz: u32) -> &'static str {
+    VOLUMENES_DE_SIEMPRE.iter().find(|v| v.1 == raiz).map_or("?", |v| v.0)
+}
+
+/// Los volúmenes de su tabla de nombres (`ASIGNACIONES` de `sesiones`), en su orden: los que conoce, con la raíz que dice
+/// la tabla. Sin tabla, los de siempre.
+fn volumenes_de_la_tabla() -> Vec<(&'static str, u32)> {
+    let Some(t) = dashos::asignaciones::pedir_tabla(SESIONES) else {
+        println!("  [workbench] sin tabla de nombres: los volúmenes de siempre");
+        return VOLUMENES_DE_SIEMPRE.to_vec();
+    };
+    let mut v = Vec::new();
+    for l in t.volumenes() {
+        let raiz = l.destinos.strip_prefix(b"@").and_then(|r| core::str::from_utf8(r).ok()).and_then(|r| r.parse::<u32>().ok());
+        let conocido = VOLUMENES_DE_SIEMPRE.iter().find(|x| dashos::asignaciones::mismo(x.0.as_bytes(), l.nombre));
+        if let (Some(raiz), Some(&(nombre, de_siempre))) = (raiz, conocido) {
+            // Solo las raíces que se cedió (las de siempre de cada volumen).
+            if raiz == de_siempre {
+                v.push((nombre, raiz));
+            }
+        }
+    }
+    let nombres: Vec<&str> = v.iter().map(|x| x.0).collect();
+    println!("  [workbench] volúmenes de su tabla de nombres: {}", nombres.join(": ") + ":");
+    v
 }
 
 impl Escritorio {
     fn colocar(&mut self) {
-        let mut v = alloc::vec![Icono { nombre: "Sistema", raiz: RAIZ_SISTEMA, r: Rect::default() }];
-        if self.home {
-            v.push(Icono { nombre: "Home", raiz: RAIZ_HOME, r: Rect::default() });
+        // Los volúmenes de su tabla de nombres, en su orden; `Home:`, solo con la sesión de Ana abierta.
+        let mut v: Vec<Icono> = self.volumenes.iter().filter(|&&(_, r)| r != RAIZ_HOME || self.home).map(|&(nombre, raiz)| Icono { nombre, raiz, r: Rect::default() }).collect();
+        if v.is_empty() {
+            v.push(Icono { nombre: "SYS", raiz: RAIZ_SISTEMA, r: Rect::default() });
         }
         for (k, ic) in v.iter_mut().enumerate() {
             ic.r = Rect::new(self.w - 8 - CELDA_ESC_W, 12 + k as i32 * CELDA_ESC_H, CELDA_ESC_W, CELDA_ESC_H);
@@ -705,7 +741,7 @@ impl Escritorio {
             } else if self.encima == Some(k) {
                 l.redondeado(Rect::new(cx - 36, ic.r.y + 2, 72, 68), 20, con_opacidad(t.superficie, 110));
             }
-            icono(&mut l, cx - 28, ic.r.y + 7, 56, if ic.raiz == RAIZ_SISTEMA { Forma::Sistema } else { Forma::Home }, t);
+            icono(&mut l, cx - 28, ic.r.y + 7, 56, if ic.raiz == RAIZ_HOME { Forma::Home } else { Forma::Sistema }, t);
             // El nombre sobre una pastilla, para que se lea sobre cualquier fondo.
             let w = m.medir(ic.nombre, 13).ancho;
             let pastilla = Rect::new(cx - w / 2 - 8, ic.r.y + 72, w + 16, 22);
@@ -828,7 +864,10 @@ impl App {
             let primera = !self.esc_configurado;
             self.esc_configurado = true;
             let s = &self.esc.iconos[0].r;
-            println!("  [workbench] en pantalla: {}x{}, icono de Sistema en ({}, {})", w, h, s.x + s.w / 2, s.y + 36);
+            println!("  [workbench] en pantalla: {}x{}, icono de {} en ({}, {})", w, h, self.esc.iconos[0].nombre, s.x + s.w / 2, s.y + 36);
+            for ic in self.esc.iconos.iter().skip(1).filter(|ic| ic.raiz != RAIZ_HOME) {
+                println!("  [workbench] icono de {} en ({}, {})", ic.nombre, ic.r.x + ic.r.w / 2, ic.r.y + 36);
+            }
             if primera {
                 self.avisar_home();
             }
@@ -836,7 +875,7 @@ impl App {
     }
 
     fn avisar_home(&self) {
-        match self.esc.iconos.get(1) {
+        match self.esc.iconos.iter().find(|ic| ic.raiz == RAIZ_HOME) {
             Some(ic) => println!("  [workbench] icono de Home en ({}, {})", ic.r.x + ic.r.w / 2, ic.r.y + 36),
             None => println!("  [workbench] sin icono de Home: la sesión de Ana no está abierta"),
         }
@@ -996,7 +1035,7 @@ impl App {
             return false;
         }
         let e = dashos::canal_escribir(EXPLORADOR, &m, &[]);
-        println!("  [workbench] pide al explorador que abra {}: {}", lugar.texto(), e);
+        println!("  [workbench] pide al explorador que abra {} ({})", lugar.texto(), e);
         e == 0
     }
 
@@ -1096,7 +1135,7 @@ impl App {
                 println!("  [workbench] lanza Programas/{}: {} (proceso {})", e.nombre, estado, pid);
                 if estado == 0 { alloc::format!("En marcha: {}", e.nombre) } else { alloc::format!("No se lanzó ({})", estado) }
             } else {
-                println!("  [workbench] {} no se abre: solo se lanzan los programas de Sistema/Programas", ruta);
+                println!("  [workbench] {} no se abre: solo se lanzan los programas de SYS:Programas", ruta);
                 String::from("Solo se lanzan los de Programas")
             };
             self.aviso_cajon(k, &aviso);
@@ -1248,7 +1287,7 @@ impl App {
         let (dueno, grupo, yo) = (du.a, du.b, du.c);
         let puede = dueno == yo && raiz == RAIZ_HOME;
         let porque = if raiz != RAIZ_HOME {
-            "Por Sistema solo se puede leer"
+            "Por SYS: solo se puede leer"
         } else if dueno != yo {
             "Solo lo puede cambiar su dueño"
         } else {
@@ -1547,7 +1586,7 @@ fn comprobar_lo_ajeno(ar: &Archivos, c: &mut Cliente) {
     let bien = sesiones_l == a::PROTEGIDO && registro == a::PROTEGIDO && carla_l == a::PROTEGIDO && secreto == a::PROTEGIDO
         && crear.e == a::PROTEGIDO && subir != a::BIEN;
     println!(
-        "  [workbench] lo ajeno: listar el cajón de sesiones {}, abrir su registro {}; listar DeCarla {}, abrir su fichero {}; crear por Sistema {}; \"..\" desde Home {}: {}",
+        "  [workbench] lo ajeno: listar el cajón de sesiones {}, abrir su registro {}; listar DeCarla {}, abrir su fichero {}; crear por SYS: {}; \"..\" desde Home: {}: {}",
         sesiones_l, registro, carla_l, secreto, crear.e, subir_txt, if bien { "bien" } else { "MAL" }
     );
     // Los nombres raros: '|' en Home y ':' en Sistema/Imagenes no se enseñan; "..", "a/b", "x:y" y "" no se buscan.
@@ -1563,7 +1602,7 @@ fn comprobar_lo_ajeno(ar: &Archivos, c: &mut Cliente) {
     let no_busca = ["..", ".", "a/b", "x:y", "", "uno|dos"].iter().all(|n| !nombre_valido(n));
     let bien = raros_home >= 1 && raros_img >= 1 && no_busca;
     println!(
-        "  [workbench] nombres raros: {} sin enseñar en Home, {} en Sistema/Imagenes; \"..\", \"a/b\", \"x:y\" no se buscan: {}",
+        "  [workbench] nombres raros: {} sin enseñar en Home:, {} en SYS:Imagenes; \"..\", \"a/b\", \"x:y\" no se buscan: {}",
         raros_home, raros_img, if bien { "bien" } else { "MAL" }
     );
 }
@@ -1598,8 +1637,8 @@ fn principal() -> u64 {
         println!("  [workbench] sin servicio de archivos");
         return 4;
     };
-    let (sistema, home) = ar.ceder_raices(&mut c);
-    println!("  [workbench] raíces: Sistema solo para leer {}, Home para leer y escribir {}", sistema, home);
+    let [sistema, home, ram, work] = ar.ceder_raices(&mut c);
+    println!("  [workbench] raíces: SYS: solo para leer {}, Home: {}, RAM: {}, Work: {}", sistema, home, ram, work);
     if sistema != a::BIEN || home != a::BIEN {
         return 5;
     }
@@ -1609,7 +1648,7 @@ fn principal() -> u64 {
         ar,
         tema: Tema::CLARO,
         medio: Fuente::medium(),
-        esc: Escritorio { w: 0, h: 0, mem: 0, pool: 0, bufer: 0, iconos: Vec::new(), elegido: None, encima: None, ultimo: None, home: false },
+        esc: Escritorio { w: 0, h: 0, mem: 0, pool: 0, bufer: 0, iconos: Vec::new(), elegido: None, encima: None, ultimo: None, home: false, volumenes: volumenes_de_la_tabla() },
         esc_configurado: false,
         ventanas: Vec::new(),
         siguiente_id: PRIMER_ID,

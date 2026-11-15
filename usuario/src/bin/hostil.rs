@@ -442,8 +442,99 @@ fn archivos(memoria: u32) -> bool {
         println!("  [hostil] archivos, permisos: {}", permisos(lectura, copia));
         println!("  [hostil] A7 préstamos: {}", prestamos(lectura, copia));
         println!("  [hostil] selector: {}", cedida(lectura, copia));
+        println!("  [hostil] asignaciones: {}", nombres_hostiles(lectura, copia));
     }
     vivo
+}
+
+/// El servicio de archivos para `dashos::asignaciones`, por las órdenes de siempre del hostil.
+struct PorNombres {
+    lectura: u32,
+    copia: u32,
+}
+
+impl dashos::asignaciones::Fs for PorNombres {
+    fn pedir(&mut self, orden: u32, asa: u32, x: u64, y: u64, nombre: &[u8]) -> dashos::asignaciones::Resp {
+        let e = core::str::from_utf8(nombre).ok().and_then(|n| pedir(self.lectura, self.copia, orden, asa, x, y, n));
+        match e {
+            Some((e, asa)) => dashos::asignaciones::Resp { e, asa, ..Default::default() },
+            None => dashos::asignaciones::Resp { e: i32::MIN, ..Default::default() },
+        }
+    }
+
+    fn ventana(&self) -> &[u8] {
+        &[]
+    }
+}
+
+/// Paso 2 de las asignaciones: el hostil (Carla, lanzado por `inicio` con su cajón como única raíz) pide su tabla: trae
+/// las asignaciones de la sesión pero ningún volumen (no tiene sus raíces), y por ellas no llega a nada. Con una tabla
+/// escrita a mano que dice que `SYS:` es una raíz que no tiene, tampoco. Y `ASIGNAR` no tapa volúmenes, no pone raíces,
+/// no admite caminos que suben ni bucles, ni lo mal formado; `sesiones` sigue contestando. Devuelve lo que falló, o
+/// "bien".
+fn nombres_hostiles(lectura: u32, copia: u32) -> &'static str {
+    use dashos::asignaciones::{self as asig, Cambio, Tabla};
+    let Some(t) = asig::pedir_tabla(SESIONES) else { return "sin tabla de nombres" };
+    if t.volumenes().count() != 0 || t.buscar(b"LIBS").is_none() || t.buscar(b"PROGDIR").is_some() {
+        return "su tabla no es la de un programa sin raíces";
+    }
+    let mut fs = PorNombres { lectura, copia };
+    for c in [&b"LIBS:x"[..], b"C:grande.txt", b"ENVARC:", b"Programas:hola", b"T:"] {
+        if asig::abrir(&mut fs, &t, c).is_ok() {
+            return "llega a algo por un nombre de su tabla";
+        }
+    }
+    let falsa = Tabla::desde(b"*SYS=@9\n*Home=@15\nLIBS=Home:Libs,SYS:Libs\n").unwrap();
+    if asig::abrir(&mut fs, &falsa, b"SYS:").is_ok() || asig::abrir(&mut fs, &falsa, b"LIBS:").is_ok() || asig::crear(&mut fs, &falsa, b"Home:x", FICHERO).is_ok() {
+        return "llega a algo con una tabla falsa";
+    }
+    let largo = {
+        let mut l = alloc::vec![b'N'; asig::MAX_NOMBRE + 1];
+        l.extend_from_slice(b"=SYS:");
+        l
+    };
+    let casos: [(Cambio, &[u8], i32); 13] = [
+        (Cambio::Poner, b"SYS=C:", PROTEGIDO),
+        (Cambio::Poner, b"home=LIBS:", PROTEGIDO),
+        (Cambio::Quitar, b"Work", PROTEGIDO),
+        (Cambio::Poner, b"PROGDIR=SYS:", PROTEGIDO),
+        (Cambio::Poner, b"X=@1", MAL_FORMADO),
+        (Cambio::Anadir, b"LIBS=@2/Libs", MAL_FORMADO),
+        (Cambio::Poner, b"X=Home:../DeCarla", MAL_FORMADO),
+        (Cambio::Poner, b"X=Home:/a", MAL_FORMADO),
+        (Cambio::Poner, b"X:Y=SYS:", MAL_FORMADO),
+        (Cambio::Poner, &largo, MAL_FORMADO),
+        (Cambio::Poner, b"Uno=Dos:", 0),
+        (Cambio::Poner, b"Dos=Uno:", asig::BUCLE),
+        (Cambio::Anadir, b"Uno=Uno:x", asig::BUCLE),
+    ];
+    for (cambio, texto, quiere) in casos {
+        let e = asig::asignar_en_sesiones(SESIONES, cambio, texto);
+        if e != quiere {
+            println!("  [hostil] asignar \"{}\" da {} (tenía que dar {})", core::str::from_utf8(texto).unwrap_or("?"), e, quiere);
+            return "ASIGNAR deja algo que no debe";
+        }
+    }
+    // A mano: un cambio que no existe y un largo que no cabe en el mensaje.
+    for (cambio, largo) in [(99u32, 3u32), (0, u32::MAX), (0, 300)] {
+        let mut p = [0u8; 20];
+        p[0..4].copy_from_slice(&dashos::protocolo::sesiones::ASIGNAR.to_le_bytes());
+        p[4..8].copy_from_slice(&cambio.to_le_bytes());
+        p[8..12].copy_from_slice(&largo.to_le_bytes());
+        p[12..17].copy_from_slice(b"X=C:a");
+        let (l, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 4];
+        let n = if escribir(SESIONES, &p, &[suyo]) { dashos::canal_leer_plazo(l, &mut r, &mut [], 2_000_000).0 } else { -1 };
+        dashos::cerrar(l);
+        if n != 4 || i32::from_le_bytes(r) != MAL_FORMADO {
+            return "ASIGNAR a mano con basura no da mal formado";
+        }
+    }
+    match asig::pedir_tabla(SESIONES) {
+        Some(t) if t.buscar(b"Uno").is_some() && t.buscar(b"Dos").is_none() && t.buscar(b"X").is_none() && t.volumenes().count() == 0 => "bien",
+        Some(_) => "su tabla quedó con lo que no debía",
+        None => "sesiones ya no contesta la tabla",
+    }
 }
 
 /// Sonido: ataques y, después, abrir un flujo tiene que dar el aviso de "pide muestras".
