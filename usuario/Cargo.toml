@@ -12,6 +12,8 @@ monton = ["dep:linked_list_allocator"]
 ventanas = ["monton", "dep:wayland", "dep:kit"]
 # El servicio de sonido (S19, A4).
 sonido = ["monton", "dep:sonido"]
+# RelevoJIT en un proceso de x86-64 (X7a): enlaza librelevo.a sin libc (RELEVO_LIB_DIR, ver build.rs).
+relevo = ["monton"]
 
 [dependencies]
 linked_list_allocator = { version = "0.10.6", default-features = false, optional = true }
@@ -218,3 +220,8 @@ name = "ficheros"
 path = "src/bin/ficheros.rs"
 test = false
 
+[[bin]]
+name = "relevo"
+path = "src/bin/relevo.rs"
+test = false
+required-features = ["relevo"]

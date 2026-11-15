@@ -91,6 +91,12 @@ pub fn memoria_proyectar(llave: u32, direccion: usize, escribir: bool) -> i64 {
     llamada(8, [llave as u64, direccion as u64, if escribir { 3 } else { 1 }, 0, 0]).0 as i64
 }
 
+/// Proyecta un objeto de memoria para leerlo y ejecutarlo, nunca para escribirlo (X7a, solo x86-64): la memoria de
+/// código de un JIT, que escribe por otra proyección del mismo objeto.
+pub fn memoria_proyectar_ejecutable(llave: u32, direccion: usize) -> i64 {
+    llamada(8, [llave as u64, direccion as u64, 5, 0, 0]).0 as i64
+}
+
 /// Lo que mide el objeto de memoria `llave`, en bytes, o un error negativo (W7).
 pub fn memoria_tamano(llave: u32) -> i64 {
     llamada(27, [llave as u64, 0, 0, 0, 0]).0 as i64

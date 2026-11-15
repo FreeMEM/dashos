@@ -357,6 +357,13 @@ fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
     let Some((l, por)) = proc_.llaves.tomar().ver_con_intermediarios(h) else { return E_LLAVE };
     let Objeto::Memoria(m) = l.objeto else { return E_TIPO };
     let escribir = permisos & 2 != 0;
+    // Permiso 4, ejecutar (X7a, solo x86): leer y ejecutar, nunca a la vez que escribir. Un JIT proyecta el mismo
+    // objeto dos veces, una para escribir y otra para ejecutar. En ARM aún no: EL0 no puede limpiar la caché de
+    // instrucciones (SCTLR_EL1.UCI), así que lo escrito no se ejecutaría con seguridad.
+    let ejecutar = permisos & 4 != 0;
+    if ejecutar && (escribir || cfg!(not(target_arch = "x86_64"))) {
+        return E_ARGUMENTO;
+    }
     if escribir && l.derechos & objetos::ESCRIBIR == 0 || l.derechos & objetos::LEER == 0 {
         return E_DERECHOS;
     }
@@ -372,7 +379,18 @@ fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
         }
     }
     let via: Vec<usize> = por.iter().map(|r| r.id()).collect();
-    if let Err(err) = proc_.espacio.tomar().proyectar_memoria(va, &m, escribir, &via) {
+    let hecho = {
+        let mut e = proc_.espacio.tomar();
+        #[cfg(target_arch = "x86_64")]
+        if ejecutar {
+            e.proyectar_memoria_ejecutable(va, &m, &via)
+        } else {
+            e.proyectar_memoria(va, &m, escribir, &via)
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        e.proyectar_memoria(va, &m, escribir, &via)
+    };
+    if let Err(err) = hecho {
         for r in &por {
             r.retirar_proyeccion(&proc_, va);
         }

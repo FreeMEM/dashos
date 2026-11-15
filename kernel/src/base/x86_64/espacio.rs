@@ -288,6 +288,26 @@ impl Espacio {
     /// Proyecta un objeto de memoria entero desde `va`, de lectura y escritura o de solo lectura; nunca se ejecuta.
     /// O todo o nada. El espacio guarda el objeto mientras esté proyectado (C18).
     pub fn proyectar_memoria(&mut self, va: u64, m: &alloc::sync::Arc<super::memoria::Memoria>, escribir: bool, via: &[usize]) -> Result<(), Error> {
+        let permiso = match (escribir, m.bus().is_some()) {
+            (true, true) => Permiso::DatosSinCache,
+            (true, false) => Permiso::Datos,
+            (false, true) => Permiso::SoloLecturaSinCache,
+            (false, false) => Permiso::SoloLectura,
+        };
+        self.proyectar_objeto(va, m, permiso, via)
+    }
+
+    /// Proyecta un objeto de memoria entero desde `va` para leerlo y ejecutarlo, nunca para escribirlo (X7a: la memoria
+    /// de código de un JIT, que escribe por otra proyección del mismo objeto). La memoria de DMA no se ejecuta nunca.
+    /// En x86 la caché de instrucciones sigue sola a las escrituras: no hace falta nada más.
+    pub fn proyectar_memoria_ejecutable(&mut self, va: u64, m: &alloc::sync::Arc<super::memoria::Memoria>, via: &[usize]) -> Result<(), Error> {
+        if m.bus().is_some() {
+            return Err(Error::Direccion);
+        }
+        self.proyectar_objeto(va, m, Permiso::Codigo, via)
+    }
+
+    fn proyectar_objeto(&mut self, va: u64, m: &alloc::sync::Arc<super::memoria::Memoria>, permiso: Permiso, via: &[usize]) -> Result<(), Error> {
         if via.len() > VIAS {
             return Err(Error::Limite);
         }
@@ -296,12 +316,6 @@ impl Espacio {
         }
         self.proyectados.try_reserve(1).map_err(|_| Error::SinMemoria)?;
         self.preparar(va, m.paginas() as u64)?;
-        let permiso = match (escribir, m.bus().is_some()) {
-            (true, true) => Permiso::DatosSinCache,
-            (true, false) => Permiso::Datos,
-            (false, true) => Permiso::SoloLecturaSinCache,
-            (false, false) => Permiso::SoloLectura,
-        };
         for (i, &p) in m.fisicas().iter().enumerate() {
             let _ = self.proyectar(va + i as u64 * PAGINA, p, permiso);
         }
