@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use caja_exec::Memoria;
 
 use crate::estructuras::drmd;
-use crate::lienzo::{Lienzo, Rect};
+use crate::lienzo::{Pinta, Rect};
 
 /// Un mapa planar: hasta 8 planos de `bpr` bytes por fila. Un plano 0 se lee como ceros y uno `0xFFFFFFFF` como
 /// unos; en ninguno de los dos se escribe (es lo que hace el blitter con ellos).
@@ -75,7 +75,7 @@ impl Planar {
 
 /// Dónde se dibuja.
 pub(crate) enum Sup<'a, M: Memoria> {
-    Nativa(&'a mut Lienzo),
+    Nativa(crate::lienzo::Vista<'a, M>),
     Planar(&'a mut M, Planar),
     /// Color verdadero en la memoria del 68k (`chunky.rs`).
     Chunky(&'a mut M, crate::chunky::Chunky),
@@ -270,6 +270,18 @@ impl<M: Memoria> Pintor<'_, M> {
         let r = r.interseccion(&self.clip);
         if r.vacio() {
             return;
+        }
+        // Lo de siempre (un color, sin patrón ni región, JAM1/JAM2 sin invertir) en un lienzo: fila a fila.
+        if patron.is_empty() && self.region.is_none() && self.modo & (drmd::COMPLEMENT | drmd::INVERSVID) == 0 {
+            let c = self.a.argb;
+            let (dx, dy) = (self.dx, self.dy);
+            if let Sup::Nativa(v) = &mut self.sup {
+                let fila = alloc::vec![c; r.ancho() as usize];
+                for y in r.y0..=r.y1 {
+                    v.escribir_fila(r.x0 + dx, y + dy, &fila);
+                }
+                return;
+            }
         }
         for y in r.y0..=r.y1 {
             let fila = if patron.is_empty() { 0xFFFF } else { patron[y as usize % patron.len()] };

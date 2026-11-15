@@ -419,7 +419,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 }
                 hecho(self.close_window(ex, a[0]))
             }
-            REFRESHWINDOWFRAME => hecho(self.refresh_window_frame(a[0])),
+            REFRESHWINDOWFRAME => hecho(self.refresh_window_frame(ex, a[0])),
             SETWINDOWTITLES => hecho(self.set_window_titles(ex, a[0], a[1], a[2])),
             MODIFYIDCMP => self.modify_idcmp(ex, a[0], d[0]),
             ACTIVATEWINDOW => hecho(self.activate_window(a[0])),

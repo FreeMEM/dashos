@@ -172,7 +172,7 @@ fn dibujar_en_la_ventana_llega_al_compositor() {
     rect(&mut c, rp, 20, 20, 39, 29);
     // Todavía no se ha mandado.
     assert_eq!(c.1.comp.ventana(s).pixel(30, 25) & 0xFF_FFFF, 0xAAAAAA);
-    c.1.presentar();
+    c.1.presentar(&c.0);
     let v = c.1.comp.ventana(s);
     assert_eq!(v.pixel(30, 25) & 0xFF_FFFF, 0xFFFFFF);
     assert_eq!(v.danos.len(), antes + 1);
@@ -180,7 +180,7 @@ fn dibujar_en_la_ventana_llega_al_compositor() {
     // Las coordenadas del RastPort son las de la ventana (como en el Amiga): el (0, 0) es la esquina del borde.
     pen(&mut c, rp, 1);
     g(&mut c, "WritePixel", &[0, 0], &[0, rp]);
-    c.1.presentar();
+    c.1.presentar(&c.0);
     assert_eq!(c.1.comp.ventana(s).pixel(0, 0) & 0xFF_FFFF, 0);
     // Fuera de la ventana no se dibuja.
     assert_eq!(g(&mut c, "WritePixel", &[200, 10], &[0, rp]) as i32, -1);
@@ -565,7 +565,7 @@ fn captura() {
     }
     g(&mut c, "SetDrMd", &[2], &[0, rp]);
     rect(&mut c, rp, 95, 60, 175, 70);
-    c.1.presentar();
+    c.1.presentar(&c.0);
     let v = c.1.comp.ventana(c.1.superficie(w).unwrap()).clone();
     // Algo de cada: el borde azul, el texto negro, un rectángulo de la pluma 3.
     assert_eq!(v.pixel(150, 3) & 0xFF_FFFF, 0x6688BB);
@@ -592,8 +592,8 @@ fn gimme_zero_zero_dibuja_dentro_de_los_bordes() {
     let capa = l32(&c, w + win::WLAYER);
     assert_eq!(l16(&c, capa + layer::BOUNDS) as i32, bi);
     let marco: Vec<u32> = {
-        let l = c.1.lienzo(bm).unwrap();
-        (0..200).map(|x| l.pixel(x, 0)).chain((0..100).map(|y| l.pixel(0, y))).collect()
+        let l = |x: i32, y: i32| c.1.pixel_de(&c.0, bm, x, y).unwrap_or(0);
+        (0..200).map(|x| l(x, 0)).chain((0..100).map(|y| l(0, y))).collect()
     };
     pen(&mut c, rp, 2);
     rect(&mut c, rp, 0, 0, 9, 4);
@@ -601,11 +601,11 @@ fn gimme_zero_zero_dibuja_dentro_de_los_bordes() {
     rect(&mut c, rp, -20, -20, -1, 50);
     mover(&mut c, rp, -5, -5);
     draw(&mut c, rp, 300, -5);
-    let l = c.1.lienzo(bm).unwrap();
-    let blanco = l.pixel(bi, ba);
-    assert_eq!(l.pixel(bi + 9, ba + 4), blanco);
-    assert_ne!(l.pixel(bi + 10, ba + 5), blanco);
-    let marco2: Vec<u32> = (0..200).map(|x| l.pixel(x, 0)).chain((0..100).map(|y| l.pixel(0, y))).collect();
+    let l = |x: i32, y: i32| c.1.pixel_de(&c.0, bm, x, y).unwrap_or(0);
+    let blanco = l(bi, ba);
+    assert_eq!(l(bi + 9, ba + 4), blanco);
+    assert_ne!(l(bi + 10, ba + 5), blanco);
+    let marco2: Vec<u32> = (0..200).map(|x| l(x, 0)).chain((0..100).map(|y| l(0, y))).collect();
     assert_eq!(marco, marco2, "el marco sigue igual");
     // ReadPixel, en las mismas coordenadas.
     assert_eq!(pluma(&mut c, rp, 0, 0), 2);

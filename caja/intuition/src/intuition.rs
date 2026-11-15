@@ -19,7 +19,7 @@ use crate::estructuras::{
     cliprect, colormap, drawinfo as dri, idcmp, intuitionbase as ib, layer, newwindow as nw, rastport as rp_, rectangle,
     screen as sc, tag, textattr, textfont, tipo_pantalla, viewport, wa, wflg, window as win,
 };
-use crate::lienzo::{self, Rect};
+use crate::lienzo::{self, Pinta, Rect};
 use crate::marco::{GADGET_TAMANO, Gadget, Geometria};
 use crate::teclado::Calificadores;
 use crate::{CajaGrafica, Compositor, Fallo, Superficie, Tabla, fuente, lvo};
@@ -534,7 +534,7 @@ impl<C: Compositor> CajaGrafica<C> {
         self.nuevo_nativo(ex, bm, an as u32, al as u32, cm)?;
         // Un programa la ve en el formato del modo de su pantalla (`LockBitMap`, cybergraphics).
         if let Some(l) = self.gfx.lienzos.get_mut(&bm) {
-            l.formato = formato;
+            l.poner_formato(formato);
         }
         // S26: con el aspecto de DashOS, dentro es de la superficie del tema (la paleta de la pantalla no se toca: un
         // programa que borra con la pluma 0 pinta el gris de siempre).
@@ -661,7 +661,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 dir: w,
             },
         );
-        self.dibujar_marco(w);
+        self.dibujar_marco(ex, w);
         let Some(s) = self.comp.crear_ventana(&pedida) else {
             self.soltar_ventana(ex, w)?;
             return Err(Fallo::SinCompositor);
@@ -677,7 +677,7 @@ impl<C: Compositor> CajaGrafica<C> {
             self.add_g_list(ex, w, p.gadgets, -1, -1)?;
             self.dibujar_lista(ex, w, p.gadgets, -1, false);
         }
-        self.presentar_ventana(w);
+        self.presentar_ventana(ex, w);
         // Una ventana de refresco simple nace con todo por pintar (como en el Amiga, donde su capa nueva no guarda nada):
         // su capa queda marcada (`LAYERREFRESH`) y, si lo pide, recibe `IDCMP_REFRESHWINDOW` (MUI pinta al recibirlo).
         self.refresco_inicial(ex, w)?;
@@ -763,29 +763,25 @@ impl<C: Compositor> CajaGrafica<C> {
     }
 
     /// Manda al compositor lo que ha cambiado de una ventana.
-    pub(crate) fn presentar_ventana(&mut self, w: u32) {
+    pub(crate) fn presentar_ventana<M: Memoria>(&mut self, ex: &Exec<M>, w: u32) {
         let Some(v) = self.intui.ventanas.get(&w) else { return };
         let (s, bm) = (v.superficie, v.bm);
         if s == 0 {
             return;
         }
         let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return };
-        let Some(d) = l.tomar_dano() else { return };
         let (an, al) = (l.ancho(), l.alto());
-        let (pix, textos) = l.pixeles_y_textos();
-        // Sin memoria para sus píxeles, no hay nada que mandar.
-        if pix.len() != an as usize * al as usize {
-            return;
-        }
+        // Lo cambiado, de la memoria del 68k a ARGB (sin píxeles o sin memoria para la copia, nada que mandar).
+        let Some((d, pix, textos)) = l.presentar(&ex.mem) else { return };
         self.comp.presentar(s, pix, an, al, d, textos);
     }
 
     /// Manda al compositor lo que ha cambiado en todas las ventanas. La caja lo llama a cada cuadro (o al volver
     /// de las llamadas nativas).
-    pub fn presentar(&mut self) {
+    pub fn presentar<M: Memoria>(&mut self, ex: &Exec<M>) {
         let ws: Vec<u32> = self.intui.ventanas.keys().copied().collect();
         for w in ws {
-            self.presentar_ventana(w);
+            self.presentar_ventana(ex, w);
         }
     }
 
@@ -831,7 +827,7 @@ impl<C: Compositor> CajaGrafica<C> {
         let Some(v) = self.intui.ventanas.remove(&w) else { return Ok(()) };
         self.comp.cerrar_ventana(v.superficie);
         self.intui.por_superficie.remove(&v.superficie);
-        self.gfx.lienzos.remove(&v.bm);
+        self.soltar_lienzo(ex, v.bm);
         self.gfx.capas.remove(&v.capa);
         self.gfx.origenes.remove(&v.capa);
         if v.pendientes.is_empty() {
@@ -881,7 +877,7 @@ impl<C: Compositor> CajaGrafica<C> {
         if v.puerto_creado != 0 {
             ex.delete_msg_port(v.puerto_creado)?;
         }
-        self.gfx.lienzos.remove(&v.bm);
+        self.soltar_lienzo(ex, v.bm);
         self.gfx.capas.remove(&v.capa);
         self.gfx.origenes.remove(&v.capa);
         self.liberar(ex, &v)
@@ -970,10 +966,10 @@ impl<C: Compositor> CajaGrafica<C> {
     // --- Lo demás de las ventanas ---
 
     /// `RefreshWindowFrame`.
-    pub fn refresh_window_frame(&mut self, w: u32) -> Result<(), Fallo> {
+    pub fn refresh_window_frame<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32) -> Result<(), Fallo> {
         self.ventana(w)?;
-        self.dibujar_marco(w);
-        self.presentar_ventana(w);
+        self.dibujar_marco(ex, w);
+        self.presentar_ventana(ex, w);
         Ok(())
     }
 
@@ -998,7 +994,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 let s = v.superficie;
                 self.comp.poner_titulo(s, &texto);
             }
-            self.refresh_window_frame(w)?;
+            self.refresh_window_frame(ex, w)?;
         }
         Ok(())
     }
@@ -1071,7 +1067,7 @@ impl<C: Compositor> CajaGrafica<C> {
         } else if ex.l32(base + ib::ACTIVEWINDOW)? == w {
             ex.e32(base + ib::ACTIVEWINDOW, 0)?;
         }
-        self.dibujar_marco(w);
+        self.dibujar_marco(ex, w);
         let clase = if si { idcmp::ACTIVEWINDOW } else { idcmp::INACTIVEWINDOW };
         replan |= self.enviar(ex, w, clase, 0, 0)?;
         Ok(replan)
@@ -1210,8 +1206,9 @@ impl<C: Compositor> CajaGrafica<C> {
         let (bm, capa) = (v.bm, v.capa);
         // Lo de dentro, del color con el que se abrió (el de BACKGROUNDPEN, o la superficie de DashOS).
         let fondo = v.fondo;
-        if let Some(l) = self.gfx.lienzos.get_mut(&bm) {
-            l.cambiar_tamano(an as u32, al as u32);
+        self.cambiar_tamano_lienzo(ex, bm, an as u32, al as u32);
+        if let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) {
+            let l = &mut l;
             // Lo que era borde abajo y a la derecha queda dentro: se borra.
             let [_, _, bd, bb] = g.bordes;
             for y in 0..al {
@@ -1233,7 +1230,7 @@ impl<C: Compositor> CajaGrafica<C> {
             v.geometria.ancho = an;
             v.geometria.alto = al;
         }
-        self.dibujar_marco(w);
+        self.dibujar_marco(ex, w);
         // Los gadgets BOOPSI relativos (el layout de una ventana de ReAction) se colocan otra vez.
         if self.tiene_boopsi(ex, w) {
             self.apuntar(crate::boopsi::Pendiente::Colocar { w });

@@ -239,7 +239,7 @@ impl<C: Compositor> CajaGrafica<C> {
         Ok(match self.mapa(ex, bm)? {
             Mapa::Nativo => {
                 let l = &self.gfx.lienzos[&bm];
-                let f = l.formato;
+                let f = l.formato();
                 match attr {
                     P96BMA_WIDTH => l.ancho(),
                     P96BMA_HEIGHT => l.alto(),

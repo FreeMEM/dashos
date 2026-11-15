@@ -1388,7 +1388,7 @@ fn pintar_layout<P: Puente>(p: &mut P, obj: u32, gi: u32, rp: u32, modo: u32) ->
         if let Some(r) = r {
             let (ex, gr) = p.partes();
             if modo == gm::GREDRAW_REDRAW {
-                gr.fondo_en(w, r);
+                gr.fondo_en(ex, w, r);
             }
             let alto_t = if titulo.is_empty() { 0 } else { crate::fuente::ALTO as i32 / 2 + 1 };
             let marco = Rect::nuevo(r.x0, r.y0 + alto_t, r.x1, r.y1);
@@ -1402,7 +1402,7 @@ fn pintar_layout<P: Puente>(p: &mut P, obj: u32, gi: u32, rp: u32, modo: u32) ->
             if !titulo.is_empty() {
                 let an = titulo.len() as i32 * crate::fuente::ANCHO as i32;
                 let x = r.x0 + 10;
-                gr.fondo_en(w, Rect::nuevo(x - 2, r.y0, x + an + 1, r.y0 + crate::fuente::ALTO as i32));
+                gr.fondo_en(ex, w, Rect::nuevo(x - 2, r.y0, x + an + 1, r.y0 + crate::fuente::ALTO as i32));
                 gr.texto_en(ex, w, x, r.y0 + 1, &titulo, r.x1 - 4, Alinea::Izquierda, Estilo::Grueso);
             }
         }
@@ -1515,7 +1515,7 @@ pub(crate) fn dibujar_imagen<P: Puente>(p: &mut P, k: Nativa, obj: u32, rp: u32,
                 };
                 // Las de la columna de un layout, contra el gadget (a la derecha).
                 let (x, al) = if estilo == 0 && r.x1 - r.x0 + 1 > an { (r.x1 + 1 - an, Alinea::Derecha) } else { (x, al) };
-                gr.fondo_en(w, Rect::nuevo(x, y, x + an - 1, y + fa - 1));
+                gr.fondo_en(ex, w, Rect::nuevo(x, y, x + an - 1, y + fa - 1));
                 gr.texto_en(ex, w, x, y, &texto, r.x1 + 1, al, Estilo::Normal);
                 if estado == ids::DISABLED {
                     let _ = estado;
@@ -1946,8 +1946,8 @@ fn pintar_control<P: Puente>(p: &mut P, k: Nativa, obj: u32, gi: u32) -> R<()> {
         Nativa::Casilla => {
             // La casilla de su tamaño, a la izquierda (o a la derecha con la etiqueta a la izquierda), centrada.
             {
-                let (_, gr) = p.partes();
-                gr.fondo_en(w, r);
+                let (ex, gr) = p.partes();
+                gr.fondo_en(ex, w, r);
             }
             let y = r.y0 + (r.y1 - r.y0 + 1 - CASILLA.1) / 2;
             let izquierda = orient == gt::PLACETEXT_LEFT;
@@ -1981,8 +1981,8 @@ fn pintar_control<P: Puente>(p: &mut P, k: Nativa, obj: u32, gi: u32) -> R<()> {
         }
         Nativa::Radio => {
             {
-                let (_, gr) = p.partes();
-                gr.fondo_en(w, r);
+                let (ex, gr) = p.partes();
+                gr.fondo_en(ex, w, r);
             }
             let o = opciones(p, obj)?;
             let s = Gt { tipo: kind::MX, textos: o, valor, lugar: gt::PLACETEXT_RIGHT, espacio: 2, ..Default::default() };

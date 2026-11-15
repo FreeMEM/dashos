@@ -20,6 +20,22 @@ use crate::chunky::{Chunky, Formato};
 use crate::lienzo::{self, Lienzo, Rect};
 use crate::{CajaGrafica, Compositor, Fallo, Tabla, fuente, lvo};
 
+/// La vista de un lienzo para pintar en él: el lienzo y la memoria del 68k. Si aún no tiene píxeles (la pantalla de
+/// Workbench nace sin ellos), se le reservan ahora en la memoria del 68k (del sistema, con el tope y el aviso de memoria
+/// baja de exec); sin memoria, la vista no pinta nada.
+pub(crate) fn vista<'a, M: Memoria>(lienzos: &'a mut Tabla<Lienzo>, ex: &'a mut Exec<M>, bm: u32) -> Option<crate::lienzo::Vista<'a, M>> {
+    let l = lienzos.get_mut(&bm)?;
+    if !l.con_pixeles()
+        && let Some((_, largo)) = Lienzo::largo_de(l.ancho(), l.alto(), l.formato())
+        && let Ok(base) = ex.alloc_mem(largo, memf::PUBLIC)
+        && base != 0
+    {
+        ex.cambiar_dueno(base, 0);
+        l.poner_pixeles(&mut ex.mem, base);
+    }
+    Some(crate::lienzo::Vista { l, mem: &mut ex.mem })
+}
+
 /// Lo que graphics lleva fuera de la memoria del 68k.
 #[derive(Default)]
 pub(crate) struct Estado {
@@ -318,7 +334,8 @@ impl<C: Compositor> CajaGrafica<C> {
                 let cm = self.gfx.lienzos.get(&bm).map(|l| l.paleta).unwrap_or(0);
                 let a = Tinta { pen: fg, argb: self.color(cm, fg) };
                 let b = Tinta { pen: bg, argb: self.color(cm, bg) };
-                let l = self.gfx.lienzos.get_mut(&bm).ok_or(Fallo::BitMapMalo { dir: bm })?;
+                let l = vista(&mut self.gfx.lienzos, ex, bm).ok_or(Fallo::BitMapMalo { dir: bm })?;
+                use crate::lienzo::Pinta;
                 let mut clip = l.rect();
                 if let Some(c) = capa {
                     clip = clip.interseccion(&c);
@@ -498,7 +515,7 @@ impl<C: Compositor> CajaGrafica<C> {
         Ok(match mapa {
             Mapa::Nativo => {
                 let l = &self.gfx.lienzos[&i.bm];
-                mas_cercano(self.paleta(l.paleta), l.pixel(x, y)) as i32
+                mas_cercano(self.paleta(l.paleta), l.pixel_en(&ex.mem, x, y)) as i32
             }
             Mapa::Planar(p) => p.leer(&ex.mem, x, y) as i32,
             Mapa::Chunky(c) => mas_cercano(self.paleta(c.cm), c.leer(&ex.mem, x, y)) as i32,
@@ -603,7 +620,7 @@ impl<C: Compositor> CajaGrafica<C> {
         for y in r.y0..=r.y1 {
             for x in r.x0..=r.x1 {
                 v.push(match mapa {
-                    Mapa::Nativo => self.gfx.lienzos.get(&bm).map(|l| l.pixel(x, y)).unwrap_or(0),
+                    Mapa::Nativo => self.gfx.lienzos.get(&bm).map(|l| l.pixel_en(&ex.mem, x, y)).unwrap_or(0),
                     Mapa::Planar(p) => p.leer(&ex.mem, x, y) as u32,
                     Mapa::Chunky(c) => c.leer(&ex.mem, x, y),
                 });
@@ -1315,9 +1332,40 @@ impl<C: Compositor> CajaGrafica<C> {
     /// El formato de color verdadero de un mapa (un lienzo o uno chunky), o `None` si es planar o no es de la caja.
     pub(crate) fn formato_de(&self, bm: u32) -> Option<Formato> {
         if let Some(l) = self.gfx.lienzos.get(&bm) {
-            return Some(l.formato);
+            return Some(l.formato());
         }
         self.gfx.chunkies.get(&bm).map(|c| c.fmt)
+    }
+
+    /// Cambia el tamaño de un lienzo (una ventana): píxeles nuevos en la memoria del 68k con lo que cabía de los viejos,
+    /// y los viejos se sueltan. Sin memoria para los nuevos, el lienzo se queda sin píxeles (se reservan al pintar).
+    pub(crate) fn cambiar_tamano_lienzo<M: Memoria>(&mut self, ex: &mut Exec<M>, bm: u32, ancho: u32, alto: u32) {
+        let Some(l) = self.gfx.lienzos.get(&bm) else { return };
+        let base = if l.con_pixeles() {
+            Lienzo::largo_de(ancho, alto, l.formato())
+                .and_then(|(_, largo)| ex.alloc_mem(largo, memf::PUBLIC).ok())
+                .filter(|&b| b != 0)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        if base != 0 {
+            ex.cambiar_dueno(base, 0);
+        }
+        let l = self.gfx.lienzos.get_mut(&bm).unwrap();
+        if let Some((d, largo)) = l.cambiar_tamano(&mut ex.mem, ancho, alto, base) {
+            let _ = ex.free_mem(d, largo);
+        }
+    }
+
+    /// Quita un lienzo (al cerrar su ventana) y suelta sus píxeles.
+    pub(crate) fn soltar_lienzo<M: Memoria>(&mut self, ex: &mut Exec<M>, bm: u32) {
+        self.cgx_mapa_soltado(ex, bm);
+        if let Some(mut l) = self.gfx.lienzos.remove(&bm)
+            && let Some((d, largo)) = l.quitar_pixeles()
+        {
+            let _ = ex.free_mem(d, largo);
+        }
     }
 
     /// `AllocBitMap`: de color verdadero (chunky, en la memoria del 68k: `chunky.rs`) si pide más de 8 planos, si su
@@ -1491,7 +1539,7 @@ impl<C: Compositor> CajaGrafica<C> {
         Ok(match (mapa, attr) {
             (Mapa::Nativo, bitmap::BMA_WIDTH) => self.gfx.lienzos[&bm].ancho(),
             (Mapa::Nativo, bitmap::BMA_HEIGHT) => self.gfx.lienzos[&bm].alto(),
-            (Mapa::Nativo, bitmap::BMA_DEPTH) => self.gfx.lienzos[&bm].formato.profundidad(),
+            (Mapa::Nativo, bitmap::BMA_DEPTH) => self.gfx.lienzos[&bm].formato().profundidad(),
             (Mapa::Nativo, bitmap::BMA_FLAGS) => bitmap::BMF_DISPLAYABLE,
             (Mapa::Chunky(c), bitmap::BMA_WIDTH) => c.ancho,
             (Mapa::Chunky(c), bitmap::BMA_HEIGHT) => c.alto,

@@ -20,7 +20,7 @@ use caja_exec::{Exec, Memoria, Registros};
 
 use crate::acceso::{Acceso, palabra};
 use crate::estructuras::{drawinfo as dri, idcmp, ie, tag, window as win};
-use crate::lienzo::{Lienzo, Rect};
+use crate::lienzo::{Pinta, Rect};
 use crate::nitido::{Alinea, Estilo};
 use crate::lvo::{GADTOOLS as T, fila};
 use crate::tema::{Plumas, Vista};
@@ -254,7 +254,7 @@ pub(crate) fn leer_etiquetas<M: Memoria>(ex: &Exec<M>, mut d: u32) -> Result<Vec
 }
 
 /// Un texto con la fuente topaz/8 en el lienzo: arriba a la izquierda en `(x, y)`, cortado en `hasta` (x exclusiva).
-pub(crate) fn texto(l: &mut Lienzo, glifos: &[[u8; 8]], x: i32, y: i32, s: &[u8], c: u32, hasta: i32) -> i32 {
+pub(crate) fn texto(l: &mut dyn Pinta, glifos: &[[u8; 8]], x: i32, y: i32, s: &[u8], c: u32, hasta: i32) -> i32 {
     let mut x = x;
     for &b in s {
         if x + fuente::ANCHO as i32 > hasta {
@@ -278,7 +278,7 @@ pub(crate) fn texto(l: &mut Lienzo, glifos: &[[u8; 8]], x: i32, y: i32, s: &[u8]
 /// llega hasta `hasta` (dentro del lienzo) y la letra de DashOS, más estrecha, puede enseñar más del texto.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn texto_n(
-    l: &mut Lienzo,
+    l: &mut dyn Pinta,
     glifos: &[[u8; 8]],
     x: i32,
     y: i32,
@@ -288,7 +288,7 @@ pub(crate) fn texto_n(
     alinea: Alinea,
     estilo: Estilo,
 ) -> i32 {
-    if !l.nitido || s.is_empty() {
+    if !l.nitido() || s.is_empty() {
         return texto(l, glifos, x, y, s, c, hasta);
     }
     let fw = fuente::ANCHO as i64;
@@ -308,21 +308,13 @@ pub(crate) fn texto_n(
     fin_x
 }
 
-pub(crate) fn llenar(l: &mut Lienzo, r: Rect, c: u32) {
-    let r = r.interseccion(&l.rect());
-    if r.vacio() {
-        return;
-    }
-    for y in r.y0..=r.y1 {
-        for x in r.x0..=r.x1 {
-            l.poner(x, y, c);
-        }
-    }
+pub(crate) fn llenar(l: &mut dyn Pinta, r: Rect, c: u32) {
+    l.rellenar(r, c);
 }
 
 /// Un marco de GadTools: claro arriba y a la izquierda, oscuro abajo y a la derecha (al revés si `hundido`). Como en
 /// 3.x, las esquinas de abajo a la izquierda y de arriba a la derecha son del color de abajo y de arriba.
-pub(crate) fn bisel(l: &mut Lienzo, r: Rect, claro: u32, oscuro: u32, hundido: bool) {
+pub(crate) fn bisel(l: &mut dyn Pinta, r: Rect, claro: u32, oscuro: u32, hundido: bool) {
     let (a, b) = if hundido { (oscuro, claro) } else { (claro, oscuro) };
     llenar(l, Rect::nuevo(r.x0, r.y0, r.x1 - 1, r.y0), a);
     llenar(l, Rect::nuevo(r.x0, r.y0, r.x0, r.y1 - 1), a);
@@ -944,7 +936,8 @@ impl<C: Compositor> CajaGrafica<C> {
                 Rect::nuevo(bi, ba, gm.ancho - bd - 1, gm.alto - bb - 1)
             })
         };
-        let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return };
+        let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) else { return };
+        let l = &mut l;
         let bordes: Vec<(i32, i32, u32)> = match dentro_gzz {
             Some(d) => {
                 let (an, al) = (l.ancho() as i32, l.alto() as i32);
@@ -1119,7 +1112,8 @@ impl<C: Compositor> CajaGrafica<C> {
         }
         let (dx, dy) = self.origen_capa(i.capa);
         let capa = self.recorte_capa(i.capa);
-        let Some(l) = self.gfx.lienzos.get_mut(&i.bm) else { return Ok(false) };
+        let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, i.bm) else { return Ok(false) };
+        let l = &mut l;
         let clip = capa.map_or(l.rect(), |c| c.interseccion(&l.rect()));
         let r = Rect::nuevo(x.saturating_add(dx), y.saturating_add(dy), x.saturating_add(an - 1).saturating_add(dx), y.saturating_add(al - 1).saturating_add(dy));
         // Lo de fuera del recorte (otra capa, los bordes de una GIMMEZEROZERO) se guarda y se devuelve.

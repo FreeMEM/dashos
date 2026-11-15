@@ -440,8 +440,9 @@ fn acceso_directo() {
     assert!(av.is_empty(), "{:?}", av);
 }
 
-/// `LockBitMapTagList` de un lienzo (la pantalla: una superficie del compositor, fuera de la memoria del 68k): se copia
-/// a un búfer y vuelve al soltarlo; con `UBMI_REALLYUNLOCK` a FALSE y `UBMI_UPDATERECTS`, solo esos rectángulos.
+/// `LockBitMapTagList` de un lienzo (la pantalla, una ventana: superficies del compositor) también da la dirección de
+/// verdad de sus píxeles en la memoria del 68k, sin copia; al soltarlo, lo que dice `UBMI_UPDATERECTS` (o todo) queda
+/// como cambiado para el compositor.
 #[test]
 fn acceso_directo_a_un_lienzo() {
     use caja_intuition::estructuras::screen;
@@ -455,18 +456,20 @@ fn acceso_directo_a_un_lienzo() {
     let a1 = x(&mut c, "LockBitMapTagList", &[], &[bm, t]);
     assert_ne!(a1, 0);
     assert_eq!((l32(&c, campos), l32(&c, campos + 4)), (a1, 640 * 4));
-    assert_eq!(c.0.bloques_de(0).len(), antes + 1, "el búfer de la copia");
+    assert_eq!(a1, x(&mut c, "GetCyberMapAttr", &[0x8000_0003], &[bm]), "la de sus píxeles");
+    assert_eq!(c.0.bloques_de(0).len(), antes, "sin búfer de copia");
     assert_eq!(l32(&c, a1) & 0x00FF_FFFF, 0x112233);
-    e32(&mut c, a1, 0x0000_0001);
+    // Lo escrito se ve en seguida; al soltar con un rectángulo, ese queda por presentar.
     e32(&mut c, a1 + 8, 0x0000_0002);
+    assert_eq!(rgb(&mut c, rp, 2, 0), 2);
     let rl = reservar(&mut c, 16);
     e32(&mut c, rl, 1);
+    e16(&mut c, rl + 8 + 4, 2);
     let tu = etiquetas(&mut c, &[(UBMI_UPDATERECTS, rl), (UBMI_REALLYUNLOCK, 0)]);
     x(&mut c, "UnLockBitMapTagList", &[], &[a1, tu]);
-    assert_eq!((rgb(&mut c, rp, 0, 0), rgb(&mut c, rp, 2, 0)), (1, 0x112233));
     assert_eq!(c.1.cerrojos_cgx(), 1);
+    assert!(c.1.lienzo(bm).unwrap().dano().is_some_and(|d| d.contiene(2, 0)));
     x(&mut c, "UnLockBitMap", &[], &[a1]);
-    assert_eq!(rgb(&mut c, rp, 2, 0), 2);
     assert_eq!(c.1.cerrojos_cgx(), 0);
     assert_eq!(c.0.bloques_de(0).len(), antes);
     let av = c.1.tomar_avisos();

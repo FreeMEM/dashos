@@ -543,8 +543,8 @@ fn nombre_de<C: Compositor>(gr: &CajaGrafica<C>, n: u16) -> &'static str {
 /// `false` si el programa acabó dentro de un despachador 68k.
 pub fn atender<P: Puente>(p: &mut P) -> bool {
     let r = atender_cola(p);
-    let (_, gr) = p.partes();
-    gr.presentar();
+    let (ex, gr) = p.partes();
+    gr.presentar(ex);
     r != Err(Error::Cortado)
 }
 

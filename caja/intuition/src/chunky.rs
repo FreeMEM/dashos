@@ -203,7 +203,11 @@ impl Chunky {
         let bpp = self.fmt.bpp();
         o.clear();
         match mem.leer(self.dir(x, y), n * bpp) {
-            Ok(b) => o.extend(b.chunks_exact(bpp as usize).map(|p| self.fmt.leer(p))),
+            Ok(b) => match self.fmt {
+                Formato::Argb32 => o.extend(b.chunks_exact(4).map(|p| u32::from_be_bytes([p[0], p[1], p[2], p[3]]))),
+                Formato::Bgra32 => o.extend(b.chunks_exact(4).map(|p| u32::from_le_bytes([p[0], p[1], p[2], p[3]]))),
+                f => o.extend(b.chunks_exact(bpp as usize).map(|p| f.leer(p))),
+            },
             Err(_) => o.resize(n as usize, 0),
         }
     }

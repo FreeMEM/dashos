@@ -13,6 +13,7 @@ use caja_exec::estructuras::{memf, message};
 use caja_exec::{Accion, Exec, Memoria};
 
 use crate::acceso::Acceso;
+use crate::lienzo::Pinta;
 use crate::compositor::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Evento};
 use crate::estructuras::{idcmp, ie, intuimessage as im, intuitionbase as ib, screen as sc, wflg, window as win};
 use crate::marco::Gadget;
@@ -102,7 +103,7 @@ impl<C: Compositor> CajaGrafica<C> {
             }
             self.repintar_tema(ex);
         }
-        self.presentar();
+        self.presentar(ex);
         replan
     }
 
@@ -122,16 +123,18 @@ impl<C: Compositor> CajaGrafica<C> {
                 v.aspecto = aspecto;
             }
             // Los textos nítidos se apuntan otra vez al repintar (solo "como DashOS").
-            if let Some(l) = self.gfx.lienzos.get_mut(&bm) {
-                l.olvidar_textos();
-                l.nitido = aspecto.is_some();
+            if let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) {
+                let l = &mut l;
+                l.l.olvidar_textos();
+                l.l.nitido = aspecto.is_some();
             }
             let nuevo = match self.tema_de(w).como().fondo_ventana() {
                 Some(f) => f | 0xFF00_0000,
                 None => self.color(self.intui.wb.cm, 0) | 0xFF00_0000,
             };
             if nuevo != viejo {
-                if let Some(l) = self.gfx.lienzos.get_mut(&bm) {
+                if let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) {
+                    let l = &mut l;
                     let (an, al) = (l.ancho() as i32, l.alto() as i32);
                     for y in ba.max(0)..(al - bb).min(al) {
                         for x in bi.max(0)..(an - bd).min(an) {
@@ -146,7 +149,7 @@ impl<C: Compositor> CajaGrafica<C> {
                     v.fondo = nuevo;
                 }
             }
-            self.dibujar_marco(w);
+            self.dibujar_marco(ex, w);
             let primero = ex.l32(w.wrapping_add(win::FIRSTGADGET)).unwrap_or(0);
             self.dibujar_lista(ex, w, primero, -1, true);
             if self.requesters.iter().any(|q| q.w == w) {
@@ -177,7 +180,8 @@ impl<C: Compositor> CajaGrafica<C> {
             },
             Evento::Exponer => {
                 let bm = self.ventana(w)?.bm;
-                if let Some(l) = self.gfx.lienzos.get_mut(&bm) {
+                if let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) {
+                    let l = &mut l;
                     let r = l.rect();
                     l.danar(r);
                 }
