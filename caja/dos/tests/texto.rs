@@ -288,7 +288,6 @@ fn loadseg_y_objetos() {
     // Funciones que aún no están: aviso y error, sin caerse.
     assert_eq!(b.llamar(lvo::SYSTEM_TAG_LIST, &[0, 0]) as i32, -1);
     assert_eq!(b.io_err(), ERROR_NOT_IMPLEMENTED);
-    assert_eq!(b.llamar(lvo::MATCH_FIRST, &[0, 0]), 0);
     let a = b.avisos();
     assert!(matches!(a[a.len() - 1].fallo, Fallo::NoImplementada { .. }));
     // Números que no son de dos.

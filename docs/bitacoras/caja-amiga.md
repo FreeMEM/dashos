@@ -1948,3 +1948,16 @@ enseña imágenes.
 - Entre un programa y otro no corre ninguna tarea: las del sistema que queden listas esperan al siguiente programa.
 - En modo supervisor (un `tc_TrapCode` que espera) no se cambia de tarea: espera en el sitio, como antes.
 - La prueba del oráculo (FS-UAE) de todo esto: no se ha hecho.
+
+## 2026-11-14 (noche, 2): MatchFirst/MatchNext/MatchEnd y AddDataTypes al arrancar
+
+- dos: `MatchFirst`, `MatchNext`, `MatchEnd` (`caja/dos/src/busqueda.rs`): comodines en el último trozo, sin
+  distinguir mayúsculas, asignaciones múltiples (salta lo que no es cajón), `an_Lock` como BPTR de verdad,
+  `APF_ITSWILD` y `APF_DirChanged`, `ap_Buf` con `ERROR_BUFFER_OVERFLOW` si no cabe, tope de 256 búsquedas, limpieza al
+  acabar la tarea. Pruebas en `caja/dos/tests/busqueda.rs` (7, con hostil). Falta: comodines fuera del último trozo y
+  `APF_DODIR` (se avisan como función que falta), `ap_BreakBits`.
+- caja.c 8b3a: con `C:AddDataTypes` (AmigaOS del usuario), `AddDataTypes REFRESH QUIET` con vigilante de 20 s; lo que
+  no suelta pasa al sistema (`caja_memoria_al_sistema`) para que datatypes no se quede con memoria libre.
+- `cargo test` de dos bien; `make prueba` bien; `make arranque-virt` bien salvo el fallo suelto conocido "suelta en la
+  ventana 1" del explorador. SIN PROBAR con el AmigaOS del usuario (`DASHOS_AMIGAOS=~/.cache/dash-emu/sys32mui
+  MEMORIA=3G make arranque-virt`): si registra los tipos y si Tachyon carga imágenes.
