@@ -415,3 +415,10 @@ cambiar nada, pasó.
 Queda para después: la caja Amiga en x86 (X7, con RelevoJIT); el reloj del PC y una semilla para el azar (RDRAND);
 apagar por ACPI; máquinas virtuales en x86; `sesiones` y el resto del escritorio en `inicio_x86.rs`; mover lo de ARM a
 `base/aarch64/` y partir el planificador (S31); y lo que `revision` ha avanzado desde f9878b8.
+
+### 2026-11-15 03:4x — Fusión de `revision` comprobada por el coordinador
+
+`32535a3` (fusiona `revision` en `f9878b8`): `make -C kernel prueba`, `arranque-virt`, `prueba-x86` y `arranque-x86`
+dan BIEN en la sesión del coordinador. Siguiente en la línea B: la reescritura de RelevoJIT en Rust
+(`~/Projects/RelevoJIT/docs/REESCRITURA.md`, RR0 y RR1), cuando la ventana de 5 horas baje del 80 %.
+
