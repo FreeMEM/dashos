@@ -219,9 +219,10 @@ Home:                       (Usuarios:<nombre>, cifrado, solo suyo)
   cada `Home:`, con el tope del volumen (FS10, `quota`, aún sin aplicar).
 - **Sin sesión de invitado** (decisión del usuario, 2026-11-15): todo el que entra tiene su cuenta y su volumen.
 
-Hecho hoy: entrada, bloqueo, cambio rápido de usuario y un volumen por usuario (U2, U6). Falta: crear y borrar
-cuentas (hoy fijas en el código), el árbol de `Home:` de arriba, las asignaciones con nombre en lo nativo (paso 2 de
-la bitácora), `User-Startup` y `WBStartup` por usuario, y el tope de disco.
+Hecho hoy: entrada, bloqueo, cambio rápido de usuario y un volumen por usuario (U2, U6). Las asignaciones con nombre
+en lo nativo, por proceso y heredadas (paso 2, `docs/bitacoras/asignaciones.md`), sin la capa de paquetes y con `RAM:`
+y `Work:` provisionales en el disco. Falta: crear y borrar cuentas (hoy fijas en el código), el árbol de `Home:` de
+arriba, `User-Startup` y `WBStartup` por usuario, `ENV:` copiado de `ENVARC:` al entrar, y el tope de disco.
 
 ## Lo que queda abierto
 

@@ -247,6 +247,20 @@ impl Servicio {
     }
 }
 
+/// El servicio de archivos para `dashos::asignaciones`.
+pub struct PorNombres<'a>(Real<'a>);
+
+impl dashos::asignaciones::Fs for PorNombres<'_> {
+    fn pedir(&mut self, orden: u32, asa: u32, x: u64, y: u64, nombre: &[u8]) -> dashos::asignaciones::Resp {
+        let r = self.0.pedir(orden, asa, x, y, nombre);
+        dashos::asignaciones::Resp { e: r.e, asa: r.asa, a: r.a, b: r.b, c: r.c }
+    }
+
+    fn ventana(&self) -> &[u8] {
+        Fs::ventana(&self.0)
+    }
+}
+
 /// El servicio con el cliente del compositor (para no dejar de leerle mientras se espera).
 pub struct Real<'a> {
     s: &'a Servicio,
@@ -771,6 +785,9 @@ pub struct EnMarcha {
 pub struct App {
     c: Cliente,
     sv: Servicio,
+    /// Su tabla de nombres (paso 2 de las asignaciones, `ASIGNACIONES` de `sesiones`): los caminos escritos con un
+    /// nombre (`LIBS:`, `ENVARC:Sys`, `T:`) se resuelven por ella.
+    nombres: dashos::asignaciones::Tabla,
     pub tema: Tema,
     pub regular: Fuente,
     pub medio: Fuente,
@@ -2012,10 +2029,36 @@ impl App {
         }
     }
 
+    /// El lugar de un camino con nombre ("LIBS:", "ENVARC:Sys", "Home:Viaje"), por su tabla de nombres: el de la primera
+    /// capa donde exista, como en el Amiga. `None` si el nombre no está en la tabla (entonces vale lo de siempre:
+    /// "Home/Privado", "Amiga:"). Un camino que intenta salir del nombre, o que lleva a una raíz que no tiene, no vale.
+    fn lugar_por_nombre(&mut self, texto: &str) -> Option<Result<Lugar, &'static str>> {
+        use dashos::asignaciones as asig;
+        let (nombre, _) = texto.split_once(':')?;
+        self.nombres.buscar(nombre.as_bytes())?;
+        let tabla = self.nombres.clone();
+        let mut fs = PorNombres(self.fs());
+        let capa = match asig::mirar(&mut fs, &tabla, texto.as_bytes()) {
+            Ok((_, capa)) => capa,
+            Err(e) if e == a::MAL_FORMADO => return Some(Err("ese camino no vale")),
+            Err(asig::BUCLE) => return Some(Err("esa asignación lleva a sí misma")),
+            Err(asig::NO_CABE) => return Some(Err("ese camino es demasiado largo")),
+            Err(e) if e == a::PROTEGIDO => return Some(Err("sin permiso")),
+            Err(_) => return Some(Err("no existe en ninguna de sus capas")),
+        };
+        let mut s = asig::Sitios::nuevos();
+        tabla.resolver(texto.as_bytes(), &mut s).ok()?;
+        let (raiz, camino) = s.sitio(capa)?;
+        let nombres = core::str::from_utf8(camino).ok()?.split('/').filter(|p| !p.is_empty()).map(String::from).collect();
+        let l = Lugar { raiz: raiz as u32, nombres };
+        Some(if App::raices().contains(&l.raiz) && l.valido() { Ok(l) } else { Err("lleva a donde no llega") })
+    }
+
     fn ir_al_camino(&mut self, k: usize) {
         let texto = self.ventanas[k].linea.texto.clone();
         let actual = self.ventanas[k].p().lugar.clone();
-        match interpretar_camino(&texto, &RAICES_ESCRITAS, &actual) {
+        let destino = self.lugar_por_nombre(texto.trim()).unwrap_or_else(|| interpretar_camino(&texto, &RAICES_ESCRITAS, &actual));
+        match destino {
             Ok(l) => {
                 // Se abre paso a paso: si algo no es una carpeta, no se va.
                 let r = {
@@ -2128,9 +2171,50 @@ mod entrada;
 /// raíz de solo lectura y nombres raros al crear, renombrar y buscar.
 pub fn preparar(app: &mut App) {
     comprobar_lo_ajeno(app);
+    comprobar_nombres(app);
     preparar_papelera(app);
     app.disco_libre();
     println!("  [explorador] listo: espera a que el Workbench le pida abrir algo");
+}
+
+/// Paso 2 de las asignaciones: pide su tabla de nombres a `sesiones` y mira que los caminos con nombre llevan donde
+/// deben, por sus capas: `C:` a `SYS:C` (no hay `Home:C`), `LIBS:` y `ENVARC:` a `SYS:`, `T:` a `RAM:T`, `Programas:`
+/// a `SYS:Programas`; que un camino que sube no vale; que por un nombre no se abre lo de Carla; y que un nombre que no
+/// está deja paso a lo de siempre.
+fn comprobar_nombres(app: &mut App) {
+    match dashos::asignaciones::pedir_tabla(SESIONES) {
+        Some(t) => app.nombres = t,
+        None => println!("  [explorador] sin tabla de nombres"),
+    }
+    let mut ver = |app: &mut App, c: &str| match app.lugar_por_nombre(c) {
+        Some(Ok(l)) => texto_lugar(&l),
+        Some(Err(e)) => String::from(e),
+        None => String::from("sin ese nombre"),
+    };
+    let casos = ["C:grande.txt", "LIBS:", "ENVARC:Sys", "T:", "Programas:hola", "Home:../DeCarla", "SYS:/Libs", "Nada:x", "Amiga:", "SYS:DeCarla"];
+    let quiere = [
+        "SYS:C/grande.txt", "SYS:Libs", "SYS:Prefs/Env-Archive/Sys", "RAM:T", "SYS:Programas/hola", "ese camino no vale", "ese camino no vale", "sin ese nombre",
+        "sin ese nombre", "SYS:DeCarla",
+    ];
+    let dan: Vec<String> = casos.iter().map(|c| ver(app, c)).collect();
+    // Lo de Carla: el nombre lleva a SYS:DeCarla (un nombre solo traduce), pero el servicio no deja listarlo.
+    let carla = match app.lugar_por_nombre("SYS:DeCarla") {
+        Some(Ok(l)) => {
+            let mut fs = app.fs();
+            ops::abrir(&mut fs, &l).and_then(|asa| {
+                let r = ops::listar(&mut fs, asa, 10).map(|_| ());
+                ops::cerrar(&mut fs, asa);
+                r
+            })
+        }
+        _ => Ok(()),
+    };
+    let bien = dan.iter().zip(quiere.iter()).all(|(d, q)| d == q) && carla == Err(a::PROTEGIDO);
+    let mut t = String::new();
+    for (c, d) in casos.iter().zip(dan.iter()) {
+        t.push_str(&alloc::format!("{} = {}; ", c, d));
+    }
+    println!("  [explorador] nombres: {}listar SYS:DeCarla {:?}: {}", t, carla.err(), if bien { "bien" } else { "MAL" });
 }
 
 fn comprobar_lo_ajeno(app: &mut App) {
@@ -2256,6 +2340,7 @@ fn principal() -> u64 {
     let mut app = App {
         c,
         sv,
+        nombres: dashos::asignaciones::Tabla::vacia(),
         tema: Tema::CLARO,
         regular: Fuente::regular(),
         medio: Fuente::medium(),

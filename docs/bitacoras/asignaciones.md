@@ -210,3 +210,41 @@ Cambios en las pruebas (todos en este commit):
 `make prueba` bien; `make arranque-virt` bien a la tercera (la primera, `Programas` no cabía a la vista; la segunda,
 las líneas del malware de guiones; las dos, ajustes de lo esperado, no fallos); `make arranque-virt-2` y
 `make arranque-virt-linux` bien.
+
+### Paso 5: el explorador, por nombres
+
+El explorador pide su tabla de nombres al prepararse y resuelve por ella los caminos escritos con un nombre (Ctrl+L):
+`LIBS:`, `ENVARC:Sys`, `T:`, `Programas:hola` llevan a la primera capa donde existen, como en el Amiga
+(`App::lugar_por_nombre`, con `dashos::asignaciones::mirar`). Un nombre que no está en la tabla (`Amiga:`, o
+"Home/Privado" sin dos puntos) sigue por lo de siempre. Lo que intenta salir del nombre no vale; lo que lleva a una raíz
+que no tiene, tampoco; y un nombre no da nada que el servicio no deje: `SYS:DeCarla` se resuelve, pero listarlo da -12.
+
+Pruebas en QEMU: al prepararse, "[explorador] nombres: C:grande.txt → SYS:C/grande.txt; LIBS: → SYS:Libs; ENVARC:Sys →
+SYS:Prefs/Env-Archive/Sys; T: → RAM:T; Programas:hola → SYS:Programas/hola; Home:../DeCarla y SYS:/Libs no valen;
+Nada:x y Amiga: no están en la tabla; SYS:DeCarla se resuelve y listarlo da -12". Y con el ratón y el teclado (el guion), la segunda
+ventana va a `Home:Viaje` escribiendo el camino con su nombre, y la primera a `SYS:Programas`.
+
+## Lo que queda por pasar a nombres
+
+| Qué | Cómo está |
+|---|---|
+| Workbench por dentro | Enseña los volúmenes de su tabla, pero abre y lista por raíces numeradas |
+| Barra del explorador | `SYS:`, `RAM:` y `Work:` fijos (coinciden con la tabla), no leídos de ella |
+| `selector`, `centro`, `fondo`, `panel` | Por su raíz 0 y caminos fijos (`C/Prefs`, `C/Fondos`): esperan a `ENVARC:` y `Home:` de verdad |
+| `LANZAR` de `sesiones` | Camino del disco (`Programas/hola`), no `C:hola` ni `Programas:hola` |
+| `cambio`, `pide`, `hostil` | Siguen probando también `NOMBRES` (10), la tabla vieja de 5 nombres sin capas; quitarla cuando nada la use |
+| Caja Amiga | Su propio dos; lee sus ajustes de `SYS:C/Prefs` (por eso `C` guarda aún lo del Home provisional) |
+
+## Lo que falta del todo
+
+- La capa de paquetes (`Paquetes:*/C`…): espera a S8.
+- `RAM:` en memoria y `Work:` como disco aparte (hoy cajones del disco).
+- `Home:` del escritorio: hoy `SYS:C`; el de lo que lanza `sesiones` sí es el volumen cifrado.
+- `ENV:` copiado de `ENVARC:` al entrar; `User-Startup` y `WBStartup` por usuario.
+- Perfiles en las fichas: la tabla del perfil encerrado está hecha y probada en el PC, pero ninguna ficha es aún
+  "aplicación" o "suelto".
+- Los `.info` de los cajones de `SYS:` y su `Disk.info`.
+- Una orden `Assign` nativa (no hay Shell nativo): hoy solo se asigna por la API.
+
+`make prueba` bien; `make arranque-virt` bien a la tercera (las dos primeras, la prueba de `SYS:DeCarla` esperaba que
+mirarlo fallara: el servicio deja abrir y mirar un cajón ajeno y niega listarlo; ahora se prueba listando).

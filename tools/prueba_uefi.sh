@@ -1327,7 +1327,8 @@ while time.time() - inicio < total:
                 tecla_ex("ctrl-l")
                 time.sleep(0.4)
                 tecla_ex("ctrl-a")
-                escribir_ex("Home/Viaje")
+                # Paso 2 de las asignaciones: con su nombre, como en el Amiga (lo resuelve su tabla de nombres).
+                escribir_ex("Home:Viaje")
                 tecla_ex("ret")
             elif ex == 35:
                 # La segunda ventana, por su barra (el título "Archivos"), 300 a la derecha.

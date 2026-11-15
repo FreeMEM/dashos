@@ -258,6 +258,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [explorador] lo ajeno: listar DeCarla Some(-12), abrir su carta -12, copiarla no; ".." desde Home: no; crear por SYS: -12; renombrar a ".." -1 (servicio -1), crear ".." -1; Privado dentro de sí no (servicio
 ~): bien
 ~│   [explorador] papelera en Home:.Papelera: lista
+~│   [explorador] nombres: C:grande.txt = SYS:C/grande.txt; LIBS: = SYS:Libs; ENVARC:Sys = SYS:Prefs/Env-Archive/Sys; T: = RAM:T;
+~Amiga: = sin ese nombre; SYS:DeCarla = SYS:DeCarla; listar SYS:DeCarla Some(-12): bien
 ~│   [explorador] listo: espera a que el Workbench le pida abrir algo
 # Con el ratón y el teclado (el guion, al final): el doble clic en el icono de SYS: del Workbench lo abre; DeCarla
 # no se lista; Programas y hola (lo lanza `sesiones`, como Ana); sus Propiedades (por SYS: no se cambian).
@@ -294,7 +296,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [explorador] miniatura de Home:Fondos/
 ~│   [explorador] ventana 1: pestaña nueva (2 pestañas)
 ~│   [explorador] ventana 2: camino escrito "Home/../DeCarla": no vale
-~│   [explorador] ventana 2: camino escrito "Home/Viaje": va a Home:Viaje
+~│   [explorador] ventana 2: camino escrito "Home:Viaje": va a Home:Viaje
 ~│   [explorador] suelta en la ventana 1: mueve a Home:Privado
 ~│   [explorador] acabado: Mover "datos.bin" a Privado: 1 de 1 elementos
 ~│   [explorador] sin ventanas abiertas
