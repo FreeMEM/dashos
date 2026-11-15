@@ -104,12 +104,14 @@ Lo que se toma:
 - **Para los dominios de controladores**: construirlos de forma reproducible (las mismas entradas dan la misma imagen,
   bit a bit), para que la firma diga algo y cualquiera pueda comprobarla. Y lo que NixOS no garantiza y aquí sí: la
   integridad se comprueba al arrancar y el hipervisor la mantiene en marcha.
-- **Propuesta para Paq, por decidir (va a S8)**: generaciones como en NixOS, pero con asignaciones en vez de enlaces.
-  Cada versión de un paquete en su propio cajón (`Paquetes:<nombre>-<versión>`), sin pisar la anterior; una
+- **Para Paq, decidido (detalle en S8)**: generaciones como en NixOS, pero con asignaciones en vez de enlaces.
+  Cada versión de un paquete en su propio cajón (en un almacén que solo toca `Paq`), sin pisar la anterior; una
   "generación" es la tabla de qué cajones entran en `C:`, `LIBS:`, etc. Instalar o actualizar es escribir cajones
   nuevos y cambiar la tabla de golpe; volver atrás es usar la tabla anterior; los cajones que ninguna generación usa
   se limpian. Dos programas pueden usar versiones distintas de una biblioteca sin conflicto, porque cada proceso tiene
-  su vista. Complementa a las instantáneas del sistema de archivos, no las sustituye.
+  su vista. El usuario lo aceptó con una condición: que sea elegante y no le dé trabajo. Por eso las rutas que se
+  ven no llevan versión (`Paquetes:<nombre>`, como siempre) y lo único nuevo a la vista es "Deshacer la última
+  actualización".
 - **Estado aparte**: lo que cambia vive solo en `Home:` y `Estado:`; `RAM:`, `ENV:` y `T:` se pierden al salir. Es la
   "impermanencia" de NixOS, que DashOS ya sigue.
 - **Más adelante**: describir una máquina en un fichero (usuarios, programas, ajustes) para rehacerla igual. Los
@@ -131,4 +133,4 @@ Amiga) y generar toda la configuración como enlaces.
 
 S7 (caja Linux: el hipervisor y los aparatos virtio que ya existen), S12 y S12b (controladores), S13 (red, TLS), S14
 (`SYS:` firmada), S30 (x86, zona GPL e IOMMU), S32 (qué controladores van de serie), S33 y S34 (vídeo y gráficas), S8
-(la propuesta de generaciones).
+(las generaciones).

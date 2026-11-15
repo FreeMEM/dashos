@@ -175,14 +175,53 @@ La firma del fichero (`PKG-FILE-2`) es opcional y sirve para lo suelto (un USB, 
 - **Cuándo lee `Paq` el fichero `keys`**: al empezar si no lo tiene, al caducar (con reloj), y cuando ve una firma de
   una clave que no conoce; con `keys` leído, solo valen sus claves no anuladas.
 
-## Propuesta por decidir: generaciones, como en NixOS (2026-11-15)
+## Generaciones, como en NixOS (decidido 2026-11-15)
 
-Viene de S35 ("Lo que se toma de NixOS"). Cada versión de un paquete en su propio cajón
-(`Paquetes:<nombre>-<versión>`), sin pisar la anterior; una generación es la tabla de qué cajones entran en `C:`,
-`LIBS:` y las demás asignaciones (S4b). Instalar o actualizar: escribir cajones nuevos y cambiar la tabla de golpe.
-Volver atrás: la tabla anterior. Limpieza: los cajones que ninguna generación usa. Dos programas pueden usar versiones
-distintas de una biblioteca, porque cada proceso tiene su vista de los nombres. Complementa a las instantáneas (S5) y
-al comprobador de planes; no cambia el formato de paquetes. Pendiente del usuario.
+Viene de S35 ("Lo que se toma de NixOS"). El usuario lo aceptó con una condición: que sea elegante y que no le dé
+trabajo a quien usa el sistema. Esa condición manda sobre todo lo demás de este apartado.
+
+**Qué es.** Cada versión de un paquete se guarda en su propio cajón y no se pisa nunca. Una generación es una tabla
+pequeña que dice qué versión de cada paquete está en uso. Instalar, actualizar o quitar es escribir los cajones que
+falten y cambiar de tabla de golpe. Volver atrás es usar la tabla anterior.
+
+**Lo que ve el usuario: nada nuevo.**
+
+- Las rutas no llevan versión ni huella. El usuario y los programas ven `Paquetes:Tachyon`, como hasta ahora, y los
+  iconos, `PROGDIR:` y los guiones siguen valiendo tras actualizar. Las versiones guardadas viven en un almacén que
+  solo toca `Paq` y que no sale en el explorador; `Paquetes:` es la vista de la generación en uso (cada proceso ya
+  tiene su vista de los nombres, S4b).
+- No hay fichero de configuración que escribir ni lenguaje que aprender. Se instala y se quita igual que antes.
+- Una sola acción nueva: "Deshacer la última actualización", en Ajustes y en `Paq`. Quien quiera, puede ver la lista
+  de generaciones con su fecha y lo que cambió, y elegir una. Nadie está obligado a mirarla.
+- La limpieza es sola: se guardan las tres últimas generaciones y las de los últimos 30 días; lo que ninguna usa se
+  borra. Ajustes dice cuánto ocupa y deja limpiar a mano. Si el disco se llena, se limpia antes de fallar.
+- Los avisos hablan en llano: "Se actualizó Tachyon. Deshacer", nunca "generación 14".
+
+**Reglas.**
+
+- **Una versión de cada biblioteca, salvo que haga falta otra.** Dos versiones a la vez solo si un paquete lo pide en
+  su ficha; entonces ese programa ve la suya y los demás no se enteran. No es lo normal ni se anima a ello.
+- **Dos niveles**, como las capas de S4b: las generaciones del sistema (`Paquetes:`, las cambia un administrador) y
+  las de cada usuario (`Home:Paquetes`). Deshacer lo de un usuario no toca lo de otro.
+- **Los datos no vuelven atrás.** `Home:`, `ENVARC:` y `Estado:` no forman parte de la generación: deshacer una
+  actualización no borra documentos ni ajustes. Límite que se dice: si la versión nueva cambió el formato de sus
+  ajustes, la vieja puede no entenderlos; el paquete puede declarar "no se puede volver atrás desde esta versión" y
+  `Paq` avisa antes de actualizar.
+- **El cambio de tabla es atómico**: un corte de luz deja la tabla vieja o la nueva, nunca media (lo da DashFS).
+- **Un programa abierto sigue con su versión** hasta que se cierra: su vista no cambia en marcha.
+- **Con `SYS:`** no cambia nada: la base sigue siendo una imagen firmada con dos ranuras (S14). Una generación apunta
+  la versión de `SYS:` con la que se hizo, para que al arrancar con la ranura anterior se use la tabla que le toca.
+- **No cambia el formato de paquetes** ni Hangar. Sustituye a "una instantánea nueva de `Paquetes:` por transacción"
+  (punto 2 de arriba): la transacción es ahora el cambio de tabla. Las instantáneas (S5) siguen para los datos.
+
+**Lo que no se toma de NixOS**: su lenguaje, las huellas en las rutas y montar el sistema entero a base de enlaces.
+
+**Coste que se acepta**: más disco mientras se guardan versiones viejas (lo acota la limpieza), y que `Paq` lleve la
+tabla. **Por diseñar al hacerlo**: el formato de la tabla, dónde vive el almacén, y cómo se resuelven `Paquetes:*/C`
+y las demás capas con la tabla sin que cueste al abrir programas (hay que medirlo).
+
+**Pruebas hostiles que tendrá**: corte de luz a mitad de actualizar; deshacer con un programa abierto; disco lleno;
+un programa que intenta escribir en el almacén o en la tabla; una tabla dañada (se usa la anterior y se avisa).
 
 ## Lo que queda abierto
 
