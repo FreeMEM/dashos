@@ -269,3 +269,26 @@ Se toma la idea (sin leer su código), y se casa con las Prefs del Amiga:
   usuario.
 - Hoy los Ajustes (C1, C3) tienen 8 secciones; faltan Red, Sonido, Teclado, Idioma, Fecha y hora y Usuarios, el
   buscador por ajuste y la casación con `SYS:Prefs`/`ENVARC:` (que depende de las asignaciones nativas, paso 2).
+
+### Y como un Workbench: el cajón `Prefs` con sus herramientas (2026-11-15)
+
+Ajustes y el cajón `SYS:Prefs` son dos puertas a lo mismo, no dos sistemas:
+
+- **Un programa por categoría en `SYS:Prefs`, con su icono**: `Apariencia`, `Fondo` (el `WBPattern`), `Pantallas` (el
+  `ScreenMode`), `Fuentes` (el `Font`), `Idioma` (el `Locale`), `Hora` (el `Time`), `Teclado y ratón` (el `Input`),
+  `Puntero` (el `Pointer`), `Sonido`, `Red`, `Barra`, `Avisos`, `Energía`, `Usuarios`, `Permisos`, `Impresoras` (el
+  `Printer`), `Programas`... Se abre el cajón en el Workbench y se lanza cada uno suelto, como siempre.
+- **Ajustes es el contenedor**: su barra lateral lista los programas del cajón `SYS:Prefs` (y los de `Paquetes:` y
+  `Home:` que traigan su `Prefs`), y cada categoría es ese mismo editor dentro de la ventana. Mismo código, mismos
+  ficheros. Un programa instalado que trae su editor de preferencias aparece solo en los dos sitios.
+- **Los tres botones del Amiga, con vista al momento de DMS**: lo que se toca se ve ya (va a `ENV:`); **Guardar** lo
+  escribe también en `ENVARC:` (para siempre), **Usar** lo deja solo en esta sesión, **Cancelar** vuelve a como estaba.
+  En la ventana de Ajustes, cerrar es Guardar (como DMS); en el editor suelto, los tres botones.
+- **Presets**: `SYS:Prefs/Presets` (de fábrica) y `Home:Prefs/Presets` (los suyos): un fichero de preferencias con su
+  icono; doble clic lo aplica. Exportar e importar es copiar ese fichero.
+- **Desde el Shell y los guiones**, como en el Amiga: `Idioma FROM fichero USE` o `SAVE`, para ponerlo en
+  `User-Startup` o en un guion.
+- **Sincronizado con la caja Amiga**: las preferencias que también entiende AmigaOS (idioma, país, fuentes, modo de
+  pantalla, teclado, puntero, paleta) van en `ENV:Sys/*.prefs` en el formato IFF del Amiga (S4b). Si el usuario abre
+  el `Locale` o el `Font` originales de 68k dentro de la caja, escriben esos mismos ficheros, y DashOS lo ve al
+  momento; y al revés.
