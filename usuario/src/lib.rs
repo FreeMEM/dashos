@@ -36,6 +36,12 @@ pub mod hilos;
 pub mod red_cliente;
 /// S29: el cortafuegos de la caja Linux en el servicio de red (sin dependencias: se prueba en el PC).
 pub mod cortafuegos_caja;
+/// S13: el cortafuegos de entrada del servicio de red, DNS, SNTP y las zonas horarias (sin dependencias: se prueban en
+/// el PC).
+pub mod cortafuegos;
+pub mod dns;
+pub mod sntp;
+pub mod zona;
 mod copiar;
 
 /// Llamada al sistema en crudo: número y cinco argumentos; devuelve x0 y x1. Para pruebas y para la biblioteca.
@@ -213,6 +219,12 @@ pub fn ahora_ns() -> u64 {
 /// A14: la hora del calendario, en nanosegundos desde 1970 (UTC); 0 si el sistema no la sabe (la Pi 4 no tiene reloj).
 pub fn hora_ns() -> u64 {
     llamada(39, [0; 5]).0
+}
+
+/// S13: pone la hora del calendario (nanosegundos desde 1970, UTC), con el permiso del reloj (solo lo tiene `hora`). 0
+/// si se puso; `E_ARGUMENTO` si no es creíble (anterior a 2024), y otro error si la llave no es el permiso.
+pub fn hora_poner(permiso: u32, ns: u64) -> i64 {
+    llamada(39, [1, permiso as u64, ns, 0, 0]).0 as i64
 }
 
 /// Sin hipervisor (H9): el kernel no arrancó en EL2.

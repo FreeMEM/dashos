@@ -84,10 +84,15 @@ pub fn iniciar_hora(d: &crate::dtb::Dtb) -> Option<u64> {
 
 /// Pone la hora del calendario (segundos desde 1970). Falso, y sin cambiar nada, si no es creíble.
 pub fn poner_hora(segundos: u64) -> bool {
-    if segundos < HORA_MINIMA || segundos > u64::MAX / 2_000_000_000 {
+    segundos <= u64::MAX / 2_000_000_000 && poner_hora_ns(segundos * 1_000_000_000)
+}
+
+/// Lo mismo, en nanosegundos desde 1970 (S13: la hora que llega por la red).
+pub fn poner_hora_ns(ns: u64) -> bool {
+    if ns < HORA_MINIMA * 1_000_000_000 || ns > u64::MAX / 2 {
         return false;
     }
-    BASE_HORA.store((segundos * 1_000_000_000).saturating_sub(ns_del_contador(ahora())).max(1), Ordering::Relaxed);
+    BASE_HORA.store(ns.saturating_sub(ns_del_contador(ahora())).max(1), Ordering::Relaxed);
     true
 }
 

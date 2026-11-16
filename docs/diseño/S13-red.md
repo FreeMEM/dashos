@@ -1,5 +1,11 @@
 # S13. Red
 
+> **2026-11-15, segunda parte (rama `red-dns`, `docs/bitacoras/red.md`).** UDP, el resolvedor de nombres dentro del
+> servicio (con `hosts` y caché), escuchar con el permiso `red-escuchar` aparte y el cortafuegos de entrada cerrado de
+> serie, IPv6 por SLAAC, y la hora por la red (`hora`, con el permiso del reloj) con zona horaria en la barra. TLS no:
+> el estudio y la propuesta, en [S13b](S13b-tls-propuesta.md). Lo que se configura va, por ahora, en `Prefs/Red` del
+> disco del sistema, que el servicio lee al arrancar.
+
 > **2026-11-12, primera versión (rama `red`, `docs/bitacoras/red.md`).** smoltcp como pila, provisional (la pregunta
 > abierta 1). Su CUBIC no compila sin `std` (usa `f64::powi` y `mul_add`): va con Reno hasta que se le dé una raíz y
 > una potencia propias. La memoria de cada conexión la pone el servicio, no el programa: una memoria del programa

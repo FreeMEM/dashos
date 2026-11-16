@@ -8,7 +8,8 @@
 //! (little-endian; lo lee `usuario/src/bin/inicio.rs`):
 //! - u32 cuántos aparatos; por cada uno, 24 bytes: nombre (16, relleno con 0), tipo (u32: 1 registros,
 //!   2 interrupción, 3 permiso DMA, 4 registro, 5 memoria del firmware, 6 datos, 7 permiso de plazo, 8 permiso de
-//!   máquinas virtuales, 9 permiso de página 0, 10 permiso de apagar, 11 permiso del aviso de memoria) y número de
+//!   máquinas virtuales, 9 permiso de página 0, 10 permiso de apagar, 11 permiso del aviso de memoria, 12 permiso del
+//!   reloj) y número de
 //!   llave (u32);
 //! - u32 cuántos programas; por cada uno, 32 bytes: tamaño (u32), qué canales (u32: el bit i es el canal i; C50),
 //!   qué aparatos le pasa `inicio` (8 bytes: el número de cada uno en la lista de arriba, en el orden en que los pide
@@ -126,7 +127,10 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Trasfondo: va antes del fondo, que lee "red-estado" para su panel (el primero que nombra un canal lo sirve).
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     // También "red-estado": solo el estado, para leer (decisión del usuario del 2026-11-13); lo atiende un hilo aparte.
-    ("red", programa!("red"), &[], &["red", "red-estado"]),
+    // S13, segunda parte: "red-escuchar" es el permiso de escuchar (S6b), aparte del de conectar: lo atiende otro hilo
+    // del servicio. Y es cliente de "archivos": lee `Prefs/Red` (hosts y el servidor de hora). Sus llaves: 1 archivos, 2
+    // red, 3 red-estado, 4 red-escuchar y 5 a 7 las copias para escribirse.
+    ("red", programa!("red"), &[], &["archivos", "red", "red-estado", "red-escuchar"]),
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     ("virtio-red", programa!("virtio-red"), &[("dma-vred", PERMISO_DMA), ("virtio-red", REGISTROS), ("vred-cfg", REGISTROS), ("virtio-red", INTERRUPCION | OPCIONAL)], &["red"]),
     // C3: el fondo de escritorio, una capa de fondo con la imagen de `C/Fondos` (poder de escritorio). Nombra "fondo" antes
@@ -221,8 +225,9 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // de conexiones y uno sin la llave.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
     ("red-gloton", programa!("red-gloton"), &[], &["red"]),
+    // S13, segunda parte: `red-prueba` tiene además el permiso de escuchar; el glotón, no (y lo intenta).
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
-    ("red-prueba", programa!("red-prueba"), &[], &["red"]),
+    ("red-prueba", programa!("red-prueba"), &[], &["red", "red-escuchar"]),
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
     ("sin-red", programa!("sin-red"), &[], &[]),
     // C2 de S10c: el panel rápido (Super+A), con el poder de escritorio para su capa, el canal del centro para el modo y
@@ -299,6 +304,10 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // la caja Amiga, Ajustes salía encima del botón de cerrar de su ventana).
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso"), dash_ventana))]
     ("dash-ventana", programa!("dash-ventana"), &[], &["ventanas", "archivos", "sesiones", "selector"]),
+    // S13: la hora por la red (SNTP). El único con el permiso del reloj; de la red solo tiene la llave de conectar. Al
+    // final, para no cambiar las marcas de los de antes.
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    ("hora", programa!("hora"), &[("reloj", RELOJ)], &["red"]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", programa!("medir-fs"), &[], &["archivos"]),
     #[cfg(feature = "medir")]
@@ -324,6 +333,8 @@ const APAGAR: u32 = 10;
 /// El permiso del aviso de memoria baja (llamada 53, S3): como el de apagar, `inicio` lo busca por su nombre
 /// ("memoria") y se lo manda a `sesiones` (`PERMISO_MEMORIA`).
 const AVISO_MEMORIA: u32 = 11;
+/// El permiso de poner la hora del calendario (llamada 39 con 1, S13): solo para `hora`.
+const RELOJ: u32 = 12;
 /// Marca de un aparato que el servicio puede no tener: si falta, se lanza igual, sin esa llave (y las siguientes
 /// corren un puesto).
 const OPCIONAL: u32 = 0x100;
@@ -772,6 +783,8 @@ pub fn lanzar() -> bool {
     apuntar(&mut llaves, "apagar", APAGAR, Llave::nueva(Objeto::PermisoApagar, DERECHOS));
     // S3: el del aviso de memoria baja, para `sesiones`. El último, por lo mismo.
     apuntar(&mut llaves, "memoria", AVISO_MEMORIA, Llave::nueva(Objeto::PermisoMemoria, DERECHOS));
+    // S13: el de poner la hora, para `hora`. El último, por lo mismo.
+    apuntar(&mut llaves, "reloj", RELOJ, Llave::nueva(Objeto::PermisoReloj, DERECHOS));
     // Un servicio al que le falta algún aparato no se lanza (la GPU en QEMU, por ejemplo).
     let lanzables: Vec<_> = PROGRAMAS
         .iter()

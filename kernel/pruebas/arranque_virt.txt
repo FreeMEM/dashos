@@ -585,6 +585,47 @@ DashOS en marcha con 4 núcleos.
 ~│   [red-prueba] puerto cerrado: rechazada: bien
 # El PC manda basura (cortas, largas, enormes, IPv4 y ARP rotas): el controlador y el servicio siguen.
 ~│   [red-prueba] basura del PC tirada; eco después: bien
+# S13, segunda parte (docs/bitacoras/red.md). Sin Internet: contra el vecino del PC (`tools/red_vecino.py`, otro aparato
+# en el concentrador, 10.0.2.53: un servidor de nombres de mentira, la hora por SNTP y un eco por UDP) y quien entra
+# desde fuera por un puerto reenviado (`tools/red_entra.py`).
+# Lo que se configura, en Prefs/Red del disco: hosts (tres nombres y una línea que no vale) y el servidor de hora, que
+# el servicio resuelve con hosts. IPv6: la dirección del prefijo que anuncia QEMU, por SLAAC.
+~│   [red] Prefs/Red: 3 nombres en hosts; servidor de hora hora.prueba
+~│   [red] servidor de hora: 10.0.2.53
+~│   [red] IPv6 por SLAAC: fec0::5054:ff:fe12:3456/64
+# UDP: el eco vuelve igual y lo que manda otra dirección sin pedirlo no llega; con 200 datagramas de golpe sin leer,
+# llegan los que caben y los demás se pierden y se cuentan; una cabecera imposible rompe solo ese zócalo. Sin el
+# permiso de escuchar no se elige puerto ni se espera a que entren.
+~│   [red-prueba] UDP, eco con el vecino: bien
+~│   [red-prueba] UDP, 200 datagramas de golpe sin leer: bien
+~│   [red-prueba] UDP, una cabecera imposible: bien
+~escuchar sin el permiso: bien (UDP
+# Nombres: la caché respeta lo que vale la respuesta (3 s), los alias, hosts y localhost. Hostil: respuestas con otro
+# identificador, desde otra dirección o puerto, a otra pregunta, con un nombre comprimido en bucle y cortadas (sale la
+# buena y las falsas se cuentan); truncada, inexistente, veinte direcciones, nombres malos y uno de 240 bytes; un
+# servidor que no contesta (tres intentos).
+~│   [red-prueba] nombres: bien
+~│   [red-prueba] hosts: bien
+~│   [red-prueba] nombres, respuestas falsas (otro identificador, otro origen, otra pregunta, bucle, cortada): bien
+~│   [red-prueba] nombres, raros: bien
+~│   [red-prueba] nombres, un servidor mudo: bien
+# Escuchar, con el permiso aparte y el cortafuegos cerrado de serie: lo que intenta entrar antes de que nadie escuche
+# se tira sin contestar; con el permiso, entra, llega su línea y vuelve su eco. Por UDP, lo mismo.
+~│   [red-prueba] escuchar por TCP: bien
+~│   [red-prueba] escuchar por UDP: bien
+~│   [red-prueba] IPv6: bien
+~│   [red-prueba] la hora por SNTP: bien
+# El glotón, sin los permisos de escuchar ni del reloj, lo intenta; y pregunta 2000 nombres de golpe: 8 en curso.
+~│   [red-gloton] escuchar sin el permiso: bien
+~│   [red-gloton] poner la hora sin el permiso del reloj, con 64 llaves: bien
+~│   [red-gloton] 2000 preguntas de nombres de golpe: bien
+# La hora por la red: `hora`, el único con el permiso del reloj, la toma del vecino (tras tres respuestas que no
+# valen) y pone el reloj. La barra la enseña en la zona de Prefs/zona (Europe/Madrid).
+~│   [hora] una hora que no es creíble o una llave que no es el permiso no ponen el reloj: bien
+~│   [hora] reloj puesto por SNTP de 10.0.2.53
+~│   [hora] respuestas que no valían, tiradas: 
+~│   [barra] hora: 
+~(Europe/Madrid, UTC+
 # Sin la llave del canal "red" no hay red.
 ~│   [sin-red] sin la llave: 1024 llaves probadas, llegan 0; por un canal propio sí: bien
 # H4, primer paso de la caja Amiga (`caja/`, docs/bitacoras/caja-amiga.md): el JIT de Emu68 en un proceso big-endian.
