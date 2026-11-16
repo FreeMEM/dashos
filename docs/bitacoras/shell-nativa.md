@@ -278,6 +278,109 @@ Choques en `sesiones.rs`, `usuario/Cargo.toml`, `tools/disco_archivos.py` y `ser
 Sobre la unión: `make prueba`, `make arranque-virt`, `make arranque-virt-2` y `make arranque-virt-linux`, bien. Las
 medidas del Shell, parecidas (302 ms, 761 ms y 4,2 s).
 
+### Visto en pantalla (2026-11-16)
+
+Rama `shell-capturas`. Hasta aquí nadie había visto el Shell: sus pruebas lo manejan por guion. Ahora hay una prueba que
+lo usa como una persona y lo captura: **`make arranque-virt-shell`**. La imagen es la de usar (`virt-uso`, con la
+pantalla de entrada de verdad), con una copia del disco de pruebas. `tools/guion_shell.py` entra como Ana, abre el Shell
+desde el lanzador de la barra y teclea en él con el teclado y el ratón USB de QEMU: así pasa por el mapa de teclado
+español y los modificadores, que `Teclea` se salta. Las capturas, en `kernel/target/shell/shell.*.png` (y en
+`capturas-agente/shell-*.png`, fuera de git):
+
+| Captura | Qué se teclea |
+|---|---|
+| `1-recien-abierto` | Nada: el indicador de serie (`Home:` en su bloque) y el cursor |
+| `2-list` | `List SYS:`: los cajones en azul, el resumen |
+| `3-sugerencia` | `Echo "hola desde el teclado"`, y luego `Ech`: la sugerencia en gris |
+| `4-orden-mala` | `NoExiste SYS:S "sin cerrar`, sin Intro: rojo, ruta subrayada, comillas abiertas en rojo |
+| `5-menu-tab` | `Dir SYS:S` y Tab dos veces: el menú (`S/ Storage/ System/`) con el primero elegido |
+| `6-paneles` | Ctrl+Mayús+E y `Dir SYS:C` en el panel nuevo |
+| `7-pestana` | Ctrl+Mayús+T y `Version` en la pestaña nueva |
+| `8-titulo` | `Run Wait 100`, y la ventana arrastrada por su barra: el título y el trabajo de fondo en el indicador |
+
+Al final la cierra con el botón de su barra, con ese trabajo de fondo en marcha: el Shell dice
+`ventana cerrada desde su barra; trabajos matados: 1`, que es lo último que espera la prueba.
+
+Una de las órdenes tecleadas es `Assign CapturasHechas: RAM:`, que `sesiones` dice en el registro: llegaron las
+teclas, con `:` y mayúsculas.
+
+Se ve bien: el indicador, el cursor en su sitio (también sobre la primera letra de la sugerencia), los colores del
+resaltado, la sugerencia en gris (se lee: 3,2 a 1 sobre el fondo claro), el menú de Tab, los dos paneles con la raya del
+que tiene el teclado, la barra de pestañas, `Dir` en dos columnas y las letras con acento (`Cajón`). Nada cortado ni
+pisado. Ctrl+Mayús+E y Ctrl+Mayús+T, de verdad por el teclado, funcionan.
+
+Arreglado, con su prueba:
+
+- **El texto del indicador no se leía**: negro sobre el azul del bloque (2,7 a 1). El indicador pedía el "blanco vivo"
+  de la paleta (el 15), que en la paleta clara es oscuro a propósito (para que se lea sobre la superficie). En el tema
+  oscuro el fallo era el contrario: blanco sobre un azul claro (2,9 a 1). Ahora la letra de los bloques es un color
+  nuevo de la consola, `SOBRE_FONDO`, que decide quien pinta: de la letra clara y la oscura del tema, la que más
+  contrasta con el fondo que tiene la celda en pantalla (`consola::mejor_sobre`, con su prueba, hostiles incluidas).
+  En el tema claro sale blanco sobre azul (6 a 1).
+- **"1 ficheros"** en el resumen de `List`: ahora singular y plural (`1 fichero`, `1 cajón`, `1 byte`). La prueba del
+  Shell lista un cajón con un solo fichero y `arranque_virt.txt` espera `1 fichero - 0 cajones -` (`List` de un
+  fichero suelto no saca el resumen).
+
+Visto y sin arreglar (apuntado):
+
+1. **La ventana del Shell no tenía barra de título ni botón de cerrar**: un rectángulo plano, sin borde ni sombra.
+   Arreglado después (abajo, "Segunda tanda").
+2. **Las fechas de `List` iban en UTC y la barra en hora local** (los ficheros decían 07:41 y el reloj 08:41).
+   Arreglado después (abajo).
+3. **Lo elegido en el menú de Tab sale en un bloque casi negro** (`5-menu-tab`): es `INVERSO` sobre la letra de serie.
+   La selección y el cursor usan los colores del tema (el primario y su contenedor); el menú podría usar los mismos.
+   Pendiente del usuario: es cuestión de gusto.
+4. **Mientras se teclea una orden, sale en rojo hasta que está entera** (`3-sugerencia`: `Ech` en rojo con la
+   sugerencia `o "hola..."` detrás). Es lo que hace zsh con su resaltado; con la sugerencia delante choca un poco.
+   Pendiente del usuario: dejarlo, o no poner rojo si la sugerencia completa una orden que existe.
+5. **Las pestañas se llamaban por el cajón** (`1 Home:` y `2 Home:`): dos pestañas en el mismo cajón solo se
+   distinguían por el número. Arreglado después (abajo).
+6. **El indicador azul no es del color del tema** (el cursor y la pestaña elegida son del primario, morado aquí). El
+   color de cada segmento es un ajuste (`ENVARC:Shell/Indicador`); el de serie podría ser el primario del tema.
+   Pendiente del usuario.
+
+Pruebas: `cd shell && cargo test` (69), `make prueba`, `make arranque-virt` (a la segunda: la primera, el resumen de
+`List` de un fichero suelto no sale, y cambié la prueba), `make arranque-virt-2` y `make arranque-virt-shell`, bien.
+No pasé `make arranque-virt-linux`: no toco archivos, sesiones ni el compositor, y del disco solo cambia el guion de
+la prueba del Shell.
+
+#### Segunda tanda: la barra de la ventana, la hora local y el título de las pestañas
+
+- **Por qué no tenía barra.** El Shell crea una `xdg_toplevel` con su búfer y nada más: ni se pinta una cabecera ni
+  pide la del compositor. En DashOS hay dos formas: la del explorador, que se pinta la suya (su barra de arriba es parte
+  de su contenido, hecha a mano en `explorador/pintar.rs`: el kit no tiene una cabecera que compartir; el centro de
+  control no tiene ninguna), y la del compositor (`zxdg_decoration_manager_v1`, `wayland/src/decoracion.rs`), que hoy
+  solo usaban los programas de Linux. El Shell pide ahora la del compositor: barra de Material 3 con el título,
+  maximizar y cerrar; arrastrarla mueve la ventana y el borde la redimensiona. Es la misma que lleva foot (la terminal
+  de Linux) en la caja, y no hace falta tocar el compositor. **Pendiente del usuario**: si las ventanas nativas deben
+  llevar la barra del compositor o pintarse la suya como el explorador.
+- **Cerrar con el botón** es cerrar todos los paneles: sus trabajos se matan sin preguntar, como al cerrar un panel
+  (decisión 7). Antes, si el compositor pedía cerrar la ventana, el Shell salía sin matar sus trabajos. Ahora dice
+  `ventana cerrada desde su barra; trabajos matados: N`. Pendiente: avisar antes de cerrar con trabajos en marcha
+  (Terminator pregunta).
+- **El título**: el cajón y la última orden tecleada del panel con el teclado (`Home: · List`), como Terminator, que pone
+  el de la terminal con el foco. Si no se ha tecleado nada, el cajón; sin cajón, "Shell". Lo enseñan su barra y la de
+  la pantalla. Solo cuenta lo tecleado: las órdenes de un guion (el arranque, los complementos, `Execute`) no cambian
+  el título, que si no cambiaría con cada línea.
+- **Las pestañas** dicen lo mismo que el título (`1 Home: · Echo`, `2 Home: · Run`). La última orden se queda aunque
+  haya acabado: el título no distingue "en marcha" de "acabada" (el indicador sí dice `[1]` si hay trabajos de fondo).
+- **La hora local**: unida `red-zona` (la zona única del sistema). `List`, `Date` y el segmento `hora` del indicador van
+  en la zona de `SYS:Prefs/zona`, la misma que leen la barra y el crate `idioma` (`dashos::zona`, con su hora de
+  verano). Cada orden la lee una vez, la primera vez que la necesita (`Sistema::zona`); sin fichero o con una zona que
+  no está en la tabla, UTC, como la barra. `Date` dice ahora también la zona: `2026-11-16 09:41:30 (Europe/Madrid,
+  UTC+1)`, o `(UTC)` sin ella. El Shell la lee una vez: si se cambia la zona con un Shell abierto, su indicador sigue
+  con la vieja hasta abrir otro.
+- Pruebas nuevas: `shell::fecha::con_desfase` (verano, invierno, al oeste, cruzar el año, los extremos) y
+  `shell::linea::nombre_de_orden` (rutas, comentarios, nombres enormes, letras de control), en el PC. En QEMU,
+  `arranque_virt.txt` espera `(Europe/Madrid, UTC+` del `Date` de la prueba del Shell, y `arranque_virt_shell.txt`,
+  el título `Home: · List` en la barra y el cierre con un trabajo de fondo matado. En las capturas: la barra, la hora
+  igual que la del reloj (`2-list`) y las pestañas (`7-pestana`, `8-titulo`).
+- Pruebas: `cd shell && cargo test` (71), `make prueba`, `make arranque-virt`, `make arranque-virt-2`,
+  `make arranque-virt-linux` y `make arranque-virt-shell`, bien a la primera.
+
+No visto: el tema oscuro (las cuentas de contraste de arriba son con su paleta, no con una captura), la translucidez,
+Ctrl-R, los paneles en horizontal y el ratón sobre la ventana (seleccionar, pegar, la rueda).
+
 ## El Shell potente (encargo del 2026-11-15)
 
 Petición del usuario: "quiero una Shell potente como la que tengo ahora en Shiva con Terminator y zsh y oh-my-zsh". Se

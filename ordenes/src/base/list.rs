@@ -44,7 +44,9 @@ fn entrada(o: &mut Orden, op: &Opciones, c: &mut Cuenta, nombre: &str, d: &Datos
     }
     let tam = if d.cajon() { String::from("Dir") } else { alloc::format!("{}", d.tamano) };
     let relleno = 24usize.saturating_sub(nombre.chars().count());
-    di!(o, "{}{}{}{:relleno$} {:>9} {} {}\n", color, nombre, fin, "", tam, d.proteccion(), shell::fecha::texto(d.fecha));
+    // En la hora local del sistema, como la barra.
+    let cuando = shell::fecha::texto(o.s.local_s(d.fecha));
+    di!(o, "{}{}{}{:relleno$} {:>9} {} {}\n", color, nombre, fin, "", tam, d.proteccion(), cuando);
     if !comentario.is_empty() {
         di!(o, ": {}\n", comentario);
     }
@@ -52,7 +54,9 @@ fn entrada(o: &mut Orden, op: &Opciones, c: &mut Cuenta, nombre: &str, d: &Datos
 
 fn pie(o: &mut Orden, op: &Opciones, c: &Cuenta) {
     if !op.sin_cabecera && !op.rapido {
-        di!(o, "{} ficheros - {} cajones - {} bytes\n", c.ficheros, c.cajones, c.bytes);
+        // "1 fichero", no "1 ficheros" (como el Amiga: "1 file").
+        let n = |n: u64, uno: &'static str, varios: &'static str| if n == 1 { uno } else { varios };
+        di!(o, "{} {} - {} {} - {} {}\n", c.ficheros, n(c.ficheros, "fichero", "ficheros"), c.cajones, n(c.cajones, "cajón", "cajones"), c.bytes, n(c.bytes, "byte", "bytes"));
     }
 }
 
