@@ -39,7 +39,7 @@
 //! | 45 | maquina_crear(permiso, memoria, dirección física del invitado, entrada, x0) -> llave de máquina virtual (H9) |
 //! | 46 | maquina_correr(máquina, informe, valor, interrupciones) -> motivo: entra en el invitado hasta que sale |
 //! | 47 | maquina_memoria(máquina, memoria, dirección física del invitado): más RAM para el invitado |
-//! | 48 | maquina_estado(máquina, operación, argumento, a, b): registros, aborto, GICV, otra vCPU, reiniciarla, patearla, parar |
+//! | 48 | maquina_estado(máquina, operación, argumento, a, b): registros, aborto, GICV, otra vCPU, reiniciarla, patearla, parar ; 40 y 41 prestan un aparato a un dominio (S35) |
 //! | 51 | apagar(permiso, modo): 0 apaga la máquina, 1 la reinicia; no vuelve si se pudo |
 //! | 39 | hora(0): la hora del calendario; hora(1, permiso, ns): ponerla, con el permiso del reloj (S13) |
 //!
@@ -1582,6 +1582,29 @@ fn maquina_estado(h: u32, op: u64, arg: u64, a: u64, b: u64) -> u64 {
         7 => {
             m.parar();
             0
+        }
+        // S35, paso 2 (`docs/bitacoras/dominio-red.md`): prestar un aparato a un dominio de controladores. 40: los
+        // registros de la llave `arg` (leer y escribir), en su misma dirección física. 41: el objeto de memoria DMA `arg`
+        // (leer y escribir), en su dirección de bus. Sin IOMMU, solo para la prueba en QEMU.
+        40 | 41 => {
+            let Some(r) = proc_.llaves.tomar().ver_con_intermediarios(arg as u32) else { return E_LLAVE };
+            let (r, por) = r;
+            // Una llave revocable no vale: revocarla no quitaría nada de la etapa 2.
+            if !por.is_empty() {
+                return E_ARGUMENTO;
+            }
+            if r.derechos & (objetos::LEER | objetos::ESCRIBIR) != objetos::LEER | objetos::ESCRIBIR {
+                return E_DERECHOS;
+            }
+            let hecho = match (op, r.objeto) {
+                (40, Objeto::Registros { fisica, tamano }) => m.prestar_registros(fisica, tamano, &proc_.cupo),
+                (41, Objeto::Memoria(mem)) => m.anadir_dma(mem, &proc_.cupo),
+                _ => return E_TIPO,
+            };
+            match hecho {
+                Ok(()) => 0,
+                Err(e) => error_hiper(e),
+            }
         }
         _ => E_ARGUMENTO,
     }
