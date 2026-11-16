@@ -2131,3 +2131,10 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
      generaciones al estilo NixOS: **aceptadas por el usuario** (2026-11-15) con la condición de que sean elegantes y
      no le den trabajo a quien usa el sistema; quedan decididas en S8 (rutas sin versión, "Deshacer la última
      actualización", limpieza sola). Sin código todavía.
+- **Principio nuevo y repaso de los diseños** (usuario, 2026-11-15 y 16): S0 lleva "amigable de 2026, con fondo para
+  informáticos" (sencillo por delante, todo a la vista por detrás). Se repasaron 39 diseños contra él: 162 hallazgos
+  (`docs/revisiones/repaso-s0/`), diez reglas comunes en S36, y 145 hallazgos aplicados a los documentos (rama
+  `repaso-s0`, unida). Es solo diseño: ningún código cumple aún las reglas nuevas (órdenes `Ajuste`, `Registro`,
+  `Permiso`, `Instantanea`, `Caja`; `Estado:Registros/`; modo de desarrollo). Sin aplicar, 17, con su motivo en S36.
+  Pendiente del usuario: las cuatro recomendaciones de S36 y los nombres provisionales (`Estado:Prefs`, `Estado:Devs`,
+  `Home:Instantáneas/`, el volumen `Linux:`). Generaciones de `Paq` decididas (S8).
