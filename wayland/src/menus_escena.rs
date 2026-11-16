@@ -13,6 +13,10 @@
 //!   llega `elegido` al programa de ese menú. Los programas no tienen cómo elegir: un menú no manda nada a otro.
 //! - **El botón derecho**, con los menús en la barra: sobre una ventana con menú de DashOS no llega a la ventana; la
 //!   barra abre los menús del programa activo, como en el Amiga.
+//! - **El clic que cierra** (rama `menus-pulido`): con lo desplegado abierto en la barra (`desplegado`), el primer botón
+//!   pulsado fuera de la barra no llega a nadie (ni sube la ventana ni le da el teclado, ni su soltar): solo se dice a
+//!   la barra que lo cierre (`cerrar`). Lo hace el compositor, que es quien sabe dónde cae el clic antes de dárselo a
+//!   nadie: la barra solo se enteraba después, cuando la ventana ya lo había recibido.
 //!
 //! Hostil: un menú que no vale, demasiado grande, sobre una superficie que no es suya o uno de más son errores de
 //! protocolo; poner el sitio o ser la barra sin serlo, también. Cien cambios seguidos del sitio o del menú dejan un
@@ -63,6 +67,8 @@ pub enum Aviso {
     Menu { objeto: u32, generacion: u32, datos: Vec<u8> },
     Abrir { objeto: u32 },
     Elegido { objeto: u32, numero: u32 },
+    /// Un clic fuera de lo desplegado: que la barra lo cierre.
+    Cerrar { objeto: u32 },
 }
 
 #[derive(Default)]
@@ -84,6 +90,10 @@ pub struct Estado {
     forzar: bool,
     /// Un botón derecho que se quedó la barra: su soltar tampoco llega.
     derecho_tragado: bool,
+    /// La barra con lo desplegado abierto (programa y su `dashos_menus_barra_v1`).
+    pub desplegado: Option<(Cliente, u32)>,
+    /// Los botones pulsados que se tragó el clic que cierra (los bits de `raton`): su soltar tampoco llega.
+    pub tragados: u8,
     pub avisos: Vec<(Cliente, Aviso)>,
     /// Lo que pasó, para el registro del compositor (quien atiende lo saca).
     pub registro: Vec<String>,
@@ -119,6 +129,7 @@ pub fn escribir_aviso(con: &mut Conexion, a: &Aviso) {
         Aviso::Menu { objeto, generacion, datos } => s.empezar(*objeto, dashos_menus_barra_v1::ev::MENU).uint(*generacion).array(datos).fin(),
         Aviso::Abrir { objeto } => s.empezar(*objeto, dashos_menus_barra_v1::ev::ABRIR).fin(),
         Aviso::Elegido { objeto, numero } => s.empezar(*objeto, dashos_menu_v1::ev::ELEGIDO).uint(*numero).fin(),
+        Aviso::Cerrar { objeto } => s.empezar(*objeto, dashos_menus_barra_v1::ev::CERRAR).fin(),
     }
 }
 
@@ -172,6 +183,9 @@ impl<M: Memorias> Escena<M> {
         self.mn.suscritos.retain(|s| s.0 != cliente);
         self.mn.barras.retain(|s| s.0 != cliente);
         self.mn.avisos.retain(|a| a.0 != cliente);
+        if self.mn.desplegado.is_some_and(|d| d.0 == cliente) {
+            self.mn.desplegado = None;
+        }
     }
 
     /// Se destruyó un objeto del programa: su menú, o la superficie de un menú, o su suscripción o su barra.
@@ -179,6 +193,33 @@ impl<M: Memorias> Escena<M> {
         self.mn.lista.retain(|m| !(m.cliente == cliente && (m.objeto == objeto || m.superficie == objeto)));
         self.mn.suscritos.retain(|s| *s != (cliente, objeto));
         self.mn.barras.retain(|s| *s != (cliente, objeto));
+        if self.mn.desplegado == Some((cliente, objeto)) {
+            self.mn.desplegado = None;
+        }
+    }
+
+    /// Los botones del ratón (desde `raton`, con el cursor ya movido y antes de nada más): los que ve el resto del
+    /// compositor. Con lo desplegado abierto en la barra, un botón que se pulsa fuera de las superficies de la barra
+    /// se traga (él y su soltar) y se dice a la barra que lo cierre. Un clic, uno solo: tras él, lo desplegado se da
+    /// por cerrado aunque la barra no conteste.
+    pub(super) fn menus_tragar(&mut self, botones: u8) -> u8 {
+        let antes = self.botones | self.mn.tragados;
+        // Los tragados que se sueltan dejan de estarlo.
+        self.mn.tragados &= botones;
+        let nuevos = botones & !antes;
+        if nuevos != 0
+            && self.bloqueo.is_none()
+            && let Some((barra, objeto)) = self.mn.desplegado
+        {
+            let sobre_barra = self.bajo(self.cursor.0, self.cursor.1).is_some_and(|((c, _), _, _)| c == barra);
+            if !sobre_barra {
+                self.mn.desplegado = None;
+                self.mn.tragados |= nuevos;
+                self.mn.avisos.push((barra, Aviso::Cerrar { objeto }));
+                self.mn.apuntar(String::from("un clic fuera cierra lo desplegado en la barra: no llega a nadie"));
+            }
+        }
+        botones & !self.mn.tragados
     }
 
     /// Un botón del ratón (desde `raton`, antes de subir la ventana o darle el botón): `true` si no llega a nadie. Con
@@ -294,6 +335,12 @@ impl<M: Memorias> PorCliente<'_, M> {
                     for (c, o) in escena.mn.barras.clone() {
                         escena.mn.avisos.push((c, Aviso::Abrir { objeto: o }));
                     }
+                }
+                Ok(())
+            }
+            ("dashos_menus_barra_v1", dashos_menus_barra_v1::req::DESPLEGADO) => {
+                if escena.mn.barras.contains(&(cliente, objeto)) {
+                    escena.mn.desplegado = (args[0].uint() != 0).then_some((cliente, objeto));
                 }
                 Ok(())
             }

@@ -393,3 +393,171 @@ fn los_avisos_por_la_conexion() {
     assert_eq!(Menus::leer(datos).unwrap().buscar(11).map(|e| e.titulo.as_str()), Some("Salir"));
     assert_eq!((ev[1].0, ev[1].1, u32_en(&ev[1].2, 0)), (31, dashos_menu_v1::ev::ELEGIDO, 11));
 }
+
+/// La barra dice si lo desplegado se ve (el 41 de la barra 5).
+fn desplegado(escena: &mut Escena<Mem>, con: &mut Conexion, c: Cliente, abierto: bool) -> Option<ErrorProtocolo> {
+    let mut e = Escritor::new();
+    e.empezar(41, dashos_menus_barra_v1::req::DESPLEGADO).uint(abierto as u32).fin();
+    mandar(escena, con, c, &e)
+}
+
+/// Un clic (pulsar y soltar) con el botón `bit` en (x, y): lo que sale de las dos cosas.
+fn clic_en(escena: &mut Escena<Mem>, x: i32, y: i32, bit: u8) -> Vec<(Cliente, Entrada)> {
+    escena.raton(-2000, -2000, 0);
+    let mut out = escena.raton(x, y, 0);
+    out.extend(escena.raton(0, 0, 1 << bit));
+    out.extend(escena.raton(0, 0, 0));
+    out
+}
+
+fn botones_de(out: &[(Cliente, Entrada)], c: Cliente) -> usize {
+    out.iter().filter(|e| e.0 == c && matches!(e.1, Entrada::Boton { .. })).count()
+}
+
+/// El clic que cierra (menus-pulido): con un menú desplegado en la barra, un clic en una ventana solo lo cierra. Ni
+/// le llega el botón ni su soltar, ni la sube ni le da el teclado. Solo el primero: el siguiente llega como siempre.
+#[test]
+fn el_clic_que_cierra_no_llega_a_la_ventana() {
+    let (mut escena, [mut centro, mut barra, _a, _b]) = montar();
+    poner_sitio(&mut escena, &mut centro, 3, BARRA);
+    escena.revisar_menus();
+    escena.mn.avisos.clear();
+    // Sin nada desplegado, el clic llega (lo de siempre).
+    let out = clic_en(&mut escena, 450, 350, 0);
+    assert_eq!(botones_de(&out, 6), 2);
+    assert!(escena.mn.avisos.is_empty());
+    // Desplegado: el clic en la ventana activa no le llega y la barra recibe `cerrar`.
+    assert!(desplegado(&mut escena, &mut barra, 5, true).is_none());
+    assert_eq!(escena.mn.desplegado, Some((5, 41)));
+    let out = clic_en(&mut escena, 450, 350, 0);
+    assert_eq!(botones_de(&out, 6), 0, "el clic que cierra el menú llegó a la ventana");
+    assert_eq!(avisos_de(&mut escena, 5), [Aviso::Cerrar { objeto: 41 }]);
+    assert_eq!(escena.mn.desplegado, None);
+    assert_eq!(escena.mn.tragados, 0, "el soltar no limpió lo tragado");
+    // El siguiente, ya cerrado, llega.
+    let out = clic_en(&mut escena, 450, 350, 0);
+    assert_eq!(botones_de(&out, 6), 2);
+    // Sobre la de detrás: no la sube ni le da el teclado (la activa sigue siendo la 6, con su menú en la barra).
+    desplegado(&mut escena, &mut barra, 5, true);
+    let orden = escena.orden.clone();
+    let out = clic_en(&mut escena, 50, 150, 0);
+    assert_eq!(botones_de(&out, 4), 0);
+    assert_eq!(escena.teclado.map(|t| t.0), Some(6), "el clic que cierra cambió la ventana activa");
+    assert_eq!(escena.orden, orden, "el clic que cierra subió una ventana");
+    assert!(!out.iter().any(|e| matches!(e.1, Entrada::TecladoEntra { .. } | Entrada::TecladoSale { .. })));
+    assert_eq!(avisos_de(&mut escena, 5), [Aviso::Cerrar { objeto: 41 }]);
+    // El botón derecho fuera, sobre una ventana con menú: también solo cierra (no abre otra vez ni llega).
+    desplegado(&mut escena, &mut barra, 5, true);
+    let out = clic_en(&mut escena, 450, 350, 1);
+    assert_eq!(botones_de(&out, 6), 0);
+    assert_eq!(avisos_de(&mut escena, 5), [Aviso::Cerrar { objeto: 41 }]);
+    // En el escritorio vacío (sin nada debajo): igual.
+    desplegado(&mut escena, &mut barra, 5, true);
+    clic_en(&mut escena, 700, 50, 0);
+    assert_eq!(avisos_de(&mut escena, 5), [Aviso::Cerrar { objeto: 41 }]);
+    // La barra dice que lo cerró ella (Esc, elegir): no se traga nada.
+    desplegado(&mut escena, &mut barra, 5, true);
+    desplegado(&mut escena, &mut barra, 5, false);
+    let out = clic_en(&mut escena, 450, 350, 0);
+    assert_eq!(botones_de(&out, 6), 2);
+    assert!(avisos_de(&mut escena, 5).is_empty());
+}
+
+/// Un clic sobre la barra misma (otro título, lo desplegado) sí le llega: es ella quien lo atiende.
+#[test]
+fn el_clic_en_la_barra_le_llega() {
+    let (mut escena, [mut centro, _barra, _a, _b]) = montar();
+    poner_sitio(&mut escena, &mut centro, 3, BARRA);
+    // Otra barra (la 15), con una superficie en pantalla arriba a la derecha.
+    escena.barras.push(15);
+    let mut b15 = Conexion::new();
+    ventana(&mut escena, &mut b15, 15, 100, 40);
+    escena.colocar(15, 7, 650, 0);
+    let mut e = Escritor::new();
+    e.empezar(30, dashos_menus_v1::req::BARRA).uint(42).fin();
+    e.empezar(42, dashos_menus_barra_v1::req::DESPLEGADO).uint(1).fin();
+    assert!(mandar(&mut escena, &mut b15, 15, &e).is_none());
+    assert_eq!(escena.mn.desplegado, Some((15, 42)));
+    escena.mn.avisos.clear();
+    let out = clic_en(&mut escena, 680, 20, 0);
+    assert_eq!(botones_de(&out, 15), 2, "el clic en la barra no le llegó");
+    assert_eq!(escena.mn.desplegado, Some((15, 42)), "un clic en la barra cerró lo desplegado desde el compositor");
+    assert!(escena.mn.avisos.iter().all(|a| !matches!(a.1, Aviso::Cerrar { .. })));
+    // Fuera de ella, a la ventana 6: se traga y se le dice a la 15 (a la otra barra, nada).
+    let out = clic_en(&mut escena, 450, 350, 0);
+    assert_eq!(botones_de(&out, 6), 0);
+    assert_eq!(avisos_de(&mut escena, 15).into_iter().filter(|a| matches!(a, Aviso::Cerrar { .. })).count(), 1);
+    assert!(avisos_de(&mut escena, 5).iter().all(|a| !matches!(a, Aviso::Cerrar { .. })));
+}
+
+/// Hostil: ráfagas de clics con el menú abriéndose y cerrándose; pulsar dentro de la barra y soltar fuera; la barra
+/// que se va con lo desplegado abierto; un programa que no es la barra intenta decir que hay algo desplegado (para
+/// tragarse los clics de los demás); y con la sesión bloqueada no se traga nada.
+#[test]
+fn hostil_el_clic_que_cierra() {
+    let (mut escena, [mut centro, mut barra, mut a, _b]) = montar();
+    poner_sitio(&mut escena, &mut centro, 3, BARRA);
+    escena.revisar_menus();
+    escena.mn.avisos.clear();
+    // Cien vueltas: abre, clic fuera (se traga), clic (llega), abre y cierra la barra, clic (llega).
+    let mut llegan = 0;
+    for k in 0..100 {
+        desplegado(&mut escena, &mut barra, 5, true);
+        llegan += botones_de(&clic_en(&mut escena, 450, 350, (k % 3) as u8), 6);
+        llegan += botones_de(&clic_en(&mut escena, 450, 350, 0), 6);
+        desplegado(&mut escena, &mut barra, 5, true);
+        desplegado(&mut escena, &mut barra, 5, false);
+        llegan += botones_de(&clic_en(&mut escena, 450, 350, 0), 6);
+    }
+    assert_eq!(llegan, 400, "de 300 clics, 100 se tragan y 200 llegan (pulsar y soltar)");
+    let cerrar = avisos_de(&mut escena, 5).into_iter().filter(|a| matches!(a, Aviso::Cerrar { .. })).count();
+    assert_eq!(cerrar, 100);
+    // Dos botones a la vez: el izquierdo pulsado fuera se traga; con él aún pulsado, el derecho no abre otra vez nada
+    // y llega como uno normal (ya no hay nada desplegado); soltarlos, cada uno lo suyo.
+    desplegado(&mut escena, &mut barra, 5, true);
+    escena.raton(-2000, -2000, 0);
+    escena.raton(450, 350, 0);
+    let mut out = escena.raton(0, 0, 1);
+    out.extend(escena.raton(0, 0, 3));
+    out.extend(escena.raton(0, 0, 2));
+    out.extend(escena.raton(0, 0, 0));
+    let izquierdos = out.iter().filter(|e| e.0 == 6 && matches!(e.1, Entrada::Boton { boton: 0x110, .. })).count();
+    assert_eq!(izquierdos, 0, "el izquierdo tragado (o su soltar) llegó");
+    assert_eq!(escena.mn.tragados, 0);
+    escena.mn.avisos.clear();
+    // Pulsado con nada desplegado (en la ventana), abierto entonces, y soltado: el soltar llega (no es el que cierra).
+    escena.raton(-2000, -2000, 0);
+    escena.raton(450, 350, 0);
+    let mut out = escena.raton(0, 0, 1);
+    desplegado(&mut escena, &mut barra, 5, true);
+    out.extend(escena.raton(0, 0, 0));
+    assert_eq!(botones_de(&out, 6), 2);
+    assert_eq!(escena.mn.desplegado, Some((5, 41)), "soltar no es pulsar: no cierra");
+    // La barra se va con lo desplegado: los clics vuelven a llegar.
+    let mut b2 = Conexion::new();
+    escena.barras.push(16);
+    enlazar(&mut escena, &mut b2, 16, true);
+    desplegado(&mut escena, &mut b2, 16, true);
+    escena.adios(16);
+    assert_eq!(escena.mn.desplegado, None, "la barra se fue y lo desplegado siguió tragando");
+    assert_eq!(botones_de(&clic_en(&mut escena, 450, 350, 0), 6), 2);
+    // La barra destruye su objeto: igual.
+    desplegado(&mut escena, &mut barra, 5, true);
+    let mut e = Escritor::new();
+    e.empezar(41, dashos_menus_barra_v1::req::DESTROY).fin();
+    assert!(mandar(&mut escena, &mut barra, 5, &e).is_none());
+    assert_eq!(escena.mn.desplegado, None);
+    // Un programa cualquiera no tiene objeto de barra: decirlo es un error y no traga nada.
+    assert!(desplegado(&mut escena, &mut a, 4, true).is_some());
+    assert_eq!(escena.mn.desplegado, None);
+    assert_eq!(botones_de(&clic_en(&mut escena, 450, 350, 0), 6), 2);
+    // Bloqueada la sesión: no se traga nada (la pantalla de bloqueo es lo primero).
+    let mut b3 = Conexion::new();
+    escena.barras.push(17);
+    enlazar(&mut escena, &mut b3, 17, true);
+    desplegado(&mut escena, &mut b3, 17, true);
+    escena.bloqueo = Some(Bloqueo { cliente: 9, objeto: 1, vivo: true, superficies: Vec::new() });
+    escena.mn.avisos.clear();
+    clic_en(&mut escena, 450, 350, 0);
+    assert!(escena.mn.avisos.iter().all(|a| !matches!(a.1, Aviso::Cerrar { .. })));
+}

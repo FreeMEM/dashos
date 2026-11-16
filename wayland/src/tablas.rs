@@ -1420,10 +1420,12 @@ pub static DASHOS_MENUS_BARRA_V1: Interface = Interface {
     requests: &[
         Message { name: "destroy", since: 1, destructor: true, args: &[] },
         Message { name: "elegir", since: 1, destructor: false, args: &[Arg { name: "generacion", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "numero", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "desplegado", since: 1, destructor: false, args: &[Arg { name: "abierto", kind: Kind::Uint, nullable: false, interface: None }] },
     ],
     events: &[
         Message { name: "menu", since: 1, destructor: false, args: &[Arg { name: "generacion", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "datos", kind: Kind::Array, nullable: false, interface: None }] },
         Message { name: "abrir", since: 1, destructor: false, args: &[] },
+        Message { name: "cerrar", since: 1, destructor: false, args: &[] },
     ],
 };
 
@@ -1432,10 +1434,12 @@ pub mod dashos_menus_barra_v1 {
     pub mod req {
         pub const DESTROY: u16 = 0;
         pub const ELEGIR: u16 = 1;
+        pub const DESPLEGADO: u16 = 2;
     }
     pub mod ev {
         pub const MENU: u16 = 0;
         pub const ABRIR: u16 = 1;
+        pub const CERRAR: u16 = 2;
     }
 }
 
