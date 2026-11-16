@@ -598,7 +598,8 @@ DashOS en marcha con 4 núcleos.
 # `tools/red_basura.py`), el servicio con smoltcp y su dirección por DHCP.
 ~virtio-red: en el PCIe 0:
 ~│   [virtio-red] MAC 52:54:00:12:34:56; colas de 128 y 64; avisos 
-~│   [red] DHCP: 10.0.2.15/24, puerta 10.0.2.2, DNS 10.0.2.3
+# Sin puerta ni DNS: QEMU va con `restrict=on` (nada sale fuera) y entonces su DHCP no los da.
+~│   [red] DHCP: 10.0.2.15/24
 # Lo que no le toca a un programa con permiso (decir que es el controlador, tocar conexiones ajenas, mal formados), se
 # rechaza.
 ~│   [red-prueba] hacerse pasar por el controlador o tocar lo ajeno: 

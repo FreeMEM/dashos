@@ -135,7 +135,10 @@ RED_MAC := 52:54:00:12:34:56
 # antes de arrancar QEMU), que QEMU reenvía al 7777 de DashOS (`hostfwd`): por él entra `tools/red_entra.py`.
 RED_ANTES := RED_PUERTO=$$(python3 -I -c "import socket; s = socket.socket(); s.bind(('127.0.0.1', 0)); print(s.getsockname()[1])"); python3 -I ../tools/red_vecino.py $(RED) $(RED_MAC) 900 & VECINO=$$!; python3 -I ../tools/red_entra.py $$RED_PUERTO 900 & ENTRA=$$!
 RED_DESPUES := kill $$BASURA $$VECINO $$ENTRA 2>/dev/null
-RED_QEMU := -netdev user,id=red0,hostfwd=tcp:127.0.0.1:$$RED_PUERTO-10.0.2.15:7777,guestfwd=tcp:10.0.2.100:7-cmd:$(abspath ../tools/red_eco.py) -netdev dgram,id=red5,local.type=unix,local.path=$(RED)/qemu2.sock,remote.type=unix,remote.path=$(RED)/vecino.sock -netdev hubport,id=red6,hubid=0,netdev=red5 -netdev dgram,id=red1,local.type=unix,local.path=$(RED)/qemu.sock,remote.type=unix,remote.path=$(RED)/pc.sock -netdev hubport,id=red2,hubid=0,netdev=red0 -netdev hubport,id=red3,hubid=0,netdev=red1 -netdev hubport,id=red4,hubid=0 -device virtio-net-pci,netdev=red4,disable-legacy=on,mac=$(RED_MAC),romfile=
+# Con `restrict=on`, la red de usuario de QEMU no deja salir nada al PC ni a Internet (DHCP, `guestfwd` y `hostfwd` sí):
+# ninguna prueba habla con fuera (ni el DNS de QEMU, 10.0.2.3, que reenviaría al del PC). Así su DHCP no da puerta de
+# enlace ni servidor de nombres: DashOS no tiene ruta hacia fuera.
+RED_QEMU := -netdev user,id=red0,restrict=on,hostfwd=tcp:127.0.0.1:$$RED_PUERTO-10.0.2.15:7777,guestfwd=tcp:10.0.2.100:7-cmd:$(abspath ../tools/red_eco.py) -netdev dgram,id=red5,local.type=unix,local.path=$(RED)/qemu2.sock,remote.type=unix,remote.path=$(RED)/vecino.sock -netdev hubport,id=red6,hubid=0,netdev=red5 -netdev dgram,id=red1,local.type=unix,local.path=$(RED)/qemu.sock,remote.type=unix,remote.path=$(RED)/pc.sock -netdev hubport,id=red2,hubid=0,netdev=red0 -netdev hubport,id=red3,hubid=0,netdev=red1 -netdev hubport,id=red4,hubid=0 -device virtio-net-pci,netdev=red4,disable-legacy=on,mac=$(RED_MAC),romfile=
 
 # Al final, el guion pulsa Reiniciar en el menú de apagado del panel y se espera al segundo arranque (REINICIO,
 # pruebas/arranque_virt_reinicio.txt; decisión del usuario del 2026-11-13).
@@ -178,6 +181,9 @@ arranque-virt-vm: virt
 # para DashOS, 10.0.2.2 de puerta de enlace) para la del invitado.
 USB_QEMU := -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2
 RED_CAJA := -netdev user,id=red0 -device virtio-net-pci,netdev=red0,disable-legacy=on,mac=$(RED_MAC),romfile=
+# Sin `restrict=on`: con él, el DHCP de QEMU no da puerta de enlace, y el invitado de la caja Linux (su ping a la puerta
+# en `arranque-virt-linux`, `pacman -Sy` en las de Arch) no tendría a quién hablar. DashOS no sale por su cuenta: en
+# `arranque-virt-linux` (sin disco) no tiene servidor de hora, y en las de Arch el suyo es el vecino (10.0.2.53).
 LINUX ?= $(HOME)/.cache/dashos-caja-linux/Image-caja
 INITRD ?= $(HOME)/.cache/dashos-caja-linux/initramfs.cpio.gz
 VIRT_LINUX := target/kernel8-virt-linux.img

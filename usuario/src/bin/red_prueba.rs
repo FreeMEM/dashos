@@ -282,12 +282,8 @@ fn segunda_parte() {
     let mudo = a(b"mudo.prueba").err();
     let tardo = (dashos::ahora_us() - t) / 1000;
     println!("  [red-prueba] nombres, un servidor mudo: {} ({:?} a los {} ms, tras tres intentos)", veredicto(mudo == Some(p::SIN_RESPUESTA) && (6_000..11_000).contains(&tardo)), mudo, tardo);
-    // El servidor de nombres de QEMU (10.0.2.3, el que da el DHCP), que pregunta al del PC: con Internet, contesta.
-    // No cuenta para la prueba: solo se dice.
-    match sistema(b"example.org", p::IPV4) {
-        Ok(d) => println!("  [red-prueba] el DNS de QEMU (10.0.2.3) da example.org: {}.{}.{}.{} (vale {} s)", d.dirs[0][0], d.dirs[0][1], d.dirs[0][2], d.dirs[0][3], d.ttl),
-        Err(e) => println!("  [red-prueba] el DNS de QEMU (10.0.2.3) no da example.org: {} (sin Internet en el PC, es lo normal)", e),
-    }
+    // Al servidor de nombres de QEMU (10.0.2.3, el del DHCP) no se le pregunta: reenvía al del PC, y de ahí a Internet.
+    // Ninguna prueba sale fuera (`docs/bitacoras/red.md`, 2026-11-16); además, QEMU va con `restrict=on`.
 
     // Escuchar, con el cortafuegos cerrado de serie. Desde el PC, `red_entra.py` lleva intentando entrar por el 7777
     // desde que arrancó QEMU: mientras nadie escucha, el cortafuegos tira sus intentos (se ve en la cuenta).
