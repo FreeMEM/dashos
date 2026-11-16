@@ -113,7 +113,8 @@ las únicas que da el kernel:
 - La 1: el paquete de arranque, un objeto de memoria de solo lectura. Dice qué es cada una de las demás llaves y trae
   los ELF de los servicios. Su formato está en `kernel/src/inicio.rs`.
 - Después, los permisos DMA (uno por aparato con DMA), el registro del sistema, el permiso de plazo, el de máquinas
-  virtuales (H9), el de página 0 (H4), el de apagar (llamada 51), el del aviso de memoria (llamada 53), la memoria de
+  virtuales (H9), el de página 0 (H4), el de apagar (llamada 51), el del aviso de memoria (llamada 53), el del reloj
+  (llamada 39, S13), la memoria de
   la VideoCore y, para
   cada aparato del árbol que conoce el kernel (serie, SD, USB, buzón de la VideoCore, y la V3D si contesta), sus
   registros (en páginas enteras) y su interrupción.
@@ -174,6 +175,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 36 | `proceso_avisar` | `x0` proceso (con leer), `x1` canal (con escribir) | 0. Cuando el proceso acabe (o ya, si acabó), el kernel escribe por el canal 16 bytes: clase y código como en `proceso_esperar` (u64 little-endian), con la marca de la llave del canal. Hasta 16 por proceso (`E_LIMITE`); con la cola llena, el aviso se pierde (K7) |
 | 37 | `proceso_numero` | `x0` proceso (con leer) | Su número de proceso en el kernel: no se repite, desde 1 (U6) |
 | 38 | `grupo_procesos` | `x0` grupo (con leer), `x1` dónde, `x2` cuántos caben (hasta 64) | Cuántos procesos vivos tiene el grupo; escribe sus números (u64) en `x1`. Solo con la llave del grupo (U6) |
+| 39 | `hora` | `x0` 0: leerla. `x0` 1: ponerla (S13), con `x1` el permiso del reloj (con escribir) y `x2` la hora en nanosegundos desde 1970 (UTC) | Con 0, la hora del calendario en nanosegundos desde 1970 (UTC), o 0 si no se sabe (la Pi 4 no tiene reloj: hasta que la ponga la red). Con 1, 0 si se puso; `E_TIPO` si `x1` no es el permiso, `E_DERECHOS` sin escribir, `E_ARGUMENTO` si la hora no es creíble (anterior a 2024) o con otro `x0`. Solo cambia la hora del calendario: el contador de la máquina, los plazos y los temporizadores no se tocan |
 | 40 | `hilo_crear` | `x0` entrada, `x1` pila (alineada a 16), `x2` argumento, `x3` TLS | El número del hilo. Baja a EL0 en la entrada con SP = pila, x0 = argumento y TPIDR_EL0 = TLS. `E_ARGUMENTO` si la entrada no es código del proceso o la pila no es memoria suya que se pueda escribir; `E_MEMORIA` si no cabe en el grupo; `E_LIMITE` con 256 hilos sin unir; `E_CERRADO` si el proceso se está acabando |
 | 41 | `hilo_unir` | `x0` número de hilo | `x0` clase y `x1` código, como `proceso_esperar`, cuando acaba. Solo hilos de `hilo_crear` del mismo proceso, una vez: si no, `E_ARGUMENTO` |
 | 42 | `esperar` | `x0` palabra de 32 bits (alineada a 4), `x1` valor, `x2` plazo en µs (0: sin plazo) | 0 si lo despertaron; 1 si la palabra no valía eso (no duerme); `E_PLAZO`; `E_ARGUMENTO` si la palabra no es memoria normal que pueda leer |
@@ -521,6 +523,7 @@ Tipos de objeto:
 | Temporizador | `temporizador_crear` | Avisos por un canal pasado un plazo; se para al cerrarlo |
 | Permiso de máquinas virtuales | Solo el kernel (`inicio` lo da a `caja-linux`) | Crear máquinas virtuales (escribir) |
 | Permiso de apagar | Solo el kernel (`inicio` lo manda a `sesiones`, sin derecho de transferirlo) | Apagar y reiniciar la máquina (escribir; llamada 51) |
+| Permiso del reloj | Solo el kernel (`inicio` lo da a `hora`, sin derecho de transferirlo) | Poner la hora del calendario (escribir; llamada 39 con `x0` = 1) |
 | vCPU de una máquina virtual | `maquina_crear` (la 0), `maquina_estado` 4 (las demás) | Correrla, darle más memoria a su máquina, patearla, pararla (escribir); la máquina se para al cerrar su última vCPU |
 
 ## Biblioteca de usuario en Rust

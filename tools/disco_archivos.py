@@ -48,6 +48,10 @@ ESPERA = os.path.join(os.path.dirname(HOLA), "espera")
 # de la caja), un ejecutable nuevo que deja el virus de enlace (crear sí puede) y `C/viejo`, que actualiza un programa
 # honrado con permiso del usuario.
 CAJA = "Estado/Servicios/caja-amiga"
+# S13: `Prefs/Red/hosts` y `Prefs/Red/hora` (el vecino de la prueba, `tools/red_vecino.py`, da la hora) y `Prefs/zona`.
+RED_HOSTS = "# Nombres que se saben sin preguntar a nadie.\n10.0.2.53 hora.prueba vecino.prueba\nfec0::53 vecino.prueba\nesto no es una línea de hosts\n"
+RED_HORA = "hora.prueba\n"
+ZONA = "Europe/Madrid\n"
 SALUDO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "caja", "pruebas68k", "saludo.exe")
 CAJA_ICONO = bytes([0xE3, 0x10, 0, 1]) + bytes(74) + b"saludo\0"
 CAJA_GUION = b"; el arranque de la caja Amiga\nsaludo\n"
@@ -191,7 +195,12 @@ if sys.argv[1] == "--comprobar":
         "Imagenes/raro\tdos.txt 14",
         "LEEME.txt 19",
         "Prefs/ cajón",
+        # S13: lo que se configura de la red (el servicio de red lo lee) y la zona horaria (la lee la barra).
+        "Prefs/Red/ cajón",
+        f"Prefs/Red/hora {len(RED_HORA)}",
+        f"Prefs/Red/hosts {len(RED_HOSTS.encode())}",
         "Prefs/fuente 8",
+        f"Prefs/zona {len(ZONA)}",
         "Programas/ cajón",
         f"Programas/avisa {os.path.getsize(AVISA)}",
         f"Programas/cambio {os.path.getsize(CAMBIO)}",
@@ -322,6 +331,11 @@ with tempfile.TemporaryDirectory() as t:
         f.write(frio)
     with open(os.path.join(raiz, "Prefs", "fuente"), "w") as f:
         f.write("Topaz 8\n")
+    # S13: `Prefs/Red` (hosts y el servidor de hora, que es el vecino de la prueba) y la zona horaria.
+    os.makedirs(os.path.join(raiz, "Prefs", "Red"))
+    for nombre, texto in (("Red/hosts", RED_HOSTS), ("Red/hora", RED_HORA), ("zona", ZONA)):
+        with open(os.path.join(raiz, "Prefs", *nombre.split("/")), "w") as f:
+            f.write(texto)
     os.makedirs(os.path.join(raiz, "Programas"))
     if os.path.exists(CATALOGO_DASH):
         cat = os.path.join(raiz, *DASH_VENTANA.split("/"), "Locale", "Catalogs", "español")

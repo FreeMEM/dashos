@@ -62,6 +62,9 @@ pub enum Objeto {
     /// Permiso para escuchar el aviso de memoria baja (S3): con escribir, la llamada 53. Solo lo da el kernel, a
     /// `inicio`, que se lo manda a `sesiones` y a nadie más.
     PermisoMemoria,
+    /// Permiso para poner la hora del calendario (S13): con escribir, la llamada 39 con `x0` = 1. Solo lo da el kernel,
+    /// y `inicio` lo da a `hora` (el servicio que la toma de la red) y a nadie más.
+    PermisoReloj,
     /// Un grupo de procesos con su cupo (C42): con escribir se crean procesos en él y se mata; con leer se mira el uso.
     Grupo(Arc<crate::cupo::Cupo>),
     /// Permiso para crear máquinas virtuales (caja Linux, H9): con escribir, la llamada 45. Solo lo da el kernel, a

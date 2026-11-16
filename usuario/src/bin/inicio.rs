@@ -61,6 +61,9 @@ const FICHAS: &[(&str, u32, u32, u32, &str)] = &[
     // kit-c: la prueba de las ventanas de Dash, de Ana, sin derechos y encerrada en su cajón: lee su catálogo de
     // `Locale/Catalogs` de ahí (LOCALE:, provisional hasta las asignaciones).
     ("dash-ventana", 1000, 1000, 0, "Estado/Servicios/dash-ventana"),
+    // S13: el servicio de red, para leer lo que se configura en `Prefs/Red` del disco del sistema (`hosts` y `hora`):
+    // del sistema, sin derechos y encerrado ahí.
+    ("red", 1, 1, 0, "Prefs/Red"),
 ];
 /// Raíces de más en el alta de archivos (U2, S6b capa 2): programa, hueco (1 a 15), tope (4 leer, 6 leer y escribir) y
 /// camino desde la raíz del disco.
@@ -70,6 +73,8 @@ const RAICES_DE_MAS: &[(&str, u8, u8, &str)] = &[
     // S28 (decisión del usuario del 2026-11-13): la papelera de la caja Amiga, junto a su cajón y fuera de su alcance:
     // lo que borra va ahí (`HUECO_PAPELERA`). Provisional, como su cajón.
     ("caja-amiga", dashos::protocolo::archivos::HUECO_PAPELERA, 6, "Estado/Servicios/caja-amiga.papelera"),
+    // S13: los ajustes del sistema, solo para leer, para la barra: de ahí saca la zona horaria (`Prefs/zona`).
+    ("barra", 1, 4, "Prefs"),
 ];
 /// Los servicios cuyas llaves reparte `sesiones` (U4): de ellos recibe una copia sin marca, para hacer copias marcadas
 /// con el número de cada programa al que se las da. Del resto (archivos), una con la suya, como cualquier cliente.
@@ -257,6 +262,7 @@ fn principal() -> u64 {
             9 => "permiso de página 0",
             10 => "permiso de apagar",
             11 => "permiso del aviso de memoria",
+            12 => "permiso del reloj",
             _ => "?",
         };
         println!("  [inicio]   llave {}: {} de {}", u32_en(p + 20), tipo, nombre(p));

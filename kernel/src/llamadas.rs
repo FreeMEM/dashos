@@ -41,6 +41,7 @@
 //! | 47 | maquina_memoria(máquina, memoria, dirección física del invitado): más RAM para el invitado |
 //! | 48 | maquina_estado(máquina, operación, argumento, a, b): registros, aborto, GICV, otra vCPU, reiniciarla, patearla, parar |
 //! | 51 | apagar(permiso, modo): 0 apaga la máquina, 1 la reinicia; no vuelve si se pudo |
+//! | 39 | hora(0): la hora del calendario; hora(1, permiso, ns): ponerla, con el permiso del reloj (S13) |
 //!
 //! `proceso_crear` lleva en x4 una llave de grupo donde crear el proceso, o 0 para el propio (C42).
 
@@ -177,10 +178,11 @@ pub fn atender(marco: &mut Marco) {
         // justa con capacidad 0. Desde S3 pide una llave de permiso de plazo en a[0] (para volver a la justa, no).
         // E_LIMITE si su núcleo ya tiene prometido demasiado o los números no valen.
         28 => plazo(a[0] as u32, a[1], a[2]),
-        // A14: la hora del calendario en nanosegundos desde 1970 (UTC); 0 si no se sabe. a[0] = 0; los demás valores,
-        // reservados (ponerla pedirá una llave de permiso).
+        // A14: la hora del calendario en nanosegundos desde 1970 (UTC); 0 si no se sabe. a[0] = 0.
+        // S13: con a[0] = 1, ponerla: el permiso del reloj en a[1] y la hora (ns desde 1970, UTC) en a[2].
         39 => match a[0] {
             0 => crate::reloj::hora(),
+            1 => poner_hora(a[1] as u32, a[2]),
             _ => E_ARGUMENTO,
         },
         // R10 (S5): hasta 256 bytes al azar en a[0], a[1] bytes; x1 = 1 si vienen de una semilla de verdad.
@@ -521,6 +523,23 @@ fn pagina_cero(permiso: u32, h: u32) -> u64 {
         Ok(()) => 0,
         Err(e) => error_espacio(e),
     }
+}
+
+/// La llamada 39 con `x0` = 1 (S13): pone la hora del calendario (nanosegundos desde 1970, UTC). Solo con el permiso
+/// del reloj, que da el kernel a `inicio` y este a `hora`, el servicio que la toma de la red. `E_ARGUMENTO` si la hora no
+/// es creíble (anterior a 2024); entonces no cambia nada. El contador de la máquina (`ahora_us`, los plazos, los
+/// temporizadores) no se toca: solo cambia la hora del calendario.
+fn poner_hora(permiso: u32, ns: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    {
+        let t = proc_.llaves.tomar();
+        let Some(p) = t.ver(permiso) else { return E_LLAVE };
+        let Objeto::PermisoReloj = p.objeto else { return E_TIPO };
+        if p.derechos & objetos::ESCRIBIR == 0 {
+            return E_DERECHOS;
+        }
+    }
+    if crate::reloj::poner_hora_ns(ns) { 0 } else { E_ARGUMENTO }
 }
 
 /// La llamada 51 (decisión del usuario del 2026-11-13): apaga (`modo` 0) o reinicia (1) la máquina. Solo con el

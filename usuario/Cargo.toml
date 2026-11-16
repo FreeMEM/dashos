@@ -29,7 +29,7 @@ sonido = { package = "dashos-sonido", path = "../sonido", optional = true }
 audiodevice = { package = "dashos-audiodevice", path = "../audiodevice", optional = true }
 amigados = { package = "dashos-amigados", path = "../amigados", optional = true }
 caja-vmm = { package = "dashos-caja-vmm", path = "../caja-linux/vmm", optional = true }
-smoltcp = { version = "0.14.0", default-features = false, optional = true, features = ["alloc", "medium-ethernet", "proto-ipv4", "proto-dhcpv4", "socket-tcp", "socket-tcp-reno", "socket-dhcpv4"] }
+smoltcp = { version = "0.14.0", default-features = false, optional = true, features = ["alloc", "medium-ethernet", "proto-ipv4", "proto-dhcpv4", "proto-ipv6", "proto-ipv6-slaac", "socket-tcp", "socket-tcp-reno", "socket-udp", "socket-dhcpv4", "iface-max-addr-count-4", "iface-max-route-count-4"] }
 
 [lib]
 name = "dashos"
@@ -317,6 +317,12 @@ test = false
 [[bin]]
 name = "sin-red"
 path = "src/bin/sin_red.rs"
+test = false
+
+# S13: la hora por la red (SNTP): el único con el permiso del reloj.
+[[bin]]
+name = "hora"
+path = "src/bin/hora.rs"
 test = false
 
 # La caja Linux (H9): el servicio de las máquinas virtuales y un programa sin su permiso.
