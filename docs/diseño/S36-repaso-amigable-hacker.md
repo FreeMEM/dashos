@@ -65,6 +65,82 @@ Son consecuencia directa del principio de S0. Los diseños se corrigen para cump
    llevar una ROM libre de serie y que la caja elija sola; llevar una ROM es una decisión de licencia y de la regla "sin
    ROMs en el repositorio".
 
+## Estudio y recomendación de las cuatro decisiones (2026-11-16)
+
+Pedido por el usuario. Son recomendaciones: no están decididas hasta que él lo diga.
+
+### 1. Las tres decisiones ya tomadas: se quedan, con un ajuste cada una
+
+- **Contraseña en cada acción de administrador.** Se queda sin "vale durante 5 minutos": esa ventana de tiempo es
+  justo lo que aprovecha un programa malo para colar su acción detrás de la del usuario. Ajuste: **una tanda es una
+  acción**. Instalar diez paquetes de un plan de `Paq`, o crear un usuario con sus grupos, es una sola ventana que
+  enseña la lista entera y pide la contraseña una vez. Lo que no esté en la lista enseñada no se hace.
+- **Las aplicaciones encerradas no cargan de `Home:Libs`.** Se queda: si no, cualquier programa del Shell deja una
+  biblioteca que se cuela en todas las aplicaciones. Ajuste: **modo de desarrollo por aplicación** (regla 4). El
+  usuario marca una aplicación y esa sí carga de su capa; marcarla pide la confirmación de `guardian` (si no, la
+  marcaría el mismo programa malo), se ve en su ficha y queda en el registro. Y una orden para lanzar desde el Shell
+  un programa encerrado, para probarlo como lo verá el usuario.
+- **La guardia de la caja Amiga, que pregunta.** Se queda preguntar. Ajustes: con la sesión delante la pregunta
+  **espera**, sin el plazo de 30 segundos; el plazo existe porque hoy la caja se queda parada mientras pregunta, y lo
+  que hay que arreglar es eso (el programa 68k espera, la caja sigue atendiendo su ventana). Con la sesión bloqueada
+  o sin nadie, es "no", con un aviso que se queda: "actualiza.exe no pudo cambiar viejo. Volver a intentar". Y la
+  versión anterior del ejecutable se guarda siempre en la papelera, también cuando se dice que sí: así se puede
+  deshacer.
+
+### 2. LKL o máquinas virtuales: máquinas virtuales (S35), y LKL se retira
+
+| | LKL (S12b) | Dominio en máquina virtual (S35) |
+|---|---|---|
+| Qué Linux corre | Una variante fuera del kernel oficial (`arch/lkl`), mantenida aparte | El kernel oficial, sin tocar |
+| Lo que hay que escribir | La capa que pide `arch/lkl` y, además, cómo llegan a ese Linux el bus, las interrupciones y el DMA del aparato de verdad | Pasar el aparato a la máquina y servirlo por virtio |
+| Lo que DashOS ya tiene | Hilos en los procesos | El hipervisor (la caja Linux) y los controladores virtio, probados |
+| Seguir las versiones de Linux | Depende de que el proyecto LKL siga | Se cambia el kernel y ya |
+| Frontera de licencia | Código GPL enlazado con nuestra capa, en la zona GPL | Un kernel aparte que solo habla virtio: la más limpia |
+| Protección del propio Linux | La de un proceso | La de un proceso y, además, el código del kernel protegido desde fuera (capa 3) |
+| Memoria | Sin medir | Sin medir (objetivo 48 MB) |
+
+Recomendado: **máquinas virtuales**. La razón que pesa: LKL se pensó para usar la pila de red y los sistemas de
+ficheros de Linux dentro de un programa, no para llevar aparatos de verdad; lo que S12b quería ahorrar (escribir la
+unión con cada bus) habría que escribirlo igual, y sobre un Linux que no es el oficial. Comprobado: LKL sigue fuera
+del kernel oficial (las propuestas para meterlo llegan hasta 2021). No comprobado: si hoy admite varios procesadores
+o aparatos reales; lo que se recuerda es que no, pero no se ha verificado.
+
+Lo que cambia con la decisión:
+- S12b queda sustituido por S35 en lo de LKL; lo de red de S12b (SACK, `amissl.library` nativa) sigue.
+- Los hilos de usuario no se pierden: hacen falta igual.
+- **El Wi-Fi de la Pi** (SDIO, sin IOMMU) era lo primero de S12b. Con S35: controlador propio (el chip es "fullmac",
+  casi todo lo hace su firmware) o dominio sin barrera de DMA. Sigue por decidir con la placa delante.
+- **Corrección a S35**: "con 1 GB o menos, sin dominios" es demasiado tajante. La Pi 3 (1 GB) y el THEA1200 (512 MB)
+  dependen del Wi-Fi. Mejor: el dominio de red entra si su tope medido cabe (48 MB en 1 GB cabe); los de gráficas, no.
+- Si la medida del paso 1 de S35 sale mal (muy por encima de 48 MB), se vuelve a mirar. LKL no tendría por qué
+  gastar menos: es el mismo kernel.
+
+### 3. "Pantallas" o "espacios de trabajo": son tres cosas y cada una lleva su nombre
+
+- **Monitor**: el aparato físico.
+- **Espacio de trabajo**: lo de todos los días, del 1 al 9, cada uno con su disposición (S27, ya hecho en el
+  compositor). Es la palabra que ve el usuario.
+- **Pantalla**: solo la pantalla propia de un programa de Amiga (`OpenScreen`, con su resolución y su paleta, S23). Se
+  ve como un espacio de trabajo más, que es lo que S27 ya dice.
+
+Teclas: mandan las de S27, que son las que existen (Super+1..9, Super+arriba y abajo). Amiga+M y Amiga+N se quedan
+como atajo del Amiga para lo mismo (pasar al siguiente y al anterior), y el gesto de arrastrar una pantalla hacia
+abajo se conserva. S10 y S23 se corrigen para decirlo así. S27 usa a veces "pantalla" por "monitor": se corrige.
+
+### 4. ROM para los juegos del Amiga: sí, la de AROS, en la imagen pero no en el repositorio
+
+- Qué es: la ROM de AROS para 68k es libre (licencia APL) y se puede repartir. No es la de Commodore.
+- No rompe la sala limpia: esa regla es no leer su código para escribir el nuestro. Repartir su binario no lo es.
+- No rompe "sin ROMs en el repositorio": la imagen de `SYS:` la baja al construirse, con su huella comprobada, y
+  dice de dónde sale el código fuente (lo pide su licencia). En git no entra.
+- Cómo se usa: si el usuario tiene su Kickstart, manda el suyo (y sigue siendo la referencia de las pruebas). Si no,
+  la caja arranca con la de AROS sin preguntar. La caja elige sola el modo ("máquina entera" al primer acceso a los
+  chips) y la configuración de cada juego se guarda en texto junto a él.
+- Lo que se dice claro: con la ROM de AROS no funcionarán todos los juegos. Cuántos, no se sabe: no está medido.
+  Cuando uno falle, el aviso lo dice en llano y ofrece poner un Kickstart propio.
+- Cuándo: no hay prisa. Los chips del Amiga (S18) están diseñados, no hechos; esto se hace en su fase 2. S18 ya lo
+  traía como pregunta 8 ("probarlo en la fase 2 como extra"): la recomendación es que deje de ser un extra.
+
 ## Orden
 
 Primero se corrigen los documentos con las reglas 1 a 10 (rama `repaso-s0`, revisada antes de unir). Luego, al hacer
