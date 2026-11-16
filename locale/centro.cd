@@ -14,7 +14,7 @@ Apariencia
 MSG_6 (6//)
 Monitor del sistema
 MSG_7 (7//)
-Panel del escritorio
+Escritorio
 MSG_8 (8//)
 Acerca de
 MSG_9 (9//)
@@ -186,7 +186,7 @@ Lo que dice el compositor de cada pantalla.
 MSG_92 (92//)
 Lo tuyo con detalle; lo demás, sumado.
 MSG_93 (93//)
-El monitor del fondo. Intro cambia una fila.
+Los menús y el monitor del fondo. Intro cambia una fila.
 MSG_94 (94//)
 El sistema.
 MSG_95 (95//)
@@ -201,3 +201,9 @@ MSG_99 (99//)
 Guardar
 MSG_100 (100//)
 guardar un ajuste
+MSG_101 (101//)
+Menús de los programas: {}
+MSG_102 (102//)
+en la ventana
+MSG_103 (103//)
+en la barra de arriba

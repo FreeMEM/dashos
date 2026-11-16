@@ -51,6 +51,7 @@ mod idiomas;
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU32, Ordering};
 use dashos::println;
 use dashos::protocolo::sesiones as s;
 use dashos::servicio::{cerrar_llaves, recibir, Recibido, MAX_DATOS, MAX_LLAVES};
@@ -106,7 +107,7 @@ const CATEGORIAS: &[(&str, &str)] = &[
     ("pantallas", "Pantallas"),
     ("apariencia", "Apariencia"),
     ("monitor", "Monitor del sistema"),
-    ("escritorio", "Panel del escritorio"),
+    ("escritorio", "Escritorio"),
     ("acerca", "Acerca de"),
 ];
 /// El nombre que se ve de la categoría `k` de `CATEGORIAS`, en el idioma del usuario (el de la tabla es el de la
@@ -119,7 +120,7 @@ fn nombre_categoria(k: usize) -> &'static str {
         3 => tr(4, "Pantallas"),
         4 => tr(5, "Apariencia"),
         5 => tr(6, "Monitor del sistema"),
-        6 => tr(7, "Panel del escritorio"),
+        6 => tr(7, "Escritorio"),
         7 => tr(8, "Acerca de"),
         _ => "",
     }
@@ -762,6 +763,109 @@ fn escribir_env(fichero: &str, bytes: &[u8]) -> Result<usize, String> {
     Ok(bytes.len())
 }
 
+/// S10, "Dónde van los menús de un programa" (`docs/bitacoras/menus.md`): el ajuste de todo el sistema es
+/// `Escritorio/menus` de `ENV:` (en uso) y `ENVARC:` (guardado), clave `sitio`: `dentro` (de serie, una fila en cada
+/// ventana) o `barra` (los del programa activo en la barra de arriba, como en el Amiga). El centro lo aplica en marcha:
+/// se lo dice al compositor, que lo reparte a todos los programas y a la barra. La misma clave que escribe la orden
+/// `Ajuste menus`.
+const FICHERO_MENUS: &str = "Escritorio/menus";
+const CABECERA_MENUS: &str = "Dónde van los menús de los programas (Ajustes > Escritorio; la orden `Ajuste menus`). Este fichero manda.\nsitio: dentro (una fila en cada ventana) o barra (los del programa activo en la barra de arriba, como en el Amiga).";
+const SITIO_DENTRO: u32 = 0;
+const SITIO_BARRA: u32 = 1;
+/// El sitio de los menús que tiene el compositor ahora (lo último que se le puso).
+static MENUS_EN_USO: AtomicU32 = AtomicU32::new(SITIO_DENTRO);
+
+/// El sitio de los menús de `ENV:` (o el guardado, o el de fábrica). `Err` con el porqué ("no hay" si no está).
+fn leer_sitio_menus() -> Result<u32, String> {
+    let bytes = leer_ajuste(FICHERO_MENUS)?;
+    let x = kit::idioma::texto::Ajustes::leer(&bytes).map_err(|_| String::from("no es texto"))?;
+    match x.valor("sitio") {
+        None => Err("no hay".into()),
+        Some(v) if v.eq_ignore_ascii_case("dentro") => Ok(SITIO_DENTRO),
+        Some(v) if v.eq_ignore_ascii_case("barra") => Ok(SITIO_BARRA),
+        Some(v) => Err(alloc::format!("sitio {:?} no es dentro ni barra", v)),
+    }
+}
+
+/// Dice al compositor dónde van los menús, con una conexión de un momento. 0 si lo hizo; -1 si no.
+fn poner_menus_en_compositor(sitio: u32) -> i32 {
+    const MENUS_OBJ: u32 = 45;
+    const SYNC: u32 = 44;
+    let mut conexion = None;
+    for _ in 0..20 {
+        if let Some(mut c) = Cliente::conectar() {
+            if let Some(g) = c.globales() {
+                conexion = Some((c, g));
+                break;
+            }
+            adios_al_compositor();
+        }
+        dashos::dormir_us(50_000);
+    }
+    let Some((mut c, globales)) = conexion else { return -1 };
+    let Some(gm) = globales.iter().find(|g| g.1 == "dashos_menus_v1").map(|g| g.0) else {
+        adios_al_compositor();
+        return -1;
+    };
+    let mut e = Escritor::new();
+    e.empezar(REGISTRO, wl_registry::req::BIND).uint(gm).texto(Some("dashos_menus_v1")).uint(1).uint(MENUS_OBJ).fin();
+    e.empezar(MENUS_OBJ, wayland::tablas::dashos_menus_v1::req::PONER_SITIO).uint(sitio).fin();
+    e.empezar(1, wl_display::req::SYNC).uint(SYNC).fin();
+    c.mandar(&e);
+    while let Some((o, orden, _)) = c.evento() {
+        if o == SYNC && orden == wayland::tablas::wl_callback::ev::DONE {
+            adios_al_compositor();
+            MENUS_EN_USO.store(sitio, Ordering::Relaxed);
+            return 0;
+        }
+    }
+    adios_al_compositor();
+    -1
+}
+
+/// Ajustes > Escritorio: el otro sitio para los menús, en `ENV:` (sobre lo que había), guardado en `ENVARC:` y puesto
+/// en el compositor. Lo que pasó, para la consola.
+fn cambiar_sitio_menus() -> String {
+    use kit::idioma::texto::Ajustes;
+    let nuevo = if MENUS_EN_USO.load(Ordering::Relaxed) == SITIO_BARRA { SITIO_DENTRO } else { SITIO_BARRA };
+    let antes = leer_ajuste(FICHERO_MENUS).ok();
+    let mut x = antes.as_deref().and_then(|b| Ajustes::leer(b).ok()).unwrap_or_else(|| {
+        let mut x = Ajustes::nuevo();
+        x.comentar(CABECERA_MENUS);
+        x
+    });
+    let _ = x.poner("sitio", if nuevo == SITIO_BARRA { "barra" } else { "dentro" });
+    let usado = escribir_env(FICHERO_MENUS, x.texto().as_bytes());
+    let guardado = if usado.is_ok() { guardar_en_envarc(FICHERO_MENUS) } else { -1 };
+    let puesto = poner_menus_en_compositor(nuevo);
+    alloc::format!(
+        "en ENV: {}; guardado: {}; en el compositor: {}",
+        match usado {
+            Ok(n) => alloc::format!("{} bytes", n),
+            Err(e) => e,
+        },
+        guardado,
+        if puesto == 0 { "sí" } else { "no" }
+    )
+}
+
+/// Los menús de `ENV:`, si son otros que los que tiene el compositor (lo llaman el arranque y los avisos de cambio).
+/// Sin ajuste (o tras salir de la sesión), los de serie: dentro.
+fn aplicar_sitio_menus(de_donde: &str) {
+    let sitio = match leer_sitio_menus() {
+        Ok(s) => s,
+        Err(porque) if porque == "no hay" => SITIO_DENTRO,
+        Err(porque) => {
+            println!("  [centro] {}: {}; los menús se quedan donde están", FICHERO_MENUS, porque);
+            return;
+        }
+    };
+    if sitio != MENUS_EN_USO.load(Ordering::Relaxed) {
+        let puesto = poner_menus_en_compositor(sitio);
+        println!("  [centro] menús en marcha: {}, de {}; en el compositor: {}", if sitio == SITIO_BARRA { "en la barra" } else { "dentro de las ventanas" }, de_donde, if puesto == 0 { "sí" } else { "no" });
+    }
+}
+
 /// Usar: la apariencia en `ENV:` (sobre lo que había allí). Los bytes, o el porqué.
 fn usar_apariencia(ap: &Apariencia) -> Result<usize, String> {
     let antes = leer_ajuste(FICHERO_TEMA).ok();
@@ -1166,10 +1270,13 @@ fn nombre_bloque(k: usize) -> &'static str {
     }
 }
 
-/// Las filas del panel del escritorio: enseñarlo, la esquina, el intervalo, las gráficas y un bloque por fila.
+/// Las filas de Escritorio: (S10) dónde van los menús de los programas; y las del panel del fondo: enseñarlo, la
+/// esquina, el intervalo, las gráficas y un bloque por fila.
 fn lineas_panel(aj: &monitor::Ajustes) -> Vec<String> {
     let esquina = monitor::ESQUINAS.iter().position(|e| e.0 == aj.esquina).map_or("", nombre_esquina);
+    let sitio = if MENUS_EN_USO.load(Ordering::Relaxed) == SITIO_BARRA { tr(103, "en la barra de arriba") } else { tr(102, "en la ventana") };
     let mut l = alloc::vec![
+        trf(101, "Menús de los programas: {}", &[&sitio]),
         trf(80, "Enseñar el panel en el fondo: {}", &[&si_no(aj.mostrar)]),
         trf(81, "Esquina: {}", &[&esquina]),
         trf(82, "Cada cuánto se mide: {} s", &[&aj.intervalo]),
@@ -1326,7 +1433,7 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
         } else if cat == MONITOR_SIS {
             (tr(92, "Lo tuyo con detalle; lo demás, sumado."), reg.join("|"))
         } else if cat == PANEL_FONDO {
-            (tr(93, "El monitor del fondo. Intro cambia una fila."), reg.join("|"))
+            (tr(93, "Los menús y el monitor del fondo. Intro cambia una fila."), reg.join("|"))
         } else {
             (tr(94, "El sistema."), reg.join("|"))
         };
@@ -1612,12 +1719,21 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                         cambio = true;
                     }
                 }
+                Some("elegir") if cat == PANEL_FONDO && i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int) == 0 => {
+                    // S10: dónde van los menús: el otro sitio, en `ENV:` (se ve ya) y guardado.
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                    let r = cambiar_sitio_menus();
+                    lineas_registro = lineas_panel(&aj_panel);
+                    println!("  [centro] Escritorio: {}; {}", lineas_registro[0], r);
+                    i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                    cambio = true;
+                }
                 Some("elegir") if cat == PANEL_FONDO => {
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
                     let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
-                    if let Some(r) = usize::try_from(v).ok().and_then(|k| cambiar_panel(&mut aj_panel, k)) {
+                    if let Some(r) = usize::try_from(v - 1).ok().and_then(|k| cambiar_panel(&mut aj_panel, k)) {
                         lineas_registro = lineas_panel(&aj_panel);
-                        println!("  [centro] Panel del escritorio: {}; {}", lineas_registro[v as usize], r);
+                        println!("  [centro] Escritorio: {}; {}", lineas_registro[v as usize], r);
                         i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
                         cambio = true;
                     }
@@ -2107,6 +2223,8 @@ fn al_cambiar_env(v: &mut Vigila, idioma: &mut Option<idiomas::Idiomas>, uso: &m
         }
         *idioma = Some(nuevo);
     }
+    // S10: dónde van los menús.
+    aplicar_sitio_menus("ENV:Escritorio/menus");
     // El tema: el de `ENV:`, si es otro que el que está en uso.
     match leer_apariencia() {
         Ok(mut ap) => {
@@ -2181,6 +2299,8 @@ fn aplicar_al_arrancar() -> Apariencia {
         }
         dashos::dormir_us(300_000);
     }
+    // S10: los menús, si la de fábrica dice otra cosa que lo de serie.
+    aplicar_sitio_menus("ENVARC:Escritorio/menus");
     // Lo calculado no se guarda: antes de entrar nadie no hay `ENV:` (se queda en uso).
     let guardado: Option<i32> = None;
     let _ = antes;
