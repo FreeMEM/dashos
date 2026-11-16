@@ -19,7 +19,11 @@ pub const FILENOTE: &str = "FILE/A,COMMENT";
 pub const INFO: &str = "";
 pub const LIST: &str = "DIR/M,FILES/S,DIRS/S,QUICK/S,NOHEAD/S,COLOR/S,NOCOLOR/S";
 pub const MAKEDIR: &str = "NAME/M/A";
+/// S6b, S36: lo concedido a tus programas; dar y quitar, con la confirmación del sistema.
+pub const PERMISO: &str = "DAR/S,QUITAR/S,PROGRAMA,PERMISO";
 pub const PROTECT: &str = "FILE/A,FLAGS,ADD/S,SUB/S";
+/// S6, S36: el registro común: leer (filtrar y seguir en vivo) y apuntar.
+pub const REGISTRO: &str = "APUNTA/S,TEXTO/M,MOTIVO/K,VECES/K/N,PROGRAMA/K,CLASE/K,DESDE/K,HASTA/K,ULTIMAS/K/N,DE/K,TODO/S,SEGUIR/S";
 pub const RENAME: &str = "FROM/A,TO=AS/A";
 pub const TYPE: &str = "FROM/M,NUMBER/S,HEX/S";
 pub const VERSION: &str = "";
@@ -40,7 +44,9 @@ pub const BASE: &[(&str, &str)] = &[
     ("Info", INFO),
     ("List", LIST),
     ("MakeDir", MAKEDIR),
+    ("Permiso", PERMISO),
     ("Protect", PROTECT),
+    ("Registro", REGISTRO),
     ("Rename", RENAME),
     ("Type", TYPE),
     ("Version", VERSION),

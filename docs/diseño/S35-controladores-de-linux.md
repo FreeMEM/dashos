@@ -42,7 +42,7 @@ S12b había aceptado LKL: el kernel de Linux compilado como biblioteca dentro de
 | Seguir las versiones de Linux | Depende de que el proyecto LKL siga | Se cambia el kernel y ya |
 | Frontera de licencia | Código GPL enlazado con nuestra capa, en la zona GPL | Un kernel aparte que solo habla virtio: la más limpia |
 | Protección del propio Linux | La de un proceso | La de un proceso y, además, el código del kernel protegido desde fuera (capa 3) |
-| Memoria | Sin medir | Sin medir (objetivo 48 MB) |
+| Memoria | Sin medir | Medido en QEMU: 15 a 17 MB en reposo para red y Wi-Fi juntos (ver "Memoria") |
 
 La razón que pesa: LKL se pensó para usar la pila de red y los sistemas de ficheros de Linux dentro de un programa,
 no para llevar aparatos de verdad. Lo que S12b quería ahorrar (escribir la unión con cada bus) habría que escribirlo
@@ -51,8 +51,8 @@ meterlo llegan hasta 2021). No comprobado: si hoy admite varios procesadores o a
 que no, pero no se ha verificado.
 
 Lo que sigue de S12b: lo de red (SACK, `amissl.library` nativa). Los hilos de usuario hacen falta igual, aunque ya
-no por LKL. Si la medida del paso 1 (ver "Orden") sale muy por encima de 48 MB, se vuelve a mirar. LKL no tendría
-por qué gastar menos: es el mismo kernel.
+no por LKL. La medida del paso 1 (ver "Orden" y "Memoria") salió muy por debajo de 48 MB, así que no hay que volver
+a mirarlo. LKL no tendría por qué gastar menos: es el mismo kernel.
 
 ## Cómo llegan los aparatos al dominio
 
@@ -133,14 +133,107 @@ Preocupación del usuario: el consumo. Reglas:
   dominio (menos de un segundo, sin estado). La memoria no es una prueba de integridad (un módulo maligno puede ocupar
   lo mismo): es una alarma, la sexta capa. Si pasa tres veces seguidas, sale un aviso en llano ("El Wi-Fi está
   fallando y se reinicia solo"), con el detalle a un clic.
-- **Condición para dar el diseño por bueno**: medirlo. Objetivo: 48 MB o menos para el dominio de red y Wi-Fi. Las
-  cifras de hoy (32 a 64 MB para red; más para gráficas) son estimaciones sin medir.
+- **Condición para dar el diseño por bueno**: medirlo. Objetivo: 48 MB o menos para el dominio de red y Wi-Fi.
+  **Medido el 2026-11-16 en QEMU: se cumple, con margen.** Red y Wi-Fi juntos arrancan con 15 a 17 MB y en reposo
+  usan 14 a 17 MB, según el número de procesadores (detalle abajo, en "Medido"). Lo que falta por medir lo sube algo,
+  no lo triplica. Los de gráficas siguen sin medir.
 - **Lo que baja el consumo**: controladores propios para lo siempre encendido; dominios a demanda; Linux sin
-  distribución (nuestro kernel mínimo ocupa 5 MB en disco); el globo de memoria, que ya existe (aviso-cajas); el kernel
-  compartido entre dominios.
-- **Con poca memoria**: el dominio de red entra si su tope medido cabe (48 MB en 1 GB caben). La Pi 3 (1 GB) y el
-  THEA1200 (512 MB) dependen del Wi-Fi, así que no vale decir "con 1 GB o menos, sin dominios", como decía aquí
-  antes. Los de gráficas, desde 4 GB y apagables (S34).
+  distribución (el kernel del dominio ocupa de 4 a 5 MB en disco, 2 MB comprimido); el globo de memoria, que ya existe
+  (aviso-cajas); el kernel compartido entre dominios (su código y sus datos de solo lectura son 4 a 5 MB por dominio).
+- **Con poca memoria**: el dominio de red entra si su tope medido cabe (unos 24 MB; 48 en 1 GB caben). La Pi 3
+  (1 GB) y el THEA1200 (512 MB) dependen del Wi-Fi, así que no vale decir "con 1 GB o menos, sin dominios", como
+  decía aquí antes. Los de gráficas, desde 4 GB y apagables (S34).
+
+### Medido (2026-11-16)
+
+**Qué se midió.** Linux 7.3.4, la estable de kernel.org de ese día (comprobada con su `sha256sums.asc`), sin tocar.
+`make tinyconfig` y encima la configuración propia de `caja-linux/dominios/` (`comun.config`, una por arquitectura y
+una por dominio), sin módulos. Sin distribución: el initramfs solo lleva `/init`, un programa propio (4 KB en
+aarch64, 9 en x86-64) sin biblioteca C (`caja-linux/dominios/servidor.c`) que levanta las interfaces, abre un socket
+de paquetes en cada una (lo que usaría para pasar tramas a DashOS), dice "listo" y vuelca `/proc/meminfo` tres
+segundos después.
+
+- **Red**: la tarjeta con cable e1000e que emula QEMU (Intel 82574L), por PCIe, y virtio-net como canal hacia fuera.
+- **Wi-Fi**: `cfg80211`, `mac80211`, `mac80211_hwsim` (una radio simulada, para que la pila trabaje sin aparato:
+  QEMU no emula ningún Wi-Fi) y `rt2800usb` (las llaves USB Ralink/MediaTek RT5370, RT3070) con su xHCI. Este
+  último está dentro del kernel pero sin aparato: cuenta su código, no lo que gasta con una llave enchufada.
+- **Red y Wi-Fi juntos**, que es el dominio del objetivo.
+
+**Dónde.** En QEMU 11.1, no en hardware: aarch64 con `-M virt` y Cortex-A72 **emulado** (sin KVM: el PC es x86) y
+x86-64 con `-M q35` y KVM. Las dos tarjetas, en un concentrador de QEMU sin salida al PC.
+
+**Cómo.** `tools/medir_dominios.py todo`. La memoria mínima es la menor `-m` (en MB) con la que llega a "listo" y
+vuelca la memoria sin pánico ni OOM, por búsqueda binaria y confirmada dos veces. "Usada en reposo" es la memoria de
+la máquina menos `MemFree`, con el mínimo más un 25 %: incluye lo que el kernel reserva al arrancar (en aarch64, 9 a
+10 MB contando el propio kernel, según su línea `Memory:`) y lo que pide después. "Con tráfico": tras el reposo,
+20.000 tramas de 1.514 bytes de la tarjeta con cable a la virtio-net. El tiempo, de cinco arranques (mediana): desde
+que se lanza QEMU hasta que "listo" sale por la consola serie, y el reloj del kernel (`/proc/uptime`) en ese momento.
+
+| Máquina | Dominio | CPU | Mínimo para arrancar | Usada en reposo | Con tráfico | Kernel en memoria | Kernel en disco | "Listo" desde fuera | Reloj del kernel |
+|---|---|---|---|---|---|---|---|---|---|
+| aarch64 | red | 1 | 13 MB | 12,0 MB | 12,5 MB | 3,8 MB | 4,1 MB (1,6 comprimido) | 0,45 s | 0,37 s |
+| aarch64 | red | 4 | 15 MB | 14,3 MB | 14,7 MB | 3,8 MB | 4,1 MB | 0,49 s | 0,40 s |
+| aarch64 | Wi-Fi | 1 | 14 MB | 13,4 MB | — | 4,8 MB | 5,1 MB (2,1) | 0,36 s | 0,27 s |
+| aarch64 | Wi-Fi | 4 | 16 MB | 15,3 MB | — | 4,8 MB | 5,1 MB | 0,42 s | 0,32 s |
+| aarch64 | red y Wi-Fi | 1 | 15 MB | 14,2 MB | 14,5 MB | 4,9 MB | 5,2 MB (2,2) | 0,56 s | 0,46 s |
+| aarch64 | red y Wi-Fi | 2 | 16 MB | 15,0 MB | 15,6 MB | 4,9 MB | 5,2 MB | 0,53 s | 0,44 s |
+| aarch64 | red y Wi-Fi | 4 | 17 MB | 16,2 MB | 16,4 MB | 4,9 MB | 5,2 MB | 0,56 s | 0,46 s |
+| x86-64 | red | 1 a 4 | 27 MB | 14,4 a 15,3 MB | 14,9 a 15,7 MB | 4,8 MB | 1,7 MB (bzImage) | 0,50 a 0,52 s | 0,28 s |
+| x86-64 | Wi-Fi | 1 a 4 | 27 MB | 15,2 a 16,0 MB | — | 5,8 MB | 2,1 MB | 0,46 a 0,47 s | 0,12 s |
+| x86-64 | red y Wi-Fi | 1 a 4 | 27 MB (17 MB, ver abajo) | 15,7 a 16,7 MB | 17,0 a 17,2 MB | 5,9 MB | 2,2 MB | 0,65 a 0,66 s | 0,30 s |
+
+"Kernel en memoria" es código, datos y bss según la línea `Memory:` del propio kernel; aparte, 0,4 MB (0,8 en x86)
+de `init` que se liberan al arrancar. Los objetos del kernel (slab) son 3 a 4,5 MB de lo usado. Los tiempos variaron
+poco (lo más lejos de la mediana, 0,76 s en un arranque); el PC tenía otras sesiones (carga de 3 a 10 al acabar cada
+fila).
+
+**Lo que se lee de la tabla.**
+
+- **El objetivo de 48 MB se cumple**: el dominio de red y Wi-Fi arranca con 15 a 17 MB y se queda en 14 a 17 MB.
+  Con el margen del 25 %, el tope medido sería de unos 20 a 24 MB.
+- **Cada procesador más cuesta unos 0,7 MB** (pilas, datos por CPU y slab por CPU): de 1 a 4, unos 2 MB.
+- **El tráfico apenas sube** (0,3 a 1,5 MB): los anillos de recepción ya se reservan al levantar la interfaz.
+- **x86-64 pide 27 MB para arrancar pero usa lo mismo**: el kernel se descomprime en `CONFIG_PHYSICAL_START`, 16 MB
+  de serie, y no puede ir más abajo; la memoria de debajo se usa después. Con `CONFIG_PHYSICAL_START=0x200000`
+  arranca con 17 MB, igual que en ARM.
+- **El arranque, en medio segundo** hasta "listo", también con el procesador ARM emulado. En x86 la mitad es el
+  firmware de QEMU y descomprimir el bzImage. La sonda de la e1000e se lleva de 0,1 a 0,15 s del reloj del kernel.
+
+**Qué opciones mueven la memoria** (aarch64, red y Wi-Fi, usada con 64 MB y 1 / 4 procesadores; base: 14,5 / 16,8 MB):
+
+| Cambio sobre la base | Usada | Mínimo para arrancar | Nota |
+|---|---|---|---|
+| Partir de `defconfig` en vez de `tinyconfig` (sin módulos) | 106 MB (con 256) | 143 MB | Kernel de 78 MB: lo que más pesa con diferencia |
+| `CONFIG_INET=y` (IPv4 en el dominio) | +1,7 / +1,6 MB | +1 MB | El dominio pasa tramas: no necesita IP |
+| `-O2` en vez de `-Os` (`CC_OPTIMIZE_FOR_SIZE=n`) | +1,1 / +1,2 MB | +1 MB | +1 MB de código |
+| SLUB normal en vez de `SLUB_TINY` (trae `SLUB_DEBUG`) | +0,6 / +2,3 MB | +1 MB | Crece con los procesadores |
+| `KALLSYMS=y` | +0,4 MB | = | |
+| `NR_CPUS` de serie (512) en vez de 8 | +0,3 MB | = | |
+| `BASE_SMALL=y` | 0 / −0,4 MB | = | |
+| Registro de 4 KB (`LOG_BUF_SHIFT=12`) en vez de 128 KB | −0,5 MB | −1 MB | Se pierden mensajes del arranque |
+| Sin `printk` | −0,9 MB | −1 MB | No vale: el dominio se queda sin registro ("Los dominios se dejan mirar") |
+
+Lo que más baja, con diferencia, es partir de `tinyconfig`: de 106 a 15 MB. Lo demás mueve de 0,3 a 2 MB cada cosa,
+y la configuración medida ya lleva lo que baja (`SLUB_TINY`, `-Os`, sin IP, `NR_CPUS=8`, sin `KALLSYMS` ni ayudas de
+depuración). Hacen falta sí o sí: `PRINTK` (sin él no hay consola ni registro), `SMP`, `PCI` con MSI, `NET` con
+`PACKET`, `DEVTMPFS`, `PROC_FS` y `SYSFS` (el servidor busca ahí sus interfaces), `BLK_DEV_INITRD`, virtio y el
+controlador del aparato. En x86-64 se usó además ACPI (sin probar si hace falta).
+
+**Lo que no se midió** (cada cosa sube la cifra; ninguna se acerca a triplicarla):
+
+- **Un Wi-Fi de verdad.** `mac80211_hwsim` mide la pila de Wi-Fi, no un aparato: con una llave enchufada, el
+  controlador reserva sus búferes USB y carga su firmware (el de `rt2800usb` es pequeño, unos KB; el de un Wi-Fi PCI
+  de Intel, del orden del MB). Tampoco hay tráfico de Wi-Fi.
+- **El programa que negocia la clave del Wi-Fi** (`wpa_supplicant` o `iwd`): no va en el dominio medido. Como
+  referencia, el `wpa_supplicant` del PC ocupa 3,4 MB de memoria residente (x86-64, glibc dinámica): medido en el PC,
+  no en el dominio.
+- **El servidor de verdad**: el de la prueba solo abre los aparatos. Servirlos a DashOS como aparato virtio añade lo
+  suyo, sin medir.
+- **Hardware real**: ni la Pi ni un PC. En aarch64 los tiempos son de un procesador emulado; con KVM o en la Pi
+  serán otros. Tampoco el hipervisor de DashOS: aquí es QEMU, y la memoria que gasta QEMU en el PC no cuenta.
+
+Las cifras, con todos los campos de `/proc/meminfo`, salen en `resultados.json` de la carpeta de trabajo
+(`DASHOS_MEDIR_LINUX`); los kernels y su `.config`, también allí. Nada de eso va a git: se rehace con el guion.
 
 ## Lo que se toma de NixOS (y lo que no)
 
@@ -180,8 +273,8 @@ Amiga) y generar toda la configuración como enlaces.
 
 ## Orden
 
-1. Medir un Linux mínimo con un controlador (memoria y tiempo de arranque) en QEMU. Sin esto no se sigue. Si sale
-   muy por encima de 48 MB, se vuelve a mirar el diseño.
+1. ~~Medir un Linux mínimo con un controlador (memoria y tiempo de arranque) en QEMU.~~ **Hecho el 2026-11-16**: 15
+   a 17 MB y medio segundo para red y Wi-Fi juntos; el objetivo de 48 MB se cumple (ver "Memoria", "Medido").
 2. Prestar un aparato USB a un dominio y recibir de él red por virtio (vale en todas las máquinas, se prueba en QEMU).
 3. Las seis capas de seguridad, con pruebas hostiles (un dominio que intenta escribir su kernel, cargar un módulo,
    salirse de su memoria, mentir por el canal virtio).

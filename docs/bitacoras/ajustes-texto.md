@@ -126,8 +126,9 @@ esté.
   usuario (cajones 0700, fichero 0600, suyos). Condiciones: solo los programas de `GUARDAN_AJUSTES` (hoy el centro, por
   el nombre que da `inicio`; uno del disco con ese nombre no vale); siempre la sesión de quien lo pide (el mensaje no
   nombra ninguna); solo nombres que no salen del cajón (`archivos::ajuste_valido`, comprobado en `sesiones` y otra vez
-  en `archivos`); hasta 64 KB y solo ficheros. Lo negado va al registro de seguridad de `sesiones` (`R_AJUSTE`, 90); el
-  registro común de `registro-permisos` tiene su hueco marcado en el mismo sitio. Lo de la máquina sigue pidiendo
+  en `archivos`); hasta 64 KB y solo ficheros. Lo negado va al registro común (`Estado:Registros/seguridad`,
+  clase "ajustes", con el porqué), por la misma vía que lo demás de `sesiones` (`R_AJUSTE`, 90), desde la unión con
+  `registro-permisos`; la orden `Registro TODO CLASE ajustes` lo enseña. Lo de la máquina sigue pidiendo
   `guardian` (la orden `Ajuste` no lo pone; `GUARDAR_ENV` solo llega al `Home:` del usuario).
 - **La ventana** (Apariencia): lo que se elige se ve ya y va a `ENV:`; tres botones, como en las Prefs del Amiga:
   **Guardar** (a `ENVARC:`, por `sesiones`), **Usar** (se queda en `ENV:`, sin guardar) y **Cancelar** (vuelve a como
@@ -213,3 +214,12 @@ se midió con el servicio de antes de esta rama.
 - `Ajuste` con la confirmación de `guardian` para lo de la máquina, y la capa de la máquina (`Estado:Prefs`).
 - Los demás programas que leen idioma (explorador, Workbench) no vigilan aún: lo ven al abrirse.
 - Avisos de un fichero abierto por una asa cedida (`CEDER`) a quien vigila su cajón: el servicio no sabe su cajón.
+
+## Unión con `revision` (69485b98, con `registro-permisos`)
+
+Choques solo de juntar las dos partes: la referencia de `sesiones`, las líneas esperadas y el guion del Shell (las dos
+tandas, la de `Ajuste` antes que la de `Registro` y `Permiso`), y la lista de órdenes de base (`Ajuste`, `Permiso` y
+`Registro`). Los números no chocan: `registro-permisos` usa las órdenes 80 a 83 de `sesiones` y la bandera 0x40 del
+alta de `archivos`; esta rama, las órdenes 80 a 82 y 120 de `archivos` y la 90 de `sesiones`. El hueco del registro se
+rellenó: lo negado en `GUARDAR_ENV` va al registro común (clase nueva "ajustes" en `usuario/src/registro.rs`), y el
+guion del Shell lo lee con `Registro TODO PROGRAMA ram CLASE ajustes`.

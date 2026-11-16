@@ -103,6 +103,9 @@ prueba: $(PRUEBAS) catalogos
 	cd ../usuario && rustc --edition 2024 --test src/llaves.rs -o target/llaves_pruebas && ./target/llaves_pruebas -q
 	@# El selector de ficheros: peticiones y respuestas (malas incluidas), nombres que no valen y patrones.
 	cd ../usuario && rustc --edition 2024 --test src/protocolo/selector.rs -o target/selector_pruebas && ./target/selector_pruebas -q
+	@# S6, S36: el registro común (líneas hostiles, quién ve qué, rotar, el ritmo) y los permisos en texto con su frase.
+	cd ../usuario && rustc --edition 2024 --test src/registro.rs -o target/registro_pruebas && ./target/registro_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/permisos_texto.rs -o target/permisos_texto_pruebas && ./target/permisos_texto_pruebas -q
 	@# S28: la pregunta de la guardia de ficheros de la caja Amiga (permisos sin llave, detalle, nombres raros).
 	cd ../usuario && rustc --edition 2024 --test src/preguntas_ficheros.rs -o target/preguntas_ficheros_pruebas && ./target/preguntas_ficheros_pruebas -q
 	../puente/pruebas/g0.sh

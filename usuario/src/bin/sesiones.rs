@@ -41,6 +41,15 @@ mod lanzables;
 mod preguntas_ficheros;
 use preguntas_ficheros as pf;
 
+// S6, S36: el registro común en `Estado:Registros/` y los permisos concedidos en `Home:Prefs/Permisos/` (y en
+// `Estado:Prefs/Permisos/` los del sistema), con clientes propios del servicio de archivos.
+#[path = "../sesiones_disco.rs"]
+#[allow(dead_code)]
+mod sesiones_disco;
+use dashos::permisos_texto as pt;
+use dashos::registro as rg;
+use sesiones_disco as sd;
+
 dashos::programa!(principal);
 
 /// Llave 1: el permiso de la clase de plazo (S3), para repartirlo (U4: la "llave de plazo"); llave 2: el de máquinas
@@ -149,10 +158,70 @@ struct Registro {
     /// Las últimas que faltan por llevar al disco, y la asa del fichero (0 si no hay).
     pendientes: usize,
     asa: u32,
+    /// S6, S36: el registro común, en texto (`Estado:Registros/`): lo de aquí va también a `seguridad`, en llano.
+    texto: sd::Registro,
+    /// El usuario de lo que se apunta ahora: el de quien pide en el mensaje que se atiende (lo pone el bucle).
+    uid: u32,
 }
 
 impl Registro {
+    /// S6, S36: una línea en el registro común (fichero `f` de `dashos::registro`), de `programa` como `uid`. La hora la
+    /// pone esto; el texto se limpia en `registro::linea`.
+    fn linea(&mut self, f: usize, programa: &[u8], uid: u32, clase: &str, que: core::fmt::Arguments, motivo: &str) {
+        let que = sd::Texto::<{ rg::MAX_TEXTO }>::de(que);
+        self.linea_bytes(f, programa, uid, clase, que.bytes(), motivo.as_bytes());
+    }
+
+    /// Como `linea`, con el qué y el motivo tal como llegan (de un programa: `registro::linea` los limpia).
+    fn linea_bytes(&mut self, f: usize, programa: &[u8], uid: u32, clase: &str, que: &[u8], motivo: &[u8]) {
+        let usuario = sd::usuario(uid, CUENTAS, PRIMERA_PERSONA);
+        let mut h = [0u8; 24];
+        let hn = rg::hora(dashos::hora_ns(), dashos::ahora_us(), &mut h);
+        let mut l = [0u8; rg::MAX_LINEA];
+        let n = rg::linea(core::str::from_utf8(&h[..hn]).unwrap_or("?"), programa, usuario.bytes(), clase, que, motivo, &mut l);
+        self.texto.anadir(f, &l[..n]);
+    }
+
     fn apuntar(&mut self, tipo: u32, estado: i32, quien: &[u8], que: &[u8]) {
+        self.apuntar_por(tipo, estado, quien, que, "");
+    }
+
+    /// Como `apuntar`, con el motivo para la línea del registro común.
+    fn apuntar_por(&mut self, tipo: u32, estado: i32, quien: &[u8], que: &[u8], motivo: &str) {
+        let q = &que[..que.iter().position(|&c| c == 0).unwrap_or(que.len())];
+        let q = core::str::from_utf8(q).unwrap_or("?");
+        let (f, clase) = match tipo {
+            R_FALLO => (rg::SISTEMA, "servicio"),
+            R_SERVICIO => (rg::SEGURIDAD, "permiso"),
+            R_ENTRAR => (rg::SEGURIDAD, "entrada"),
+            R_MATAR | R_LANZAR => (rg::SEGURIDAD, "procesos"),
+            R_ADMIN => (rg::SEGURIDAD, "admin"),
+            R_APAGAR => (rg::SEGURIDAD, "apagar"),
+            R_AJUSTE => (rg::SEGURIDAD, "ajustes"),
+            _ => (rg::SEGURIDAD, "programa"),
+        };
+        let uid = self.uid;
+        let bien = estado == BIEN;
+        match (tipo, bien) {
+            (R_SERVICIO, true) => self.linea(f, quien, uid, clase, format_args!("se da \"{}\" ({})", q, pt::frase(q)), motivo),
+            (R_SERVICIO, false) if estado == NO_EXISTE => self.linea(f, quien, uid, clase, format_args!("pide \"{}\", que no puede pedir", q), motivo),
+            (R_SERVICIO, false) => self.linea(f, quien, uid, clase, format_args!("no se da \"{}\" ({})", q, pt::frase(q)), motivo),
+            (R_MATAR, _) => self.linea(f, quien, uid, clase, format_args!("no puede cerrar {}", q), motivo),
+            (R_LANZAR, _) => self.linea(f, quien, uid, clase, format_args!("no puede lanzar {}", q), motivo),
+            (R_ENTRAR, _) if q == "bloquear" => self.linea(f, quien, uid, clase, format_args!("no puede bloquear la sesión"), if motivo.is_empty() { "su usuario no tiene la sesión delante" } else { motivo }),
+            (R_ENTRAR, _) => self.linea(f, quien, uid, clase, format_args!("no entra como {}", q), if motivo.is_empty() { "contraseña mala, o no puede pedirlo" } else { motivo }),
+            (R_FALLO, _) => self.linea(f, quien, uid, clase, format_args!("acaba por un fallo"), motivo),
+            (R_ADMIN, true) => self.linea(f, quien, uid, clase, format_args!("hace \"{}\" con la contraseña de un administrador", q), motivo),
+            (R_ADMIN, false) => self.linea(f, quien, uid, clase, format_args!("no hace \"{}\" (estado {})", q, estado), motivo),
+            (R_APAGAR, true) => self.linea(f, quien, uid, clase, format_args!("{}", q), motivo),
+            (R_APAGAR, false) => self.linea(f, quien, uid, clase, format_args!("no puede {}", q), motivo),
+            (R_AJUSTE, _) => self.linea(f, quien, uid, clase, format_args!("no guarda ENV:{} en ENVARC: (estado {})", q, estado), motivo),
+            _ => self.linea(f, quien, uid, clase, format_args!("{} {}", q, estado), motivo),
+        }
+        self.apuntar_binario(tipo, estado, quien, que);
+    }
+
+    fn apuntar_binario(&mut self, tipo: u32, estado: i32, quien: &[u8], que: &[u8]) {
         let e = &mut self.entradas[self.total % REGISTRO_MAX];
         e.fill(0);
         e[0..4].copy_from_slice(&tipo.to_le_bytes());
@@ -392,6 +461,9 @@ const ACCION: usize = 1000;
 /// S28: el "servicio" de un permiso sin llave (la guardia de ficheros de la caja Amiga, `preguntas_ficheros`), en lo
 /// concedido y en las preguntas pendientes; su nombre va aparte.
 const SIN_LLAVE: usize = 500;
+/// S6b, S36: en las preguntas pendientes, el "servicio" de dar (`CAMBIO`) o quitar (`CAMBIO + 1`) un permiso con la
+/// orden `Permiso` (`PERMISO_CAMBIAR`); el programa es aquel al que se da o se quita, y el permiso va aparte.
+const CAMBIO: usize = 3000;
 
 /// Los 16 bytes de un nombre, rellenos de ceros.
 fn nombre16(n: &[u8]) -> [u8; 16] {
@@ -646,6 +718,48 @@ const PLAZO_COMPROBAR_US: u64 = 20_000_000;
 const MARCA_COMPROBADOR: u64 = 1 << 62;
 /// A15: la del temporizador que despierta a `sesiones` cuando vence ese plazo.
 const MARCA_PLAZO_COMPROBAR: u64 = MARCA_COMPROBADOR | 1;
+/// S6, S36: la del temporizador de la ronda, cada `RONDA_US`: quién topó con su tope de memoria (S3).
+const MARCA_RONDA: u64 = MARCA_COMPROBADOR | 2;
+const RONDA_US: u64 = 2_000_000;
+/// S6, S36: la de lo que manda el hilo del aviso de memoria baja, para que lo apunte el hilo principal (el registro es
+/// suyo).
+const MARCA_MEMORIA: u64 = MARCA_COMPROBADOR | 3;
+/// La copia de su canal con esa marca, para el hilo del aviso (0 hasta que se cree).
+static AVISO_A_SESIONES: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+/// Si `sesiones` tiene el servicio de archivos: sin él (sin disco, `arranque-virt-vm`), lo concedido no se lee ni se
+/// escribe (el servicio no contestaría y cada intento esperaría su plazo).
+static CON_DISCO: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+/// Programas a la vez en el ritmo de lo que apuntan, y los que pueden leer todo el registro a la vez.
+const MAX_RITMO: usize = 16;
+const MAX_LEE_TODO: usize = 4;
+
+/// S6, S36 (S3: "topar con el cupo deja rastro"): mira cuántas veces ha topado el grupo de cada ficha (`grupo_topado`) y
+/// apunta en el registro lo que haya subido desde la última ronda. `topados`, por hueco de ficha: de qué marca era y
+/// lo que dio la última vez (un grupo nuevo empieza en 0).
+fn ronda_topes(fichas: &[Option<Ficha>], topados: &mut [(u64, u64)], registro: &mut Registro) {
+    for (i, f) in fichas.iter().enumerate() {
+        if let Some(f) = f {
+            mirar_tope(f, &mut topados[i], registro);
+        }
+    }
+}
+
+/// Lo de `ronda_topes` para una ficha (también al irse: lo que topó justo antes de acabar no se pierde).
+fn mirar_tope(f: &Ficha, visto: &mut (u64, u64), registro: &mut Registro) {
+    let t = dashos::grupo_topado(f.grupo);
+    if t < 0 {
+        return;
+    }
+    let antes = if visto.0 == f.marca { visto.1 } else { 0 };
+    if t as u64 > antes {
+        let tope = dashos::grupo_uso(f.grupo).0.max(0) as u64 >> 20;
+        let veces = t as u64 - antes;
+        let vez = if veces == 1 { "vez" } else { "veces" };
+        println!("  [sesiones] {} topa con su tope de memoria ({} MB): {} {}", nombre(&f.nombre), tope, veces, vez);
+        registro.linea(rg::SISTEMA, &f.nombre, f.uid, "memoria", format_args!("topa con su tope de memoria ({} MB), {} {}", tope, veces, vez), "pidió más de lo que le cabe");
+    }
+    *visto = (f.marca, t as u64);
+}
 
 /// A15: pide al comprobador aparte (llave `COMPROBADOR`) que recorra el disco con los datos, sin esperar: la respuesta
 /// llega luego por el canal propio, con `MARCA_COMPROBADOR`. Devuelve la llave del temporizador del plazo (0 si no se
@@ -712,6 +826,9 @@ fn dar_servicio(dadas: &mut [Option<(u64, usize, u32)>], s: usize, marca: u64, p
     }
 }
 
+/// Un texto corto con formato, sin montón.
+type Texto16 = sd::Texto<96>;
+
 /// Lo concedido (U4): programa, servicio (en `REPARTE`, o `SIN_LLAVE`) y, desde U6, el usuario para quien se concedió.
 /// S28: y el nombre del permiso (el de `REPARTE`, o el de un permiso sin llave, `ejec:...`).
 type Concedido = ([u8; 16], usize, u32, [u8; 16]);
@@ -721,89 +838,178 @@ fn permiso_de(c: &Concedido) -> &str {
     REPARTE.get(c.1).map_or_else(|| nombre(&c.3), |r| r.0)
 }
 
-/// Lee los permisos concedidos (U4): una línea "programa servicio usuario" por permiso, en el cajón de `sesiones`. Una
-/// sin usuario (de antes de U6) no vale: se pregunta otra vez.
-fn leer_permisos(a: &Archivos, concedidos: &mut [Option<Concedido>]) {
+/// Lo de antes de S36: los permisos concedidos en el cajón de `sesiones` (una línea "programa servicio usuario" por
+/// permiso). Se leen una vez, para pasarlos a su sitio (`guardar_de`); una sin usuario (de antes de U6) no vale.
+/// Devuelve cuántos había.
+fn leer_permisos(a: &Archivos, concedidos: &mut [Option<Concedido>]) -> usize {
     use dashos::protocolo::archivos as x;
     let (e, asa, tam) = a.orden(x::BUSCAR, 0, 0, 0, CAMINO_PERMISOS);
     if e != x::BIEN {
-        return;
+        return 0;
     }
     let (e, _, n) = a.orden(x::LEER, asa, 0, tam.min(4096), b"");
     a.orden(x::CERRAR, asa, 0, 0, b"");
     if e != x::BIEN {
-        return;
+        return 0;
     }
     let texto = unsafe { core::slice::from_raw_parts(VA_VENTANA as *const u8, n as usize) };
     let mut van = 0;
     for linea in texto.split(|&c| c == b'\n') {
         let mut partes = linea.splitn(3, |&c| c == b' ');
         let (Some(p), Some(sv), Some(u)) = (partes.next(), partes.next(), partes.next()) else { continue };
-        // S28: o un permiso sin llave de la guardia de ficheros de la caja Amiga.
-        let Some(s) = REPARTE.iter().position(|r| r.0.as_bytes() == sv).or(pf::es_permiso(sv).then_some(SIN_LLAVE)) else { continue };
         let Some(uid) = core::str::from_utf8(u).ok().and_then(|u| u.parse::<u32>().ok()) else { continue };
-        if p.is_empty() || p.len() > 16 || van >= concedidos.len() {
-            continue;
-        }
-        concedidos[van] = Some((nombre16(p), s, uid, nombre16(sv)));
-        van += 1;
+        van += conceder(concedidos, p, sv, uid) as usize;
     }
-    println!("  [sesiones] permisos concedidos en el disco: {}", van);
+    println!("  [sesiones] permisos concedidos en el cajón de sesiones (de antes): {}", van);
+    van
 }
 
-/// Reescribe el fichero de permisos con lo concedido que queda.
-fn reescribir_permisos(a: &Archivos, concedidos: &[Option<Concedido>]) {
-    use dashos::protocolo::archivos as x;
-    let (e, asa, _) = a.orden(x::BUSCAR, 0, 0, 0, CAMINO_PERMISOS);
-    if e != x::BIEN {
+/// Apunta como concedido a `programa` el permiso `permiso` para `uid`, si el permiso existe (de `REPARTE`, o uno sin
+/// llave de la caja Amiga) y cabe. Si ya estaba, bien.
+fn conceder(concedidos: &mut [Option<Concedido>], programa: &[u8], permiso: &[u8], uid: u32) -> bool {
+    let Some(s) = REPARTE.iter().position(|r| r.0.as_bytes() == permiso).or(pf::es_permiso(permiso).then_some(SIN_LLAVE)) else { return false };
+    if programa.is_empty() || programa.len() > 16 || !pt::nombre_valido(programa) {
+        return false;
+    }
+    let c = (nombre16(programa), s, uid, nombre16(permiso));
+    if concedidos.iter().flatten().any(|x| *x == c) {
+        return true;
+    }
+    match concedidos.iter_mut().find(|x| x.is_none()) {
+        Some(h) => {
+            *h = Some(c);
+            true
+        }
+        None => false,
+    }
+}
+
+/// S6b, S36: lee lo concedido de su sitio y lo junta con lo que hay: con `uid`, el `Home:Prefs/Permisos/` de esa persona
+/// (al entrar); sin él, el `Estado:Prefs/Permisos/` del sistema (al arrancar). Lo que no es de `sesiones` (un fichero
+/// o un cajón que alguien puso a mano) no se lee, y queda dicho en el registro.
+fn cargar_permisos(uid: Option<u32>, concedidos: &mut [Option<Concedido>], registro: &mut Registro) {
+    if !CON_DISCO.load(core::sync::atomic::Ordering::Relaxed) {
         return;
     }
-    a.orden(x::TAMANO, asa, 0, 0, b"");
-    a.orden(x::CERRAR, asa, 0, 0, b"");
-    // Lo de serie (H9, `SIN_PREGUNTAR`) no se guarda: vuelve solo al arrancar.
-    for c in concedidos.iter().flatten().filter(|c| !SIN_PREGUNTAR.iter().any(|&(q, sv)| q == nombre(&c.0) && sv == permiso_de(c))) {
-        guardar_permiso(a, nombre(&c.0), permiso_de(c), c.2);
+    let cuenta = uid.and_then(|u| CUENTAS.iter().find(|c| c.0 == u)).map(|c| c.1);
+    if uid.is_some() && cuenta.is_none() {
+        return;
+    }
+    let (vol, cam) = match cuenta {
+        Some(c) => (c.as_bytes(), pt::CAJON_PERSONA.as_bytes()),
+        None => (&b""[..], pt::CAJON_SISTEMA.as_bytes()),
+    };
+    let mut van = 0;
+    let r = sd::leer_permisos(ARCHIVOS_ALTAS, vol, cam, |p, s, u| {
+        // En el de una persona, todo es suyo (una línea con usuario no vale); en el del sistema, solo del sistema.
+        let u = match (uid, u) {
+            (Some(yo), None) => yo,
+            (None, Some(u)) if u < PRIMERA_PERSONA => u,
+            _ => return,
+        };
+        van += conceder(concedidos, p, s, u) as usize;
+    });
+    let donde = cuenta.unwrap_or("sistema");
+    match r {
+        Ok(_) => println!("  [sesiones] permisos concedidos ({}): {} leídos de su Prefs/Permisos", donde, van),
+        Err(f) => {
+            let motivo = match f {
+                sd::Fallo::Ajeno => "el fichero no es de sesiones (alguien lo escribió a mano): no se lee",
+                sd::Fallo::Cajon => "el cajón no se pudo crear o no es de sesiones: no se lee",
+                sd::Fallo::Disco(_) => "el servicio de archivos no lo dio",
+            };
+            println!("  [sesiones] permisos concedidos ({}): {}", donde, motivo);
+            registro.uid = uid.unwrap_or(0);
+            registro.linea(rg::SEGURIDAD, b"sesiones", uid.unwrap_or(0), "permiso", format_args!("no lee lo concedido de {}", donde), motivo);
+        }
     }
 }
 
-/// Añade al fichero de permisos lo que el usuario concedió a `programa` como `uid`.
-fn guardar_permiso(a: &Archivos, programa: &str, servicio: &str, uid: u32) {
-    use dashos::protocolo::archivos as x;
-    let (e, asa, tam) = a.orden(x::BUSCAR, 0, 0, 0, CAMINO_PERMISOS);
-    let (asa, tam) = if e == x::BIEN {
-        (asa, tam)
+/// S6b, S36: escribe lo concedido en su sitio: lo de la persona `uid` en su `Home:Prefs/Permisos/` (si su volumen está
+/// abierto; si no, queda en `por_guardar` hasta que entre) o, con un `uid` del sistema, todo lo del sistema en
+/// `Estado:Prefs/Permisos/`. Lo de serie (`SIN_PREGUNTAR`) no se escribe: vuelve solo al arrancar.
+fn guardar_de(uid: u32, concedidos: &[Option<Concedido>], abiertas: &[u32; 8], por_guardar: &mut [u32; 8], registro: &mut Registro) {
+    if !CON_DISCO.load(core::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    let de_serie = |c: &&Concedido| SIN_PREGUNTAR.iter().any(|&(q, sv)| q == nombre(&c.0) && sv == permiso_de(c));
+    let campo = |n: &[u8; 16]| n.iter().position(|&c| c == 0).unwrap_or(16);
+    let r = if uid >= PRIMERA_PERSONA {
+        let Some(cuenta) = CUENTAS.iter().find(|c| c.0 == uid).map(|c| c.1) else { return };
+        if !abiertas.contains(&uid) {
+            if !por_guardar.contains(&uid) {
+                if let Some(h) = por_guardar.iter_mut().find(|h| **h == 0) {
+                    *h = uid;
+                }
+            }
+            println!("  [sesiones] permisos concedidos ({}): su volumen está cerrado; se escriben cuando entre", cuenta);
+            return;
+        }
+        for h in por_guardar.iter_mut().filter(|h| **h == uid) {
+            *h = 0;
+        }
+        let lineas = concedidos.iter().flatten().filter(|c| c.2 == uid && !de_serie(c)).map(|c| (&c.0[..campo(&c.0)], &c.3[..campo(&c.3)], None));
+        (cuenta, sd::guardar_permisos(ARCHIVOS_ALTAS, cuenta.as_bytes(), pt::CAJON_PERSONA.as_bytes(), lineas))
     } else {
-        let (e, cajon, _) = a.orden(x::BUSCAR, 0, 0, 0, CAJON);
-        if e != x::BIEN {
-            return;
-        }
-        let (e, asa, _) = a.orden(x::CREAR, cajon, x::FICHERO as u64, 0, b"permisos");
-        a.orden(x::CERRAR, cajon, 0, 0, b"");
-        if e != x::BIEN {
-            return;
-        }
-        (asa, 0)
+        let lineas = concedidos.iter().flatten().filter(|c| c.2 < PRIMERA_PERSONA && !de_serie(c)).map(|c| (&c.0[..campo(&c.0)], &c.3[..campo(&c.3)], Some(c.2)));
+        ("sistema", sd::guardar_permisos(ARCHIVOS_ALTAS, b"", pt::CAJON_SISTEMA.as_bytes(), lineas))
     };
-    let mut num = [0u8; 10];
-    let mut i = num.len();
-    let mut u = uid;
-    loop {
-        i -= 1;
-        num[i] = b'0' + (u % 10) as u8;
-        u /= 10;
-        if u == 0 {
-            break;
+    match r {
+        (donde, Ok(n)) => println!("  [sesiones] permisos concedidos ({}): {} escritos en su Prefs/Permisos", donde, n),
+        (donde, Err(f)) => {
+            println!("  [sesiones] permisos concedidos ({}): no se escriben ({:?})", donde, f);
+            registro.linea(rg::SEGURIDAD, b"sesiones", uid, "permiso", format_args!("no escribe lo concedido de {}", donde), "el cajón no es de sesiones o el disco no lo deja; queda en memoria hasta que se reinicie");
         }
     }
-    let linea_ = [programa.as_bytes(), b" ", servicio.as_bytes(), b" ", &num[i..], b"\n"];
-    let ventana = unsafe { core::slice::from_raw_parts_mut(VA_VENTANA as *mut u8, 64) };
-    let mut n = 0;
-    for parte in linea_ {
-        ventana[n..n + parte.len()].copy_from_slice(parte);
-        n += parte.len();
+}
+
+/// Quita a `prog` el permiso `serv` de lo concedido a los usuarios que deje `de`, y revoca en el acto las llaves de ese
+/// servicio que tengan sus programas con ese nombre (S6b: "quitar un permiso revoca esa llave en el acto"). Lo de serie
+/// (`SIN_PREGUNTAR`), a partir de ahora se pregunta. Devuelve los usuarios a los que se les quitó (0 en los huecos).
+fn quitar_permiso(
+    concedidos: &mut [Option<Concedido>],
+    dadas: &mut [Option<(u64, usize, u32)>],
+    fichas: &[Option<Ficha>],
+    sin_preguntar_quitado: &mut [bool],
+    prog: &[u8],
+    serv: &[u8],
+    de: impl Fn(u32) -> bool,
+) -> [u32; 8] {
+    let s = REPARTE.iter().position(|r| r.0.as_bytes() == serv);
+    let mut quitados = [0u32; 8];
+    for c in concedidos.iter_mut() {
+        if let Some(x) = *c {
+            if permiso_de(&x).as_bytes() == serv && &x.0[..x.0.iter().position(|&b| b == 0).unwrap_or(16)] == prog && de(x.2) {
+                *c = None;
+                if !quitados.contains(&x.2) {
+                    if let Some(h) = quitados.iter_mut().find(|h| **h == 0) {
+                        *h = x.2;
+                    }
+                }
+            }
+        }
     }
-    a.orden(x::ESCRIBIR, asa, tam, n as u64, b"");
-    a.orden(x::CERRAR, asa, 0, 0, b"");
+    if quitados.iter().all(|&u| u == 0) {
+        return quitados;
+    }
+    // H9: lo que se daba sin preguntar, a partir de ahora se pregunta.
+    if let Some(s) = s.filter(|&s| SIN_PREGUNTAR.iter().any(|&(p, sv)| sv == REPARTE[s].0 && p.as_bytes() == prog)) {
+        if let Some(q) = sin_preguntar_quitado.get_mut(s) {
+            *q = true;
+        }
+    }
+    // Las llaves que ya tengan dejan de servir: el permiso se retira ya, no al pedirlo otra vez.
+    for x in dadas.iter_mut() {
+        if let Some((mc, sv, rev)) = *x {
+            let de_el = fichas.iter().flatten().any(|f| f.marca == mc && nombre(&f.nombre).as_bytes() == prog && quitados.contains(&f.uid));
+            if Some(sv) == s && de_el {
+                dashos::revocar(rev);
+                dashos::cerrar(rev);
+                *x = None;
+            }
+        }
+    }
+    quitados
 }
 
 /// U6: las llaves sin marca de los servicios que siguen las sesiones (0 hasta que lleguen de `inicio`).
@@ -1024,6 +1230,10 @@ fn escuchar_memoria(permiso: u32) {
         return;
     }
     // `a` se queda abierta: es el lado desde el que escribe el kernel.
+    // S6, S36: lo que llegue lo apunta el hilo principal en el registro: se le manda por su canal, con su marca.
+    if let Ok(propia) = u32::try_from(dashos::llave_duplicar(PROPIO, dashos::ESCRIBIR, MARCA_MEMORIA)) {
+        AVISO_A_SESIONES.store(propia, core::sync::atomic::Ordering::Release);
+    }
     // SAFETY: se llama una sola vez (con el primer permiso de apagar), y la pila es solo de ese hilo desde aquí.
     let pila = unsafe { &mut *PILA_MEMORIA.0.get() };
     if dashos::hilos::crear(hilo_memoria, b as u64, pila, 0) < 0 {
@@ -1053,6 +1263,10 @@ fn hilo_memoria(lectura: u64) -> u64 {
             continue;
         }
         let nivel = u32::from_le_bytes(b[0..4].try_into().unwrap());
+        let propia = AVISO_A_SESIONES.load(core::sync::atomic::Ordering::Acquire);
+        if propia != 0 {
+            dashos::canal_escribir(propia, &b, &[]);
+        }
         let libres = u64::from_le_bytes(b[8..16].try_into().unwrap()) >> 20;
         let total = u64::from_le_bytes(b[16..24].try_into().unwrap()) >> 20;
         if nivel == 1 {
@@ -1118,7 +1332,7 @@ fn principal() -> u64 {
     // H9: lo de `SIN_PREGUNTAR` (por su servicio en `REPARTE`) que quien está delante quitó en el centro de control.
     let mut sin_preguntar_quitado = [false; 8];
     let mut siguiente_pregunta = 1u32;
-    let mut registro = Registro { entradas: [[0; ENTRADA_REGISTRO]; REGISTRO_MAX], total: 0, pendientes: 0, asa: 0 };
+    let mut registro = Registro { entradas: [[0; ENTRADA_REGISTRO]; REGISTRO_MAX], total: 0, pendientes: 0, asa: 0, texto: sd::Registro::sin_disco(), uid: 0 };
     let mut siguiente_pid = PRIMER_PID_PROPIO;
     // Las últimas bajas, para decir cuándo vuelve un servicio relanzado por `inicio`.
     // Los usuarios con la sesión abierta (U2/U3): solo como ellos puede `guardian` lanzar algo.
@@ -1137,13 +1351,55 @@ fn principal() -> u64 {
     let mut ido = 0;
     // Trasfondo: quién pidió la primera página de `MONITOR` y cuándo (µs), para no dejar que se pida muy deprisa.
     let mut monitor_visto = [(0u64, 0u64); 8];
+    // S6, S36: el ritmo de lo que apunta cada programa, quién lee todo el registro (confirmó la acción de administrador
+    // "registro"), las veces que topó el grupo de cada ficha (en su hueco) y si la memoria está baja.
+    let mut ritmo = rg::Ritmo::<MAX_RITMO>::default();
+    let mut lee_todo = [0u64; MAX_LEE_TODO];
+    let mut topados = [(0u64, 0u64); MAX];
+    let mut memoria_baja = false;
+    // S6b, S36: las personas con lo concedido aún sin escribir en su `Home:Prefs/Permisos/` (su volumen estaba cerrado).
+    let mut por_guardar = [0u32; 8];
     let mut b = [0u8; dashos::servicio::MAX_DATOS];
     let mut ll = [0u32; dashos::servicio::MAX_LLAVES];
     let archivos = Archivos::abrir();
     println!("  [sesiones] en marcha{}", if archivos.is_some() { ", con el servicio de archivos" } else { ", sin el servicio de archivos" });
     if let Some(a) = &archivos {
+        CON_DISCO.store(true, core::sync::atomic::Ordering::Relaxed);
         registro.abrir_disco(a);
-        leer_permisos(a, &mut concedidos);
+        // S6, S36: el registro común, con su cliente propio.
+        match registro.texto.abrir(ARCHIVOS_ALTAS) {
+            Ok(()) => println!("  [sesiones] registro común en Estado:Registros/: seguridad, sistema y programas"),
+            Err(e) => println!("  [sesiones] sin el registro común en el disco ({}): lo que se apunte se pierde", e),
+        }
+        registro.linea(rg::SISTEMA, b"sesiones", 0, "servicio", format_args!("en marcha"), "");
+        // S6b, S36: lo concedido a los programas del sistema, en `Estado:Prefs/Permisos/`; y lo de antes, en el cajón
+        // de `sesiones`, se pasa a su sitio (el de cada persona, cuando entre).
+        cargar_permisos(None, &mut concedidos, &mut registro);
+        if leer_permisos(a, &mut concedidos) > 0 {
+            for c in concedidos.iter().flatten() {
+                if c.2 >= PRIMERA_PERSONA && !por_guardar.contains(&c.2) {
+                    if let Some(h) = por_guardar.iter_mut().find(|h| **h == 0) {
+                        *h = c.2;
+                    }
+                }
+            }
+            guardar_de(0, &concedidos, &abiertas, &mut por_guardar, &mut registro);
+            let (e, cajon, _) = a.orden(dashos::protocolo::archivos::BUSCAR, 0, 0, 0, CAJON);
+            if e == 0 {
+                let borrado = a.orden(dashos::protocolo::archivos::BORRAR, cajon, 0, 0, b"permisos").0;
+                a.orden(dashos::protocolo::archivos::CERRAR, cajon, 0, 0, b"");
+                println!("  [sesiones] lo concedido pasa a Prefs/Permisos; el fichero de antes, fuera: {}", borrado);
+            }
+        }
+    }
+    // S6, S36: la ronda (quién topó con su tope de memoria), cada `RONDA_US`.
+    let ronda = u32::try_from(dashos::llave_duplicar(PROPIO, dashos::ESCRIBIR, MARCA_RONDA)).map_or(-1, |a| {
+        let t = dashos::temporizador_crear(a, RONDA_US, RONDA_US);
+        dashos::cerrar(a);
+        t
+    });
+    if ronda <= 0 {
+        println!("  [sesiones] sin la ronda de los topes de memoria ({})", ronda);
     }
     loop {
         // Lo que se apuntó en la vuelta anterior, al disco antes de esperar (U6).
@@ -1160,6 +1416,24 @@ fn principal() -> u64 {
         let m = &b[..n];
         let u32_en = |i: usize| m.get(i..i + 4).map_or(0, |x| u32::from_le_bytes(x.try_into().unwrap()));
         let u64_en = |i: usize| m.get(i..i + 8).map_or(0, |x| u64::from_le_bytes(x.try_into().unwrap()));
+        // S6, S36: la ronda de los topes y lo que manda el hilo del aviso de memoria baja (nivel, 0, libres y total).
+        if marca == MARCA_RONDA || marca == MARCA_MEMORIA {
+            if marca == MARCA_RONDA {
+                ronda_topes(&fichas, &mut topados, &mut registro);
+            } else if n == 24 && (u32_en(0) == 1) != memoria_baja {
+                memoria_baja = u32_en(0) == 1;
+                let (libres, total) = (u64_en(8) >> 20, u64_en(16) >> 20);
+                if memoria_baja {
+                    registro.linea(rg::SISTEMA, b"kernel", 0, "memoria", format_args!("memoria baja: quedan {} MB libres de {}", libres, total), "se pide a las cajas que suelten lo que puedan");
+                } else {
+                    registro.linea(rg::SISTEMA, b"kernel", 0, "memoria", format_args!("la memoria vuelve: {} MB libres de {}", libres, total), "");
+                }
+            }
+            for &l in &ll[..k] {
+                dashos::cerrar(l);
+            }
+            continue;
+        }
         // A15: la respuesta del comprobador, a quien la pidió; o, pasado el plazo, EN_USO (lo que conteste luego se tira).
         let vencido = comprobando.is_some_and(|c| dashos::ahora_us().saturating_sub(c.3) > PLAZO_COMPROBAR_US);
         if marca == MARCA_COMPROBADOR || marca == MARCA_PLAZO_COMPROBAR || vencido {
@@ -1190,6 +1464,9 @@ fn principal() -> u64 {
             let de = marca & !(1 << 63);
             if let Some(i) = fichas.iter().position(|x| x.is_some_and(|x| x.marca == de)) {
                 let f = fichas[i].take().unwrap();
+                // S6, S36: si topó con su tope desde la última ronda, antes de soltar su grupo.
+                registro.uid = f.uid;
+                mirar_tope(&f, &mut topados[i], &mut registro);
                 dashos::cerrar(f.grupo);
                 // Que archivos suelte su alta, con lo que dejara abierto o sujeto: lo que lanzó `sesiones` y también lo
                 // de `inicio` (misma marca en los dos; A15: si no, un comprobador caído dejaba el disco sujeto). Sin
@@ -1203,9 +1480,15 @@ fn principal() -> u64 {
                 } else {
                     println!("  [sesiones] baja de {} (clase {})", nombre(&f.nombre), u64_en(0));
                 }
+                registro.uid = f.uid;
                 if u64_en(0) == 2 {
                     registro.apuntar(R_FALLO, 2, &f.nombre, b"");
                 }
+                // S6, S36: y si leía todo el registro, ya no.
+                for x in lee_todo.iter_mut().filter(|x| **x == f.marca) {
+                    *x = 0;
+                }
+                topados[i] = (0, 0);
                 // U6: que el compositor y el sonido se olviden de él.
                 if f.uid >= PRIMERA_PERSONA || f.marca >= PRIMER_PID_PROPIO {
                     for c in siguen.todos() {
@@ -1234,6 +1517,7 @@ fn principal() -> u64 {
                     if let Some(j) = vuelve {
                         idos[j] = 0;
                         println!("  [sesiones] vuelve {}, con su grupo nuevo", nombre(&f.nombre));
+                        registro.linea(rg::SISTEMA, &f.nombre, f.uid, "servicio", format_args!("vuelve"), "se había ido e inicio lo relanzó, con su grupo nuevo");
                     }
                     fichas[i] = Some(f);
                     asignaciones[i] = asignaciones_de(f.uid);
@@ -1299,6 +1583,8 @@ fn principal() -> u64 {
             let respuesta = ll[0];
             usadas = 1;
             let yo = fichas.iter().flatten().find(|f| f.marca == marca).copied();
+            // S6, S36: lo que se apunte al atender este mensaje es del usuario de quien lo manda.
+            registro.uid = yo.map_or(0, |f| f.uid);
             // U6: si quien pide es de una persona con la sesión abierta pero detrás (otra está delante).
             let yo_detras = yo.is_some_and(|f| f.uid >= PRIMERA_PERSONA && abiertas.contains(&f.uid) && activa != f.uid);
             match u32_en(0) {
@@ -1387,6 +1673,12 @@ fn principal() -> u64 {
                                         abiertas[i] = uid;
                                         // Su `RAM:`, con `T:` y `ENV:`, antes de que corra nada suyo.
                                         grupos_sesion[i] = ram_entrar(uid, quien, &fichas, t_entrar);
+                                        // S6b, S36: lo que concedió, de su `Home:Prefs/Permisos/`; y lo que se le concedió
+                                        // con el volumen cerrado, ahí.
+                                        cargar_permisos(Some(uid), &mut concedidos, &mut registro);
+                                        if por_guardar.contains(&uid) {
+                                            guardar_de(uid, &concedidos, &abiertas, &mut por_guardar, &mut registro);
+                                        }
                                     }
                                 }
                                 SALIR => {
@@ -1402,6 +1694,8 @@ fn principal() -> u64 {
                                 }
                                 _ => {}
                             }
+                            // S6, S36: entrar, volver y salir, al registro común.
+                            registro.linea(rg::SEGURIDAD, &pide, uid, "entrada", format_args!("{} {}", que, quien), "");
                             // U6: quién está delante. Entrar o volver con la contraseña buena pone delante esa sesión (si
                             // está abierta); salir de la de delante deja a nadie.
                             let antes = activa;
@@ -1819,7 +2113,13 @@ fn principal() -> u64 {
                         _ => (PROTEGIDO, pf::SIN_PREGUNTAR),
                     };
                     if estado != BIEN {
-                        registro.apuntar(R_SERVICIO, estado, &programa, &pedido);
+                        let motivo = match (puede, como) {
+                            (false, _) => "solo la caja Amiga pide permisos así",
+                            (_, pf::OCUPADO) => "ya tiene una pregunta sin contestar",
+                            _ if yo_detras => "su sesión está detrás: no se pregunta",
+                            _ => "no hay a quién preguntar",
+                        };
+                        registro.apuntar_por(R_SERVICIO, estado, &programa, &pedido, motivo);
                     }
                     println!("  [sesiones] {} pide {}: {} ({})", nombre(&programa), nombre(&pedido), estado, pf::como(como));
                     let mut r = [0u8; 8];
@@ -1864,7 +2164,7 @@ fn principal() -> u64 {
                         // U6: de una sesión de detrás no se pregunta: quien está delante es otra persona.
                         (SERVICIO, Some(_)) if yo_detras => {
                             println!("  [sesiones] {} pide {} desde una sesión de detrás: no se pregunta", nombre(&programa), pedido);
-                            registro.apuntar(R_SERVICIO, PROTEGIDO, &programa, pedido.as_bytes());
+                            registro.apuntar_por(R_SERVICIO, PROTEGIDO, &programa, pedido.as_bytes(), "su sesión está detrás: no se pregunta");
                             PROTEGIDO
                         }
                         // Sin permiso: si `guardian` atiende preguntas, se le pregunta al usuario y la respuesta
@@ -1894,12 +2194,12 @@ fn principal() -> u64 {
                                 en_espera = true;
                                 BIEN
                             } else {
-                                registro.apuntar(R_SERVICIO, PROTEGIDO, &programa, pedido.as_bytes());
+                                registro.apuntar_por(R_SERVICIO, PROTEGIDO, &programa, pedido.as_bytes(), "no se pudo preguntar al usuario");
                                 PROTEGIDO
                             }
                         }
                         (SERVICIO, Some(_)) => {
-                            registro.apuntar(R_SERVICIO, PROTEGIDO, &programa, pedido.as_bytes());
+                            registro.apuntar_por(R_SERVICIO, PROTEGIDO, &programa, pedido.as_bytes(), "no lo tiene concedido y no hay a quién preguntar");
                             PROTEGIDO
                         }
                         (_, Some(s)) => {
@@ -1977,9 +2277,10 @@ fn principal() -> u64 {
                     let (id, lu, lc) = (u32_en(4), u32_en(8) as usize, u32_en(12) as usize);
                     let usuario = m.get(16..16 + lu).unwrap_or(b"");
                     let clave = m.get(16 + lu..16 + lu + lc).unwrap_or(b"");
-                    if let Some(i) = preguntas.iter().position(|p| p.is_some_and(|p| p.0 == id && p.4 >= ACCION)) {
-                        let (_, a_quien, _, programa, accion, objetivo) = preguntas[i].take().unwrap();
+                    if let Some(i) = preguntas.iter().position(|p| p.is_some_and(|p| p.0 == id && p.4 >= ACCION && p.4 < CAMBIO)) {
+                        let (_, a_quien, de, programa, accion, objetivo) = preguntas[i].take().unwrap();
                         let accion = accion - ACCION;
+                        registro.uid = fichas.iter().flatten().find(|f| f.marca == de).map_or(0, |f| f.uid);
                         // Un administrador (del grupo `admin`) con su contraseña buena: la comprueba `sesiones` con su
                         // volumen, sin abrirlo. Sin plazo de gracia: cada acción, la suya.
                         let admin = CUENTAS.iter().find(|c| c.1.as_bytes() == usuario).is_some_and(|c| ADMIN.contains(&c.0));
@@ -2000,6 +2301,15 @@ fn principal() -> u64 {
                                 }
                             }
                             // Matar a otro usuario o al sistema: su grupo entero, como `MATAR` con uno propio.
+                            // S6, S36: leer el registro de todos: quien lo pidió, mientras viva (su número; hasta
+                            // `MAX_LEE_TODO` a la vez, y el más viejo deja su sitio).
+                            (true, _) if ACCIONES[accion] == "registro" => {
+                                if !lee_todo.contains(&de) {
+                                    lee_todo.rotate_right(1);
+                                    lee_todo[0] = de;
+                                }
+                                Some((BIEN, 0))
+                            }
                             (true, _) if ACCIONES[accion] == "matar" => match fichas.iter().position(|x| x.is_some_and(|x| x.marca == objetivo)) {
                                 Some(j) => {
                                     let f = fichas[j].take().unwrap();
@@ -2009,6 +2319,7 @@ fn principal() -> u64 {
                                         presentar_al_selector(selector, f.marca, &[0; 16]);
                                     }
                                     println!("  [sesiones] {} mata a {} (usuario {}), con permiso de administrador", nombre(&programa), nombre(&f.nombre), f.uid);
+                                    registro.linea(rg::SEGURIDAD, &programa, f.uid, "procesos", format_args!("cierra a {} (proceso {})", nombre(&f.nombre), f.marca), "con la contraseña de un administrador");
                                     Some((BIEN, objetivo))
                                 }
                                 None => Some((NO_EXISTE, objetivo)),
@@ -2068,29 +2379,63 @@ fn principal() -> u64 {
                             println!("  [sesiones] {} pide {}: el usuario dice no", nombre(&quien), if reiniciar { "reiniciar" } else { "apagar" });
                         }
                     }
+                    // S6b, S36: dar o quitar un permiso desde el Shell (`PERMISO_CAMBIAR`), si el usuario dijo que sí.
+                    if let Some(i) = preguntas.iter().position(|p| p.is_some_and(|p| p.0 == id && p.4 >= CAMBIO)) {
+                        let (_, a_quien, de, prog16, cual, uid) = preguntas[i].take().unwrap();
+                        let (dar, uid) = (cual == CAMBIO, uid as u32);
+                        let serv16 = pregunta_permiso[i];
+                        let prog = &prog16[..prog16.iter().position(|&c| c == 0).unwrap_or(16)];
+                        let serv = &serv16[..serv16.iter().position(|&c| c == 0).unwrap_or(16)];
+                        let pidio = fichas.iter().flatten().find(|f| f.marca == de).map_or([b'?'; 16], |f| f.nombre);
+                        registro.uid = uid;
+                        let serv_t = core::str::from_utf8(serv).unwrap_or("?");
+                        let estado = match (si, dar) {
+                            (false, _) => PROTEGIDO,
+                            (true, true) if conceder(&mut concedidos, prog, serv, uid) => BIEN,
+                            (true, true) => dashos::protocolo::archivos::SIN_SITIO,
+                            (true, false) => {
+                                let q = quitar_permiso(&mut concedidos, &mut dadas, &fichas, &mut sin_preguntar_quitado, prog, serv, |u| u == uid);
+                                if q.contains(&uid) { BIEN } else { NO_EXISTE }
+                            }
+                        };
+                        let por = Texto16::de(format_args!("lo pidió {} y el usuario dijo que {}", nombre(&pidio), if si { "sí" } else { "no" }));
+                        let por = core::str::from_utf8(por.bytes()).unwrap_or("?");
+                        if estado == BIEN {
+                            guardar_de(uid, &concedidos, &abiertas, &mut por_guardar, &mut registro);
+                            registro.linea(rg::SEGURIDAD, &prog16, uid, "permiso", format_args!("se {} \"{}\" ({})", if dar { "da" } else { "quita" }, serv_t, pt::frase(serv_t)), por);
+                        } else {
+                            registro.linea(rg::SEGURIDAD, &prog16, uid, "permiso", format_args!("no se {} \"{}\"", if dar { "da" } else { "quita" }, serv_t), por);
+                        }
+                        println!("  [sesiones] {} {} a {} el permiso {}: el usuario dice {} ({})", nombre(&pidio), if dar { "da" } else { "quita" }, nombre(&prog16), serv_t, if si { "sí" } else { "no" }, estado);
+                        dashos::canal_escribir(a_quien, &estado.to_le_bytes(), &[]);
+                        dashos::cerrar(a_quien);
+                    }
                     // Todas las que esperaban esa respuesta (copias del mismo programa que pidieron lo mismo).
                     let mut primera = true;
                     while let Some(i) = preguntas.iter().position(|p| p.is_some_and(|p| p.0 == id && p.4 < ACCION)) {
                         let (_, a_quien, de, programa, s, uid) = preguntas[i].take().unwrap();
                         let ya = !primera;
                         primera = false;
+                        registro.uid = uid as u32;
+                        let motivo = match (si, guardar) {
+                            (true, true) => "el usuario dijo que sí, siempre",
+                            (true, false) => "el usuario dijo que sí, solo esta vez",
+                            _ => "el usuario dijo que no, o no contestó",
+                        };
                         // S28: un permiso sin llave: se concede (y se guarda si es "siempre") o no; sin llave.
                         if s == SIN_LLAVE {
                             let pedido = pregunta_permiso[i];
                             if si && guardar && !ya {
-                                if let Some(c) = concedidos.iter_mut().find(|c| c.is_none()) {
-                                    *c = Some((programa, SIN_LLAVE, uid as u32, pedido));
-                                }
-                                if let Some(a) = &archivos {
-                                    guardar_permiso(a, nombre(&programa), nombre(&pedido), uid as u32);
-                                }
+                                let campo = pedido.iter().position(|&c| c == 0).unwrap_or(16);
+                                conceder(&mut concedidos, &programa[..programa.iter().position(|&c| c == 0).unwrap_or(16)], &pedido[..campo], uid as u32);
+                                guardar_de(uid as u32, &concedidos, &abiertas, &mut por_guardar, &mut registro);
                             }
                             let (estado, como) = match (si, guardar) {
                                 (true, true) => (BIEN, pf::SIEMPRE),
                                 (true, false) => (BIEN, pf::ESTA_VEZ),
                                 _ => (PROTEGIDO, pf::DIJO_NO),
                             };
-                            registro.apuntar(R_SERVICIO, estado, &programa, &pedido);
+                            registro.apuntar_por(R_SERVICIO, estado, &programa, &pedido, motivo);
                             println!("  [sesiones] {} pide {}: {} ({})", nombre(&programa), nombre(&pedido), estado, pf::como(como));
                             let mut r = [0u8; 8];
                             r[0..4].copy_from_slice(&estado.to_le_bytes());
@@ -2104,19 +2449,18 @@ fn principal() -> u64 {
                             // Para el usuario de quien preguntó (U6); los demás que esperaban la misma respuesta
                             // reciben la llave esta vez, y si son de otro usuario, la próxima se les pregunta.
                             if !ya && guardar {
-                                if let Some(c) = concedidos.iter_mut().find(|c| c.is_none()) {
-                                    *c = Some((programa, s, uid as u32, nombre16(REPARTE[s].0.as_bytes())));
-                                }
-                                if let Some(a) = &archivos {
-                                    guardar_permiso(a, nombre(&programa), REPARTE[s].0, uid as u32);
-                                }
+                                conceder(&mut concedidos, &programa[..programa.iter().position(|&c| c == 0).unwrap_or(16)], REPARTE[s].0.as_bytes(), uid as u32);
+                                guardar_de(uid as u32, &concedidos, &abiertas, &mut por_guardar, &mut registro);
                             }
                             if SE_APUNTA.contains(&REPARTE[s].0) {
-                                registro.apuntar(R_SERVICIO, BIEN, &programa, REPARTE[s].0.as_bytes());
+                                registro.apuntar_por(R_SERVICIO, BIEN, &programa, REPARTE[s].0.as_bytes(), motivo);
+                            } else if !ya {
+                                // S6, S36: lo que se da también queda en el registro común (en el de antes, solo lo de `SE_APUNTA`).
+                                registro.linea(rg::SEGURIDAD, &programa, uid as u32, "permiso", format_args!("se da \"{}\" ({})", REPARTE[s].0, pt::frase(REPARTE[s].0)), motivo);
                             }
                             dar_servicio(&mut dadas, s, de, &programa, &siguen)
                         } else {
-                            registro.apuntar(R_SERVICIO, PROTEGIDO, &programa, REPARTE[s].0.as_bytes());
+                            registro.apuntar_por(R_SERVICIO, PROTEGIDO, &programa, REPARTE[s].0.as_bytes(), motivo);
                             (PROTEGIDO, None)
                         };
                         println!("  [sesiones] {} pide {}: el usuario dice {} ({})", nombre(&programa), REPARTE[s].0, if si { "sí" } else { "no" }, estado);
@@ -2170,37 +2514,18 @@ fn principal() -> u64 {
                         registro.apuntar(R_SERVICIO, PROTEGIDO, &quien, prog);
                         PROTEGIDO
                     } else {
-                        let s = REPARTE.iter().position(|r| r.0.as_bytes() == serv);
-                        let mut quitado = false;
                         // U6: como en `CONCEDIDOS`, el centro solo lo de su usuario y lo del sistema.
                         let todo = yo.is_some_and(|f| es(&f, GUARDIANES));
                         let suyo = yo.map_or(0, |f| f.uid);
-                        for c in concedidos.iter_mut() {
-                            if c.is_some_and(|c| permiso_de(&c).as_bytes() == serv && &c.0[..c.0.iter().position(|&x| x == 0).unwrap_or(16)] == prog && (todo || c.2 == suyo || c.2 < PRIMERA_PERSONA)) {
-                                *c = None;
-                                quitado = true;
-                            }
-                        }
-                        if quitado {
-                            // H9: lo que se daba sin preguntar, a partir de ahora se pregunta.
-                            if let Some(s) = s.filter(|&s| SIN_PREGUNTAR.iter().any(|&(p, sv)| sv == REPARTE[s].0 && p.as_bytes() == prog)) {
-                                if let Some(q) = sin_preguntar_quitado.get_mut(s) {
-                                    *q = true;
-                                }
-                            }
-                            // Las llaves que ya tenga dejan de servir: el permiso se retira ya, no al pedirlo otra vez.
-                            for x in dadas.iter_mut() {
-                                if let Some((mc, sv, rev)) = *x {
-                                    let de_el = fichas.iter().flatten().any(|f| f.marca == mc && nombre(&f.nombre).as_bytes() == prog);
-                                    if Some(sv) == s && de_el {
-                                        dashos::revocar(rev);
-                                        dashos::cerrar(rev);
-                                        *x = None;
-                                    }
-                                }
-                            }
-                            if let Some(a) = &archivos {
-                                reescribir_permisos(a, &concedidos);
+                        let quitados = quitar_permiso(&mut concedidos, &mut dadas, &fichas, &mut sin_preguntar_quitado, prog, serv, |u| todo || u == suyo || u < PRIMERA_PERSONA);
+                        if quitados.iter().any(|&u| u != 0) {
+                            // S6b, S36: a su sitio, el de cada persona y el del sistema; y al registro común.
+                            let mut sistema = false;
+                            let motivo = if yo.is_some_and(|f| es(&f, &["centro"])) { "lo quitó el usuario en Ajustes" } else { "lo quitó guardian" };
+                            for u in quitados.into_iter().filter(|&u| u != 0) {
+                                let u = if u < PRIMERA_PERSONA { if sistema { continue } else { sistema = true; 1 } } else { u };
+                                registro.linea(rg::SEGURIDAD, &nombre16(prog), u, "permiso", format_args!("se quita \"{}\"", core::str::from_utf8(serv).unwrap_or("?")), motivo);
+                                guardar_de(u, &concedidos, &abiertas, &mut por_guardar, &mut registro);
                             }
                             BIEN
                         } else {
@@ -2285,9 +2610,15 @@ fn principal() -> u64 {
                     };
                     if estado != BIEN {
                         println!("  [sesiones] {} pide guardar ENV:{:?} en ENVARC:: {}", nombre(&quien), core::str::from_utf8(&fichero[..fichero.len().min(64)]).unwrap_or("?"), estado);
-                        // Lo negado, al registro de seguridad de `sesiones`. El registro común (`Estado:Registros/`, rama
-                        // `registro-permisos`) irá aquí también cuando esté.
-                        registro.apuntar(R_AJUSTE, estado, &quien, &fichero[..fichero.len().min(16)]);
+                        // Lo negado, al registro común (`Estado:Registros/seguridad`, clase "ajustes"), con el porqué.
+                        let porque = match estado {
+                            PROTEGIDO => "solo lo pide el centro de control",
+                            -3 => "el nombre sale del cajón de los ajustes o no vale",
+                            NO_EXISTE => "sin la sesión abierta",
+                            _ => "el servicio de archivos no pudo",
+                        };
+                        let f = &fichero[..fichero.len().min(rg::MAX_TEXTO / 2)];
+                        registro.apuntar_por(R_AJUSTE, estado, &quien, f, porque);
                     }
                     dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
                 }
@@ -2412,6 +2743,122 @@ fn principal() -> u64 {
                     };
                     dashos::canal_escribir(respuesta, &r.to_le_bytes(), &[]);
                 }
+                // S6, S36: lo que apunta un programa en el registro común. La hora, el programa y el usuario los pone
+                // `sesiones`; el fichero y la clase, también (un programa del sistema puede pedir una clase de las suyas).
+                APUNTAR => {
+                    let (lq, lm) = (u32_en(4) as usize, u32_en(8) as usize);
+                    let que = m.get(28..28usize.saturating_add(lq)).unwrap_or(b"");
+                    let motivo = m.get(28 + que.len()..(28 + que.len()).saturating_add(lm)).unwrap_or(b"");
+                    let clase = m.get(12..28).map_or("", |c| core::str::from_utf8(&c[..c.iter().position(|&x| x == 0).unwrap_or(16)]).unwrap_or(""));
+                    let estado = match yo {
+                        None => PROTEGIDO,
+                        Some(f) => {
+                            let del_sistema = f.marca < PRIMER_PID_PROPIO && rg::CLASES_DEL_SISTEMA.contains(&clase) && clase != "programa";
+                            let (fichero, clase) = if del_sistema { (rg::SISTEMA, clase) } else { (rg::PROGRAMAS, "programa") };
+                            // El ritmo, por programa y usuario (no por proceso: lanzar copias no da más).
+                            let clave = f.nombre.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3)) ^ ((f.uid as u64) << 32) | 1;
+                            match ritmo.dejar(clave, dashos::ahora_us()) {
+                                None => OCUPADO,
+                                Some(perdidas) => {
+                                    if perdidas > 0 {
+                                        registro.linea(fichero, &f.nombre, f.uid, "registro", format_args!("{} líneas suyas no se apuntaron", perdidas), "las mandaba más deprisa de lo que se deja");
+                                    }
+                                    registro.linea_bytes(fichero, &f.nombre, f.uid, clase, que, motivo);
+                                    BIEN
+                                }
+                            }
+                        }
+                    };
+                    dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
+                }
+                // S6, S36: leer el registro común: lo de su usuario y lo del sistema; todo, con la acción "registro".
+                REGISTRO_LEER => {
+                    let (fichero, parte, desde) = (u32_en(4) as usize, u32_en(8), u64_en(12));
+                    let todo = marca != 0 && lee_todo.contains(&marca);
+                    let lector = yo.and_then(|f| CUENTAS.iter().find(|c| c.0 == f.uid)).map_or("", |c| c.1);
+                    let (estado, hasta, generacion, llave, largo) = if yo.is_some() { registro.texto.leer(fichero, parte, desde, lector, todo) } else { (PROTEGIDO, 0, 0, 0, 0) };
+                    let mut r = [0u8; LARGO_REGISTRO_LEER];
+                    r[0..4].copy_from_slice(&estado.to_le_bytes());
+                    r[4..8].copy_from_slice(&generacion.to_le_bytes());
+                    r[8..16].copy_from_slice(&hasta.to_le_bytes());
+                    r[16..24].copy_from_slice(&(largo as u64).to_le_bytes());
+                    if llave != 0 {
+                        if dashos::canal_escribir(respuesta, &r, &[llave]) != 0 {
+                            dashos::cerrar(llave);
+                        }
+                    } else {
+                        r[16..24].fill(0);
+                        dashos::canal_escribir(respuesta, &r, &[]);
+                    }
+                }
+                // S6b, S36: lo concedido a los programas de su usuario (la orden `Permiso`): ver lo propio es libre.
+                PERMISOS_PROPIOS => {
+                    let suyo = yo.map(|f| f.uid);
+                    let ve = |c: &&Concedido| suyo == Some(c.2);
+                    let total = concedidos.iter().flatten().filter(ve).count();
+                    let desde = u32_en(4) as usize;
+                    let mut r = [0u8; 16 + POR_PAGINA_CONCEDIDOS * CONCEDIDO];
+                    let mut van = 0;
+                    for c in concedidos.iter().flatten().filter(ve).skip(desde).take(POR_PAGINA_CONCEDIDOS) {
+                        let e = &mut r[16 + van * CONCEDIDO..16 + (van + 1) * CONCEDIDO];
+                        e[..16].copy_from_slice(&c.0);
+                        e[16..32].copy_from_slice(&nombre16(permiso_de(c).as_bytes()));
+                        van += 1;
+                    }
+                    r[0..4].copy_from_slice(&(if yo.is_some() { BIEN } else { PROTEGIDO }).to_le_bytes());
+                    r[4..8].copy_from_slice(&(total as u32).to_le_bytes());
+                    r[8..12].copy_from_slice(&(van as u32).to_le_bytes());
+                    dashos::canal_escribir(respuesta, &r[..16 + van * CONCEDIDO], &[]);
+                }
+                // S6b, S36: dar o quitar un permiso desde el Shell (la orden `Permiso`): lo confirma el usuario en
+                // `guardian`, como la pregunta del primer uso. Un guion no se concede nada solo.
+                PERMISO_CAMBIAR => {
+                    let dar = u32_en(4) == 1;
+                    let (lp, ls) = (u32_en(8) as usize, u32_en(12) as usize);
+                    let prog = m.get(16..16usize.saturating_add(lp)).unwrap_or(b"");
+                    let serv = m.get(16 + prog.len()..(16 + prog.len()).saturating_add(ls)).unwrap_or(b"");
+                    let quien = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
+                    let uid = yo.map_or(0, |f| f.uid);
+                    let existe = (REPARTE.iter().any(|r| r.0.as_bytes() == serv) || pf::es_permiso(serv)) && pt::nombre_valido(prog) && prog.len() <= 16;
+                    let ya = concedidos.iter().flatten().any(|c| c.2 == uid && permiso_de(c).as_bytes() == serv && &c.0[..c.0.iter().position(|&x| x == 0).unwrap_or(16)] == prog);
+                    let hueco = preguntas.iter().position(|p| p.is_none());
+                    let delante = uid >= PRIMERA_PERSONA && activa == uid;
+                    let que = if dar { "dar" } else { "quitar" };
+                    let (prog_t, serv_t) = (core::str::from_utf8(prog).unwrap_or("?"), core::str::from_utf8(serv).unwrap_or("?"));
+                    let (estado, motivo) = match () {
+                        _ if yo.is_none() => (PROTEGIDO, "no tiene ficha"),
+                        _ if !existe => (NO_EXISTE, "ese permiso o ese programa no existen"),
+                        _ if !dar && !ya => (NO_EXISTE, "no lo tenía"),
+                        _ if dar && ya => (BIEN, "ya lo tenía"),
+                        _ if !delante => (PROTEGIDO, "su sesión no está delante: no se pregunta"),
+                        _ if canal_guardian == 0 || hueco.is_none() => (PROTEGIDO, "no hay a quién preguntar"),
+                        _ => {
+                            let h = hueco.unwrap();
+                            let id = siguiente_pregunta;
+                            siguiente_pregunta = siguiente_pregunta.wrapping_add(1).max(1);
+                            let mut q = [0u8; PREGUNTA];
+                            q[0..4].copy_from_slice(&id.to_le_bytes());
+                            q[4..8].copy_from_slice(&uid.to_le_bytes());
+                            q[8..24].copy_from_slice(&quien);
+                            let marcador: &[u8] = if dar { b"+dar" } else { b"+quitar" };
+                            q[24..24 + marcador.len()].copy_from_slice(marcador);
+                            q[40..40 + prog.len()].copy_from_slice(prog);
+                            q[41 + prog.len()..41 + prog.len() + serv.len().min(16)].copy_from_slice(&serv[..serv.len().min(16)]);
+                            if dashos::canal_escribir(canal_guardian, &q, &[]) == 0 {
+                                preguntas[h] = Some((id, respuesta, marca, nombre16(prog), CAMBIO + (!dar) as usize, uid as u64));
+                                pregunta_permiso[h] = nombre16(serv);
+                                println!("  [sesiones] {} pide {} a {} el permiso {}: se pregunta al usuario", nombre(&quien), que, prog_t, serv_t);
+                                continue;
+                            }
+                            (PROTEGIDO, "no hay a quién preguntar")
+                        }
+                    };
+                    println!("  [sesiones] {} pide {} a {} el permiso {}: {} ({})", nombre(&quien), que, prog_t, serv_t, estado, motivo);
+                    if estado != BIEN {
+                        registro.linea(rg::SEGURIDAD, &quien, uid, "permiso", format_args!("pide {} a {} el permiso \"{}\": no", que, prog_t, serv_t), motivo);
+                    }
+                    dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
+                }
                 MATAR => {
                     let objetivo = u64_en(4);
                     let i = fichas.iter().position(|x| x.is_some_and(|x| x.marca == objetivo));
@@ -2449,6 +2896,7 @@ fn principal() -> u64 {
                                     presentar_al_selector(selector, f.marca, &[0; 16]);
                                 }
                                 println!("  [sesiones] {} mata a {} (los dos, usuario {})", nombre(&yo.nombre), nombre(&f.nombre), f.uid);
+                                registro.linea(rg::SEGURIDAD, &yo.nombre, f.uid, "procesos", format_args!("cierra a {} (proceso {})", nombre(&f.nombre), f.marca), "es del mismo usuario");
                                 BIEN
                             }
                         }

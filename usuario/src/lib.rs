@@ -44,6 +44,10 @@ pub mod cortafuegos;
 pub mod dns;
 pub mod sntp;
 pub mod zona;
+/// S6, S36: el registro común en `Estado:Registros/` (el formato de la línea, quién ve qué, el ritmo) y los permisos
+/// concedidos en texto con su frase en llano (sin dependencias: se prueban en el PC).
+pub mod registro;
+pub mod permisos_texto;
 mod copiar;
 
 /// Llamada al sistema en crudo: número y cinco argumentos; devuelve x0 y x1. Para pruebas y para la biblioteca.
@@ -495,6 +499,23 @@ pub fn grupo_matar(grupo: u32) -> i64 {
 pub fn grupo_uso(grupo: u32) -> (i64, u64) {
     let (a, b) = llamada(20, [grupo as u64, 0, 0, 0, 0]);
     (a as i64, b)
+}
+
+/// S3 (topar con el cupo deja rastro): las veces que un cobro al grupo no cupo por un tope (el suyo o uno de encima,
+/// no el de la máquina entera); negativo si la llave no vale. Solo sube: quien lo vigila compara con lo de antes.
+pub fn grupo_topado(grupo: u32) -> i64 {
+    let (r0, r3): (u64, u64);
+    unsafe {
+        asm!("svc #0",
+            in("x8") 20u64,
+            inlateout("x0") grupo as u64 => r0,
+            inlateout("x1") 0u64 => _,
+            inlateout("x2") 0u64 => _,
+            inlateout("x3") 0u64 => r3,
+            in("x4") 0u64,
+            options(nostack));
+    }
+    if (r0 as i64) < 0 { r0 as i64 } else { r3 as i64 }
 }
 
 /// (tope, usado con sus subgrupos, usado sin ellos) en bytes, o un error negativo en el tope (S3).

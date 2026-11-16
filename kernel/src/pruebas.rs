@@ -1389,6 +1389,8 @@ fn prueba_topes() {
     // 2 MB más en g3 no caben en g1 (4 MB): no se cobra, y ni g3 ni su padre se quedan con nada de más.
     let antes = (g1.uso().1, g3.uso().1);
     let no_cabe = g3.cobrar(2 << 20).is_none() && (g1.uso().1, g3.uso().1) == antes;
+    // Y queda contado en el que pidió (g3), no en los demás: topar con el cupo deja rastro (S3).
+    let contado = g3.topado() == 1 && g1.topado() == 0 && g2.topado() == 0;
     drop((a, b));
     let vuelven = g2.uso().1 == 0 && g3.uso().1 == 0;
     let hermanos: alloc::vec::Vec<_> = (0..100).filter_map(|_| g1.hijo(1 << 40)).collect();
@@ -1426,10 +1428,12 @@ fn prueba_topes() {
     drop(tomado);
     presion::mirar();
     let normal = presion::nivel() == 0 && nivel_de(&canal) == Some(0) && g.uso().1 == 0;
+    // La máquina sin memoria no es topar con un tope: no se cuenta.
+    let contado = contado && g.topado() == 0;
     presion::callar();
-    kprintln!("  topes: cadena {}, sin cobro a medias {}, devuelto {}, cien hermanos de 1 TB {}; memoria llena a {} MB (quedan {} MB), aviso {:?}, baja {}, de vuelta {}",
-        suben, no_cabe, vuelven, cien, mb, queda, primero, baja, normal);
-    let bien = suben && no_cabe && vuelven && cien && mb > 0 && queda < 64 && primero == Some(0) && baja && normal;
+    kprintln!("  topes: cadena {}, sin cobro a medias {}, contado {}, devuelto {}, cien hermanos de 1 TB {}; memoria llena a {} MB (quedan {} MB), aviso {:?}, baja {}, de vuelta {}",
+        suben, no_cabe, contado, vuelven, cien, mb, queda, primero, baja, normal);
+    let bien = suben && no_cabe && contado && vuelven && cien && mb > 0 && queda < 64 && primero == Some(0) && baja && normal;
     kprintln!("S3: cupos como topes y aviso de memoria baja {}", if bien { "bien" } else { "MAL" });
 }
 
