@@ -2204,3 +2204,10 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   `HUECO_SUYO`; órdenes 80 a 83 de `sesiones`. Tanda completa y `arranque-virt-shell`: todo bien a la primera. Sin
   ver en pantalla las preguntas nuevas. Fallo apuntado: volver a una instantánea pierde lo registrado después.
   Queda: modo de desarrollo, tanda de administrador, el registro en Ajustes.
+- **Unida `ajustes-texto` (2026-11-16)**: ajustes como texto `clave = valor` (`idioma::texto`, respeta comentarios);
+  avisos de cambio en `archivos` (órdenes 80 a 82: `VIGILAR`, `NO_VIGILAR`, `AVISOS`); `ENV:Sys/locale` en texto
+  manda y el IFF del Amiga se genera; orden `Ajuste` (leer, poner, `GUARDAR`, `LISTA`; la zona pide `guardian`); el
+  centro aplica idioma y tema en marcha; Apariencia con Guardar, Usar y Cancelar, guardado por `sesiones`
+  (`GUARDAR_ENV`, 90; `archivos` `RAM_GUARDAR`, 120; solo el centro, solo su sesión, lo negado al registro común);
+  la apariencia en un solo sitio (`Escritorio/apariencia`). Tanda completa y `arranque-virt-shell`: todo bien a la
+  primera. Sin ver los botones en pantalla. Por decidir: el tema de la pantalla de entrada como ajuste de la máquina.
