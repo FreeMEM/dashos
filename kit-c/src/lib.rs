@@ -210,6 +210,8 @@ struct Ventana {
     siguiente_numero: u32,
     menu_obj: Option<u32>,
     menu_dicho: Vec<u8>,
+    /// Lo último dicho por la consola de lo que se ve de su menú desplegado (`Menus::lo_que_se_ve`).
+    menu_visto: String,
 }
 
 /// Dónde se proyectan los píxeles de las ventanas: dos sitios de 256 MB por ventana desde 320 GB (lejos del montón de
@@ -508,6 +510,15 @@ impl Estado {
             elegidos.push(n);
         }
         let abrir = core::mem::take(&mut i.abrir_fuera);
+        // Lo que se ve de lo desplegado (cambia con el teclado y la rueda), para las pruebas: solo si cambió.
+        let visto = i.menus.as_ref().map(|m| m.lo_que_se_ve()).unwrap_or_default();
+        if visto != self.ventanas[w].menu_visto {
+            if !visto.is_empty() {
+                println!("  [dash-ui] se ve: {}", visto);
+            }
+            self.ventanas[w].menu_visto = visto;
+        }
+        let Some(i) = self.ventanas.get_mut(w).and_then(|v| v.interfaz.as_mut()) else { return };
         let cambiado = i.menus.as_mut().is_some_and(|m| core::mem::take(&mut m.cambiado));
         if cambiado {
             // Las marcas, de vuelta al modelo de kit-c (si no, rehacer los menús las perdería).
@@ -775,7 +786,16 @@ impl Estado {
                 }
             }
             (TECLADO, wl_keyboard::ev::ENTER) => self.teclado = self.ventana_de(palabra(1)),
-            (TECLADO, wl_keyboard::ev::LEAVE) => self.teclado = None,
+            (TECLADO, wl_keyboard::ev::LEAVE) => {
+                // S10 (menus-pulido): lo desplegado en la fila se cierra si el teclado se va a otra ventana.
+                if let Some(w) = self.ventana_de(palabra(1)).or(self.teclado)
+                    && self.ventanas[w].interfaz.as_mut().is_some_and(|i| i.teclado_sale())
+                {
+                    println!("  [dash-ui] menús cerrados: el teclado se fue");
+                    self.pintar(w, false);
+                }
+                self.teclado = None;
+            }
             (TECLADO, wl_keyboard::ev::KEY) => {
                 if let Some(w) = self.teclado.filter(|&w| self.atiende(w)) {
                     if let Some(i) = self.ventanas[w].interfaz.as_mut() {
@@ -1091,6 +1111,7 @@ pub unsafe extern "C" fn dash_ui_window_begin(titulo: *const c_char, _id: i32) -
         siguiente_numero: 1,
         menu_obj: None,
         menu_dicho: Vec::new(),
+        menu_visto: String::new(),
     });
     let w = e.ventanas.len() - 1;
     e.construyendo = Some(w);
@@ -1646,6 +1667,7 @@ pub unsafe extern "C" fn dash_ui_request(win: i32, titulo: *const c_char, t: *co
         siguiente_numero: 1,
         menu_obj: None,
         menu_dicho: Vec::new(),
+        menu_visto: String::new(),
     });
     let w = e.ventanas.len() - 1;
     if !e.abrir(w) {
