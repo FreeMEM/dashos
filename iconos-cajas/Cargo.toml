@@ -1,0 +1,19 @@
+[package]
+name = "dashos-iconos-cajas"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "Los iconos de las cajas: los .info del Amiga (clásicos, NewIcons, GlowIcons, PNG de OS4 y MorphOS) y los de los programas de Linux (.desktop y temas de freedesktop)"
+
+[lib]
+name = "iconos_cajas"
+path = "src/lib.rs"
+
+[features]
+default = ["imagen"]
+# Leer las imágenes (los .info y los PNG): con el kit (su PNG, su zlib y su `Imagen`). Sin ella queda solo lo de los
+# .desktop y los temas, que usa el puente dentro del invitado de Linux (con std, sin el kit).
+imagen = ["dep:kit"]
+
+[dependencies]
+kit = { package = "dashos-kit", path = "../kit", optional = true }
