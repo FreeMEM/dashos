@@ -76,6 +76,8 @@ const E_NO_HAY: u64 = -10i64 as u64;
 /// Un objeto de memoria, hasta 16 MB (una pantalla de 2560 × 1440 a 32 bits): crearlo tiene puntos de corte cada
 /// 256 KB (S2), así que el tamaño no alarga lo que se pasa con las IRQ enmascaradas. La de DMA, 4 MB seguidos.
 const MAX_MEMORIA: u64 = 16 << 20;
+/// Lo más que mide un objeto de memoria disperso (llamada 56): 1 GB (2 MB de lista de páginas).
+const MAX_DISPERSA: u64 = 1 << 30;
 const MAX_DMA: u64 = 4 << 20;
 const MAX_ESCRIBIR: u64 = 256;
 
@@ -210,6 +212,10 @@ pub fn atender(marco: &mut Marco) {
         // Aviso a las cajas: el globo de una máquina (a[0] una vCPU con escribir; a[1] 0 soltar, 1 reponer; a[2] tabla
         // de direcciones del invitado en u64; a[3] cuántas, hasta 256).
         55 => maquina_globo(a[0] as u32, a[1], a[2], a[3]),
+        // El `RAM:` de una sesión (docs/bitacoras/asignaciones.md): un objeto de memoria disperso (a[0] bytes), cobrado
+        // al grupo de la llave a[1] (0: el propio), y poner (a[1] = 1) o soltar (0) a[3] páginas suyas desde la a[2].
+        56 => memoria_dispersa(a[0], a[1] as u32),
+        57 => memoria_paginas(a[0] as u32, a[1], a[2], a[3]),
         // M2b (docs/MULTITAREA_LOOP.md): dormir a[0] microsegundos (como mucho una hora), sin canal ni temporizador.
         30 => {
             planificador::dormir_us(a[0].min(3_600_000_000));
@@ -439,6 +445,69 @@ fn memoria_crear(tamano: u64) -> u64 {
     match proc_.llaves.tomar().instalar(llave) {
         Ok(n) => n as u64,
         Err(_) => E_LIMITE,
+    }
+}
+
+/// Llamada 56: un objeto de memoria disperso de `tamano` bytes (hasta `MAX_DISPERSA`), sin ninguna página puesta, que
+/// se cobra al grupo de la llave `grupo` (con escribir, como para crear un proceso en él; 0, el propio). Vacío solo
+/// cuesta su lista de páginas. Las páginas se ponen y se sueltan con la llamada 57.
+fn memoria_dispersa(tamano: u64, grupo: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    if tamano == 0 || tamano > MAX_DISPERSA {
+        return E_TAMANO;
+    }
+    let cupo = if grupo == 0 {
+        proc_.cupo.clone()
+    } else {
+        let Some(g) = proc_.llaves.tomar().ver(grupo) else { return E_LLAVE };
+        let Objeto::Grupo(c) = g.objeto else { return E_TIPO };
+        if g.derechos & objetos::ESCRIBIR == 0 {
+            return E_DERECHOS;
+        }
+        c
+    };
+    if proc_.llaves.tomar().huecos() == 0 {
+        return E_LIMITE;
+    }
+    let Some(m) = objetos::Memoria::dispersa(tamano as usize, &cupo) else { return E_MEMORIA };
+    let llave = objetos::Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::TODOS);
+    match proc_.llaves.tomar().instalar(llave) {
+        Ok(n) => n as u64,
+        Err(_) => E_LIMITE,
+    }
+}
+
+/// Llamada 57: pone (`op` 1) o suelta (0) `n` páginas (de 1 a 256) del objeto de memoria `h` (con escribir) desde la
+/// `primera`, en las proyecciones de quien llama (`Espacio::paginas_de`). Devuelve cuántas quedaron como se pedía,
+/// en orden desde la primera: menos de `n` si al poner no cupo más en el tope del grupo del objeto o no queda memoria.
+fn memoria_paginas(h: u32, op: u64, primera: u64, n: u64) -> u64 {
+    use crate::espacio::FalloPaginas;
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    if op > 1 {
+        return E_ARGUMENTO;
+    }
+    if n == 0 || n > crate::espacio::MAX_PAGINAS_SUELTAS as u64 || primera > u32::MAX as u64 {
+        return E_TAMANO;
+    }
+    // Con la tabla de llaves y el espacio tomados (en ese orden, como el globo), nadie del proceso saca otra referencia
+    // al objeto mientras se cuenta y se suelta. Una llave revocable no vale: su intermediario guarda otra referencia.
+    let llaves = proc_.llaves.tomar();
+    let Some(l) = llaves.ver_crudo(h) else { return E_LLAVE };
+    let Objeto::Memoria(m) = &l.objeto else { return E_TIPO };
+    if l.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    // Las referencias de este proceso fuera de sus proyecciones: sus llaves y la copia de la llave que se acaba de ver.
+    let mias = llaves.cuantas_de_memoria(m) + 1;
+    let mut espacio = proc_.espacio.tomar();
+    let r = espacio.paginas_de(m, primera as usize, n as usize, op == 1, mias);
+    drop(espacio);
+    drop(llaves);
+    match r {
+        Ok(k) => k as u64,
+        Err(FalloPaginas::Fuera) => E_TAMANO,
+        Err(FalloPaginas::Compartida) => E_DERECHOS,
+        Err(FalloPaginas::Memoria) => E_MEMORIA,
     }
 }
 

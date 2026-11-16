@@ -80,6 +80,13 @@ impl Cargo {
     pub fn descontar(&mut self, n: u64) {
         self.n = self.n.saturating_sub(n);
     }
+
+    /// Suma `n` bytes a lo que devolverá al soltarse, sin cobrarlos aquí: quien lo llama lleva la cuenta de lo que de
+    /// verdad está cobrado (`Cupo::cobrar_suelto`) y descuenta el resto antes de soltar el cargo (`descontar`). Es el
+    /// cargo de un objeto de memoria disperso (llamada 56): nace con todas sus páginas apuntadas y ninguna cobrada.
+    pub fn apuntar(&mut self, n: u64) {
+        self.n = self.n.saturating_add(n);
+    }
 }
 
 impl Drop for Cargo {

@@ -17,6 +17,8 @@
 //! 14: se come la memoria a trozos de 64 KB y gira (S3).
 //! 16: intenta subir a 1 TB el tope del grupo de su llave 2 (el suyo) y sale con el error en positivo (S3).
 //! 15: se come la memoria a trozos de 16 MB (el máximo) y sale con cuántos le dieron (250 si no acaba en E_MEMORIA; S3).
+//! 17: crea un objeto de memoria disperso, lo proyecta, pone y escribe su página 1 y lee la 0, que no está puesta:
+//! tiene que morir por fallo (llamada 56 y 57). Si llega a leerla, sale con 0.
 //! Si no le llega nada, se queda bloqueado leyendo (para matarlo bloqueado).
 
 #![no_std]
@@ -154,6 +156,15 @@ fn principal() -> u64 {
                     }
                 }
             }
+        }
+        17 => {
+            let va = 0x30_0000_0000usize;
+            let m = dashos::memoria_dispersa(64 << 10, 0);
+            if m <= 0 || dashos::memoria_proyectar(m as u32, va, true) != 0 || dashos::memoria_paginas(m as u32, true, 1, 1) != 1 {
+                return 254;
+            }
+            unsafe { core::ptr::write_volatile((va + 4096) as *mut u64, 7) };
+            unsafe { core::ptr::read_volatile(va as *const u64) }
         }
         _ => 201,
     }

@@ -189,6 +189,8 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 53 | `memoria_aviso` | `x0` permiso de memoria (con escribir), `x1` canal (con escribir) | 0. El aviso de memoria baja llega al otro lado del canal (S3). `E_LLAVE`, `E_TIPO` o `E_DERECHOS` |
 | 54 | `grupo_tope` | `x0` llave de grupo (con escribir), `x1` tope en bytes | 0. `E_DERECHOS` sin escribir o si es el grupo propio o uno de encima (S3) |
 | 55 | `maquina_globo` | `x0` vCPU (con escribir), `x1` 0 soltar, 1 reponer, `x2` tabla de direcciones físicas del invitado (u64, alineadas a 4 KB, en el orden de bytes del proceso), `x3` cuántas (de 1 a 256) | Cuántas páginas se soltaron o repusieron. El globo de la caja Linux (aviso-cajas): soltar quita la página de la etapa 2 y de las proyecciones de quien llama, vacía las TLB y la devuelve al sistema (y sus bytes al grupo del objeto); reponer pone una nueva a cero (cobrada a ese grupo). Solo memoria que no tiene nadie más: las páginas de un objeto que esté en otra máquina, otro proceso, un mensaje, una vista o tras una llave revocable se saltan. `E_ARGUMENTO` si una dirección no es de su RAM o no está alineada (no se toca nada), `E_TAMANO`, `E_MEMORIA` si no se pudo reponer ninguna, `E_NO_HAY` sin hipervisor en el núcleo |
+| 56 | `memoria_dispersa` | `x0` tamaño en bytes (hasta 1 GB), `x1` llave de grupo (con escribir) o 0: el propio | Llave de un objeto de memoria **disperso**: mide lo pedido (en páginas enteras) y nace sin ninguna página puesta. Se cobra al grupo de `x1`, y solo lo que tenga puesto; vacío cuesta su lista (256 bytes y 8 por página). Se proyecta entero como cualquier otro; tocar una página que no está puesta es un fallo del programa. Es el "disco" de memoria del `RAM:` de una sesión. `E_TAMANO`, `E_LLAVE`, `E_TIPO` (no es un grupo), `E_DERECHOS` (sin escribir), `E_MEMORIA`, `E_LIMITE` |
+| 57 | `memoria_paginas` | `x0` llave de memoria (con escribir; no revocable), `x1` 1 poner, 0 soltar, `x2` primera página, `x3` cuántas (de 1 a 256) | Cuántas páginas quedaron como se pedía, en orden desde la primera (una que ya estaba cuenta). Poner da páginas nuevas a cero, cobradas al grupo del objeto, y se para en la primera que no cabe en su tope o para la que no queda memoria (`E_MEMORIA` si no se pudo ni la primera). Soltar las quita de las proyecciones de quien llama, vacía las TLB y las devuelve al sistema (y sus bytes al grupo). Vale con cualquier objeto de memoria, disperso o no, que no tenga nadie más: si está en otro proceso, en un mensaje, en una vista, en una máquina o tras una llave revocable, o es memoria DMA o una vista, `E_DERECHOS` y no se toca. `E_TAMANO` si el tramo se sale del objeto, `E_ARGUMENTO` con otra operación |
 | 49 | `pagina_cero` | `x0` permiso de página 0 (con escribir), `x1` llave de memoria de una página (con leer; no revocable) | 0. La proyecta en la dirección 0, de solo lectura y sin ejecutar (H4). `E_TIPO` si `x0` no es el permiso, `E_TAMANO` si el objeto no mide una página, `E_ARGUMENTO` si ya hay página 0 o la llave es revocable |
 
 ### Detalles
@@ -463,7 +465,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 ### Topes de trabajo
 
 Una llamada corre entera sin que el kernel se interrumpa, así que cada una tiene un tope (desde C35):
-`memoria_crear` pide como mucho 16 MB (con puntos de corte cada 256 KB) y `escribir` toma como mucho 256 bytes. Para más, se llama varias veces.
+`memoria_crear` pide como mucho 16 MB (con puntos de corte cada 256 KB), `memoria_paginas` pone o suelta como mucho 256 páginas (1 MB) y `escribir` toma como mucho 256 bytes. Para más, se llama varias veces.
 
 ### Límites
 
@@ -507,7 +509,7 @@ Tipos de objeto:
 | Objeto | Se crea con | Para |
 |---|---|---|
 | Extremo de canal | `canal_crear` | Mensajes y paso de llaves |
-| Memoria | `memoria_crear`; `memoria_vista` (una vista: páginas de otras, solo para leer) | Proyectar y compartir |
+| Memoria | `memoria_crear`; `memoria_vista` (una vista: páginas de otras, solo para leer); `memoria_dispersa` (sin páginas hasta que se ponen con `memoria_paginas`, cobrada a un grupo que se elige) | Proyectar y compartir |
 | Registros | Solo el kernel | Controladores fuera del kernel |
 | Memoria del firmware | Solo el kernel | La de la VideoCore, para el buzón, que da al compositor solo la pantalla (C50) |
 | Interrupción | Solo el kernel | Controladores fuera del kernel |

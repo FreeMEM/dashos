@@ -122,6 +122,22 @@ pub fn memoria_dma(permiso: u32, tamano: usize) -> (i64, u64) {
     (a as i64, b)
 }
 
+/// Un objeto de memoria disperso (llamada 56): mide `tamano` bytes (hasta 1 GB) y nace sin ninguna página puesta. Se
+/// cobra al grupo de la llave `grupo` (con escribir; 0, el propio), y solo lo que tenga puesto. Devuelve la llave o un
+/// error negativo. Las páginas se ponen y se sueltan con `memoria_paginas`; tocar una que no está puesta es un fallo.
+pub fn memoria_dispersa(tamano: usize, grupo: u32) -> i64 {
+    llamada(56, [tamano as u64, grupo as u64, 0, 0, 0]).0 as i64
+}
+
+/// Pone (`poner`) o suelta `cuantas` páginas (de 1 a 256) del objeto de memoria `llave` (con escribir) desde la
+/// `primera` (llamada 57). Poner da páginas nuevas a cero, cobradas al grupo del objeto; soltar las devuelve al
+/// sistema. Devuelve cuántas quedaron como se pedía, en orden desde la primera (menos de `cuantas` si al poner no cupo
+/// más en el tope del grupo o no queda memoria), o un error negativo: -5 si el tramo se sale, -3 si el objeto lo tiene
+/// alguien más (otro proceso, un mensaje, una vista) o la llave no deja escribir, -7 si no se pudo poner ninguna.
+pub fn memoria_paginas(llave: u32, poner: bool, primera: usize, cuantas: usize) -> i64 {
+    llamada(57, [llave as u64, poner as u64, primera as u64, cuantas as u64, 0]).0 as i64
+}
+
 /// Quita la proyección de un objeto de memoria que empieza en `direccion` (C45).
 pub fn memoria_quitar(direccion: usize) -> i64 {
     llamada(21, [direccion as u64, 0, 0, 0, 0]).0 as i64

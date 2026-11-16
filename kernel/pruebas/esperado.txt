@@ -134,6 +134,7 @@ S3: cupos como topes y aviso de memoria baja bien
   [grupos] topes: el propio no se sube, uno por debajo de lo usado no quita nada y no deja cobrar, y el aviso de memoria pide su permiso
   [grupos] topes: un nieto con tope de 64 MB bajo uno de 2 MB se para en
   [grupos] tiempo de CPU: el hijo que gira gastó
+  [grupos] memoria dispersa: vacía no cobra más que su lista, cada página se cobra al ponerla y vuelve al soltarla, el tope de su grupo la para en
   [lanzador] grupos: clase 0, código 42
   [lanzador] 7 pruebas lanzadas desde un proceso, cada una en su grupo, que queda a cero
   [lanzador] avisos de fin por canal (K7): 7 de 7

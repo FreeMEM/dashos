@@ -144,6 +144,20 @@ pub enum Error {
 
 /// Proyecciones de objetos de memoria por proceso, hasta los cupos de S16 (F).
 const MAX_PROYECCIONES: usize = 1024;
+/// Páginas como mucho por llamada 57 (`Espacio::paginas_de`): acota el rato con los cerrojos tomados, como el globo.
+pub const MAX_PAGINAS_SUELTAS: usize = 256;
+
+/// Por qué no se ponen o sueltan páginas de un objeto de memoria (llamada 57).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FalloPaginas {
+    /// El tramo se sale del objeto, o son demasiadas páginas de una vez.
+    Fuera,
+    /// El objeto lo tiene alguien más (otro proceso, un mensaje, una vista, una máquina, una llave revocable), o es
+    /// memoria DMA o una vista.
+    Compartida,
+    /// No se pudo poner ni la primera: no cabe en el tope de su grupo o no queda memoria.
+    Memoria,
+}
 /// Inicio de la ventana de periféricos de la Pi 4.
 
 /// Por debajo de esto no se proyecta nada.
@@ -507,6 +521,73 @@ impl Espacio {
         if codigo {
             unsafe { core::arch::asm!("dsb ish", "ic ialluis", "dsb ish", "isb") };
         }
+    }
+
+    /// Llamada 57: pone (`poner`) o suelta las páginas `primera..primera + n` del objeto `m` (`n` hasta
+    /// [`MAX_PAGINAS_SUELTAS`]), en orden, y dice cuántas quedaron como se pedía desde la primera; se para en la primera
+    /// que no puede. Una que ya estaba como se pedía cuenta como hecha.
+    ///
+    /// Poner da a cada hueco una página nueva a cero, cobrada al grupo del objeto (si no cabe en su tope o no queda
+    /// memoria fuera de la reserva del kernel, se para ahí), y la pone en las proyecciones que este espacio tenga del
+    /// objeto. Soltar la quita de esas proyecciones, la saca de las TLB de todos los núcleos y la devuelve al sistema
+    /// (y sus bytes al grupo): después, tocarla es un fallo del programa.
+    ///
+    /// Solo con un objeto que no tiene nadie más que este proceso, como el globo de una máquina
+    /// (`hiper::Espacio::globo`): ni otro proceso, ni un mensaje en un canal, ni una vista, ni una máquina, ni una
+    /// llave revocable. Se comprueba contando: sus `Arc` tienen que ser exactamente las proyecciones de este espacio
+    /// más `mias`, las referencias que dice tener quien llama (las llaves de la tabla del proceso y la copia con la
+    /// que llama), que tiene tomado el cerrojo de esa tabla: así nadie del proceso saca otra mientras tanto. Tampoco
+    /// con memoria DMA ni con una vista.
+    pub fn paginas_de(&mut self, m: &alloc::sync::Arc<super::memoria::Memoria>, primera: usize, n: usize, poner: bool, mias: usize) -> Result<usize, FalloPaginas> {
+        if n == 0 || n > MAX_PAGINAS_SUELTAS || primera.checked_add(n).is_none_or(|fin| fin > m.paginas()) {
+            return Err(FalloPaginas::Fuera);
+        }
+        if m.bus().is_some() || m.es_vista() || alloc::sync::Arc::strong_count(m) != self.proyecciones_de(m) + mias {
+            return Err(FalloPaginas::Compartida);
+        }
+        let mut hechas = 0;
+        if poner {
+            for k in primera..primera + n {
+                if m.fisica(k) == 0 {
+                    let Some(f) = crate::memoria::pagina_usuario() else { break };
+                    if !m.reponer_pagina(k, f) {
+                        // SAFETY: recién sacada del repartidor y sin poner en ningún sitio: nadie más la tiene.
+                        unsafe { paginas().liberar(f, 1) };
+                        break;
+                    }
+                    self.poner_pagina(m, k, f);
+                }
+                hechas += 1;
+            }
+            // SAFETY: barrera: las entradas nuevas, antes de volver al proceso.
+            unsafe { core::arch::asm!("dsb ish", "isb") };
+            if hechas == 0 {
+                return Err(FalloPaginas::Memoria);
+            }
+            return Ok(hechas);
+        }
+        let mut sueltas = [0u64; MAX_PAGINAS_SUELTAS];
+        let mut n_sueltas = 0;
+        for k in primera..primera + n {
+            if m.fisica(k) != 0 {
+                // Primero fuera de las proyecciones y de las TLB; después deja de ser del objeto.
+                self.quitar_pagina(m, k);
+                if let Some(f) = m.soltar_pagina(k) {
+                    sueltas[n_sueltas] = f;
+                    n_sueltas += 1;
+                }
+            }
+            hechas += 1;
+        }
+        let mut p = paginas();
+        for &f in &sueltas[..n_sueltas] {
+            // SAFETY: eran del objeto, que solo tiene este proceso (se contó arriba, con su tabla de llaves tomada por
+            // quien llama): `quitar_pagina` las sacó de sus proyecciones y de las TLB de todos los núcleos, y
+            // `soltar_pagina` del objeto, así que el kernel tampoco llega a ellas por él (`Memoria::tramos` no toca un
+            // tramo con huecos). Ya no las ve nadie.
+            unsafe { p.liberar(f, 1) };
+        }
+        Ok(hechas)
     }
 
     /// Proyecta memoria del firmware (C50): la de la VideoCore, por debajo de 4 GB y fuera de la RAM que reparte el

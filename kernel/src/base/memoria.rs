@@ -478,6 +478,9 @@ pub struct Memoria {
     /// así que sus páginas no vuelven al repartidor ni se dan a otro mientras alguien las vea por la vista. Una vista
     /// no devuelve páginas al soltarse: lo hacen sus orígenes, cuando se suelta el último que los tiene.
     origenes: alloc::vec::Vec<alloc::sync::Arc<Memoria>>,
+    /// Si nació dispersa (llamada 56): lo que cuesta su lista de páginas, cobrado a su grupo aunque no tenga ninguna
+    /// puesta. Sin esto, un objeto vacío de 1 GB (2 MB de lista en el montón del kernel) saldría gratis.
+    _fijo: Option<crate::cupo::Cargo>,
 }
 
 /// Lo que no deja hacer una vista (llamada 50).
@@ -497,6 +500,12 @@ pub fn coste_vista(paginas: usize, origenes: usize) -> u64 {
     256 + 8 * paginas as u64 + 8 * origenes as u64
 }
 
+/// Lo que cuesta un objeto de memoria disperso sin ninguna página puesta (llamada 56): lo fijo y su lista de páginas
+/// (8 bytes cada una).
+pub fn coste_dispersa(paginas: usize) -> u64 {
+    256 + 8 * paginas as u64
+}
+
 impl Memoria {
     /// Lo que mide, en bytes (páginas enteras).
     pub fn tamano(&self) -> u64 {
@@ -508,7 +517,7 @@ impl Memoria {
     pub fn nueva(tamano: usize, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
         let n = tamano.div_ceil(PAGINA as usize);
         let cargo = cupo.cobrar(n as u64 * PAGINA)?;
-        let mut m = Self { paginas: alloc::vec::Vec::new(), soltadas: core::sync::atomic::AtomicU64::new(0), bus: None, permiso: None, cargo: Some(cargo), origenes: alloc::vec::Vec::new() };
+        let mut m = Self { paginas: alloc::vec::Vec::new(), soltadas: core::sync::atomic::AtomicU64::new(0), bus: None, permiso: None, cargo: Some(cargo), origenes: alloc::vec::Vec::new(), _fijo: None };
         m.paginas.try_reserve_exact(n).ok()?;
         for _ in 0..n {
             m.paginas.push(core::sync::atomic::AtomicU64::new(pagina_usuario()?));
@@ -516,12 +525,29 @@ impl Memoria {
         Some(m)
     }
 
+    /// Un objeto disperso (llamada 56): mide `tamano` bytes (en páginas enteras) y nace sin ninguna página puesta.
+    /// Las páginas se ponen y se sueltan después, de una en una (`Espacio::paginas_de`, llamada 57), y solo las puestas
+    /// se cobran al grupo `cupo`: es el "disco" de memoria del `RAM:` de una sesión, que crece al escribir y devuelve
+    /// lo que el sistema de archivos descarta. Vacío solo cuesta su lista ([`coste_dispersa`]).
+    pub fn dispersa(tamano: usize, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
+        let n = tamano.div_ceil(PAGINA as usize);
+        let mut paginas = alloc::vec::Vec::new();
+        paginas.try_reserve_exact(n).ok()?;
+        paginas.resize_with(n, || core::sync::atomic::AtomicU64::new(0));
+        let fijo = cupo.cobrar(coste_dispersa(n))?;
+        // El cargo de las páginas: ninguna cobrada todavía y todas apuntadas como soltadas, que es como las deja el
+        // globo (`reponer_pagina` cobra cada una al ponerla; al soltar el objeto se devuelven solo las puestas).
+        let mut cargo = cupo.cobrar(0)?;
+        cargo.apuntar(n as u64 * PAGINA);
+        Some(Self { paginas, soltadas: core::sync::atomic::AtomicU64::new(n as u64), bus: None, permiso: None, cargo: Some(cargo), origenes: alloc::vec::Vec::new(), _fijo: Some(fijo) })
+    }
+
     /// Como `nueva`, desde una llamada al sistema y sin cerrojos tomados: cada 64 páginas (256 KB a cero), un punto
     /// de corte (S2). Un objeto de 4 MB ya no deja al núcleo sin interrupciones durante toda la llamada.
     pub fn nueva_en_llamada(tamano: usize, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
         let n = tamano.div_ceil(PAGINA as usize);
         let cargo = cupo.cobrar(n as u64 * PAGINA)?;
-        let mut m = Self { paginas: alloc::vec::Vec::new(), soltadas: core::sync::atomic::AtomicU64::new(0), bus: None, permiso: None, cargo: Some(cargo), origenes: alloc::vec::Vec::new() };
+        let mut m = Self { paginas: alloc::vec::Vec::new(), soltadas: core::sync::atomic::AtomicU64::new(0), bus: None, permiso: None, cargo: Some(cargo), origenes: alloc::vec::Vec::new(), _fijo: None };
         m.paginas.try_reserve_exact(n).ok()?;
         for i in 0..n {
             if i % 64 == 63 {
@@ -588,6 +614,7 @@ impl Memoria {
             permiso: Some(permiso.clone()),
             cargo: Some(cargo),
             origenes: alloc::vec::Vec::new(),
+            _fijo: None,
         })
     }
 
@@ -625,7 +652,7 @@ impl Memoria {
             paginas.push(core::sync::atomic::AtomicU64::new(fisica.ok_or(FalloVista::Fuera)?));
         }
         let cargo = cupo.cobrar(coste_vista(numeros.len(), propios.len())).ok_or(FalloVista::Memoria)?;
-        Ok(Self { paginas, soltadas: core::sync::atomic::AtomicU64::new(0), bus: None, permiso: None, cargo: Some(cargo), origenes: propios })
+        Ok(Self { paginas, soltadas: core::sync::atomic::AtomicU64::new(0), bus: None, permiso: None, cargo: Some(cargo), origenes: propios, _fijo: None })
     }
 
     /// Si es una vista: solo se proyecta para leer, y no vale como RAM de un invitado.
