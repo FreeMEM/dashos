@@ -2239,3 +2239,9 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   Avisada la sesión de Dash de lo que falta en su runtime (casillas, opciones, submenús). Por decidir: aspecto, atajos
   con Ctrl, botón derecho al pulsar, "Escritorio" en Ajustes, nombres del ajuste, ventanas que crecen, letra del Shell,
   el reloj tras los títulos. Queda: el sitio por persona, el clic que cierra el menú y además llega a la ventana.
+- **Unida `demo` (2026-11-16)**: `make demo` (imagen de usar con la caja Linux y la Amiga, grabación por screendump
+  a 8 cuadros/s, guion por tramos que esperan su línea), `tools/demo.py`, `demo_guion.py`, `demo_montar.py` (lado a
+  lado con EnMarcha, locución, subtítulos, música) y `demo_ocr.py`. El vídeo, la voz y la música, fuera de git. Tanda
+  completa: 11 de 12 a la primera; `arranque-virt-wayland` falló por el título de Firefox ("FALTA: título: Linux ·
+  Index of file:///usr/local/share/dashos/", el paso inestable ya apuntado) y pasó al repetirla sola;
+  `arranque-virt-shell` bien.

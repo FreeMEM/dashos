@@ -44,7 +44,10 @@ fn comprimir_programas(dir: &str, fuente: &str, destino: &str) {
     for nombre in nombres {
         // H4: la caja Amiga es un programa de C aparte (`caja/`), no de `usuario/`.
         // La prueba de kit-c, un programa de Dash (`make kit-c`): en `build/`.
-        let ruta = if nombre == "caja-amiga" {
+        // La demo (`make demo`) lleva la caja de las capturas, compilada aparte en caja/build-demo.
+        let ruta = if nombre == "caja-amiga" && std::env::var_os("CARGO_FEATURE_DEMO").is_some() {
+            format!("{}/../caja/build-demo/{}", dir, nombre)
+        } else if nombre == "caja-amiga" {
             format!("{}/../caja/build/{}", dir, nombre)
         } else if nombre == "dash-ventana" {
             format!("{}/../build/{}", dir, nombre)
