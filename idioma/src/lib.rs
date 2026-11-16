@@ -30,6 +30,10 @@ pub mod sesion;
 /// la barra y las fechas de los programas den la misma hora.
 #[path = "../../usuario/src/zona.rs"]
 pub mod zona;
+/// Los ficheros de ajustes en texto (S36, regla 1: el texto manda): el mismo fichero que leen y escriben la orden
+/// `Ajuste`, el centro de control y los programas que aplican un ajuste (con `alloc`, por eso aquí y no en `dashos`).
+#[path = "../../usuario/src/ajustes_texto.rs"]
+pub mod texto;
 #[cfg(test)]
 mod pruebas;
 
