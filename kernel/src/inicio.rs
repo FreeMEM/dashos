@@ -318,16 +318,17 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("commodity-prueba", programa!("commodity-prueba"), &[], &["ventanas", "sesiones"]),
     // S35, paso 2 (`docs/bitacoras/dominio-red.md`): el dominio de red. El conductor de siempre, `virtio-red`, sin aparato
     // PCI: con "dominio-red" usa el transporte por mensajes (nombra ese canal antes que nadie: lo lee él). Su prueba, que
-    // lee "dominio-control". Y el servicio del dominio, con la Image y el initramfs del dominio, la e1000 que se le presta
-    // (sus registros, su configuración, su INTx y un permiso DMA; sin IOMMU, solo en QEMU) y el permiso de máquinas
-    // virtuales directamente (es del sistema, como un controlador: pendiente del usuario). Al final, para no cambiar las
-    // marcas de los de antes.
+    // lee "dominio-control" (y con "sesiones" lee el registro común al acabar). Y el servicio del dominio, con la Image y
+    // el initramfs del dominio y la e1000 que se le presta (sus registros, su configuración, su INTx y un permiso DMA; sin
+    // IOMMU, solo en QEMU). El permiso de máquinas virtuales lo pide a `sesiones`, como la caja Linux (decisión del
+    // usuario del 2026-11-12), que se lo da sin preguntar por ser del sistema; y por `sesiones` apunta en el registro
+    // común cada vez que el dominio cae. Al final, para no cambiar las marcas de los de antes.
     #[cfg(feature = "dominio")]
     ("virtio-red", programa!("virtio-red"), &[], &["red", "dominio-red"]),
     #[cfg(feature = "dominio")]
-    ("dominio-prueba", programa!("dominio-prueba"), &[], &["red", "dominio-control"]),
+    ("dominio-prueba", programa!("dominio-prueba"), &[], &["red", "dominio-control", "sesiones"]),
     #[cfg(feature = "dominio")]
-    ("dominio", programa!("dominio"), &[("hipervisor", MAQUINAS), ("dominio-linux", DATOS), ("dred-bar", REGISTROS), ("dred-cfg", REGISTROS), ("dred-irq", INTERRUPCION), ("dma-dred", PERMISO_DMA)], &["dominio-red", "dominio-control"]),
+    ("dominio", programa!("dominio"), &[("dominio-linux", DATOS), ("dred-bar", REGISTROS), ("dred-cfg", REGISTROS), ("dred-irq", INTERRUPCION), ("dma-dred", PERMISO_DMA)], &["sesiones", "dominio-red", "dominio-control"]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", programa!("medir-fs"), &[], &["archivos"]),
     #[cfg(feature = "medir")]

@@ -3,6 +3,7 @@
 Hipervisor: el kernel arrancó en EL2
 DashOS en marcha con 4 núcleos
 ~[dominio] dominio de red: la tarjeta 8086:100e
+~[sesiones] dominio es del sistema: maquinas sin preguntar
 ~[dominio] generación 1: el dominio ofrece una red virtio
 ~[dominio] generación 1: listo a los
 # (DHCP implica que virtio-red montó el aparato del dominio.)
@@ -27,4 +28,6 @@ DashOS en marcha con 4 núcleos
 ~[dominio-prueba] hostil, muere: eco TCP de 256 KB
 ~[dominio-prueba] hostil, muere: el dominio cayó a media transferencia y volvió
 ~[dominio-prueba] al final: eco TCP de 16 KB
+# Cada caída, en el registro común (Estado:Registros/sistema, por sesiones).
+~[dominio-prueba] el registro común tiene
 ~[dominio-prueba] el dominio de red de punta a punta: bien

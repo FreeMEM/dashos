@@ -20,10 +20,12 @@
 //! - **Lo que llega del dominio** se trata como hostil: su oferta se comprueba, sus avisos se juntan, y lo que toca
 //!   donde no tiene nada recibe un aborto (y se cuenta).
 //!
-//! Llaves (por nombre): "hipervisor" (el permiso de máquinas), "dominio-linux" (el kernel y el initramfs del dominio:
+//! Llaves (por nombre): "dominio-linux" (el kernel y el initramfs del dominio:
 //! el largo de cada uno, u64, y detrás los dos seguidos), "dred-bar", "dred-cfg" y "dred-irq" (la tarjeta: su BAR 0, su espacio de configuración
-//! y su interrupción), "dma-dred" (su permiso de DMA); los canales "dominio-red" (para dar el `HOLA` al conductor) y
-//! "dominio-control" (la prueba: relanzar con un modo hostil, y los avisos de cada generación).
+//! y su interrupción), "dma-dred" (su permiso de DMA); los canales "sesiones" (el permiso de máquinas virtuales, que da
+//! sin preguntar a este servicio del sistema, como a la caja Linux; y el registro común: cada caída queda en
+//! `Estado:Registros/sistema`), "dominio-red" (para dar el `HOLA` al conductor) y "dominio-control" (la prueba: relanzar
+//! con un modo hostil, y los avisos de cada generación).
 
 #![no_std]
 #![no_main]
@@ -62,6 +64,8 @@ const RAM_MB: usize = 24;
 const TROZO: usize = 16 << 20;
 /// La zona de DMA de la tarjeta (`restricted-dma-pool`): los anillos y búferes de la e1000 caben de sobra.
 const TAM_DMA: usize = 2 << 20;
+/// Lo que mide la máquina del dominio: su RAM, la ventana y la zona de DMA (como "la memoria de la máquina" de S35).
+const MAQUINA_KB: u64 = ((RAM_MB << 20) as u64 + dom::TAM_VENTANA + TAM_DMA as u64) >> 10;
 const VA_RAM: usize = 0x40_0000_0000;
 const VA_IMAGEN: usize = 0x2000_0000;
 const VA_CFG: usize = 0x1800_0000;
@@ -246,7 +250,7 @@ impl ExtremoConsola for Consola {
 
 /// Las llaves del servicio, por nombre.
 struct Llaves {
-    permiso: u32,
+    sesiones: u32,
     linux: u32,
     bar: u32,
     cfg: u32,
@@ -259,7 +263,7 @@ struct Llaves {
 fn llaves() -> Option<Llaves> {
     let b = |n: &str| dashos::llaves::buscar(n);
     Some(Llaves {
-        permiso: b("hipervisor")?,
+        sesiones: b("sesiones")?,
         linux: b("dominio-linux")?,
         bar: b("dred-bar")?,
         cfg: b("dred-cfg")?,
@@ -331,6 +335,72 @@ fn poner_mando(m: u16) {
     let antes = cfg32(4) as u16;
     let dejados = pci::MANDO_MEMORIA | pci::MANDO_MAESTRO | pci::MANDO_SIN_INTX;
     poner_cfg16(4, (antes & !dejados) | (m & dejados));
+}
+
+/// Pide a `sesiones` el permiso de máquinas virtuales (como la caja Linux): al arrancar, `sesiones` puede tardar, así
+/// que se reintenta hasta 60 s. La llave, o el estado.
+fn pedir_permiso(sesiones: u32) -> Result<u32, i64> {
+    let nombre = b"maquinas";
+    let mut m = [0u8; 20];
+    m[0..4].copy_from_slice(&dashos::protocolo::sesiones::SERVICIO.to_le_bytes());
+    m[4..8].copy_from_slice(&(nombre.len() as u32).to_le_bytes());
+    m[12..20].copy_from_slice(nombre);
+    let hasta = dashos::ahora_us() + 60_000_000;
+    let mut ultimo = -1;
+    while dashos::ahora_us() < hasta {
+        let (lectura, suyo) = dashos::canal_crear();
+        if dashos::canal_escribir(sesiones, &m, &[suyo]) != 0 {
+            dashos::cerrar(lectura);
+            dashos::cerrar(suyo);
+            dashos::dormir_us(200_000);
+            continue;
+        }
+        let mut r = [0u8; 4];
+        let mut ll = [0u32; 1];
+        let (n, k, _) = dashos::canal_leer_plazo(lectura, &mut r, &mut ll, 5_000_000);
+        dashos::cerrar(lectura);
+        if n == 4 && k == 1 && i32::from_le_bytes(r) == 0 {
+            return Ok(ll[0]);
+        }
+        if k == 1 {
+            dashos::cerrar(ll[0]);
+        }
+        ultimo = if n == 4 { i32::from_le_bytes(r) as i64 } else { n };
+        if ultimo == -2 {
+            break;
+        }
+    }
+    Err(ultimo)
+}
+
+/// Apunta en el registro común (S6, S36), por `sesiones`: qué pasó y el motivo, de la clase "servicio" (va al fichero
+/// `sistema`). La hora, el programa y el usuario los pone `sesiones`. Devuelve su estado (0, apuntado).
+fn apuntar(sesiones: u32, que: &str, motivo: &str) -> i32 {
+    use dashos::protocolo::sesiones as ps;
+    let (q, mo) = (que.as_bytes(), motivo.as_bytes());
+    let mut m = Vec::with_capacity(28 + q.len() + mo.len());
+    m.extend_from_slice(&ps::APUNTAR.to_le_bytes());
+    m.extend_from_slice(&(q.len() as u32).to_le_bytes());
+    m.extend_from_slice(&(mo.len() as u32).to_le_bytes());
+    let mut clase = [0u8; 16];
+    clase[..8].copy_from_slice(b"servicio");
+    m.extend_from_slice(&clase);
+    m.extend_from_slice(q);
+    m.extend_from_slice(mo);
+    let (lectura, suyo) = dashos::canal_crear();
+    if dashos::canal_escribir(sesiones, &m[..m.len().min(240)], &[suyo]) != 0 {
+        dashos::cerrar(lectura);
+        dashos::cerrar(suyo);
+        return -1;
+    }
+    let mut r = [0u8; 4];
+    let mut ll = [0u32; 1];
+    let (n, k, _) = dashos::canal_leer_plazo(lectura, &mut r, &mut ll, 2_000_000);
+    dashos::cerrar(lectura);
+    if k == 1 && n >= 0 {
+        dashos::cerrar(ll[0]);
+    }
+    if n == 4 { i32::from_le_bytes(r) } else { n as i32 }
 }
 
 /// Cómo acabó una generación del dominio.
@@ -409,6 +479,8 @@ struct Cuentas {
 
 struct Servicio {
     l: Llaves,
+    /// El permiso de máquinas virtuales (de `sesiones`).
+    permiso: u32,
     imagen: &'static [u8],
     initrd: &'static [u8],
     bar: (u64, u64),
@@ -416,6 +488,8 @@ struct Servicio {
     dma: (u32, u64),
     /// La llave para escribir a la prueba, si la hay.
     prueba: Option<u32>,
+    /// Dónde ve el dominio la ventana (detrás de su RAM) en esta generación.
+    ventana: u64,
     /// El modo hostil de esta generación (vacío: normal).
     modo: String,
     /// Lo que pidió la prueba para la siguiente (con la orden de relanzar).
@@ -498,18 +572,18 @@ fn atender_conductor(s: &mut Servicio, g: u32, vmk: u32, e: &Entrada, canal: &Rc
                     let tam = dashos::memoria_tamano(k);
                     if tam <= 0 || tam as u64 > dom::TAM_VENTANA {
                         Some(vm::Mensaje::RMemoria(vm::NO_VALE, 0, 0))
-                    } else if dashos::maquina_memoria(vmk, k, dom::VENTANA) != 0 {
+                    } else if dashos::maquina_memoria(vmk, k, s.ventana) != 0 {
                         Some(vm::Mensaje::RMemoria(vm::NO_PUEDE, 0, 0))
                     } else {
                         s.t.ventana = Some((k, tam as u64));
-                        ec.poner_ventana(dom::VENTANA, tam as u64);
-                        return responder(s, g, vm::Mensaje::RMemoria(vm::BIEN, dom::VENTANA, tam as u64), None, c);
+                        ec.poner_ventana(s.ventana, tam as u64);
+                        return responder(s, g, vm::Mensaje::RMemoria(vm::BIEN, s.ventana, tam as u64), None, c);
                     }
                 }
                 _ => Some(vm::Mensaje::RMemoria(vm::NO_VALE, 0, 0)),
             },
             vm::Mensaje::Cola(q) => {
-                let bien = s.t.ventana.is_some_and(|(_, tam)| vm::cola_valida(&q, dom::VENTANA, tam, o.tam_cola)) && q.indice < o.colas && ec.estado() & 4 == 0;
+                let bien = s.t.ventana.is_some_and(|(_, tam)| vm::cola_valida(&q, s.ventana, tam, o.tam_cola)) && q.indice < o.colas && ec.estado() & 4 == 0;
                 if bien {
                     ec.poner_cola(q.indice as usize, canal::Cola { tam: q.tam as u16, desc: q.desc, disp: q.disp, usados: q.usados, lista: true });
                     s.t.colas |= 1 << q.indice;
@@ -575,6 +649,9 @@ fn vacia() -> vm::Info {
 fn generacion(s: &mut Servicio, g: u32) -> Fin {
     // La RAM, en trozos de 16 MB proyectados seguidos.
     let tam_ram = RAM_MB << 20;
+    // La RAM y la ventana, junto a la zona de DMA (en la misma sección de memoria de Linux: ver `dom::colocar`).
+    let ram_ipa = dom::colocar((s.dma.1, TAM_DMA as u64), tam_ram as u64);
+    s.ventana = ram_ipa + tam_ram as u64;
     let mut mems: Vec<u32> = Vec::new();
     let mut hecho = 0;
     while hecho < tam_ram {
@@ -598,7 +675,7 @@ fn generacion(s: &mut Servicio, g: u32) -> Fin {
             dashos::cerrar(k);
         }
     };
-    let plan = match arranque::leer_cabecera(s.imagen).and_then(|cab| arranque::planificar(&cab, s.imagen.len() as u64, (dom::RAM, tam_ram as u64), Some(s.initrd.len() as u64))) {
+    let plan = match arranque::leer_cabecera(s.imagen).and_then(|cab| arranque::planificar(&cab, s.imagen.len() as u64, (ram_ipa, tam_ram as u64), Some(s.initrd.len() as u64))) {
         Ok(p) => p,
         Err(e) => {
             println!("  [dominio] el kernel del dominio no vale o no cabe ({:?})", e);
@@ -609,7 +686,7 @@ fn generacion(s: &mut Servicio, g: u32) -> Fin {
     // SAFETY: los trozos, proyectados seguidos aquí; solo los toca esta `Ram` (y el dominio).
     let ram = unsafe { core::slice::from_raw_parts_mut(VA_RAM as *mut u8, tam_ram) };
     let consola = Rc::new(RefCell::new(EstadoConsola::default()));
-    let mut maq = Vmm::nueva(RamDominio(Ram { base: dom::RAM, datos: ram }), Distribuidor::nuevo(1, disposicion::NUM_SPIS), disposicion::GICD);
+    let mut maq = Vmm::nueva(RamDominio(Ram { base: ram_ipa, datos: ram }), Distribuidor::nuevo(1, disposicion::NUM_SPIS), disposicion::GICD);
     let (canal_dom, ec) = Canal::nuevo();
     // Con BAR de puertos (la 1), la de la e1000: se emula sobre la BAR 0.
     let con_puertos = s.cabecera[5] & 1 == 1;
@@ -619,7 +696,7 @@ fn generacion(s: &mut Servicio, g: u32) -> Fin {
         && maq.añadir(dom::CANAL, dom::SPI_CANAL, Box::new(canal_dom)).is_ok()
         && maq.añadir(dom::ECAM, dom::SPI_PCI, Box::new(pci_dom)).is_ok()
         && (!con_puertos || maq.añadir(dom::PUERTOS, 0, Box::new(PuertosE1000::nuevo(ep.clone(), Box::new(BarReal)))).is_ok());
-    let extra = Extra { dma: (s.dma.1, TAM_DMA as u64), bar: s.bar };
+    let extra = Extra { ram: ram_ipa, tam_ram: tam_ram as u64, dma: (s.dma.1, TAM_DMA as u64), bar: s.bar };
     let mut bootargs = String::from(BOOTARGS);
     if !s.modo.is_empty() {
         bootargs.push_str(" hostil=");
@@ -627,7 +704,7 @@ fn generacion(s: &mut Servicio, g: u32) -> Fin {
     }
     let mut config = disposicion::config(tam_ram as u64, 1, 0, bootargs, plan.initrd);
     config.rtc = None;
-    config.memoria = dom::memoria(tam_ram as u64, &extra);
+    config.memoria = dom::memoria(&extra);
     let mut semilla = [0u8; 32];
     if dashos::azar(&mut semilla).is_some() {
         config.semilla = Some(semilla);
@@ -640,9 +717,9 @@ fn generacion(s: &mut Servicio, g: u32) -> Fin {
         return Fin::Error(-1);
     }
     let regs = arranque::registros(&plan);
-    let vmk = dashos::maquina_crear(s.l.permiso, mems[0], dom::RAM, regs.pc, regs.x[0]);
+    let vmk = dashos::maquina_crear(s.permiso, mems[0], ram_ipa, regs.pc, regs.x[0]);
     let mut bien = vmk > 0;
-    let mut ipa = dom::RAM + TROZO as u64;
+    let mut ipa = ram_ipa + TROZO as u64;
     for &k in mems.iter().skip(1) {
         bien &= vmk > 0 && dashos::maquina_memoria(vmk as u32, k, ipa) == 0;
         ipa += TROZO as u64;
@@ -660,8 +737,8 @@ fn generacion(s: &mut Servicio, g: u32) -> Fin {
     }
     let vmk = vmk as u32;
     println!(
-        "  [dominio] generación {}: Linux de {} KB, initramfs de {} KB, {} MB de RAM, 1 vCPU; la tarjeta {:04x}:{:04x} con sus registros en {:#x} ({} KB) y su DMA en {:#x} (2 MB){}",
-        g, s.imagen.len() / 1024, s.initrd.len() / 1024, RAM_MB, s.cabecera[0] & 0xffff, s.cabecera[0] >> 16, s.bar.0, s.bar.1 / 1024, s.dma.1,
+        "  [dominio] generación {}: Linux de {} KB, initramfs de {} KB, {} MB de RAM en {:#x}, 1 vCPU; la tarjeta {:04x}:{:04x} con sus registros en {:#x} ({} KB) y su DMA en {:#x} (2 MB){}",
+        g, s.imagen.len() / 1024, s.initrd.len() / 1024, RAM_MB, ram_ipa, s.cabecera[0] & 0xffff, s.cabecera[0] >> 16, s.bar.0, s.bar.1 / 1024, s.dma.1,
         if s.modo.is_empty() { String::new() } else { alloc::format!("; hostil: {}", s.modo) }
     );
     s.t = Transporte { oferta: None, funciones: 0, ventana: None, colas: 0 };
@@ -792,7 +869,11 @@ fn generacion(s: &mut Servicio, g: u32) -> Fin {
                     decir_prueba(s, &[C_LISTO, g]);
                 }
                 Ok(_) => {}
-                Err(por) => println!("  [dominio] generación {}: el dominio ofrece algo que no vale ({}): rechazada", g, por),
+                Err(por) => {
+                    println!("  [dominio] generación {}: el dominio ofrece algo que no vale ({}): rechazada", g, por);
+                    let q = alloc::format!("el dominio de red ofrece algo que no vale (generación {})", g);
+                    apuntar(s.l.sesiones, &q, por);
+                }
             }
         }
         if nov.usados != 0 && s.t.oferta.is_some() {
@@ -801,8 +882,8 @@ fn generacion(s: &mut Servicio, g: u32) -> Fin {
         if let Some((total, libre, reloj)) = nov.medida {
             let ms = (dashos::ahora_us() - t0) / 1000;
             println!(
-                "  [dominio] generación {}: listo a los {} ms de arrancar la máquina (reloj del dominio: {} ms); memoria: {} KB usados de los {} que ve Linux; {} KB de los {} MB de la máquina menos los libres",
-                g, ms, reloj, total.saturating_sub(libre), total, ((RAM_MB as u64) << 10).saturating_sub(libre as u64), RAM_MB
+                "  [dominio] generación {}: listo a los {} ms de arrancar la máquina (reloj del dominio: {} ms); memoria: {} KB usados de los {} que ve Linux; la máquina del dominio, {} KB menos los libres, de {} KB (RAM, ventana y zona de DMA)",
+                g, ms, reloj, total.saturating_sub(libre), total, MAQUINA_KB.saturating_sub(libre as u64), MAQUINA_KB
             );
         }
         if nov.fallo {
@@ -922,14 +1003,23 @@ fn principal() -> u64 {
         "  [dominio] dominio de red: la tarjeta {:04x}:{:04x} (registros en {:#x}, {} KB), sin IOMMU (solo en QEMU), su DMA en {:#x}",
         cabecera[0] & 0xffff, cabecera[0] >> 16, bar.0, bar.1 / 1024, bus
     );
+    let permiso = match pedir_permiso(l.sesiones) {
+        Ok(p) => p,
+        Err(e) => {
+            println!("  [dominio] sesiones no le da el permiso de máquinas virtuales ({}): no hay dominio de red", e);
+            return 9;
+        }
+    };
     let mut s = Servicio {
         l,
+        permiso,
         imagen,
         initrd,
         bar,
         cabecera,
         dma: (dma as u32, bus),
         prueba,
+        ventana: 0,
         modo: String::new(),
         siguiente: None,
         conductor: None,
@@ -946,6 +1036,12 @@ fn principal() -> u64 {
         let mut c = Cuentas::default();
         al_conductor(&s, g, vm::Mensaje::Aparato(false), &mut c);
         decir_prueba(&s, &[C_CAIDO, g, fin.numero()]);
+        // Al registro común: cada caída o reinicio, con su motivo (S35, "Los dominios se dejan mirar").
+        let q = alloc::format!("el dominio de red cae (generación {})", g);
+        let apuntado = apuntar(s.l.sesiones, &q, fin.motivo());
+        if apuntado != 0 {
+            println!("  [dominio] el registro común no apunta la caída ({})", apuntado);
+        }
         if fin == Fin::Orden {
             continue;
         }
@@ -956,6 +1052,7 @@ fn principal() -> u64 {
         }
         if caidas.len() as u32 > MAX_SEGUIDAS {
             println!("  [dominio] el dominio cae sin parar ({} veces en un minuto): se deja apagado; la red, sin tarjeta", caidas.len());
+            apuntar(s.l.sesiones, "el dominio de red se deja apagado", "cae sin parar: más de 5 veces en un minuto");
             // Solo una orden de la prueba lo vuelve a arrancar.
             loop {
                 let t = COMPARTIDO.timbre.load(Ordering::Acquire);

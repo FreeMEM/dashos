@@ -663,7 +663,10 @@ fn montar_dominio(d: &Dominio, lee: u32) -> Option<(Red, [u8; 6])> {
 /// El conductor con un dominio (S35, paso 2): espera el `HOLA` de su servicio, contesta con su canal y, cada vez que
 /// hay aparato, lo monta y mueve tramas hasta que se cae.
 fn con_dominio(hola_de: u32) -> u64 {
-    let servicio = 1u32;
+    let Some(servicio) = dashos::llaves::buscar("red") else {
+        println!("  [virtio-red] sin el canal del servicio de red");
+        return 1;
+    };
     let (lee, escribe) = dashos::canal_crear();
     // El HOLA del servicio del dominio: con la llave para escribirle.
     let bus = loop {

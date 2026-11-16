@@ -12,7 +12,10 @@
 //! 4. **Hostil: muere a media transferencia**: acaba su /init (pánico del kernel) con un eco TCP en marcha; se relanza y
 //!    el eco acaba.
 //!
-//! Llaves: la 1, "red" (el permiso de red); la 2, "dominio-control" (lo que avisa el servicio del dominio).
+//! 5. **El registro común**: cada caída del dominio quedó en `Estado:Registros/sistema` (se lee por `sesiones`).
+//!
+//! Llaves (por nombre): "red" (el permiso de red), "dominio-control" (lo que avisa el servicio del dominio) y
+//! "sesiones" (leer el registro común).
 
 #![no_std]
 #![no_main]
@@ -23,8 +26,16 @@ use dashos::red_cliente::{estado, Conexion, Udp};
 
 dashos::programa!(principal);
 
-const SERVICIO: u32 = 1;
-const CONTROL: u32 = 2;
+static SERVICIO: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static CONTROL: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+fn servicio() -> u32 {
+    SERVICIO.load(core::sync::atomic::Ordering::Relaxed)
+}
+fn control() -> u32 {
+    CONTROL.load(core::sync::atomic::Ordering::Relaxed)
+}
+const VA_REGISTRO: usize = 0x60_0000_0000;
 const VA: usize = 0x50_0000_0000;
 const VA2: usize = VA + (4 << 20);
 const ECO: [u8; 4] = [10, 0, 2, 100];
@@ -98,7 +109,7 @@ fn eco(c: &Conexion, total: usize, semilla: u64, plazo_us: u64) -> Result<u64, &
 
 /// Un eco TCP de `total` bytes con el eco del PC; dice cómo fue.
 fn eco_tcp(fase: &str, total: usize, semilla: u64, plazo_us: u64) -> bool {
-    match Conexion::conectar(SERVICIO, ECO, 7, VA, 64 * 1024, 20_000_000) {
+    match Conexion::conectar(servicio(), ECO, 7, VA, 64 * 1024, 20_000_000) {
         Ok(c) => {
             let r = eco(&c, total, semilla, plazo_us);
             c.cerrar();
@@ -122,7 +133,7 @@ fn eco_tcp(fase: &str, total: usize, semilla: u64, plazo_us: u64) -> bool {
 
 /// El eco UDP del vecino de prueba.
 fn eco_udp() -> bool {
-    let Ok(z) = Udp::abrir(SERVICIO, 0, VA2, 16 * 1024, 5_000_000) else {
+    let Ok(z) = Udp::abrir(servicio(), 0, VA2, 16 * 1024, 5_000_000) else {
         println!("  [dominio-prueba] no abre un zócalo UDP; MAL");
         return false;
     };
@@ -157,7 +168,7 @@ fn eco_udp() -> bool {
 fn aviso(plazo_us: u64) -> Option<(u32, u32, u32)> {
     let mut b = [0u8; 256];
     let mut ll = [0u32; 4];
-    let (n, k, _) = dashos::canal_leer_plazo(CONTROL, &mut b, &mut ll, plazo_us);
+    let (n, k, _) = dashos::canal_leer_plazo(control(), &mut b, &mut ll, plazo_us);
     if n < 0 {
         return None;
     }
@@ -202,7 +213,64 @@ fn relanzar(al_servicio: u32, modo: &str) {
     dashos::canal_escribir(al_servicio, &m[..4 + n], &[]);
 }
 
+/// Lo del fichero `sistema` del registro común que es del dominio y dice que cae: cuántas líneas, o el error. Se lee
+/// por trozos (cada respuesta dice hasta dónde llegó), desde el principio.
+fn caidas_en_el_registro(sesiones: u32) -> Result<usize, i64> {
+    use dashos::protocolo::sesiones as ps;
+    let mut cuantas = 0;
+    let mut desde = 0u64;
+    for _ in 0..256 {
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut m = [0u8; 20];
+        m[0..4].copy_from_slice(&ps::REGISTRO_LEER.to_le_bytes());
+        m[4..8].copy_from_slice(&(dashos::registro::SISTEMA as u32).to_le_bytes());
+        m[12..20].copy_from_slice(&desde.to_le_bytes());
+        let r = dashos::canal_escribir(sesiones, &m, &[suyo]);
+        if r != 0 {
+            dashos::cerrar(lectura);
+            dashos::cerrar(suyo);
+            return Err(r);
+        }
+        let mut b = [0u8; ps::LARGO_REGISTRO_LEER];
+        let mut ll = [0u32; 1];
+        let (n, k, _) = dashos::canal_leer_plazo(lectura, &mut b, &mut ll, 5_000_000);
+        dashos::cerrar(lectura);
+        let estado = i32::from_le_bytes(b[..4].try_into().unwrap_or([0; 4]));
+        if n < 0 || estado != 0 {
+            return Err(if n < 0 { n } else { estado as i64 });
+        }
+        let hasta = u64::from_le_bytes(b[8..16].try_into().unwrap_or([0; 8]));
+        let largo = u64::from_le_bytes(b[16..24].try_into().unwrap_or([0; 8])) as usize;
+        if k == 1 {
+            if largo > 0 && dashos::memoria_proyectar(ll[0], VA_REGISTRO, false) == 0 {
+                // SAFETY: recién proyectada aquí, solo para leer; mide al menos `largo` (lo que dice `sesiones`).
+                let texto = unsafe { core::slice::from_raw_parts(VA_REGISTRO as *const u8, largo) };
+                cuantas += texto
+                    .split(|&c| c == b'\n')
+                    .filter(|l| {
+                        let s = core::str::from_utf8(l).unwrap_or("");
+                        s.contains(" dominio ") && s.contains("el dominio de red cae")
+                    })
+                    .count();
+                dashos::memoria_quitar(VA_REGISTRO);
+            }
+            dashos::cerrar(ll[0]);
+        }
+        if hasta <= desde {
+            break;
+        }
+        desde = hasta;
+    }
+    Ok(cuantas)
+}
+
 fn principal() -> u64 {
+    let (Some(red), Some(ctl), Some(ses)) = (dashos::llaves::buscar("red"), dashos::llaves::buscar("dominio-control"), dashos::llaves::buscar("sesiones")) else {
+        println!("  [dominio-prueba] le faltan llaves; MAL");
+        return 1;
+    };
+    SERVICIO.store(red, core::sync::atomic::Ordering::Relaxed);
+    CONTROL.store(ctl, core::sync::atomic::Ordering::Relaxed);
     // El HOLA del servicio del dominio, con la llave para pedirle cosas.
     // `inicio` lanza el servicio del dominio el último: puede tardar minutos con QEMU sin aceleración. Por el canal llega
     // también lo que diga `inicio` de sus clientes: se ignora.
@@ -210,7 +278,7 @@ fn principal() -> u64 {
     let mut ll = [0u32; 4];
     let hasta = dashos::ahora_us() + 900_000_000;
     let al_servicio = loop {
-        let (n, k, _) = dashos::canal_leer_plazo(CONTROL, &mut b, &mut ll, 1_000_000);
+        let (n, k, _) = dashos::canal_leer_plazo(control(), &mut b, &mut ll, 1_000_000);
         if n >= 4 && k == 1 && u32::from_le_bytes(b[..4].try_into().unwrap_or([0; 4])) == C_HOLA {
             break ll[0];
         }
@@ -233,7 +301,7 @@ fn principal() -> u64 {
         return 2;
     };
     let e = loop {
-        match estado(SERVICIO, 2_000_000) {
+        match estado(servicio(), 2_000_000) {
             Ok(e) if e[p::E_CONFIGURADA] == 1 => break e,
             _ if dashos::ahora_us() - t0 > 120_000_000 => {
                 println!("  [dominio-prueba] sin dirección por DHCP en 120 s; MAL");
@@ -278,6 +346,18 @@ fn principal() -> u64 {
     }
     // Tras los hostiles, el dominio sigue sirviendo.
     bien &= eco_tcp("al final", 16 * 1024, 99, 60_000_000);
+    // Y sus caídas (5: tres órdenes de relanzar, colgado y pánico) quedaron en el registro común.
+    match caidas_en_el_registro(ses) {
+        Ok(n) if n >= 5 => println!("  [dominio-prueba] el registro común tiene {} caídas del dominio: bien", n),
+        Ok(n) => {
+            println!("  [dominio-prueba] el registro común tiene {} caídas del dominio (se esperaban 5 o más); MAL", n);
+            bien = false;
+        }
+        Err(e) => {
+            println!("  [dominio-prueba] no se puede leer el registro común ({}); MAL", e);
+            bien = false;
+        }
+    }
     println!("  [dominio-prueba] el dominio de red de punta a punta: {}", if bien { "bien" } else { "MAL" });
     0
 }
