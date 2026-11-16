@@ -2219,3 +2219,13 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   resuelto con las dos partes. Tanda completa y `arranque-virt-shell`: todo bien a la primera. Sin ver en pantalla
   Blanker, FKey ni la ventana de Exchange. Queda: `commodities.library` en la caja Amiga (diseñada; toca `caja.c`),
   `WBStartup`, la categoría de Ajustes.
+- **Unida `admin-desarrollo` (2026-11-16)**: tanda de administrador (orden `Administrar`, `sesiones` orden 120;
+  `guardian` enseña la lista en llano y pide la contraseña una vez; se para en la primera que falla; hoy: comprobar el
+  disco, cerrar un proceso, leer el registro de todos), modo de desarrollo como permiso `desarrollo` por aplicación
+  (abre `Home:C`, `Libs`, `Fonts`, `Classes`; borde magenta con "DESARROLLO" pintado por el compositor), orden `Abrir`
+  (programa de `SYS:Programas` encerrado con su identidad). Arreglado: el ayudante de un programa encerrado nacía con
+  `Home:` entero. Fuera de su zona: `archivos` suelta el disco sujeto y repite si una escritura no cabe (A15), y la
+  prueba del panel impostor de `cambio` reintenta. Tanda completa 12 de 12 y `arranque-virt-shell`: bien a la primera.
+  Sin ver en pantalla la ventana de la tanda ni la marca. Por decidir: parar en la primera que falla, plazos y topes
+  de la ventana (2 min, un intento, 16 acciones, 4 KB), modo de desarrollo sin contraseña de administrador, el
+  magenta, los nombres, el doble clic sin encierro, sin `RAM:`/`T:` en lo encerrado.
