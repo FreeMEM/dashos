@@ -1,8 +1,9 @@
 //! El idioma del usuario, leído: qué ficheros se miran y en qué orden. Los ficheros los da un `Lector` (en DashOS, el
 //! servicio de archivos por las asignaciones del proceso; en las pruebas, uno de mentira).
 //!
-//! - El idioma y el país salen de `ENV:Sys/locale.prefs` (el fichero de AmigaOS); si no está, de
-//!   `ENVARC:Sys/locale.prefs`; si tampoco, o está roto, castellano y España.
+//! - El idioma y el país salen de `ENV:Sys/locale`, su texto, que manda (S36, `prefs::Prefs::de_texto`); si no está o
+//!   no trae ni idiomas ni país, de `ENV:Sys/locale.prefs` (el fichero de AmigaOS, que se genera del texto, o el que
+//!   deja la caja); si no, lo mismo en `ENVARC:`; si tampoco, o el que hay está roto, castellano y España.
 //! - El catálogo de un programa, de `PROGDIR:Catalogs/<idioma>/<programa>.catalog` o de
 //!   `LOCALE:Catalogs/<idioma>/<programa>.catalog`, en el primer idioma preferido que lo tenga.
 //! - Los textos del idioma (días, meses), de `LOCALE:Languages/<idioma>.language`; los datos del país, si el
@@ -21,9 +22,13 @@ use crate::{Local, IDIOMA_DE_SERIE};
 use alloc::string::String;
 use alloc::vec::Vec;
 
-/// Dónde están las preferencias en uso y las guardadas.
+/// Dónde están las preferencias en uso y las guardadas: el texto, que manda, y el IFF del Amiga.
+pub const TEXTO: &str = "ENV:Sys/locale";
 pub const PREFS: &str = "ENV:Sys/locale.prefs";
+pub const TEXTO_GUARDADO: &str = "ENVARC:Sys/locale";
 pub const PREFS_GUARDADAS: &str = "ENVARC:Sys/locale.prefs";
+/// Por dónde se busca, en orden.
+const CAMINOS: [(&str, bool); 4] = [(TEXTO, true), (PREFS, false), (TEXTO_GUARDADO, true), (PREFS_GUARDADAS, false)];
 /// Lo más que mide un `locale.prefs` o un `.country` que se lee (los de verdad no llegan a 1 KB).
 pub const MAX_PREFS: usize = 4096;
 /// La zona horaria del sistema (la de la barra) y lo más que mide su fichero (una línea).
@@ -54,9 +59,11 @@ pub trait Lector {
 /// El idioma y el país del usuario, leídos, y de dónde salieron.
 pub struct Idiomas {
     pub local: Local,
-    /// De qué fichero salió (`PREFS`, `PREFS_GUARDADAS`), o `None` si no hay ninguno y es lo de serie.
+    /// De qué fichero salió (`TEXTO`, `PREFS`, `TEXTO_GUARDADO`, `PREFS_GUARDADAS`), o `None` si no hay ninguno y es lo
+    /// de serie.
     pub origen: Option<&'static str>,
-    firma: Option<Firma>,
+    /// Los ficheros que se miraron hasta dar con el que manda, con su firma de entonces (`None`: no estaba).
+    vistos: Vec<(&'static str, Option<Firma>)>,
     /// La firma de `ZONA` cuando se leyó (`None`: no estaba).
     zona_firma: Option<Firma>,
 }
@@ -64,20 +71,30 @@ pub struct Idiomas {
 impl Idiomas {
     /// Lo de serie, sin leer nada: castellano y España.
     pub fn de_serie() -> Idiomas {
-        Idiomas { local: Local::de_serie(), origen: None, firma: None, zona_firma: None }
+        Idiomas { local: Local::de_serie(), origen: None, vistos: Vec::new(), zona_firma: None }
     }
 
     /// Lee las preferencias de idioma del usuario y lo que cuelga de ellas. No falla: lo que no se pueda leer se
     /// queda como de serie.
     pub fn cargar<L: Lector>(l: &mut L) -> Idiomas {
         let mut yo = Idiomas::de_serie();
-        for camino in [PREFS, PREFS_GUARDADAS] {
+        for (camino, es_texto) in CAMINOS {
             match l.leer(camino, MAX_PREFS) {
                 Ok((bytes, firma)) => {
-                    // El fichero que hay manda aunque esté roto: uno roto en ENV: no deja paso al guardado.
+                    yo.vistos.push((camino, Some(firma)));
+                    // El fichero que hay manda aunque esté roto: uno roto en ENV: no deja paso al guardado. Un texto
+                    // sin idiomas ni país (solo comentarios) deja paso al IFF de su misma capa.
+                    let leido = if es_texto {
+                        match Prefs::de_texto(&bytes) {
+                            Ok(None) => continue,
+                            Ok(Some(p)) => Some(p),
+                            Err(_) => None,
+                        }
+                    } else {
+                        Prefs::leer(&bytes).ok()
+                    };
                     yo.origen = Some(camino);
-                    yo.firma = Some(firma);
-                    if let Ok(p) = Prefs::leer(&bytes) {
+                    if let Some(p) = leido {
                         let sin_datos = p.datos.is_none();
                         yo.local = Local::de_prefs(p);
                         if sin_datos {
@@ -86,9 +103,10 @@ impl Idiomas {
                     }
                     break;
                 }
-                Err(Falta::NoExiste) => {}
-                // No se deja leer, o es enorme: lo de serie, sin mirar el otro.
+                Err(Falta::NoExiste) => yo.vistos.push((camino, None)),
+                // No se deja leer, o es enorme: lo de serie, sin mirar los demás.
                 Err(Falta::Otra(_)) => {
+                    yo.vistos.push((camino, l.firma(camino)));
                     yo.origen = Some(camino);
                     break;
                 }
@@ -170,23 +188,15 @@ impl Idiomas {
     }
 
     /// Si las preferencias de idioma ya no son las que se leyeron (otra fecha, otro tamaño, o un fichero que antes no
-    /// estaba), o la zona horaria del sistema cambió: hay que `cargar` otra vez y abrir los catálogos de nuevo. Cuesta de
-    /// dos a tres preguntas al servicio de archivos. Hasta que `archivos` avise de los cambios, es la forma de enterarse.
+    /// estaba delante del que manda), o la zona horaria del sistema cambió: hay que `cargar` otra vez y abrir los
+    /// catálogos de nuevo. Cuesta una pregunta al servicio de archivos por fichero mirado. Para quien no vigila: quien
+    /// recibe los avisos de cambio de `ENV:Sys` (`archivos`, `VIGILAR`) carga otra vez sin preguntar (la fecha va en
+    /// segundos: dos cambios del mismo tamaño en el mismo segundo no se distinguen por la firma).
     pub fn ha_cambiado<L: Lector>(&self, l: &mut L) -> bool {
         // La zona horaria: otra fecha o tamaño, o aparece o desaparece.
         if l.firma(ZONA) != self.zona_firma {
             return true;
         }
-        let ahora = match l.firma(PREFS) {
-            Some(f) => Some((PREFS, f)),
-            None => l.firma(PREFS_GUARDADAS).map(|f| (PREFS_GUARDADAS, f)),
-        };
-        match (ahora, self.origen, self.firma) {
-            (None, None, _) => false,
-            (Some((camino, f)), Some(origen), Some(antes)) => camino != origen || f != antes,
-            // Estaba y no se dejó leer: no se sabe más que si es el mismo fichero.
-            (Some((camino, _)), Some(origen), None) => camino != origen,
-            _ => true,
-        }
+        self.vistos.iter().any(|&(camino, antes)| l.firma(camino) != antes)
     }
 }

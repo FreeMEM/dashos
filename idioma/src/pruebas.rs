@@ -413,7 +413,7 @@ fn textos_del_idioma_desde_un_catalogo() {
 // ---------------------------------------------------------------------------------------------------------------
 // La sesión: qué se lee y en qué orden, con un lector de mentira.
 
-use crate::sesion::{Falta, Firma, Idiomas, Lector, MAX_ZONA, PREFS, PREFS_GUARDADAS, ZONA};
+use crate::sesion::{Falta, Firma, Idiomas, Lector, MAX_ZONA, PREFS, PREFS_GUARDADAS, TEXTO, TEXTO_GUARDADO, ZONA};
 use std::collections::BTreeMap;
 
 #[derive(Default)]
@@ -465,10 +465,10 @@ fn sesion_sin_nada_es_castellano_y_no_busca_catalogos() {
     let mut d = Disco::default();
     let i = Idiomas::cargar(&mut d);
     assert_eq!((i.local.idioma(), i.local.pais_nombre.as_str(), i.origen), ("español", "España", None));
-    assert_eq!(d.pedidos, [PREFS, PREFS_GUARDADAS, ZONA]);
+    assert_eq!(d.pedidos, [TEXTO, PREFS, TEXTO_GUARDADO, PREFS_GUARDADAS, ZONA]);
     assert!(i.catalogo(&mut d, "prueba", 1, "español").is_none());
     // Ni una pregunta más: en castellano no se busca nada.
-    assert_eq!(d.pedidos.len(), 3);
+    assert_eq!(d.pedidos.len(), 5);
     assert!(!i.ha_cambiado(&mut d));
 }
 
@@ -695,4 +695,55 @@ fn sesion_zona_rota_o_que_no_existe() {
         let i = Idiomas::cargar(&mut d);
         let _ = i.local.fecha_hora_corta((x >> 20) as i64 - (1 << 43));
     }
+}
+
+/// Ajustes en texto (S36): `ENV:Sys/locale` manda sobre el IFF; uno sin idiomas ni país deja paso al IFF de su capa; uno
+/// roto manda (lo de serie); editado a mano vale; y lo que escribe `a_texto` se lee igual y no pierde comentarios.
+#[test]
+fn sesion_texto_manda() {
+    let mut d = Disco::ingles();
+    d.poner("LOCALE:Countries/españa.country", Pais::espana().escribir());
+    // Solo el IFF (inglés): inglés.
+    assert_eq!(Idiomas::cargar(&mut d).local.idioma(), "english");
+    // Un texto con solo comentarios: sigue el IFF de su capa.
+    d.poner(TEXTO, b"# nada\n".to_vec());
+    let i = Idiomas::cargar(&mut d);
+    assert_eq!((i.local.idioma(), i.origen), ("english", Some(PREFS)));
+    // El texto, a mano, en castellano: manda sobre el IFF inglés de la misma capa.
+    d.poner(TEXTO, b"# a mano\nidiomas = espa\xc3\xb1ol, english\npais = espa\xc3\xb1a\n".to_vec());
+    let i = Idiomas::cargar(&mut d);
+    assert_eq!((i.local.idioma(), i.local.pais_nombre.as_str(), i.origen), ("español", "españa", Some(TEXTO)));
+    assert!(!i.ha_cambiado(&mut d));
+    // Cambia el texto: se nota; cambia el IFF de detrás: no importa (manda el texto).
+    d.poner(PREFS, Prefs { idiomas: vec!["klingon".into()], ..Prefs::default() }.escribir());
+    assert!(!i.ha_cambiado(&mut d));
+    d.poner(TEXTO, b"idiomas = english\n".to_vec());
+    assert!(i.ha_cambiado(&mut d));
+    // Roto (no es texto, o enorme): manda igual, y es lo de serie.
+    for roto in [vec![0xff, 0xfe, b'x'], vec![b'#'; 70_000]] {
+        d.poner(TEXTO, roto);
+        let i = Idiomas::cargar(&mut d);
+        assert_eq!((i.local.idioma(), i.origen), ("español", Some(TEXTO)));
+    }
+    // Un texto con idiomas malos: los malos no entran.
+    d.poner(TEXTO, b"idiomas = ../../Prefs, english, :x, english\npais = a/b\n".to_vec());
+    let i = Idiomas::cargar(&mut d);
+    assert_eq!((i.local.idiomas.clone(), i.local.pais_nombre.as_str()), (vec![String::from("english")], "España"));
+    // El guardado (ENVARC:) en texto vale si en ENV: no hay nada.
+    d.ficheros.remove(TEXTO);
+    d.ficheros.remove(PREFS);
+    d.poner(TEXTO_GUARDADO, b"idiomas = english\n".to_vec());
+    assert_eq!(Idiomas::cargar(&mut d).origen, Some(TEXTO_GUARDADO));
+    // a_texto sobre uno a mano: sus comentarios se quedan y se lee igual; nuevo, con su cabecera.
+    let p = Prefs { idiomas: vec!["english".into(), "español".into()], pais: "great_britain".into(), ..Prefs::default() };
+    let t = p.a_texto(Some(b"# mio\npais = x\notra = 1\n"));
+    assert_eq!(String::from_utf8(t.clone()).unwrap(), "# mio\npais = great_britain\notra = 1\nidiomas = english, español\n");
+    let leido = Prefs::de_texto(&t).unwrap().unwrap();
+    assert_eq!((leido.idiomas, leido.pais), (p.idiomas.clone(), p.pais.clone()));
+    let nuevo = String::from_utf8(p.a_texto(None)).unwrap();
+    assert!(nuevo.starts_with("# Idioma y país") && nuevo.ends_with("idiomas = english, español\npais = great_britain\n"));
+    // La lista de la orden: comas, espacios, repetidos; y lo que no vale.
+    assert_eq!(crate::prefs::lista_de_idiomas(" english ,español,,English").unwrap(), ["english", "español"]);
+    assert_eq!(crate::prefs::lista_de_idiomas("english, ../x").err(), Some(String::from("../x")));
+    assert!(crate::prefs::lista_de_idiomas(&(0..11).map(|i| format!("i{i}")).collect::<Vec<_>>().join(",")).is_err());
 }

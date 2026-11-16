@@ -1,6 +1,10 @@
 //! `ENV:Sys/locale.prefs`: el fichero de preferencias de idioma de AmigaOS (IFF `PREF` con un trozo `LCLE`, el
 //! `LocalePrefs` de 860 bytes), para que la caja Amiga y lo nativo compartan fichero: el país, hasta diez idiomas por
 //! orden de preferencia, la diferencia con Greenwich y los datos del país.
+//!
+//! Y su texto, que manda (S36, regla 1; `docs/bitacoras/ajustes-texto.md`): `ENV:Sys/locale`, en el formato de
+//! `crate::texto`, con `idiomas` (por orden, separados por comas) y `pais`. Quien lo escribe (la orden `Ajuste`, el
+//! centro de control) genera el IFF de él con `escribir`; editado a mano vale igual para lo nativo.
 
 use crate::iff;
 use crate::letras::{de_campo, en_campo, mismo_nombre, nombre_valido};
@@ -40,7 +44,67 @@ pub struct Prefs {
     pub datos: Option<Pais>,
 }
 
+/// Las claves del texto.
+pub const CLAVE_IDIOMAS: &str = "idiomas";
+pub const CLAVE_PAIS: &str = "pais";
+/// Lo que lleva encima un `Sys/locale` nuevo.
+pub const CABECERA_TEXTO: &str = "Idioma y país (Ajustes > Idioma y región; la orden `Ajuste idioma`).\nEste fichero manda: Sys/locale.prefs, el que lee la caja Amiga, se genera de él.\nidiomas: por orden de preferencia, separados por comas (english, español). pais: el de LOCALE:Countries.";
+
+/// Los idiomas de una lista separada por comas (`english, español`): sin vacíos ni repetidos, hasta `MAX_IDIOMAS`.
+/// `Err` con el primero que no vale como nombre de fichero (con barras, dos puntos, de control, largo) o si son más de
+/// `MAX_IDIOMAS`.
+pub fn lista_de_idiomas(texto: &str) -> Result<Vec<String>, String> {
+    let mut v: Vec<String> = Vec::new();
+    for i in texto.split(',').map(str::trim).filter(|i| !i.is_empty()) {
+        if !nombre_valido(i) {
+            return Err(i.into());
+        }
+        if !v.iter().any(|x| mismo_nombre(x, i)) {
+            if v.len() == MAX_IDIOMAS {
+                return Err(i.into());
+            }
+            v.push(i.into());
+        }
+    }
+    Ok(v)
+}
+
 impl Prefs {
+    /// Del texto (`Sys/locale`). `Ok(None)` si no trae ni `idiomas` ni `pais` (entonces manda el IFF de la misma capa).
+    /// Lo que no vale se salta: un idioma con un nombre malo no entra; un país malo se queda vacío (el de serie).
+    pub fn de_texto(bytes: &[u8]) -> Result<Option<Prefs>, crate::texto::Error> {
+        let a = crate::texto::Ajustes::leer(bytes)?;
+        let (idiomas, pais) = (a.valor(CLAVE_IDIOMAS), a.valor(CLAVE_PAIS));
+        if idiomas.is_none() && pais.is_none() {
+            return Ok(None);
+        }
+        let mut p = Prefs::default();
+        for i in idiomas.unwrap_or("").split(',').map(str::trim) {
+            if nombre_valido(i) && !p.idiomas.iter().any(|x| mismo_nombre(x, i)) && p.idiomas.len() < MAX_IDIOMAS {
+                p.idiomas.push(i.into());
+            }
+        }
+        if let Some(pais) = pais.filter(|x| nombre_valido(x)) {
+            p.pais = pais.into();
+        }
+        Ok(Some(p))
+    }
+
+    /// El texto, sobre el que había (`antes`, si se entiende: sus comentarios y lo demás se quedan); uno nuevo lleva
+    /// `CABECERA_TEXTO`. Solo los idiomas y el país: la diferencia horaria es de la zona del sistema, y los datos del
+    /// país, de su `.country`.
+    pub fn a_texto(&self, antes: Option<&[u8]>) -> Vec<u8> {
+        let mut a = antes.and_then(|b| crate::texto::Ajustes::leer(b).ok()).unwrap_or_else(|| {
+            let mut a = crate::texto::Ajustes::nuevo();
+            a.comentar(CABECERA_TEXTO);
+            a
+        });
+        // Valen siempre: nombres que ya pasaron por `nombre_valido`.
+        let _ = a.poner(CLAVE_IDIOMAS, &self.idiomas.join(", "));
+        let _ = a.poner(CLAVE_PAIS, &self.pais);
+        a.texto().into_bytes()
+    }
+
     pub fn leer(bytes: &[u8]) -> Result<Prefs, Error> {
         let mut datos = None;
         for t in iff::forma(bytes, b"PREF").map_err(Error::Formato)? {
