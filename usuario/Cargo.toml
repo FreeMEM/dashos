@@ -462,3 +462,8 @@ test = false
 name = "medir-fs"
 path = "src/bin/medir_fs.rs"
 test = false
+# X5c: la prueba del servicio de discos SATA (`ahci`).
+[[bin]]
+name = "disco-sata"
+path = "src/bin/disco_sata.rs"
+test = false

@@ -16,6 +16,8 @@ pub mod graficos;
 pub mod hid;
 pub mod hid_informe;
 pub mod particiones;
+/// El canal "disco" para los controladores de discos que no son el NVMe (X5c: AHCI).
+pub mod disco_servidor;
 pub mod servicio;
 pub mod avisos_cliente;
 /// Los protocolos de los servicios, compartidos con sus clientes (E7).

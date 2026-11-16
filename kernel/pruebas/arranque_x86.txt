@@ -54,6 +54,22 @@ DashOS en marcha (x86-64)
 ~│   [disco] leer: bien; escribir y releer: bien; cruzando páginas: bien; rechazos: bien; vaciar: bien
 ~│   [disco] descartar: bien; rechazos al descartar: bien
 ~│   [disco] anillo: 16 lecturas y un rechazo: bien
+# X5c: el AHCI de q35 con dos discos SATA (puertos 0 y 2) por su MSI, servidos por el canal "sata" (hay NVMe) a su
+# prueba, `disco-sata`, que escribe en los dos (se mira después en Linux).
+~ahci: en el PCIe 0:
+~│   [ahci] puerto 0: disco 0, "QEMU HARDDISK", 8192 sectores de 512 bytes (4096 KB); TRIM: sí
+~│   [ahci] puerto 2: disco 1, "QEMU HARDDISK", 8192 sectores de 512 bytes (4096 KB); TRIM: sí
+~│   [ahci] disco 0, sector 0: "DashOS: sector 0 del disco SATA 0", firma 0xaa55
+~│   [ahci] disco 1, sector 1: "DashOS: sector 1", firma 0x0000
+~│   [ahci] 2 discos; avisos por su interrupción
+~│   [ahci] disco 1: particiones: MBR; ninguna de DashOS
+~│   [disco-sata] disco 0: 2048 sectores de 512 bytes; leer: bien; de prueba: sí
+~│   [disco-sata] disco 0: escribir y releer: bien; cruzando páginas: bien; rechazos: bien; vaciar: bien
+~│   [disco-sata] disco 0: descartar: bien; se lee a cero: sí
+~│   [disco-sata] disco 0: anillo: 16 lecturas, escribir y releer en orden y un rechazo: bien
+~│   [disco-sata] disco 1: escribir y releer: bien; cruzando páginas: bien; rechazos: bien; vaciar: bien
+~│   [disco-sata] disco 1: anillo: 16 lecturas, escribir y releer en orden y un rechazo: bien
+~│   [disco-sata] 2 discos; el 2 no existe: bien
 ~│   [archivos] RedoxFS abierto: 7168 KB,
 ~│   [ficheros] raíz (7 entradas, fin bien): C/ DeCarla/ Estado/ Imagenes/ LEEME.txt Prefs/ Programas/
 ~│   [ficheros] LEEME.txt (19 bytes): "DashOS lee RedoxFS"

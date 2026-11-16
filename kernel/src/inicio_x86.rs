@@ -35,6 +35,10 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("xhci", elf!("xhci"), &[("dma-xhci", PERMISO_DMA), ("xhci", REGISTROS), ("xhci", INTERRUPCION | OPCIONAL)], &["ventanas"]),
     ("nvme", elf!("nvme"), &[("dma-nvme", PERMISO_DMA), ("nvme", REGISTROS), ("nvme", INTERRUPCION | OPCIONAL)], &["disco"]),
     ("disco", elf!("disco"), &[], &["disco"]),
+    // X5c: los discos SATA por AHCI. Su canal es "sata" si hay NVMe (que sirve "disco"); si no, "disco" (`canal`), y
+    // los demás servicios del disco van por él. `disco-sata`, su prueba.
+    ("ahci", elf!("ahci"), &[("dma-ahci", PERMISO_DMA), ("ahci", REGISTROS), ("ahci", INTERRUPCION | OPCIONAL)], &["sata"]),
+    ("disco-sata", elf!("disco-sata"), &[], &["sata"]),
     ("archivos", elf!("archivos"), &[], &["disco", "archivos"]),
     ("ficheros", elf!("ficheros"), &[], &["archivos"]),
     // Desde la fusión con `revision`, el sonido y su controlador reciben el permiso de plazo (S3), como en ARM.
@@ -74,7 +78,8 @@ fn nombre16(n: &str) -> [u8; 16] {
 
 /// Los aparatos del PCIe que se dan a `inicio`: nombre, cómo se reconoce (clase o fabricante y aparato), la BAR de sus
 /// registros, si se le da también su configuración y el nombre de su permiso DMA. Las clases: xHCI, 0x0C0330
-/// (especificación de xHCI); NVMe, 0x010802 (especificación de NVMe). El sonido de virtio: virtio 1.2, 4.1.2,
+/// (especificación de xHCI); NVMe, 0x010802 (especificación de NVMe); AHCI, 0x010601, con sus registros (ABAR) en la
+/// BAR 5 (Serial ATA AHCI 1.3.1, 2.1.11). El sonido de virtio: virtio 1.2, 4.1.2,
 /// fabricante 0x1af4 y aparato 0x1040 más el tipo, 25; en QEMU, todos sus registros en la BAR 4.
 enum Quien {
     Clase(u32),
@@ -84,6 +89,7 @@ const APARATOS: &[(&str, Quien, usize, Option<&str>, &str)] = &[
     ("virtio-sonido", Quien::Id(0x1af4, 0x1059), 4, Some("vsonido-cfg"), "dma-vsonido"),
     ("xhci", Quien::Clase(0x0C_0330), 0, None, "dma-xhci"),
     ("nvme", Quien::Clase(0x01_0802), 0, None, "dma-nvme"),
+    ("ahci", Quien::Clase(0x01_0601), 5, None, "dma-ahci"),
 ];
 
 /// Prepara un aparato: su BAR (en páginas enteras), el bus master y una MSI. (física, tamaño, interrupción).
@@ -212,6 +218,9 @@ pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
         paquete.extend_from_slice(&llave.to_le_bytes());
     }
     paquete.extend_from_slice(&(lanzables.len() as u32).to_le_bytes());
+    // X5c: sin NVMe, el AHCI sirve el canal "disco" (y los de "sata" van a él).
+    let hay_nvme = manifiesto.iter().any(|(n, t, _)| *n == nombre16("nvme") && *t == REGISTROS);
+    let canal = |c: &'static str| if c == "sata" && !hay_nvme { "disco" } else { c };
     let mut canales: Vec<&str> = Vec::new();
     for (nombre, elf, aparatos, suyos) in lanzables.iter() {
         let mut suyos_aparatos = [0xFFu8; 8];
@@ -221,8 +230,8 @@ pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
             }
         }
         let mut de_canales = 0u32;
-        for c in suyos.iter() {
-            let i = canales.iter().position(|x| x == c).unwrap_or_else(|| {
+        for c in suyos.iter().map(|c| canal(c)) {
+            let i = canales.iter().position(|x| *x == c).unwrap_or_else(|| {
                 canales.push(c);
                 canales.len() - 1
             });
