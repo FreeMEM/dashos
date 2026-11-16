@@ -107,6 +107,16 @@
       <arg name="numero" type="uint"/>
     </request>
 
+    <request name="desplegado">
+      <description summary="lo desplegado se ve o se fue">
+        1 al abrir un menú en la barra; 0 al cerrarlo. Mientras se ve, el primer botón que se pulsa fuera de las
+        superficies de la barra no llega a nadie (ni sube la ventana ni le da el teclado, ni su soltar): solo cierra
+        lo desplegado (el evento `cerrar`), como en el Amiga y en cualquier escritorio. Tras ese clic el compositor lo
+        da por cerrado; hasta otro 1 no se traga nada más.
+      </description>
+      <arg name="abierto" type="uint"/>
+    </request>
+
     <event name="menu">
       <description summary="el menú del programa activo">
         Cada vez que cambia: otra ventana con el teclado (otra generación) o el mismo menú cambiado (la misma). Vacío
@@ -119,6 +129,13 @@
     <event name="abrir">
       <description summary="abrir los menús">
         El botón derecho sobre una ventana con menú de DashOS (no le llega a la ventana), o la tecla del programa.
+      </description>
+    </event>
+
+    <event name="cerrar">
+      <description summary="un clic fuera de lo desplegado">
+        Con lo desplegado abierto (`desplegado` 1), un botón pulsado fuera de la barra: no llegó a nadie. La barra cierra
+        lo desplegado.
       </description>
     </event>
   </interface>

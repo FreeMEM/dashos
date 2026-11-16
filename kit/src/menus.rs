@@ -256,6 +256,11 @@ impl Menus {
         self.abierto.map(|a| a.menu)
     }
 
+    /// El submenú abierto (su puesto entre las cosas del menú abierto), si hay.
+    pub fn sub_abierto_en(&self) -> Option<usize> {
+        self.abierto.and_then(|a| a.sub).map(|s| s.cosa)
+    }
+
     /// Dónde está el título del menú `k`, si se ve.
     pub fn sitio_titulo(&self, k: usize) -> Option<Rect> {
         self.titulos.get(k).copied().filter(|r| !r.vacio())
@@ -370,6 +375,27 @@ impl Menus {
         Self::filas(caja, cosas, s.primera).into_iter().find(|f| es(&cosas[f.0])).map(|f| f.1)
     }
 
+    /// Lo que se ve de lo desplegado, para decirlo por la consola (las pruebas de QEMU): el menú abierto, de su primera
+    /// a su última cosa a la vista, y la que tiene el foco del teclado; y lo mismo de su submenú, si hay. Vacío si no
+    /// hay nada abierto.
+    pub fn lo_que_se_ve(&self) -> String {
+        let Some(a) = self.abierto else { return String::new() };
+        let Some(caja) = self.caja_menu(a.menu) else { return String::new() };
+        let tramo = |caja: Rect, cosas: &[Cosa], primera: usize, actual: Option<usize>| {
+            let f = Self::filas(caja, cosas, primera);
+            let titulo = |k: Option<&(usize, Rect)>| k.map_or("", |x| titulo_de(&cosas[x.0]));
+            let foco = actual.and_then(|k| cosas.get(k)).map(|c| alloc::format!(", foco en \"{}\"", titulo_de(c))).unwrap_or_default();
+            alloc::format!("de \"{}\" a \"{}\"{}", titulo(f.first()), titulo(f.last()), foco)
+        };
+        let m = &self.datos.menus[a.menu];
+        let mut t = alloc::format!("{}: {}", m.titulo, tramo(caja, &m.cosas, a.primera, a.actual.filter(|_| a.teclado)));
+        if let Some((caja_s, cosas, s)) = self.sub_abierto() {
+            let actual = s.actual.filter(|_| a.teclado);
+            t.push_str(&alloc::format!("; {}: {}", titulo_de(&m.cosas[s.cosa]), tramo(caja_s, cosas, s.primera, actual)));
+        }
+        t
+    }
+
     /// Dónde está la cosa `cosa` del menú abierto (la entrada de un submenú, por ejemplo), si se ve.
     pub fn sitio_cosa(&self, cosa: usize) -> Option<Rect> {
         let a = self.abierto?;
@@ -442,12 +468,40 @@ impl Menus {
     fn ver(&mut self, k: usize) {
         let Some(a) = self.abierto else { return };
         let Some(caja) = self.caja_menu(a.menu) else { return };
-        let cosas = &self.datos.menus[a.menu].cosas;
-        let mut primera = a.primera.min(k);
+        let primera = Self::primera_para_ver(caja, &self.datos.menus[a.menu].cosas, a.primera, k);
+        self.abierto.as_mut().unwrap().primera = primera;
+    }
+
+    /// Desplaza el submenú abierto para que se vea su cosa `k` (menus-pulido: con el teclado, la actual de un submenú
+    /// que no cabía se iba por debajo sin que se viera).
+    fn ver_sub(&mut self, k: usize) {
+        let Some((caja, cosas, s)) = self.sub_abierto() else { return };
+        let primera = Self::primera_para_ver(caja, cosas, s.primera, k);
+        if let Some(s) = self.abierto.as_mut().and_then(|a| a.sub.as_mut()) {
+            s.primera = primera;
+        }
+    }
+
+    /// La primera cosa que tiene que verse en `caja`, desde `primera`, para que se vea la `k`.
+    fn primera_para_ver(caja: Rect, cosas: &[Cosa], primera: usize, k: usize) -> usize {
+        let mut primera = primera.min(k);
         while !Self::filas(caja, cosas, primera).iter().any(|f| f.0 == k) && primera < k {
             primera += 1;
         }
-        self.abierto.as_mut().unwrap().primera = primera;
+        primera
+    }
+
+    /// La primera cosa que se ve en `caja` tras mover la rueda `pasos` desde `primera`, si cambia (sin pasar de la
+    /// que deja ver la última abajo del todo). Una cosa por paso: un giro rápido llega como un evento de varios pasos
+    /// (el ratón de QEMU junta así los que llegan seguidos) y antes solo bajaba una.
+    fn desplazar(caja: Rect, cosas: &[Cosa], primera: usize, pasos: i32) -> Option<usize> {
+        let n = cosas.len();
+        if Self::filas(caja, cosas, primera).len() >= n {
+            return None;
+        }
+        let max = (0..n).find(|&p| Self::filas(caja, cosas, p).len() + p >= n).unwrap_or(0);
+        let nueva = (primera as i32).saturating_add(pasos).clamp(0, max as i32) as usize;
+        (nueva != primera).then_some(nueva)
     }
 
     // ---- el ratón ----
@@ -566,24 +620,37 @@ impl Menus {
         if self.encima_titulo.take().is_some() || estado != self.abierto { Resultado::Repintar } else { Resultado::Hecho }
     }
 
-    /// La rueda sobre lo desplegado lo desplaza.
+    /// La rueda sobre lo desplegado lo desplaza: el submenú abierto, si está encima (y no cabe); si no, el menú
+    /// (y su submenú se cierra, porque su entrada se mueve). La actual pasa a ser la que queda bajo el ratón, como si
+    /// se hubiera movido: si no, la de antes (que ya no está ahí) se quedaba marcada, y al colocar otra vez (la barra lo
+    /// hace con cada repintado, el reloj) el menú volvía hacia ella.
     pub fn rueda(&mut self, x: i32, y: i32, pasos: i32) -> Resultado {
         let Some(a) = self.abierto else { return Resultado::Nada };
         let Some(caja) = self.caja_menu(a.menu) else { return Resultado::Nada };
+        let bajo = |caja: Rect, cosas: &[Cosa], primera: usize| {
+            Self::filas(caja, cosas, primera).into_iter().find(|f| f.1.contiene(x, y)).map(|f| f.0).filter(|&k| activa(&cosas[k]))
+        };
+        if let Some((caja_s, cosas_s, s)) = self.sub_abierto().filter(|(c, ..)| c.contiene(x, y)) {
+            let Some(nueva) = Self::desplazar(caja_s, cosas_s, s.primera, pasos) else { return Resultado::Hecho };
+            let actual = bajo(caja_s, cosas_s, nueva);
+            let ab = self.abierto.as_mut().unwrap();
+            ab.teclado = false;
+            let sa = ab.sub.as_mut().unwrap();
+            sa.primera = nueva;
+            sa.actual = actual;
+            return Resultado::Repintar;
+        }
         if !caja.contiene(x, y) {
             return Resultado::Hecho;
         }
         let cosas = &self.datos.menus[a.menu].cosas;
-        let n = cosas.len();
-        let visibles = Self::filas(caja, cosas, a.primera).len();
-        let max = (0..n).find(|&p| Self::filas(caja, cosas, p).len() + p >= n).unwrap_or(0);
-        let nueva = (a.primera as i32 + pasos.signum()).clamp(0, max as i32) as usize;
-        if nueva == a.primera || visibles >= n {
-            return Resultado::Hecho;
-        }
+        let Some(nueva) = Self::desplazar(caja, cosas, a.primera, pasos) else { return Resultado::Hecho };
+        let actual = bajo(caja, cosas, nueva);
         let ab = self.abierto.as_mut().unwrap();
         ab.primera = nueva;
         ab.sub = None;
+        ab.actual = actual;
+        ab.teclado = false;
         Resultado::Repintar
     }
 
@@ -641,8 +708,9 @@ impl Menus {
         if let Some(s) = a.sub.filter(|s| s.actual.is_some()) {
             let Some(Cosa::Sub(sub)) = cosas.get(s.cosa) else { return Resultado::Hecho };
             let mover = |m: &mut Self, k: Option<usize>| {
-                if k.is_some() {
-                    m.abierto.as_mut().unwrap().sub.as_mut().unwrap().actual = k;
+                if let Some(k) = k {
+                    m.abierto.as_mut().unwrap().sub.as_mut().unwrap().actual = Some(k);
+                    m.ver_sub(k);
                 }
                 Resultado::Repintar
             };
@@ -1045,6 +1113,17 @@ mod pruebas {
         assert!(m.sitio_entrada(1).is_some());
         assert_eq!(m.rueda(caja.x + 5, caja.y + 50, 1), Resultado::Repintar);
         assert!(m.sitio_entrada(1).is_none());
+        // Con el ratón encima (la actual, la de debajo), la rueda y colocar otra vez (la barra lo hace con cada
+        // repintado): lo desplazado se queda, no vuelve a la que estaba bajo el ratón antes.
+        let e3 = m.sitio_entrada(3).unwrap();
+        m.raton(e3.x + 5, e3.y + 5, false);
+        for _ in 0..4 {
+            m.rueda(e3.x + 5, e3.y + 5, 1);
+        }
+        let visto = m.lo_que_se_ve();
+        m.colocar(Rect::new(0, 0, 300, FILA), area, &mut r, &mut f);
+        assert_eq!(m.lo_que_se_ve(), visto, "colocar otra vez deshizo la rueda");
+        assert!(m.sitio_entrada(3).is_none());
         // Pintar no sale del lienzo (el lienzo recorta; que no caiga).
         let mut px = alloc::vec![0u32; 300 * 240];
         let mut l = Lienzo::new(&mut px, 300, 240, 300);
@@ -1059,6 +1138,81 @@ mod pruebas {
         let mut n = Menus::new(Datos::leer(EJEMPLO.as_bytes()).unwrap());
         assert_eq!(n.raton(10, 10, true), Resultado::Nada);
         assert_eq!(n.tecla(KEY_F10, true), Resultado::Nada);
+    }
+
+    /// menus-pulido: un submenú que no cabe (32 entradas en un área de 300 de alto). Con el teclado, la actual se ve
+    /// siempre (bajando, Fin, Inicio, una letra); la rueda encima del submenú lo desplaza a él, no al menú; y elegir
+    /// con Intro elige la que se ve. Hostil: la rueda a ráfagas en los dos sentidos no se sale de los topes.
+    #[test]
+    fn submenu_que_no_cabe() {
+        let mut t = String::from("menus 1\nM\tVer\nE\t1\tUna\nS\tMuchas\n");
+        for k in 1..=32 {
+            t.push_str(&alloc::format!(">E\t{}\tOpción {k}\n", 100 + k));
+        }
+        t.push_str("E\t2\tOtra\n");
+        let (mut r, mut f) = (Fuente::regular(), Fuente::medium());
+        let mut m = Menus::new(Datos::leer(t.as_bytes()).unwrap());
+        let area = Rect::new(0, 0, 700, 300);
+        m.colocar(Rect::new(0, 0, 700, FILA), area, &mut r, &mut f);
+        // F10, abajo hasta "Muchas" y derecha: el submenú con el foco en su primera.
+        m.tecla(KEY_F10, true);
+        m.tecla(108, true);
+        assert_eq!(m.tecla(106, true), Resultado::Repintar);
+        assert!(m.sitio_entrada(101).is_some());
+        assert!(m.sitio_entrada(132).is_none(), "el submenú cabe: la prueba no prueba nada");
+        // Bajando: la actual se ve siempre, y dentro del área.
+        for k in 2..=32 {
+            m.tecla(108, true);
+            let e = m.sitio_entrada(100 + k).unwrap_or_else(|| panic!("la {k}.ª del submenú no se ve con el foco"));
+            assert!(e.y >= 0 && e.y + e.h <= 300, "{e:?}");
+        }
+        assert_eq!(m.tecla(28, true), Resultado::Elegido(132));
+        // Otra vez: Fin y la última se ve; Inicio, la primera; una letra ("O"), la siguiente que empieza por ella.
+        m.tecla(KEY_F10, true);
+        m.tecla(108, true);
+        m.tecla(106, true);
+        m.tecla(107, true);
+        assert!(m.sitio_entrada(132).is_some());
+        assert!(m.sitio_entrada(101).is_none());
+        let se_ve = m.lo_que_se_ve();
+        assert!(se_ve.starts_with("Ver: ") && se_ve.contains("; Muchas: de \"Opción 27\" a \"Opción 32\", foco en \"Opción 32\""), "{se_ve}");
+        m.tecla(102, true);
+        assert!(m.sitio_entrada(101).is_some());
+        // La rueda sobre el submenú lo desplaza a él; el menú sigue igual (con su submenú abierto).
+        let sub = m.cajas_abiertas().1.unwrap();
+        let menu = m.cajas_abiertas().0.unwrap();
+        assert_eq!(m.rueda(sub.x + 10, sub.y + 60, 1), Resultado::Repintar);
+        assert!(m.sitio_entrada(101).is_none(), "la rueda no desplazó el submenú");
+        assert_eq!(m.cajas_abiertas().0, Some(menu));
+        assert!(m.cajas_abiertas().1.is_some());
+        // Un evento de tres pasos (un giro rápido) baja tres; y uno enorme se para en el tope.
+        let antes = m.lo_que_se_ve();
+        assert_eq!(m.rueda(sub.x + 10, sub.y + 60, 3), Resultado::Repintar);
+        assert!(m.sitio_entrada(104).is_none() && m.sitio_entrada(105).is_some(), "{antes} -> {}", m.lo_que_se_ve());
+        m.rueda(sub.x + 10, sub.y + 60, -3);
+        assert!(m.sitio_entrada(102).is_some());
+        assert_eq!(m.rueda(sub.x + 10, sub.y + 60, i32::MAX), Resultado::Repintar);
+        assert!(m.sitio_entrada(132).is_some());
+        m.rueda(sub.x + 10, sub.y + 60, i32::MIN);
+        assert!(m.sitio_entrada(101).is_some());
+        // Ráfagas: cien hacia abajo (se para en el tope: la última se ve) y cien hacia arriba (la primera).
+        for _ in 0..100 {
+            m.rueda(sub.x + 10, sub.y + 60, 1);
+        }
+        assert!(m.sitio_entrada(132).is_some_and(|e| e.y + e.h <= 300));
+        assert_eq!(m.rueda(sub.x + 10, sub.y + 60, 1), Resultado::Hecho);
+        for _ in 0..100 {
+            m.rueda(sub.x + 10, sub.y + 60, -1);
+        }
+        assert!(m.sitio_entrada(101).is_some());
+        // Fuera de todo, la rueda no hace nada (y no es de nadie más).
+        assert_eq!(m.rueda(690, 290, 1), Resultado::Hecho);
+        // Con el ratón: la que se ve tras la rueda se elige con un clic.
+        assert!(m.sitio_entrada(107).is_none(), "seis filas: la 7.ª aún no se ve");
+        m.rueda(sub.x + 10, sub.y + 60, 1);
+        m.rueda(sub.x + 10, sub.y + 60, 1);
+        let e = m.sitio_entrada(107).unwrap();
+        assert_eq!(clic(&mut m, centro(e))[1], Resultado::Elegido(107));
     }
 
     #[test]

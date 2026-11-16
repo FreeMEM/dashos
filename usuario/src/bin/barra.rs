@@ -1768,7 +1768,7 @@ fn principal() -> u64 {
                 pantalla_barra(&mut c, &b, &mut fuente, &mut medio);
             }
             (PUNTERO, wl_pointer::ev::AXIS) if barra_menus::es_suya(sobre) && palabra(1) == 0 => {
-                b.mb.rueda(&mut c, x, y, kit::controles::pasos_rueda(palabra(2)), &b.tema.clone(), &mut fuente, &mut medio);
+                b.mb.rueda(&mut c, sobre, x, y, kit::controles::pasos_rueda(palabra(2)), &b.tema.clone(), &mut fuente, &mut medio);
             }
             (PUNTERO, wl_pointer::ev::BUTTON) if palabra(2) == BOTON_IZQUIERDO && palabra(3) == 1 => {
                 let en_barra = if sobre == SUPERFICIE && b.ancho > 0 { disponer(&b, &mut fuente, &mut medio).boton_en(x, y) } else { None };

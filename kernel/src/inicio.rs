@@ -313,6 +313,10 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // S10, los menús (`make arranque-virt-menus`): la misma prueba en la imagen de usar, para verla con sus menús.
     #[cfg(all(feature = "menus", dash_ventana))]
     ("dash-ventana", programa!("dash-ventana"), &[], &["ventanas", "archivos", "sesiones", "selector"]),
+    // S10, los menús (rama `menus-pulido`): un programa del kit nativo con un submenú y menús que no caben; abre su
+    // ventana cuando los menús han ido a la barra y han vuelto (`tools/guion_menus.py`). Llave: 1 ventanas.
+    #[cfg(feature = "menus")]
+    ("menus-prueba", programa!("menus-prueba"), &[], &["ventanas"]),
     // S13: la hora por la red (SNTP). El único con el permiso del reloj; de la red solo tiene la llave de conectar. Al
     // final, para no cambiar las marcas de los de antes.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]

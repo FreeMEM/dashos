@@ -75,6 +75,13 @@ Main
                 mui_menu_separator()
                 mui_menu_item("Salir", "Q", 11)
             mui_menu_end()
+            # S10 (menus-pulido, `make arranque-virt-menus`): un menú que no cabe en la ventana, para probar la rueda
+            # y el teclado en él.
+            mui_menu_begin("Largo")
+                for k in (1..30)
+                    mui_menu_item("Entrada #{k}", "", 200 + k)
+                end
+            mui_menu_end()
             texto = mui_text("Hola desde Dash")
             mui_hgroup_begin()
                 mui_label("Nombre:")
@@ -117,6 +124,8 @@ Main
                 elif ev == 10
                     r = mui_request(win, "Acerca de", "Una ventana de Dash en DashOS", "_Vale|_Cancelar")
                     Print "[dash-ventana] acerca de: #{r}"
+                elif ev > 200 and ev <= 230
+                    Print "[dash-ventana] menú: Entrada #{ev - 200}"
                 end
             end
             Print "[dash-ventana] fin"

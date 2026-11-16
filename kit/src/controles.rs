@@ -1080,6 +1080,18 @@ impl Interfaz {
         r
     }
 
+    /// S10 (menus-pulido): el teclado se fue a otra ventana: lo desplegado de los menús de la fila se cierra, como
+    /// cualquier menú que pierde el foco. Devuelve si hay que dibujar.
+    pub fn teclado_sale(&mut self) -> bool {
+        match self.menus.as_mut().filter(|m| m.abierto()) {
+            Some(m) => {
+                m.cerrar();
+                true
+            }
+            None => false,
+        }
+    }
+
     /// La rueda del ratón en (x, y): al primer objeto de debajo que se mueve con ella (una lista). Con un menú
     /// abierto, nada. Devuelve si hay que dibujar.
     pub fn rueda(&mut self, x: i32, y: i32, pasos: i32) -> bool {
@@ -1560,6 +1572,18 @@ mod pruebas {
         let mut px = vec![0u32; 400 * 300];
         let mut l = Lienzo::new(&mut px, 400, 300, 400);
         i.dibujar(&mut l);
+        // menus-pulido: el teclado se va a otra ventana con lo desplegado abierto: se cierra (y hay que pintar); sin
+        // nada abierto, nada.
+        assert!(i.menus.as_ref().unwrap().abierto());
+        assert!(i.teclado_sale());
+        assert!(!i.menus.as_ref().unwrap().abierto());
+        assert!(!i.teclado_sale());
+        // La rueda y las teclas con lo desplegado van a los menús, no a lo de debajo.
+        i.tecla(68, true);
+        assert!(!i.rueda(390, 290, 1), "la rueda fuera de lo desplegado hizo algo");
+        assert!(i.menus.as_ref().unwrap().abierto());
+        i.tecla(1, true);
+        assert!(!i.menus.as_ref().unwrap().abierto(), "Esc no cerró");
     }
 
     #[test]
