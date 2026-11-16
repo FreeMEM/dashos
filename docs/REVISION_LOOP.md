@@ -2211,3 +2211,11 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   (`GUARDAR_ENV`, 90; `archivos` `RAM_GUARDAR`, 120; solo el centro, solo su sesión, lo negado al registro común);
   la apariencia en un solo sitio (`Escritorio/apariencia`). Tanda completa y `arranque-virt-shell`: todo bien a la
   primera. Sin ver los botones en pantalla. Por decidir: el tema de la pantalla de entrada como ajuste de la máquina.
+- **Unida `commodities` (2026-11-16)**: protocolo `dashos_commodities_v1` en el compositor, solo para quien tiene
+  permiso (`atajos`, `fondo`, `commodities`, en la tabla común con su frase); atajos con Ctrl+Alt (y F1 a F12 solas,
+  interruptor `wayland::atajos::FUNCION_SOLAS`, pendiente del sí del usuario); teclas reservadas que nunca se dan;
+  aviso de inactividad, pantalla apagada, Bloq Mayús tragado; ClickToFront y AutoPoint como ajustes del compositor;
+  Blanker, NoCapsLock, FKey y Exchange (orden y ventana) en `SYS:Tools/Commodities`. Conflicto en el guion del Shell
+  resuelto con las dos partes. Tanda completa y `arranque-virt-shell`: todo bien a la primera. Sin ver en pantalla
+  Blanker, FKey ni la ventana de Exchange. Queda: `commodities.library` en la caja Amiga (diseñada; toca `caja.c`),
+  `WBStartup`, la categoría de Ajustes.
