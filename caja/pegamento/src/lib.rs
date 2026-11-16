@@ -1205,6 +1205,8 @@ fn recoger_avisos(c: &mut Caja) {
             c.negados_dichos += 1;
             di(&format!("guardia: {} \"{}\" ({}): negado", n.orden, n.nombre, n.motivo));
         }
+        // S6, S36: y al registro común, en llano.
+        preguntador::apuntar(&format!("niega {} \"{}\"", n.orden, n.nombre), n.motivo);
     }
     // Código cambiado (CacheClearU, SetFunction, MakeFunctions...): el JIT olvida lo traducido, menos lo que se está
     // ejecutando (caja.c).

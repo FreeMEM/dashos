@@ -364,8 +364,9 @@ pub fn rota(tam: u64, largo: usize) -> bool {
 }
 
 /// El ritmo de lo que apunta cada programa: una ráfaga de `RAFAGA` líneas y luego una cada `CADA_US`. Lo que pasa de
-/// ahí no se apunta, pero se cuenta, y la siguiente que entra dice cuántas se perdieron. Uno por programa (su marca),
-/// hasta `N`; el que lleva más tiempo sin apuntar deja su sitio.
+/// ahí no se apunta, pero se cuenta, y la siguiente que entra dice cuántas se perdieron. Uno por clave (`sesiones` usa
+/// el nombre del programa y su usuario: lanzar copias no da más), hasta `N`; el que lleva más tiempo sin apuntar deja
+/// su sitio.
 pub const RAFAGA: u32 = 20;
 pub const CADA_US: u64 = 500_000;
 
