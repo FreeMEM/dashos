@@ -163,3 +163,112 @@ En QEMU solo, con un árbol de `virt` cambiado a mano (`tools/dominio_red.py` ha
 `of_id=dashos,canal-dominio` en la línea del kernel engancha el nodo y da `/dev/uio0`; `/dev/mem` proyecta una zona de
 `reserved-memory` dentro de la RAM y los accesos desalineados funcionan (memoria normal); el `memory-region` en el nodo
 del PCIe hace que la e1000 use la `restricted-dma-pool` ("assigned reserved memory node").
+
+### Lo que hubo que arreglar por el camino
+
+- **La BAR de puertos de la e1000** (arriba): sin ella, pánico al reiniciar la tarjeta.
+- **Ocho llaves como mucho por programa**: el kernel y el initramfs del dominio van en un objeto, y el permiso de
+  máquinas lo pide el servicio a `sesiones` (como la caja Linux, que es lo que decidió el usuario el 2026-11-12):
+  `SIN_PREGUNTAR` lleva ahora también ("dominio", "maquinas"). Con la misma llave de `sesiones` apunta en el registro
+  común.
+- **4 MB de más en el dominio**: con la zona de DMA (1 a 2 GB), la RAM (en 2 GB) y la ventana (en 2,5 GB) en tres
+  secciones de 128 MB de la memoria de Linux, su tabla de páginas era el triple (2 MB por sección). Ahora la RAM y la
+  ventana van junto a la zona de DMA, en su misma sección (`dominio::colocar`): "reserved" baja de 14 184 KB a
+  10 080 KB, lo mismo que en QEMU solo (10 144 KB).
+- **El HOLA del servicio llega tarde**: `inicio` lanza el servicio del dominio el último, minutos después en QEMU sin
+  aceleración; la prueba espera hasta 15 minutos, de segundo en segundo. Y por los canales de servidor llega también lo
+  que dice `inicio` de sus clientes: se lee con un búfer de 256 bytes y se ignora.
+- **Las llaves por nombre** (`dashos::llaves::buscar`): los canales llegan en el orden en que se nombran por primera vez
+  en la lista de `inicio`, no en el de cada programa.
+
+### Pruebas
+
+- `make arranque-virt-dominio` (nueva, `kernel/pruebas/arranque_virt_dominio.txt`):
+  - normal: DHCP por el dominio (10.0.2.15), eco TCP de 64 KB con 10.0.2.100:7 y eco UDP con el vecino;
+  - hostil, oferta: el dominio ofrece primero un aparato de disco con una MAC de grupo; el servicio la rechaza (y lo
+    apunta en el registro común) y acepta la buena;
+  - hostil, descriptores: el dominio devuelve usados que no son del conductor (índices fuera, repetidos, largos de 4 GB
+    y de 2 bytes) y escribe 20 000 avisos seguidos; `virtio-red` los cuenta y los ignora ("9 devoluciones ajenas y 3 de
+    largo imposible"), el servicio cuenta 10 000 accesos raros a su canal, y la red sigue (eco TCP y UDP);
+  - hostil, fuera: el dominio lee donde DashOS tiene su kernel en la máquina (0x40200000), más allá de la ventana y en
+    0xf0000000: el hipervisor le da un aborto cada vez ("el dominio toca 0x... donde no tiene nada") y el hijo que lo
+    intenta muere con SIGBUS;
+  - hostil, se cuelga: con un eco TCP de 256 KB en marcha, el dominio deja de atender y de latir; a los 3 s el vigilante
+    lo da por colgado, apaga la tarjeta y lo relanza; el eco acaba (TCP reintenta);
+  - hostil, muere: con otro eco de 256 KB en marcha, su /init acaba, su kernel entra en pánico y pide reiniciar; se
+    relanza y el eco acaba;
+  - el registro común (`Estado:Registros/sistema`, leído por `sesiones`) tiene una línea por cada caída o reinicio,
+    con el motivo, y la de la oferta rechazada:
+    `2026-11-16T14:50:42Z dominio sistema servicio el dominio de red cae (generación 3): dejó de latir (colgado)`.
+  - El vigilante, además, sin querer: con la BAR de puertos sin emular, el dominio entraba en pánico al arrancar; se
+    relanzó 5 veces y a la sexta caída en un minuto se dejó apagado ("el dominio cae sin parar").
+- `cargo test` en `caja-linux/vmm`: 11 pruebas nuevas (canal, ofertas, PCIe, puertos, árbol, `colocar`).
+- `virtio_msg`: 3 pruebas en el PC (todos los mensajes, mensajes malos y 200 000 al azar, colas fuera de la ventana),
+  en `make prueba`.
+- `make prueba`, `make arranque-virt`, `make arranque-virt-2` y `make arranque-virt-linux`: BIEN (con el refactor de `virtio-red`, la red de
+  `arranque-virt` sigue por virtio-net-pci como antes).
+
+### Medidas
+
+QEMU `virt` con TCG, 4 núcleos, con el PC cargado por otras sesiones (carga 6 a 10). Números de emulador.
+
+| | En DashOS (servicio `dominio`) | En QEMU solo (`tools/dominio_red.py qemu 27`) |
+|---|---|---|
+| Memoria de la máquina del dominio | 27 MB: 24 de RAM, 1 de ventana y 2 de zona de DMA | 27 MB, con las mismas zonas reservadas dentro |
+| Lo que ve Linux (MemTotal) | 17 960 KB | 17 896 KB |
+| Usada por Linux (MemTotal − MemFree) | 3,6 MB | 3,7 MB |
+| La máquina menos lo libre (como en S35) | 13,0 MB (13 348 a 13 364 KB) | 13,2 MB (13 544 KB) |
+| Mínimo para arrancar | no medido (24 MB de RAM) | 14 MB |
+| "Listo" (la oferta hecha) desde que arranca la máquina | 0,68 a 0,83 s (seis arranques) | 0,58 s desde que se lanza QEMU (mediana de 5) |
+| Reloj del dominio al decir "listo" | 0,55 a 0,69 s | 0,50 s |
+
+- La memoria es la misma dentro de DashOS que en QEMU solo, y cuadra con S35 (13 MB mínimo, 12 en reposo para el
+  dominio de red con una CPU: aquí, además, UIO, la zona de DMA y la ventana).
+- El arranque, un 10 a 30 % más lento dentro de DashOS: en QEMU solo, los aparatos los emula QEMU en C; aquí, cada
+  acceso al PL011, al PCIe emulado y al canal es una salida al servicio (unas 3 200 salidas por arranque, 2 800 de ellas
+  a aparatos). Con `quiet`, la consola casi no cuenta.
+- Lo que gasta DashOS además de la máquina del dominio (las tablas de la etapa 2, el montón y la pila del servicio) no
+  se ha medido; el servicio tiene un tope de 40 MB.
+- Red por el dominio: eco TCP de 64 KB en 28 a 40 ms; con el dominio cayendo a media transferencia, el eco de 256 KB
+  tarda 7,1 s (3 s del vigilante, 0,7 de arrancar otro y lo que espera TCP para reintentar).
+
+### Decisiones pendientes del usuario
+
+1. **PCI sin IOMMU, solo en QEMU**: la imagen de prueba presta la e1000 a un dominio que podría hacerla escribir en
+   toda la memoria. Se queda solo en `virt,dominio` y como paso intermedio; ¿vale así hasta tener el USB?
+2. **`/dev/mem` sin `STRICT_DEVMEM` en el dominio**: el /init lee la ventana por `/dev/mem`, así que root en el dominio
+   puede leer y escribir toda la memoria del dominio (no la de DashOS). Se eligió porque da la ventana como memoria
+   normal (con caché, igual que la ve DashOS); la alternativa, UIO, la da como memoria de dispositivo y en hardware
+   de verdad no sería coherente. Encaja con la capa 3 (el código del kernel del dominio, protegido desde fuera), que
+   está sin hacer.
+3. **El permiso de máquinas del dominio, en el centro de control**: se da sin preguntar, como a la caja Linux. Si
+   alguien lo quita, al siguiente relanzamiento se pregunta; sin él, no hay red. ¿Un dominio de controladores debería
+   salir entre los permisos que se pueden quitar?
+4. **El registro del dominio**: cada caída va al fichero `sistema` del registro común (clase "servicio"). S35 pide
+   además un fichero por dominio con su consola: hoy la consola del dominio solo sale por el registro del kernel de
+   DashOS (con "linux:" delante). Falta decidir el formato.
+5. **El vigilante**: 3 s sin latido es colgado; más de 5 caídas en un minuto, se deja apagado. S35 pide además un
+   aviso en llano a la tercera seguida: no hecho.
+
+### Lo que queda
+
+- **El USB** (el plan de arriba): sin él, este paso de S35 no vale fuera de QEMU.
+- Las capas 1 a 3 (paso 3). Nada de lo hecho las cierra: el kernel y el initramfs del dominio son un objeto de datos
+  que el servicio solo lee (se puede comprobar su firma antes de cargarlo), sin módulos, y la etapa 2 ya distingue
+  memoria y aparatos (se puede quitar la escritura o la ejecución de páginas del dominio).
+- El dominio en `Status` y en el Monitor del sistema; el tope de memoria medido y la alarma (capa 6).
+- Menos salidas: supresión de avisos (VIRTIO_F_EVENT_IDX) y juntar los USADOS de una ráfaga. Una tormenta de avisos
+  cuesta una salida por escritura (acotado por el tiempo de CPU del dominio) y un mensaje al conductor por salida (los
+  que no caben en su cola se pierden, sin daño).
+- Medir lo que gasta el servicio en DashOS, y el mínimo de RAM del dominio dentro de DashOS.
+- Si se cae `virtio-red` (el conductor), `inicio` lo relanza pero el servicio del dominio no le vuelve a mandar su
+  `HOLA`: la red se queda sin tarjeta hasta reiniciar. Hay que volver a presentarse (o que el conductor lo pida).
+
+### Lo que no se ha comprobado
+
+- Nada en hardware de verdad. En QEMU no hay cachés: la coherencia entre la ventana vista por DashOS (con caché) y por
+  el dominio (`/dev/mem` de RAM reservada, que Linux da con caché; no comprobado en hardware), y la de la zona de DMA
+  (sin caché para DashOS, normal en la etapa 2) están sin probar.
+- Una INTx compartida con otro aparato: en la prueba, la e1000 tiene la suya sola.
+- Mucho tráfico seguido ni una inundación de tramas desde fuera.
+- El dominio con más de una vCPU.
