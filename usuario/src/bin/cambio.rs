@@ -615,14 +615,39 @@ fn principal() -> u64 {
         return 1;
     };
     let bien = match &vol[..vol.iter().position(|&c| c == 0).unwrap_or(16)] {
-        b"Ana" => nombres_ana(&arch) & testigo(&arch, raiz),
-        b"Carla" => espia(&arch, raiz),
+        b"Ana" => llaves_y_selector("Ana", true) & nombres_ana(&arch) & testigo(&arch, raiz),
+        b"Carla" => llaves_y_selector("Carla", false) & espia(&arch, raiz),
         _ => {
             println!("  [cambio] Home: de nadie conocido: MAL");
             false
         }
     };
     if bien { 0 } else { 1 }
+}
+
+/// La tabla de llaves (`dashos::llaves`) y el selector de ficheros: `sesiones` dice qué es cada llave, y da la del
+/// selector solo a los programas de la persona del selector (Ana, en la prueba). El de Ana lo usa sin ventana
+/// (`CONSULTA`: quién dirá el selector que es); el de Carla no lo tiene.
+fn llaves_y_selector(persona: &str, con_selector: bool) -> bool {
+    use dashos::protocolo::selector as sel;
+    let t = dashos::llaves::Tabla::leer();
+    let tres = t.buscar("sesiones") == Some(SESIONES) && t.buscar("archivos") == Some(ARCHIVOS) && t.buscar("ventanas") == Some(VENTANAS);
+    let selector = t.buscar("selector");
+    let consulta = selector.map(|llave| {
+        let mut b = [0u8; 16];
+        let n = sel::escribir_peticion(&mut b, sel::CONSULTA, "", "").unwrap_or(0);
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 64];
+        let leidos = if dashos::canal_escribir(llave, &b[..n], &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 5_000_000).0 } else { -1 };
+        dashos::cerrar(lectura);
+        usize::try_from(leidos).ok().and_then(|l| sel::leer_respuesta(&r[..l])).is_some_and(|x| x.estado == sel::BIEN && x.nombre == "cambio")
+    });
+    let bien = tres && consulta == con_selector.then_some(true);
+    println!("  [cambio] {}: tabla de llaves ({}): sesiones, archivos y ventanas {}; selector de ficheros: {}: {}", persona, t.cuantas(),
+        if tres { "en su sitio" } else { "NO" },
+        match consulta { Some(true) => "lo tiene y la conoce como \"cambio\"", Some(false) => "lo tiene, pero no contesta bien", None => "no lo tiene" },
+        if bien { "bien" } else { "MAL" });
+    bien
 }
 
 /// Ana: su programa sigue detrás y lo encuentra todo al volver.

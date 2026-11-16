@@ -148,7 +148,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 9 | `registros_proyectar` | `x0` llave de registros, `x1` dirección (alineada a 4 KB) | 0 |
 | 10 | `interrupcion_asociar` | `x0` llave de interrupción, `x1` llave de un extremo de canal | 0 |
 | 11 | `interrupcion_terminar` | `x0` llave de interrupción | 0 |
-| 12 | `proceso_crear` | `x0` llave de memoria con el ELF, `x1` tamaño del ELF, `x2` tabla de llaves, `x3` cuántas, `x4` llave de grupo o 0 | Llave de proceso |
+| 12 | `proceso_crear` | `x0` llave de memoria con el ELF, `x1` tamaño del ELF, `x2` tabla de llaves, `x3` cuántas (y, con el bit 16, que tras la tabla van sus nombres), `x4` llave de grupo o 0 | Llave de proceso |
 | 13 | `proceso_matar` | `x0` llave de proceso | 0 |
 | 14 | `proceso_esperar` | `x0` llave de proceso | `x0` clase, `x1` código |
 | 15 | `llave_duplicar` | `x0` llave, `x1` derechos, `x2` marca | Llave nueva |
@@ -188,6 +188,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 52 | `cpu_tiempo` | `x0` llave de grupo (con leer), o 0: el grupo propio | Microsegundos de CPU que han gastado los procesos del grupo y de sus subgrupos, vivos y muertos, desde que se creó (las dos clases, también los hilos de una vCPU). `E_LLAVE`, `E_TIPO` (no es un grupo) o `E_DERECHOS` (sin leer). Para el monitor del sistema (trasfondo): solo quien tiene la llave del grupo (`sesiones`, de lo que lanza) mide a otro |
 | 53 | `memoria_aviso` | `x0` permiso de memoria (con escribir), `x1` canal (con escribir) | 0. El aviso de memoria baja llega al otro lado del canal (S3). `E_LLAVE`, `E_TIPO` o `E_DERECHOS` |
 | 54 | `grupo_tope` | `x0` llave de grupo (con escribir), `x1` tope en bytes | 0. `E_DERECHOS` sin escribir o si es el grupo propio o uno de encima (S3) |
+| 56 | `llaves_nombres` | `x0` búfer, `x1` capacidad en bytes | Cuántas llaves de nacimiento tienen nombre en la tabla de quien llama (0 si quien lo lanzó no los dio). Copia al búfer los nombres que quepan enteros, 16 bytes cada uno, en el orden de las llaves. `E_ARGUMENTO` si el búfer no es suyo |
 | 55 | `maquina_globo` | `x0` vCPU (con escribir), `x1` 0 soltar, 1 reponer, `x2` tabla de direcciones físicas del invitado (u64, alineadas a 4 KB, en el orden de bytes del proceso), `x3` cuántas (de 1 a 256) | Cuántas páginas se soltaron o repusieron. El globo de la caja Linux (aviso-cajas): soltar quita la página de la etapa 2 y de las proyecciones de quien llama, vacía las TLB y la devuelve al sistema (y sus bytes al grupo del objeto); reponer pone una nueva a cero (cobrada a ese grupo). Solo memoria que no tiene nadie más: las páginas de un objeto que esté en otra máquina, otro proceso, un mensaje, una vista o tras una llave revocable se saltan. `E_ARGUMENTO` si una dirección no es de su RAM o no está alineada (no se toca nada), `E_TAMANO`, `E_MEMORIA` si no se pudo reponer ninguna, `E_NO_HAY` sin hipervisor en el núcleo |
 | 49 | `pagina_cero` | `x0` permiso de página 0 (con escribir), `x1` llave de memoria de una página (con leer; no revocable) | 0. La proyecta en la dirección 0, de solo lectura y sin ejecutar (H4). `E_TIPO` si `x0` no es el permiso, `E_TAMANO` si el objeto no mide una página, `E_ARGUMENTO` si ya hay página 0 o la llave es revocable |
 
@@ -380,6 +381,13 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   - Las llaves de la tabla (hasta 8, con derecho de transferir y sin repetir) salen de la tabla de quien crea y son
     las llaves 1, 2... del proceso nuevo. Si no se puede crear, vuelven a sus números.
   - El kernel elige el núcleo. La llave de proceso tiene todos los derechos.
+  - **La tabla de llaves.** Con el bit 16 de `x3` (`CON_NOMBRES`), tras los números de llave (4 bytes cada uno) van
+    sus nombres, 16 bytes por llave, rellenos con ceros, en el mismo orden: lo que es cada una ("ventanas",
+    "archivos", "selector"...; vacío, sin nombre). El kernel no los mira: los guarda con el proceso, que los lee con
+    la llamada 56 y no los puede cambiar. Si los nombres no se pueden leer, `E_ARGUMENTO`, no se crea nada y las
+    llaves no se mueven. Sin el bit, el proceso nace sin tabla (la 56 da 0). Así un programa busca sus llaves por
+    su nombre, sin saber quién lo lanzó ni cuántas trae (`dashos::llaves`; los nombres que ponen `inicio` y
+    `sesiones`, en `referencia/servicios.md`).
   - Errores: `E_ARGUMENTO` si el ELF no vale, `E_TAMANO` si el tamaño es 0 o mayor que el objeto, `E_MEMORIA`,
     `E_LIMITE` si no cabe la llave nueva.
 - **13, `proceso_matar`.** Pide el derecho de escribir. Vale para un proceso que corre, que espera o que ya acabó.
@@ -528,7 +536,8 @@ Tipos de objeto:
 `usuario/src/lib.rs` (crate `dashos`) envuelve las llamadas: `escribir`, `salir`, `canal_crear`, `canal_escribir`,
 `canal_leer`, `memoria_crear`, `memoria_proyectar`, `registros_proyectar`, `interrupcion_asociar` e
 `interrupcion_terminar`. `dashos::hilos` tiene las de hilos (`crear`, `unir`, `esperar`, `despertar`,
-`proceso_salir`) y un `Cerrojo` hecho con la espera. También tiene `println!` y la macro `programa!(principal)`, que pone `_start` y el
+`proceso_salir`) y un `Cerrojo` hecho con la espera. `dashos::llaves` tiene la tabla de llaves (`Tabla::leer`,
+`buscar("ventanas")`) y `proceso_crear_con_nombres` lanza diciendo qué es cada llave. También tiene `println!` y la macro `programa!(principal)`, que pone `_start` y el
 manejador de pánico.
 
 Los objetivos de compilación son dos:

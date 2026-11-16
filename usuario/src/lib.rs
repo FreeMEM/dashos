@@ -21,6 +21,7 @@ pub mod protocolo {
     pub mod comprobar;
     pub mod pantallas;
     pub mod red;
+    pub mod selector;
     pub mod sesiones;
 }
 #[cfg(feature = "monton")]
@@ -29,6 +30,8 @@ pub mod prestados;
 /// Volúmenes y asignaciones con nombre (S4b): la tabla de cada proceso y cómo se resuelve (sin dependencias: se prueba
 /// en el PC).
 pub mod asignaciones;
+/// La tabla de llaves: qué es cada llave con que nace el programa (sin dependencias: se prueba en el PC).
+pub mod llaves;
 pub mod hilos;
 pub mod red_cliente;
 /// S29: el cortafuegos de la caja Linux en el servicio de red (sin dependencias: se prueba en el PC).
@@ -428,6 +431,24 @@ pub fn proceso_crear(memoria: u32, tamano: usize, llaves: &[u32]) -> i64 {
 /// Como `proceso_crear`, en el grupo de la llave `grupo` (0: el propio). C42.
 pub fn proceso_crear_en(grupo: u32, memoria: u32, tamano: usize, llaves: &[u32]) -> i64 {
     llamada(12, [memoria as u64, tamano as u64, llaves.as_ptr() as u64, llaves.len() as u64, grupo as u64]).0 as i64
+}
+
+/// Como `proceso_crear_en`, diciendo qué es cada llave: `nombres[i]` es el de `llaves[i]` (`llaves::nombre16`). El
+/// programa los lee con `llaves::Tabla::leer`. `E_ARGUMENTO` si no hay un nombre por llave o son más de 8.
+pub fn proceso_crear_con_nombres(grupo: u32, memoria: u32, tamano: usize, llaves: &[u32], nombres: &[[u8; llaves::NOMBRE]]) -> i64 {
+    if llaves.len() > llaves::MAX || nombres.len() != llaves.len() {
+        return E_ARGUMENTO;
+    }
+    // Un solo bloque: los números de llave y, detrás, sus nombres.
+    let mut b = [0u8; (4 + llaves::NOMBRE) * llaves::MAX];
+    for (i, l) in llaves.iter().enumerate() {
+        b[4 * i..4 * i + 4].copy_from_slice(&l.to_ne_bytes());
+    }
+    let o = 4 * llaves.len();
+    for (i, n) in nombres.iter().enumerate() {
+        b[o + llaves::NOMBRE * i..o + llaves::NOMBRE * (i + 1)].copy_from_slice(n);
+    }
+    llamada(12, [memoria as u64, tamano as u64, b.as_ptr() as u64, llaves.len() as u64 | llaves::CON_NOMBRES, grupo as u64]).0 as i64
 }
 
 /// Un subgrupo del propio con un tope de `tope` bytes (C42). Desde S3 es un tope y no una reserva: no se aparta nada

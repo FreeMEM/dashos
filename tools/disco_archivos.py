@@ -40,6 +40,8 @@ PIDE = os.path.join(os.path.dirname(HOLA), "pide")
 CAMBIO = os.path.join(os.path.dirname(HOLA), "cambio")
 # S10: un programa del disco que avisa (lo lanza la barra).
 AVISA = os.path.join(os.path.dirname(HOLA), "avisa")
+# El selector de ficheros: un programa del disco que guarda con "Guardar como" (lo lanza la barra, al final).
+GUARDA = os.path.join(os.path.dirname(HOLA), "guarda")
 # Trasfondo: un programa que espera 90 s (lo lanza la barra; el monitor del sistema lo cierra).
 ESPERA = os.path.join(os.path.dirname(HOLA), "espera")
 # S28: el cajón de la caja Amiga (su `Caja:`), con lo que atacan sus virus de laboratorio (`caja/pruebas68k/malware/`):
@@ -137,6 +139,8 @@ if sys.argv[1] == "--comprobar":
         "C/datos.bin 614400",
         "C/frio.bin 1048576",
         "C/grande.txt 313890",
+        # El selector de ficheros: lo que `guarda` guardó con "Guardar como" y sustituyó después (queda lo segundo).
+        "C/informe.txt 17",
         "C/raro|nombre.txt 14",
         # S10: el cajón de otra persona (Carla, 0700), que el Workbench de Ana no lista ni abre.
         "DeCarla/ cajón",
@@ -196,6 +200,7 @@ if sys.argv[1] == "--comprobar":
         f"Programas/avisa {os.path.getsize(AVISA)}",
         f"Programas/cambio {os.path.getsize(CAMBIO)}",
         f"Programas/espera {os.path.getsize(ESPERA)}",
+        f"Programas/guarda {os.path.getsize(GUARDA)}",
         f"Programas/hola {os.path.getsize(HOLA)}",
         f"Programas/panel {os.path.getsize(CAMBIO)}",
         f"Programas/pide {os.path.getsize(PIDE)}",
@@ -257,6 +262,9 @@ if sys.argv[1] == "--comprobar":
     permisos = subprocess.run([ver, disco, desde, "Estado/Servicios/sesiones/permisos"], capture_output=True).stdout
     if permisos != b"":
         fallos.append(f"permisos concedidos: {permisos!r}")
+    informe = subprocess.run([ver, disco, desde, "C/informe.txt"], capture_output=True).stdout
+    if informe != "segunda versión\n".encode():
+        fallos.append(f"C/informe.txt: {informe!r}")
     if hola != b"hola desde DashOS!\n":
         fallos.append(f"Escrito/hola.txt: {hola!r}")
     if grande != "".join(f"línea {i}\n" for i in range(25000)).encode():
@@ -362,6 +370,9 @@ with tempfile.TemporaryDirectory() as t:
     with open(os.path.join(raiz, "Programas", "pide"), "wb") as f:
         f.write(open(PIDE, "rb").read())
     os.chmod(os.path.join(raiz, "Programas", "pide"), 0o755)
+    with open(os.path.join(raiz, "Programas", "guarda"), "wb") as f:
+        f.write(open(GUARDA, "rb").read())
+    os.chmod(os.path.join(raiz, "Programas", "guarda"), 0o755)
     with open(os.path.join(raiz, "Programas", "avisa"), "wb") as f:
         f.write(open(AVISA, "rb").read())
     os.chmod(os.path.join(raiz, "Programas", "avisa"), 0o755)

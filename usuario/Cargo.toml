@@ -444,3 +444,9 @@ test = false
 name = "medir-fs"
 path = "src/bin/medir_fs.rs"
 test = false
+
+# La prueba del selector de ficheros desde un programa del disco ("Guardar como"), con su tabla de llaves.
+[[bin]]
+name = "guarda"
+path = "src/bin/guarda.rs"
+test = false

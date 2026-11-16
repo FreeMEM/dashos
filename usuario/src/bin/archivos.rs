@@ -706,12 +706,15 @@ struct Cliente {
 /// Las asas 0 a 15 son raíces; las demás empiezan aquí.
 const RAICES: usize = 16;
 
-/// El tope de la asa `asa` de `c`: lo más que deja hacer por ella, además de los permisos del fichero.
+/// El tope de la asa `asa` de `c`: lo más que deja hacer por ella, además de los permisos del fichero. El de una asa
+/// cedida (`CEDER`) son los derechos con que se cedió: con una cedida solo para leer no se escribe, ni se cambia el
+/// tamaño, el comentario, la protección o la fecha, aunque el fichero sea de quien la recibe (el selector cede para leer
+/// ficheros del mismo usuario que el programa).
 fn tope(c: &Cliente, asa: u32) -> u16 {
     match asa as usize {
         0 => R | W,
         k if k < RAICES => c.raices[k].map_or(0, |r| r.2),
-        _ => c.topes.get(&asa).copied().unwrap_or(R | W),
+        _ => c.cedidas.get(&asa).map(|d| d & (R | W)).unwrap_or_else(|| c.topes.get(&asa).copied().unwrap_or(R | W)),
     }
 }
 
@@ -1743,13 +1746,15 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
         }
         TAMANO => {
             let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            // Como `ESCRIBIR`: con una asa cedida mandan los derechos con que se cedió, no los permisos del fichero.
+            let cedida = c.cedidas.get(&p.asa).copied();
             rec.olvidar_nodo(vol, n.id());
             let r = fs.tx_in(vol, |tx| {
                 let nodo = tx.read_tree(n)?;
                 if nodo.data().is_dir() {
                     return Err(Error::new(EISDIR));
                 }
-                if sin_escritura(&ficha, nodo.data()) {
+                if cedida.map_or_else(|| sin_escritura(&ficha, nodo.data()), |d| d & W == 0) {
                     return Err(Error::new(EACCES));
                 }
                 tx.truncate_node(n, p.a, hora.0, hora.1)

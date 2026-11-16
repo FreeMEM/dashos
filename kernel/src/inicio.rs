@@ -16,6 +16,8 @@
 //!   orden, y después los canales. `inicio` le da una
 //!   copia de cada llave de aparato (se queda la suya) y crea cada canal la primera vez que se nombra: el primer
 //!   programa que lo nombra recibe un extremo y el segundo, el otro;
+//! - u32 cuántos canales; por cada uno, su nombre (16, relleno con 0), en el orden de sus bits: con ellos `inicio`
+//!   dice a cada programa qué es cada llave que le da (la tabla de llaves, `usuario/src/llaves.rs`);
 //! - los ELF seguidos, cada uno desde un múltiplo de 8.
 
 use crate::dtb::Dtb;
@@ -814,6 +816,11 @@ pub fn lanzar() -> bool {
         paquete.extend_from_slice(&de_canales.to_le_bytes());
         paquete.extend_from_slice(&suyos_aparatos);
         paquete.extend_from_slice(&nombre16(nombre));
+    }
+    // Los nombres de los canales, para la tabla de llaves de cada programa.
+    paquete.extend_from_slice(&(canales.len() as u32).to_le_bytes());
+    for c in &canales {
+        paquete.extend_from_slice(&nombre16(c));
     }
     for (nombre, elf, _, _) in lanzables.iter() {
         while paquete.len() % 8 != 0 {

@@ -44,7 +44,7 @@ QEMU=$!
 # marcha") y a las líneas de ese fichero, en orden. La señal para el guion es un fichero junto a la salida.
 export REINICIO_SENAL="${REINICIO:+$SALIDA.reiniciar}"
 if [ -n "${TECLAS:-}" ]; then
-    python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" "${CAPTURA_PREGUNTA:-}" "${DIAG_REGISTROS:-}" "${CAPTURA_SELECTOR:-}" "${CAPTURA_CENTRO:-}" <<'PY' >/dev/null 2>"${GUION_ERRORES:-/dev/null}" &
+    ESPERADOS_GUION="$ESPERADOS" python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" "${CAPTURA_PREGUNTA:-}" "${DIAG_REGISTROS:-}" "${CAPTURA_SELECTOR:-}" "${CAPTURA_CENTRO:-}" <<'PY' >/dev/null 2>"${GUION_ERRORES:-/dev/null}" &
 import os, socket, sys, time
 ruta, total, serie, captura_pregunta, diag_registros, captura_selector, captura_centro = sys.argv[1], float(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7]
 diag_hecho = False
@@ -145,6 +145,22 @@ ra_capturas = 0
 gt_mirado = 0
 gt_movida = 0
 req_dash = 0
+# El selector de ficheros desde un programa del disco (`Programas/guarda`): lo último de la prueba. Sus líneas esperadas
+# (las que llevan alguna de estas marcas) y las demás, que tienen que haber salido antes de empezar.
+MARCAS_GUARDA = ("[guarda]", "para guarda", "Programas/guarda", "[selector] guarda ", "el usuario guarda ", "informe.txt", "el nombre del campo")
+guarda_paso = 0
+guarda_desde = 0
+guarda_mirado = 0
+guarda_abiertos = 0
+guarda_suyas, guarda_otras = [], []
+if os.environ.get("ESPERADOS_GUION"):
+    try:
+        for l in open(os.environ["ESPERADOS_GUION"], errors="replace").read().splitlines():
+            if l and not l.startswith("#"):
+                l = l[1:] if l.startswith("~") else l
+                (guarda_suyas if any(m in l for m in MARCAS_GUARDA) else guarda_otras).append(l)
+    except OSError:
+        pass
 reinicio = 0
 reinicio_hasta = 0
 reinicio_abiertos = 0
@@ -200,6 +216,87 @@ while time.time() - inicio < total:
                 time.sleep(1.3)
                 mandar("sendkey shift-s")
                 reinicio = 4
+            time.sleep(0.25)
+            continue
+        # "Guardar como" desde un programa del disco: cuando ya salió todo lo demás que se espera (así no se cruza con
+        # los otros pasos ni con el selector del hostil o de dash-ventana), el lanzador de la barra (1), "guarda" (2) e
+        # Intro (3): `sesiones` lo lanza como Ana, con la llave del selector. Pide guardar "informe.txt": un clic en
+        # "Guardar" (4). Pide otra vez: clic en el campo, Fin, se borra el nombre e Intro (5: vacío no vale); se teclea
+        # otra vez e Intro (6: ya existe, se pregunta) y un clic en "Sustituir" (7). Y pide abrir con un patrón: un
+        # clic en la ventana, Fin e Intro (8). Cada paso, como mucho 40 s.
+        if guarda_paso == 0 and guarda_suyas and time.time() - guarda_mirado > 2:
+            import re
+            guarda_mirado = time.time()
+            limpio = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", texto).replace("\r", "")
+            guarda_otras = [l for l in guarda_otras if l not in limpio]
+            if not guarda_otras:
+                guarda_paso, guarda_desde = 1, time.time()
+        if 1 <= guarda_paso <= 8:
+            import re
+            if time.time() - guarda_desde > 40:
+                guarda_paso = 99                 # (no siguió: faltarán sus líneas)
+                continue
+            def clic_guarda(x, y):
+                ir_a(x, y)
+                time.sleep(0.3)
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
+                ir_a(790, 590)
+            def en_selector(patron):
+                # El último sitio que dijo el selector (dentro de su ventana), ya en la pantalla.
+                v = re.findall(r"\[compositor\] ventana de selector en \((\d+), (\d+)\)", texto)
+                s = re.findall(patron, texto)
+                return (int(v[-1][0]) + int(s[-1][0]), int(v[-1][1]) + int(s[-1][1])) if v and s else None
+            con_nombre = texto.count("[selector] campo Nombre en (") - texto.count("), con 0 letras")
+            hecho = False
+            if guarda_paso == 1:
+                bb = re.search(r"\[barra\] botones: lanzador en \((\d+), (\d+)\)", texto)
+                if bb:
+                    guarda_abiertos = texto.count("[barra] lanzador abierto")
+                    clic_guarda(int(bb.group(1)), int(bb.group(2)))
+                    hecho = True
+            elif guarda_paso == 2 and texto.count("[barra] lanzador abierto") > guarda_abiertos:
+                time.sleep(0.5)
+                mandar(*["sendkey " + c for c in "guarda"], pausa=0.3)
+                hecho = True
+            elif guarda_paso == 3 and '[barra] busca "guarda": guarda' in texto:
+                time.sleep(0.5)
+                mandar("sendkey ret")
+                hecho = True
+            elif guarda_paso == 4 and con_nombre >= 1:
+                time.sleep(1)
+                sitio = en_selector(r"\[selector\] botón Guardar en \((\d+), (\d+)\)")
+                if sitio:
+                    clic_guarda(*sitio)
+                    hecho = True
+            elif guarda_paso == 5 and con_nombre >= 2 and "[guarda] guardar: " in texto:
+                time.sleep(1)
+                sitio = en_selector(r"\[selector\] campo Nombre en \((\d+), (\d+)\)")
+                if sitio:
+                    clic_guarda(*sitio)
+                    time.sleep(0.5)
+                    mandar("sendkey end", *["sendkey backspace"] * 11, "sendkey ret", pausa=0.2)
+                    hecho = True
+            elif guarda_paso == 6 and "[selector] el nombre del campo no vale" in texto:
+                time.sleep(0.5)
+                mandar(*["sendkey " + ("dot" if c == "." else c) for c in "informe.txt"], "sendkey ret", pausa=0.2)
+                hecho = True
+            elif guarda_paso == 7 and "[selector] botón Sustituir en (" in texto:
+                time.sleep(0.7)
+                sitio = en_selector(r"\[selector\] botón Sustituir en \((\d+), (\d+)\)")
+                if sitio:
+                    clic_guarda(*sitio)
+                    hecho = True
+            elif guarda_paso == 8 and "[selector] ventana de abrir en pantalla, para guarda" in texto:
+                time.sleep(1)
+                v = re.findall(r"\[compositor\] ventana de selector en \((\d+), (\d+)\)", texto)
+                if v:
+                    # Un clic en el título de la ventana (no en la lista), para que tenga el teclado.
+                    clic_guarda(int(v[-1][0]) + 230, int(v[-1][1]) + 36)
+                    time.sleep(0.5)
+                    mandar("sendkey end", "sendkey ret", pausa=0.4)
+                    hecho = True
+            if hecho:
+                guarda_paso, guarda_desde = guarda_paso + 1, time.time()
             time.sleep(0.25)
             continue
         # Los pasos de las capturas de la caja Amiga (GadTools, el ejemplo de Dash y el requester), al principio de la
