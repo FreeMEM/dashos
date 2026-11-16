@@ -68,6 +68,9 @@ const CEDEN_RAICES: &[&str] = &["workbench", "explorador"];
 /// `inicio`), y a los que `sesiones` pone en la 3, también solo para leer, el `RAM:` de la sesión de su usuario cuando
 /// entra (`ram_entrar`): su tabla de nombres trae `SYS:` y `RAM:`, y por ellos leen `LOCALE:` y `ENV:`.
 const LEEN_IDIOMA: &[&str] = &["centro"];
+/// Ajustes en texto: los programas del escritorio que piden guardar un ajuste de `ENV:` en `ENVARC:` (`GUARDAR_ENV`) y
+/// escriben `ENV:` (su raíz de `RAM:`, para leer y escribir): el centro de control, que es la ventana de Ajustes.
+const GUARDAN_AJUSTES: &[&str] = &["centro"];
 /// Lo que reparte, con la llave sin marca de cada uno: servicios (canales) y permisos del kernel, como el de la clase de
 /// plazo (U4). A un canal se le dice quién es el nuevo cliente (su entrada de directorio); a un permiso, no.
 /// U6: el sonido, con la llave sin marca que da `inicio` (`CANAL_SISTEMA`), no con un número fijo (`SIN_NUMERO`).
@@ -529,7 +532,7 @@ fn ram_entrar(uid: u32, cuenta: &str, fichas: &[Option<Ficha>], desde_us: u64) -
         let mut r = cabecera_ram(a::RAM_RAIZ, uid, uid);
         r[8..16].copy_from_slice(&f.marca.to_le_bytes());
         r[16] = RAIZ_RAM;
-        r[17] = if es(f, CEDEN_RAICES) { 6 } else { 4 };
+        r[17] = if es(f, CEDEN_RAICES) || es(f, GUARDAN_AJUSTES) { 6 } else { 4 };
         orden_ram(&r[..a::CABECERA], None);
     }
     let ahora = dashos::ahora_us();
@@ -2254,6 +2257,39 @@ fn principal() -> u64 {
                         _ => PROTEGIDO,
                     };
                     dashos::canal_escribir(respuesta, &r.to_le_bytes(), &[]);
+                }
+                GUARDAR_ENV => {
+                    let quien = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
+                    let largo = (u32_en(4) as usize).min(m.len().saturating_sub(8));
+                    let fichero = m.get(8..8 + largo).unwrap_or(b"");
+                    // De la sesión de quien lo pide: su usuario, con la sesión abierta y su cuenta.
+                    let cuenta = yo.and_then(|f| CUENTAS.iter().find(|c| c.0 == f.uid && abiertas.contains(&f.uid)));
+                    let estado = if !yo.is_some_and(|f| es(&f, GUARDAN_AJUSTES)) {
+                        PROTEGIDO
+                    } else if !dashos::protocolo::archivos::ajuste_valido(fichero) {
+                        -3
+                    } else if let Some(&(uid, cuenta)) = cuenta {
+                        let mut r = cabecera_ram(dashos::protocolo::archivos::RAM_GUARDAR, uid, uid);
+                        r[16] = cuenta.len() as u8;
+                        r[17] = fichero.len() as u8;
+                        let c = dashos::protocolo::archivos::CABECERA;
+                        r[c..c + cuenta.len()].copy_from_slice(cuenta.as_bytes());
+                        r[c + cuenta.len()..c + cuenta.len() + fichero.len()].copy_from_slice(fichero);
+                        let (e, bytes, _) = orden_ram(&r[..c + cuenta.len() + fichero.len()], None);
+                        if e == BIEN {
+                            println!("  [sesiones] {} guarda ENV:{} en ENVARC: de {}: {} bytes", nombre(&quien), core::str::from_utf8(fichero).unwrap_or("?"), cuenta, bytes);
+                        }
+                        e
+                    } else {
+                        NO_EXISTE
+                    };
+                    if estado != BIEN {
+                        println!("  [sesiones] {} pide guardar ENV:{:?} en ENVARC:: {}", nombre(&quien), core::str::from_utf8(&fichero[..fichero.len().min(64)]).unwrap_or("?"), estado);
+                        // Lo negado, al registro de seguridad de `sesiones`. El registro común (`Estado:Registros/`, rama
+                        // `registro-permisos`) irá aquí también cuando esté.
+                        registro.apuntar(R_AJUSTE, estado, &quien, &fichero[..fichero.len().min(16)]);
+                    }
+                    dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
                 }
                 CAJAS_CAMBIADAS => {
                     // S3: solo el centro de control, que es donde el usuario elige el ajuste. La caja no puede.

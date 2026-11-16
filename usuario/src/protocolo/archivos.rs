@@ -161,6 +161,48 @@ pub const RAM_RAIZ: u32 = 104;
 /// origen se lee sin mirar permisos (lo pide quien reparte las llaves); si no existe, no se copia nada y va bien.
 /// Contesta en `a` cuántos ficheros copió y en `b` sus bytes. `LLENO` si no cabe (lo copiado hasta ahí se queda).
 pub const RAM_COPIAR: u32 = 105;
+/// Ajustes en texto (`docs/bitacoras/ajustes-texto.md`): guardar un fichero de ajustes de `ENV:` en `ENVARC:`, como el
+/// "Save" del Amiga. Sin marca, como las demás de `RAM:`: solo lo pide `sesiones`, en nombre de un programa del
+/// escritorio que no tiene el `Home:` del usuario. Copia `Env/<fichero>` del volumen en memoria de la sesión (bytes 4 a
+/// 7) a `Prefs/Env-Archive/<fichero>` del volumen `vol` (el del usuario), con los cajones que falten (0700), suyo (uid y
+/// gid en los bytes 8 a 15) y 0600. Bytes 16 y 17: lo que miden `vol` y `fichero`, que van seguidos desde el byte 32.
+/// `fichero` tiene que valer (`ajuste_valido`): no sale del cajón. Un fichero de más de `MAX_AJUSTE`, o que no es un
+/// fichero, no se copia. Contesta en `a` los bytes copiados. `NO_EXISTE` si no está en `ENV:`, `MAL_FORMADO` si el
+/// nombre no vale o es demasiado grande. Número alto, para no chocar con otras ramas.
+pub const RAM_GUARDAR: u32 = 120;
+/// Lo más que mide un fichero de ajustes que se guarda así (el tope del formato de texto).
+pub const MAX_AJUSTE: u64 = 64 * 1024;
+
+/// Si `nombre` vale como fichero de ajustes dentro de `ENV:`/`ENVARC:` (`Escritorio/apariencia`): de una a cuatro partes
+/// separadas por `/`, cada una UTF-8 de 1 a 64 bytes, sin `.` ni `..`, sin `:`, `\\` ni bytes de control; hasta 128
+/// bytes en total. Así no sale del cajón de los ajustes.
+pub fn ajuste_valido(nombre: &[u8]) -> bool {
+    let Ok(t) = core::str::from_utf8(nombre) else { return false };
+    !t.is_empty()
+        && t.len() <= 128
+        && t.split('/').count() <= 4
+        && t.split('/').all(|p| !p.is_empty() && p.len() <= 64 && p != "." && p != ".." && !p.chars().any(|c| c == ':' || c == '\\' || c.is_control()))
+}
+
+#[cfg(test)]
+mod pruebas {
+    use super::ajuste_valido;
+
+    /// Hostil: lo que sale del cajón, vacío, largo, con volumen o con bytes de control no vale.
+    #[test]
+    fn nombres_de_ajustes() {
+        for bien in ["Escritorio/apariencia", "Sys/locale", "Sys/locale.prefs", "a", "año/ñ", "a/b/c/d"] {
+            assert!(ajuste_valido(bien.as_bytes()), "{bien}");
+        }
+        for mal in ["", "/", "/a", "a/", "a//b", "..", "../Prefs", "Sys/../../x", "Sys/./x", ".", "SYS:x", "a\\b", "a\nb", "a/b/c/d/e"] {
+            assert!(!ajuste_valido(mal.as_bytes()), "{mal}");
+        }
+        assert!(!ajuste_valido(&[b'a'; 65]));
+        assert!(!ajuste_valido(b"\xff\xfe"));
+        assert!(!ajuste_valido("a/".repeat(70).trim_end_matches('/').as_bytes()));
+    }
+}
+
 /// En el alta, el primer byte del volumen de una raíz que es el volumen en memoria de una sesión; detrás, la sesión
 /// (u32). No es UTF-8: no se confunde con el nombre de ningún volumen del disco.
 pub const VOLUMEN_RAM: u8 = 0xff;

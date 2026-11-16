@@ -2615,6 +2615,25 @@ fn ram_orden(fs: &mut Fs, altas: &mut BTreeMap<u64, Ficha>, clientes: &mut [Opti
                 Respuesta { estado, ..Default::default() }
             }
         }
+        // Ajustes en texto: un fichero de `ENV:` a `ENVARC:` (el `Home:` del usuario), en nombre de `sesiones`.
+        RAM_GUARDAR => {
+            let (lv, lf) = (m[16] as usize, m[17] as usize);
+            let texto = |desde: usize, largo: usize| m.get(desde..desde + largo).and_then(|b| core::str::from_utf8(b).ok());
+            match (texto(CABECERA, lv), texto(CABECERA + lv, lf)) {
+                (Some(v), Some(f)) if !v.is_empty() && ajuste_valido(f.as_bytes()) => match ram_guardar(fs, vol, (uid, gid), v, f) {
+                    Ok((id, bytes)) => {
+                        rec.olvidar();
+                        vig.todo_cambio(id);
+                        match guardar(fs) {
+                            BIEN => Respuesta { estado: BIEN, a: bytes, ..Default::default() },
+                            e => mal(e),
+                        }
+                    }
+                    Err(e) => mal(estado_de(e)),
+                },
+                _ => mal(MAL_FORMADO),
+            }
+        }
         _ => {
             let (lv, lo, ld, solo_cajon) = (m[16] as usize, m[17] as usize, m[18] as usize, m[19] == 1);
             let texto = |desde: usize, largo: usize| m.get(desde..desde + largo).and_then(|b| core::str::from_utf8(b).ok());
@@ -2794,6 +2813,77 @@ fn ram_copiar(fs: &mut Fs, vol: u64, dueno: (u32, u32), de: &str, origen: &str, 
         }
     }
     Ok((ficheros, bytes))
+}
+
+/// `RAM_GUARDAR`: `Env/<fichero>` del volumen en memoria `vol` a `Prefs/Env-Archive/<fichero>` del volumen del disco
+/// `de` (el `Home:` del usuario), con los cajones que falten (0700) y el fichero 0600, todo del `dueno`. Lo que había se
+/// sustituye. El volumen y los bytes. `fichero` ya se comprobó (`ajuste_valido`).
+fn ram_guardar(fs: &mut Fs, vol: u64, dueno: (u32, u32), de: &str, fichero: &str) -> Result<(u64, u64)> {
+    if fs.ram_de(vol).is_none() {
+        return Err(Error::new(ENOENT));
+    }
+    let hora = ahora();
+    // Lo de `ENV:`, sin mirar permisos (lo pide quien reparte las llaves, para su dueño).
+    let datos = fs.tx_in(vol, |tx| {
+        let mut n = tx.find_node(TreePtr::<Node>::root(), "Env")?;
+        for parte in fichero.split('/') {
+            if !n.data().is_dir() {
+                return Err(Error::new(ENOTDIR));
+            }
+            n = tx.find_node(n.ptr(), parte)?;
+        }
+        if !n.data().is_file() {
+            return Err(Error::new(EISDIR));
+        }
+        if n.data().size() > MAX_AJUSTE {
+            return Err(Error::new(EINVAL));
+        }
+        let mut datos = alloc::vec![0u8; n.data().size() as usize];
+        let mut hecho = 0;
+        while hecho < datos.len() {
+            let k = tx.read_node_inner(&n, hecho as u64, &mut datos[hecho..])?;
+            if k == 0 {
+                break;
+            }
+            hecho += k;
+        }
+        datos.truncate(hecho);
+        Ok(datos)
+    })?;
+    let id = fs.disco.tx(|tx| tx.find_volume(de))?;
+    let (partes, nombre) = fichero.rsplit_once('/').map_or((alloc::vec![], fichero), |(c, n)| (c.split('/').collect(), n));
+    fs.disco.tx_in(id, |tx| {
+        let poner = |tx: &mut dashfs::Transaction<Medio>, n: TreePtr<Node>, modo: u16| -> Result<()> {
+            let mut d = tx.read_tree(n)?;
+            d.data_mut().set_uid(dueno.0);
+            d.data_mut().set_gid(dueno.1);
+            d.data_mut().set_mode(modo);
+            tx.sync_tree(d)
+        };
+        let mut dir = TreePtr::<Node>::root();
+        for parte in ["Prefs", "Env-Archive"].into_iter().chain(partes) {
+            dir = match tx.find_node(dir, parte) {
+                Ok(n) if n.data().is_dir() => n.ptr(),
+                Ok(_) => return Err(Error::new(ENOTDIR)),
+                Err(_) => {
+                    let n = tx.create_node(dir, parte, Node::MODE_DIR | 0o700, hora.0, hora.1)?.ptr();
+                    poner(tx, n, Node::MODE_DIR | 0o700)?;
+                    n
+                }
+            };
+        }
+        let n = match tx.find_node(dir, nombre) {
+            Ok(n) if n.data().is_dir() => return Err(Error::new(EISDIR)),
+            Ok(n) => {
+                tx.truncate_node(n.ptr(), 0, hora.0, hora.1)?;
+                n.ptr()
+            }
+            Err(_) => tx.create_node(dir, nombre, Node::MODE_FILE | 0o600, hora.0, hora.1)?.ptr(),
+        };
+        tx.write_node(n, 0, &datos, hora.0, hora.1)?;
+        poner(tx, n, Node::MODE_FILE | 0o600)
+    })?;
+    Ok((id as u64, datos.len() as u64))
 }
 
 /// Abre la sesión de quien tiene la marca `marca`, con su canal de respuesta: le da su ventana. Si ya tenía sesión,
@@ -2980,7 +3070,7 @@ fn principal() -> u64 {
             continue;
         }
         // `RAM:`: los volúmenes en memoria de las sesiones, también de quien reparte las llaves (`sesiones`).
-        if marca == 0 && n >= CABECERA && matches!(u32_en(0), RAM_CREAR | RAM_QUITAR | RAM_RAIZ | RAM_COPIAR) {
+        if marca == 0 && n >= CABECERA && matches!(u32_en(0), RAM_CREAR | RAM_QUITAR | RAM_RAIZ | RAM_COPIAR | RAM_GUARDAR) {
             ram_orden(&mut fs, &mut altas, &mut clientes, &mut recuerdos, &mut vig, &buf[..n], &ll[..k]);
             tocar_timbres(&mut vig, &mut reintento);
             continue;

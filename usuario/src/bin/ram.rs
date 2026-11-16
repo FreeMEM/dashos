@@ -550,7 +550,30 @@ fn carla_primera(arch: &Archivos, t: &Tabla) -> bool {
     let e_zona = if zona.e == a::BIEN { arch.ventana()[..3].copy_from_slice(b"UTC"); let e = arch.orden(a::ESCRIBIR, zona.asa, 0, 3, b"").e; arch.cerrar(zona.asa); e } else { zona.e };
     let fabrica_sys = arch.orden(a::BUSCAR, s::RAIZ_SYS as u32, 0, 0, b"Prefs/Env-Archive/Sys");
     let e_fabrica = if fabrica_sys.e == a::BIEN { let r = arch.orden(a::CREAR, fabrica_sys.asa, a::FICHERO as u64, 0, b"locale"); arch.cerrar(fabrica_sys.asa); r.e } else { fabrica_sys.e };
-    let maquina = e_zona == a::PROTEGIDO && e_fabrica == a::PROTEGIDO;
+    // Y guardar `ENV:` en `ENVARC:` por `sesiones` (`GUARDAR_ENV`) es solo del centro de control: un programa cualquiera
+    // no puede, ni de su sesión ni de otra (el mensaje no nombra la sesión), ni con un nombre que sale del cajón; y la
+    // orden de `archivos` que lo hace es de `sesiones` (con la llave de un programa no existe).
+    let guardar_env = |nombre: &[u8]| -> i32 {
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut m = [0u8; 8 + 64];
+        m[0..4].copy_from_slice(&s::GUARDAR_ENV.to_le_bytes());
+        m[4..8].copy_from_slice(&(nombre.len() as u32).to_le_bytes());
+        m[8..8 + nombre.len()].copy_from_slice(nombre);
+        let mut r = [0u8; 4];
+        let n = if dashos::canal_escribir(SESIONES, &m[..8 + nombre.len()], &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 3_000_000).0 } else { -1 };
+        dashos::cerrar(lectura);
+        if n == 4 { i32::from_le_bytes(r) } else { i32::MIN }
+    };
+    let pedidos = [guardar_env(b"Sys/locale"), guardar_env(b"../../Prefs/Red/hora")];
+    let mut cab = [0u8; 64];
+    cab[0..4].copy_from_slice(&1000u32.to_le_bytes());
+    cab[16] = 3;
+    cab[17] = 10;
+    cab[32..35].copy_from_slice(b"Ana");
+    cab[35..45].copy_from_slice(b"Sys/locale");
+    let directo = arch.orden(a::RAM_GUARDAR, 1000, 1000, 1000, &cab).e;
+    let maquina = e_zona == a::PROTEGIDO && e_fabrica == a::PROTEGIDO && pedidos == [s::PROTEGIDO, s::PROTEGIDO] && directo == a::MAL_FORMADO;
+    println!("  [ram] Carla: guardar ENV: en ENVARC: por sesiones {:?}; la orden de archivos con su llave {}", pedidos, directo);
     println!("  [ram] Carla: escribir la zona de la máquina {} y en ENVARC: de fábrica {}: {}", e_zona, e_fabrica, if maquina { "bien" } else { "MAL" });
     let soltadas = soltadas && maquina;
     let bien = aislada && fabrica && cambio == a::BIEN && e_huella == a::BIEN && capa == Ok(()) && envarc && soltadas;

@@ -331,6 +331,7 @@ DashFS lo descarta. Lo maneja `sesiones` con cuatro órdenes sin marca, como el 
 | 103 quitar | sesión | Lo quita con todo: las asas y las raíces que llevan a él dejan de valer para todos (-5) y su memoria vuelve. En `a`, lo que ocupaba. -2 si no lo había |
 | 104 raíz | sesión, marca del cliente (8-15), hueco (byte 16) y tope (byte 17) | Da a ese cliente (y a su alta) la raíz del volumen en ese hueco: para el escritorio, que nace antes de que entre nadie |
 | 105 copiar | sesión, uid y gid de lo copiado, largos de volumen, origen y destino (bytes 16, 17 y 18), solo crear el cajón (byte 19 a 1); los tres textos desde el byte 32 | Crea el cajón `destino` del volumen en memoria y copia en él el árbol `origen` del volumen del disco (vacío, el principal), pisando lo que se llame igual: así se monta `ENV:` con las capas de `ENVARC:`. Sin mirar permisos del origen; si no existe, no copia nada. En `a`, ficheros; en `b`, bytes. -11 si no cabe |
+| 120 guardar ajuste | sesión, uid y gid (8-15), largos del volumen y del fichero (bytes 16 y 17); los dos textos desde el byte 32 | Ajustes en texto: copia `Env/<fichero>` del volumen en memoria de la sesión a `Prefs/Env-Archive/<fichero>` del volumen (el `Home:` del usuario), con los cajones que falten (0700) y el fichero 0600, suyos; lo que había se sustituye y va al disco al contestar. El fichero tiene que valer (`ajuste_valido`: no sale del cajón), ser un fichero y medir hasta 64 KB. Lo pide `sesiones` (`GUARDAR_ENV`). En `a`, los bytes. -2 si no está en `ENV:`, -1 si el nombre no vale |
 
 En el alta, una raíz cuyo volumen empieza por el byte 0xff y sigue con la sesión (u32) es la del volumen en memoria de
 esa sesión. Por sus asas todo va como en el disco, con tres diferencias: `INFO` da lo que mide y lo libre de ese
@@ -507,6 +508,7 @@ de respuesta:
 | 18 activa | cualquiera | Si su sesión está delante (1), detrás (0) o no tiene (-2). U6: cambio rápido de usuario |
 | 27 escuchar memoria | las cajas (`caja-amiga`, `caja-linux`) | aviso-cajas: con la llave de contestar y el lado de escribir de un canal que solo lee la caja. Por él le manda `sesiones` (nadie más tiene esa llave) el aviso de memoria baja del kernel: orden 28 `SOLTAR`, el nivel (1 que suelte lo que pueda; 0 normal), lo libre para procesos y lo que había al arrancar. A otro programa, -2, y el canal que da se cierra sin usar |
 | 29 soltado | una caja apuntada | Lo que soltó por un aviso (u64, bytes). `sesiones` mide lo que tiene cobrado su grupo y lo apunta junto a lo que tenía al llegar el aviso. A otro, -2 |
+| 90 guardar ajuste | el centro de control (`GUARDAN_AJUSTES`, por el nombre de `inicio`) | Ajustes en texto: guarda `ENV:<fichero>` en `ENVARC:` de la sesión de quien lo pide (nunca de otra: el mensaje no la nombra), por `archivos` (120). u32 largo y el nombre, que no sale del cajón (`ajuste_valido`). Contesta el estado (4 bytes): -2 si no puede, -1 sin la sesión abierta, -3 si el nombre no vale. Lo negado, al registro (`R_AJUSTE`) |
 
 Las negativas (matar, servicio, entrar, lanzar, administrar, bloquear) y los procesos que mueren por un fallo quedan en
 el registro.
