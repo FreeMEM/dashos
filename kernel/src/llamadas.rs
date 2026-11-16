@@ -24,7 +24,7 @@
 //! | 17 | revocar(revocador) |
 //! | 18 | grupo_crear(presupuesto en bytes) -> llave de grupo: un subgrupo del propio |
 //! | 19 | grupo_matar(llave de grupo) |
-//! | 20 | grupo_uso(llave de grupo) -> (límite, usado) |
+//! | 20 | grupo_uso(llave de grupo) -> (límite, usado; x2 lo usado sin subgrupos, x3 las veces que topó) |
 //! | 21 | memoria_quitar(dirección): quita la proyección que empieza ahí |
 //! | 22 | memoria_dma(permiso DMA, tamaño) -> (llave de memoria, dirección de bus) |
 //! | 23 | registro_leer(llave del registro, búfer, capacidad) -> bytes: para la consola |
@@ -1145,6 +1145,7 @@ fn grupo_uso(marco: &mut Marco, h: u32) -> u64 {
     let (limite, usado) = g.uso();
     marco.poner_x1(usado);
     marco.poner_x2(g.uso_propio());
+    marco.poner_x3(g.topado());
     limite
 }
 
