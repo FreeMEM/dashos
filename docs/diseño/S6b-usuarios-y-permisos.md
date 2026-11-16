@@ -295,6 +295,21 @@ Quien compila un programa en Dash y lo prueba desde el Shell no se encuentra nin
 
 Dónde se guarda la marca y el nombre de la orden, por diseñar al hacerlo.
 
+**Hecho** (rama `admin-desarrollo`, 2026-11-16; bitácora `docs/bitacoras/admin-desarrollo.md`). La ficha lleva su
+perfil: "libre" (el de siempre, como el Shell) o "aplicación" (encerrado). La orden **`Abrir`** (orden 122 de
+`sesiones`) abre un programa instalado (`SYS:Programas`) encerrado, con su propia identidad: solo `SYS:`, su
+`PROGDIR:` y su cajón `Home:Datos/<programa>` (que ve como `Datos:` y se crea suyo si falta), sin `Home:`, `Work:` ni
+`RAM:`, y sin la capa del usuario en `C:`, `LIBS:`, `FONTS:` y `CLASSES:`; sus ayudantes nacen igual de encerrados y
+no puede cambiar permisos. El **modo de desarrollo** es un permiso más de lo concedido, `desarrollo`
+(`Home:Prefs/Permisos/concedidos`): se da y se quita con `Permiso DAR|QUITAR <programa> desarrollo` (con la
+confirmación de `guardian`) o se quita en Ajustes, Permisos, donde se ve con su frase; un programa no lo puede pedir
+como un permiso de primer uso. Con él, la aplicación abierta encerrada tiene además `Home:C`, `Home:Libs`, `Home:Fonts`
+y `Home:Classes` solo para leer (`HomeC:`, `HomeLibs:`... delante en su asignación, que `Assign` enseña); el compositor
+marca sus ventanas (borde y pestaña "DESARROLLO" en magenta, y "Desarrollo · " en la barra), y cada vez que se abre así
+queda una línea en `Estado:Registros/seguridad`. Quitarlo devuelve el encierro al relanzar. Pendiente del usuario: el
+nombre `Abrir`, los nombres `Datos:` y `HomeLibs:`, la marca magenta, que el doble clic abra ya encerrado (hoy no:
+lanza como el Shell), y el perfil "suelto" (un programa sin identidad propia no se abre encerrado todavía).
+
 ## Administradores
 
 - Administrador es quien está en el grupo `admin`. No hay otra diferencia: sus programas corren con los mismos
@@ -311,6 +326,17 @@ Dónde se guarda la marca y el nombre de la orden, por diseñar al hacerlo.
   entera y pide la contraseña una vez. El servicio hace solo lo que estaba en la lista enseñada; lo demás no se hace
   y pide su propia confirmación.
 - Queda apuntada en el registro de seguridad (`Estado:Registros/seguridad`, S6).
+
+**Hecho, la tanda** (rama `admin-desarrollo`, 2026-11-16). Un programa pide una tanda a `sesiones` (orden 120, la
+lista en texto en una memoria, `usuario/src/tanda.rs`); `sesiones` la copia y la lee entera antes de preguntar: si una
+línea no es de la lista cerrada, nombra un proceso que no existe o la lista pasa de 16 acciones o 4 KB, no se enseña ni
+se hace nada. `guardian` enseña la lista en llano, numerada, con la frase del administrador, y pide su nombre y su
+contraseña una vez; `sesiones` hace solo esas, en orden, cada una por quien la tiene a su cargo (el comprobador aparte,
+`sesiones`), y **se para en la primera que falle**: las de después no se hacen (pueden contar con las de antes) y quien
+pidió sabe cuál falló y qué pasó con las demás. Una acción suelta (`ADMINISTRAR`) sale con la misma ventana, como una
+tanda de una. Cada acción hecha o fallida, una línea en `Estado:Registros/seguridad`. Desde el Shell, la orden
+`Administrar` (`Administrar comprobar "matar 65540" registro`, o `DESDE plan.txt`). Las acciones de hoy son las tres
+que existen (comprobar, matar, registro): instalar paquetes y crear usuarios entrarán en la lista cuando existan.
 
 ### Que la ventana sea de verdad la del sistema
 

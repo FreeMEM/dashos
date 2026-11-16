@@ -56,6 +56,8 @@ En Linux, `root` lo puede todo. Si un programa consigue ser `root`, el sistema e
 - **Una tanda es una acción** (decidido el 2026-11-16, S36). Instalar diez paquetes de un plan de `Paq`, o crear un
   usuario con sus grupos, es una sola ventana que enseña la lista entera y pide la contraseña una vez. Lo que no
   está en la lista enseñada no se hace.
+  Hecho (rama `admin-desarrollo`): la orden `Administrar` y la ventana de `guardian` con la lista entera; se para en
+  la primera que falle (S6b, "Administradores").
 - **`SYS:` no lo cambia ni un administrador.** Solo las actualizaciones del sistema, firmadas (S8, S14). Un
   administrador puede instalar paquetes en `Paquetes:`, pero no tocar el sistema base a mano.
 
@@ -77,7 +79,8 @@ Tiene que existir un **modo de desarrollo**, con estas condiciones:
 Qué piezas se pueden sustituir, con qué clave se firman las propias y cómo se montan encima de `SYS:`: por diseñar
 al hacerlo, con revisión de seguridad. Activarlo habrá que añadirlo entonces a la lista de acciones de administrador
 de S6b. Lo que no cambia: las aplicaciones encerradas siguen sin cargar de `Home:Libs` (S6b, decisión 9). Para
-probar una biblioteca propia con una de ellas está el modo de desarrollo por aplicación (S6b, "Perfiles").
+probar una biblioteca propia con una de ellas está el modo de desarrollo por aplicación (S6b, "Perfiles"; hecho en la
+rama `admin-desarrollo`: el permiso `desarrollo` y la orden `Abrir`).
 
 ## Permisos de cada aplicación
 
