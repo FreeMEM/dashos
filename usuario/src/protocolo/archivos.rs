@@ -32,6 +32,11 @@ pub const VOLVER: u32 = 20;
 pub const VOLUMEN: u32 = 21;
 pub const VOLUMENES: u32 = 22;
 pub const HACER_VOLUMEN: u32 = 23;
+/// En a de `HACER_VOLUMEN` (cifrado), con este bit: el volumen nace además con un **código de recuperación** (S6b, rama
+/// `cuentas`: el de una cuenta nueva, para apuntar en papel), que el servicio saca de su azar
+/// (`dashos::cuentas::codigo_recuperacion`) y deja en la ventana, en el lugar de la contraseña; en b de la respuesta,
+/// lo que mide. El volumen se queda abierto, como sin él.
+pub const CON_RECUPERACION: u64 = 4;
 pub const QUITAR_VOLUMEN: u32 = 24;
 pub const ABRIR_VOLUMEN: u32 = 25;
 pub const CERRAR_VOLUMEN: u32 = 26;

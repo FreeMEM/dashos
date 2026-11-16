@@ -111,6 +111,8 @@ prueba: $(PRUEBAS) catalogos
 	cd ../usuario && rustc --edition 2024 --test src/permisos_texto.rs -o target/permisos_texto_pruebas && ./target/permisos_texto_pruebas -q
 	@# S36, decisión 1: la tanda de acciones de administrador (listas malas y enormes, basura al azar, frases, respuesta).
 	cd ../usuario && rustc --edition 2024 --test src/tanda.rs -o target/tanda_pruebas && ./target/tanda_pruebas -q
+	@# S6b, rama cuentas: las cuentas de usuario (ficheros dañados y truncados, nombres hostiles, el último administrador).
+	cd ../usuario && rustc --edition 2024 --test src/cuentas.rs -o target/cuentas_pruebas && ./target/cuentas_pruebas -q
 	@# S28: la pregunta de la guardia de ficheros de la caja Amiga (permisos sin llave, detalle, nombres raros).
 	cd ../usuario && rustc --edition 2024 --test src/preguntas_ficheros.rs -o target/preguntas_ficheros_pruebas && ./target/preguntas_ficheros_pruebas -q
 	../puente/pruebas/g0.sh

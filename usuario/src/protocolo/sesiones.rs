@@ -118,6 +118,8 @@ pub const RETIRAR: u32 = 13;
 pub const ADMINISTRAR: u32 = 14;
 /// De `guardian`: la respuesta a una acción de administrador (orden, número u32, largo del usuario u32, largo de la
 /// contraseña u32, el usuario y la contraseña). Contesta 0. Con usuario vacío, el usuario dijo que no.
+/// Rama `cuentas`: detrás, si la tanda crea una cuenta, el largo de su contraseña (u32) y la contraseña, que también se
+/// teclea en la ventana de `guardian`.
 pub const RESPUESTA_ADMIN: u32 = 15;
 /// Las acciones de administrador que hay: comprobar el disco (la hace `archivos`) y matar un proceso de otro usuario o
 /// del sistema (su número, u64, tras el nombre de la acción).
@@ -298,6 +300,14 @@ pub const PERMISO_CAMBIAR: u32 = 83;
 /// hechas; `NO_EXISTE` o `MAL_FORMADO` si la lista no vale; `PROTEGIDO` si no se confirmó; `OCUPADO` si ya tiene una
 /// sin contestar; o el de la que falló), cuántas se hicieron, cuántas había, en cuál se paró y el resultado de cada una.
 /// Una tanda sin contestar a la vez por programa. Desde una sesión de detrás, no.
+///
+/// Rama `cuentas` (S6b): las acciones de cuentas (`crear`, `borrar`, `devolver`, `meter`, `sacar`; `dashos::tanda`)
+/// se prueban antes de preguntar, en orden, sobre una copia de las cuentas: si una no se podría hacer (un nombre
+/// repetido, un número usado, la cuenta propia, el último administrador...), no se pregunta, y el estado es el de
+/// `cuentas::Fallo::estado` (de -101 en adelante). En la pregunta a `guardian`, si crea una cuenta, su nombre en los
+/// bytes 48 a 63: `guardian` pide también su contraseña. Hecha la cuenta, `sesiones` manda a `guardian` otra pregunta,
+/// "*codigo", con el nombre de la cuenta donde va el programa y su código de recuperación en los bytes 40 a 68, que
+/// `guardian` enseña para apuntarlo; no se contesta. En la respuesta, el dato de `crear` es el número de la cuenta.
 pub const TANDA: u32 = 120;
 /// De `guardian`: la lista de la tanda `id` en llano, para enseñarla (orden, id u32, desde u32: el byte desde el que se
 /// lee). Contesta el estado (i32), lo que mide el texto (u32), cuántos bytes van (u32), cuántas acciones hay (u32), el

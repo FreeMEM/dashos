@@ -53,6 +53,9 @@ pub mod permisos_texto;
 /// S6, S36 (decisión 1 del 2026-11-16): la tanda de acciones de administrador (la lista, su frase en llano y la
 /// respuesta), sin dependencias: se prueba en el PC.
 pub mod tanda;
+/// S6b, rama `cuentas`: las cuentas de usuario en `Estado:Cuentas/` (leer, comprobar, cambiar y escribir), sin
+/// dependencias: se prueba en el PC.
+pub mod cuentas;
 mod copiar;
 
 /// Llamada al sistema en crudo: número y cinco argumentos; devuelve x0 y x1. Para pruebas y para la biblioteca.

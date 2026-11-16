@@ -97,6 +97,26 @@ def registro_viejo():
 
 
 REGISTRO_VIEJO = registro_viejo()
+# S6b, rama `cuentas`: las cuentas, en `Estado:Cuentas/` (de `sesiones`, usuario 1: el cajón 0755 y los ficheros 0644,
+# que leen todos). Ana (administradora) y Carla, como antes en el código. Y, a propósito, líneas que no valen: un número
+# repetido, una sin campos, un nombre con letras raras y la última cortada (sin salto de línea): `sesiones` las salta,
+# lo dice, y Ana y Carla entran igual.
+CUENTAS = "Estado/Cuentas"
+CUENTAS_USUARIOS = ("# Cuentas de usuario: nombre:uid:gid:nombre completo:volumen:estado\n"
+                    "Ana:1000:1000:Ana:Ana:activa\n"
+                    "Carla:1001:1001:Carla:Carla:activa\n"
+                    "Intrusa:1000:1000:con el número de Ana:Intrusa:activa\n"
+                    "esto no es una cuenta\n"
+                    "Pe\u00f1a:1003:1003:letras raras:Pena:activa\n"
+                    "Cortada:1004:1004:Cort").encode()
+CUENTAS_GRUPOS = b"# Grupos: nombre:gid:miembros\nadmin:10:Ana\n"
+# Lo que queda tras la prueba del Shell: Berta, creada, borrada y devuelta; sin el grupo "fotos" (se quedó vacío).
+CUENTAS_FIN = (b"# Cuentas de usuario: nombre:uid:gid:nombre completo:volumen:estado\n"
+               b"# Lo escribe el sistema (sesiones). Cambiarlo a mano no vale: la orden Usuario del Shell.\n"
+               b"Ana:1000:1000:Ana:Ana:activa\nCarla:1001:1001:Carla:Carla:activa\nBerta:1002:1002:Berta Gil:Berta:activa\n")
+GRUPOS_FIN = (b"# Grupos: nombre:gid:miembros (separados por comas). admin, los administradores.\n"
+              b"# Lo escribe el sistema (sesiones). Cambiarlo a mano no vale: la orden Usuario del Shell.\n"
+              b"admin:10:Ana\n")
 LARGO = "largo_" + "x" * 84
 # Paso 2 de las asignaciones: los cajones de `SYS:` del árbol de S4b ("El árbol de `SYS:`, completo") y los guiones de
 # `S`. Los .info (iconos) aún no: el formato de iconos con PNG está por hacer.
@@ -120,7 +140,7 @@ SHELL = os.path.join(ORDENES_BIN, "shell")
 # Con DASHOS_ORDENES_SUELTAS=1 va además cada una en su programa (`C/Dir`, `C/Copy`...), que el Shell prefiere.
 ORDENES = os.path.join(ORDENES_BIN, "ordenes")
 SUELTAS = ["Abrir", "Administrar", "Ask", "Assign", "Cd", "Copy", "Date", "Delete", "Dir", "Echo", "Filenote", "Info", "List", "MakeDir", "Permiso",
-           "Protect", "Registro", "Rename", "Type", "Version", "Wait"] if os.environ.get("DASHOS_ORDENES_SUELTAS") else []
+           "Protect", "Registro", "Rename", "Type", "Usuario", "Version", "Wait"] if os.environ.get("DASHOS_ORDENES_SUELTAS") else []
 
 
 def orden(nombre):
@@ -459,6 +479,42 @@ PRUEBA_SHELL = "\n".join([
     "If $hice_libs EQ si",
     "  Delete Home:Libs QUIET",
     "EndIf",
+    "; S6b, rama cuentas: las cuentas de usuario, de Estado:Cuentas/. Verlas es libre; crear, borrar, devolver y los",
+    "; grupos son una tanda de acciones de administrador: la ventana del sistema enseña la lista y pide la contraseña de",
+    "; un administrador, y al crear, también la de la cuenta nueva (las teclea el guion), y enseña su código de",
+    "; recuperación. Berta: se crea en el grupo fotos, se borra (se puede devolver), se devuelve y sale de fotos.",
+    "Usuario",
+    'Usuario CREAR Berta "Berta Gil" +fotos',
+    "Usuario GRUPOS Berta",
+    "Usuario BORRAR Berta",
+    "Usuario LISTA",
+    "Usuario DEVOLVER Berta",
+    "Usuario GRUPOS Berta -fotos",
+    "Type SYS:Estado/Cuentas/grupos",
+    "; Lo hostil, que no llega a preguntar: un nombre repetido (con otras mayúsculas), con dos puntos, con un salto de",
+    "; línea, largo o del sistema; un número ya usado; la cuenta propia; la última administradora; una que no existe; dos",
+    "; cuentas nuevas en una tanda; y una tanda que cuenta con la de antes (Eva no existe aún: no se puede meter en admin).",
+    "Usuario CREAR berta",
+    'Usuario CREAR "a:b"',
+    'Usuario CREAR "Eva*Nfalsa"',
+    "Usuario CREAR " + "x" * 40,
+    "Usuario CREAR SYS",
+    "Usuario CREAR Dora UID 1001",
+    "Usuario BORRAR Ana",
+    "Usuario GRUPOS Ana -admin",
+    "Usuario BORRAR Nadie",
+    'Administrar "crear Eva 0" "crear Gil 0"',
+    'Administrar "meter Eva admin" "crear Eva 0"',
+    "; Escribir las cuentas a mano, borrarlas o dejar otra cosa en su cajón: no.",
+    'Echo >>SYS:Estado/Cuentas/usuarios "Intrusa:1009:1009:x:Intrusa:activa"',
+    "Delete SYS:Estado/Cuentas/usuarios",
+    "Echo >SYS:Estado/Cuentas/otra hola",
+    "; Con la contraseña mala de un administrador, con la buena de quien no lo es (Carla) y con una contraseña corta para",
+    "; la cuenta nueva: no se crea Dora.",
+    "Usuario CREAR Dora",
+    "Usuario CREAR Dora",
+    "Usuario CREAR Dora",
+    "Usuario",
     "; Se deja todo como estaba.",
     "Cd Home:",
     "Assign Prueba: REMOVE",
@@ -686,7 +742,8 @@ if sys.argv[1] == "--comprobar":
     REGISTRO = "Estado/Servicios/sesiones/registro"
     # S6, S36: el registro común y lo concedido del sistema miden lo que haya pasado: se miran aparte, más abajo.
     arbol_entero = arbol
-    arbol = [l for l in arbol if not l.startswith(REGISTROS + "/") and not l.startswith("Estado/Prefs/Permisos/concedidos ")]
+    arbol = [l for l in arbol if not l.startswith(REGISTROS + "/") and not l.startswith("Estado/Prefs/Permisos/concedidos ")
+             and not l.startswith(CUENTAS + "/")]
     linea = [l for l in arbol if l.startswith(REGISTRO + " ")]
     arbol = [l for l in arbol if not l.startswith(REGISTRO + " ")]
     if not linea:
@@ -745,6 +802,32 @@ if sys.argv[1] == "--comprobar":
                           ("programas", " Shell Ana programa larga larga ")]:
             if quiere not in texto[n]:
                 fallos.append(f"Estado/Registros/{n}: falta {quiere!r}")
+
+    # S6b, rama `cuentas`: las cuentas, como las dejó la prueba del Shell (reescritas por `sesiones`: sin las líneas
+    # malas), y nada más en su cajón. Y el volumen de Berta abre con su contraseña y con su código de recuperación (el
+    # que enseñó `guardian`; en las pruebas lo escribe en la consola), y no con otra: en una copia del disco, con
+    # `duenos`, que es lo que abre volúmenes cifrados desde Linux.
+    cuentas = sorted(l.split(" ")[0] for l in arbol_entero if l.startswith(CUENTAS + "/"))
+    if cuentas != [CUENTAS + "/", CUENTAS + "/grupos", CUENTAS + "/usuarios"]:
+        fallos.append(f"{CUENTAS}: {cuentas}")
+    for n, quiere in (("usuarios", CUENTAS_FIN), ("grupos", GRUPOS_FIN)):
+        hay = subprocess.run([ver, disco, desde, f"{CUENTAS}/{n}"], capture_output=True).stdout
+        if hay != quiere:
+            fallos.append(f"{CUENTAS}/{n}: {hay!r}")
+    salida = os.path.join(os.path.dirname(os.path.abspath(disco)), "salida_virt.txt")
+    codigo = re.findall(r"el código de recuperación de Berta es ([A-Z0-9-]{29})", open(salida, errors="replace").read()) if os.path.exists(salida) else []
+    if len(codigo) != 1:
+        fallos.append(f"el código de recuperación de Berta en la consola: {codigo}")
+    else:
+        with tempfile.TemporaryDirectory() as t:
+            copia = os.path.join(t, "disco.img")
+            with open(copia, "wb") as f:
+                f.write(open(disco, "rb").read())
+            duenos = os.path.join(os.path.dirname(ver), "duenos")
+            for clave, abre in (("clave de Berta", True), (codigo[0], True), ("clave de Ana", False), (codigo[0].replace("-", ""), False)):
+                r = subprocess.run([duenos, copia, str(1 << 20), "1002:1002", "Berta"], input=(clave + "\n").encode(), capture_output=True)
+                if (r.returncode == 0) != abre:
+                    fallos.append(f"el volumen de Berta con {'su contraseña' if clave == 'clave de Berta' else repr(clave)}: {r.returncode}")
 
     informe = subprocess.run([ver, disco, desde, "C/informe.txt"], capture_output=True).stdout
     if informe != "segunda versión\n".encode():
@@ -835,6 +918,13 @@ with tempfile.TemporaryDirectory() as t:
     with open(os.path.join(raiz, *REGISTROS.split("/"), "programas"), "wb") as f:
         f.write(REGISTRO_VIEJO)
     os.makedirs(os.path.join(raiz, "Estado", "Prefs"))
+    cuentas = os.path.join(raiz, *CUENTAS.split("/"))
+    os.makedirs(cuentas)
+    for nombre, datos in (("usuarios", CUENTAS_USUARIOS), ("grupos", CUENTAS_GRUPOS)):
+        with open(os.path.join(cuentas, nombre), "wb") as f:
+            f.write(datos)
+        os.chmod(os.path.join(cuentas, nombre), 0o644)
+    os.chmod(cuentas, 0o755)
     # `Work:` (el cajón `Work`), provisional: no hay aún un segundo disco. `RAM:` no está en el disco: es un volumen en
     # memoria que `sesiones` crea al entrar cada usuario.
     os.makedirs(os.path.join(raiz, "Work"))
@@ -1011,6 +1101,7 @@ with tempfile.TemporaryDirectory() as t:
                    input=b"clave de Ana\n", check=True)
     subprocess.run([duenos, fs, "0", "1:1", "camino=Estado/Servicios/sesiones"], check=True)
     subprocess.run([duenos, fs, "0", "1:1", "camino=" + REGISTROS], check=True)
+    subprocess.run([duenos, fs, "0", "1:1", "camino=" + CUENTAS], check=True)
     subprocess.run([duenos, fs, "0", "1001:1001", "camino=DeCarla"], check=True)
     # A10: un daño que la comprobación encuentra y la reparación arregla (los enlaces de LEEME.txt, 7 en vez de 1).
     # El servicio de archivos repara al arrancar; al final, la comprobación desde Linux tiene que salir limpia.
