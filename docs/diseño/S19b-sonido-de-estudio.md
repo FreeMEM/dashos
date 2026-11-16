@@ -143,7 +143,7 @@ Aceptadas por el usuario el 2026-11-10:
 3. CLAP, cada plugin en su proceso.
 4. API compatible con JACK para los programas portados (E11), en sala limpia.
 5. Orden: después de la revisión y de Wayland con el puente (`docs/GRAFICOS_LOOP.md`), y antes de los hilos, LKL y el
-   Wi-Fi (S12b).
+   Wi-Fi (S12b). (LKL se retiró el 2026-11-16, S36; el Wi-Fi va por S35.)
 
 ## Cómo encaja
 

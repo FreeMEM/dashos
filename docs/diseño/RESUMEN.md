@@ -156,6 +156,8 @@ Del 2026-11-10, aceptados por el usuario.
 - **S12b**: los controladores de Linux con LKL (Linux como biblioteca) en la zona GPL, empezando por el Wi-Fi de la
   Pi; antes, hilos en los procesos. Red: SACK si hace falta y `amissl.library` nativa antes.
 - Orden: revisión y Wayland con el puente; después el sonido de estudio; después hilos, LKL y Wi-Fi.
+- **2026-11-16**: LKL se retira. Los controladores de Linux van en máquinas virtuales (S35); de S12b sigue lo de red,
+  y los hilos hacen falta igual.
 - **Caja Linux de serie** (2026-11-10): Arch Linux ARM con pacman, Flatpak con Flathub para el escritorio, Docker y
   Podman con pacman, y la terminal como la del usuario (zsh, Oh My Zsh con `agnosterzak`, autosugerencias, colores,
   `lsd`, `fastfetch`, Terminator). Hangar como escaparate único de los tres mundos (S7, S8).

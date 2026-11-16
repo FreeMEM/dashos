@@ -6,6 +6,9 @@
 > podría ser revocable y quitársela al servicio con él dentro.
 
 > **2026-11-10.** Los controladores de Linux con LKL, y el Wi-Fi y las mejoras de red, en [S12b](S12b-controladores-de-linux.md).
+>
+> **2026-11-16.** LKL se retira (decidido por el usuario, S36): el controlador de Wi-Fi de Linux va en un dominio de
+> controladores (S35). Las mejoras de red de S12b siguen.
 
 > **Nota del 2026-11-03 por la tarde.** El usuario decidió que lo nativo sea little-endian y solo la caja Amiga
 > big-endian. Donde este documento dice big-endian para lo nativo, manda `PLAN.md`.

@@ -1,7 +1,12 @@
 # Hilos de usuario
 
-Encargo: varios hilos por proceso. Lo piden LKL (S12b: los hilos del kernel de Linux son hilos del proceso "linux")
-y muchos programas (Dash, el puente, la caja Amiga con varias tareas en un proceso). Hoy cada proceso nace con un
+Encargo: varios hilos por proceso. Lo pedían LKL (S12b: los hilos del kernel de Linux son hilos del proceso "linux")
+y muchos programas (Dash, el puente, la caja Amiga con varias tareas en un proceso).
+
+> **2026-11-16.** LKL se retira (decidido por el usuario, S36): los controladores de Linux van en máquinas virtuales
+> (S35). Los hilos siguen haciendo falta, pero ya no por LKL: los piden los programas. Donde este documento nombra
+> LKL o `arch/lkl`, léase como el motivo que hubo, no como algo por hacer.
+ Hoy cada proceso nace con un
 hilo y no hay llamada para crear más. Bitácora: `docs/bitacoras/hilos.md`.
 
 ## Lo que ya hay
@@ -164,7 +169,8 @@ después, en la biblioteca, cuando haga falta.
    `principal`, y `salir` queda para acabar un hilo. Hoy no se ha cambiado la macro.
 2. Que un fallo en un hilo mate el proceso entero (hecho así).
 3. Reparto de CPU por hilo, no por proceso ni por grupo. Un programa con 64 hilos que calculan se lleva 64 partes.
-   ¿Hace falta reparto por grupo (como los cgroups de Linux) antes de LKL?
+   ¿Hace falta reparto por grupo (como los cgroups de Linux) antes de abrir los hilos a programas de terceros? (La
+   pregunta decía "antes de LKL"; LKL se retiró el 2026-11-16.)
 4. Los números 40 a 44, y el tope de 256 hilos por proceso.
 5. Sin "soltar" (detach): un hilo al que nadie se une sigue cobrado hasta que acaba el proceso. ¿Se añade?
 6. La espera usa la dirección física como clave (vale entre procesos que comparten memoria). ¿Se quiere así, o solo

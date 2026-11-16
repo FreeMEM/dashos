@@ -3,9 +3,9 @@
 Decidido con el usuario el 2026-11-15. Generaliza lo que S32 (controladores de serie) y S34 (gráficas) ya dicen. Es
 diseño: no hay nada hecho salvo lo que se nombra como existente.
 
-> **Contradicción por decidir (S36).** S12b dio por aceptado LKL: Linux como biblioteca dentro de un proceso de DashOS.
-> Este documento pone los controladores en máquinas virtuales y no nombra LKL. Cuál vale, o cada uno para qué, lo
-> decide el usuario.
+> **Decidido por el usuario el 2026-11-16 (S36).** Los controladores de Linux van en máquinas virtuales, como dice
+> este documento. LKL (S12b: Linux como biblioteca dentro de un proceso de DashOS) se retira. El porqué, en "Por qué
+> máquinas virtuales y no LKL".
 
 ## El problema
 
@@ -30,6 +30,30 @@ tiene. Los papeles se invierten (DashOS manda y es el hipervisor, pero consume a
 
 Un controlador propio sustituye al del dominio cuando exista. Una máquina con poca memoria funciona sin ningún dominio.
 
+## Por qué máquinas virtuales y no LKL (decidido el 2026-11-16)
+
+S12b había aceptado LKL: el kernel de Linux compilado como biblioteca dentro de un proceso de DashOS. Comparados:
+
+| | LKL (S12b) | Dominio en máquina virtual (este documento) |
+|---|---|---|
+| Qué Linux corre | Una variante fuera del kernel oficial (`arch/lkl`), mantenida aparte | El kernel oficial, sin tocar |
+| Lo que hay que escribir | La capa que pide `arch/lkl` y, además, cómo llegan a ese Linux el bus, las interrupciones y el DMA del aparato de verdad | Pasar el aparato a la máquina y servirlo por virtio |
+| Lo que DashOS ya tiene | Hilos en los procesos | El hipervisor (la caja Linux) y los controladores virtio, probados |
+| Seguir las versiones de Linux | Depende de que el proyecto LKL siga | Se cambia el kernel y ya |
+| Frontera de licencia | Código GPL enlazado con nuestra capa, en la zona GPL | Un kernel aparte que solo habla virtio: la más limpia |
+| Protección del propio Linux | La de un proceso | La de un proceso y, además, el código del kernel protegido desde fuera (capa 3) |
+| Memoria | Sin medir | Sin medir (objetivo 48 MB) |
+
+La razón que pesa: LKL se pensó para usar la pila de red y los sistemas de ficheros de Linux dentro de un programa,
+no para llevar aparatos de verdad. Lo que S12b quería ahorrar (escribir la unión con cada bus) habría que escribirlo
+igual, y sobre un Linux que no es el oficial. Comprobado: LKL sigue fuera del kernel oficial (las propuestas para
+meterlo llegan hasta 2021). No comprobado: si hoy admite varios procesadores o aparatos reales; lo que se recuerda es
+que no, pero no se ha verificado.
+
+Lo que sigue de S12b: lo de red (SACK, `amissl.library` nativa). Los hilos de usuario hacen falta igual, aunque ya
+no por LKL. Si la medida del paso 1 (ver "Orden") sale muy por encima de 48 MB, se vuelve a mirar. LKL no tendría
+por qué gastar menos: es el mismo kernel.
+
 ## Cómo llegan los aparatos al dominio
 
 - **Aparatos USB: sin IOMMU.** DashOS lleva el USB (xHCI) y presta al dominio un aparato concreto (un Wi-Fi USB, una
@@ -40,7 +64,8 @@ Un controlador propio sustituye al del dominio cuando exista. Una máquina con p
 - **Aparatos PCI: con IOMMU** (VT-d, AMD-Vi; SMMU en ARM). Sin IOMMU, un aparato pasado alcanza toda la memoria: no se
   hace. DashOS x86 aún no lleva IOMMU (X5b en la rama `x86`).
 - **Aparatos de la placa en la Pi** (el Wi-Fi por SDIO): la Pi no tiene IOMMU. O controlador propio (el de Broadcom es
-  "fullmac": casi todo lo hace su firmware), o dominio sin esa barrera. Por decidir con la placa delante. Si se
+  "fullmac": casi todo lo hace su firmware), o dominio sin esa barrera. Sigue por decidir con la placa delante,
+  también después de retirar LKL (era lo primero de S12b). Si se
   elige el dominio, no se pregunta al usuario: va de serie, y Ajustes lo dice en una línea llana ("El Wi-Fi de esta
   placa tiene menos protección que el resto"), con el detalle a un clic.
 
@@ -113,7 +138,9 @@ Preocupación del usuario: el consumo. Reglas:
 - **Lo que baja el consumo**: controladores propios para lo siempre encendido; dominios a demanda; Linux sin
   distribución (nuestro kernel mínimo ocupa 5 MB en disco); el globo de memoria, que ya existe (aviso-cajas); el kernel
   compartido entre dominios.
-- Con 1 GB o menos, sin dominios. Los de gráficas, desde 4 GB y apagables (S34).
+- **Con poca memoria**: el dominio de red entra si su tope medido cabe (48 MB en 1 GB caben). La Pi 3 (1 GB) y el
+  THEA1200 (512 MB) dependen del Wi-Fi, así que no vale decir "con 1 GB o menos, sin dominios", como decía aquí
+  antes. Los de gráficas, desde 4 GB y apagables (S34).
 
 ## Lo que se toma de NixOS (y lo que no)
 
@@ -153,7 +180,8 @@ Amiga) y generar toda la configuración como enlaces.
 
 ## Orden
 
-1. Medir un Linux mínimo con un controlador (memoria y tiempo de arranque) en QEMU. Sin esto no se sigue.
+1. Medir un Linux mínimo con un controlador (memoria y tiempo de arranque) en QEMU. Sin esto no se sigue. Si sale
+   muy por encima de 48 MB, se vuelve a mirar el diseño.
 2. Prestar un aparato USB a un dominio y recibir de él red por virtio (vale en todas las máquinas, se prueba en QEMU).
 3. Las seis capas de seguridad, con pruebas hostiles (un dominio que intenta escribir su kernel, cargar un módulo,
    salirse de su memoria, mentir por el canal virtio).
