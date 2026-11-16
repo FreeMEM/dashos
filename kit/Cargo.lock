@@ -20,9 +20,14 @@ name = "dashos-kit"
 version = "0.0.1"
 dependencies = [
  "dashos-idioma",
+ "dashos-wayland",
  "libm",
  "ttf-parser",
 ]
+
+[[package]]
+name = "dashos-wayland"
+version = "0.0.1"
 
 [[package]]
 name = "libm"

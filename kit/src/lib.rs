@@ -8,6 +8,7 @@ extern crate alloc;
 pub mod controles;
 pub mod grupos;
 pub mod lienzo;
+pub mod menus;
 pub mod objetos;
 pub mod color;
 pub mod imagen;
