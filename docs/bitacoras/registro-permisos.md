@@ -57,7 +57,50 @@ ficheros (y sus `.1`) por la hora; las fechas, por el principio y en hora local.
   confirma el usuario en `guardian`: "¿Cambiar un permiso?", con el teclado; un guion no puede contestar. Solo desde la
   sesión de delante. Quitar revoca en el acto las llaves de ese servicio de los programas de ese usuario.
 - **`guardian`** enseña la frase en llano (S6b) en las preguntas de permisos ("Quiere usar la red."), y el nombre
-  interno solo con la D ("Detalles"). El diálogo de un permiso pasa a ser el grande, como el de la caja.
+  interno solo con la D ("Detalles"), que lo pone en lugar de "Contesta con el teclado". El de un permiso se queda del
+  tamaño de siempre: con el grande, tapaba el título de Ajustes y la prueba multimonitor (`arranque-virt-2`) no le daba
+  el teclado. El de cambiar un permiso es el grande, como el de la caja.
+
+### Pruebas
+
+- PC: `usuario/src/registro.rs` (8: horas, línea, lo hostil, líneas enormes y al azar, quién ve qué, filtros, rotar,
+  ritmo) y `usuario/src/permisos_texto.rs` (3: frases, ida y vuelta, lo hostil y basura al azar), en `make prueba`.
+  `cargo test` del crate `shell`: bien.
+- Kernel (`make prueba`): la prueba de topes comprueba la cuenta nueva ("contado true"): bien.
+- `make arranque-virt`, con el guion del Shell: apuntar y leer; lo de antes de rotar (`programas.1`, de "ayer", que
+  rota de verdad con la primera línea nueva); lo del hostil (de Carla) que Ana no ve; escapes y saltos de línea
+  limpios; 60 líneas seguidas (43 no se apuntan, y se dice); escribir, borrar o leer `SYS:Estado/Registros/seguridad`
+  (protegido); una clase que no existe; leer todo con la contraseña; seguir en vivo. Permisos: listar, dar (sí) con la
+  D, dar a otro (el usuario dice no), un permiso que no existe, escribir y borrar el fichero a mano (protegido),
+  cambiar el cajón por otro hecho a mano (no se lee ni se escribe ahí: queda en memoria y en el registro), quitar.
+  `pide` topa con su tope y queda apuntado. La comprobación del disco mira los tres ficheros (texto, una línea por
+  hecho, sin letras de control, 383 bytes como mucho), `programas.1` tal cual, y que lo concedido del sistema acabe
+  vacío. Bien, también la vuelta tras reiniciar.
+- `make arranque-virt-2`, `make arranque-virt-linux`, `make arranque-virt-shell`: bien.
+
+### Lo medido
+
+Nada de rendimiento: cada línea es un `ESCRIBIR` al servicio de archivos desde `sesiones` (un viaje), sin medir.
+`SYS:C/Ordenes` pasa a 201 KB con las dos órdenes (la suelta `Registro` mide 137 KB; `Date`, 116).
+
+### Pendiente del usuario
+
+- Que leer el registro de todos sea una acción de administrador con contraseña (S6b dice que un administrador no tiene
+  otros poderes; la lista cerrada de acciones gana "registro").
+- Tres ficheros, 64 KB cada uno (más su `.1`) y el ritmo (20 de golpe, 2 por segundo).
+- Que cada persona lea lo suyo solo por `sesiones` (la orden): el cajón es de `sesiones`, 0700. Con un fichero por
+  persona (suyo para leer) se podría con `Type`.
+- Cualquier programa con ficha lee lo de su usuario y apunta; una aplicación encerrada (S6b) quizá no debería leer.
+- Lo concedido del sistema en `Estado:Prefs/Permisos/` (S4b no lo nombraba).
+- Volver a una instantánea del disco borra las líneas apuntadas después de ella (es lo que hace volver).
+- La pregunta de cambiar un permiso, con su texto y la D de los detalles (visible).
+
+### Lo que no se comprobó
+
+- La pantalla de las preguntas nuevas (no hay captura que la mire): solo sus líneas por el puerto serie.
+- Varias horas de registro: la rotación en el disco se probó una vez (con `programas`), no las de `seguridad` y
+  `sistema`.
+- Leer el de todos con un administrador de verdad tecleando su contraseña: en la prueba la da `guardian`.
 
 ### Lo siguiente (no hecho, como pide el encargo)
 

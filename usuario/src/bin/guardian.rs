@@ -791,11 +791,12 @@ fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u
     const CAPA: u32 = 21;
     // El diálogo; su sombra la pone el compositor, como a las demás capas. El de un fichero, más grande.
     let fichero = matches!(pregunta, Pregunta::Fichero { .. });
-    // S6b, S36: el nombre interno del permiso, solo en "Detalles" (con la D). Con la frase y los detalles, el diálogo
-    // de un permiso es el grande, como el de un fichero de la caja.
+    // S6b, S36: el nombre interno del permiso, solo en "Detalles" (con la D). El de un cambio de permiso (la orden
+    // `Permiso`) es el diálogo grande, como el de un fichero de la caja; el de un permiso, el de siempre (los detalles
+    // van en la línea de "Contesta con el teclado").
     let con_detalles = matches!(pregunta, Pregunta::Cambio { .. }) || matches!(pregunta, Pregunta::Servicio(s) if !s.starts_with('*'));
     let mut detalles = false;
-    let (ancho_d, alto_d) = if fichero || con_detalles { DIALOGO_FICHERO } else { DIALOGO };
+    let (ancho_d, alto_d) = if fichero || matches!(pregunta, Pregunta::Cambio { .. }) { DIALOGO_FICHERO } else { DIALOGO };
     const ESPERA_US: u64 = 1_000_000;
     /// El tema del sistema (S10c): llega al enlazar, antes que la configuración de la capa.
     const TEMA: u32 = 22;
@@ -968,10 +969,11 @@ fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, pregun
         // S6b, S36: la frase en llano del permiso; el nombre interno, solo en "Detalles".
         Pregunta::Servicio(servicio) => {
             let mut v = partir(fuente, &alloc::format!("Quiere {}.", pt::frase(servicio)), ancho_texto, 2);
-            v.push(String::from(if detalles { "Contesta con el teclado (D: esconder los detalles)." } else { "Contesta con el teclado (D: detalles)." }));
-            if detalles {
-                v.push(alloc::format!("Detalles: permiso \"{}\"", recortar(servicio).trim_matches('"')));
-            }
+            v.push(if detalles {
+                alloc::format!("Detalles: permiso \"{}\" (D: esconder).", recortar(servicio).trim_matches('"'))
+            } else {
+                String::from("Contesta con el teclado (D: detalles).")
+            });
             (v, &[("Mayús+S", "Sí"), ("N", "No")])
         }
         Pregunta::Cambio { dar, programa: p, permiso } => {
