@@ -80,8 +80,10 @@ Dos líneas a la vez (decisión 4 de S30):
   servicio limitado a sus ventanas, y el aviso de fallos de DMA. Requisito para pasar aparatos a la caja Linux y
   para el dominio de controladores de la zona GPL (S32 y S33 de `revision`). En QEMU: `-device intel-iommu` y
   `-device amd-iommu`. Prioridad de la línea A. Lo que queda abierto:
-  - Remapeo de interrupciones (VT-d y AMD-Vi): no está. Hace falta para núcleos con ID de APIC de más de 8 bits y
-    para pasar aparatos a una máquina virtual (X11) sin que puedan mandar cualquier interrupción.
+  - Remapeo de interrupciones: el de VT-d, hecho en X11b (todas las interrupciones del anfitrión, en formato
+    remapeable y con el origen comprobado). AMD-Vi solo lo usa para los aparatos pasados a una máquina (X11): las MSI de
+    los servicios van sin remapeo (IV = 0). Núcleos con ID de APIC de más de 8 bits: la tabla de VT-d ya los admite
+    con EIME (formato de x2APIC), pero `interrupciones::msi` sigue dando las MSI al núcleo 0 con un destino de 8 bits.
   - Alias: un aparato detrás de un puente de PCIe a PCI hace DMA con el número del puente; no recibe dominio (su DMA
     falla). Tampoco los grupos de funciones sin ACS. Solo el segmento 0 del PCI.
   - Sin probar en una máquina de verdad (pegaso, VT-d; shiva, AMD-Vi), ni con RMRR o IVMD (QEMU no los da): lo de la
@@ -114,11 +116,8 @@ Dos líneas a la vez (decisión 4 de S30):
     páginas de MSI-X), su configuración filtrada, y al parar la máquina o morir el monitor, callado, con el dominio vacío
     y libre. Sin IOMMU se niega. Remapeo de interrupciones con AMD-Vi (una tabla de una entrada por aparato). Probado en
     QEMU con TCG (AMD-V) y AMD-Vi, VT-d y sin IOMMU. Lo que queda abierto:
-    - **VT-d sin remapeo de interrupciones**: un aparato pasado puede mandar al anfitrión cualquier MSI (cualquier
-      vector de cualquier núcleo). En VT-d el remapeo es de toda la unidad (GCMD.IRE): hay que remapear todas las MSI del
-      sistema (las de los servicios, con IRTE que comprueben el número del aparato, SVT/SID) y las del IOAPIC, o dejar
-      pasar el formato compatible (CFI), que no protege nada. La llamada lo dice (bandera 1 a 0) y el kernel lo avisa
-      en la consola. Hace falta antes de pasar aparatos en Intel con invitados que no sean de confianza.
+    - ~~VT-d sin remapeo de interrupciones~~: hecho en X11b. Solo una VT-d sin remapeo (sin ECAP.IR, o la DMAR sin
+      INTR_REMAP) sigue así: la llamada lo dice (bandera 1 a 0) y el kernel lo avisa en la consola.
     - Solo la entrada 0 de la MSI-X (y un mensaje de MSI): un aparato con varias colas (una gráfica, un NVMe) tendrá una
       sola interrupción. Hará falta una por vector, con su entrada en la tabla de remapeo.
     - Las páginas de la tabla y la PBA de MSI-X no se proyectan: si comparten página con otros registros del aparato,
@@ -139,6 +138,21 @@ Dos líneas a la vez (decisión 4 de S30):
       (sin remapeo): una "MSI falsa" por DMA sí llega en QEMU. En una AMD-Vi de verdad todo lo que sube lleva el número
       del aparato. La prueba del remapeo cambia en su lugar el dato de la MSI del aparato.
     - Con KVM y AMD-Vi, QEMU pide `kernel-irqchip=split` para `intremap=on` (el Makefile lo pone); sin probar con KVM.
+  - [x] X11b **Remapeo de interrupciones de VT-d** (`base/x86_64/iommu.rs`, `iommu.rs`, `ioapic.rs`): la cola de
+    invalidaciones, una tabla de remapeo para todas las unidades, y todas las interrupciones del anfitrión (MSI y MSI-X
+    de los servicios, IOAPIC, el aparato pasado a una máquina) en formato remapeable, cada una con su entrada y el
+    origen comprobado (SVT = 01 con su número de PCI); el formato compatible, bloqueado (CFI a 0). El aparato pasado
+    tiene una sola entrada, a su vector de siempre; al soltarlo, se quita. Sin IR (unidad o DMAR), como antes. Probado
+    en QEMU (TCG) y en pegaso (KVM anidado). Lo que queda abierto:
+    - El bloqueo del formato compatible no se puede probar en QEMU: su VT-d deja pasar esos mensajes con el remapeo
+      encendido (no mira CFI). Sin probar en una VT-d de verdad.
+    - Una tabla de 256 entradas para todas las unidades. Una entrada por fuente (aparato y vector, o IOAPIC y GSI): si
+      el vector de una MSI cambiara, la vieja se quedaría (hoy no pasa: cada aparato tiene un vector fijo).
+    - Los destinos de más de 8 bits (EIME): la entrada y el IOAPIC ya los llevan, pero las MSI siguen yendo al núcleo
+      0 con el destino de 8 bits de `interrupciones::msi`.
+    - Los HPET (ámbito de tipo 4) no se apuntan: el kernel no usa sus interrupciones. Si se usan, irán como los IOAPIC.
+    - Una sola unidad en QEMU: lo de varias unidades (unas con remapeo y otras sin él) está escrito y sin probar.
+    - Sin interrupciones entregadas sin salir (posted interrupts, IM = 1 en la entrada).
 - [ ] X7 **Caja Amiga en x86** con el intérprete de RelevoJIT (necesita R3 y la caja Amiga en `main`).
 - [ ] X8 **La caja con el JIT** de RelevoJIT (necesita R6).
 - [ ] X9 **Un PC de verdad**, arrancando desde USB (necesita la máquina; decisión 5 de S30).
@@ -724,3 +738,50 @@ la tecla "a" repetida, y faltó "no abre Sistema/DeCarla": el paso de la interfa
 
 No comprobado: FLR (el `edu` no lo tiene); una MSI-X; un aparato de verdad en una máquina de verdad; el remapeo en una
 AMD-Vi de verdad (shiva); con KVM y AMD-Vi (`kernel-irqchip=split`). Lo que queda está en la tarea X11.
+
+
+### 2026-11-16 — X11b: remapeo de interrupciones de VT-d
+
+Hecho (sala limpia: la especificación de VT-d de Intel, 5.1, 6.5.2, 7.1.3, 9.10 y 10.4; el código de QEMU solo para
+entender qué emula su `intel-iommu`):
+
+- `base/x86_64/iommu.rs`: la cola de invalidaciones (una página, descriptores de 128 bits, espera con sello en
+  memoria). Se enciende en las unidades con ECAP.IR, y desde ahí todas sus invalidaciones (contextos, IOTLB, caché de
+  entradas de interrupción) van por ella; sin IR, por registros, como antes. Una tabla de remapeo de 256 entradas para
+  todas las unidades (`encender_remapeo`: IRTA, SIRTP, invalidación global, CFI a 0, IRE), con EIME si la CPU va en
+  x2APIC y todas las unidades tienen EIM. `irte_poner` da a cada fuente (número de PCI y clave) su entrada: entrega
+  fija, destino físico, el modo de la fuente, y SVT = 01 con su SID (solo ese aparato la puede usar); un cambio de una
+  entrada viva solo toca la palabra baja. `irte_quitar` las quita. Los fallos del remapeo (motivos 0x20 a 0x26) se
+  escriben como "interrupción bloqueada", con el aparato y la entrada.
+- `acpi.rs`: el número de enumeración de cada ámbito de la DMAR (el ID del IOAPIC) y la bandera INTR_REMAP.
+- `iommu.rs`: el remapeo se enciende si la DMAR y la unidad lo admiten y cada IOAPIC de la MADT sale en el ámbito de
+  alguna unidad (su número de PCI, para comprobar el origen); si no, se dice en la consola y todo sigue en formato
+  compatible. `iommu::dar_msi` programa la MSI de un aparato en formato remapeable si su unidad remapea.
+  `inicio_x86.rs` la usa para xHCI, NVMe y virtio-sound.
+- `ioapic.rs`: cada entrada, en formato remapeable (índice en 63:49 y el bit 11, bit 48 a 1) con su entrada de la tabla
+  (clave: la GSI); `rehacer` pasa a ese formato las que ya estuvieran en marcha.
+- `pasar.rs`: el aparato pasado a una máquina tiene su entrada, a su vector de siempre en el anfitrión, y la bandera
+  `REMAPEADAS` también con VT-d. Al soltarlo, sus entradas se quitan. El aviso de "VT-d sin remapeo" queda solo para
+  una unidad sin IR.
+- Prueba (X11, `msi_remapeada`): con VT-d, la MSI del aparato llega; con su dirección cambiada a mano a la entrada de
+  otro aparato (al mismo vector y núcleo), no llega y sale el fallo de origen (0x26) con su número; suelto, no le queda
+  ninguna entrada. La de X3 (la UART por el IOAPIC al núcleo 2) y la de X5b (las invalidaciones de la IOTLB, ahora por
+  la cola) pasan con el remapeo encendido.
+- Makefile: `IOMMU=intel` pone `intremap=on` (QEMU 11 ya lo trae por omisión con TCG; antes de esto la unidad lo
+  ofrecía y no se usaba) e `INTREMAP=off` lo quita. Con `ACCEL=kvm` y cualquier IOMMU, `kernel-irqchip=split`. Con
+  remapeo, los esperados suman su línea y la de X11 con VT-d. `arranque-x86` falla también con una "interrupción
+  bloqueada".
+
+Comprobado (QEMU 11.1.3, q35, TCG): `make -C kernel prueba-x86` BIEN sin IOMMU, con `IOMMU=intel` (remapeo con
+destinos de 8 bits: TCG no da EIM), con `IOMMU=intel INTREMAP=off` (como antes: sin remapeo y el aviso) y con
+`IOMMU=amd`; `make -C kernel arranque-x86 IOMMU=intel` BIEN (salida, disco, captura y sonido; las MSI-X de los tres
+servicios remapeadas; ni fallos de DMA ni interrupciones bloqueadas). En pegaso (i5-8500, VT-x con KVM anidado,
+`-cpu host`, `kernel-irqchip=split`, QEMU 10.2.1), en `~/dashos-pruebas-ir`: `prueba-x86` BIEN entera, con el remapeo
+en formato de x2APIC (destinos de 32 bits). ARM: `make -C kernel prueba` y `make -C kernel arranque-virt` BIEN.
+
+Una cosa de QEMU: con el remapeo encendido, su VT-d deja pasar los mensajes en formato compatible (no mira CFI), así
+que ese bloqueo no se puede probar ahí. La comprobación del origen sí la hace, salvo para el DMA de un aparato (llega
+sin número): por eso la prueba cambia la MSI de verdad del aparato.
+
+No comprobado: el bloqueo del formato compatible; una VT-d de verdad; varias unidades (unas con remapeo y otras sin
+él); `arranque-x86` con KVM. Lo que queda está en la tarea X11b.
