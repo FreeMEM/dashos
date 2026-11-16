@@ -2152,3 +2152,17 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
 - **`RAM:` (rama `ram-volumen`, por unir)**: el usuario acepta (2026-11-16) el tope (la 32.ª parte de la memoria,
   entre 16 y 256 MB) como ajuste, que `ENV:` no se guarde al salir (como en el Amiga), y dejar para después el tope de
   memoria de la sesión entera. La orden de S9 se llama `ModoMonitor`; `AGENTS.md` nombra la ROM de AROS en su regla 2.
+- **Unidas a `revision` (2026-11-16)**, por la rama `union`: `selector-llaves` (tabla de llaves con nombre, llamada
+  56; selector para los programas de `sesiones`, "Guardar como"; arreglo de seguridad en las asas cedidas), `red-dns`
+  (UDP, DNS, escuchar con permiso, cortafuegos de entrada cerrado, IPv6 por SLAAC, hora por SNTP con zona),
+  `dashfs-tamano` (encoger moviendo datos, crecer en uso, cuota; órdenes 40 y 41 de `archivos`), `idiomas` (crate
+  `idioma`, catálogos CTLG, inglés; kit, centro, explorador y Workbench por catálogo) y `ram-volumen` (`RAM:` en
+  memoria por sesión con `T:` y `ENV:` desde `ENVARC:`; llamadas 57 y 58). Choques resueltos: llamada 56 y modo 17 de
+  `hijo` (RAM: pasa a 57, 58 y 18), `cambio.rs`, `RAICES_DE_MAS` de `inicio.rs`; carrera del guion en el paso del
+  centro que quita un permiso. **Arreglo de una rotura que ya estaba en `revision`**: la ventana de la prueba de Dash
+  salía encima de la terminal de la caja Linux y se quedaba con el teclado (`arranque-virt-gpu` perdía "terminal
+  viva"); fuera de las pruebas con `linux`, y el guion hace clic en la terminal (rama `diag-terminal`).
+  Tanda completa sobre la unión: 10 de 12 a la primera; con el arreglo, gráfica, Wayland, Linux, prueba y arranque
+  bien. Wayland ya había fallado una vez con carga y pasado sola. Pendiente: que ninguna prueba salga a Internet
+  (`red` pregunta por `pool.ntp.org` en las variantes sin disco de prueba); la zona horaria de idiomas (UTC+1 fijo)
+  debe tomar la de `red`; decisiones de idiomas, cuota y selector por confirmar con el usuario.
