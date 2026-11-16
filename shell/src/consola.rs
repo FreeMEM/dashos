@@ -24,6 +24,25 @@ pub const fn directo(rgb: u32) -> Color {
 }
 /// El gris de lo que no es del todo texto (la sugerencia): lo decide quien pinta.
 pub const TENUE_GRIS: Color = 0x0300_0000;
+/// La letra que mejor se lee sobre el fondo que tenga la celda (los bloques del indicador): la decide quien pinta, ya
+/// con los colores de pantalla, con `mejor_sobre`. Con un número de la paleta no se puede: en la clara, el "blanco
+/// vivo" (15) es oscuro, para que se lea sobre su superficie.
+pub const SOBRE_FONDO: Color = 0x0400_0000;
+
+/// De dos colores de pantalla (`0xAARRGGBB`), el que más contrasta con `fondo`. La luminancia, aproximada con gamma 2
+/// (sin coma flotante): basta para elegir entre una letra clara y una oscura.
+pub fn mejor_sobre(fondo: u32, uno: u32, otro: u32) -> u32 {
+    let luz = |c: u32| {
+        let canal = |s: u32| ((c >> s) & 0xff) * ((c >> s) & 0xff);
+        // Los pesos de Rec. 709 (por 10.000) sobre los canales al cuadrado.
+        (2126 * canal(16) as u64 + 7152 * canal(8) as u64 + 722 * canal(0) as u64) / 10_000
+    };
+    let (f, a, b) = (luz(fondo), luz(uno), luz(otro));
+    // El contraste es (claro + k) / (oscuro + k); con k = 5 % de 255², como en WCAG.
+    let k = 255 * 255 / 20;
+    let contraste = |x: u64| if x > f { (x + k) * 1000 / (f + k) } else { (f + k) * 1000 / (x + k) };
+    if contraste(a) >= contraste(b) { uno } else { otro }
+}
 
 /// Los estilos de una celda (bits).
 pub const NEGRITA: u8 = 1;
@@ -1016,6 +1035,24 @@ mod pruebas {
             c.editor.buscar_letra(Some('q'));
         }
         assert_eq!(c.editor.buscando().map(str::len), Some(100));
+    }
+
+    #[test]
+    fn letra_sobre_el_fondo() {
+        let (clara, oscura) = (0xfffe_f7ff, 0xff1d_1b20);
+        // El azul del indicador en el tema claro (0x1a5fb4) pide letra clara; el del oscuro (0x6f9bd6), oscura.
+        assert_eq!(mejor_sobre(0xff1a_5fb4, clara, oscura), clara);
+        assert_eq!(mejor_sobre(0xff6f_9bd6, oscura, clara), oscura);
+        // El amarillo y el rojo de la paleta clara, y los extremos.
+        assert_eq!(mejor_sobre(0xff8a_6d00, clara, oscura), clara);
+        assert_eq!(mejor_sobre(0xffb3_261e, oscura, clara), clara);
+        assert_eq!(mejor_sobre(0xffff_ffff, clara, oscura), oscura);
+        assert_eq!(mejor_sobre(0xff00_0000, oscura, clara), clara);
+        // Hostil: el canal alfa no cuenta; dos letras iguales, o iguales al fondo, no rompen nada.
+        assert_eq!(mejor_sobre(0x001a_5fb4, clara, oscura), clara);
+        assert_eq!(mejor_sobre(0xff1a_5fb4, oscura, oscura), oscura);
+        assert_eq!(mejor_sobre(clara, clara, clara), clara);
+        assert_eq!(mejor_sobre(u32::MAX, 0, u32::MAX), 0);
     }
 
     #[test]

@@ -14,7 +14,7 @@
 //! `hora` y `git` (el hueco para cuando haya git: sin rama, no sale). Lo que no se entiende del fichero se dice y se
 //! salta; con un fichero vacío o roto queda el de serie.
 
-use crate::consola::{paleta, Celda, Color, NEGRITA, NORMAL};
+use crate::consola::{paleta, Celda, Color, NEGRITA, NORMAL, SOBRE_FONDO};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -171,9 +171,9 @@ impl Ajustes {
                 for &s in &self.segmentos {
                     let Some(t) = Self::texto(s, d) else { continue };
                     let fondo = self.colores[NOMBRES.iter().position(|x| x.1 == s).unwrap_or(0)];
-                    // Letra blanca viva sobre los colores; negra sobre los claros.
-                    let claro = (paleta(8)..=paleta(15)).contains(&fondo) || fondo == paleta(7) || fondo == paleta(3) || fondo == paleta(6);
-                    poner(&mut v, &format!(" {} ", t), if claro { paleta(0) } else { paleta(15) }, fondo, NEGRITA);
+                    // La letra, clara u oscura según el fondo que tenga el bloque en pantalla (lo decide quien pinta: el
+                    // azul de la paleta clara es oscuro y el de la oscura, claro).
+                    poner(&mut v, &format!(" {} ", t), SOBRE_FONDO, fondo, NEGRITA);
                 }
                 poner(&mut v, " ", NORMAL, NORMAL, 0);
             }
@@ -205,7 +205,7 @@ mod pruebas {
         let a = Ajustes::default();
         let c = a.pintar(&d);
         assert_eq!(texto(&c), " Home:Trabajo  ");
-        assert_eq!((c[1].fondo, c[1].letra, c.last().unwrap().fondo), (paleta(4), paleta(15), NORMAL));
+        assert_eq!((c[1].fondo, c[1].letra, c.last().unwrap().fondo), (paleta(4), SOBRE_FONDO, NORMAL));
         // El código y los trabajos, solo cuando hay algo que decir.
         let mal = Datos { codigo: 20, trabajos: 2, ..d.clone() };
         assert_eq!(texto(&a.pintar(&mal)), " Home:Trabajo  [2]  20  ");

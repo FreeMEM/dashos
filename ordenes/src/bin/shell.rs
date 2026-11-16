@@ -569,6 +569,11 @@ impl Ventana {
                         }
                         None => (letra, fondo, 0),
                     };
+                    // La letra que se decide con el fondo ya puesto (los bloques del indicador): clara u oscura, la que
+                    // más contraste.
+                    if c.is_some_and(|c| c.letra == consola::SOBRE_FONDO) {
+                        color = consola::mejor_sobre(detras, self.tema.superficie | 0xff00_0000, self.tema.sobre_superficie | 0xff00_0000);
+                    }
                     if estilo & consola::INVERSO != 0 {
                         core::mem::swap(&mut color, &mut detras);
                     }

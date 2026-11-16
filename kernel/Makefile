@@ -162,6 +162,21 @@ virt-uso: usuario FORCE
 	cargo build $(CARGO_PERFIL) --features virt,uso
 	$(OBJCOPY) -O binary $(ELF) $(VIRT_USO)
 
+# El Shell nativo en pantalla (docs/bitacoras/shell-nativa.md, "Visto en pantalla"): la imagen de usar (`virt-uso`),
+# con una copia del disco de pruebas. `tools/guion_shell.py` entra como Ana, abre el Shell desde el lanzador de la barra
+# y teclea en él con el teclado de QEMU (mapa de teclado y modificadores de verdad), con una captura en cada momento:
+# recién abierto, `List`, la sugerencia, una orden que no existe, el menú de Tab, dos paneles y una segunda pestaña
+# (target/shell/shell.*.png; y en capturas-agente/, fuera de git).
+SHELL_CAPTURAS := 1-recien-abierto 2-list 3-sugerencia 4-orden-mala 5-menu-tab 6-paneles 7-pestana
+arranque-virt-shell: virt-uso $(DISCO_NVME)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_USO)) cargo build --release
+	rm -rf target/shell && mkdir -p target/shell
+	cp --reflink=auto $(DISCO_NVME) target/shell/disco.img
+	GUARDAR=$(abspath target/salida_virt_shell.txt) SHELL_CAPTURAS=$(abspath target/shell/shell) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU) -drive file=$(abspath target/shell/disco.img),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_shell.txt 300
+	@cat target/shell/shell.guion.txt
+	for c in $(SHELL_CAPTURAS); do test -s target/shell/shell.$$c.png || { echo "FALTA la captura $$c"; exit 1; }; done
+	mkdir -p ../capturas-agente && for c in $(SHELL_CAPTURAS); do cp target/shell/shell.$$c.png ../capturas-agente/shell-$$c.png; done
+
 # La caja Linux (H9, docs/bitacoras/caja-linux.md): la misma imagen de `virt` en una QEMU virt con virtualization=on,
 # sin disco ni USB. EDK2 y el cargador entran en EL2: el kernel deja ahí el trozo del hipervisor y el servicio
 # `caja-linux` corre sus invitados de prueba. Sin virtualization=on (`arranque-virt`), el servicio dice que no hay

@@ -2053,6 +2053,12 @@ if [ -n "${CAJA_LINUX:-}" ]; then
     python3 -I "$(dirname "$0")/guion_caja_linux.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$CAJA_LINUX" "${CAJA_MODO:-busybox}" >/dev/null 2>&1 &
     CAJA_PID=$!
 fi
+# El Shell nativo en pantalla: con SHELL_CAPTURAS=prefijo, `tools/guion_shell.py` entra, abre el Shell desde el
+# lanzador, teclea en él y lo captura en cada momento (`make arranque-virt-shell`).
+if [ -n "${SHELL_CAPTURAS:-}" ]; then
+    python3 -I "$(dirname "$0")/guion_shell.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$SHELL_CAPTURAS" >/dev/null 2>&1 &
+    SHELL_PID=$!
+fi
 # Se para en cuanto han salido todas las líneas esperadas, en cualquier orden (o al acabar el tiempo); el orden se
 # mira después. Antes se paraba en la última del fichero, y con procesos que acaban a su ritmo (W8, K7) la última en
 # el fichero no siempre es la última en salir. Con CAPTURA=fichero.ppm, antes guarda la pantalla (U4).
@@ -2102,6 +2108,7 @@ wait "$QEMU" 2>/dev/null
 [ -n "${TECLAS_PID:-}" ] && kill "$TECLAS_PID" 2>/dev/null
 [ -n "${MULTI_PID:-}" ] && kill "$MULTI_PID" 2>/dev/null
 [ -n "${CAJA_PID:-}" ] && kill "$CAJA_PID" 2>/dev/null
+[ -n "${SHELL_PID:-}" ] && kill "$SHELL_PID" 2>/dev/null
 # Lo que escribe EDK2 lleva secuencias de escape de terminal: fuera, para comparar el texto.
 sed -e 's/\x1b\[[0-9;]*[A-Za-z]//g' -e 's/\r//g' "$SALIDA" > "$SALIDA.txt"
 

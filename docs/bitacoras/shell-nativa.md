@@ -278,6 +278,75 @@ Choques en `sesiones.rs`, `usuario/Cargo.toml`, `tools/disco_archivos.py` y `ser
 Sobre la unión: `make prueba`, `make arranque-virt`, `make arranque-virt-2` y `make arranque-virt-linux`, bien. Las
 medidas del Shell, parecidas (302 ms, 761 ms y 4,2 s).
 
+### Visto en pantalla (2026-11-16)
+
+Rama `shell-capturas`. Hasta aquí nadie había visto el Shell: sus pruebas lo manejan por guion. Ahora hay una prueba que
+lo usa como una persona y lo captura: **`make arranque-virt-shell`**. La imagen es la de usar (`virt-uso`, con la
+pantalla de entrada de verdad), con una copia del disco de pruebas. `tools/guion_shell.py` entra como Ana, abre el Shell
+desde el lanzador de la barra y teclea en él con el teclado y el ratón USB de QEMU: así pasa por el mapa de teclado
+español y los modificadores, que `Teclea` se salta. Las capturas, en `kernel/target/shell/shell.*.png` (y en
+`capturas-agente/shell-*.png`, fuera de git):
+
+| Captura | Qué se teclea |
+|---|---|
+| `1-recien-abierto` | Nada: el indicador de serie (`Home:` en su bloque) y el cursor |
+| `2-list` | `List SYS:`: los cajones en azul, el resumen |
+| `3-sugerencia` | `Echo "hola desde el teclado"`, y luego `Ech`: la sugerencia en gris |
+| `4-orden-mala` | `NoExiste SYS:S "sin cerrar`, sin Intro: rojo, ruta subrayada, comillas abiertas en rojo |
+| `5-menu-tab` | `Dir SYS:S` y Tab dos veces: el menú (`S/ Storage/ System/`) con el primero elegido |
+| `6-paneles` | Ctrl+Mayús+E y `Dir SYS:C` en el panel nuevo |
+| `7-pestana` | Ctrl+Mayús+T y `Version` en la pestaña nueva |
+
+La última orden tecleada es `Assign CapturasHechas: RAM:`, que `sesiones` dice en el registro: es la línea final que
+espera la prueba (llegaron las teclas, con `:` y mayúsculas, y el guion acabó).
+
+Se ve bien: el indicador, el cursor en su sitio (también sobre la primera letra de la sugerencia), los colores del
+resaltado, la sugerencia en gris (se lee: 3,2 a 1 sobre el fondo claro), el menú de Tab, los dos paneles con la raya del
+que tiene el teclado, la barra de pestañas, `Dir` en dos columnas y las letras con acento (`Cajón`). Nada cortado ni
+pisado. Ctrl+Mayús+E y Ctrl+Mayús+T, de verdad por el teclado, funcionan.
+
+Arreglado, con su prueba:
+
+- **El texto del indicador no se leía**: negro sobre el azul del bloque (2,7 a 1). El indicador pedía el "blanco vivo"
+  de la paleta (el 15), que en la paleta clara es oscuro a propósito (para que se lea sobre la superficie). En el tema
+  oscuro el fallo era el contrario: blanco sobre un azul claro (2,9 a 1). Ahora la letra de los bloques es un color
+  nuevo de la consola, `SOBRE_FONDO`, que decide quien pinta: de la letra clara y la oscura del tema, la que más
+  contrasta con el fondo que tiene la celda en pantalla (`consola::mejor_sobre`, con su prueba, hostiles incluidas).
+  En el tema claro sale blanco sobre azul (6 a 1).
+- **"1 ficheros"** en el resumen de `List`: ahora singular y plural (`1 fichero`, `1 cajón`, `1 byte`). La prueba del
+  Shell lista un cajón con un solo fichero y `arranque_virt.txt` espera `1 fichero - 0 cajones -` (`List` de un
+  fichero suelto no saca el resumen).
+
+Visto y sin arreglar (apuntado):
+
+1. **La ventana del Shell no tiene barra de título ni botón de cerrar** (`1-recien-abierto`): un rectángulo plano sobre
+   el escritorio, sin borde ni sombra. Las ventanas de la caja Linux sí llevan la barra de DashOS. No hay dónde pulsar
+   para moverla o cerrarla (no he mirado si el compositor tiene teclas para eso); desde dentro, `EndShell` o
+   Ctrl+Mayús+W en cada panel. Hay que darle la decoración del kit o la del
+   compositor: no es un cambio pequeño.
+2. **Las fechas de `List` van en UTC y la barra en hora local** (`2-list`: los ficheros dicen 07:41 y el reloj 08:41).
+   La barra usa la zona de `Prefs/zona`; `shell::fecha`, no (y tampoco `Date` ni el segmento `hora` del indicador).
+   Arreglarlo es leer la zona en las órdenes: queda para otro paso.
+3. **Lo elegido en el menú de Tab sale en un bloque casi negro** (`5-menu-tab`): es `INVERSO` sobre la letra de serie.
+   La selección y el cursor usan los colores del tema (el primario y su contenedor); el menú podría usar los mismos.
+   Pendiente del usuario: es cuestión de gusto.
+4. **Mientras se teclea una orden, sale en rojo hasta que está entera** (`3-sugerencia`: `Ech` en rojo con la
+   sugerencia `o "hola..."` detrás). Es lo que hace zsh con su resaltado; con la sugerencia delante choca un poco.
+   Pendiente del usuario: dejarlo, o no poner rojo si la sugerencia completa una orden que existe.
+5. **Las pestañas se llaman por el cajón** (`7-pestana`: `1 Home:` y `2 Home:`): dos pestañas en el mismo cajón solo
+   se distinguen por el número.
+6. **El indicador azul no es del color del tema** (el cursor y la pestaña elegida son del primario, morado aquí). El
+   color de cada segmento es un ajuste (`ENVARC:Shell/Indicador`); el de serie podría ser el primario del tema.
+   Pendiente del usuario.
+
+Pruebas: `cd shell && cargo test` (69), `make prueba`, `make arranque-virt` (a la segunda: la primera, el resumen de
+`List` de un fichero suelto no sale, y cambié la prueba), `make arranque-virt-2` y `make arranque-virt-shell`, bien.
+No pasé `make arranque-virt-linux`: no toco archivos, sesiones ni el compositor, y del disco solo cambia el guion de
+la prueba del Shell.
+
+No visto: el tema oscuro (las cuentas de contraste de arriba son con su paleta, no con una captura), la translucidez,
+Ctrl-R, los paneles en horizontal y el ratón sobre la ventana (seleccionar, pegar, la rueda).
+
 ## El Shell potente (encargo del 2026-11-15)
 
 Petición del usuario: "quiero una Shell potente como la que tengo ahora en Shiva con Terminator y zsh y oh-my-zsh". Se

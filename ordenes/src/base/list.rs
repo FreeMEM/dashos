@@ -52,7 +52,9 @@ fn entrada(o: &mut Orden, op: &Opciones, c: &mut Cuenta, nombre: &str, d: &Datos
 
 fn pie(o: &mut Orden, op: &Opciones, c: &Cuenta) {
     if !op.sin_cabecera && !op.rapido {
-        di!(o, "{} ficheros - {} cajones - {} bytes\n", c.ficheros, c.cajones, c.bytes);
+        // "1 fichero", no "1 ficheros" (como el Amiga: "1 file").
+        let n = |n: u64, uno: &'static str, varios: &'static str| if n == 1 { uno } else { varios };
+        di!(o, "{} {} - {} {} - {} {}\n", c.ficheros, n(c.ficheros, "fichero", "ficheros"), c.cajones, n(c.cajones, "cajón", "cajones"), c.bytes, n(c.bytes, "byte", "bytes"));
     }
 }
 
