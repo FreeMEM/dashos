@@ -698,6 +698,49 @@ DashOS en marcha con 4 núcleos.
 ~│   [sesiones] Shell quita a pide el permiso plazo: el usuario dice sí (0)
 ~│   [sesiones] Shell quita a pide el permiso eco: el usuario dice sí (0)
 ~│   [sesiones] permisos concedidos (Ana): 0 escritos en su Prefs/Permisos
+# S36, decisión 1 (rama admin-desarrollo): la tanda de acciones de administrador. Lo que no es de administrador no se
+# enseña ni se hace; una buena sale entera en la ventana de `guardian`, con una contraseña (la teclea el guion), y se
+# hace en orden (comprobar sigue cuando contesta el comprobador).
+~│   [shell] Administrar: no se pide nada: la línea 1 no es una acción de administrador
+~│   [guardian] tanda en pantalla: Shell pide 2 (administrador propuesto: Ana): 1. Comprobar el disco | 2. Leer el registro de todos los usuarios
+~│   [sesiones] tanda de Shell: 1 de 2, se espera al comprobador
+~│   [shell] 1. Comprobar el disco: hecho, sin problemas
+~│   [shell] 2. Leer el registro de todos los usuarios: hecho
+~│   [shell] Hechas las 2.
+# Lo hostil (`Programas/espera` lanzado desde el Shell): ni preguntar ni hacer con una que no es de administrador, listas
+# enormes o un proceso que no existe; otra a la vez, OCUPADO; la lista cambiada tras mandarla no cuenta; lo colado
+# detrás pide su confirmación; se para en la que falla; con la contraseña mala, nada.
+~│   [tanda] con una que no es de administrador, -1: bien
+~│   [tanda] listas enormes (17 acciones, 5000 bytes, 1 MB de memoria, sin memoria): no se preguntan: bien
+~│   [tanda] un proceso que no existe, -1: bien
+~│   [tanda] otra mientras espera la primera, -3: bien
+~│   [tanda] se hace la tanda enseñada, no la cambiada (0 2; vivos: false true true): bien
+~│   [tanda] colar otra detrás pide su confirmación y no se hace (-2; vivo: true): bien
+~│   [sesiones] tanda de Shell: falla la 2 de 3 (-1): Cerrar "Shell", de Ana (proceso
+~│   [tanda] se para en la que falla (-1 1 2; vivo: false): bien
+~│   [sesiones] tanda de Shell: no es la contraseña de un administrador; no se hace nada
+~│   [tanda] con la contraseña mala no se hace (-2; vivo: true): bien
+~│   [tanda] prueba hostil acabada: bien
+# S6b, S36: `Abrir` abre encerrado, como con doble clic. Sin modo de desarrollo, la aplicación no carga de Home:Libs; con
+# él (`Permiso DAR espera desarrollo`, confirmado en `guardian`), sí, y el compositor marca sus ventanas; quitado, otra
+# vez no. Lo hostil: no sale de su encierro (ni por su ayudante), no se pone el modo a sí misma.
+~│   [sesiones] Shell abre espera encerrado, en su cajón Home:Datos/espera; modo de desarrollo: no
+~│   [encerrada] vuelta 1, modo de desarrollo: no; LIBS:prueba.library: no la encuentra (-2): bien
+~│   [encerrada] encierro: llega a 0 nombres de fuera y a 0 raíces a mano; su cajón Datos:: bien
+~│   [encerrada] ponerse en modo de desarrollo: -2; escribir lo concedido: no: bien
+~│   [encerrada] lanza un ayudante con su PROGDIR: en Home: (
+~│   [encerrada] su ayudante, que pidió su PROGDIR: en Home:, llega a 0 raíces de fuera: bien
+~│   [guardian] pregunta en pantalla: cambiar permiso: Shell quiere dar a espera desarrollo
+~│   [sesiones] Shell da a espera el permiso desarrollo: el usuario dice sí (0)
+~│   [shell] espera: cargar bibliotecas, órdenes y tipos de letra de tu Home: (modo de desarrollo) (desarrollo)
+~│   [sesiones] Shell abre espera encerrado, en su cajón Home:Datos/espera; modo de desarrollo: sí
+~│   [compositor] espera va en modo de desarrollo: sus ventanas llevan la marca
+~│   [encerrada] vuelta 2, modo de desarrollo: sí; LIBS:prueba.library: carga "biblioteca de prueba de Ana" (de la capa 0, HomeLibs:): bien
+~│   [shell] Abrir: SYS:System/Shell: solo se abren encerrados los programas instalados (SYS:Programas); uno suelto, aún no
+~│   [shell] Abrir: Programas:../System/Shell: solo se abren encerrados los programas instalados (SYS:Programas); uno suelto, aún no
+~│   [shell] Abrir: noexiste: 
+~│   [sesiones] Shell quita a espera el permiso desarrollo: el usuario dice sí (0)
+~│   [encerrada] vuelta 3, modo de desarrollo: no; LIBS:prueba.library: no la encuentra (-2): bien
 ~│   [sesiones] Shell asigna "Prueba" (3): 0
 ~│   [shell] Home:PruebaShell borrado
 ~│   [shell] Fin de la prueba del Shell

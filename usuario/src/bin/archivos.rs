@@ -1066,11 +1066,16 @@ fn vigilar_sujecion(fs: &mut Fs) {
     }
     let total = fs.header.size() / dashfs::BLOCK_SIZE;
     if fs.allocator().free() < total / 16 {
-        fs.release();
-        let quien = SUJETA.swap(0, Ordering::Relaxed);
-        SOLTADA_POR_SITIO.store(quien, Ordering::Relaxed);
-        println!("  [archivos] queda poco sitio: se suelta el disco sujeto");
+        soltar_por_sitio(fs);
     }
+}
+
+/// A15: suelta el disco sujeto por falta de sitio (y se le dirá a quien lo tenía en su `SOLTAR`).
+fn soltar_por_sitio(fs: &mut Fs) {
+    fs.release();
+    let quien = SUJETA.swap(0, Ordering::Relaxed);
+    SOLTADA_POR_SITIO.store(quien, Ordering::Relaxed);
+    println!("  [archivos] queda poco sitio: se suelta el disco sujeto");
 }
 
 /// Que todo lo confirmado esté en el disco (paso B): el estado para contestar.
@@ -1894,17 +1899,26 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
             // Se copia antes: el cliente puede cambiar la ventana mientras tanto.
             let datos = c.ventana()[..p.b as usize].to_vec();
             rec.olvidar_nodo(vol, n.id());
-            let r = fs.tx_in(vol, |tx| {
-                let nodo = tx.read_tree(n)?;
-                if nodo.data().is_dir() {
-                    return Err(Error::new(EISDIR));
-                }
-                if cedida.map_or_else(|| sin_escritura(&ficha, nodo.data()), |d| d & W == 0) {
-                    return Err(Error::new(EACCES));
-                }
-                let k = tx.write_node(n, p.a, &datos, hora.0, hora.1)?;
-                Ok((k, tx.read_tree(n)?.data().size()))
-            });
+            let escribir = |fs: &mut Fs| {
+                fs.tx_in(vol, |tx| {
+                    let nodo = tx.read_tree(n)?;
+                    if nodo.data().is_dir() {
+                        return Err(Error::new(EISDIR));
+                    }
+                    if cedida.map_or_else(|| sin_escritura(&ficha, nodo.data()), |d| d & W == 0) {
+                        return Err(Error::new(EACCES));
+                    }
+                    let k = tx.write_node(n, p.a, &datos, hora.0, hora.1)?;
+                    Ok((k, tx.read_tree(n)?.data().size()))
+                })
+            };
+            let mut r = escribir(fs);
+            // A15: con el disco sujeto, una escritura no se queda sin sitio: si no cabe (el recuento de libres de
+            // `vigilar_sujecion` no basta: lo libre puede estar troceado), se suelta y se repite (rama admin-desarrollo).
+            if matches!(&r, Err(e) if e.errno == ENOSPC) && fs.holding() {
+                soltar_por_sitio(fs);
+                r = escribir(fs);
+            }
             match r {
                 Ok((k, tam)) => {
                     c.cambiadas.insert(p.asa);

@@ -45,7 +45,8 @@ RAM = os.path.join(os.path.dirname(HOLA), "ram")
 AVISA = os.path.join(os.path.dirname(HOLA), "avisa")
 # El selector de ficheros: un programa del disco que guarda con "Guardar como" (lo lanza la barra, al final).
 GUARDA = os.path.join(os.path.dirname(HOLA), "guarda")
-# Trasfondo: un programa que espera 90 s (lo lanza la barra; el monitor del sistema lo cierra).
+# Trasfondo: un programa que espera 90 s (lo lanza la barra; el monitor del sistema lo cierra). S6b, S36: abierto
+# encerrado, la prueba del encierro y del modo de desarrollo; lanzado desde el Shell, la prueba hostil de la tanda.
 ESPERA = os.path.join(os.path.dirname(HOLA), "espera")
 # S28: el cajón de la caja Amiga (su `Caja:`), con lo que atacan sus virus de laboratorio (`caja/pruebas68k/malware/`):
 # un ejecutable de AmigaOS, su icono, un guion de arranque, una imagen de disco (una pista de un ADF) y un fichero de
@@ -118,7 +119,7 @@ SHELL = os.path.join(ORDENES_BIN, "shell")
 # copia de lo común y entre todas ocupan 880 KB, que en este disco de 7 MB dejan sin sitio a las pruebas de archivos.
 # Con DASHOS_ORDENES_SUELTAS=1 va además cada una en su programa (`C/Dir`, `C/Copy`...), que el Shell prefiere.
 ORDENES = os.path.join(ORDENES_BIN, "ordenes")
-SUELTAS = ["Ask", "Assign", "Cd", "Copy", "Date", "Delete", "Dir", "Echo", "Filenote", "Info", "List", "MakeDir", "Permiso",
+SUELTAS = ["Abrir", "Administrar", "Ask", "Assign", "Cd", "Copy", "Date", "Delete", "Dir", "Echo", "Filenote", "Info", "List", "MakeDir", "Permiso",
            "Protect", "Registro", "Rename", "Type", "Version", "Wait"] if os.environ.get("DASHOS_ORDENES_SUELTAS") else []
 
 
@@ -411,6 +412,44 @@ PRUEBA_SHELL = "\n".join([
     "Permiso QUITAR pide plazo",
     "Permiso QUITAR pide eco",
     "Type Home:Prefs/Permisos/concedidos",
+    "; S36, decisión 1: la tanda de acciones de administrador. Una tanda es una acción: la ventana del sistema enseña",
+    "; la lista entera, en llano, y pide la contraseña una vez (en la prueba la teclea el guion de QEMU). Lo que no es de",
+    "; administrador no se enseña ni se hace.",
+    "Administrar bloquear registro",
+    "Administrar comprobar registro",
+    "; Lo hostil (SYS:Programas/espera, lanzado desde el Shell): listas malas y enormes, otra a la vez, cambiar la lista",
+    "; tras mandarla, colar otra acción detrás, una que falla en medio y la contraseña mala.",
+    "SYS:Programas/espera",
+    "; S6b, S36: abrir encerrado, como con doble clic, y el modo de desarrollo de una aplicación: sin él no carga de",
+    "; Home:Libs; con él, sí; y quitado, otra vez no.",
+    "If NOT EXISTS Home:Libs",
+    "  MakeDir Home:Libs",
+    "  Set hice_libs si",
+    "EndIf",
+    "If NOT EXISTS Home:Datos",
+    "  Set hice_datos si",
+    "EndIf",
+    'Echo >Home:Libs/prueba.library "biblioteca de prueba de Ana"',
+    "Abrir espera ESPERAR",
+    "Permiso DAR espera desarrollo",
+    "Permiso",
+    "Abrir Programas:espera ESPERAR",
+    "; Lo hostil: el modo de desarrollo escrito a mano, y abrir lo que no es un programa instalado.",
+    'Echo >>Home:Prefs/Permisos/concedidos "hostil desarrollo"',
+    "Abrir SYS:System/Shell",
+    "Abrir Programas:../System/Shell",
+    "Abrir noexiste",
+    "Permiso QUITAR espera desarrollo",
+    "Abrir SYS:Programas/espera ESPERAR",
+    "Type Home:Datos/espera/vueltas",
+    "Delete Home:Datos/espera ALL QUIET",
+    "If $hice_datos EQ si",
+    "  Delete Home:Datos QUIET",
+    "EndIf",
+    "Delete Home:Libs/prueba.library QUIET",
+    "If $hice_libs EQ si",
+    "  Delete Home:Libs QUIET",
+    "EndIf",
     "; Se deja todo como estaba.",
     "Cd Home:",
     "Assign Prueba: REMOVE",

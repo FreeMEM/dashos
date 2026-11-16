@@ -629,6 +629,16 @@ while time.time() - inicio < total:
             captura_u6_hecha = 2
             time.sleep(0.3)
             mandar("screendump " + captura_u6 + ".carla.ppm")
+        # S36, decisión 1 (rama admin-desarrollo): la tanda de acciones de administrador del guion del Shell: `guardian`
+        # enseña la lista y pide la contraseña. A las tres primeras, la de Ana; a la cuarta (la de la prueba hostil), una
+        # mala.
+        tandas_en = texto.count("[guardian] tanda en pantalla: ")
+        if tandas_en > globals().get("tandas_vistas", 0):
+            globals()["tandas_vistas"] = globals().get("tandas_vistas", 0) + 1
+            time.sleep(1.3)
+            teclear("no es esta" if tandas_vistas == 4 else "clave de Ana")
+            time.sleep(0.5)
+            continue
         # U4: las preguntas de permisos de `guardian`. A `pide`, que sí; a los demás, una "s" enseguida (en el primer
         # segundo no cuenta) y luego que no.
         vistas = [l for l in texto.splitlines() if "[guardian] pregunta en pantalla: " in l]
@@ -666,7 +676,8 @@ while time.time() - inicio < total:
                     mandar("sendkey d")
                     time.sleep(0.5)
                 if sigue_preguntando():
-                    mandar("sendkey " + ("shift-s" if " a pide " in linea else "n"))
+                    # S6b, S36: y a `espera`, el modo de desarrollo (dar y quitar).
+                    mandar("sendkey " + ("shift-s" if " a pide " in linea or " a espera " in linea else "n"))
             elif " quiere cambiar " in linea:
                 time.sleep(1.3)
                 if sigue_preguntando():

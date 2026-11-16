@@ -341,11 +341,14 @@ impl Ventana {
     fn mandar(&mut self, e: &Escritor) {
         let Ok(trozos) = canal::trocear(e) else { return };
         for t in trozos {
-            for _ in 0..200 {
+            // Con la cola del compositor llena, se reintenta hasta unos 2 s recogiendo lo suyo mientras (como
+            // `ventana_cliente`): con 200 µs, con el compositor atareado (la caja Amiga abriendo ventanas) se perdía el
+            // mensaje (rama admin-desarrollo: la prueba del Shell, más larga, hace que coincidan).
+            for _ in 0..2000 {
                 if dashos::canal_escribir(VENTANAS, &t.bytes, &t.llaves) == 0 {
                     break;
                 }
-                self.recoger(1);
+                self.recoger(1_000);
             }
         }
     }
@@ -367,8 +370,18 @@ impl Ventana {
     /// Se conecta al compositor por la llave 3.
     fn conectar() -> Option<Ventana> {
         let (mio, suyo) = dashos::canal_crear();
-        if dashos::canal_escribir(VENTANAS, &[TROZO_CONECTAR], &[suyo]) != 0 {
+        // Con la cola llena, hasta 5 s (como `ventana_cliente`).
+        let mut e = dashos::canal_escribir(VENTANAS, &[TROZO_CONECTAR], &[suyo]);
+        for _ in 0..5_000 {
+            if e == 0 || e == dashos::E_CERRADO {
+                break;
+            }
+            dashos::dormir_us(1_000);
+            e = dashos::canal_escribir(VENTANAS, &[TROZO_CONECTAR], &[suyo]);
+        }
+        if e != 0 {
             dashos::cerrar(mio);
+            dashos::cerrar(suyo);
             return None;
         }
         Some(Ventana { respuesta: mio, juntador: Juntador::new(), cuenta: Cuenta::default(), aviso: 0, siguiente: PRIMER_AVISO, pedido_us: 0, en_pantalla: false })

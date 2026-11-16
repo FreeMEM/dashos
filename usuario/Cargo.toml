@@ -243,6 +243,8 @@ test = false
 name = "espera"
 path = "src/bin/espera.rs"
 test = false
+# S6b, S36: con las pruebas del encierro y de la tanda (`src/prueba_encierro.rs`), que usan el montón.
+required-features = ["monton"]
 
 [[bin]]
 name = "pide"
