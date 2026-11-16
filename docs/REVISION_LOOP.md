@@ -2197,3 +2197,10 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   configuración en `caja-linux/dominios/`; los kernels, fuera de git. Por decidir: si el kernel de los dominios y el
   de la caja Linux (6.18) van en la misma versión. Siguiente de S35: prestar un aparato USB a un dominio y recibir
   red por virtio.
+- **Unida `registro-permisos` (2026-11-16)**: registro común en texto en `Estado:Registros/` (`seguridad`, `sistema`,
+  `programas`; solo lo escribe `sesiones`, rota a 64 KB), orden `Registro`; lo concedido en
+  `Home:Prefs/Permisos/concedidos` (y `Estado:Prefs/Permisos/` para lo del sistema), orden `Permiso` (dar y quitar
+  con `guardian`); preguntas en llano con "Detalles"; el kernel cuenta los topes de cada grupo; `archivos`
+  `HUECO_SUYO`; órdenes 80 a 83 de `sesiones`. Tanda completa y `arranque-virt-shell`: todo bien a la primera. Sin
+  ver en pantalla las preguntas nuevas. Fallo apuntado: volver a una instantánea pierde lo registrado después.
+  Queda: modo de desarrollo, tanda de administrador, el registro en Ajustes.
