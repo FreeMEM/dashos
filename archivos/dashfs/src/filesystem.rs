@@ -7,10 +7,9 @@ use alloc::{
 use syscall::error::{EIO, EKEYREJECTED, ENOENT, ENOKEY, Error, Result};
 use xts_mode::{Xts128, get_tweak_default};
 
+use crate::{AllocEntry, AllocList, BlockData, BlockTrait, Node, NodeFlags, TreeList};
 #[cfg(feature = "std")]
-use crate::{
-    AllocEntry, AllocList, BlockData, BlockTrait, Key, KeySlot, Node, NodeFlags, Salt, TreeList,
-};
+use crate::{Key, KeySlot, Salt};
 use crate::{
     Allocator, BLOCK_SIZE, BlockAddr, BlockLevel, BlockMeta, Disk, HEADER_RING, Header,
     RECORD_SIZE, Transaction,
@@ -237,6 +236,36 @@ impl<D: Disk> FileSystem<D> {
             None => None,
         };
 
+        Self::create_with(disk, block_offset, header, cipher_opt, ctime, ctime_nsec, false)
+    }
+
+    /// Create a file system without encryption on the whole of a disk, with the UUID given (DashOS: it needs no
+    /// `std`, so the file service can make one on a disk of memory, the `RAM:` of a session).
+    ///
+    /// It is made and returned `deferred`, already durable: the blocks that making it frees are told to the disk
+    /// (`Disk::discard`, `Disk::forget`), which a disk of memory needs to give them back. Whoever uses it calls
+    /// `durable` after its transactions.
+    pub fn create_plain(mut disk: D, uuid: [u8; 16], ctime: u64, ctime_nsec: u32) -> Result<Self> {
+        let disk_blocks = disk.size()? / BLOCK_SIZE;
+        if disk_blocks < HEADER_RING + 4 {
+            return Err(Error::new(syscall::error::ENOSPC));
+        }
+        let header = Header::with_uuid(disk_blocks * BLOCK_SIZE, uuid);
+        Self::create_with(disk, 0, header, None, ctime, ctime_nsec, true)
+    }
+
+    /// The rest of creating a file system: the first headers, the allocator and the root. With `deferred`, its
+    /// transactions are committed in memory and made durable at the end (see `create_plain`).
+    fn create_with(
+        disk: D,
+        block_offset: u64,
+        header: Header,
+        cipher_opt: Option<Xts128<Aes128>>,
+        ctime: u64,
+        ctime_nsec: u32,
+        deferred: bool,
+    ) -> Result<Self> {
+        let fs_blocks = header.size() / BLOCK_SIZE;
         let mut fs = FileSystem {
             disk,
             block: block_offset,
@@ -262,6 +291,8 @@ impl<D: Disk> FileSystem<D> {
             log::error!("CREATE: WRONG NUMBER OF BYTES");
             return Err(Error::new(syscall::error::EIO));
         }
+
+        fs.deferred = deferred;
 
         // Set tree and alloc pointers and write header generation one
         fs.tx(|tx| unsafe {
@@ -305,6 +336,9 @@ impl<D: Disk> FileSystem<D> {
         })?;
 
         fs.cleanup()?;
+        if deferred {
+            fs.durable()?;
+        }
 
         Ok(fs)
     }
