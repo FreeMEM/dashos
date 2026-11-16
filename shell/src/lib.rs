@@ -14,11 +14,19 @@
 extern crate alloc;
 
 pub mod consola;
+pub mod fecha;
+pub mod completar;
+pub mod historial;
+pub mod indicador;
 pub mod interprete;
 pub mod linea;
+pub mod ordenes;
+pub mod paneles;
 pub mod patron;
+pub mod perfil;
 pub mod plantilla;
 pub mod protocolo;
+pub mod resaltar;
 pub mod ruta;
 
 /// Los códigos de retorno de AmigaDOS.

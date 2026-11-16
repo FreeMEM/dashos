@@ -13,10 +13,11 @@
 pub const LLAVE_ARRANQUE: u32 = 4;
 
 /// Del que lanza: orden (u32), marcas (u32, `SERVIDO`...), largo del cajón actual (u32), largo de los argumentos (u32),
-/// columnas y filas de la consola (u16 y u16; 0 si no hay). Con `SERVIDO`, una llave: la puerta.
+/// columnas y filas de la consola (u16 y u16; 0 si no hay) y largo del nombre con que se llama al programa (u32; 0 si
+/// no se dice: `SYS:C/Ordenes` hace la orden de ese nombre). Con `SERVIDO`, una llave: la puerta.
 pub const ARRANQUE: u32 = 0x4153_0001;
-pub const LARGO_ARRANQUE: usize = 20;
-/// Del que lanza: orden (u32) y hasta `POR_DATOS` bytes: el cajón actual y, pegados detrás, los argumentos, en trozos.
+pub const LARGO_ARRANQUE: usize = 24;
+/// Del que lanza: orden (u32) y hasta `POR_DATOS` bytes: el cajón actual, el nombre y los argumentos, pegados, en trozos.
 pub const DATOS: u32 = 0x4153_0002;
 pub const POR_DATOS: usize = 248;
 /// En las marcas de `ARRANQUE`: hay un Shell al otro lado que atiende la puerta.

@@ -18,6 +18,9 @@ imagenes = ["monton", "dep:amigados"]
 red = ["monton", "dep:smoltcp"]
 # La caja Linux (H9): los aparatos de la máquina virtual (virtio, PL011, distribuidor del GIC, PSCI, DTB).
 caja = ["monton", "dep:caja-vmm"]
+# El protocolo del Shell nativo (docs/bitacoras/shell-nativa.md), para quien lo lanza con argumentos (`guardian`).
+# El Shell y sus órdenes están en `ordenes/`.
+ordenes = ["dep:shell"]
 
 [dependencies]
 linked_list_allocator = { version = "0.10.6", default-features = false, optional = true }
@@ -29,6 +32,7 @@ sonido = { package = "dashos-sonido", path = "../sonido", optional = true }
 audiodevice = { package = "dashos-audiodevice", path = "../audiodevice", optional = true }
 amigados = { package = "dashos-amigados", path = "../amigados", optional = true }
 caja-vmm = { package = "dashos-caja-vmm", path = "../caja-linux/vmm", optional = true }
+shell = { package = "dashos-shell", path = "../shell", optional = true }
 smoltcp = { version = "0.14.0", default-features = false, optional = true, features = ["alloc", "medium-ethernet", "proto-ipv4", "proto-dhcpv4", "socket-tcp", "socket-tcp-reno", "socket-dhcpv4"] }
 
 [lib]
@@ -185,7 +189,7 @@ path = "src/bin/sesiones.rs"
 [[bin]]
 name = "guardian"
 path = "src/bin/guardian.rs"
-required-features = ["ventanas"]
+required-features = ["ventanas", "ordenes"]
 
 [[bin]]
 name = "panel"

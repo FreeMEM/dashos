@@ -396,8 +396,9 @@ fn nombre16(n: &[u8]) -> [u8; 16] {
 
 /// El alta en archivos (orden 100, sin marca) de lo que lanza: su usuario y su grupo, sin derechos, la raíz 0 en el
 /// cajón de donde sale y sus otras raíces: el disco para leer y, si tiene cuenta, su volumen para leer y escribir.
-fn alta_archivos(pid: u64, uid: u32, gid: u32, dir: &[u8], cuenta: Option<&[u8]>) {
-    let mut m = [0u8; 232];
+/// Shell nativo: `extra` es una raíz más (hueco, tope, volumen y camino): el `PROGDIR:` de un ayudante.
+fn alta_archivos(pid: u64, uid: u32, gid: u32, dir: &[u8], cuenta: Option<&[u8]>, extra: Option<(u8, u8, &[u8], &[u8])>) {
+    let mut m = [0u8; 256];
     let dir = &dir[..dir.len().min(64)];
     m[0..4].copy_from_slice(&dashos::protocolo::archivos::ALTA.to_le_bytes());
     m[8..16].copy_from_slice(&pid.to_le_bytes());
@@ -426,6 +427,9 @@ fn alta_archivos(pid: u64, uid: u32, gid: u32, dir: &[u8], cuenta: Option<&[u8]>
         raiz(RAIZ_RAM, 6, b"", &ram[..l + c.len()]);
         raiz(RAIZ_WORK, 6, b"", CAMINO_WORK.as_bytes());
     }
+    if let Some((hueco, tope, vol, cam)) = extra {
+        raiz(hueco, tope, vol, cam);
+    }
     dashos::canal_escribir(ARCHIVOS_ALTAS, &m[..o], &[]);
 }
 
@@ -439,9 +443,56 @@ fn asignaciones_de(uid: u32) -> Tabla {
     t
 }
 
+/// Shell nativo: la raíz donde un proceso tiene su `PROGDIR:`: la 0, salvo los ayudantes (`LANZAR_AYUDANTE`).
+fn progdir_de(ayudantes: &[(u64, u8)], marca: u64) -> u8 {
+    ayudantes.iter().find(|a| a.0 == marca && marca != 0).map_or(RAIZ_PROGDIR, |a| a.1)
+}
+
+/// Shell nativo: dónde está en el disco el cajón `sub` de la raíz `raiz` de quien lanza (cuyo `PROGDIR:`, la raíz 0, es
+/// `dir`), para dárselo al ayudante como raíz: el tope (4 leer, 6 leer y escribir: el de la raíz de origen), si es del
+/// volumen de la cuenta y cuánto se escribió en `cam`. `None` si esa raíz no la tiene, si el cajón no vale (sube, tiene
+/// partes vacías o letras de control) o si no cabe: entonces el ayudante nace sin `PROGDIR:`.
+fn progdir_ayudante(raiz: u8, sub: &[u8], dir: &[u8], cuenta: Option<&[u8]>, cam: &mut [u8; 160]) -> Option<(u8, bool, usize)> {
+    let parte_vale = |p: &[u8]| !p.is_empty() && p != b"." && p != b".." && p.iter().all(|&b| b >= 0x20 && b != 0x7f && b != b':');
+    if sub.len() > MAX_CAJON_AYUDANTE || core::str::from_utf8(sub).is_err() || !(sub.is_empty() || sub.split(|&c| c == b'/').all(parte_vale)) {
+        return None;
+    }
+    let mut largo = 0;
+    let mut poner = |largo: &mut usize, x: &[u8]| {
+        cam[*largo..*largo + x.len()].copy_from_slice(x);
+        *largo += x.len();
+    };
+    let (tope, de_cuenta) = match raiz {
+        RAIZ_PROGDIR => {
+            poner(&mut largo, dir);
+            (6, false)
+        }
+        RAIZ_SYS => (4, false),
+        RAIZ_HOME => (6, true),
+        RAIZ_RAM => {
+            poner(&mut largo, CAMINO_RAM.as_bytes());
+            poner(&mut largo, &cuenta?[..cuenta?.len().min(16)]);
+            (6, false)
+        }
+        RAIZ_WORK => {
+            poner(&mut largo, CAMINO_WORK.as_bytes());
+            (6, false)
+        }
+        _ => return None,
+    };
+    if de_cuenta && cuenta.is_none() {
+        return None;
+    }
+    if largo > 0 && !sub.is_empty() {
+        poner(&mut largo, b"/");
+    }
+    poner(&mut largo, sub);
+    Some((tope, de_cuenta, largo))
+}
+
 /// La tabla de nombres entera de `f`: sus volúmenes (según las raíces que tiene: lo lanzado por `sesiones` y los
 /// programas del escritorio que se las ceden), su `PROGDIR:` si salió del disco, y sus asignaciones.
-fn tabla_de(f: &Ficha, asignaciones: &Tabla) -> Tabla {
+fn tabla_de(f: &Ficha, asignaciones: &Tabla, progdir: u8) -> Tabla {
     let mut propia = Tabla::vacia();
     let lanzado = f.marca >= PRIMER_PID_PROPIO;
     if lanzado || es(f, CEDEN_RAICES) {
@@ -452,8 +503,9 @@ fn tabla_de(f: &Ficha, asignaciones: &Tabla) -> Tabla {
             let _ = propia.poner_volumen(b"Work", RAIZ_WORK, b"");
         }
     }
-    if lanzado {
-        let _ = propia.poner_progdir(RAIZ_PROGDIR);
+    // Shell nativo: el `PROGDIR:` de un ayudante está en otra raíz (o no está).
+    if lanzado && progdir != SIN_RAIZ {
+        let _ = propia.poner_progdir(progdir);
     }
     Tabla::heredar(asignaciones, &propia)
 }
@@ -893,6 +945,10 @@ fn principal() -> u64 {
     // Paso 2 de las asignaciones: las de cada ficha (en su mismo hueco), sin volúmenes ni `PROGDIR` (esos salen de sus
     // raíces, `tabla_de`). Lo que lance un programa las hereda.
     let mut asignaciones: [Tabla; MAX] = [const { Tabla::vacia() }; MAX];
+    // Shell nativo: los ayudantes en marcha (su número) y la raíz donde tienen su `PROGDIR:` (los números no se repiten:
+    // lo viejo no molesta).
+    let mut ayudantes = [(0u64, RAIZ_PROGDIR); MAX];
+    let mut ayudante = 0usize;
     // Las llaves de servicios repartidas: a quién (marca), de qué servicio y su revocador.
     let mut dadas: [Option<(u64, usize, u32)>; MAX_DADAS] = [None; MAX_DADAS];
     // U4: lo que el usuario concedió (programa y servicio), las preguntas a `guardian` sin contestar (número, llave de
@@ -1203,7 +1259,7 @@ fn principal() -> u64 {
                     let camino = m.get(12..12 + nl).unwrap_or(b"");
                     // S10: la barra lanza solo de `Programas/`, como la persona que está delante (nunca como sistema, ni
                     // como otra), y solo si hay alguien delante.
-                    let barra = yo.is_some_and(|f| es(&f, LANZADORES)) && como == 0 && activa != 0 && lanzables::de_programas(camino);
+                    let barra = yo.is_some_and(|f| es(&f, LANZADORES)) && como == 0 && activa != 0 && lanzables::lanzable(camino);
                     let guardian = barra || (yo.is_some_and(|f| es(&f, GUARDIANES)) && (como == 0 || abiertas.contains(&como)));
                     let pide = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
                     // Paso 2 de las asignaciones: de quién hereda las suyas (del que lo lanza si es del mismo usuario).
@@ -1230,7 +1286,7 @@ fn principal() -> u64 {
                                 let dir = &camino[..camino.len() - corto_.len()];
                                 let dir = dir.strip_suffix(b"/").unwrap_or(dir);
                                 let cuenta = CUENTAS.iter().find(|c| c.0 == uid).map(|c| c.1.as_bytes());
-                                alta_archivos(pid, uid, gid, dir, cuenta);
+                                alta_archivos(pid, uid, gid, dir, cuenta, None);
                                 // Y su llave de archivos, marcada con su número: va la segunda.
                                 let archivos_suyo = dashos::llave_duplicar(ARCHIVOS_ALTAS, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, pid);
                                 // U6: la tercera, la del compositor, también con su número. Antes, el compositor y el
@@ -1248,10 +1304,14 @@ fn principal() -> u64 {
                                 } else {
                                     -1
                                 };
-                                let todas = [canal_suyo as u32, archivos_suyo as u32, ventanas_suyo as u32];
+                                // Shell nativo: una llave de más en la petición es la cuarta del programa (su canal
+                                // de arranque).
+                                let arranque = if k >= 2 { ll[1] as i64 } else { -1 };
+                                usadas = k.min(2);
+                                let todas = [canal_suyo as u32, archivos_suyo as u32, ventanas_suyo as u32, arranque as u32];
                                 // Las que hay, en su sitio: si falta una, ninguna de las de detrás.
-                                let hay = [canal_suyo, archivos_suyo, ventanas_suyo].iter().take_while(|&&l| l > 0).count();
-                                for (j, &l) in [canal_suyo, archivos_suyo, ventanas_suyo].iter().enumerate().skip(hay) {
+                                let hay = [canal_suyo, archivos_suyo, ventanas_suyo, arranque].iter().take_while(|&&l| l > 0).count();
+                                for (j, &l) in [canal_suyo, archivos_suyo, ventanas_suyo, arranque].iter().enumerate().skip(hay) {
                                     if l > 0 && j > hay {
                                         dashos::cerrar(l as u32);
                                     }
@@ -1305,6 +1365,99 @@ fn principal() -> u64 {
                     r[4..12].copy_from_slice(&pid.to_le_bytes());
                     dashos::canal_escribir(respuesta, &r, &[]);
                 }
+                LANZAR_AYUDANTE => {
+                    // Shell nativo: un ayudante con la ficha de quien lo pide. El ELF llega en memoria (ll[1]): lo leyó
+                    // él, con sus raíces y sus permisos. ll[2], si viene, es el canal de arranque del ayudante.
+                    usadas = k.min(3);
+                    let tam = u32_en(4) as usize;
+                    let raiz_origen = m.get(8).copied().unwrap_or(SIN_RAIZ);
+                    let ln = m.get(9).copied().unwrap_or(0) as usize;
+                    let ls = m.get(10..12).map_or(0, |x| u16::from_le_bytes([x[0], x[1]])) as usize;
+                    let corto = m.get(12..12 + ln).unwrap_or(b"");
+                    let sub = m.get(12 + ln..12 + ln + ls).unwrap_or(b"");
+                    let mut arranque = if k >= 3 { ll[2] } else { 0 };
+                    let padre = fichas.iter().position(|x| x.is_some_and(|x| x.marca == marca));
+                    let hueco = fichas.iter().position(|x| x.is_none());
+                    let vale = k >= 2 && lanzables::nombre_valido(corto) && tam > 0 && tam <= MAX_PROGRAMA && dashos::memoria_tamano(ll[1]) >= tam as i64;
+                    let (estado, pid) = match (yo.filter(|f| f.marca >= PRIMER_PID_PROPIO), padre, hueco) {
+                        (None, ..) | (_, None, _) => {
+                            registro.apuntar(R_LANZAR, PROTEGIDO, &yo.map(|f| f.nombre).unwrap_or([b'?'; 16]), corto);
+                            (PROTEGIDO, 0)
+                        }
+                        (Some(_), Some(_), _) if !vale => (dashos::protocolo::archivos::MAL_FORMADO, 0),
+                        (Some(f), Some(_), _) if hueco.is_none() || fichas.iter().flatten().filter(|x| x.uid == f.uid && x.marca >= PRIMER_PID_PROPIO).count() >= MAX_AYUDANTES => {
+                            (dashos::protocolo::archivos::SIN_SITIO, 0)
+                        }
+                        (Some(f), Some(p), Some(hueco)) => {
+                            let g = dashos::grupo_crear(PRESUPUESTO_LANZADO);
+                            let pid = siguiente_pid;
+                            let canal_suyo = dashos::llave_duplicar(PROPIO, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, pid);
+                            // Sus raíces, las de quien lo lanza (la 0, su mismo cajón) y una más: su `PROGDIR:`.
+                            let cuenta = CUENTAS.iter().find(|c| c.0 == f.uid).map(|c| c.1.as_bytes());
+                            let largo_dir = f.progdir.iter().position(|&c| c == 0).unwrap_or(24);
+                            let mut cam = [0u8; 160];
+                            let progdir = progdir_ayudante(raiz_origen, sub, &f.progdir[..largo_dir], cuenta, &mut cam);
+                            let extra = progdir.map(|(tope, de_cuenta, largo)| (RAIZ_PROGDIR_AYUDANTE, tope, if de_cuenta { cuenta.unwrap_or(b"") } else { &b""[..] }, &cam[..largo]));
+                            alta_archivos(pid, f.uid, f.gid, &f.progdir[..largo_dir], cuenta, extra);
+                            let archivos_suyo = dashos::llave_duplicar(ARCHIVOS_ALTAS, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, pid);
+                            // El compositor y el sonido saben de quién es, con el nombre del fichero (solo para sus
+                            // mensajes); la identidad de la ficha es la de quien lo lanza.
+                            let corto16 = nombre16(corto);
+                            for c in siguen.todos() {
+                                aviso_persona(c, pid, f.uid, &corto16);
+                            }
+                            let ventanas_suyo = if siguen.compositor != 0 {
+                                dashos::llave_duplicar(siguen.compositor, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, pid)
+                            } else {
+                                -1
+                            };
+                            let todas = [canal_suyo as u32, archivos_suyo as u32, ventanas_suyo as u32, arranque];
+                            let completas = g > 0 && canal_suyo > 0 && archivos_suyo > 0 && ventanas_suyo > 0;
+                            let llaves: &[u32] = if arranque != 0 { &todas } else { &todas[..3] };
+                            let p_nuevo = if completas { dashos::proceso_crear_en(g as u32, ll[1], tam, llaves) } else { -1 };
+                            if p_nuevo <= 0 {
+                                for l in [canal_suyo, archivos_suyo, ventanas_suyo] {
+                                    if l > 0 {
+                                        dashos::cerrar(l as u32);
+                                    }
+                                }
+                                if g > 0 {
+                                    dashos::cerrar(g as u32);
+                                }
+                                (if completas { p_nuevo as i32 } else { dashos::protocolo::archivos::SIN_SITIO }, 0)
+                            } else {
+                                // El canal de arranque ya es del ayudante.
+                                arranque = 0;
+                                siguiente_pid += 1;
+                                let aviso = dashos::llave_duplicar(PROPIO, dashos::ESCRIBIR, (1 << 63) | pid);
+                                if aviso > 0 {
+                                    dashos::proceso_avisar(p_nuevo as u32, aviso as u32);
+                                    dashos::cerrar(aviso as u32);
+                                }
+                                fichas[hueco] = Some(Ficha { marca: pid, uid: f.uid, gid: f.gid, nombre: f.nombre, grupo: g as u32, progdir: f.progdir });
+                                asignaciones[hueco] = asignaciones[p].clone();
+                                ayudantes[ayudante % MAX] = (pid, if progdir.is_some() { RAIZ_PROGDIR_AYUDANTE } else { SIN_RAIZ });
+                                ayudante += 1;
+                                dashos::cerrar(p_nuevo as u32);
+                                (BIEN, pid)
+                            }
+                        }
+                        _ => (PROTEGIDO, 0),
+                    };
+                    if k >= 2 {
+                        dashos::cerrar(ll[1]);
+                    }
+                    if arranque != 0 {
+                        dashos::cerrar(arranque);
+                    }
+                    if estado != BIEN {
+                        println!("  [sesiones] {} lanza a {} con su ficha: {}", nombre(&yo.map(|f| f.nombre).unwrap_or([b'?'; 16])), core::str::from_utf8(corto).unwrap_or("?"), estado);
+                    }
+                    let mut r = [0u8; 12];
+                    r[0..4].copy_from_slice(&estado.to_le_bytes());
+                    r[4..12].copy_from_slice(&pid.to_le_bytes());
+                    dashos::canal_escribir(respuesta, &r, &[]);
+                }
                 NOMBRES => {
                     // Su tabla: la de todos, más `Home:` si su usuario tiene cuenta y `PROGDIR:` si salió del disco.
                     // Sin ficha, vacía.
@@ -1339,7 +1492,7 @@ fn principal() -> u64 {
                 ASIGNACIONES => {
                     // Su tabla de nombres, por páginas. Sin ficha, vacía.
                     let t = match fichas.iter().position(|x| x.is_some_and(|x| x.marca == marca)) {
-                        Some(i) => tabla_de(&fichas[i].unwrap(), &asignaciones[i]),
+                        Some(i) => tabla_de(&fichas[i].unwrap(), &asignaciones[i], progdir_de(&ayudantes, marca)),
                         None => Tabla::vacia(),
                     };
                     let texto = t.texto();
@@ -1357,7 +1510,7 @@ fn principal() -> u64 {
                     let l = u32_en(8) as usize;
                     let estado = match (fichas.iter().position(|x| x.is_some_and(|x| x.marca == marca)), Cambio::desde(u32_en(4)), m.get(12..12usize.saturating_add(l))) {
                         (Some(i), Some(cambio), Some(texto)) => {
-                            let mut t = tabla_de(&fichas[i].unwrap(), &asignaciones[i]);
+                            let mut t = tabla_de(&fichas[i].unwrap(), &asignaciones[i], progdir_de(&ayudantes, marca));
                             match t.asignar(cambio, texto) {
                                 Ok(()) => {
                                     asignaciones[i] = Tabla::heredar(&t, &Tabla::vacia());

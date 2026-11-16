@@ -76,10 +76,145 @@ SYS_CAJONES = [
     "Storage/DOSDrivers", "Storage/Keymaps", "Storage/Monitors", "Storage/Printers",
     "System", "Tools/Commodities", "Utilities", "WBStartup",
 ]
+# El Shell nativo (docs/bitacoras/shell-nativa.md): el programa, en `System/Shell`; sus órdenes, en `C/` (el `SYS:C` de
+# S4b), cada una un programa (`usuario/src/bin/ordenes/`); y el guion de su prueba, `S/Prueba-Shell`, que `guardian`
+# le hace ejecutar como Ana: ejercita las órdenes y lo hostil, y deja el disco como estaba.
+ORDENES_BIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ordenes", "target", "aarch64-unknown-none-softfloat", "release")
+SHELL = os.path.join(ORDENES_BIN, "shell")
+# Las órdenes de base van juntas en un programa, `C/Ordenes` (17 órdenes en unos 100 KB): sueltas, cada una lleva su
+# copia de lo común y entre todas ocupan 880 KB, que en este disco de 7 MB dejan sin sitio a las pruebas de archivos.
+# Con DASHOS_ORDENES_SUELTAS=1 va además cada una en su programa (`C/Dir`, `C/Copy`...), que el Shell prefiere.
+ORDENES = os.path.join(ORDENES_BIN, "ordenes")
+SUELTAS = ["Ask", "Assign", "Cd", "Copy", "Date", "Delete", "Dir", "Echo", "Filenote", "Info", "List", "MakeDir", "Protect",
+           "Rename", "Type", "Version", "Wait"] if os.environ.get("DASHOS_ORDENES_SUELTAS") else []
+
+
+def orden(nombre):
+    return os.path.join(ORDENES_BIN, "orden-" + nombre.lower())
+
+
+PRUEBA_SHELL = "\n".join([
+    "; La prueba del Shell nativo: la ejecuta el Shell que lanza guardian como Ana (make arranque-virt).",
+    "FailAt 21",
+    'Echo "Prueba del Shell nativo"',
+    "Cd",
+    "MakeDir Home:PruebaShell",
+    "Cd Home:PruebaShell",
+    "Cd",
+    "; Redirecciones, Type, Copy, Rename, Filenote, Protect, List, Dir.",
+    'Echo >nota.txt "hola desde el Shell"',
+    'Echo >>nota.txt "segunda línea"',
+    "Type nota.txt NUMBER",
+    "Copy nota.txt copia.txt QUIET",
+    "Rename copia.txt TO otra.txt",
+    'Filenote otra.txt "una copia"',
+    "Protect otra.txt rwd",
+    "Protect otra.txt",
+    "List >lista.txt otra.txt",
+    "Type lista.txt | Type HEX >hex.txt",
+    "List #?.txt QUICK NOHEAD",
+    "MakeDir sub",
+    "Copy #?.txt sub QUIET",
+    "Dir",
+    "; Asignaciones: poner, añadir una capa, ver, y lo que no se puede.",
+    "Assign Prueba: Home:PruebaShell",
+    "Type Prueba:nota.txt",
+    "Assign Prueba: SYS:S ADD",
+    "Assign Prueba:",
+    "List Prueba:#?-Startup QUICK NOHEAD",
+    "Assign SYS: Home:PruebaShell",
+    "Assign Bucle: Bucle:",
+    "Which Dir",
+    "Which Set",
+    "Which NoEstoy",
+    'Echo "Which no lo encuentra: $RC"',
+    "; Variables locales y de entorno.",
+    "Set nombre Ana",
+    'Echo "Hola, $nombre"',
+    'SetEnv PruebaShell "de entorno"',
+    'Echo "Variable $PruebaShell"',
+    "UnsetEnv PruebaShell",
+    "; If, Skip y Lab.",
+    "If EXISTS nota.txt",
+    '  Echo "nota.txt existe"',
+    "Else",
+    '  Echo "MAL: nota.txt no existe"',
+    "EndIf",
+    "Set vuelta 1",
+    "Lab otra",
+    'Echo "vuelta $vuelta"',
+    "If $vuelta EQ 1",
+    "  Set vuelta 2",
+    "  Skip otra BACK",
+    "EndIf",
+    "; Tuberías y entrada desde un fichero.",
+    "Type nota.txt | Type NUMBER",
+    'Echo "s" | Ask "¿Sigo?"',
+    "If WARN",
+    '  Echo "Ask dijo sí"',
+    "EndIf",
+    'Ask <nota.txt "¿Y ahora?"',
+    'Echo "Ask dijo no: $RC"',
+    "; Un guion con argumentos (.KEY), llamado por su nombre (con el bit de guion) y con Execute.",
+    'Echo >saluda ".KEY quien/A,veces/N"',
+    'Echo >>saluda "Echo *"Saludos a <quien> (<veces$1>)*""',
+    "Protect saluda s ADD",
+    "saluda Carla 3",
+    "Execute saluda Ana",
+    "Execute saluda",
+    'Echo "sin argumento: $RC"',
+    "; Lo hostil. Comillas sin cerrar, una orden que no existe, una línea larguísima.",
+    'Echo "sin cerrar',
+    "NoExiste x",
+    "Echo " + "x" * 3000,
+    'Echo "tras la línea larga: $RC"',
+    "; Escribir en SYS:, que es de solo lectura: redirigir, copiar, crear y borrar con un patrón.",
+    "Echo >SYS:prohibido hola",
+    "Copy nota.txt SYS:S QUIET",
+    "MakeDir SYS:S/Nuevo",
+    "Delete SYS:S/#?-Startup ALL",
+    "Delete SYS:Prefs ALL QUIET",
+    'Echo "Delete en SYS: $RC"',
+    "; Lo de otra persona: ni leerlo ni lanzarlo. Y lanzar lo que no es un programa.",
+    "Type SYS:DeCarla/carta.txt",
+    "SYS:DeCarla/carta.txt",
+    "SYS:LEEME.txt",
+    "Copy SYS:LEEME.txt falso QUIET",
+    "Protect falso rwed",
+    "falso",
+    "; Un patrón que recorre todo SYS: (cientos de nombres), a un fichero.",
+    "List >todo.txt SYS:#?/#? QUICK NOHEAD",
+    'Echo "patrón por todo SYS: $RC"',
+    "; Un guion con un bucle sin fin, de fondo, y Break. Y una orden que tarda.",
+    'Echo >bucle "Lab otra"',
+    'Echo >>bucle "Skip otra BACK"',
+    "Run >salida.txt Execute bucle",
+    "Wait 1",
+    "Break 1",
+    "Wait 2",
+    "Run >salida.txt Wait 100",
+    "Break 1",
+    "Wait 1",
+    "Status",
+    "; Se deja todo como estaba.",
+    "Cd Home:",
+    "Assign Prueba: REMOVE",
+    "Delete Home:PruebaShell ALL QUIET",
+    "If EXISTS Home:PruebaShell",
+    '  Echo "MAL: queda Home:PruebaShell"',
+    "Else",
+    '  Echo "Home:PruebaShell borrado"',
+    "EndIf",
+    'Echo "Fin de la prueba del Shell"',
+    "EndShell",
+    "",
+]).encode()
+
 SYS_FICHEROS = [
     ("S/Startup-Sequence", b"; El arranque de la maquina (S14): lo hace el sistema antes de que entre nadie.\n"),
     ("S/Shell-Startup", b"; Lo que hace cada Shell al abrirse.\n"),
     ("S/User-Startup", b""),
+    ("S/Prueba-Shell", PRUEBA_SHELL),
 ]
 
 
@@ -111,6 +246,10 @@ if sys.argv[1] == "--comprobar":
     fondo = subprocess.run([ver, disco, desde, "C/Prefs/fondo"], capture_output=True).stdout
     esperado = [
         "C/ cajón",
+        # El Shell nativo: sus órdenes, en SYS:C, y el programa, en SYS:System.
+        f"C/Ordenes {os.path.getsize(ORDENES)}",
+        *[f"C/{n} {os.path.getsize(orden(n))}" for n in SUELTAS],
+        f"System/Shell {os.path.getsize(SHELL)}",
         # El explorador de archivos: su papelera en Home (vacía al acabar: lo tirado se restauró), la carpeta que crea
         # (Viaje, con grande.txt copiado y renombrado), y datos.bin copiado ahí y arrastrado luego a Privado.
         "C/.Papelera/ cajón",
@@ -356,6 +495,11 @@ with tempfile.TemporaryDirectory() as t:
         with open(os.path.join(caja, sub, nombre), "wb") as f:
             f.write(datos)
     os.chmod(caja, 0o700)
+    # El Shell nativo y sus órdenes.
+    for destino, origen in [(("System", "Shell"), SHELL), (("C", "Ordenes"), ORDENES)] + [(("C", n), orden(n)) for n in SUELTAS]:
+        with open(os.path.join(raiz, *destino), "wb") as f:
+            f.write(open(origen, "rb").read())
+        os.chmod(os.path.join(raiz, *destino), 0o755)
     with open(os.path.join(raiz, "Programas", "hola"), "wb") as f:
         f.write(open(HOLA, "rb").read())
     os.chmod(os.path.join(raiz, "Programas", "hola"), 0o755)

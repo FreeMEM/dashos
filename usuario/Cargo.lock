@@ -165,6 +165,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashos-shell"
+version = "0.0.1"
+
+[[package]]
 name = "dashos-sonido"
 version = "0.0.1"
 
@@ -177,6 +181,7 @@ dependencies = [
  "dashos-audiodevice",
  "dashos-caja-vmm",
  "dashos-kit",
+ "dashos-shell",
  "dashos-sonido",
  "dashos-wayland",
  "linked_list_allocator",

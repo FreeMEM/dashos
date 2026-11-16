@@ -293,6 +293,14 @@ impl Args {
         }
     }
 
+    /// Los valores del campo número `k` si es de varios (para los que no tienen nombre).
+    pub fn varios_en(&self, k: usize) -> Option<&[String]> {
+        match self.valores.get(k)? {
+            Valor::Varios(v) => Some(v),
+            _ => None,
+        }
+    }
+
     /// El número del campo `nombre` (`/N`), si se dio.
     pub fn numero(&self, nombre: &str) -> Option<i64> {
         self.texto(nombre)?.parse().ok()

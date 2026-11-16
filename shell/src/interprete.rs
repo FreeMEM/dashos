@@ -185,6 +185,7 @@ impl Interprete {
         let habia = self.ocupado();
         if habia {
             self.vaciar();
+            self.ultima.clear();
             self.rc = RC_FALLO;
             m.decir("***Break");
         }
@@ -345,8 +346,12 @@ impl Interprete {
                         // Sin campos con nombre, que al menos conste que hay parámetros (para no mirar más).
                     }
                     Err(e) => {
+                        // Sin sus argumentos el guion no corre, diga lo que diga `FailAt`: se sale de él con 20.
                         let nombre = marco.nombre.clone();
                         m.decir(&format!("{}: {}", nombre, e));
+                        if let Some(acabado) = self.marcos.pop() {
+                            self.falla_en = acabado.falla_en_antes;
+                        }
                         self.ultima.clear();
                         self.fallo(m, RC_FALLO, 0);
                     }
@@ -711,6 +716,14 @@ mod pruebas {
         let (m, i) = correr(".KEY nombre/A\nEcho no", "");
         assert_eq!((m.hechas.len(), i.rc), (0, 20));
         assert_eq!(m.dicho, ["g: falta el argumento nombre"]);
+        // Tampoco con un `FailAt` alto en quien lo llama: se sale de él con 20, y quien lo llama sigue.
+        let mut m = Falso::default();
+        m.guiones.push(("fuera".into(), "FailAt 21\nExecute dentro\nEcho sigue $RC".into()));
+        m.guiones.push(("dentro".into(), ".KEY nombre/A\nEcho no".into()));
+        let mut i = Interprete::nuevo();
+        i.linea("Execute fuera");
+        conducir(&mut i, &mut m, 100);
+        assert_eq!(m.hechas, ["Echo sigue 20"]);
     }
 
     #[test]

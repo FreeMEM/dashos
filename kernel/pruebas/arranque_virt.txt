@@ -456,6 +456,73 @@ DashOS en marcha con 4 núcleos.
 ~│   [guardian] U6: el permiso de plazo de cambio, preguntado como Ana 1 y como Carla 1: bien
 ~│   [guardian] cambio rápido: Ana, Carla y otra vez Ana: bien
 ~│   [guardian] U6: retirar a cambio el permiso de plazo: 0; a pide el de eco: 
+# El Shell nativo (docs/bitacoras/shell-nativa.md): guardian lo lanza como Ana (`SYS:System/Shell`, con argumentos por su
+# canal de arranque) y le hace ejecutar `S:Prueba-Shell`; lo que sale por su consola va al registro. Abre su ventana.
+~│   [shell] ventana en pantalla: 80x25 letras
+~│   [shell] Prueba del Shell nativo
+# Cd (el cajón actual es del Shell: la orden se lo pide por la puerta), MakeDir, redirecciones (> y >>), Type NUMBER.
+~│   [shell] Home:PruebaShell
+~│   [shell]     1 hola desde el Shell
+~│   [shell]     2 segunda línea
+# Copy, Rename, Filenote, Protect (letras del Amiga sobre los permisos de Unix), List con un patrón, Dir en dos columnas.
+~│   [shell] otra.txt  ---rw-d  0644
+~│   [shell] hex.txt
+~│   [shell]      sub (dir)
+~│   [shell]   nota.txt                               otra.txt
+# Assign: poner, añadir una capa (por ella se ve SYS:S), ver; y lo que `sesiones` no deja: tapar un volumen.
+~│   [sesiones] Shell asigna "Prueba=Home:PruebaShell" (0): 0
+~│   [sesiones] Shell asigna "Prueba=SYS:S" (1): 0
+~│   [shell] Prueba: Home:PruebaShell,SYS:S
+~│   [shell] Shell-Startup
+~│   [shell] Assign: SYS: es un volumen (o PROGDIR): no se puede tapar
+~│   [shell] Assign: Bucle:: no existe
+# Which: una orden de base está en SYS:C/Ordenes (C: por capas); una interna; una que no está, código 5.
+~│   [shell] SYS:C/Ordenes
+~│   [shell] INTERNA
+~│   [shell] Which no lo encuentra: 5
+# Variables locales y de entorno (ENV:), If/Else/EndIf, Skip BACK y Lab.
+~│   [shell] Hola, Ana
+~│   [shell] Variable de entorno
+~│   [shell] nota.txt existe
+~│   [shell] vuelta 1
+~│   [shell] vuelta 2
+# Una tubería (Echo | Ask: con "s", código 5) y la entrada desde un fichero.
+~│   [shell] ¿Sigo? Ask dijo sí
+~│   [shell] ¿Y ahora? Ask dijo no: 0
+# Un guion con .KEY, por su nombre (bit de guion) y con Execute; sin su argumento obligatorio no corre.
+~│   [shell] Saludos a Carla (3)
+~│   [shell] Saludos a Ana (1)
+~│   [shell] saluda: falta el argumento quien
+~│   [shell] sin argumento: 20
+# Lo hostil: comillas sin cerrar, una orden que no existe, una línea de 3.000 letras.
+~│   [shell] comillas sin cerrar
+~│   [shell] NoExiste: orden desconocida
+~│   [shell] línea demasiado larga
+~│   [shell] tras la línea larga: 20
+# SYS: es de solo lectura: ni redirigir, ni copiar, ni crear, ni borrar (con un patrón y con ALL).
+~│   [shell] No se puede escribir en SYS:prohibido: está protegido
+~│   [shell] Copy: SYS:S/nota.txt: está protegido
+~│   [shell] MakeDir: SYS:S/Nuevo: está protegido
+~│   [shell] Delete: SYS:S/Shell-Startup: está protegido
+~│   [shell] Delete: SYS:Prefs: está protegido
+~│   [shell] Delete en SYS: 10
+# Lo de otra persona: ni leerlo ni lanzarlo (el programa lo lee el Shell con sus permisos, no `sesiones`). Y lo que
+# no es un programa no se lanza.
+~│   [shell] Type: SYS:DeCarla/carta.txt: está protegido
+~│   [shell] SYS:DeCarla/carta.txt: no tiene permiso de ejecutar
+~│   [shell] SYS:LEEME.txt: no tiene permiso de ejecutar
+~│   [shell] falso: no se puede lanzar: no es un programa de DashOS
+~│   [shell] patrón por todo SYS: 0
+# Un guion con un bucle sin fin, de fondo (en otro Shell sin ventana), y Break; y una orden que espera, rota igual.
+~│   [shell] ***Break
+~│   [shell] [1] Shell (Execute) acabó con el código 20
+~│   [shell] [1] Wait acabó con el código 20
+~│   [shell] No hay trabajos en marcha
+~│   [sesiones] Shell asigna "Prueba" (3): 0
+~│   [shell] Home:PruebaShell borrado
+~│   [shell] Fin de la prueba del Shell
+~│   [shell] acaba con el código 0
+~│   [guardian] Shell nativo: lanza System/Shell como Ana: 0, acaba: true
 ~│   [guardian] S28: retirar a caja-amiga el permiso ejec:actualiza: 0
 # Hostil: un programa del disco llamado como el panel rápido no tiene sus poderes (son por el nombre que da `inicio`).
 ~│   [cambio] lanzado del disco como panel: 
