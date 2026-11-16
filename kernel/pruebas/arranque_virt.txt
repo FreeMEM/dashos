@@ -1073,3 +1073,5 @@ DashOS en marcha con 4 núcleos.
 ~│   [shell] No hay commodities en marcha.
 ~│   [shell] ClickToFront: clic. AutoPoint: no.
 ~│   [shell] Exchange: no hay ninguna commodity en marcha que se llame NoExiste
+# FKey LISTA, sin Home:Prefs/FKey: su tecla de serie.
+~│   [shell] Ctrl+Alt+S  SYS:System/Shell

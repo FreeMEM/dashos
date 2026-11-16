@@ -299,6 +299,8 @@ PRUEBA_SHELL = "\n".join([
     "; en marcha (la de la prueba es del sistema): la lista vacía, los ajustes, y una que no existe.",
     "Exchange LISTA",
     "Exchange QUITAR NoExiste",
+    "; FKey sin Home:Prefs/FKey: su tecla de serie, sin ponerla (LISTA no pide el permiso).",
+    "SYS:Tools/Commodities/FKey LISTA",
     "; Se deja todo como estaba.",
     "Cd Home:",
     "Assign Prueba: REMOVE",

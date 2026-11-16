@@ -157,7 +157,7 @@ fn principal() -> u64 {
     }
     if o.args.trim().eq_ignore_ascii_case("LISTA") {
         for t in &teclas {
-            di!(o, "{}  {} {}\n", t.combinacion, t.programa, t.args);
+            di!(o, "{}  {}{}{}\n", t.combinacion, t.programa, if t.args.is_empty() { "" } else { " " }, t.args);
         }
         return o.fin(shell::RC_BIEN);
     }
