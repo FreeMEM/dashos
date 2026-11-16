@@ -26,6 +26,15 @@ use syscall::error::{EACCES, EBUSY, EEXIST, EINVAL, EIO, EISDIR, ENOENT, ENOSPC,
 #[path = "../disco_ram.rs"]
 mod disco_ram;
 use disco_ram::{DiscoRam, Paginas as PaginasRam};
+#[path = "../vigilancia.rs"]
+#[allow(dead_code)]
+mod vigilancia;
+use vigilancia::{Cambio, Envio, Vigilancias};
+// El protocolo y el módulo dicen lo mismo.
+const _: () = assert!(vigilancia::TIMBRE == TIMBRE_VIGILAR && vigilancia::MAX_POR_CLIENTE == MAX_VIGILANCIAS && vigilancia::ENTRADA == ENTRADA_AVISO);
+const _: () = assert!(vigilancia::CAMBIO == AVISO_CAMBIO && vigilancia::BORRADO == AVISO_BORRADO && vigilancia::FUERA == AVISO_FUERA && vigilancia::MOVIDO == AVISO_MOVIDO);
+/// Avisos de cambio: cada cuánto se reintenta un timbre que encontró lleno el canal de su cliente.
+const REINTENTO_TIMBRE_US: u64 = 20_000;
 
 dashos::programa!(principal);
 dashos::monton!();
@@ -942,6 +951,9 @@ struct Cliente {
     raices: [Option<(u64, TreePtr<Node>, u16)>; RAICES],
     /// El tope de las asas que salen de una raíz con tope menor que R y W: lo heredan (lo que no está, R y W).
     topes: BTreeMap<u32, u16>,
+    /// Ajustes en texto (avisos de cambio): el cajón de cada asa que dio al buscar o crear, para avisar a quien vigila
+    /// el cajón cuando cambia un fichero de dentro.
+    padres: BTreeMap<u32, u32>,
 }
 
 /// Las asas 0 a 15 son raíces; las demás empiezan aquí.
@@ -1186,6 +1198,31 @@ struct Respuesta {
     c: u64,
     /// Llaves que van con la respuesta (A7: lo prestado).
     llaves: Vec<u32>,
+    /// Avisos de cambio: los nodos que cambió la orden (volumen, nodo y qué), para quien los vigile.
+    tocados: [Option<(u64, u32, Cambio)>; 4],
+    /// Avisos de cambio: el volumen que dejó de ser el que era (quitado o cerrado).
+    fuera: Option<u64>,
+}
+
+impl Respuesta {
+    /// La misma, con estos nodos tocados (cada uno una vez: un fichero cuyo cajón no se sabe, o un borrado sin
+    /// papelera, no cuentan doble).
+    fn tocando(mut self, t: &[(u64, u32, Cambio)]) -> Respuesta {
+        let mut n = 0;
+        for x in t {
+            if n < self.tocados.len() && !self.tocados[..n].iter().flatten().any(|y| (y.0, y.1) == (x.0, x.1)) {
+                self.tocados[n] = Some(*x);
+                n += 1;
+            }
+        }
+        self
+    }
+}
+
+/// Un fichero por su asa: él y, si se sabe, su cajón.
+fn con_padre(c: &Cliente, asa: u32, vol: u64, n: u32) -> [(u64, u32, Cambio); 2] {
+    let padre = c.padres.get(&asa).copied().unwrap_or(n);
+    [(vol, n, Cambio::Cambio), (vol, padre, Cambio::Cambio)]
 }
 
 fn mal(estado: i32) -> Respuesta {
@@ -1453,7 +1490,7 @@ impl Paginas {
         if llaves.is_empty() {
             return mal(SIN_SITIO);
         }
-        Respuesta { estado: BIEN, asa, a: primero * TROZO_U64, b: tam, c: llaves.len() as u64, llaves }
+        Respuesta { estado: BIEN, asa, a: primero * TROZO_U64, b: tam, c: llaves.len() as u64, llaves, ..Default::default() }
     }
 }
 
@@ -1468,6 +1505,8 @@ struct Recuerdos {
     nodos: BTreeMap<(u64, u32), Box<TreeData<Node>>>,
     /// La caché de páginas (A7). No se olvida con `olvidar`: se mantiene al día ella sola.
     paginas: Paginas,
+    /// El cajón donde estaba lo último que encontró `buscar` (avisos de cambio). `None` si se buscó un nombre vacío.
+    padre: Option<u32>,
 }
 
 /// Las órdenes que no cambian nada en el disco ni en los nodos. Crear, borrar, escribir y recortar olvidan solo lo
@@ -1527,6 +1566,7 @@ impl Recuerdos {
     /// permiso de ejecutar (R6).
     fn buscar(&mut self, fs: &mut Fs, vol: u64, desde: TreePtr<Node>, nombre: &str, ficha: &Ficha) -> Result<TreeData<Node>> {
         let mut nodo = self.nodo(fs, vol, desde)?;
+        self.padre = None;
         if nombre.is_empty() {
             return Ok(nodo);
         }
@@ -1541,6 +1581,7 @@ impl Recuerdos {
                 return Err(negado());
             }
             let clave = (vol, nodo.ptr().id(), Vec::from(parte.as_bytes()));
+            self.padre = Some(nodo.ptr().id());
             nodo = match self.nombres.get(&clave) {
                 Some(&id) => self.nodo(fs, vol, TreePtr::new(id))?,
                 None => {
@@ -1645,7 +1686,13 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
             match rec.buscar(fs, vol, desde, nombre, &ficha) {
                 // Solo los datos, sin abrirlo (F5): como `stat`, un viaje en lugar de buscar, datos y cerrar.
                 Ok(n) if p.a == 1 => datos(0, n.data()),
-                Ok(n) => dar_asa(fs, c, vol, &n),
+                Ok(n) => {
+                    let r = dar_asa(fs, c, vol, &n);
+                    if let (BIEN, Some(padre)) = (r.estado, rec.padre) {
+                        c.padres.insert(r.asa, padre);
+                    }
+                    r
+                }
                 Err(e) => mal(estado_de(e)),
             }
         }
@@ -1832,6 +1879,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 c.cambiadas.remove(&p.asa);
                 c.cedidas.remove(&p.asa);
                 c.topes.remove(&p.asa);
+                c.padres.remove(&p.asa);
                 let estado = c.fallo.take().unwrap_or(BIEN);
                 Respuesta { estado, asa: p.asa, ..Default::default() }
             }
@@ -1862,7 +1910,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                     c.cambiadas.insert(p.asa);
                     // También en la caché de páginas (A7): lo prestado sigue al día.
                     rec.paginas.escribir(vol, n.id(), p.a, &datos[..k.min(datos.len())]);
-                    Respuesta { estado: BIEN, asa: p.asa, a: k as u64, b: tam, ..Default::default() }
+                    Respuesta { estado: BIEN, asa: p.asa, a: k as u64, b: tam, ..Default::default() }.tocando(&con_padre(c, p.asa, vol, n.id()))
                 }
                 Err(e) => mal(estado_de(e)),
             }
@@ -1893,8 +1941,9 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                     let r = dar_asa(fs, c, vol, &n);
                     if r.estado == BIEN {
                         c.cambiadas.insert(r.asa);
+                        c.padres.insert(r.asa, dir.id());
                     }
-                    r
+                    r.tocando(&[(vol, dir.id(), Cambio::Cambio)])
                 }
                 Err(e) => mal(estado_de(e)),
             }
@@ -1924,7 +1973,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 Ok((k, n)) => {
                     rec.creado(vol, dir.id(), nombre, &n);
                     match guardar(fs) {
-                        BIEN => Respuesta { estado: BIEN, a: k as u64, b: n.data().size(), ..Default::default() },
+                        BIEN => Respuesta { estado: BIEN, a: k as u64, b: n.data().size(), ..Default::default() }.tocando(&[(vol, dir.id(), Cambio::Cambio)]),
                         e => mal(e),
                     }
                 }
@@ -1963,7 +2012,8 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
             match r {
                 Ok(id) => {
                     rec.borrado(vol, dir.id(), id);
-                    Respuesta { estado: BIEN, asa: p.asa, ..Default::default() }
+                    let pap = papelera.map_or(dir.id(), |x| x.id());
+                    Respuesta { estado: BIEN, asa: p.asa, ..Default::default() }.tocando(&[(vol, id, Cambio::Borrado), (vol, dir.id(), Cambio::Cambio), (vol, pap, Cambio::Cambio)])
                 }
                 Err(e) => mal(estado_de(e)),
             }
@@ -1992,10 +2042,10 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 if pegajoso(&ficha, origen.data(), n.data()) {
                     return Err(negado());
                 }
-                tx.rename_node_no_replace(dir, viejo, destino, nuevo)
+                tx.rename_node_no_replace(dir, viejo, destino, nuevo).map(|_| n.id())
             });
             match r {
-                Ok(()) => Respuesta { estado: BIEN, asa: p.asa, ..Default::default() },
+                Ok(id) => Respuesta { estado: BIEN, asa: p.asa, ..Default::default() }.tocando(&[(vol, id, Cambio::Movido), (vol, dir.id(), Cambio::Cambio), (vol, destino.id(), Cambio::Cambio)]),
                 Err(e) => mal(estado_de(e)),
             }
         }
@@ -2018,7 +2068,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 Ok(()) => {
                     c.cambiadas.insert(p.asa);
                     rec.paginas.recortar(vol, n.id(), p.a);
-                    Respuesta { estado: BIEN, asa: p.asa, a: p.a, ..Default::default() }
+                    Respuesta { estado: BIEN, asa: p.asa, a: p.a, ..Default::default() }.tocando(&con_padre(c, p.asa, vol, n.id()))
                 }
                 Err(e) => mal(estado_de(e)),
             }
@@ -2045,7 +2095,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 tx.set_comment(n, texto)
             });
             match r {
-                Ok(()) => Respuesta { estado: BIEN, asa: p.asa, ..Default::default() },
+                Ok(()) => Respuesta { estado: BIEN, asa: p.asa, ..Default::default() }.tocando(&con_padre(c, p.asa, vol, n.id())),
                 Err(e) => mal(estado_de(e)),
             }
         }
@@ -2067,7 +2117,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 tx.sync_tree(nodo)
             });
             match r {
-                Ok(()) => Respuesta { estado: BIEN, asa: p.asa, ..Default::default() },
+                Ok(()) => Respuesta { estado: BIEN, asa: p.asa, ..Default::default() }.tocando(&con_padre(c, p.asa, vol, n.id())),
                 Err(e) => mal(estado_de(e)),
             }
         }
@@ -2086,7 +2136,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 tx.sync_tree(nodo)
             });
             match r {
-                Ok(()) => Respuesta { estado: BIEN, asa: p.asa, ..Default::default() },
+                Ok(()) => Respuesta { estado: BIEN, asa: p.asa, ..Default::default() }.tocando(&con_padre(c, p.asa, vol, n.id())),
                 Err(e) => mal(estado_de(e)),
             }
         }
@@ -2305,7 +2355,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
             }) {
                 Ok(id) => {
                     rec.paginas.olvidar_volumen(id as u64);
-                    Respuesta { estado: BIEN, ..Default::default() }
+                    Respuesta { estado: BIEN, fuera: Some(id as u64), ..Default::default() }
                 }
                 Err(e) => mal(estado_de(e)),
             }
@@ -2342,7 +2392,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
             }) {
                 Ok(id) => {
                     rec.paginas.olvidar_volumen(id as u64);
-                    Respuesta { estado: BIEN, ..Default::default() }
+                    Respuesta { estado: BIEN, fuera: Some(id as u64), ..Default::default() }
                 }
                 Err(e) => mal(estado_de(e)),
             }
@@ -2470,7 +2520,7 @@ fn hacer_papelera(fs: &mut Fs, vol: &str, cam: &str, uid: u32, gid: u32) -> Opti
 /// Las órdenes de los volúmenes en memoria (`RAM_CREAR`, `RAM_QUITAR`, `RAM_RAIZ`, `RAM_COPIAR`), sin marca: `m` es el
 /// mensaje entero y `ll` sus llaves. La última es la de la respuesta (en crear, tras la de la memoria); las que no se
 /// usan se cierran.
-fn ram_orden(fs: &mut Fs, altas: &mut BTreeMap<u64, Ficha>, clientes: &mut [Option<Cliente>], rec: &mut Recuerdos, m: &[u8], ll: &[u32]) {
+fn ram_orden(fs: &mut Fs, altas: &mut BTreeMap<u64, Ficha>, clientes: &mut [Option<Cliente>], rec: &mut Recuerdos, vig: &mut Vigilancias, m: &[u8], ll: &[u32]) {
     let u32_en = |i: usize| u32::from_le_bytes(m[i..i + 4].try_into().unwrap());
     let (orden, sesion, uid, gid) = (u32_en(0), u32_en(4), u32_en(8), u32_en(12));
     let vol = VOL_RAM | sesion as u64;
@@ -2526,6 +2576,7 @@ fn ram_orden(fs: &mut Fs, altas: &mut BTreeMap<u64, Ficha>, clientes: &mut [Opti
                 }
                 rec.olvidar();
                 rec.paginas.olvidar_volumen(vol);
+                vig.fuera(vol);
                 let quitado = fs.ram.swap_remove(i);
                 let ocupaba = match &quitado.fs.disk {
                     Medio::Ram(d) => d.puestas() * BLOCK_SIZE,
@@ -2571,6 +2622,7 @@ fn ram_orden(fs: &mut Fs, altas: &mut BTreeMap<u64, Ficha>, clientes: &mut [Opti
                 (Some(v), Some(origen), Some(destino)) => {
                     let r = ram_copiar(fs, vol, (uid, gid), v, origen, destino, solo_cajon);
                     rec.olvidar();
+                    vig.todo_cambio(vol);
                     match r {
                         Ok((ficheros, bytes)) => Respuesta { estado: BIEN, a: ficheros, b: bytes, ..Default::default() },
                         Err(e) => mal(estado_de(e)),
@@ -2767,7 +2819,7 @@ fn sesion(fs: &mut Fs, clientes: &mut [Option<Cliente>], altas: &BTreeMap<u64, F
                 }
                 return (SIN_SITIO, None, 0);
             }
-            clientes[i] = Some(Cliente { marca, ficha, respuesta, ventana: m, va, asas: BTreeMap::new(), cambiadas: alloc::collections::BTreeSet::new(), siguiente: RAICES as u32, pendiente: false, fallo: None, tam, cedidas: BTreeMap::new(), raices: ficha.raices, topes: BTreeMap::new() });
+            clientes[i] = Some(Cliente { marca, ficha, respuesta, ventana: m, va, asas: BTreeMap::new(), cambiadas: alloc::collections::BTreeSet::new(), siguiente: RAICES as u32, pendiente: false, fallo: None, tam, cedidas: BTreeMap::new(), raices: ficha.raices, topes: BTreeMap::new(), padres: BTreeMap::new() });
             // Las raíces de su alta cuentan como abiertas mientras dure la sesión (se cierran al soltarlo).
             for (vol, n, _) in ficha.raices.into_iter().flatten() {
                 fs.contar_uso(vol, n.id());
@@ -2782,8 +2834,12 @@ fn sesion(fs: &mut Fs, clientes: &mut [Option<Cliente>], altas: &BTreeMap<u64, F
 }
 
 /// Suelta al cliente que ya no escucha, con su ventana y sus asas.
-fn soltar(fs: &mut Fs, clientes: &mut [Option<Cliente>], i: usize, paginas: &mut Paginas) {
+fn soltar(fs: &mut Fs, clientes: &mut [Option<Cliente>], i: usize, paginas: &mut Paginas, vig: &mut Vigilancias) {
     if let Some(c) = clientes[i].take() {
+        // Sus vigilancias, con sus puertas.
+        for l in vig.soltar(c.marca) {
+            dashos::cerrar(l);
+        }
         // A15: si sujetaba el disco, se suelta.
         if SUJETA.load(Ordering::Relaxed) == c.marca {
             fs.release();
@@ -2865,10 +2921,13 @@ fn principal() -> u64 {
     let mut clientes: Vec<Option<Cliente>> = (0..MAX_CLIENTES).map(|_| None).collect();
     let mut altas: BTreeMap<u64, Ficha> = BTreeMap::new();
     let mut solo_lectura = solo_lectura_al_arrancar;
-    let mut recuerdos = Recuerdos { nombres: BTreeMap::new(), nodos: BTreeMap::new(), paginas: Paginas::nueva() };
+    let mut recuerdos = Recuerdos { nombres: BTreeMap::new(), nodos: BTreeMap::new(), paginas: Paginas::nueva(), padre: None };
     let t_paginas = dashos::ahora_us();
     recuerdos.paginas.crear_todos();
     println!("  [archivos] caché de páginas: {} trozos de {} KB creados ({} µs)", recuerdos.paginas.huecos.len(), TROZO_PRESTADO / 1024, dashos::ahora_us() - t_paginas);
+    // Avisos de cambio: quién vigila qué, y el temporizador para reintentar los timbres que no salieron.
+    let mut vig = Vigilancias::nuevas();
+    let mut reintento: Option<(u64, u32)> = None;
     let mut buf = [0u8; 256];
     loop {
         let mut ll = [0u32; 8];
@@ -2879,6 +2938,15 @@ fn principal() -> u64 {
             guardar(&mut fs);
             al_disco(&fs, &mut plazo);
         }
+        if let Some((cuando, t)) = reintento
+            && dashos::ahora_us() >= cuando
+        {
+            if t != 0 {
+                dashos::cerrar(t);
+            }
+            reintento = None;
+        }
+        tocar_timbres(&mut vig, &mut reintento);
         tras_guardar(&mut clientes, &mut solo_lectura);
         if n < 0 {
             if n == -4 {
@@ -2903,7 +2971,7 @@ fn principal() -> u64 {
             // U2: el programa de esa marca acabó (lo dice `sesiones`): fuera su sesión, con sus asas y raíces, y su alta.
             let de = u64::from_le_bytes(buf[8..16].try_into().unwrap());
             if let Some(i) = clientes.iter().position(|c| c.as_ref().is_some_and(|c| c.marca == de)) {
-                soltar(&mut fs, &mut clientes, i, &mut recuerdos.paginas);
+                soltar(&mut fs, &mut clientes, i, &mut recuerdos.paginas, &mut vig);
             }
             altas.remove(&de);
             for &l in &ll[..k] {
@@ -2913,7 +2981,8 @@ fn principal() -> u64 {
         }
         // `RAM:`: los volúmenes en memoria de las sesiones, también de quien reparte las llaves (`sesiones`).
         if marca == 0 && n >= CABECERA && matches!(u32_en(0), RAM_CREAR | RAM_QUITAR | RAM_RAIZ | RAM_COPIAR) {
-            ram_orden(&mut fs, &mut altas, &mut clientes, &mut recuerdos, &buf[..n], &ll[..k]);
+            ram_orden(&mut fs, &mut altas, &mut clientes, &mut recuerdos, &mut vig, &buf[..n], &ll[..k]);
+            tocar_timbres(&mut vig, &mut reintento);
             continue;
         }
         // Sin marca no se sabe de quién es; sin cabecera entera, tampoco qué pide.
@@ -2946,12 +3015,32 @@ fn principal() -> u64 {
                     if let Some(v) = ventana {
                         dashos::cerrar(v);
                     }
-                    soltar(&mut fs, &mut clientes, i, &mut recuerdos.paginas);
+                    soltar(&mut fs, &mut clientes, i, &mut recuerdos.paginas, &mut vig);
                 }
             } else {
                 contestar(ll[0], &r, &[]);
                 dashos::cerrar(ll[0]);
             }
+            continue;
+        }
+        // Avisos de cambio: VIGILAR trae una llave (la puerta del timbre) que se queda.
+        if matches!(orden, VIGILAR | NO_VIGILAR | AVISOS) {
+            let puerta = (orden == VIGILAR && k >= 1).then(|| ll[0]);
+            for &l in ll.iter().take(k).skip(puerta.is_some() as usize) {
+                dashos::cerrar(l);
+            }
+            let Some(i) = clientes.iter().position(|c| c.as_ref().is_some_and(|c| c.marca == marca)) else {
+                if let Some(l) = puerta {
+                    dashos::cerrar(l);
+                }
+                continue;
+            };
+            let p = Peticion { orden, asa: u32_en(4), a: u64_en(8), b: u64_en(16), nombre: &[] };
+            let r = vigilancias(&mut fs, clientes[i].as_mut().unwrap(), &p, &mut recuerdos, &mut vig, puerta);
+            if contestar(clientes[i].as_ref().unwrap().respuesta, &r, &[]) != 0 {
+                soltar(&mut fs, &mut clientes, i, &mut recuerdos.paginas, &mut vig);
+            }
+            tocar_timbres(&mut vig, &mut reintento);
             continue;
         }
         for &l in &ll[..k] {
@@ -2984,6 +3073,18 @@ fn principal() -> u64 {
             // mismos: se sueltan (la vuelta ya olvidó que estaban abiertos). S28: las raíces que son la raíz del
             // volumen se quedan (su nodo es siempre el mismo) y vuelven a contar como abiertas: la caja Amiga, con el
             // disco de solo lectura como raíz 1, no se queda sin `SYS:` cuando alguien vuelve a una instantánea.
+            // Avisos de cambio: lo que tocó la orden, a quien lo vigile.
+            if r.estado == BIEN {
+                for &(vol, nodo, que) in r.tocados.iter().flatten() {
+                    vig.cambio(vol, nodo, que);
+                }
+                if let Some(vol) = r.fuera {
+                    vig.fuera(vol);
+                }
+                if orden == VOLVER {
+                    vig.fuera(r.a);
+                }
+            }
             if orden == VOLVER && r.estado == BIEN {
                 let raiz_del_volumen = TreePtr::<Node>::root().id();
                 for c in clientes.iter_mut().flatten() {
@@ -3006,14 +3107,77 @@ fn principal() -> u64 {
         }
         tras_guardar(&mut clientes, &mut solo_lectura);
         al_disco(&fs, &mut plazo);
+        tocar_timbres(&mut vig, &mut reintento);
         let llave = clientes[i].as_ref().unwrap().respuesta;
         if contestar(llave, &r, &r.llaves) != 0 {
             // Las prestadas no salieron: vuelven a la tabla. `soltar` las revoca; aquí se cierran.
             for &l in &r.llaves {
                 dashos::cerrar(l);
             }
-            soltar(&mut fs, &mut clientes, i, &mut recuerdos.paginas);
+            soltar(&mut fs, &mut clientes, i, &mut recuerdos.paginas, &mut vig);
         }
+    }
+}
+
+/// Avisos de cambio: VIGILAR, NO_VIGILAR y AVISOS de un cliente. `puerta`, la llave que trajo VIGILAR (si no la
+/// usa, la cierra).
+fn vigilancias(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, vig: &mut Vigilancias, puerta: Option<u32>) -> Respuesta {
+    match p.orden {
+        VIGILAR => {
+            let Some(puerta) = puerta else { return mal(MAL_FORMADO) };
+            let r = (|| {
+                let (vol, n) = nodo_de(c, p.asa).ok_or(ASA_MALA)?;
+                let nodo = rec.nodo(fs, vol, n).map_err(estado_de)?;
+                // Vigilar es saber cuándo cambia: hace falta poder leerlo (un cajón, listarlo), como para mirarlo.
+                let cedida = c.cedidas.get(&p.asa).copied();
+                if !cedida.map_or_else(|| puede(&c.ficha, nodo.data(), R), |d| d & R != 0) || tope(c, p.asa) & R == 0 {
+                    return Err(PROTEGIDO);
+                }
+                vig.vigilar(c.marca, vol, n.id(), puerta).map_err(|_| SIN_SITIO)
+            })();
+            match r {
+                Ok(id) => Respuesta { estado: BIEN, asa: id, a: vig.de(c.marca) as u64, b: vig.total() as u64, ..Default::default() },
+                Err(e) => {
+                    dashos::cerrar(puerta);
+                    mal(e)
+                }
+            }
+        }
+        NO_VIGILAR => match vig.dejar(c.marca, p.asa) {
+            Some(l) => {
+                dashos::cerrar(l);
+                Respuesta { estado: BIEN, a: vig.de(c.marca) as u64, ..Default::default() }
+            }
+            None => mal(NO_EXISTE),
+        },
+        _ => {
+            let mut cerrar = Vec::new();
+            let (n, mas) = vig.avisos(c.marca, c.ventana(), &mut cerrar);
+            for l in cerrar {
+                dashos::cerrar(l);
+            }
+            Respuesta { estado: BIEN, a: n as u64, b: mas as u64, ..Default::default() }
+        }
+    }
+}
+
+/// Avisos de cambio: toca los timbres pendientes. Una puerta llena se reintenta con un temporizador; una cerrada (quien
+/// vigilaba ya no lee) se quita con su vigilancia.
+fn tocar_timbres(vig: &mut Vigilancias, reintento: &mut Option<(u64, u32)>) {
+    if !vig.hay_por_tocar() {
+        return;
+    }
+    let cerradas = vig.tocar(|l, m| match dashos::canal_escribir(l, m, &[]) {
+        0 => Envio::Hecho,
+        dashos::E_LIMITE => Envio::Lleno,
+        _ => Envio::Cerrado,
+    });
+    for l in cerradas {
+        dashos::cerrar(l);
+    }
+    if vig.hay_por_tocar() && reintento.is_none() {
+        let t = dashos::temporizador_crear(DESPERTADOR, REINTENTO_TIMBRE_US, 0);
+        *reintento = Some((dashos::ahora_us() + REINTENTO_TIMBRE_US, if t > 0 { t as u32 } else { 0 }));
     }
 }
 

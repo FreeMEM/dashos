@@ -10,6 +10,11 @@
 //! - **Carla, la segunda** (`guardian` cerró su sesión y la volvió a abrir): la huella y el cambio de `ENV:` no están;
 //!   `ENV:` trae ahora su capa encima de la de fábrica, y cambiar `ENV:` no toca lo guardado.
 //!
+//! Y los avisos de cambio del servicio de archivos (`VIGILAR`, `docs/bitacoras/ajustes-texto.md`): Ana vigila
+//! `ENV:Sys` y `ENV:Sys/teclado` y los cambia en ráfaga (un timbre por vigilancia y la cuenta entera), y lo hostil:
+//! vigilar lo que no puede leer, una asa mala, una puerta que se cierra, una puerta llena (ningún timbre se pierde),
+//! miles de vigilancias, y se va sin soltar las suyas; Carla, después, ve que se soltaron.
+//!
 //! Llave 1: su canal con `sesiones`; llave 2: su llave de archivos (las dos, marcadas con su número).
 
 #![no_std]
@@ -291,6 +296,188 @@ fn ana(arch: &Archivos, t: &Tabla) -> bool {
     );
     let bien = env && secreto == a::BIEN && llena && memoria;
     println!("  [ram] Ana: ENV: de ENVARC:, RAM: llena sin tumbar nada y la memoria que vuelve al borrar: {}", if bien { "bien" } else { "MAL" });
+    let avisos = avisos_ana(arch);
+    let hostiles = avisos_hostiles(arch);
+    bien && avisos && hostiles
+}
+
+/// Avisos de cambio: una puerta más hacia el canal de timbres `escr` (cada `VIGILAR` se lleva la suya).
+fn puerta(escr: u32) -> u32 {
+    dashos::llave_duplicar(escr, dashos::ESCRIBIR | dashos::TRANSFERIR, 0).max(0) as u32
+}
+
+/// Vigila lo que hay en `camino` desde la raíz `raiz`: (estado, número, cuántas tiene, cuántas hay en el servicio).
+fn vigilar(arch: &Archivos, raiz: u32, camino: &[u8], escr: u32) -> (i32, u32, u64, u64) {
+    let r = arch.orden(a::BUSCAR, raiz, 0, 0, camino);
+    if r.e != a::BIEN {
+        return (r.e, 0, 0, 0);
+    }
+    let v = a::vigilar(ARCHIVOS, arch.lectura, r.asa, puerta(escr), 3_000_000);
+    arch.cerrar(r.asa);
+    v
+}
+
+/// Los timbres que hay en el canal `lect` (esperando hasta `plazo_us` cada uno): cuántos, por número de vigilancia.
+fn timbres(lect: u32, plazo_us: u64) -> Vec<u32> {
+    let mut v = Vec::new();
+    let mut b = [0u8; 32];
+    while let (n, _, _) = dashos::canal_leer_plazo(lect, &mut b, &mut [], plazo_us)
+        && n >= 0
+    {
+        if let Some((id, _)) = a::leer_timbre(&b[..n as usize]) {
+            v.push(id);
+        }
+    }
+    v
+}
+
+/// `AVISOS`: (número, marcas, cambios) de cada vigilancia con cambios.
+fn avisos(arch: &Archivos) -> Vec<(u32, u32, u64)> {
+    let r = arch.orden(a::AVISOS, 0, 0, 0, b"");
+    if r.e != a::BIEN {
+        return Vec::new();
+    }
+    (0..r.a as usize).filter_map(|i| a::leer_aviso(arch.ventana(), i)).collect()
+}
+
+/// Ana vigila `ENV:Sys` (el cajón) y `ENV:Sys/teclado` (el fichero) y los cambia: 200 escrituras seguidas son un timbre
+/// por vigilancia y una cuenta de 200; tras pedir los avisos, el siguiente cambio vuelve a sonar; crear y borrar en el
+/// cajón cuentan para el cajón; borrar lo vigilado avisa con `BORRADO` y la vigilancia acaba.
+fn avisos_ana(arch: &Archivos) -> bool {
+    let (lect, escr) = dashos::canal_crear();
+    // Lo que cuestan 200 escrituras sin nadie vigilando, para comparar.
+    let tec = arch.orden(a::BUSCAR, RAM, 0, 0, b"Env/Sys/teclado");
+    let t0 = dashos::ahora_us();
+    for i in 0..200u64 {
+        arch.ventana()[0] = b'a' + (i % 26) as u8;
+        arch.orden(a::ESCRIBIR, tec.asa, 0, 1, b"");
+    }
+    let us_sin = dashos::ahora_us() - t0;
+    arch.cerrar(tec.asa);
+    let (e_cajon, cajon, _, _) = vigilar(arch, RAM, b"Env/Sys", escr);
+    let (e_fichero, fichero, _, _) = vigilar(arch, RAM, b"Env/Sys/teclado", escr);
+    let tec = arch.orden(a::BUSCAR, RAM, 0, 0, b"Env/Sys/teclado");
+    let t0 = dashos::ahora_us();
+    for i in 0..200u64 {
+        arch.ventana()[0] = b'a' + (i % 26) as u8;
+        arch.orden(a::ESCRIBIR, tec.asa, 0, 1, b"");
+    }
+    let us_rafaga = dashos::ahora_us() - t0;
+    let mut t1 = timbres(lect, 20_000);
+    t1.sort();
+    let av1 = avisos(arch);
+    let rafaga = e_cajon == a::BIEN && e_fichero == a::BIEN && t1 == [cajon, fichero] && av1 == [(cajon, a::AVISO_CAMBIO, 200), (fichero, a::AVISO_CAMBIO, 200)];
+    // Pedidos, vuelven a sonar.
+    arch.orden(a::ESCRIBIR, tec.asa, 0, 1, b"");
+    let t2 = timbres(lect, 20_000).len();
+    let av2 = avisos(arch).len();
+    // En el cajón: crear y borrar (el fichero no suena).
+    let sys = arch.orden(a::BUSCAR, RAM, 0, 0, b"Env/Sys");
+    let nuevo = arch.orden(a::CREAR, sys.asa, a::FICHERO as u64, 0, b"nuevo");
+    arch.cerrar(nuevo.asa);
+    arch.orden(a::BORRAR, sys.asa, 0, 0, b"nuevo");
+    let t3 = timbres(lect, 20_000);
+    let av3 = avisos(arch);
+    // Lo vigilado se borra: avisa con BORRADO, y la vigilancia acaba (dejarla ya no la encuentra).
+    arch.poner(sys.asa, b"borrame", b"x");
+    let (_, borrame, _, _) = vigilar(arch, RAM, b"Env/Sys/borrame", escr);
+    avisos(arch);
+    arch.orden(a::BORRAR, sys.asa, 0, 0, b"borrame");
+    let av4 = avisos(arch);
+    let acabada = arch.orden(a::NO_VIGILAR, borrame, 0, 0, b"").e;
+    // Como estaba, y sin vigilar.
+    arch.escribir(tec.asa, b"es\n");
+    arch.cerrar(tec.asa);
+    arch.cerrar(sys.asa);
+    let dejar = [cajon, fichero].map(|id| arch.orden(a::NO_VIGILAR, id, 0, 0, b"").e);
+    timbres(lect, 20_000);
+    avisos(arch);
+    dashos::cerrar(lect);
+    dashos::cerrar(escr);
+    let otra_vez = t2 == 2 && av2 == 2;
+    let cajon_bien = t3 == [cajon] && av3 == [(cajon, a::AVISO_CAMBIO, 2)];
+    let borrado = av4.iter().any(|&(id, m, _)| id == borrame && m & a::AVISO_BORRADO != 0) && acabada == a::NO_EXISTE;
+    let bien = rafaga && otra_vez && cajon_bien && borrado && dejar == [a::BIEN, a::BIEN];
+    println!("  [ram] Ana: 200 escrituras de un byte: {} µs sin vigilar, {} µs con dos vigilancias puestas", us_sin, us_rafaga);
+    println!(
+        "  [ram] Ana: avisos de ENV:Sys y ENV:Sys/teclado: 200 escrituras seguidas, {} timbres y cuentan {:?}; pedidos, uno más suena otra vez {}; crear y borrar en el cajón {:?}; borrar lo vigilado {:?} y acaba {}: {}",
+        t1.len(),
+        av1.iter().map(|x| x.2).collect::<Vec<_>>(),
+        otra_vez,
+        av3.iter().map(|x| x.2).collect::<Vec<_>>(),
+        av4.iter().map(|x| x.1).collect::<Vec<_>>(),
+        acabada,
+        if bien { "bien" } else { "MAL" }
+    );
+    bien
+}
+
+/// Lo hostil de los avisos: vigilar lo que no se puede leer (`SYS:DeCarla`, de Carla y 0700) o por una asa mala; una
+/// puerta cuyo canal se cierra (la vigilancia se quita sola); 63 vigilancias con la misma puerta y nadie leyendo (el
+/// canal se llena: los timbres esperan y llegan todos); y miles pedidas: 64 como mucho, y el servicio sigue. Se va con
+/// las 64 puestas: Carla, después, ve que se soltaron.
+fn avisos_hostiles(arch: &Archivos) -> bool {
+    let (lect, escr) = dashos::canal_crear();
+    let ajeno = vigilar(arch, s::RAIZ_SYS as u32, b"DeCarla", escr).0;
+    let mala = a::vigilar(ARCHIVOS, arch.lectura, 9999, puerta(escr), 3_000_000).0;
+    let sin_puerta = arch.orden(a::VIGILAR, RAM, 0, 0, b"").e;
+    // Una puerta que se cierra: al primer cambio, el servicio ve que nadie lee y la quita.
+    let (l2, e2) = dashos::canal_crear();
+    let (_, cerrada, _, _) = vigilar(arch, RAM, b"Env/Sys/teclado", e2);
+    dashos::cerrar(l2);
+    dashos::cerrar(e2);
+    let tec = arch.orden(a::BUSCAR, RAM, 0, 0, b"Env/Sys/teclado");
+    arch.orden(a::ESCRIBIR, tec.asa, 0, 0, b"");
+    arch.escribir(tec.asa, b"es\n");
+    let quitada = arch.orden(a::NO_VIGILAR, cerrada, 0, 0, b"").e;
+    // La puerta llena: 63 vigilancias del mismo fichero, un cambio, y el canal sin leer.
+    let mut ids = Vec::new();
+    for _ in 0..63 {
+        let (e, id, _, _) = vigilar(arch, RAM, b"Env/Sys/teclado", escr);
+        if e == a::BIEN {
+            ids.push(id);
+        }
+    }
+    arch.escribir(tec.asa, b"es\n");
+    dashos::dormir_us(300_000);
+    // Se leen despacio: los que no cupieron llegan por el reintento.
+    let mut llegados = timbres(lect, 300_000);
+    llegados.sort();
+    llegados.dedup();
+    let av = avisos(arch);
+    let todos = ids.len() == 63 && llegados == ids && av.len() == 63 && av.iter().all(|x| x.1 == a::AVISO_CAMBIO && x.2 == 2);
+    // Miles: con 63 puestas, una más y ya no hay sitio; el servicio sigue atendiendo.
+    let t0 = dashos::ahora_us();
+    let (mut si, mut no, mut otro) = (0, 0, 0);
+    for _ in 0..5000 {
+        match a::vigilar(ARCHIVOS, arch.lectura, tec.asa, puerta(escr), 3_000_000).0 {
+            a::BIEN => si += 1,
+            a::SIN_SITIO => no += 1,
+            _ => otro += 1,
+        }
+    }
+    let ms = (dashos::ahora_us() - t0) / 1000;
+    let sigue = arch.esta(RAM, b"Env/Sys/teclado");
+    arch.cerrar(tec.asa);
+    timbres(lect, 10_000);
+    let bien = ajeno == a::PROTEGIDO && mala == a::ASA_MALA && sin_puerta == a::MAL_FORMADO && quitada == a::NO_EXISTE && todos && (si, no, otro) == (1, 4999, 0) && sigue == a::BIEN;
+    println!("  [ram] Ana: 5000 VIGILAR (4999 sin sitio): {} ms", ms);
+    println!(
+        "  [ram] Ana: avisos hostiles: SYS:DeCarla {}, asa mala {}, sin puerta {}; la puerta cerrada se quita {}; 63 con la puerta llena, llegan {} timbres y {} avisos de 2; 5000 pedidas: {} sí, {} sin sitio, {} otro; el servicio sigue {}: {}",
+        ajeno,
+        mala,
+        sin_puerta,
+        quitada,
+        llegados.len(),
+        av.len(),
+        si,
+        no,
+        otro,
+        sigue,
+        if bien { "bien" } else { "MAL" }
+    );
+    // Se va con las 64 puestas y su canal abierto (`lect` no se cierra): al acabar el programa, el servicio las suelta
+    // (lo mira Carla).
     bien
 }
 
@@ -348,7 +535,25 @@ fn carla_primera(arch: &Archivos, t: &Tabla) -> bool {
     })();
     // Lo guardado en `Home:` ya se ve por `ENVARC:` (su capa va delante), pero `ENV:` es la copia de cuando entró.
     let envarc = leer(arch, t, b"ENVARC:Sys/idioma").as_deref() == Ok(b"ca\n") && leer(arch, t, b"ENV:Sys/idioma").as_deref() == Ok(b"es\n");
-    let bien = aislada && fabrica && cambio == a::BIEN && e_huella == a::BIEN && capa == Ok(()) && envarc;
+    // Ana se fue con 64 vigilancias puestas: el servicio las soltó al acabar ella (las que haya son de otros: la barra,
+    // el centro).
+    let (lect, escr) = dashos::canal_crear();
+    let (e_vig, id, suyas, total) = vigilar(arch, RAM, b"Env", escr);
+    let dejada = arch.orden(a::NO_VIGILAR, id, 0, 0, b"").e;
+    dashos::cerrar(lect);
+    dashos::cerrar(escr);
+    let soltadas = e_vig == a::BIEN && suyas == 1 && total < 32 && dejada == a::BIEN;
+    println!("  [ram] Carla: las 64 vigilancias de Ana se soltaron al acabar ella: {} en el servicio con la de Carla: {}", total, if soltadas { "bien" } else { "MAL" });
+    // Ajustes en texto, hostil: lo de la máquina (la zona) y la capa de fábrica de `ENVARC:` no se escriben (son de
+    // `SYS:`, que le llega solo para leer); lo de Ana, ni se alcanza (arriba).
+    let zona = arch.orden(a::BUSCAR, s::RAIZ_SYS as u32, 0, 0, b"Prefs/zona");
+    let e_zona = if zona.e == a::BIEN { arch.ventana()[..3].copy_from_slice(b"UTC"); let e = arch.orden(a::ESCRIBIR, zona.asa, 0, 3, b"").e; arch.cerrar(zona.asa); e } else { zona.e };
+    let fabrica_sys = arch.orden(a::BUSCAR, s::RAIZ_SYS as u32, 0, 0, b"Prefs/Env-Archive/Sys");
+    let e_fabrica = if fabrica_sys.e == a::BIEN { let r = arch.orden(a::CREAR, fabrica_sys.asa, a::FICHERO as u64, 0, b"locale"); arch.cerrar(fabrica_sys.asa); r.e } else { fabrica_sys.e };
+    let maquina = e_zona == a::PROTEGIDO && e_fabrica == a::PROTEGIDO;
+    println!("  [ram] Carla: escribir la zona de la máquina {} y en ENVARC: de fábrica {}: {}", e_zona, e_fabrica, if maquina { "bien" } else { "MAL" });
+    let soltadas = soltadas && maquina;
+    let bien = aislada && fabrica && cambio == a::BIEN && e_huella == a::BIEN && capa == Ok(()) && envarc && soltadas;
     println!(
         "  [ram] Carla, primera sesión: ENV: de fábrica {}; cambia ENV:Sys/teclado {}, deja T:huella {} y guarda su capa de ENVARC: en Home: {:?} (ENV: sigue como al entrar: {}): {}",
         fabrica,

@@ -85,6 +85,66 @@ pub const CRECER: u32 = 40;
 /// contar). Cuenta lo del volumen y lo que solo ven sus instantáneas. Pasado el tope, lo que lo haría crecer da
 /// `LLENO` en ese volumen y en ningún otro; borrar y escribir encima siguen valiendo. Solo con el derecho de administrar.
 pub const CUOTA: u32 = 41;
+/// Avisos de cambio (ajustes en texto, `docs/bitacoras/ajustes-texto.md`; como `StartNotify` del Amiga): vigilar lo que
+/// tiene la asa, un fichero o un cajón. El mensaje lleva una llave: la puerta (un extremo de escritura, normalmente una
+/// copia marcada del canal donde espera el cliente) por la que el servicio toca el timbre: `LARGO_TIMBRE` bytes, con
+/// `TIMBRE_VIGILAR`, el número de la vigilancia (u32) y cuántos cambios lleva (u64). Un timbre por vigilancia hasta que
+/// el cliente pide sus cambios con `AVISOS`: una ráfaga de cambios es un timbre y una cuenta. Hace falta poder leer lo
+/// vigilado (R; un cajón, poder listarlo). Contesta en `asa` el número de la vigilancia, en a cuántas tiene el cliente
+/// y en b cuántas hay en el servicio. `SIN_SITIO` con `MAX_VIGILANCIAS`; `MAL_FORMADO` sin llave.
+///
+/// Cuenta como cambio de un fichero escribir, recortar, comentar, proteger, fechar, renombrar (`MOVIDO`) o borrar
+/// (`BORRADO`, y acaba); de un cajón, crear, borrar o renombrar dentro, y cambiar un fichero de dentro abierto desde
+/// él. Un volumen quitado, cerrado o vuelto a una instantánea acaba sus vigilancias con `FUERA`. Si quien vigila se va,
+/// o su puerta se cierra, se quitan solas. Lo vigilado no se tiene abierto: se puede cerrar la asa.
+pub const VIGILAR: u32 = 80;
+/// Dejar de vigilar: el número de la vigilancia, en el campo de la asa. `NO_EXISTE` si no es suya.
+pub const NO_VIGILAR: u32 = 81;
+/// Lo que cambió desde la última vez: en la ventana, una entrada de `ENTRADA_AVISO` bytes por vigilancia con cambios
+/// (número u32, marcas u32: `CAMBIO`, `BORRADO`, `FUERA`, `MOVIDO`; cuántos cambios u64), y se ponen a cero: el
+/// siguiente cambio vuelve a tocar el timbre. En a, cuántas entradas; b es 1 si no cupieron todas. Quien quiere ver lo
+/// último pide los avisos y después lee: así un cambio que llegue en medio vuelve a tocar el timbre.
+pub const AVISOS: u32 = 82;
+pub const MAX_VIGILANCIAS: usize = 64;
+pub const TIMBRE_VIGILAR: u32 = u32::from_le_bytes(*b"VIGI");
+pub const LARGO_TIMBRE: usize = 16;
+pub const ENTRADA_AVISO: usize = 16;
+pub const AVISO_CAMBIO: u32 = 1;
+pub const AVISO_BORRADO: u32 = 2;
+pub const AVISO_FUERA: u32 = 4;
+pub const AVISO_MOVIDO: u32 = 8;
+
+/// Pide `VIGILAR` lo de la asa `asa` con la puerta `puerta` (que viaja: ya no es del que llama), por el canal del
+/// servicio `archivos`, y espera la respuesta en `lectura` (el canal de respuestas de la sesión del cliente) hasta
+/// `plazo_us`: (estado, número de la vigilancia, cuántas tiene el cliente, cuántas hay en el servicio). Las demás
+/// órdenes de avisos (`NO_VIGILAR`, `AVISOS`) no llevan llave: van como cualquier otra.
+pub fn vigilar(archivos: u32, lectura: u32, asa: u32, puerta: u32, plazo_us: u64) -> (i32, u32, u64, u64) {
+    let mut m = [0u8; CABECERA];
+    m[0..4].copy_from_slice(&VIGILAR.to_le_bytes());
+    m[4..8].copy_from_slice(&asa.to_le_bytes());
+    if crate::canal_escribir(archivos, &m, &[puerta]) != 0 {
+        crate::cerrar(puerta);
+        return (ERROR_DEL_DISCO, 0, 0, 0);
+    }
+    let mut r = [0u8; 32];
+    if crate::canal_leer_plazo(lectura, &mut r, &mut [], plazo_us).0 != 32 {
+        return (ERROR_DEL_DISCO, 0, 0, 0);
+    }
+    let u = |i: usize| u64::from_le_bytes(r[i..i + 8].try_into().unwrap());
+    (i32::from_le_bytes(r[0..4].try_into().unwrap()), u32::from_le_bytes(r[4..8].try_into().unwrap()), u(8), u(16))
+}
+
+/// Un timbre de vigilancia: (número de la vigilancia, cambios que llevaba). `None` si no lo es.
+pub fn leer_timbre(b: &[u8]) -> Option<(u32, u64)> {
+    (b.len() >= LARGO_TIMBRE && u32::from_le_bytes(b[0..4].try_into().unwrap()) == TIMBRE_VIGILAR)
+        .then(|| (u32::from_le_bytes(b[4..8].try_into().unwrap()), u64::from_le_bytes(b[8..16].try_into().unwrap())))
+}
+
+/// La entrada `i` de la respuesta de `AVISOS` en la ventana: (número, marcas, cambios).
+pub fn leer_aviso(ventana: &[u8], i: usize) -> Option<(u32, u32, u64)> {
+    let b = ventana.get(i * ENTRADA_AVISO..(i + 1) * ENTRADA_AVISO)?;
+    Some((u32::from_le_bytes(b[0..4].try_into().unwrap()), u32::from_le_bytes(b[4..8].try_into().unwrap()), u64::from_le_bytes(b[8..16].try_into().unwrap())))
+}
 pub const TROZO_PRESTADO: usize = 512 * 1024;
 pub const POR_PRESTAMO: usize = 4;
 pub const MAX_PRESTADOS: usize = 8;

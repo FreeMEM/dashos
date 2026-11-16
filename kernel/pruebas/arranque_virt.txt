@@ -433,6 +433,12 @@ DashOS en marcha con 4 núcleos.
 ~(lleno, -11); escribir en otro -11; lo de antes se lee true y el disco también (0): bien
 ~│   [ram] Ana: memoria libre de la máquina: 
 ~│   [ram] Ana: ENV: de ENVARC:, RAM: llena sin tumbar nada y la memoria que vuelve al borrar: bien
+# Avisos de cambio del servicio de archivos (`VIGILAR`, docs/bitacoras/ajustes-texto.md): Ana vigila `ENV:Sys` y
+# `ENV:Sys/teclado`; 200 escrituras seguidas son un timbre por vigilancia y una cuenta de 200; crear y borrar en el
+# cajón cuentan para él; lo vigilado que se borra avisa (BORRADO) y acaba. Lo hostil: lo que no puede leer, una asa mala,
+# sin puerta, una puerta cerrada (se quita sola), 63 con la puerta llena (llegan todos), miles (64 como mucho).
+~│   [ram] Ana: avisos de ENV:Sys y ENV:Sys/teclado: 200 escrituras seguidas, 2 timbres y cuentan [200, 200]; pedidos, uno más suena otra vez true; crear y borrar en el cajón [2]; borrar lo vigilado [1, 2] y acaba -2: bien
+~│   [ram] Ana: avisos hostiles: SYS:DeCarla -12, asa mala -5, sin puerta -1; la puerta cerrada se quita -2; 63 con la puerta llena, llegan 63 timbres y 63 avisos de 2; 5000 pedidas: 1 sí, 4999 sin sitio, 0 otro; el servicio sigue 0: bien
 # U6: el cambio rápido de usuario (docs/diseño/U6-cambio-rapido.md). Con Ana dentro, `guardian` lanza `cambio` como
 # ella y bloquea su sesión; en la pantalla, Esc, y entra Carla con Ana detrás. El `cambio` de Carla no ve ni mata los
 # procesos de Ana, no es Ana ante `sesiones` y no llega a su volumen ni a su fichero. El de Ana sigue en marcha detrás,
@@ -467,6 +473,10 @@ DashOS en marcha con 4 núcleos.
 # `RAM:` en memoria, hostil: Carla, con la sesión de Ana abierta, tiene otra `RAM:`: el secreto que Ana dejó en la suya
 # no está ni se llega a él por ninguna raíz ni pidiendo el volumen, y las órdenes de `sesiones` no son para un programa.
 ~│   [ram] Carla: su RAM: tiene 2 entradas (T y Env); el secreto de Ana: -2 en la suya, 0 caminos llegan a él; pedir el volumen [-12, -12, -12]; órdenes de sesiones [-1, -1, -1, -1]: bien
+# Ana se fue con 64 vigilancias puestas: el servicio las soltó al acabar ella.
+~ en el servicio con la de Carla: bien
+# Ajustes en texto, hostil: Carla no escribe la zona (de la máquina) ni la capa de fábrica de `ENVARC:`.
+~│   [ram] Carla: escribir la zona de la máquina -12 y en ENVARC: de fábrica -12: bien
 ~(ENV: sigue como al entrar: true): bien
 ~│   [guardian] cambio de usuario: entra Ana (0 intentos malos); Carla sigue detrás
 ~│   [sesiones] delante, la sesión de Ana; detrás, 1
