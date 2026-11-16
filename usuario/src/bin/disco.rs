@@ -89,6 +89,12 @@ fn principal() -> u64 {
     let estado = |orden, cuantos, primero, off| pedir(lectura, vuelta, orden, cuantos, primero, off).map_or(i32::MIN, |r| r.estado);
     // Los dos primeros sectores.
     let leidos = estado(LEER, 2, 0, 0) == 0 && empieza(0, b"DashOS: sector 0") && empieza(t, b"DashOS: sector 1");
+    // Solo se escribe en un disco de prueba (el de `tools/disco_archivos.py`, con sus textos en los sectores 0 y 1): en
+    // un PC de verdad el sector 2 puede ser parte del arranque (X5c, antes de X9).
+    if !leidos {
+        println!("  [disco] no es un disco de prueba: no se escribe nada");
+        return 0;
+    }
     // Escribir el sector 2 y leerlo en otro sitio de la ventana.
     let texto = b"DashOS: sector 2, escrito por el cliente";
     poner(4096, &[0; 512]);

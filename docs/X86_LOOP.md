@@ -103,8 +103,8 @@ Dos líneas a la vez (decisión 4 de S30):
     SATA y sin NVMe, el AHCI sirve "disco" y `archivos` va por él (`make -C kernel sata-x86`).
   - HDA: solo la salida, sin volumen por el amplificador, sin avisos de clavija, sin HDMI ni arreglos por códec.
   - Nada de esto probado en una máquina de verdad. `disco` (la prueba en bruto del NVMe, que escribe el sector 2) se
-    lanza siempre en x86: en un PC de verdad, antes de X9, habrá que quitarla o hacer que mire si el disco es de prueba,
-    como `disco-sata`.
+    lanza siempre en x86; desde X5c solo escribe si los sectores 0 y 1 tienen los textos del disco de prueba, como
+    `disco-sata` (en un PC de verdad solo lee).
 - [ ] X10 a X17 **La gráfica compartida** (`docs/diseño/S34-grafica-compartida.md`): X10 hipervisor de x86 (VT-x con
   EPT, AMD-V con NPT); X11 pasar un aparato PCIe a una máquina virtual; X12 el dominio de gráficos; X13 canal y
   memoria compartida sin copia; X14 Mesa en DashOS (Venus y contexto nativo); X15 el compositor sobre el dominio;
