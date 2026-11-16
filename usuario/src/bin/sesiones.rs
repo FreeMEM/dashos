@@ -48,6 +48,7 @@ use preguntas_ficheros as pf;
 mod sesiones_disco;
 use dashos::permisos_texto as pt;
 use dashos::registro as rg;
+use dashos::tanda;
 use sesiones_disco as sd;
 
 dashos::programa!(principal);
@@ -470,6 +471,10 @@ struct Ficha {
     grupo: u32,
     /// El cajón del disco de donde se lanzó (U2, `PROGDIR:`); vacío si no salió del disco.
     progdir: [u8; 24],
+    /// S6b, S36: su perfil (`PERFIL_LIBRE`, como el Shell; o `PERFIL_APLICACION`, encerrado, si se abrió con `ABRIR`) y,
+    /// si es encerrado, si va en modo de desarrollo (carga de la capa del usuario). Lo heredan sus ayudantes.
+    perfil: u8,
+    desarrollo: bool,
 }
 
 /// Las cuentas, provisionales (luego, `Estado:Cuentas/usuarios`): usuario y nombre, que es también el de su volumen
@@ -485,6 +490,8 @@ const SIN_LLAVE: usize = 500;
 /// S6b, S36: en las preguntas pendientes, el "servicio" de dar (`CAMBIO`) o quitar (`CAMBIO + 1`) un permiso con la
 /// orden `Permiso` (`PERMISO_CAMBIAR`); el programa es aquel al que se da o se quita, y el permiso va aparte.
 const CAMBIO: usize = 3000;
+/// S6b, S36: en lo concedido, el "servicio" del modo de desarrollo (`PERMISO_DESARROLLO`), que no da llave.
+const DESARROLLO: usize = 600;
 
 /// Los 16 bytes de un nombre, rellenos de ceros.
 fn nombre16(n: &[u8]) -> [u8; 16] {
@@ -497,7 +504,10 @@ fn nombre16(n: &[u8]) -> [u8; 16] {
 /// El alta en archivos (orden 100, sin marca) de lo que lanza: su usuario y su grupo, sin derechos, la raíz 0 en el
 /// cajón de donde sale y sus otras raíces: el disco para leer y, si tiene cuenta, su volumen para leer y escribir.
 /// Shell nativo: `extra` es una raíz más (hueco, tope, volumen y camino): el `PROGDIR:` de un ayudante.
-fn alta_archivos(pid: u64, uid: u32, gid: u32, dir: &[u8], cuenta: Option<&[u8]>, extra: Option<(u8, u8, &[u8], &[u8])>) {
+/// S6b, S36: con `encierro` (el nombre de la aplicación y si va en modo de desarrollo), el perfil encerrado: en vez de
+/// `Home:`, `RAM:` y `Work:`, solo su cajón `Home:Datos/<nombre>` (que se crea si falta, suyo) y, en modo de
+/// desarrollo, los cajones de la capa del usuario (`RAICES_DESARROLLO`), solo para leer.
+fn alta_archivos(pid: u64, uid: u32, gid: u32, dir: &[u8], cuenta: Option<&[u8]>, extra: Option<(u8, u8, &[u8], &[u8])>, encierro: Option<(&[u8], bool)>) {
     let mut m = [0u8; 256];
     let dir = &dir[..dir.len().min(64)];
     m[0..4].copy_from_slice(&dashos::protocolo::archivos::ALTA.to_le_bytes());
@@ -509,13 +519,30 @@ fn alta_archivos(pid: u64, uid: u32, gid: u32, dir: &[u8], cuenta: Option<&[u8]>
     m[o..o + dir.len()].copy_from_slice(dir);
     o += dir.len();
     let mut raiz = |hueco: u8, tope: u8, vol: &[u8], cam: &[u8]| {
+        // Lo que no cabe en el mensaje no se da (mejor sin una raíz que con una cortada).
+        if o + 4 + vol.len() + cam.len() > m.len() {
+            return;
+        }
         m[o..o + 4].copy_from_slice(&[hueco, tope, vol.len() as u8, cam.len() as u8]);
         m[o + 4..o + 4 + vol.len()].copy_from_slice(vol);
         m[o + 4 + vol.len()..o + 4 + vol.len() + cam.len()].copy_from_slice(cam);
         o += 4 + vol.len() + cam.len();
     };
     raiz(RAIZ_SYS, 4, b"", b"");
-    if let Some(c) = cuenta {
+    if let (Some(c), Some((nombre_app, desarrollo))) = (cuenta, encierro) {
+        let c = &c[..c.len().min(16)];
+        let mut cam = [0u8; 64];
+        let largo = CAJON_DATOS.len() + 1 + nombre_app.len().min(40);
+        cam[..CAJON_DATOS.len()].copy_from_slice(CAJON_DATOS.as_bytes());
+        cam[CAJON_DATOS.len()] = b'/';
+        cam[CAJON_DATOS.len() + 1..largo].copy_from_slice(&nombre_app[..nombre_app.len().min(40)]);
+        raiz(RAIZ_DATOS | dashos::protocolo::archivos::HUECO_SUYO, 6, c, &cam[..largo]);
+        if desarrollo {
+            for &(hueco, _, cajon, _) in RAICES_DESARROLLO {
+                raiz(hueco, 4, c, cajon.as_bytes());
+            }
+        }
+    } else if let Some(c) = cuenta {
         let c = &c[..c.len().min(16)];
         raiz(RAIZ_HOME, 6, c, b"");
         // Su `RAM:`: el volumen en memoria de su sesión (la raíz entera), que `sesiones` crea al entrar. Y `Work:`
@@ -658,6 +685,44 @@ fn asignaciones_de(uid: u32) -> Tabla {
     t
 }
 
+/// S6b, S36: las asignaciones de una aplicación encerrada (`ABRIR`): las de la sesión sin la capa del usuario en `C:`,
+/// `LIBS:`, `FONTS:` y `CLASSES:` (S6b, regla 6). En modo de desarrollo, con su capa delante, por los volúmenes de
+/// `RAICES_DESARROLLO` (`LIBS:` es `HomeLibs:`, `SYS:Libs`): así `Assign` y `Which` enseñan de dónde sale cada cosa.
+fn asignaciones_encerrado(desarrollo: bool) -> Tabla {
+    let mut t = Tabla::vacia();
+    let _ = asig::de_sesion(&mut t, true);
+    if desarrollo {
+        for &(_, volumen, _, asignacion) in RAICES_DESARROLLO {
+            let mut l = [0u8; 40];
+            let n = asignacion.len() + 1 + volumen.len() + 1;
+            l[..asignacion.len()].copy_from_slice(asignacion.as_bytes());
+            l[asignacion.len()] = b'=';
+            l[asignacion.len() + 1..n - 1].copy_from_slice(volumen.as_bytes());
+            l[n - 1] = b':';
+            let _ = t.asignar(Cambio::Delante, &l[..n]);
+        }
+    }
+    t
+}
+
+/// S6b, S36: si la persona `uid` tiene en modo de desarrollo al programa `programa` (el permiso `PERMISO_DESARROLLO` de
+/// lo concedido).
+fn tiene_desarrollo(concedidos: &[Option<Concedido>], programa: &[u8], uid: u32) -> bool {
+    let p16 = nombre16(programa);
+    programa.len() <= 16 && concedidos.iter().flatten().any(|c| c.0 == p16 && c.2 == uid && permiso_de(c) == PERMISO_DESARROLLO)
+}
+
+/// S6b, S36: al compositor, que las ventanas de `marca` van en modo de desarrollo (`AVISO_DESARROLLO`).
+fn aviso_desarrollo(canal: u32, marca: u64) {
+    if canal == 0 {
+        return;
+    }
+    let mut m = [0u8; LARGO_AVISO_DESARROLLO];
+    m[0..4].copy_from_slice(&AVISO_DESARROLLO.to_le_bytes());
+    m[8..16].copy_from_slice(&marca.to_le_bytes());
+    avisar(canal, &m);
+}
+
 /// En qué volumen está el `PROGDIR:` de un ayudante: el disco, el de la cuenta o su `RAM:`.
 const EN_DISCO: u8 = 0;
 const EN_CUENTA: u8 = 1;
@@ -712,7 +777,18 @@ fn progdir_ayudante(raiz: u8, sub: &[u8], dir: &[u8], cuenta: Option<&[u8]>, cam
 fn tabla_de(f: &Ficha, asignaciones: &Tabla, progdir: u8) -> Tabla {
     let mut propia = Tabla::vacia();
     let lanzado = f.marca >= PRIMER_PID_PROPIO;
-    if lanzado || es(f, CEDEN_RAICES) {
+    // S6b, S36: una aplicación encerrada ve `SYS:`, su cajón (`Datos:`) y, en modo de desarrollo, la capa del usuario.
+    if lanzado && f.perfil == PERFIL_APLICACION {
+        let _ = propia.poner_volumen(b"SYS", RAIZ_SYS, b"");
+        if CUENTAS.iter().any(|c| c.0 == f.uid) {
+            let _ = propia.poner_volumen(VOLUMEN_DATOS.as_bytes(), RAIZ_DATOS, b"");
+            if f.desarrollo {
+                for &(hueco, volumen, _, _) in RAICES_DESARROLLO {
+                    let _ = propia.poner_volumen(volumen.as_bytes(), hueco, b"");
+                }
+            }
+        }
+    } else if lanzado || es(f, CEDEN_RAICES) {
         let _ = propia.poner_volumen(b"SYS", RAIZ_SYS, b"");
         if CUENTAS.iter().any(|c| c.0 == f.uid) {
             let _ = propia.poner_volumen(b"Home", RAIZ_HOME, b"");
@@ -803,6 +879,128 @@ fn pedir_comprobar() -> Option<u32> {
     Some(u32::try_from(t).unwrap_or(0))
 }
 
+/// Matar con permiso de administrador (la acción "matar", sola o en una tanda): el grupo entero del proceso `objetivo`,
+/// sea de quien sea. Estado y dato (el número del proceso).
+fn matar_admin(fichas: &mut [Option<Ficha>], objetivo: u64, programa: &[u8; 16], selector: u32, registro: &mut Registro) -> (i32, u64) {
+    match fichas.iter().position(|x| x.is_some_and(|x| x.marca == objetivo)) {
+        Some(j) => {
+            let f = fichas[j].take().unwrap();
+            dashos::grupo_matar(f.grupo);
+            dashos::cerrar(f.grupo);
+            if f.marca >= PRIMER_PID_PROPIO && selector != 0 {
+                presentar_al_selector(selector, f.marca, &[0; 16]);
+            }
+            println!("  [sesiones] {} mata a {} (usuario {}), con permiso de administrador", nombre(programa), nombre(&f.nombre), f.uid);
+            registro.linea(rg::SEGURIDAD, programa, f.uid, "procesos", format_args!("cierra a {} (proceso {})", nombre(&f.nombre), f.marca), "con la contraseña de un administrador");
+            (BIEN, objetivo)
+        }
+        None => (NO_EXISTE, objetivo),
+    }
+}
+
+/// S36, decisión 1: una tanda de acciones de administrador, desde que se pide hasta que se contesta. `texto` es la lista
+/// en llano tal como la enseña `guardian` (una línea numerada por acción); `acciones`, lo que se hace, leído y comprobado
+/// una vez al pedirla: lo que el programa cambie después en su memoria no cuenta.
+#[derive(Clone, Copy)]
+struct Tanda {
+    id: u32,
+    a_quien: u32,
+    de: u64,
+    programa: [u8; 16],
+    uid: u32,
+    n: usize,
+    acciones: [tanda::Accion; tanda::MAX_ACCIONES],
+    resultado: tanda::Resultado,
+    texto: [u8; TEXTO_TANDA],
+    largo: usize,
+    /// El administrador que la confirmó (con su contraseña), para el registro.
+    quien: [u8; 16],
+}
+const TEXTO_TANDA: usize = tanda::MAX_ACCIONES * 112;
+/// Tandas sin contestar a la vez (de programas distintos: una por programa).
+const MAX_TANDAS: usize = 4;
+/// Dónde se ve un momento la memoria con la lista que manda el programa (se copia y se quita).
+const VA_TANDA: usize = 0x5C_0000_0000;
+
+impl Tanda {
+    /// La línea `i` de la lista en llano, sin su número.
+    fn frase(&self, i: usize) -> &str {
+        let l = self.texto[..self.largo].split(|&c| c == b'\n').nth(i).unwrap_or(b"");
+        let l = l.iter().position(|&c| c == b' ').map_or(l, |p| &l[p + 1..]);
+        core::str::from_utf8(l).unwrap_or("?")
+    }
+}
+
+/// S36, decisión 1: sigue con la tanda `t`, ya confirmada, desde la acción en que va: cada una por el servicio que la
+/// tiene a su cargo (`sesiones` cierra procesos y da el registro de todos; el comprobador aparte comprueba el disco), en
+/// orden, y se para en la primera que falle. Devuelve `false` si se queda esperando al comprobador (sigue cuando
+/// conteste); `true` si acabó (bien, o parada en una).
+fn seguir_tanda(t: &mut Tanda, fichas: &mut [Option<Ficha>], lee_todo: &mut [u64; MAX_LEE_TODO], selector: u32, comprobando: &mut Option<(u32, [u8; 16], [u8; 16], u64, u32)>, registro: &mut Registro) -> bool {
+    while t.resultado.hechas < t.n {
+        let i = t.resultado.hechas;
+        let a = t.acciones[i];
+        let (estado, dato) = match a.nombre() {
+            "registro" => {
+                if !lee_todo.contains(&t.de) {
+                    lee_todo.rotate_right(1);
+                    lee_todo[0] = t.de;
+                }
+                (BIEN, 0)
+            }
+            "matar" => matar_admin(fichas, a.objetivo, &t.programa, selector, registro),
+            "comprobar" if comprobando.is_some() => (dashos::protocolo::archivos::EN_USO, 0),
+            // A15: el comprobador aparte, sin esperar: su respuesta llega luego, y entonces se sigue.
+            "comprobar" => match pedir_comprobar() {
+                Some(temporizador) => {
+                    *comprobando = Some((0, t.programa, t.quien, dashos::ahora_us(), temporizador));
+                    println!("  [sesiones] tanda de {}: {} de {}, se espera al comprobador", nombre(&t.programa), i + 1, t.n);
+                    return false;
+                }
+                None => (dashos::protocolo::archivos::ERROR_DEL_DISCO, 0),
+            },
+            _ => (PROTEGIDO, 0),
+        };
+        if !apuntar_en_tanda(t, estado, dato, registro) {
+            return true;
+        }
+    }
+    true
+}
+
+/// Apunta el resultado de la acción en que va la tanda (al registro también). Devuelve si se sigue: si falló, la tanda
+/// se para ahí.
+fn apuntar_en_tanda(t: &mut Tanda, estado: i32, dato: u64, registro: &mut Registro) -> bool {
+    let i = t.resultado.hechas;
+    t.resultado.de_cada[i] = (estado, dato);
+    let quien = nombre(&t.quien);
+    registro.uid = t.uid;
+    let frase = *t;
+    let frase = frase.frase(i);
+    if estado == BIEN {
+        t.resultado.hechas += 1;
+        println!("  [sesiones] tanda de {}: {} de {} hecha: {}", nombre(&t.programa), i + 1, t.n, frase);
+        registro.linea(rg::SEGURIDAD, &t.programa, t.uid, "administrar", format_args!("hace \"{}\" ({} de {}, en una tanda)", frase, i + 1, t.n), Texto16::de(format_args!("con la contraseña de {}", quien)).como_str());
+        return true;
+    }
+    t.resultado.estado = estado;
+    t.resultado.parada = i + 1;
+    println!("  [sesiones] tanda de {}: falla la {} de {} ({}): {}; las de después no se hacen", nombre(&t.programa), i + 1, t.n, estado, frase);
+    registro.linea(rg::SEGURIDAD, &t.programa, t.uid, "administrar", format_args!("no se hace \"{}\" ({} de {}, en una tanda): error {}", frase, i + 1, t.n, estado), Texto16::de(format_args!("se para ahí: {} de {} no se hacen", t.n - i - 1, t.n)).como_str());
+    false
+}
+
+/// Contesta a quien pidió la tanda (con `tanda::Resultado`) y cierra su llave.
+fn acabar_tanda(t: &Tanda, registro: &mut Registro) {
+    let r = &t.resultado;
+    println!("  [sesiones] tanda de {}: {} de {} hechas; estado {}", nombre(&t.programa), r.hechas, r.total, r.estado);
+    if r.estado != BIEN && r.parada == 0 {
+        registro.uid = t.uid;
+        registro.linea(rg::SEGURIDAD, &t.programa, t.uid, "administrar", format_args!("no se hace su tanda de {} acciones", t.n), "no se confirmó con la contraseña de un administrador");
+    }
+    dashos::canal_escribir(t.a_quien, &r.en_bytes(), &[]);
+    dashos::cerrar(t.a_quien);
+}
+
 /// El final de una acción de administrador: al registro y a quien la pidió (estado y dato), y su llave cerrada.
 fn acabar_admin(registro: &mut Registro, a_quien: u32, programa: &[u8; 16], accion: &str, quien: &[u8], estado: i32, dato: u64) {
     let quien_ = core::str::from_utf8(quien).unwrap_or("?");
@@ -859,6 +1057,16 @@ fn dar_servicio(dadas: &mut [Option<(u64, usize, u32)>], s: usize, marca: u64, p
 /// Un texto corto con formato, sin montón.
 type Texto16 = sd::Texto<96>;
 
+trait ComoStr {
+    fn como_str(&self) -> &str;
+}
+
+impl ComoStr for Texto16 {
+    fn como_str(&self) -> &str {
+        core::str::from_utf8(self.bytes()).unwrap_or("?")
+    }
+}
+
 /// Lo concedido (U4): programa, servicio (en `REPARTE`, o `SIN_LLAVE`) y, desde U6, el usuario para quien se concedió.
 /// S28: y el nombre del permiso (el de `REPARTE`, o el de un permiso sin llave, `ejec:...`).
 type Concedido = ([u8; 16], usize, u32, [u8; 16]);
@@ -897,7 +1105,14 @@ fn leer_permisos(a: &Archivos, concedidos: &mut [Option<Concedido>]) -> usize {
 /// Apunta como concedido a `programa` el permiso `permiso` para `uid`, si el permiso existe (de `REPARTE`, o uno sin
 /// llave de la caja Amiga) y cabe. Si ya estaba, bien.
 fn conceder(concedidos: &mut [Option<Concedido>], programa: &[u8], permiso: &[u8], uid: u32) -> bool {
-    let Some(s) = REPARTE.iter().position(|r| r.0.as_bytes() == permiso).or(pf::es_permiso(permiso).then_some(SIN_LLAVE)) else { return false };
+    let Some(s) = REPARTE
+        .iter()
+        .position(|r| r.0.as_bytes() == permiso)
+        .or(pf::es_permiso(permiso).then_some(SIN_LLAVE))
+        .or((permiso == PERMISO_DESARROLLO.as_bytes()).then_some(DESARROLLO))
+    else {
+        return false;
+    };
     if programa.is_empty() || programa.len() > 16 || !pt::nombre_valido(programa) {
         return false;
     }
@@ -1372,6 +1587,9 @@ fn principal() -> u64 {
     // con la contraseña de quién y desde cuándo (µs).
     // Y la llave del temporizador de su plazo.
     let mut comprobando: Option<(u32, [u8; 16], [u8; 16], u64, u32)> = None;
+    // S36, decisión 1: las tandas de acciones de administrador sin acabar, y la que espera al comprobador (su hueco).
+    let mut tandas: [Option<Tanda>; MAX_TANDAS] = [None; MAX_TANDAS];
+    let mut tanda_comprobando: Option<usize> = None;
     let mut canal_guardian = 0u32;
     // El permiso de apagar del kernel (llega de `inicio`, `PERMISO_APAGAR`) y lo que espera la respuesta de `guardian`
     // (número de la pregunta, si es reiniciar, quién lo pidió y cuándo: pasado un minuto sin respuesta, se olvida).
@@ -1500,7 +1718,19 @@ fn principal() -> u64 {
                     println!("  [sesiones] el comprobador no contesta en {} s", PLAZO_COMPROBAR_US / 1_000_000);
                 }
                 let largo = quien.iter().position(|&c| c == 0).unwrap_or(16);
-                acabar_admin(&mut registro, a_quien, &programa, "comprobar", &quien[..largo], estado, dato);
+                // S36, decisión 1: la de una tanda sigue con las demás (o se para ahí si falló).
+                match tanda_comprobando.take() {
+                    Some(h) if let Some(t) = tandas[h].as_mut() => {
+                        let sigue = apuntar_en_tanda(t, estado, dato, &mut registro);
+                        if !sigue || seguir_tanda(t, &mut fichas, &mut lee_todo, selector, &mut comprobando, &mut registro) {
+                            acabar_tanda(t, &mut registro);
+                            tandas[h] = None;
+                        } else {
+                            tanda_comprobando = Some(h);
+                        }
+                    }
+                    _ => acabar_admin(&mut registro, a_quien, &programa, "comprobar", &quien[..largo], estado, dato),
+                }
             }
             if marca == MARCA_COMPROBADOR || marca == MARCA_PLAZO_COMPROBAR {
                 for &l in &ll[..k] {
@@ -1563,7 +1793,7 @@ fn principal() -> u64 {
             if u32_en(0) == ALTA && m.len() >= 36 && k >= 1 {
                 let mut nombre_ = [0u8; 16];
                 nombre_.copy_from_slice(&m[20..36]);
-                let f = Ficha { marca: u64_en(4), uid: u32_en(12), gid: u32_en(16), nombre: nombre_, grupo: ll[0], progdir: [0; 24] };
+                let f = Ficha { marca: u64_en(4), uid: u32_en(12), gid: u32_en(16), nombre: nombre_, grupo: ll[0], progdir: [0; 24], perfil: PERFIL_LIBRE, desarrollo: false };
                 let sitio = fichas.iter().position(|x| x.is_some_and(|x| x.marca == f.marca)).or_else(|| fichas.iter().position(|x| x.is_none()));
                 if let Some(i) = sitio {
                     if let Some(vieja) = fichas[i] {
@@ -1780,15 +2010,25 @@ fn principal() -> u64 {
                     // La contraseña, fuera de la memoria en cuanto se usa (S6b, regla 9).
                     b.fill(0);
                 }
-                LANZAR => {
+                LANZAR | ABRIR => {
+                    // S6b, S36: `ABRIR` es lanzar encerrado (perfil "aplicación"), como lo verá el usuario.
+                    let abrir = u32_en(0) == ABRIR;
                     // Como quién (bytes 8 a 11): 0, como quien pide; si no, ese usuario, que tiene que haber entrado.
-                    let como = u32_en(8);
+                    let como = if abrir { 0 } else { u32_en(8) };
                     let nl = u32_en(4) as usize;
                     let camino = m.get(12..12 + nl).unwrap_or(b"");
                     // S10: la barra lanza solo de `Programas/`, como la persona que está delante (nunca como sistema, ni
                     // como otra), y solo si hay alguien delante.
-                    let barra = yo.is_some_and(|f| es(&f, LANZADORES)) && como == 0 && activa != 0 && lanzables::lanzable(camino);
-                    let guardian = barra || (yo.is_some_and(|f| es(&f, GUARDIANES)) && (como == 0 || abiertas.contains(&como)));
+                    let barra = !abrir && yo.is_some_and(|f| es(&f, LANZADORES)) && como == 0 && activa != 0 && lanzables::lanzable(camino);
+                    // S6b, S36: abre encerrado un programa de una persona con su sesión abierta (el Shell y lo que lanza),
+                    // nunca uno encerrado, y solo lo instalado (`Programas/`), con su identidad: la de un programa suelto
+                    // (perfil "suelto", sin identidad propia aún) no se abre así.
+                    let abre = abrir && yo.is_some_and(|f| f.uid >= PRIMERA_PERSONA && f.perfil == PERFIL_LIBRE && abiertas.contains(&f.uid)) && lanzables::de_programas(camino);
+                    let guardian = abre || barra || (!abrir && yo.is_some_and(|f| es(&f, GUARDIANES)) && (como == 0 || abiertas.contains(&como)));
+                    // Su modo de desarrollo: si su persona se lo dio (lo concedido, como un permiso).
+                    let corto_abrir = camino.rsplit(|&c| c == b'/').next().unwrap_or(camino);
+                    let desarrollo = abre && yo.is_some_and(|f| tiene_desarrollo(&concedidos, corto_abrir, f.uid));
+                    let encierro = abre.then_some((corto_abrir, desarrollo));
                     let pide = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
                     // Paso 2 de las asignaciones: de quién hereda las suyas (del que lo lanza si es del mismo usuario).
                     let padre = fichas.iter().position(|x| x.is_some_and(|x| x.marca == marca));
@@ -1814,7 +2054,7 @@ fn principal() -> u64 {
                                 let dir = &camino[..camino.len() - corto_.len()];
                                 let dir = dir.strip_suffix(b"/").unwrap_or(dir);
                                 let cuenta = CUENTAS.iter().find(|c| c.0 == uid).map(|c| c.1.as_bytes());
-                                alta_archivos(pid, uid, gid, dir, cuenta, None);
+                                alta_archivos(pid, uid, gid, dir, cuenta, None, encierro);
                                 // Y su llave de archivos, marcada con su número: va la segunda.
                                 let archivos_suyo = dashos::llave_duplicar(ARCHIVOS_ALTAS, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, pid);
                                 // U6: la tercera, la del compositor, también con su número. Antes, el compositor y el
@@ -1826,6 +2066,10 @@ fn principal() -> u64 {
                                 };
                                 for c in siguen.todos() {
                                     aviso_persona(c, pid, uid, &corto16);
+                                }
+                                // S6b, S36: y si va en modo de desarrollo, antes de que abra ninguna ventana.
+                                if desarrollo {
+                                    aviso_desarrollo(siguen.compositor, pid);
                                 }
                                 let ventanas_suyo = if siguen.compositor != 0 {
                                     dashos::llave_duplicar(siguen.compositor, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, pid)
@@ -1905,13 +2149,26 @@ fn principal() -> u64 {
                                     let dir = dir.strip_suffix(b"/").unwrap_or(dir);
                                     let mut progdir = [0u8; 24];
                                     progdir[..dir.len().min(24)].copy_from_slice(&dir[..dir.len().min(24)]);
-                                    fichas[hueco] = Some(Ficha { marca: pid, uid, gid, nombre: n16, grupo: g as u32, progdir });
+                                    let perfil = if abre { PERFIL_APLICACION } else { PERFIL_LIBRE };
+                                    fichas[hueco] = Some(Ficha { marca: pid, uid, gid, nombre: n16, grupo: g as u32, progdir, perfil, desarrollo });
                                     // Sus asignaciones: las del que lo lanza, si es de su usuario (con lo que cambiara);
-                                    // si no (`guardian` lanza como Ana), las de la sesión.
+                                    // si no (`guardian` lanza como Ana), las de la sesión. Encerrado (`ABRIR`), las de la
+                                    // sesión sin la capa del usuario (o con ella delante, en modo de desarrollo): no hereda
+                                    // las de quien lo abre.
                                     asignaciones[hueco] = match padre.and_then(|p| fichas[p].map(|f| (p, f))) {
+                                        _ if abre => asignaciones_encerrado(desarrollo),
                                         Some((p, f)) if f.uid == uid => asignaciones[p].clone(),
                                         _ => asignaciones_de(uid),
                                     };
+                                    if abre {
+                                        println!("  [sesiones] {} abre {} encerrado, en su cajón Home:Datos/{}; modo de desarrollo: {}", nombre(&pide), nombre(&n16), nombre(&n16), if desarrollo { "sí" } else { "no" });
+                                    }
+                                    // S6b, S36: en modo de desarrollo, al registro de seguridad y al compositor (que pone a
+                                    // sus ventanas la marca que el programa no puede quitar).
+                                    if desarrollo {
+                                        let por = Texto16::de(format_args!("lo abrió {}", nombre(&pide)));
+                                        registro.linea(rg::SEGURIDAD, &n16, uid, "desarrollo", format_args!("se abre en modo de desarrollo: carga de Home:C, Home:Libs, Home:Fonts y Home:Classes (proceso {})", pid), core::str::from_utf8(por.bytes()).unwrap_or("?"));
+                                    }
                                     dashos::cerrar(p as u32);
                                     (BIEN, pid)
                                 }
@@ -1955,7 +2212,10 @@ fn principal() -> u64 {
                             let cuenta = CUENTAS.iter().find(|c| c.0 == f.uid).map(|c| c.1.as_bytes());
                             let largo_dir = f.progdir.iter().position(|&c| c == 0).unwrap_or(24);
                             let mut cam = [0u8; 160];
-                            let progdir = progdir_ayudante(raiz_origen, sub, &f.progdir[..largo_dir], cuenta, &mut cam);
+                            // S6b, S36: el de una aplicación encerrada, solo desde las raíces que tiene (su `PROGDIR:` o
+                            // `SYS:`): con `RAIZ_HOME` u otra se saldría de su encierro por su ayudante.
+                            let origen_vale = f.perfil != PERFIL_APLICACION || raiz_origen == RAIZ_PROGDIR || raiz_origen == RAIZ_SYS;
+                            let progdir = if origen_vale { progdir_ayudante(raiz_origen, sub, &f.progdir[..largo_dir], cuenta, &mut cam) } else { None };
                             let mut ram = [dashos::protocolo::archivos::VOLUMEN_RAM; 5];
                             ram[1..].copy_from_slice(&f.uid.to_le_bytes());
                             let extra = progdir.map(|(tope, volumen, largo)| {
@@ -1966,13 +2226,17 @@ fn principal() -> u64 {
                                 };
                                 (RAIZ_PROGDIR_AYUDANTE, tope, vol, &cam[..largo])
                             });
-                            alta_archivos(pid, f.uid, f.gid, &f.progdir[..largo_dir], cuenta, extra);
+                            alta_archivos(pid, f.uid, f.gid, &f.progdir[..largo_dir], cuenta, extra, (f.perfil == PERFIL_APLICACION).then_some((&f.nombre[..nombre(&f.nombre).len()], f.desarrollo)));
                             let archivos_suyo = dashos::llave_duplicar(ARCHIVOS_ALTAS, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, pid);
                             // El compositor y el sonido saben de quién es, con el nombre del fichero (solo para sus
                             // mensajes); la identidad de la ficha es la de quien lo lanza.
                             let corto16 = nombre16(corto);
                             for c in siguen.todos() {
                                 aviso_persona(c, pid, f.uid, &corto16);
+                            }
+                            // S6b, S36: el ayudante de una aplicación en modo de desarrollo, también con su marca.
+                            if f.desarrollo {
+                                aviso_desarrollo(siguen.compositor, pid);
                             }
                             let ventanas_suyo = if siguen.compositor != 0 {
                                 dashos::llave_duplicar(siguen.compositor, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, pid)
@@ -2021,7 +2285,7 @@ fn principal() -> u64 {
                                     dashos::proceso_avisar(p_nuevo as u32, aviso as u32);
                                     dashos::cerrar(aviso as u32);
                                 }
-                                fichas[hueco] = Some(Ficha { marca: pid, uid: f.uid, gid: f.gid, nombre: f.nombre, grupo: g as u32, progdir: f.progdir });
+                                fichas[hueco] = Some(Ficha { marca: pid, uid: f.uid, gid: f.gid, nombre: f.nombre, grupo: g as u32, progdir: f.progdir, perfil: f.perfil, desarrollo: f.desarrollo });
                                 asignaciones[hueco] = asignaciones[p].clone();
                                 ayudantes[ayudante % MAX] = (pid, if progdir.is_some() { RAIZ_PROGDIR_AYUDANTE } else { SIN_RAIZ });
                                 ayudante += 1;
@@ -2321,6 +2585,8 @@ fn principal() -> u64 {
                             q[8..24].copy_from_slice(&programa);
                             q[24] = b'*';
                             q[25..25 + pedida.len().min(15)].copy_from_slice(&pedida[..pedida.len().min(15)]);
+                            // S36, decisión 1: lo que se cierra con "matar", para que `guardian` lo enseñe.
+                            q[40..48].copy_from_slice(&objetivo.to_le_bytes());
                             if dashos::canal_escribir(canal_guardian, &q, &[]) == 0 {
                                 preguntas[h] = Some((id, respuesta, marca, programa, ACCION + i, objetivo));
                                 println!("  [sesiones] {} pide la acción de administrador {}: se pregunta", nombre(&programa), ACCIONES[i]);
@@ -2335,11 +2601,166 @@ fn principal() -> u64 {
                         }
                     }
                 }
+                // S36, decisión 1: una tanda de acciones de administrador. Se copia y se lee entera antes de preguntar
+                // nada; si una línea no vale, no se enseña ni se hace ninguna.
+                TANDA => {
+                    let programa = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
+                    let uid = yo.map_or(0, |f| f.uid);
+                    registro.uid = uid;
+                    // La lista, copiada ya: lo que el programa cambie luego en su memoria no cuenta.
+                    let mut lista = [0u8; tanda::MAX_TEXTO];
+                    let largo = u32_en(4) as usize;
+                    let copiada: Result<usize, &str> = if k < 2 {
+                        Err("sin la memoria con la lista")
+                    } else {
+                        usadas = k;
+                        let tam = dashos::memoria_tamano(ll[1]);
+                        let r = if largo > tanda::MAX_TEXTO {
+                            Err("la lista mide más de lo que se lee")
+                        } else if tam < largo as i64 || tam > 64 << 10 {
+                            Err("la memoria no es de la lista")
+                        } else if dashos::memoria_proyectar(ll[1], VA_TANDA, false) != 0 {
+                            Err("su memoria no se deja leer")
+                        } else {
+                            // Su memoria, solo para leer y un momento: se copia y se quita (pequeño y aquí, como la ventana
+                            // del servicio de archivos).
+                            let v = unsafe { core::slice::from_raw_parts(VA_TANDA as *const u8, largo) };
+                            lista[..largo].copy_from_slice(v);
+                            dashos::memoria_quitar(VA_TANDA);
+                            Ok(largo)
+                        };
+                        for &l in &ll[1..k] {
+                            dashos::cerrar(l);
+                        }
+                        r
+                    };
+                    let mut acciones = [tanda::Accion::default(); tanda::MAX_ACCIONES];
+                    let mut t = Tanda { id: 0, a_quien: respuesta, de: marca, programa, uid, n: 0, acciones, resultado: tanda::Resultado::nuevo(0), texto: [0; TEXTO_TANDA], largo: 0, quien: [0; 16] };
+                    let mut por: Texto16 = Texto16::nuevo();
+                    let mut estado = match copiada {
+                        Err(e) => {
+                            por = Texto16::de(format_args!("{}", e));
+                            dashos::protocolo::archivos::MAL_FORMADO
+                        }
+                        Ok(l) => match tanda::leer(&lista[..l], &mut acciones) {
+                            Err(mala) => {
+                                por = Texto16::de(format_args!("{}", mala));
+                                if matches!(mala, tanda::Mala::NoEsDeAdministrador(_)) { NO_EXISTE } else { dashos::protocolo::archivos::MAL_FORMADO }
+                            }
+                            Ok(n) => {
+                                t.n = n;
+                                t.acciones = acciones;
+                                t.resultado = tanda::Resultado::nuevo(n);
+                                let mut e = BIEN;
+                                // La lista en llano, con el nombre de lo que se cierra: se enseña esta y se hace esta.
+                                for (i, a) in acciones[..n].iter().enumerate() {
+                                    let destino = (a.nombre() == "matar").then(|| fichas.iter().flatten().find(|f| f.marca == a.objetivo).copied());
+                                    let (prog, persona) = match destino {
+                                        Some(None) => {
+                                            e = NO_EXISTE;
+                                            por = Texto16::de(format_args!("la línea {}: no hay un proceso {}", i + 1, a.objetivo));
+                                            break;
+                                        }
+                                        Some(Some(f)) => (f.nombre, CUENTAS.iter().find(|c| c.0 == f.uid).map_or("", |c| c.1)),
+                                        None => ([0; 16], ""),
+                                    };
+                                    let linea = sd::Texto::<112>::de(format_args!("{}. {}\n", i + 1, tanda::Frase { accion: *a, programa: nombre(&prog), persona }));
+                                    let b = linea.bytes();
+                                    let cabe = b.len().min(TEXTO_TANDA - t.largo);
+                                    t.texto[t.largo..t.largo + cabe].copy_from_slice(&b[..cabe]);
+                                    t.largo += cabe;
+                                }
+                                e
+                            }
+                        },
+                    };
+                    let hueco = tandas.iter().position(|t| t.is_none());
+                    if estado == BIEN {
+                        let (e, motivo) = match () {
+                            _ if yo.is_none() => (PROTEGIDO, "no tiene ficha"),
+                            _ if yo_detras => (PROTEGIDO, "su sesión está detrás: no se pregunta"),
+                            _ if tandas.iter().flatten().any(|t| t.de == marca) => (OCUPADO, "ya tiene una tanda sin contestar"),
+                            _ if canal_guardian == 0 || hueco.is_none() => (PROTEGIDO, "no hay a quién preguntar"),
+                            _ => (BIEN, ""),
+                        };
+                        estado = e;
+                        por = Texto16::de(format_args!("{}", motivo));
+                    }
+                    if estado == BIEN {
+                        let id = siguiente_pregunta;
+                        siguiente_pregunta = siguiente_pregunta.wrapping_add(1).max(1);
+                        let mut q = [0u8; PREGUNTA];
+                        q[0..4].copy_from_slice(&id.to_le_bytes());
+                        q[4..8].copy_from_slice(&uid.to_le_bytes());
+                        q[8..24].copy_from_slice(&programa);
+                        q[24..30].copy_from_slice(b"*tanda");
+                        q[40..44].copy_from_slice(&(t.n as u32).to_le_bytes());
+                        if dashos::canal_escribir(canal_guardian, &q, &[]) == 0 {
+                            t.id = id;
+                            println!("  [sesiones] {} pide una tanda de {} acciones de administrador: se pregunta", nombre(&programa), t.n);
+                            tandas[hueco.unwrap()] = Some(t);
+                            continue;
+                        }
+                        estado = PROTEGIDO;
+                        por = Texto16::de(format_args!("no hay a quién preguntar"));
+                    }
+                    println!("  [sesiones] {} pide una tanda: no ({}: {})", nombre(&programa), estado, por.como_str());
+                    registro.linea(rg::SEGURIDAD, &programa, uid, "administrar", format_args!("pide una tanda de acciones de administrador: no se enseña ni se hace"), por.como_str());
+                    t.resultado.estado = estado;
+                    dashos::canal_escribir(respuesta, &t.resultado.en_bytes(), &[]);
+                }
+                // S36, decisión 1: la lista de una tanda en llano, para `guardian`, que la enseña entera.
+                TANDA_LISTA if yo.is_some_and(|f| es(&f, GUARDIANES)) => {
+                    let (id, desde) = (u32_en(4), u32_en(8) as usize);
+                    let mut r = [0u8; 32 + POR_PAGINA_TANDA];
+                    let van = match tandas.iter().flatten().find(|t| t.id == id) {
+                        Some(t) => {
+                            let desde = desde.min(t.largo);
+                            let van = (t.largo - desde).min(POR_PAGINA_TANDA);
+                            r[4..8].copy_from_slice(&(t.largo as u32).to_le_bytes());
+                            r[8..12].copy_from_slice(&(van as u32).to_le_bytes());
+                            r[12..16].copy_from_slice(&(t.n as u32).to_le_bytes());
+                            // Se propone la persona de delante, si es administradora.
+                            if let Some(c) = CUENTAS.iter().find(|c| c.0 == activa && ADMIN.contains(&c.0)) {
+                                r[16..16 + c.1.len().min(16)].copy_from_slice(&c.1.as_bytes()[..c.1.len().min(16)]);
+                            }
+                            r[32..32 + van].copy_from_slice(&t.texto[desde..desde + van]);
+                            van
+                        }
+                        None => {
+                            r[0..4].copy_from_slice(&NO_EXISTE.to_le_bytes());
+                            0
+                        }
+                    };
+                    dashos::canal_escribir(respuesta, &r[..32 + van], &[]);
+                }
                 RESPUESTA_ADMIN if yo.is_some_and(|f| es(&f, GUARDIANES)) => {
                     dashos::canal_escribir(respuesta, &BIEN.to_le_bytes(), &[]);
                     let (id, lu, lc) = (u32_en(4), u32_en(8) as usize, u32_en(12) as usize);
                     let usuario = m.get(16..16 + lu).unwrap_or(b"");
                     let clave = m.get(16 + lu..16 + lu + lc).unwrap_or(b"");
+                    // S36, decisión 1: la contraseña de una tanda: con la buena de un administrador, se hace la lista
+                    // enseñada, en orden; si no, nada.
+                    // Solo una que aún no se confirmó (la que espera al comprobador ya está en marcha).
+                    if let Some(h) = tandas.iter().position(|t| t.is_some_and(|t| t.id == id && t.quien == [0; 16])) {
+                        let mut t = tandas[h].take().unwrap();
+                        let admin = CUENTAS.iter().find(|c| c.1.as_bytes() == usuario).is_some_and(|c| ADMIN.contains(&c.0));
+                        let clave_buena = admin && archivos.as_ref().is_some_and(|a| a.abrir_volumen(usuario, clave, true) == BIEN);
+                        if clave_buena {
+                            t.quien = nombre16(usuario);
+                            println!("  [sesiones] tanda de {}: confirmada con la contraseña de {}; se hacen {}", nombre(&t.programa), nombre(&t.quien), t.n);
+                            if seguir_tanda(&mut t, &mut fichas, &mut lee_todo, selector, &mut comprobando, &mut registro) {
+                                acabar_tanda(&t, &mut registro);
+                            } else {
+                                tandas[h] = Some(t);
+                                tanda_comprobando = Some(h);
+                            }
+                        } else {
+                            println!("  [sesiones] tanda de {}: {}; no se hace nada", nombre(&t.programa), if usuario.is_empty() { "el usuario dijo que no" } else { "no es la contraseña de un administrador" });
+                            t.resultado.estado = PROTEGIDO;
+                            acabar_tanda(&t, &mut registro);
+                        }
+                    }
                     if let Some(i) = preguntas.iter().position(|p| p.is_some_and(|p| p.0 == id && p.4 >= ACCION && p.4 < CAMBIO)) {
                         let (_, a_quien, de, programa, accion, objetivo) = preguntas[i].take().unwrap();
                         let accion = accion - ACCION;
@@ -2373,20 +2794,7 @@ fn principal() -> u64 {
                                 }
                                 Some((BIEN, 0))
                             }
-                            (true, _) if ACCIONES[accion] == "matar" => match fichas.iter().position(|x| x.is_some_and(|x| x.marca == objetivo)) {
-                                Some(j) => {
-                                    let f = fichas[j].take().unwrap();
-                                    dashos::grupo_matar(f.grupo);
-                                    dashos::cerrar(f.grupo);
-                                    if f.marca >= PRIMER_PID_PROPIO && selector != 0 {
-                                        presentar_al_selector(selector, f.marca, &[0; 16]);
-                                    }
-                                    println!("  [sesiones] {} mata a {} (usuario {}), con permiso de administrador", nombre(&programa), nombre(&f.nombre), f.uid);
-                                    registro.linea(rg::SEGURIDAD, &programa, f.uid, "procesos", format_args!("cierra a {} (proceso {})", nombre(&f.nombre), f.marca), "con la contraseña de un administrador");
-                                    Some((BIEN, objetivo))
-                                }
-                                None => Some((NO_EXISTE, objetivo)),
-                            },
+                            (true, _) if ACCIONES[accion] == "matar" => Some(matar_admin(&mut fichas, objetivo, &programa, selector, &mut registro)),
                             _ => Some((PROTEGIDO, 0)),
                         };
                         if let Some((estado, dato)) = hecho {
@@ -2882,7 +3290,7 @@ fn principal() -> u64 {
                     let serv = m.get(16 + prog.len()..(16 + prog.len()).saturating_add(ls)).unwrap_or(b"");
                     let quien = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
                     let uid = yo.map_or(0, |f| f.uid);
-                    let existe = (REPARTE.iter().any(|r| r.0.as_bytes() == serv) || pf::es_permiso(serv)) && pt::nombre_valido(prog) && prog.len() <= 16;
+                    let existe = (REPARTE.iter().any(|r| r.0.as_bytes() == serv) || pf::es_permiso(serv) || serv == PERMISO_DESARROLLO.as_bytes()) && pt::nombre_valido(prog) && prog.len() <= 16;
                     let ya = concedidos.iter().flatten().any(|c| c.2 == uid && permiso_de(c).as_bytes() == serv && &c.0[..c.0.iter().position(|&x| x == 0).unwrap_or(16)] == prog);
                     let hueco = preguntas.iter().position(|p| p.is_none());
                     let delante = uid >= PRIMERA_PERSONA && activa == uid;
@@ -2890,6 +3298,9 @@ fn principal() -> u64 {
                     let (prog_t, serv_t) = (core::str::from_utf8(prog).unwrap_or("?"), core::str::from_utf8(serv).unwrap_or("?"));
                     let (estado, motivo) = match () {
                         _ if yo.is_none() => (PROTEGIDO, "no tiene ficha"),
+                        // S6b, S36: un programa encerrado no cambia permisos (ni se pone a sí mismo en modo de desarrollo):
+                        // eso es del Shell y de Ajustes, con la persona delante.
+                        _ if yo.is_some_and(|f| f.perfil == PERFIL_APLICACION) => (PROTEGIDO, "un programa encerrado no cambia permisos"),
                         _ if !existe => (NO_EXISTE, "ese permiso o ese programa no existen"),
                         _ if !dar && !ya => (NO_EXISTE, "no lo tenía"),
                         _ if dar && ya => (BIEN, "ya lo tenía"),

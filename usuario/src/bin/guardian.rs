@@ -40,6 +40,7 @@ use preguntas_ficheros as pf;
 use alloc::string::String;
 use dashos::permisos_texto as pt;
 use dashos::println;
+use dashos::tanda;
 use dashos::protocolo::sesiones::{ENTRAR, FICHA, LANZAR, POR_PAGINA, PREGUNTA, PREGUNTAS, PROCESOS, RESPUESTA, RESPUESTA_ADMIN, RETIRAR, SALIR, VOLVER};
 use kit::lienzo::{Lienzo, Rect};
 use kit::tema::Tema;
@@ -159,7 +160,7 @@ fn principal() -> u64 {
         let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
         let programa = &q[8..8 + campo(&q[8..24])];
         let servicio = &q[24..24 + campo(&q[24..40])];
-        if de_apagar(&q) || de_permiso(&q) {
+        if de_apagar(&q) || de_permiso(&q) || de_tanda(&q) {
             continue;
         }
         // S28: la guardia de ficheros de la caja Amiga (un permiso sin llave): siempre, esta vez o no.
@@ -264,7 +265,7 @@ fn principal() -> u64 {
             break;
         }
         let mut q = [0u8; PREGUNTA];
-        if dashos::canal_leer_plazo(preguntas, &mut q, &mut [], 1_000).0 as usize != PREGUNTA {
+        if dashos::canal_leer_plazo(preguntas, &mut q, &mut [], 1_000).0 as usize != PREGUNTA || de_tanda(&q) {
             continue;
         }
         let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
@@ -387,7 +388,7 @@ fn de_apagar(q: &[u8; PREGUNTA]) -> bool {
 fn atender(preguntas: u32) -> ! {
     loop {
         let mut q = [0u8; PREGUNTA];
-        if dashos::canal_leer(preguntas, &mut q, &mut []).0 as usize != PREGUNTA || de_apagar(&q) || de_permiso(&q) {
+        if dashos::canal_leer(preguntas, &mut q, &mut []).0 as usize != PREGUNTA || de_apagar(&q) || de_permiso(&q) || de_tanda(&q) {
             continue;
         }
         let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
@@ -405,6 +406,10 @@ fn atender(preguntas: u32) -> ! {
             m[4..8].copy_from_slice(&q[0..4]);
             m[8..12].copy_from_slice(&r.to_le_bytes());
             pedir(&m, &[]);
+            continue;
+        }
+        // S36, decisión 1: una acción de administrador suelta, con la misma ventana que una tanda.
+        if de_accion(&q) {
             continue;
         }
         let mut r = [0u8; 16];
@@ -441,7 +446,7 @@ fn contestar_a_cambio(preguntas: u32, max_us: u64, hasta: impl Fn((u32, u32)) ->
     let mut cuentas = (0, 0);
     while dashos::ahora_us() < fin && !hasta(cuentas) {
         let mut q = [0u8; PREGUNTA];
-        if dashos::canal_leer_plazo(preguntas, &mut q, &mut [], 200_000).0 as usize != PREGUNTA || de_permiso(&q) {
+        if dashos::canal_leer_plazo(preguntas, &mut q, &mut [], 200_000).0 as usize != PREGUNTA || de_permiso(&q) || de_tanda(&q) {
             continue;
         }
         let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
@@ -692,6 +697,91 @@ fn de_permiso(q: &[u8; PREGUNTA]) -> bool {
     true
 }
 
+/// S36, decisión 1: si `q` es una tanda de acciones de administrador ("*tanda"), pide a `sesiones` la lista en llano
+/// (`TANDA_LISTA`), la enseña entera y pide el nombre y la contraseña de un administrador, una vez; contesta con
+/// `RESPUESTA_ADMIN` (con el usuario vacío si dijo que no). La contraseña la comprueba `sesiones`. Si no es una tanda,
+/// falso.
+fn de_tanda(q: &[u8; PREGUNTA]) -> bool {
+    let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
+    if &q[24..24 + campo(&q[24..40])] != b"*tanda" {
+        return false;
+    }
+    let programa = limpiar(core::str::from_utf8(&q[8..8 + campo(&q[8..24])]).unwrap_or("?"), "un programa");
+    // La lista, por páginas. Lo que no llegue entero no se enseña: se contesta que no.
+    let mut texto: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+    let mut admin = String::new();
+    let mut entera = false;
+    for _ in 0..64 {
+        let mut m = [0u8; 12];
+        m[0..4].copy_from_slice(&dashos::protocolo::sesiones::TANDA_LISTA.to_le_bytes());
+        m[4..8].copy_from_slice(&q[0..4]);
+        m[8..12].copy_from_slice(&(texto.len() as u32).to_le_bytes());
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 256];
+        let n = if dashos::canal_escribir(SESIONES, &m, &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 3_000_000).0 } else { -1 };
+        dashos::cerrar(lectura);
+        if n < 32 || r[0..4] != [0; 4] {
+            break;
+        }
+        let total = u32::from_le_bytes(r[4..8].try_into().unwrap()) as usize;
+        let van = (u32::from_le_bytes(r[8..12].try_into().unwrap()) as usize).min(n as usize - 32);
+        admin = limpiar(core::str::from_utf8(&r[16..16 + campo(&r[16..32])]).unwrap_or(""), "");
+        texto.extend_from_slice(&r[32..32 + van]);
+        if texto.len() >= total || van == 0 {
+            entera = texto.len() == total;
+            break;
+        }
+    }
+    let lineas: alloc::vec::Vec<String> = String::from_utf8_lossy(&texto).lines().take(tanda::MAX_ACCIONES).map(|l| limpiar(l, "?")).collect();
+    confirmar_admin(q, &programa, lineas, admin, entera);
+    true
+}
+
+/// S36, decisión 1: una acción de administrador suelta (la de `ADMINISTRAR`, "*comprobar", "*matar"...) es una tanda de
+/// una: la misma ventana, con su frase. `sesiones` pone tras la pregunta el número del proceso de "matar".
+fn de_accion(q: &[u8; PREGUNTA]) -> bool {
+    let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
+    let Some(accion) = q[24..24 + campo(&q[24..40])].strip_prefix(b"*") else { return false };
+    let Some(cual) = tanda::ACCIONES.iter().position(|a| a.0.as_bytes() == accion) else { return false };
+    let programa = limpiar(core::str::from_utf8(&q[8..8 + campo(&q[8..24])]).unwrap_or("?"), "un programa");
+    let objetivo = u64::from_le_bytes(q[40..48].try_into().unwrap());
+    let frase = alloc::format!("1. {}", tanda::Frase { accion: tanda::Accion { cual, objetivo }, programa: "", persona: "" });
+    confirmar_admin(q, &programa, alloc::vec![frase], String::new(), true);
+    true
+}
+
+/// La ventana de una tanda (o de una acción suelta) y la respuesta a `sesiones`.
+fn confirmar_admin(q: &[u8; PREGUNTA], programa: &str, lineas: alloc::vec::Vec<String>, admin: String, entera: bool) {
+    let nombre = core::cell::RefCell::new(admin);
+    let clave = core::cell::RefCell::new(String::new());
+    let en_nombre = core::cell::Cell::new(nombre.borrow().is_empty());
+    let si = entera && !lineas.is_empty() && {
+        let mut memoria = 0;
+        let r = preguntar_dentro(programa, &Pregunta::Tanda { lineas: &lineas, nombre: &nombre, clave: &clave, en_nombre: &en_nombre }, &mut memoria);
+        dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
+        dashos::memoria_quitar(VA);
+        if memoria > 0 {
+            dashos::cerrar(memoria);
+        }
+        r == pf::RESPUESTA_SIEMPRE
+    };
+    let (usuario, mut clave) = if si { (nombre.into_inner(), clave.into_inner()) } else { (String::new(), clave.into_inner()) };
+    let c = if si { clave.as_bytes() } else { b"" };
+    let (u, c) = (&usuario.as_bytes()[..usuario.len().min(16)], &c[..c.len().min(128)]);
+    let mut r = [0u8; 16 + 16 + 128];
+    r[0..4].copy_from_slice(&RESPUESTA_ADMIN.to_le_bytes());
+    r[4..8].copy_from_slice(&q[0..4]);
+    r[8..12].copy_from_slice(&(u.len() as u32).to_le_bytes());
+    r[12..16].copy_from_slice(&(c.len() as u32).to_le_bytes());
+    r[16..16 + u.len()].copy_from_slice(u);
+    r[16 + u.len()..16 + u.len() + c.len()].copy_from_slice(c);
+    pedir(&r[..16 + u.len() + c.len()], &[]);
+    // La contraseña, fuera de la memoria (S6b, regla 9).
+    r.fill(0);
+    unsafe { clave.as_bytes_mut().fill(0) };
+    println!("  [guardian] tanda de {}: {}", programa, if si { alloc::format!("se confirma como {}", usuario) } else { String::from("el usuario dice que no") });
+}
+
 /// Shell nativo, con S36: espera a que acabe el proceso `pid` (como `esperar_fin`), atendiendo mientras las preguntas
 /// que le lleguen: el guion del Shell usa `Permiso` y `Registro TODO`, que preguntan. Los cambios de permiso, al usuario
 /// (en la prueba contesta el guion de QEMU); la acción de administrador "registro" del Shell, con la contraseña de Ana,
@@ -707,7 +797,7 @@ fn esperar_atendiendo(pid: u64, max_us: u64, preguntas: u32) -> bool {
             mirado = dashos::ahora_us();
         }
         let mut q = [0u8; PREGUNTA];
-        if dashos::canal_leer_plazo(preguntas, &mut q, &mut [], 300_000).0 as usize != PREGUNTA || de_apagar(&q) || de_permiso(&q) {
+        if dashos::canal_leer_plazo(preguntas, &mut q, &mut [], 300_000).0 as usize != PREGUNTA || de_apagar(&q) || de_permiso(&q) || de_tanda(&q) {
             continue;
         }
         let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
@@ -784,6 +874,14 @@ enum Pregunta<'a> {
     Fichero { prog68k: &'a str, fichero: &'a str, frase: &'a str },
     /// S6b, S36: dar o quitar un permiso a un programa, que pide otro (la orden `Permiso` del Shell).
     Cambio { dar: bool, programa: &'a str, permiso: &'a str },
+    /// S36, decisión 1: una tanda de acciones de administrador (o una sola): la lista entera en llano, y el nombre y la
+    /// contraseña del administrador, que se teclean aquí (Tab cambia de uno a otro).
+    Tanda { lineas: &'a [String], nombre: &'a core::cell::RefCell<String>, clave: &'a core::cell::RefCell<String>, en_nombre: &'a core::cell::Cell<bool> },
+}
+
+/// S36, decisión 1: el alto del diálogo de una tanda de `n` líneas (una por acción).
+fn alto_tanda(n: usize) -> i32 {
+    350 + 20 * n.min(tanda::MAX_ACCIONES) as i32
 }
 
 fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u32 {
@@ -796,7 +894,12 @@ fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u
     // van en la línea de "Contesta con el teclado").
     let con_detalles = matches!(pregunta, Pregunta::Cambio { .. }) || matches!(pregunta, Pregunta::Servicio(s) if !s.starts_with('*'));
     let mut detalles = false;
-    let (ancho_d, alto_d) = if fichero || matches!(pregunta, Pregunta::Cambio { .. }) { DIALOGO_FICHERO } else { DIALOGO };
+    let (ancho_d, alto_d) = match pregunta {
+        Pregunta::Tanda { lineas, .. } => (DIALOGO_TANDA, alto_tanda(lineas.len())),
+        _ if fichero || matches!(pregunta, Pregunta::Cambio { .. }) => DIALOGO_FICHERO,
+        _ => DIALOGO,
+    };
+    let tanda = matches!(pregunta, Pregunta::Tanda { .. });
     const ESPERA_US: u64 = 1_000_000;
     /// El tema del sistema (S10c): llega al enlazar, antes que la configuración de la capa.
     const TEMA: u32 = 22;
@@ -830,7 +933,8 @@ fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u
     let mut teclado = Teclado::new();
     // Desde cuándo se ve (con el sync de su primer cuadro).
     let mut vista: Option<u64> = None;
-    let fin = dashos::ahora_us() + 30_000_000;
+    // Teclear una contraseña lleva más que una tecla: la de una tanda espera dos minutos.
+    let fin = dashos::ahora_us() + if tanda { 120_000_000 } else { 30_000_000 };
     loop {
         if dashos::ahora_us() > fin {
             return pf::RESPUESTA_NO;
@@ -881,6 +985,9 @@ fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u
                     Pregunta::Cambio { dar, programa: p, permiso } => {
                         println!("  [guardian] pregunta en pantalla: cambiar permiso: {} quiere {} a {} {}", programa, if *dar { "dar" } else { "quitar" }, p, permiso)
                     }
+                    Pregunta::Tanda { lineas, nombre, .. } => {
+                        println!("  [guardian] tanda en pantalla: {} pide {} (administrador propuesto: {}): {}", programa, lineas.len(), nombre.borrow(), lineas.join(" | "))
+                    }
                 }
             }
             (TECLADO, wl_keyboard::ev::KEYMAP) => {
@@ -891,6 +998,36 @@ fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u
             (TECLADO, wl_keyboard::ev::KEY) => {
                 let tecla = teclado.tecla(palabra(2), palabra(3) == 1);
                 let a_tiempo = vista.is_some_and(|v| dashos::ahora_us() - v >= ESPERA_US);
+                // S36, decisión 1: en una tanda se teclea el nombre y la contraseña; Intro confirma y Esc dice que no. Lo
+                // del primer segundo no cuenta (quien escribía en otra ventana no confirma sin querer).
+                if let Pregunta::Tanda { nombre, clave, en_nombre, .. } = pregunta {
+                    let Some(tecla) = tecla.filter(|_| a_tiempo) else { continue };
+                    match tecla {
+                        Tecla::Intro if !clave.borrow().is_empty() && !nombre.borrow().is_empty() => return pf::RESPUESTA_SIEMPRE,
+                        Tecla::Escape => return pf::RESPUESTA_NO,
+                        Tecla::Tabulador | Tecla::TabuladorAtras => en_nombre.set(!en_nombre.get()),
+                        Tecla::Retroceso if en_nombre.get() => {
+                            nombre.borrow_mut().pop();
+                        }
+                        Tecla::Retroceso => {
+                            clave.borrow_mut().pop();
+                        }
+                        Tecla::Letra(ch) if en_nombre.get() && nombre.borrow().chars().count() < 16 => nombre.borrow_mut().push(ch),
+                        Tecla::Letra(ch) if !en_nombre.get() && clave.borrow().len() < 128 => clave.borrow_mut().push(ch),
+                        _ => continue,
+                    }
+                    if *memoria != 0 {
+                        let tamano = (ancho_d * alto_d * 4) as usize;
+                        let px = unsafe { core::slice::from_raw_parts_mut(VA as *mut u32, tamano / 4) };
+                        pintar_pregunta(px, ancho_d, alto_d, programa, pregunta, detalles, &mut fuente, &mut medio, &tema);
+                        let mut e = Escritor::new();
+                        e.empezar(SUPERFICIE, wl_surface::req::ATTACH).uint(BUFER).int(0).int(0).fin();
+                        e.empezar(SUPERFICIE, wl_surface::req::DAMAGE).int(0).int(0).int(ancho_d).int(alto_d).fin();
+                        e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
+                        c.mandar(&e);
+                    }
+                    continue;
+                }
                 match tecla {
                     Some(Tecla::Letra(ch)) if !a_tiempo => {
                         println!("  [guardian] tecla {:?} antes de tiempo: no cuenta", ch);
@@ -930,6 +1067,8 @@ fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u
 /// más ancho y alto: el texto, en hasta cuatro líneas, y tres respuestas.
 const DIALOGO: (i32, i32) = (440, 208);
 const DIALOGO_FICHERO: (i32, i32) = (520, 268);
+/// S36, decisión 1: el ancho del de una tanda (el alto, según cuántas acciones: `alto_tanda`).
+const DIALOGO_TANDA: i32 = 560;
 /// Lo más largo que se enseña de un nombre que llega de fuera (el resto, "…").
 const MAX_NOMBRE_VISTO: usize = 60;
 
@@ -955,6 +1094,8 @@ fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, pregun
         Pregunta::Servicio(_) => alloc::format!("¿Dar permiso a \"{}\"?", programa),
         Pregunta::Fichero { .. } => String::from("Programa de Amiga"),
         Pregunta::Cambio { .. } => String::from("¿Cambiar un permiso?"),
+        Pregunta::Tanda { lineas, .. } if lineas.len() == 1 => String::from("Acción de administrador"),
+        Pregunta::Tanda { lineas, .. } => alloc::format!("{} acciones de administrador", lineas.len()),
     };
     let tam = [24u32, 22, 20].into_iter().find(|&tam| fuente.medir(&titulo, tam).ancho <= ancho_texto).unwrap_or(20);
     l.recortar(Rect::new(x, caja.y, ancho_texto, caja.h));
@@ -992,6 +1133,23 @@ fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, pregun
             }
             (v, &[("Mayús+S", "Sí"), ("N", "No")])
         }
+        // S36, decisión 1: quién lo pide, la lista entera (una línea por acción, numerada) y cómo se contesta. El
+        // nombre y la contraseña van debajo, en sus cajas.
+        Pregunta::Tanda { lineas: acciones, nombre, en_nombre, .. } => {
+            let mut v = alloc::vec![alloc::format!("{} pide hacer esto, en este orden:", recortar(programa).trim_matches('"'))];
+            for a in acciones.iter() {
+                v.extend(partir(fuente, a, ancho_texto, 1));
+            }
+            v.push(String::new());
+            // La frase que eligió el administrador (S6b): si no sale, no es el sistema.
+            let nombre = nombre.borrow();
+            match FRASES.iter().find(|f| f.0 == nombre.as_str()) {
+                Some(f) => v.push(alloc::format!("Tu frase: \"{}\"", f.1)),
+                None => v.push(String::from("Sin frase: escribe el nombre de un administrador.")),
+            }
+            v.push(String::from(if en_nombre.get() { "Tab: a la contraseña. Intro: hacerlo. Esc: no." } else { "Tab: cambiar de administrador. Intro: hacerlo. Esc: no." }));
+            (v, &[("Intro", "Hacer"), ("Esc", "No")])
+        }
         Pregunta::Fichero { prog68k, fichero, frase } => {
             let texto = alloc::format!(
                 "{} quiere cambiar {}, {}. ¿Lo dejas? Lo pide {}.",
@@ -1007,6 +1165,22 @@ fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, pregun
     };
     for (i, linea) in lineas.iter().enumerate() {
         fuente.dibujar(&mut l, x, y + 20 * i as i32 + 15, linea, 14, t.sobre_variante_superficie);
+    }
+    // S36, decisión 1: las dos cajas de la tanda, bajo el texto: el administrador y su contraseña (un punto por letra).
+    // La que se teclea, con el borde en el primario.
+    if let Pregunta::Tanda { nombre, clave, en_nombre, .. } = pregunta {
+        let y0 = y + 20 * lineas.len() as i32 + 12;
+        let cajas = [("Administrador", nombre.borrow().clone(), en_nombre.get()), ("Contraseña", "•".repeat(clave.borrow().chars().count().min(24)), !en_nombre.get())];
+        for (k, (etiqueta, valor, activa)) in cajas.iter().enumerate() {
+            let yc = y0 + 44 * k as i32;
+            fuente.dibujar(&mut l, x, yc + 24, etiqueta, 14, t.sobre_variante_superficie);
+            let caja = Rect::new(x + 120, yc, ancho_texto - 120, 36);
+            l.redondeado(caja, 8, t.contenedor());
+            if *activa {
+                l.borde(caja, 8, 2, t.primario);
+            }
+            fuente.dibujar(&mut l, caja.x + 12, yc + 24, valor, 14, t.sobre_superficie);
+        }
     }
     l.soltar_recorte();
     // Las respuestas, abajo a la derecha (24 del borde), 8 entre una y otra: botones tonales de Material (píldoras de
