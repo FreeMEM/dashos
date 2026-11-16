@@ -87,7 +87,8 @@ después de probar el otro.
 - **Ficheros**: `Home:` se comparte con la caja Linux, con los permisos del usuario (S6). Dentro se ve como
   `/home/<usuario>` (S4b).
 - **Integración**: los programas instalados en la caja Linux aparecen en el lanzador de DashOS, con su icono. El
-  portapapeles es común.
+  portapapeles es común. Desde el Shell y los guiones de DashOS, la orden `Caja` (abajo, "La caja se deja mirar y
+  mandar").
 - **Distribución**: una que ya exista, con su propio gestor de paquetes dentro (ver la pregunta 2).
 - **Memoria**: la máquina virtual pide memoria al arrancar y la devuelve cuando no la usa (globo virtio). Se
   recomienda para Pi 4 de 4 y 8 GB. En las de 1 y 2 GB es posible, pero justo.
@@ -122,6 +123,8 @@ Decidido por el usuario:
   tema (una Nerd Font). Terminator como terminal, con sus ventanas en el escritorio de DashOS por Wayland. Es la
   configuración por defecto de la caja; cada usuario la cambia en su `~/.zshrc`.
 - Lo instalado en la caja aparece en el lanzador de DashOS y en el escaparate de Hangar (S8).
+- **Instalar no pide terminal.** Hangar instala y quita las aplicaciones de Flatpak con un clic, sin nombrar Linux
+  ni la caja. pacman queda para quien abra la terminal.
 
 ## Decidido el 2026-11-15: dos perfiles de caja Linux, según la memoria
 
@@ -134,14 +137,19 @@ abajo):
 | **Terminal** | Claude Code, herramientas, compilar | 2 GB | Sin escritorio; globo de memoria (virtio-balloon, ya hecho: aviso-cajas), memoria comprimida (S3) y carpetas compartidas con DAX (las páginas del fichero, sin copia) |
 | Sin caja | — | 1 GB o menos (Pi 3, THEA500) | No se ofrece |
 
-- El perfil se elige en Ajustes (categoría Caja Linux, S27) y lo propone el instalador según la máquina. Pasar de
-  terminal a completa es instalar el escritorio dentro de la caja; no hace falta otra caja.
+- El perfil lo decide el instalador según la memoria de la máquina, sin preguntar, y se cambia en Ajustes
+  (categoría Caja Linux, S27). Pasar de terminal a completa es instalar el escritorio dentro de la caja; no hace
+  falta otra caja. Eso lo hace entero un solo botón de Ajustes, y la orden `Caja` hace lo mismo: el usuario no
+  instala nada a mano.
+- **Los ajustes de la caja son un fichero de texto en `ENVARC:`** (S4b): perfil, memoria y distribución. El valor de
+  serie sale de la máquina, y lo que diga el fichero lo pisa. Lo escriben Ajustes y la orden `Ajuste`; editarlo a
+  mano vale igual. El nombre y el formato, por diseñar al hacerlo.
 - **Claude Code en DashOS**: a corto plazo, dentro de la caja Linux (en los dos perfiles), con su terminal como ventana
   del escritorio de DashOS por el puente de Wayland y las carpetas del usuario compartidas; a largo plazo, terminal
   nativa sobre la capa POSIX con Node.js.
 - En el código: hoy la caja decide la memoria del invitado por la de la máquina (`dashos::maquina::memoria_invitado`:
   256 MB con 2 GB, 512 con 4 GB, 1 GB con 8 GB o más). Falta el perfil de terminal (imagen sin escritorio, DAX en las
-  carpetas compartidas) y que el perfil, no solo la memoria, decida qué arranca.
+  carpetas compartidas), que el perfil, no solo la memoria, decida qué arranca, y que se lea el fichero de ajustes.
 
 ## Decidido el 2026-11-15: qué distribución lleva la caja
 
@@ -152,7 +160,28 @@ abajo):
   y su planificador no se usan, porque quien reparte el procesador de verdad es DashOS.
 - **En ARM: Arch Linux ARM**, como hasta ahora. CachyOS no tiene versión para ARM (mirado el 2026-11-15 en artículos y
   en su foro, no en sus anuncios oficiales).
-- **La distribución se puede elegir**: la caja es una máquina virtual con su disco; no se ata a una sola.
+- **La distribución se puede elegir**: la caja es una máquina virtual con su disco; no se ata a una sola. Nunca se
+  pregunta: Arch de serie. Cambiarla es una línea del fichero de ajustes de la caja y una opción de la orden `Caja`
+  que rehace la caja.
+
+## La caja se deja mirar y mandar (repaso S36, 2026-11-15)
+
+Sale de las dos preguntas de S0. Aquí se dice qué tiene que existir; el formato de cada cosa, por diseñar al hacerlo.
+
+- **El disco de la caja se ve.** Lo que un programa de Linux guarda fuera de su casa (`/etc`, `/var`, lo instalado
+  con pacman, los contenedores) vive en el disco de la caja. Ese disco se monta en DashOS como un volumen con nombre,
+  `Linux:` (nombre provisional), de solo lectura desde fuera, y se abre desde el Workbench y el Shell. No hay
+  almacenamiento opaco. Dónde vive el disco (hoy, una partición; S29 propone un fichero o un volumen con
+  instantáneas) se dice en el mismo sitio.
+- **La orden `Caja`**, en `C:`: estado, arrancar, parar, ejecutar un programa dentro y enseñar su registro. Lo
+  ejecutado devuelve su salida y su código de error al guion de DashOS. También dice el perfil de cada caja (el de
+  la caja Amiga, en S4).
+- **Su registro**: la consola del kernel invitado y el motivo de un arranque fallido van a un fichero de texto en
+  `Estado:Registros/` (S6). Se lee con `Caja` y con la orden `Registro`.
+- **Si Linux mata un programa por memoria**, la caja se lo pasa a DashOS: aviso en llano ("Firefox se cerró porque
+  la caja Linux se quedó sin memoria"), con un botón para darle más, y una línea en el registro.
+- **Los puertos publicados** (S14: `servicio publicar caja-linux 80`, acción de administrador) tienen también su
+  botón en Ajustes, y la lista de lo publicado es texto en los ajustes de la máquina (`Estado:Prefs`, S4b).
 
 ## Lo que queda abierto
 
@@ -169,9 +198,10 @@ abajo):
 - Con S1: el hipervisor es una pieza del kernel. Asterinas es la referencia para la opción A.
 - Con S3: memoria de la máquina virtual con globo. Para la opción A, la capa podría prometer de más dentro de un
   límite.
-- Con S4b: `/home` es `Home:`, y los volúmenes salen en `/Volumes`.
+- Con S4b: `/home` es `Home:`, y los volúmenes salen en `/Volumes`. Los ajustes de la caja, en `ENVARC:`.
 - Con S6: permisos tipo Flatpak, la caja entera como una aplicación.
-- S8: los paquetes de Linux los gestiona la distribución de dentro; Hangar puede enseñarlos en su catálogo.
+- S8: los paquetes de Linux los gestiona la distribución de dentro; Hangar los enseña en su catálogo, e instala y
+  quita los de Flatpak.
 - S9: el compositor tiene que aceptar ventanas de Wayland.
 - S12: controladores virtio en el lado de DashOS.
 
