@@ -209,3 +209,81 @@ Lo que no se ha comprobado:
 - La caja Linux con el cortafuegos de entrada nuevo: su puerto pasa por su propio cortafuegos antes; solo se ha pasado
   `arranque-virt-linux`.
 - El resolvedor con un servidor de nombres de verdad, más allá de una pregunta por `example.org` al de QEMU.
+
+## 2026-11-16: ninguna prueba sale a Internet, y una sola zona horaria (rama `red-zona`)
+
+Rama `red-zona`, sacada de `revision` (6351ce64).
+
+### Lo que salía fuera
+
+- En `arranque-virt-linux` (sin disco: el servicio de red no puede leer `Prefs/Red`) se usaba el servidor de hora de
+  serie: `red` preguntaba `pool.ntp.org` al DNS de QEMU (10.0.2.3, que reenvía al del PC y de ahí a Internet) y `hora`
+  mandaba SNTP a un servidor de verdad (`162.159.200.123` en la salida de `shell-nativa`).
+- En `arranque-virt` y `arranque-virt-2`, `red-prueba` preguntaba `example.org` al DNS de QEMU ("no cuenta").
+- Las variantes con disco ya apuntaban al vecino (`hora.prueba` → 10.0.2.53 por `hosts`): sin pregunta DNS.
+
+### Lo hecho
+
+1. **El ajuste del servidor de hora** (`Prefs/Red/hora`, el de siempre; lo interpreta `dashos::sntp::servidor`, con
+   pruebas de PC): la primera línea que no está vacía ni empieza por `#`. `ninguno` lo apaga. Sin fichero (o vacío, o
+   solo comentarios), `pool.ntp.org`. **Si el fichero está pero no se deja leer, o el servicio no puede leer sus
+   ajustes (sin disco del sistema), apagado**: no se habla con un tercero sin saber qué dice el ajuste. Una línea que
+   no es ni nombre ni dirección, también apagado (como antes). El estado lo dice en una palabra nueva,
+   `E_HORA_APAGADA` (`E_PALABRAS` pasa de 31 a 32), y `hora` entonces no pregunta a nadie: lo dice una vez y mira el
+   estado cada minuto.
+2. **QEMU con `restrict=on`** en `arranque-virt` y `arranque-virt-2` (`RED_QEMU`): la red de usuario no deja salir
+   nada al PC ni a Internet; DHCP, `guestfwd` (el eco) y `hostfwd` (`red_entra.py`) siguen. Con él, **el DHCP de QEMU
+   no da puerta de enlace ni servidor de nombres**: DashOS no tiene ruta hacia fuera (otra barrera más), y la línea
+   esperada pasa a ser `[red] DHCP: 10.0.2.15/24` (antes, con `, puerta 10.0.2.2, DNS 10.0.2.3`). De paso, lo que va
+   al vecino ya no lo reenvía QEMU también al 127.0.0.1 del PC (la carrera con un servidor del PC apuntada el 15/11).
+   En `arranque-virt-linux` se probó y **no vale**: sin puerta de enlace, el cortafuegos de la caja Linux corta el
+   ARP del invitado hacia 10.0.2.2 y su `ping` no llega. Esa y las de Arch (`pacman -Sy`) siguen con `RED_CAJA`
+   abierta: ahí lo que impide que DashOS salga es el ajuste (sin disco, sin servidor de hora; con disco, el vecino).
+   En las de Arch, `hora.prueba` → 10.0.2.53, que QEMU lleva al 127.0.0.1:123 del PC: no sale a Internet, pero si el
+   PC tiene un servidor de hora en local, contesta él.
+3. **`red-prueba` ya no pregunta `example.org`**. Con eso, el camino "servidor de nombres del DHCP" no tiene prueba de
+   punta a punta (el de un servidor elegido, con el vecino, sí; es el mismo código salvo la elección del servidor).
+
+### Una sola zona horaria
+
+Las fechas y horas que escribe el crate `idioma` (`Local::fecha_larga`, `fecha_hora_corta`…) van en la zona del
+sistema, la misma que la barra: `SYS:Prefs/zona`, con la tabla de `usuario/src/zona.rs`, que `idioma` incluye tal cual
+(`#[path]`; una sola tabla y una sola forma de leer el fichero, `zona::de_fichero`). Los minutos (`gmt`) de
+`locale.prefs` solo valen si no hay zona (no está, no se lee, no es texto, mide más de 256 bytes o no está en la
+tabla). `ha_cambiado` también mira la firma de `SYS:Prefs/zona`. Cargar el idioma hace una pregunta más al servicio de
+archivos (tres sin `locale.prefs`).
+
+La zona es del sistema (decisión 3 de arriba), así que **la prueba de `cambio` cambia**: Carla (inglés, Reino Unido,
+`gmt` 0) ve ahora la hora de Madrid, "03/11/2026 18:05", y no "17:05". Es justo lo que comprueba que la zona manda: con
+el `gmt` de Ana (-60) las dos fuentes dan lo mismo en noviembre. Que Londres da "17:05" en ese momento está en las
+pruebas de PC.
+
+Pruebas de PC nuevas (`idioma`, `cargo test`; `sntp.rs` y `zona.rs`, `make prueba`):
+
+- `sesion_zona_del_sistema`: sin zona, el `gmt`; con Madrid, 18:05 en noviembre y 19:05 en julio (hora de verano), el
+  salto de las 02:00 a las 03:00 del 29 de marzo y de las 03:00 a las 02:00 del 25 de octubre, el día que cambia a las
+  22:00 UTC de julio; Londres, 17:05 en noviembre y 18:05 en julio; instantes extremos sin reventar.
+- `sesion_zona_rota_o_que_no_existe` (hostil): una zona que no existe, a medias, vacía, con la línea en blanco
+  delante, bytes que no son texto, UTF-8 cortado, ceros, un camino, más de 256 bytes y un fichero que no se deja leer:
+  sin zona, el `gmt`, y `ha_cambiado` no se dispara solo. 20.000 ficheros al azar.
+- `zona.rs`: `de_fichero` con lo bueno y lo malo. `sntp.rs`: `el_ajuste` (de serie, `ninguno`, comentarios, bytes que
+  no son texto).
+
+### Decisiones, pendientes del usuario
+
+1. **Sin poder leer los ajustes, sin hora por la red** (en vez de `pool.ntp.org`). Una máquina sin disco del sistema, o
+   con el fichero ilegible, no pregunta la hora a nadie. La otra opción es usar el de serie también entonces.
+2. **La palabra para apagarlo es `ninguno`.**
+3. **La hora de los programas es la de la zona del sistema para todos los usuarios**, aunque su `locale.prefs` diga
+   otra diferencia: Carla, del Reino Unido, ve la hora de Madrid. Una zona por usuario sigue por hacer (decisión 3 de
+   arriba).
+
+### Lo que queda
+
+- La barra y `idioma` leen la zona al arrancar; un cambio de `Prefs/zona` lo ve `ha_cambiado`, pero nadie vuelve a
+  cargar por eso salvo el centro al reabrir su ventana.
+- Una prueba de punta a punta del DNS del DHCP sin salir fuera (haría falta que QEMU anunciara al vecino como
+  servidor de nombres).
+- `arranque-virt-linux` y las de Arch siguen con la red de QEMU abierta (el invitado necesita la puerta de enlace, y
+  las de Arch, Internet). Cerrarla pide que QEMU dé puerta con `restrict=on`, o que el invitado de `-linux` no la use.
+- Con `restrict=on`, `arranque-virt` ya no comprueba que el DHCP traiga puerta y DNS.

@@ -52,6 +52,10 @@ DashOS en marcha con 4 núcleos
 ~[caja-linux] linux: caja-linux: vda 2048 sectores, primeros bytes: DISCO-CAJA-LINUX
 ~[caja-linux] linux: caja-linux: escrito en vda: ESCRITO-POR-LINUX
 ~[red] puerto para la caja Linux con MAC
+# Sin disco, el servicio de red no lee sus ajustes: sin servidor de hora, y `hora` no pregunta a nadie (ninguna prueba
+# sale a Internet; docs/bitacoras/red.md, 2026-11-16).
+~[red] sin Prefs/Red (el servicio de archivos no da sesión): 0 nombres en hosts; servidor de hora ninguno
+~[hora] sin servidor de hora
 ~[caja-linux] linux: caja-linux: eth0 02:da:50:
 ~[caja-linux] linux: caja-linux: ping 3 packets transmitted, 3 packets received, 0% packet loss
 ~[caja-linux] linux: caja-linux: fin de la prueba

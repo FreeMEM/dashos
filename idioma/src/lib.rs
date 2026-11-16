@@ -4,6 +4,8 @@
 //! - `prefs`: `ENV:Sys/locale.prefs`, el mismo fichero IFF que usa AmigaOS: idiomas preferidos y país.
 //! - `catalogo`: `LOCALE:Catalogs/<idioma>/<programa>.catalog`, IFF `CTLG`, en UTF-8 (y los de Latin-1 del Amiga).
 //! - `pais` y `fecha`: fechas, horas, números y dinero según el país.
+//! - `zona`: la zona horaria del sistema (`SYS:Prefs/zona`), con la tabla de `usuario/src/zona.rs`, la misma que usa
+//!   la barra. Las horas van en esa zona, con su cambio de hora; los minutos de `locale.prefs`, solo si no hay zona.
 //! - `puesto` y `formato`: el catálogo en uso de un programa y los textos con huecos.
 //!
 //! - `sesion`: qué ficheros se leen y en qué orden, sobre un `Lector` que los da.
@@ -24,6 +26,10 @@ pub mod pais;
 pub mod prefs;
 pub mod puesto;
 pub mod sesion;
+/// La tabla de zonas horarias y sus reglas: el mismo fichero que `dashos::zona` (sin dependencias ni `alloc`), para que
+/// la barra y las fechas de los programas den la misma hora.
+#[path = "../../usuario/src/zona.rs"]
+pub mod zona;
 #[cfg(test)]
 mod pruebas;
 
@@ -48,8 +54,10 @@ pub struct Local {
     pub idiomas: Vec<String>,
     pub pais_nombre: String,
     pub pais: Pais,
-    /// Minutos al oeste de Greenwich.
+    /// Minutos al oeste de Greenwich, de `locale.prefs`: solo valen si no hay `zona`.
     pub gmt: i32,
+    /// La zona horaria del sistema (`SYS:Prefs/zona`), si se pudo leer y está en la tabla.
+    pub zona: Option<&'static zona::Zona>,
     /// Los textos del idioma (días, meses…): un catálogo con los números de `fecha::cadenas`
     /// (`LOCALE:Languages/<idioma>.language`). Sin él, los del castellano.
     pub textos: Option<Catalogo>,
@@ -64,7 +72,7 @@ impl Default for Local {
 impl Local {
     /// Castellano y España: lo que hay sin `locale.prefs`, o si está roto.
     pub fn de_serie() -> Local {
-        Local { idiomas: Vec::new(), pais_nombre: String::from(PAIS_DE_SERIE), pais: Pais::espana(), gmt: -60, textos: None }
+        Local { idiomas: Vec::new(), pais_nombre: String::from(PAIS_DE_SERIE), pais: Pais::espana(), gmt: -60, zona: None, textos: None }
     }
 
     /// De un `locale.prefs` leído. Si no trae los datos del país, se quedan los de España hasta que quien lo carga
@@ -76,6 +84,7 @@ impl Local {
             pais_nombre: if p.pais.is_empty() { serie.pais_nombre } else { p.pais },
             pais: p.datos.unwrap_or(serie.pais),
             gmt: p.gmt,
+            zona: None,
             textos: None,
         }
     }
@@ -105,9 +114,18 @@ impl Local {
         }
     }
 
+    /// Los segundos que hay que sumar a una hora del reloj (UTC) para tener la local: los de la zona en ese momento
+    /// (con su hora de verano), o, sin zona, los minutos de `locale.prefs`.
+    pub fn desfase_s(&self, unix: i64) -> i64 {
+        match self.zona {
+            Some(z) => zona::desfase_s(z, unix.max(0) as u64),
+            None => -(self.gmt as i64) * 60,
+        }
+    }
+
     /// El momento local de una hora del reloj (segundos desde 1970, en UTC).
     pub fn momento(&self, unix: i64) -> fecha::Momento {
-        fecha::Momento::de_unix(unix.saturating_sub(self.gmt as i64 * 60))
+        fecha::Momento::de_unix(unix.saturating_add(self.desfase_s(unix)))
     }
 
     /// Una hora del reloj escrita con una plantilla de `FormatDate`.

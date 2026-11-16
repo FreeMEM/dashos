@@ -238,4 +238,7 @@ pub const E_DNS_CACHE: usize = 28;
 pub const E_DNS_GUARDADAS: usize = 29;
 /// El servidor de hora (SNTP) de `Prefs/Red/hora`, ya resuelto (IPv4; 0 si no hay o aún no se sabe). Lo usa `hora`.
 pub const E_HORA: usize = 30;
-pub const E_PALABRAS: usize = 31;
+/// 1 si no hay servidor de hora a propósito: `Prefs/Red/hora` dice `ninguno` (o no se entiende), o el servicio no pudo
+/// leer sus ajustes. `hora` entonces no pregunta a nadie.
+pub const E_HORA_APAGADA: usize = 31;
+pub const E_PALABRAS: usize = 32;

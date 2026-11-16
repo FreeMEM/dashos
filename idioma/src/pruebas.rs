@@ -413,7 +413,7 @@ fn textos_del_idioma_desde_un_catalogo() {
 // ---------------------------------------------------------------------------------------------------------------
 // La sesión: qué se lee y en qué orden, con un lector de mentira.
 
-use crate::sesion::{Falta, Firma, Idiomas, Lector, PREFS, PREFS_GUARDADAS};
+use crate::sesion::{Falta, Firma, Idiomas, Lector, MAX_ZONA, PREFS, PREFS_GUARDADAS, ZONA};
 use std::collections::BTreeMap;
 
 #[derive(Default)]
@@ -465,10 +465,10 @@ fn sesion_sin_nada_es_castellano_y_no_busca_catalogos() {
     let mut d = Disco::default();
     let i = Idiomas::cargar(&mut d);
     assert_eq!((i.local.idioma(), i.local.pais_nombre.as_str(), i.origen), ("español", "España", None));
-    assert_eq!(d.pedidos, [PREFS, PREFS_GUARDADAS]);
+    assert_eq!(d.pedidos, [PREFS, PREFS_GUARDADAS, ZONA]);
     assert!(i.catalogo(&mut d, "prueba", 1, "español").is_none());
     // Ni una pregunta más: en castellano no se busca nada.
-    assert_eq!(d.pedidos.len(), 2);
+    assert_eq!(d.pedidos.len(), 3);
     assert!(!i.ha_cambiado(&mut d));
 }
 
@@ -595,4 +595,104 @@ fn sesion_se_entera_del_cambio() {
     assert!(!i.ha_cambiado(&mut d));
     d.poner(PREFS, Prefs::default().escribir());
     assert!(i.ha_cambiado(&mut d));
+}
+
+/// La zona horaria del sistema (`SYS:Prefs/zona`, la de la barra) manda sobre los minutos de `locale.prefs`, con su
+/// cambio de hora. El momento de la prueba de `cambio` en QEMU: 2026-11-03 17:05:09 UTC.
+#[test]
+fn sesion_zona_del_sistema() {
+    let noviembre = 1_793_725_509;
+    // 2026-07-15 17:05:09 UTC: verano.
+    let julio = 1_784_135_109;
+    // Sin zona: Carla (Reino Unido, gmt 0) va en UTC; Ana (de serie, gmt -60), en UTC+1 todo el año.
+    let mut d = Disco::ingles();
+    let carla = Idiomas::cargar(&mut d);
+    assert!(carla.local.zona.is_none());
+    assert_eq!((carla.local.hora_corta(noviembre), carla.local.hora_corta(julio)), ("17:05".into(), "17:05".into()));
+    let ana = Idiomas::cargar(&mut Disco::default());
+    assert_eq!((ana.local.hora_corta(noviembre), ana.local.hora_corta(julio)), ("18:05".into(), "18:05".into()));
+    // Con la zona de Madrid en el sistema: las dos en la hora de Madrid, UTC+1 en noviembre y UTC+2 en julio.
+    d.poner(ZONA, b"Europe/Madrid\n".to_vec());
+    let carla = Idiomas::cargar(&mut d);
+    assert_eq!(carla.local.zona.map(|z| z.nombre), Some("Europe/Madrid"));
+    assert_eq!(carla.local.fecha_hora_corta(noviembre), "03/11/2026 18:05");
+    assert_eq!(carla.local.hora_larga(julio), "19:05:09");
+    let mut d_ana = Disco::default();
+    d_ana.poner(ZONA, b"Europe/Madrid\n".to_vec());
+    let ana = Idiomas::cargar(&mut d_ana);
+    assert_eq!((ana.local.fecha_hora_corta(noviembre), ana.local.fecha_hora_corta(julio)), ("03/11/2026 18:05".into(), "15/07/2026 19:05".into()));
+    // El cambio de hora de 2026 en Madrid: el 29 de marzo, a la 01:00 UTC, las 02:00 pasan a ser las 03:00; el 25 de
+    // octubre, a la 01:00 UTC, las 03:00 vuelven a ser las 02:00. Y el día cambia con la hora local.
+    let marzo = 1_774_746_000;
+    assert_eq!((ana.local.hora_larga(marzo - 1), ana.local.hora_larga(marzo)), ("01:59:59".into(), "03:00:00".into()));
+    let octubre = 1_792_890_000;
+    assert_eq!((ana.local.hora_larga(octubre - 1), ana.local.hora_larga(octubre)), ("02:59:59".into(), "02:00:00".into()));
+    // 2026-07-15 22:00 UTC: en Madrid ya es el 16.
+    assert_eq!((ana.local.fecha_corta(1_784_152_800 - 1), ana.local.fecha_corta(1_784_152_800)), ("15/07/2026".into(), "16/07/2026".into()));
+    // Londres: UTC en noviembre (lo que esperaba la prueba de Carla) y UTC+1 en julio.
+    d.poner(ZONA, b"Europe/London".to_vec());
+    let carla = Idiomas::cargar(&mut d);
+    assert_eq!((carla.local.fecha_hora_corta(noviembre), carla.local.hora_corta(julio)), ("03/11/2026 17:05".into(), "18:05".into()));
+    // Antes de 1970 o en el límite: sin reventar.
+    assert_eq!(carla.local.momento(i64::MIN).ano, 1);
+    assert_eq!(carla.local.momento(i64::MAX).ano, 9999);
+    assert_eq!(carla.local.momento(-1).segundo, 59);
+}
+
+/// Hostil: una zona que no existe y un fichero de zona roto, enorme o que no se deja leer no rompen nada: valen los
+/// minutos de `locale.prefs` (de serie, UTC+1 todo el año).
+#[test]
+fn sesion_zona_rota_o_que_no_existe() {
+    let julio = 1_784_135_109;
+    let malos: [Vec<u8>; 9] = [
+        b"Marte/Olympus\n".to_vec(),
+        b"Europe/Madri".to_vec(),
+        Vec::new(),
+        b"\n\nEurope/Madrid".to_vec(),
+        vec![0xff, 0xfe, 0x00, 0x41],
+        b"Europe/Madrid\xc3".to_vec(),
+        vec![0; 200],
+        b"../../Estado/RAM/Ana/zona".to_vec(),
+        [b"Europe/Madrid\n".as_slice(), &[b'#'; MAX_ZONA]].concat(),
+    ];
+    for malo in malos {
+        let mut d = Disco::default();
+        d.poner(ZONA, malo.clone());
+        let i = Idiomas::cargar(&mut d);
+        assert!(i.local.zona.is_none(), "{malo:?}");
+        assert_eq!(i.local.hora_corta(julio), "18:05", "{malo:?}");
+        assert!(!i.ha_cambiado(&mut d), "{malo:?}");
+    }
+    // Que no se deja leer: lo mismo, y no se toma por un cambio.
+    let mut d = Disco::default();
+    d.poner(ZONA, b"Europe/Helsinki\n".to_vec());
+    d.protegidos.push(ZONA.into());
+    let i = Idiomas::cargar(&mut d);
+    assert_eq!((i.local.zona, i.local.hora_corta(julio)), (None, "18:05".into()));
+    assert!(!i.ha_cambiado(&mut d));
+    // Al cambiar el fichero, se nota; al quitarlo, también.
+    d.protegidos.clear();
+    d.poner(ZONA, b"Europe/Helsinki\n".to_vec());
+    assert!(i.ha_cambiado(&mut d));
+    let i = Idiomas::cargar(&mut d);
+    assert_eq!((i.local.zona.map(|z| z.nombre), i.local.hora_corta(julio)), (Some("Europe/Helsinki"), "20:05".into()));
+    assert!(!i.ha_cambiado(&mut d));
+    d.ficheros.remove(ZONA);
+    assert!(i.ha_cambiado(&mut d));
+    // Al azar: cualquier contenido da una zona de la tabla o ninguna, sin reventar.
+    let mut x = 0x2545_f491_4f6c_dd1du64;
+    for _ in 0..20_000 {
+        let mut b = b"Europe/Madrid\n".to_vec();
+        for _ in 0..2 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            let k = (x % b.len() as u64) as usize;
+            b[k] = (x >> 40) as u8;
+        }
+        let mut d = Disco::default();
+        d.poner(ZONA, b);
+        let i = Idiomas::cargar(&mut d);
+        let _ = i.local.fecha_hora_corta((x >> 20) as i64 - (1 << 43));
+    }
 }

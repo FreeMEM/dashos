@@ -3,7 +3,8 @@
 //! De la red solo tiene la llave de conectar, como cualquier programa: no escucha.
 //!
 //! El servidor lo dice el servicio de red en su estado (`E_HORA`): el de `Prefs/Red/hora` del disco del sistema, ya
-//! resuelto. Cuando hay red y servidor, le pregunta (`dashos::sntp`): la petición lleva un número al azar y solo vale
+//! resuelto. Si el ajuste lo apaga (o la red no pudo leer sus ajustes), el estado lo dice (`E_HORA_APAGADA`) y no se
+//! pregunta a nadie. Cuando hay red y servidor, le pregunta (`dashos::sntp`): la petición lleva un número al azar y solo vale
 //! la respuesta que lo devuelve, de un servidor con hora, desde la dirección a la que se preguntó (el zócalo, sin el
 //! permiso de escuchar, no recibe de nadie más). Pone la hora y vuelve a preguntar cada hora; si nadie contesta,
 //! reintenta a los 30 s, y cada vez más despacio (hasta 10 minutos).
@@ -103,9 +104,19 @@ fn principal() -> u64 {
     );
     let mut espera = REINTENTO_US;
     let mut dicho = false;
+    let mut dicho_apagado = false;
     loop {
         // El servidor, cuando el servicio de red tenga dirección y lo haya resuelto.
         let ip = match estado(RED, 2_000_000) {
+            Ok(e) if e[p::E_HORA_APAGADA] == 1 => {
+                if !dicho_apagado {
+                    println!("  [hora] sin servidor de hora (apagado en Prefs/Red/hora, o la red no pudo leer sus ajustes): no se pregunta a nadie");
+                    dicho_apagado = true;
+                }
+                // Si relanzan el servicio de red con otro ajuste, se verá aquí.
+                dormir(60_000_000);
+                continue;
+            }
             Ok(e) if e[p::E_CONFIGURADA] == 1 && e[p::E_HORA] != 0 => e[p::E_HORA].to_le_bytes(),
             _ => {
                 dashos::dormir_us(1_000_000);

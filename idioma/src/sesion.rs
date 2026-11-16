@@ -7,6 +7,8 @@
 //!   `LOCALE:Catalogs/<idioma>/<programa>.catalog`, en el primer idioma preferido que lo tenga.
 //! - Los textos del idioma (días, meses), de `LOCALE:Languages/<idioma>.language`; los datos del país, si el
 //!   `locale.prefs` no los trae, de `LOCALE:Countries/<país>.country`.
+//! - La zona horaria, de `SYS:Prefs/zona`: es del sistema, la misma que enseña la barra. Si no está, no se entiende o
+//!   no está en la tabla, valen los minutos de `locale.prefs`.
 //!
 //! Un fichero que falta, que no se deja leer o que está roto no es un error: se sigue con lo de serie.
 
@@ -24,6 +26,9 @@ pub const PREFS: &str = "ENV:Sys/locale.prefs";
 pub const PREFS_GUARDADAS: &str = "ENVARC:Sys/locale.prefs";
 /// Lo más que mide un `locale.prefs` o un `.country` que se lee (los de verdad no llegan a 1 KB).
 pub const MAX_PREFS: usize = 4096;
+/// La zona horaria del sistema (la de la barra) y lo más que mide su fichero (una línea).
+pub const ZONA: &str = "SYS:Prefs/zona";
+pub const MAX_ZONA: usize = 256;
 
 /// Por dónde se reconoce un fichero si cambia: fecha, tamaño y en qué capa de su asignación estaba.
 pub type Firma = (u64, u64, usize);
@@ -52,12 +57,14 @@ pub struct Idiomas {
     /// De qué fichero salió (`PREFS`, `PREFS_GUARDADAS`), o `None` si no hay ninguno y es lo de serie.
     pub origen: Option<&'static str>,
     firma: Option<Firma>,
+    /// La firma de `ZONA` cuando se leyó (`None`: no estaba).
+    zona_firma: Option<Firma>,
 }
 
 impl Idiomas {
     /// Lo de serie, sin leer nada: castellano y España.
     pub fn de_serie() -> Idiomas {
-        Idiomas { local: Local::de_serie(), origen: None, firma: None }
+        Idiomas { local: Local::de_serie(), origen: None, firma: None, zona_firma: None }
     }
 
     /// Lee las preferencias de idioma del usuario y lo que cuelga de ellas. No falla: lo que no se pueda leer se
@@ -88,7 +95,22 @@ impl Idiomas {
             }
         }
         yo.leer_textos(l);
+        yo.leer_zona(l);
         yo
+    }
+
+    /// La zona horaria del sistema. Si no está, no se deja leer, no es texto o no está en la tabla, sin zona: los
+    /// minutos de `locale.prefs`.
+    fn leer_zona<L: Lector>(&mut self, l: &mut L) {
+        match l.leer(ZONA, MAX_ZONA) {
+            Ok((bytes, firma)) => {
+                self.zona_firma = Some(firma);
+                self.local.zona = crate::zona::de_fichero(&bytes);
+            }
+            Err(Falta::NoExiste) => {}
+            // Está pero no se lee (o es enorme): su firma, para que `ha_cambiado` no lo tome por un cambio.
+            Err(Falta::Otra(_)) => self.zona_firma = l.firma(ZONA),
+        }
     }
 
     /// Los datos del país desde su `.country`, por su nombre tal cual y en minúsculas (los ficheros del Amiga van en
@@ -148,9 +170,13 @@ impl Idiomas {
     }
 
     /// Si las preferencias de idioma ya no son las que se leyeron (otra fecha, otro tamaño, o un fichero que antes no
-    /// estaba): hay que `cargar` otra vez y abrir los catálogos de nuevo. Cuesta una o dos preguntas al servicio de
-    /// archivos. Hasta que `archivos` avise de los cambios, es la forma de enterarse.
+    /// estaba), o la zona horaria del sistema cambió: hay que `cargar` otra vez y abrir los catálogos de nuevo. Cuesta de
+    /// dos a tres preguntas al servicio de archivos. Hasta que `archivos` avise de los cambios, es la forma de enterarse.
     pub fn ha_cambiado<L: Lector>(&self, l: &mut L) -> bool {
+        // La zona horaria: otra fecha o tamaño, o aparece o desaparece.
+        if l.firma(ZONA) != self.zona_firma {
+            return true;
+        }
         let ahora = match l.firma(PREFS) {
             Some(f) => Some((PREFS, f)),
             None => l.firma(PREFS_GUARDADAS).map(|f| (PREFS_GUARDADAS, f)),
