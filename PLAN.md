@@ -357,7 +357,8 @@ resumido, en `docs/diseño/RESUMEN.md`.
     exacta a nivel de línea (el ciclo, fase opcional); el kernel entregará los fallos de página al propio proceso;
     el núcleo de vAmiga (MPL-2.0) se puede leer y reutilizar; UAE solo por un analista y en casos concretos
     (`AGENTS.md`, regla 1); velocidad A500 u A1200 por defecto; fases 1 a 3 en el banco si hay manos; ROM de AROS
-    como extra.
+    como extra. Cambiado el 2026-11-16 (S36): la ROM de AROS deja de ser un extra. Va de serie en la imagen de
+    `SYS:`, bajada al construir con su huella comprobada, nunca en git; si el usuario tiene Kickstart, manda el suyo.
   - S10b (`docs/diseño/S10b-escritorios.md`): compositor oficial de confianza, servicios con el estado y escritorios
     de terceros sin privilegios, por Wayland estándar y una extensión propia ("inestable" hasta la 1.0); kit oficial
     en Dash compilado; política de ventanas en el compositor; la contraseña la dibuja el compositor; módulos que

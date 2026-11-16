@@ -170,7 +170,10 @@ Reescribir todas las bibliotecas de AmigaOS 3.1 lleva tiempo. Mientras tanto hay
   tenga en nativo, y ejecutarlas en el JIT sobre el exec de DashOS. Por ejemplo utility, mathieee o icon.
 - Solo sirven las que no tocan el chipset. graphics, layers e intuition de la ROM no valen, porque hablan con el
   hardware del Amiga.
-- DashOS no lleva ninguna ROM. La pone el usuario, como en Amiberry o en WinUAE.
+- DashOS no lleva ninguna ROM de Commodore. El Kickstart lo pone el usuario, como en Amiberry o en WinUAE. Lo que
+  sí lleva la imagen de `SYS:` desde el 2026-11-16 es la ROM libre de AROS (licencia APL), para que la máquina entera
+  de S18 arranque sin Kickstart. Se baja al construir, nunca va en git, y si el usuario tiene Kickstart manda el
+  suyo. Para cargar bibliotecas en la caja nativa, como dice este apartado, sigue haciendo falta el Kickstart.
 - Dónde se pone: en un cajón fijo y con nombre dentro de `Home:Amiga` (el cajón de la caja, S4b), que se llena
   arrastrando el fichero. El nombre del cajón, por diseñar al hacerlo.
 - Sin ROM, lo de serie tiene que seguir sirviendo. Si a un programa le falta una biblioteca, sale un aviso en llano

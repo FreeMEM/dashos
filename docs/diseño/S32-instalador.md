@@ -117,3 +117,6 @@ AMD-Vi), a un clic.
 
 - S5 y FS10: DashFS y sus volúmenes. S14: arranque y la imagen firmada de `SYS:`. S8: el plan con confirmación, el
   mismo estilo que los paquetes. S24: las máquinas donde se instala. S6b: instalar el sistema es de administrador.
+- S18: la imagen de `SYS:` que se instala lleva la ROM de AROS para 68k (licencia APL), para los juegos del Amiga de
+  quien no tenga Kickstart. Se baja al construir la imagen, con su huella comprobada, y la imagen dice dónde está su
+  código fuente. No va en git.
