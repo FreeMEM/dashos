@@ -132,6 +132,11 @@ pub const D_REPARTIR: u32 = 2;
 /// la raíz de su volumen y queda fuera de sus raíces, así que el cliente no la ve ni la vacía. Si no existe, se crea
 /// (un cajón suyo, 0700). Los cajones se borran como siempre (vacíos, nada que guardar).
 pub const HUECO_PAPELERA: u8 = 0x80;
+/// S6, S36 (registro y permisos de `sesiones`): en el alta, con este bit en el hueco de una raíz (1 a 15), el último
+/// cajón de su camino se crea si falta, del cliente y 0755 (los de antes tienen que existir); y si ya está y no es
+/// del cliente, esa raíz no se da. Así un servicio tiene su cajón dentro de otro que no es suyo (`Home:Prefs/Permisos`
+/// de una persona) sin que nadie se lo cambie de sitio y ponga otro con lo que quiera.
+pub const HUECO_SUYO: u8 = 0x40;
 
 // Estados de las respuestas.
 pub const BIEN: i32 = 0;
