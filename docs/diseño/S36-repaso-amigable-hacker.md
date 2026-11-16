@@ -146,3 +146,112 @@ abajo se conserva. S10 y S23 se corrigen para decirlo así. S27 usa a veces "pan
 Primero se corrigen los documentos con las reglas 1 a 10 (rama `repaso-s0`, revisada antes de unir). Luego, al hacer
 cada pieza, su prueba incluye las dos preguntas: que exista la orden de Shell y el fichero de texto, además de la
 ventana.
+
+## Aplicado (2026-11-16)
+
+Rama `repaso-s0`. De los 162 hallazgos se aplicaron 145 (9 de ellos solo en parte) en 39 documentos. El texto se
+cambió en su sitio. Donde no había nada decidido se dice qué tiene que existir (el fichero, la orden, el registro) y
+el formato queda "por diseñar al hacerlo".
+
+Nombres comunes, los mismos en todos: órdenes `Ajuste`, `Registro`, `Permiso`, `Instantanea`, `Caja`, `Status`,
+`Break`, `Usuario`, `Avisos`, `Sonido`, `Pantalla`, `Dormir` e `Hibernar`; cajón `Estado:Registros/`; "modo de
+desarrollo"; "Mostrar todos los ficheros". Quién define cada cosa: S4b, las capas y los cajones; S6, el registro y el
+modo de desarrollo; S6b, los permisos; S5, las instantáneas; S7, la orden `Caja`; S27 (apartado 7), la orden `Ajuste`.
+
+Dos sitios que estaban repetidos quedan en uno, el que encaja con S4b:
+
+- **Los permisos concedidos**: `Home:Prefs/Permisos/` (S6b). Son de cada usuario y viajan con su volumen; `Estado:`
+  es para lo que no es de ningún usuario. S28, S10c y U6 lo citan. El código de hoy los guarda en el cajón de
+  `sesiones`: queda dicho como estado.
+- **El cajón de la caja Amiga**: `Home:Amiga` (S4b), que dentro de la caja se ve como `Caja:`. S28 y S6b lo citan.
+
+Nombres nuevos y provisionales: `Estado:Prefs` y `Estado:Devs` (la capa de la máquina de `ENVARC:` y de `DEVS:`),
+`Home:Instantáneas/` y el volumen `Linux:`.
+
+| Documento | Reglas | Qué se puso |
+|---|---|---|
+| S4b | 1, 2, 6 | Capa de la máquina; cada ajuste es texto y el IFF se genera de él; `Assign` y `Which` enseñan las capas; `Datos/`, `Prefs/Permisos/` e `Instantáneas/` en el árbol de `Home:`; volver a fábrica se deshace |
+| S5 | 1, 2, 5 | Las instantáneas como cajón, "Versiones anteriores" y la orden `Instantanea`; aviso y registro de un fichero dañado; lo enchufado se monta solo |
+| S6 | 2, 3, 4 | El registro único y la orden `Registro`; el modo de desarrollo; `Status` y `Break`; la orden `Permiso` |
+| S6b | 2, 3, 6 | Un solo sitio de permisos, legible; la frase en llano de cada permiso; la ficha entera de un proceso; la orden `Usuario`; borrar una cuenta se deshace unos días |
+| S8 | 1, 6, 10 | Órdenes de `Paq` para todo lo de Ajustes; repositorios y claves en texto; sin pregunta por la biblioteca repetida; con imagen de hibernación, la generación que la hizo |
+| S14 | 2, 4 | Registro de servicios en `Estado:Registros/`; capas de servicios con el modo de desarrollo; el menú de arranque sale solo tras dos fallos; aviso de la vuelta atrás |
+| S20 | 1, 6 | El ajuste de RAD: en la capa de la máquina; desmontar no pregunta y lo descartado va a la papelera; órdenes de Shell |
+| S28 | 2, 3, 5, 6 | La papelera del usuario para lo borrado y lo machacado; el aviso del bloque de arranque en llano; cita a S6b y a S4b |
+| S29 | 1, 2, 4, 5 | Reglas del cortafuegos de la caja en texto; el registro no deja de apuntar; copiar de una instantánea sin volver entero; restablecer se deshace |
+| S4 | 2, 6, 7 | Cajón de las ROM y aviso si falta una biblioteca; "Abrir aparte"; el perfil con la orden `Caja`; aviso al llegar a "memoria amiga"; nota del hilo único por caja |
+| S7 | 1, 2, 7 | El disco como volumen `Linux:`; la orden `Caja`; ajustes de la caja en texto; registro de la caja; aviso si Linux mata por memoria |
+| S13 | 1, 2 | Ajustes de red en texto; órdenes de Wi-Fi y de conexiones; registro de lo cortado; la pregunta de escuchar, en llano |
+| S17 | 2 | Aviso si un programa PPC no puede correr; la aplicación de QEMU elige la máquina sola |
+| S18 | 1, 6 | El modo de caja sale solo; la configuración en texto junto al juego; partidas y estados guardados donde se ven |
+| S25 | 1, 2 | Registro de reinicios de la GPU; quién la tiene; ajuste para forzar la CPU |
+| S11 | 1 | Puerto ARexx de serie por aplicación; ajustes en `ENVARC:`; herramienta de traza; aviso si falta MUI |
+| S12 | 2, 7 | Registro de reinicios; los controladores salen en `Status` |
+| S12b | (nota) | Línea de cabecera: contradicción con S35, por decidir |
+| S35 | 2, 4, 7 | Línea de cabecera; los dominios se listan y sacan su registro; imagen propia solo en modo de desarrollo; aviso a la tercera vez |
+| S21 | 1, 2 | Orden y registro de qué chip hace cada trabajo; ajuste para forzar la CPU |
+| S24 | 2, 8 | Lista llana de lo que aún no funciona; la línea de la CPU, al registro |
+| S1 | 3 | Llamada de solo lectura que lista las llaves de un proceso |
+| S2 | 1 | `Status` y `Break`; las tareas de cada caja; "de fondo" como tooltype; el perfil de energía en texto |
+| S3 | 1, 2 | Registro del Enforcer; "memoria amiga" manda desde su fichero; topar con el cupo deja rastro |
+| S16 | 2 | Lo cobrado a cada grupo se ve con `Status`; el error se llama `E_MEMORIA`, como en el código |
+| hilos | 2 | El fin no normal de un proceso va al registro; `Status` enseña los hilos |
+| S10 | 1, 9 | Los menús, a la vista con el clic normal; la vista general con el ratón; la orden `Avisos` |
+| S10b | 2, 3 | Los poderes se leen con `Permiso`; aviso y registro del escritorio mínimo; apagar con cuenta atrás |
+| S10c | 1, 3 | Los ajustes del usuario se cambian por fichero y por orden; protegido solo lo de seguridad |
+| S27 | 1 | La orden `Ajuste`; el texto manda sobre el IFF; "Deshacer cambios"; textos del panel en llano; zona horaria de serie |
+| S26 | 1, 2 | El dueño del tema es el servicio de apariencia; aviso con la línea que falla; excepciones con el ratón |
+| S23 | 1, 9 | "Probar con Workbench clásico"; la ficha como tooltypes; ver en ventana desde el menú |
+| S9 | 1 | La orden `Pantalla`; el modo nuevo se prueba y vuelve solo |
+| S19 | 1, 2 | Aviso al cambiar de salida; regla de salida de serie; la orden `Sonido`; registro de quién grabó |
+| S19b | 1, 2 | Ventana de cables y grafo en texto; período con nombres llanos; registro de plugins quitados |
+| S22 | 2, 10 | Se arranca con la generación de la imagen; aviso de lo que no guardó; `Dormir` e `Hibernar`; el sitio de la imagen |
+| U6 | 2, 3 | Botón "Cambiar de usuario"; aviso y registro de lo negado a la sesión de detrás; cita a S6b |
+| S32 | 2, 8 | El plan como fichero de texto y registro; aviso de IOMMU con un botón; guía para encoger; deshacer en vez de doble confirmación |
+| S33 | 2, 8 | Aviso con un solo botón si falta un códec; orden y registro de por dónde se decodifica |
+
+## No aplicado
+
+Diecisiete hallazgos enteros y la mitad de otros nueve. Quedan pendientes de que decida el usuario.
+
+Decididos antes, o en la lista de "Por decidir" de arriba:
+
+- **H17** (S6, S6b): la contraseña en cada acción de administrador. Decidido.
+- **H23** (S6b): las aplicaciones encerradas no cargan de `Home:Libs`. Decidido.
+- **H43** (S28): la guardia que pregunta y caduca a los 30 segundos. Decidido.
+- **S12-3 y S12b-1**: LKL frente a dominios. Solo llevan la línea de cabecera S12b y S35.
+- **S27-4**: "pantallas" frente a "espacios de trabajo" y sus teclas.
+- **S18-2**, y la parte de **S4-1** que era llevar una ROM de serie.
+
+Decisión nueva de seguridad, o cambia algo decidido con el usuario:
+
+- **H26** (S6b): elegir la imagen de una rejilla en vez de la frase. Cambia la defensa contra la ventana falsa.
+- **H30** (S8): instalar de serie en `Home:` y sin contraseña. Cambia quién necesita al administrador.
+- **H46** (S28, S6b): qué ve la caja Amiga de serie. Los dos documentos siguen sin decir lo mismo.
+- **H51** (S29): que lo de `WBStartup` no pregunte.
+- **S10b-5**: un escritorio de la caja Linux con poderes.
+- **U6-1**: apagar con otra sesión abierta sin contraseña de administrador (decisión 7 de U6).
+- **U6-4**: pausar la música de la sesión de detrás (decisión 2 de U6, ya hecha como silencio).
+- **S32-4**: que `Paq` instale el controlador de NVIDIA. El apartado está decidido el 2026-11-15.
+- En parte: **H22** (se puso el aviso en llano; sigue preguntando todo), **H48** (la pregunta de `red-local`),
+  **H52** (la excepción de administrador), **U6-2** (la lista de cuentas; se puso el botón), **S35-4** (quién cambia
+  la tabla de aparatos), **S35-5** (dejar de reiniciar el dominio), **hilos-2** (reparto por grupo, pregunta 3).
+
+Otros motivos:
+
+- **H8**: `Startup-Sequence` dice una cosa en S4b y otra en S14 y S28. Hay que elegir, y no es un cambio de texto.
+- **S27-7**: que no se pueda apagar es el estado de hoy; subirlo de prioridad es cosa de la hoja de ruta.
+- **S11-4**, en parte: repartir MUI depende de su licencia. Se puso solo el aviso.
+
+Dudas que salieron al aplicar:
+
+1. Los permisos pasan de modo `0700` a legibles por su dueño (regla 3). Escribir sigue siendo solo de `sesiones`.
+2. El modo de desarrollo es superficie nueva de seguridad. Solo se dice qué tiene que cumplir; el detalle va con
+   revisión. Lo mismo la llamada del kernel que lista las llaves de un proceso (S1).
+3. S4b tenía abierta la pregunta 3 con "IFF para lo compartido" como recomendado. Con la regla 1 queda "todo en texto
+   y el IFF se genera". Es un cambio de recomendación.
+4. Una aplicación encerrada solo ve su cajón: cómo escribe sus ajustes en `ENVARC:` (S11) queda por diseñar.
+5. S4b dice a la vez que `/home/<usuario>` es `Home:` y que `Home:Linux` es el /home de la caja Linux. Ya estaba así;
+   no se tocó.
+6. Las órdenes de S21 (qué chip hace cada trabajo), S24 (describir la máquina), S33 (clases de DataTypes) y S20
+   (montar imágenes) quedan sin nombre.

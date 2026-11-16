@@ -56,7 +56,9 @@ modos:
 - **Cada ventana nace donde le toca.** Los diálogos, las ventanas pequeñas y las de tamaño fijo nacen flotando; las
   normales, en el mosaico. Cada pantalla dice si las nuevas llegan al mosaico o flotando; la pantalla de Workbench,
   flotando.
-- **Se recuerda.** Si una aplicación se dejó flotando, la próxima vez vuelve a flotar en el mismo sitio.
+- **Se recuerda.** Si una aplicación se dejó flotando, la próxima vez vuelve a flotar en el mismo sitio. Lo
+  recordado va en un fichero de texto de `ENVARC:`, una línea por programa; borrar la línea lo olvida (el nombre del
+  fichero, por diseñar al hacerlo).
 - **El teclado también vale**: una tecla manda la ventana al mosaico o la saca, para quien no use el ratón.
 
 ### Cada pantalla elige su disposición
@@ -67,9 +69,11 @@ modos:
 - **Cualquier ventana puede flotar** encima de una pantalla en mosaico. Los diálogos y las ventanas pequeñas flotan
   solas.
 - **Columnas con pestañas**, como niri.
-- **Vista general** de todas las ventanas y pantallas, con una tecla.
+- **Vista general** de todas las ventanas y pantallas, con una tecla y también con el ratón: un botón en la barra de
+  la pantalla.
 
-Se configura en `Prefs/Escritorio`, con aplicación inmediata (S4b), y por teclado se cambia al momento.
+Se configura en `Prefs/Escritorio`, con aplicación inmediata (S4b). La disposición se cambia al momento por teclado y
+desde el menú de la barra de la pantalla.
 
 ### Workbench
 
@@ -82,8 +86,10 @@ Se configura en `Prefs/Escritorio`, con aplicación inmediata (S4b), y por tecla
 
 Arriba de cada pantalla, como en el Amiga, y con lo de DMS a la derecha:
 
-- **A la izquierda**: el título de la pantalla y, con el botón derecho, **los menús del programa activo**, como en el
-  Amiga. Los programas Wayland de Linux con menú propio lo siguen teniendo dentro de su ventana.
+- **A la izquierda**: el título de la pantalla y **los menús del programa activo**. Los títulos de los menús se ven
+  en la barra y se abren con el clic normal, para que quien no conoce el Amiga los encuentre (S36, regla 9). El botón
+  derecho los sigue abriendo desde cualquier sitio, como en el Amiga: queda como atajo. Los programas Wayland de Linux
+  con menú propio lo siguen teniendo dentro de su ventana.
 - **A la derecha**: bandeja de iconos de programas, red, sonido, batería si la hay, reloj y notificaciones.
 
 ### Lanzador, notificaciones y Commodities
@@ -91,7 +97,8 @@ Arriba de cada pantalla, como en el Amiga, y con lo de DMS a la derecha:
 - **Lanzador por teclado** (Amiga derecha + espacio, o Super), como el de DMS: busca programas nativos, Amiga y Linux
   (S7, S8), ficheros, órdenes y ajustes.
 - **Notificaciones** con historial. Los programas de Linux llegan por la norma de freedesktop a través de la caja
-  Linux. Los Amiga, por un puente.
+  Linux. Los Amiga, por un puente. El historial es del usuario y se lee como texto, y hay una orden `Avisos` (listar,
+  borrar y mandar uno) sobre el servicio de notificaciones (S10b), para usarla en guiones. El formato, por diseñar.
 - **Commodities**, como en el Amiga: atajos de teclado globales y utilidades de fondo, que se ven y se paran desde
   `Exchange`.
 
@@ -175,7 +182,8 @@ Petición del usuario (2026-11-03): un sistema de personalización tan moderno c
 - Todo se ve al momento, sin reiniciar nada.
 - Para quien prefiera escribir: los mismos ajustes en ficheros de texto en `ENVARC:`, que se vuelven a leer solos al
   guardarlos, como la configuración de niri.
-- Por ARexx, para cambiar el tema o el fondo con un guion.
+- Por ARexx y con la orden `Ajuste` (S27, apartado 7), para cambiar el tema o el fondo con un guion. Todos escriben
+  el mismo fichero de `ENVARC:`, que es el que manda.
 
 **Temas y módulos para compartir**
 
@@ -199,8 +207,8 @@ Como DMS con niri: **el compositor y el escritorio son procesos distintos.**
 Decidido por el usuario (2026-11-03): **aspecto de Material Design** (Material 3), con el modelo de MUI por debajo
 (S11).
 
-- La estructura es la del Amiga: pantallas, barra arriba con los menús al botón derecho, Workbench con iconos y
-  cajones, gadgets de cerrar y de profundidad.
+- La estructura es la del Amiga: pantallas, barra arriba con los menús (a la vista y también al botón derecho),
+  Workbench con iconos y cajones, gadgets de cerrar y de profundidad.
 - El dibujo es el de Material 3: esquinas redondeadas, superficies con tono, tipografía y espaciado de Material, y
   animaciones cortas que se pueden quitar.
 - Colores sacados del fondo de pantalla, como Material You y como hace DMS con matugen. Tema claro y oscuro.
@@ -211,7 +219,8 @@ Decidido por el usuario (2026-11-03): **aspecto de Material Design** (Material 3
 1. ¿Escritorios virtuales como "pantallas" del Amiga, con el gesto de arrastrar hacia abajo? Recomendado: sí.
 2. ¿Disposición por defecto de una pantalla nueva: flotante (Workbench clásico) o mosaico con desplazamiento (niri)?
    Recomendado: Workbench flotante, y el resto en mosaico con desplazamiento.
-3. ¿Menús del programa en la barra de la pantalla con el botón derecho, como el Amiga? Recomendado: sí.
+3. ¿Menús del programa en la barra de la pantalla con el botón derecho, como el Amiga? Recomendado: sí, y además a
+   la vista en la barra con el clic normal (S36, regla 9).
 
 ## Cómo encaja
 

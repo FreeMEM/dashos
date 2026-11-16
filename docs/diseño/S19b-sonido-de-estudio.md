@@ -23,10 +23,15 @@ El servicio "sonido" de S19 pasa de mezclador a grafo, como JACK:
   audio y de MIDI.
 - **Conexiones libres**, que se cambian sin cortar el sonido. Un programa puede pedir su sitio en el grafo, o dejar
   que el servicio lo conecte a la salida, como en S19.
+- **Cómo las hace el usuario**: con el ratón, en una ventana de cables que se arrastran de un puerto a otro; desde el
+  Shell, con la orden `Sonido` de S19 (conectar, desconectar y listar el grafo); y por ARexx. El grafo se guarda y se
+  carga como un fichero de texto. El formato y la sintaxis, por diseñar al hacerlo.
 - **Un período para todo el grafo**, con orden por dependencias: cada nodo corre una vez por período, cuando sus
   entradas están listas. Los nodos independientes van en paralelo, en varios núcleos.
 - **Período por salida**: 64 muestras para tocar, 256 por defecto (S19), más para ahorrar energía. Lo eligen
-  `Prefs/Sonido` y el programa que lo necesite (con permiso: es la clase de plazo de S3).
+  `Prefs/Sonido` y el programa que lo necesite (con permiso: es la clase de plazo de S3). De serie nadie lo toca:
+  baja cuando un programa lo pide y vuelve a subir solo. En Prefs no sale en muestras, sino con nombres llanos
+  ("Normal", "Para tocar", "Ahorro"), con la cifra en el detalle. Es un ajuste de texto en `ENVARC:`, como los demás.
 - **Muestra exacta**: cada mensaje de MIDI y cada cambio de parámetro lleva su muestra dentro del período.
 - **Sin copias** (S21): los nodos de un mismo proceso comparten búferes; los de otros procesos, anillos de memoria
   compartida.
@@ -74,7 +79,8 @@ nodo reproductor que manda órdenes al nodo del chip. Así un SID de verdad toca
 
 - **CLAP** (licencia MIT) como estándar de plugins: instrumentos y efectos de terceros.
 - **Cada plugin en su proceso**, con su anillo: si se cuelga, el estudio sigue sonando y el servicio lo quita del
-  grafo con un fundido.
+  grafo con un fundido. Se dice: un aviso en llano ("El efecto X ha fallado y se ha quitado") y una línea en
+  `Estado:Registros/` (S6).
 - Un plugin no tiene permisos: ni red, ni ficheros fuera de su cajón (S6b), salvo los que declare su paquete.
 
 ## API compatible con JACK
@@ -87,7 +93,8 @@ PipeWire con su biblioteca que imita a JACK.
 - **Sala limpia**: se escribe desde la documentación pública de la API de JACK, sin copiar su código (la biblioteca de
   JACK es LGPL). Las cabeceras dicen las firmas; lo que no digan, la documentación y las pruebas con programas reales.
 - **Lo que no tiene sentido aquí** (arrancar un servidor, elegir el controlador de la tarjeta) se acepta y no hace
-  nada: el servidor es el servicio de sonido.
+  nada: el servidor es el servicio de sonido. Queda una línea en el registro, para que quien porta un programa vea
+  qué llamadas se ignoraron.
 - **Permisos**: un programa portado es una aplicación más (S6b). Conectarse a otros nodos que no son suyos pide el
   mismo permiso que grabar lo que suena (S19).
 

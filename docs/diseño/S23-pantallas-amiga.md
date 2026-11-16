@@ -52,6 +52,13 @@ Con esa regla, los cuatro casos salen solos:
   (por ejemplo 640 x 512 x 8 con sus plumas): ese programa ve ese Workbench, y sus ventanas se dibujan con esa
   paleta y se escalan. Se elige en las propiedades del programa (como "modo de compatibilidad" en Windows), y la caja
   trae una lista de programas conocidos.
+- **El usuario no tiene que diagnosticarlo.** Si un programa 68k que no está en la lista pide algo que el Workbench
+  grande no da, o se cae al abrir, el sistema ofrece en un clic "Probar con Workbench clásico" y recuerda la
+  respuesta en la ficha.
+- **Dónde se guarda.** La ficha, el filtro "monitor de la época" y la promoción de modos de un programa son tooltypes
+  de su icono: texto que se ve y se cambia en Información y desde el Shell, y que viaja con el programa. La lista de
+  programas conocidos es un fichero de texto en `SYS:`. Los nombres de los tooltypes y el formato de la lista, por
+  diseñar al hacerlo.
 - **Los adornos**: por dentro, como en el Amiga (barra de título y gadgets de Intuition); por fuera, el borde de
   DashOS. Con el tema "Amiga clásico" (S10), solo los de Intuition.
 
@@ -102,7 +109,10 @@ Con esa regla, los cuatro casos salen solos:
 - **La barra de título de una pantalla del Amiga** es la barra de esa pantalla de DashOS (S10, "La barra de la
   pantalla", arriba como en el Amiga). En el Workbench, la barra de DashOS.
 - **Los menús de Intuition** de la ventana activa salen en esa barra al pulsar el botón derecho, como en el Amiga,
-  con sus atajos de Amiga derecha. Los programas nativos con menús (GadTools o MUI, S11) hacen lo mismo.
+  con sus atajos de Amiga derecha. Los programas nativos con menús (GadTools o MUI, S11) hacen lo mismo. Sus títulos
+  se ven además en la barra y se abren con el clic normal (S10, S36 regla 9).
+- **El menú de la barra de la pantalla** (el de la propia pantalla, no el del programa) lleva lo que hoy solo tiene
+  tecla: ver esa pantalla en ventana o a pantalla completa.
 
 ## Cómo se prueba
 
@@ -133,7 +143,8 @@ Van con H5 (S15): necesitan exec, graphics, layers e intuition nativas.
 1. ¿Cada pantalla del Amiga, una pantalla de DashOS (escritorio virtual), con su mapa de bits de fondo y sus ventanas
    como ventanas del compositor? Recomendado: sí. Es lo que une los cuatro casos.
 2. ¿Las pantallas propias a pantalla completa por defecto, con la opción de verlas en ventana con una tecla?
-   Recomendado: sí; es lo que espera quien viene del Amiga.
+   Recomendado: sí; es lo que espera quien viene del Amiga. La misma opción va en el menú de la barra de esa
+   pantalla, para quien use el ratón.
 3. ¿Ficha de compatibilidad por programa con un Workbench clásico? Recomendado: sí, con una lista de programas
    conocidos de serie.
 

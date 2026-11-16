@@ -3,6 +3,10 @@
 Decidido con el usuario el 2026-11-15. Generaliza lo que S32 (controladores de serie) y S34 (gráficas) ya dicen. Es
 diseño: no hay nada hecho salvo lo que se nombra como existente.
 
+> **Contradicción por decidir (S36).** S12b dio por aceptado LKL: Linux como biblioteca dentro de un proceso de DashOS.
+> Este documento pone los controladores en máquinas virtuales y no nombra LKL. Cuál vale, o cada uno para qué, lo
+> decide el usuario.
+
 ## El problema
 
 Escribir a mano los controladores de Wi-Fi, Bluetooth, gráficas, impresoras o tarjetas raras no es realista. Linux
@@ -30,11 +34,15 @@ Un controlador propio sustituye al del dominio cuando exista. Una máquina con p
 
 - **Aparatos USB: sin IOMMU.** DashOS lleva el USB (xHCI) y presta al dominio un aparato concreto (un Wi-Fi USB, una
   impresora, un escáner). Vale en todas las máquinas, también en la Raspberry Pi. Es lo primero que se hace.
+  Qué aparato va a qué dominio se decide solo, por el identificador del aparato: el usuario no elige nada. La tabla
+  (aparato, dominio) es un fichero de texto que se puede leer. Dónde vive y quién puede cambiar una línea, por diseñar
+  al hacerlo.
 - **Aparatos PCI: con IOMMU** (VT-d, AMD-Vi; SMMU en ARM). Sin IOMMU, un aparato pasado alcanza toda la memoria: no se
   hace. DashOS x86 aún no lleva IOMMU (X5b en la rama `x86`).
 - **Aparatos de la placa en la Pi** (el Wi-Fi por SDIO): la Pi no tiene IOMMU. O controlador propio (el de Broadcom es
-  "fullmac": casi todo lo hace su firmware), o dominio sin esa barrera, dicho claro al usuario. Por decidir con la placa
-  delante.
+  "fullmac": casi todo lo hace su firmware), o dominio sin esa barrera. Por decidir con la placa delante. Si se
+  elige el dominio, no se pregunta al usuario: va de serie, y Ajustes lo dice en una línea llana ("El Wi-Fi de esta
+  placa tiene menos protección que el resto"), con el detalle a un clic.
 
 ## Dos Linux distintos, y por qué no se juntan
 
@@ -68,6 +76,27 @@ compartido en solo lectura.
 Un controlador de Wi-Fi lee datos hostiles del aire. En Linux corre dentro del kernel; aquí, encerrado en una máquina
 virtual. Con los mismos controladores, DashOS queda más protegido que Linux.
 
+## Los dominios se dejan mirar
+
+Encerrado no quiere decir escondido (S0). Tiene que existir:
+
+- **Una lista.** `Status` (S2) enseña los dominios junto a los controladores propios (S12): el aparato de cada uno, la
+  memoria que usa, su tope y cuántas veces se ha reiniciado. El Monitor del sistema enseña lo mismo.
+- **Su registro.** Lo que dice el kernel de cada dominio sale por su canal con DashOS a un fichero de texto en
+  `Estado:Registros/` (S6), uno por dominio. La orden `Registro` lo lee y lo sigue en vivo. El dominio sigue sin
+  consola y sin disco: solo saca texto.
+- **Cada reinicio**, una línea en ese registro con el dominio, el motivo y la hora.
+- **El máximo de memoria medido** en esta máquina (ver "Memoria") se guarda en texto que se puede leer.
+
+El formato de todo esto, por diseñar al hacerlo.
+
+### Un aparato que nuestra imagen no trae
+
+Quien tenga un aparato así necesita una salida que no sea apagar la seguridad. Tiene que existir una imagen de dominio
+propia, y solo en el modo de desarrollo (S6): se activa a propósito, se ve una marca fija en pantalla, queda en
+`Estado:Registros/` y vive en la capa del usuario o de la máquina, sin tocar `SYS:`. Las seis capas no se cambian. Cómo
+se firma y se comprueba esa imagen es una decisión de seguridad: por diseñar al hacerlo, con revisión (S36).
+
 ## Memoria: tope medido y dinámico
 
 Preocupación del usuario: el consumo. Reglas:
@@ -75,8 +104,10 @@ Preocupación del usuario: el consumo. Reglas:
 - **Sin número fijo en el código.** Cada imagen de dominio lleva, firmado, lo que mide en nuestro banco. En la máquina
   del usuario se afina: se apunta el máximo que usa de verdad (depende del aparato y del número de procesadores) y el
   tope queda en ese máximo más un margen. Con cada actualización del kernel se mide de nuevo.
-- **Si se pasa del tope**, se registra y se reinicia el dominio (menos de un segundo, sin estado). La memoria no es
-  una prueba de integridad (un módulo maligno puede ocupar lo mismo): es una alarma, la sexta capa.
+- **Si se pasa del tope**, se registra (en `Estado:Registros/`, ver "Los dominios se dejan mirar") y se reinicia el
+  dominio (menos de un segundo, sin estado). La memoria no es una prueba de integridad (un módulo maligno puede ocupar
+  lo mismo): es una alarma, la sexta capa. Si pasa tres veces seguidas, sale un aviso en llano ("El Wi-Fi está
+  fallando y se reinicia solo"), con el detalle a un clic.
 - **Condición para dar el diseño por bueno**: medirlo. Objetivo: 48 MB o menos para el dominio de red y Wi-Fi. Las
   cifras de hoy (32 a 64 MB para red; más para gráficas) son estimaciones sin medir.
 - **Lo que baja el consumo**: controladores propios para lo siempre encendido; dominios a demanda; Linux sin

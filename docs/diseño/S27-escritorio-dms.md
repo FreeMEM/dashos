@@ -190,6 +190,8 @@ Detalle en `docs/bitacoras/escritorio-dms.md`.
     panel rápido como Super+A.
 - **Espacios de trabajo** (compositor, `wayland/src/escena.rs`): del 1 al 9, como lo descrito en la sección 3 sin las
   columnas. `dashos_tema_v1` pasa a la versión 3: evento `espacios` para la barra y petición `espacio` solo de la barra.
+  Falta (S0: lo del ratón, también por guion): la misma petición por el canal de órdenes del compositor y por ARexx
+  (S10b, sección 3), con el poder "Pantallas".
 - **Lanzador**: en el centro de lo que deja la barra, 600 de ancho, buscador de 56, hasta 7 filas de 56 con el icono
   (la inicial en un cuadrado redondeado del contenedor primario), el nombre y de dónde sale, y un pie con las teclas y
   cuántos casan. La lista (buscar, elegir, desplazar) va aparte, en `usuario/src/lanzador_lista.rs`, con sus pruebas.
@@ -212,6 +214,9 @@ El usuario aceptó las siete recomendaciones de arriba (2026-11-13). Detalle en 
   - Rejilla de dos columnas: la red (lo que dice el servicio de red: "Conectada · 10.0.2.15", "Sin dirección" o "Sin
     red"), el modo oscuro y bloquear. Cada mosaico con su icono en un cuadrado redondeado (en el primario si está
     encendido), el nombre y el estado. El modo de edición no cambia.
+  - Esos textos son los de hoy y tienen jerga. Por S0 (mensajes en llano, el detalle a un clic) tienen que quedar
+    así: "Esta pantalla no deja cambiar el brillo" en vez de "Sin control aquí"; "Conectada" o "Con cable, pero sin
+    Internet" en vez de la dirección y de "Sin dirección", con la dirección en el detalle del mosaico.
 - **Píldora de estado de la barra** con el estado de verdad: el panel pregunta a la red cada 10 s y lleva el volumen;
   cuando cambia algo, lo da al compositor (petición `estado`, `dashos_tema_v1` versión 5, solo del panel), que se lo
   pasa a la barra. Sin red, el icono de red sale tachado y en el color suave; con el silencio, el altavoz lleva una
@@ -263,10 +268,17 @@ Se toma la idea (sin leer su código), y se casa con las Prefs del Amiga:
 - **El buscador** busca en los nombres y en palabras clave de cada ajuste, también en el idioma del usuario, y abre
   la categoría con el ajuste resaltado. El lanzador (Super+Espacio) también encuentra ajustes.
 - **De máquina o de usuario**: lo de máquina (hora del sistema, red del sistema, usuarios, programas de todos) lleva el
-  candado de administrador (S6b); lo demás es de cada usuario y va en su `Home:`.
-- **Ficheros de texto legibles** en `ENVARC:` para lo nativo (los que lee la caja Amiga siguen en IFF, S4b): se
-  pueden copiar entre máquinas y guardar en git. "Volver a fábrica" por categoría: borrar ese fichero de la capa del
-  usuario.
+  candado de administrador (S6b) y va en la capa de la máquina de `ENVARC:`, en `Estado:Prefs` (S4b): texto que
+  todos leen y que se escribe con acción de administrador, desde la ventana o con la orden `Ajuste`. Lo demás es de
+  cada usuario y va en su `Home:`.
+- **Ficheros de texto legibles** en `ENVARC:`, y el fichero de texto es el que manda (S36, regla 1): se pueden
+  copiar entre máquinas y guardar en git, y editarlos a mano vale lo mismo que usar la ventana. También para los que
+  lee la caja Amiga: su `.prefs` en IFF se genera del texto (abajo, "Sincronizado con la caja Amiga"). "Volver a
+  fábrica" por categoría: quitar ese fichero de la capa del usuario (S4b dice cómo se deshace).
+- **Lo protegido es solo lo de seguridad**: permisos, cuentas y ajustes de la máquina pasan por `guardian`, vengan de
+  la ventana o del Shell (S10c, S6b). Todo lo demás lo cambia su dueño sin preguntas, por fichero, ventana u orden.
+- **Sirve recién instalado**: la zona horaria sale de serie del idioma y país elegidos al instalar (S32), sin
+  preguntar otra vez; se cambia en Fecha y hora. Hoy la hora es UTC (sección 2).
 - Hoy los Ajustes (C1, C3) tienen 8 secciones; faltan Red, Sonido, Teclado, Idioma, Fecha y hora y Usuarios, el
   buscador por ajuste y la casación con `SYS:Prefs`/`ENVARC:` (que depende de las asignaciones nativas, paso 2).
 
@@ -283,12 +295,20 @@ Ajustes y el cajón `SYS:Prefs` son dos puertas a lo mismo, no dos sistemas:
   ficheros. Un programa instalado que trae su editor de preferencias aparece solo en los dos sitios.
 - **Los tres botones del Amiga, con vista al momento de DMS**: lo que se toca se ve ya (va a `ENV:`); **Guardar** lo
   escribe también en `ENVARC:` (para siempre), **Usar** lo deja solo en esta sesión, **Cancelar** vuelve a como estaba.
-  En la ventana de Ajustes, cerrar es Guardar (como DMS); en el editor suelto, los tres botones.
+  En la ventana de Ajustes, cerrar es Guardar (como DMS); en el editor suelto, los tres botones. Para que cerrar no
+  deje sin vuelta atrás, la ventana de Ajustes lleva a la vista un "Deshacer cambios" por categoría, que vuelve a
+  como estaba al abrirla (S0: deshacer antes que preguntar).
 - **Presets**: `SYS:Prefs/Presets` (de fábrica) y `Home:Prefs/Presets` (los suyos): un fichero de preferencias con su
   icono; doble clic lo aplica. Exportar e importar es copiar ese fichero.
 - **Desde el Shell y los guiones**, como en el Amiga: `Idioma FROM fichero USE` o `SAVE`, para ponerlo en
-  `User-Startup` o en un guion.
+  `User-Startup` o en un guion. Eso carga un fichero entero. Para un ajuste suelto hay una orden común a todas las
+  categorías, **`Ajuste`**: `Ajuste LEE clave` lo enseña y `Ajuste PON clave valor` lo cambia, con `USE` (solo esta
+  sesión, `ENV:`) o `SAVE` (también en `ENVARC:`). Escribe el mismo fichero de texto que la ventana, así que lo que
+  se hace con el ratón se hace igual en un guion. Si el ajuste es de la máquina, pide la acción de administrador. La
+  sintaxis exacta y los nombres de las claves, por diseñar al hacerlo.
 - **Sincronizado con la caja Amiga**: las preferencias que también entiende AmigaOS (idioma, país, fuentes, modo de
-  pantalla, teclado, puntero, paleta) van en `ENV:Sys/*.prefs` en el formato IFF del Amiga (S4b). Si el usuario abre
-  el `Locale` o el `Font` originales de 68k dentro de la caja, escriben esos mismos ficheros, y DashOS lo ve al
-  momento; y al revés.
+  pantalla, teclado, puntero, paleta) las necesita la caja en `ENV:Sys/*.prefs`, en el formato IFF del Amiga (S4b).
+  Son justo las que más se tocan, y un IFF no se lee ni se edita a mano. Por eso manda el fichero de texto: el
+  `.prefs` en IFF se genera de él cada vez que cambia. Si el usuario abre el `Locale` o el `Font` originales de 68k
+  dentro de la caja y escriben el IFF, ese cambio se lleva al texto, y DashOS lo ve al momento. Cómo se casan los
+  dos sentidos sin pisarse, por diseñar al hacerlo.

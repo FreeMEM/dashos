@@ -19,6 +19,10 @@ el decodificador de la máquina si lo hay y sabe ese formato; si no, la CPU.
   en `SYS:`: un paquete opcional de "códecs extra" (como hacen Fedora y openSUSE). Si se distribuye y desde dónde, lo
   decide el usuario: es una cuestión legal.
 - **Respaldo para todo**: la caja Linux con mpv y ffmpeg de su distribución.
+- **Lo que falta se ofrece, no se explica** (S36, regla 8). Si al abrir un fichero no hay con qué decodificarlo, sale
+  un aviso en llano con un solo botón: "Instalar lo que falta" si hay un paquete que lo da, o "Abrirlo con el
+  reproductor de Linux" si no. El usuario no tiene que saber qué es un códec; el nombre del formato va en "Detalles".
+  Qué formatos van de serie no cambia con esto.
 
 ## Por CPU
 
@@ -62,6 +66,16 @@ lo comparte. Así queda en cada máquina:
 - **Por CPU, siempre**: lo libre (AV1, VP9) cabe en cualquier PC moderno, también en 4K.
 
 Sala limpia: los controladores de Linux corren dentro de la caja Linux o de la zona GPL, nunca copiados a DashOS.
+
+## Cómo se mira por dónde se decodifica
+
+Cada clase elige sola entre el decodificador de la máquina y la CPU. Para que se pueda ver y cambiar sin leer el
+código (S0):
+
+- Una orden de Shell lista las clases de DataTypes y el camino que usa cada una (máquina o CPU). Su nombre, por
+  diseñar al hacerlo.
+- Un ajuste de texto en `ENVARC:` fuerza la CPU, para depurar. Se cambia en Ajustes o con la orden `Ajuste`.
+- Al abrir un fichero queda una línea en `Estado:Registros/` (S6) con el formato y el camino elegido.
 
 ## Cómo se ve en el escritorio
 

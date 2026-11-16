@@ -120,6 +120,22 @@ Un programa que usa el sistema pero toca algún chip. Los casos más comunes, de
 Los chips de la máquina entera sirven tal cual para los casos 1 a 3. El 4 se deja hasta que un programa concreto lo
 pida.
 
+### Quién elige el modo, y dónde queda la configuración (repaso S36, 2026-11-15)
+
+El usuario no tiene que saber que hay tres modos ni qué es la chip RAM (S0):
+
+- **El modo sale solo.** Un ADF que arranca y un juego de WHDLoad van directos a la máquina entera. Si un programa de
+  la caja nativa toca los chips, en vez de un error mudo el sistema ofrece en un clic "Abrirlo como Amiga completo", y
+  lo recuerda en su icono (un tooltype). El Enforcer lo apunta igual en su registro (S3).
+- **La configuración sale sola**: modelo, memoria y velocidad salen de los perfiles de la sección 3 y, en WHDLoad, de
+  lo que dice su cabecera. Solo se toca si algo va mal. De dónde sale para lo demás, por diseñar al hacerlo.
+- **Queda en texto, junto al juego**: un fichero de texto al lado del disco, o los tooltypes de su icono, con el
+  modelo, la memoria, la velocidad y el Kickstart. La ventana de la máquina escribe ahí, se edita a mano y un guion
+  lo cambia. Una orden de Shell lanza una máquina con ese fichero (la orden `Caja` de S7, o una opción suya). Cuál de
+  las dos formas y el formato, por diseñar al hacerlo.
+- **El Kickstart** se pone en el cajón de las ROM de `Home:Amiga` (S4, sección 6). Si falta, se dice en llano y se
+  enseña dónde soltarlo.
+
 ### Por cuál empezar
 
 **Recomendado: la máquina entera primero.** Porque:
@@ -383,7 +399,9 @@ emulador. **Falta el servidor de audio** de DashOS: es una dependencia.
   bruto: el ADF ampliado o el IPF. El IPF se lee con una biblioteca de SPS con licencia propia (sin revisar). Va
   después.
 - **Velocidad**: real por defecto, porque hay cargadores que cuentan con ella. Rápida como opción.
-- El disco escribe en una copia, no en el fichero original, salvo que el usuario lo pida.
+- El disco escribe en una copia, no en el fichero original, salvo que el usuario lo pida. Esa copia es la capa de
+  cambios de S20: queda al lado de la imagen, como un fichero que se ve, con "Aplicar a la imagen" y "Descartar
+  cambios" en el menú del icono. Ahí están las partidas guardadas, donde el usuario las encuentra.
 
 ### El disco duro de la caja
 
@@ -410,7 +428,8 @@ Amiga y los comentarios (FS7) y la fecha (no hay reloj de la hora).
 
 Toda la máquina está en un proceso: chip RAM, registros, chips y la CPU. Guardar y cargar el estado es copiar eso; las
 traducciones del JIT se tiran. Encaja con "congelar un programa y llevárselo a otra máquina" de las propuestas de la
-visión (PLAN, 2026-11-07).
+visión (PLAN, 2026-11-07). Cada estado guardado es un fichero con nombre claro, al lado del disco o en un cajón de
+`Home:Amiga`: nada queda donde el usuario no lo encuentre (S0). Cuál de los dos sitios, por diseñar al hacerlo.
 
 ## 6. Pruebas
 
@@ -579,6 +598,7 @@ Decidido por el usuario el 2026-11-08: todas como se recomienda ("vale a todo").
 - Con S9 y S10: la pantalla de la máquina es una superficie más, en ventana o a pantalla completa; a pantalla
   completa, mejor un modo de 50 Hz.
 - Con S6: la máquina entera solo ve su ventana, su audio, su entrada y los ficheros que se le dan (ADF, cajones).
+- Con S20: la copia en la que escribe el disquete es la capa de cambios de la imagen, que se ve y se deshace.
 - Con S16: la llamada nueva del kernel cumple sus reglas: el marco se escribe con accesos sin privilegio y un fallo en
   el manejador termina el proceso.
 - Con S17: el mismo banco y el mismo tipo de oráculo (`qemu-ppc` allí, FS-UAE aquí).

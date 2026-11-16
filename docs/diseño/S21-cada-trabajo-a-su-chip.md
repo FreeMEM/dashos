@@ -20,7 +20,15 @@ hacer. Tres reglas:
 2. **Sin copias.** Un búfer se pinta, se mezcla o se lee una vez, en memoria compartida (anillos de S1, `dmabuf` de
    Wayland), y el chip que lo usa lo lee de ahí.
 3. **Medido.** Cada camino nuevo se compara con el de la CPU en la misma prueba, con el uso de CPU al lado, y va al
-   panel de medidas. Si el chip no gana, se queda la CPU.
+   panel de medidas. Si el chip no gana, se queda la CPU. Las medidas salen también en texto, no solo en el panel.
+
+El usuario no elige nada. Pero se puede mirar y cambiar (S0). Tiene que existir:
+
+- Una orden de Shell que diga, por trabajo, quién lo hace ahora (el chip o la reserva) y por qué cayó a la reserva. El
+  nombre, por decidir al hacerla.
+- Una línea en `Estado:Registros/` (S6) cada vez que un trabajo cae a la reserva, con el motivo y la hora.
+- Un ajuste en un fichero de texto de `ENVARC:` (S4b) para forzar la CPU en un trabajo, para depurar. Se cambia con la
+  orden `Ajuste` o a mano. Si es del usuario o de la máquina, por decidir al hacerlo.
 
 ## Qué hay en cada placa
 

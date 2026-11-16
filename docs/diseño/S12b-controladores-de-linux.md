@@ -4,6 +4,10 @@ Del 2026-11-10. Recomendaciones aceptadas por el usuario el mismo día. Concreta
 (controladores de Linux en procesos aparte, en la zona GPL) y añade a S13 lo que hace falta para el Wi-Fi. Es diseño:
 no hay código.
 
+> **Contradicción por decidir (S36).** Aquí se da por aceptado LKL. S35, escrito después, pone los controladores de
+> Linux en máquinas virtuales (dominios de controladores) y no nombra LKL. Cuál vale, o cada uno para qué, lo decide el
+> usuario.
+
 ## El problema
 
 La decisión de S12 era imitar, para cada controlador de Linux, las partes del kernel que usa (memoria, DMA,
