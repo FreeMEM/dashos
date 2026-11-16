@@ -186,6 +186,25 @@ arranque-virt-shell: virt-uso $(DISCO_NVME)
 	for c in $(SHELL_CAPTURAS); do test -s target/shell/shell.$$c.png || { echo "FALTA la captura $$c"; exit 1; }; done
 	mkdir -p ../capturas-agente && for c in $(SHELL_CAPTURAS); do cp target/shell/shell.$$c.png ../capturas-agente/shell-$$c.png; done
 
+# S10, los menús de los programas (docs/bitacoras/menus.md): la imagen de usar con la prueba de kit-c (`dash-ventana`)
+# y una copia del disco de pruebas. `tools/guion_menus.py` entra como Ana y mira los menús del Shell (el kit nativo) y
+# de `dash-ventana` (kit-c) dentro de la ventana; los pasa a la barra con `Ajuste menus barra` (tecleado en el Shell),
+# los abre allí con un clic y con el botón derecho, elige en ellos, y vuelve dentro; con una captura en cada momento
+# (target/menus/menus.*.png; y en ~/recuperar/geosian-7d/menus-capturas/, fuera de git).
+VIRT_MENUS := target/kernel8-virt-menus.img
+MENUS_CAPTURAS := 01-kitc-dentro 02-kitc-dentro-abierto 03-shell-dentro 04-shell-dentro-abierto 05-barra-shell 06-barra-shell-abierto 07-barra-elegido 08-barra-boton-derecho 09-barra-kitc 10-barra-kitc-abierto 11-kitc-elegido 12-dentro-otra-vez 13-f10
+MENUS_FUERA ?= $(HOME)/recuperar/geosian-7d/menus-capturas
+arranque-virt-menus: usuario $(DISCO_NVME) FORCE
+	cargo build $(CARGO_PERFIL) --features virt,uso,menus
+	$(OBJCOPY) -O binary $(ELF) $(VIRT_MENUS)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_MENUS)) cargo build --release
+	rm -rf target/menus && mkdir -p target/menus
+	cp --reflink=auto $(DISCO_NVME) target/menus/disco.img
+	GUARDAR=$(abspath target/salida_virt_menus.txt) MENUS_CAPTURAS=$(abspath target/menus/menus) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU) -drive file=$(abspath target/menus/disco.img),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_menus.txt 400
+	@cat target/menus/menus.guion.txt
+	for c in $(MENUS_CAPTURAS); do test -s target/menus/menus.$$c.png || { echo "FALTA la captura $$c"; exit 1; }; done
+	mkdir -p $(MENUS_FUERA) && for c in $(MENUS_CAPTURAS); do cp target/menus/menus.$$c.png $(MENUS_FUERA)/$$c.png; done
+
 # La caja Linux (H9, docs/bitacoras/caja-linux.md): la misma imagen de `virt` en una QEMU virt con virtualization=on,
 # sin disco ni USB. EDK2 y el cargador entran en EL2: el kernel deja ahí el trozo del hipervisor y el servicio
 # `caja-linux` corre sus invitados de prueba. Sin virtualization=on (`arranque-virt`), el servicio dice que no hay
