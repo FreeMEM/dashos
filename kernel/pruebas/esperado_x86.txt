@@ -111,6 +111,9 @@ X10: máquinas virtuales bien
 [relevo] banco copy: 
 [relevo] banco bytes: 
 X7a: RelevoJIT dentro de un proceso bien
+# X11: pasar un aparato del PCIe (el edu de QEMU) a una máquina virtual, con `usuario/src/bin/maquina_pci.rs` de
+# monitor y su invitado mínimo. Sin IOMMU, la llamada se niega; con ella, los pasos están en esperado_x86_iommu.txt.
+X11: pasar un aparato a una máquina virtual bien
 X2: desborde de la pila del arranque
 Excepción 8 (fallo doble (#DF)) en el kernel
 en la pila de emergencia (IST 1)

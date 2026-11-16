@@ -20,10 +20,15 @@
 //!   temporizador lo lleva el kernel, como el virtual de ARM: el plazo del TSC (IA32_TSC_DEADLINE) que escribe el
 //!   invitado, con su vector y si está encendido en la palabra 1 (lo pone el servicio, que emula la LVT); cuando vence
 //!   lo entrega y lo dice con `TEMPORIZADOR_ENTREGADO`.
+//! - X11: se le pueden pasar aparatos del PCIe (`pasar.rs`, llamada 60). La máquina los lleva en su lista: la memoria
+//!   que se le añada entra también en sus dominios de la IOMMU, y al pararla (o al soltarse su última vCPU) se sueltan,
+//!   después de que todas sus vCPU hayan salido del invitado.
 
 use crate::base::hiper::{self, Espacio, Salida, Vcpu};
 use crate::cerrojo::Cerrojo;
+use crate::interrupciones::Interrupcion;
 use crate::memoria::Memoria;
+use crate::pasar::Aparato;
 use crate::planificador::{self, ColaEspera};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -92,13 +97,41 @@ struct Comun {
     muerta: AtomicBool,
     vcpus: Cerrojo<Vec<Arc<Patada>>>,
     numeros: AtomicU32,
+    /// Los aparatos del PCIe que se le han pasado (X11).
+    aparatos: Cerrojo<Vec<Arc<Aparato>>>,
 }
+
+/// Cuánto se espera, como mucho, a que las vCPU salgan del invitado al parar una máquina con aparatos.
+const ESPERA_SALIR_US: u64 = 100_000;
 
 impl Comun {
     fn parar(&self) {
         self.muerta.store(true, Ordering::SeqCst);
         for p in self.vcpus.tomar().iter() {
             p.dar();
+        }
+        if self.aparatos.tomar().is_empty() {
+            return;
+        }
+        // Antes de soltar los aparatos, que ninguna vCPU siga dentro: podría tocar aún las BAR proyectadas (su TLB),
+        // y el aparato puede ir enseguida a otra máquina. Una vCPU que no ha entrado ya ve `muerta` y no entra.
+        let fr = crate::reloj::frecuencia().max(1);
+        let hasta = crate::reloj::ahora() + ESPERA_SALIR_US * fr / 1_000_000;
+        while crate::reloj::ahora() < hasta && self.vcpus.tomar().iter().any(|p| p.nucleo.load(Ordering::SeqCst) != NINGUNO) {
+            core::hint::spin_loop();
+        }
+        let aparatos = core::mem::take(&mut *self.aparatos.tomar());
+        for a in aparatos {
+            a.soltar();
+        }
+    }
+}
+
+impl Drop for Comun {
+    fn drop(&mut self) {
+        // La última vCPU se ha soltado (el monitor cerró sus llaves o murió): ninguna corre.
+        for a in self.aparatos.get_mut().drain(..) {
+            a.soltar();
         }
     }
 }
@@ -151,7 +184,7 @@ impl Maquina {
     pub fn nueva(memoria: Arc<Memoria>, gpa: u64, entrada: u64, x0: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<Self, hiper::Error> {
         let espacio = Espacio::nuevo(cupo)?;
         espacio.anadir(memoria, gpa, cupo)?;
-        let comun = Arc::try_new(Comun { espacio, muerta: AtomicBool::new(false), vcpus: Cerrojo::new(Vec::new()), numeros: AtomicU32::new(1) })
+        let comun = Arc::try_new(Comun { espacio, muerta: AtomicBool::new(false), vcpus: Cerrojo::new(Vec::new()), numeros: AtomicU32::new(1), aparatos: Cerrojo::new(Vec::new()) })
             .map_err(|_| hiper::Error::Memoria)?;
         Self::con(comun, 0, entrada, x0, cupo)
     }
@@ -188,7 +221,54 @@ impl Maquina {
     }
 
     pub fn anadir(&self, memoria: Arc<Memoria>, gpa: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<(), hiper::Error> {
-        self.comun.espacio.anadir(memoria, gpa, cupo)
+        // Con la lista de aparatos tomada: un aparato que se está asignando ve esta memoria entera o no la ve.
+        let aparatos = self.comun.aparatos.tomar();
+        self.comun.espacio.anadir(memoria, gpa, cupo)?;
+        // X11: también en el dominio de la IOMMU de cada aparato que tenga.
+        let mut bien = true;
+        for a in aparatos.iter() {
+            bien &= a.proyectar_memoria(gpa, &self.comun.espacio);
+        }
+        if bien { Ok(()) } else { Err(hiper::Error::Memoria) }
+    }
+
+    /// X11: pasa el aparato `a` a esta máquina (`pasar.rs`). Devuelve su interrupción (si tiene MSI o MSI-X) y las
+    /// banderas de `pasar::asignar`. `NoHay` sin IOMMU; `Limite` si ya está en una máquina; `Argumento` si la máquina
+    /// está parada.
+    pub fn asignar(&self, a: &Arc<Aparato>) -> Result<(Option<Arc<Interrupcion>>, u64), hiper::Error> {
+        if self.comun.muerta.load(Ordering::Acquire) {
+            return Err(hiper::Error::Argumento);
+        }
+        let flr = a.tomar()?;
+        let mut lista = self.comun.aparatos.tomar();
+        if lista.try_reserve(1).is_err() {
+            drop(lista);
+            a.soltar();
+            return Err(hiper::Error::Memoria);
+        }
+        let (irq, banderas) = a.conectar(&self.comun.espacio)?;
+        lista.push(a.clone());
+        // `parar` pone `muerta` antes de tomar la lista: si ya está, nadie más soltará este aparato.
+        if self.comun.muerta.load(Ordering::SeqCst) {
+            lista.pop();
+            drop(lista);
+            a.soltar();
+            return Err(hiper::Error::Argumento);
+        }
+        Ok((irq, banderas | if flr { crate::pasar::CON_FLR } else { 0 }))
+    }
+
+    /// X11: ¿está `a` en esta máquina?
+    pub fn tiene(&self, a: &Arc<Aparato>) -> bool {
+        self.comun.aparatos.tomar().iter().any(|x| Arc::ptr_eq(x, a))
+    }
+
+    /// X11: proyecta la BAR `i` del aparato `a` (de esta máquina) en la física del invitado `gpa`.
+    pub fn proyectar_bar(&self, a: &Arc<Aparato>, i: u64, gpa: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<(), hiper::Error> {
+        if !self.tiene(a) || i > 5 {
+            return Err(hiper::Error::Argumento);
+        }
+        a.proyectar_bar(i as usize, gpa, &self.comun.espacio, cupo)
     }
 
     /// El globo (llamada 55): aún no en x86.

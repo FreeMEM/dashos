@@ -29,17 +29,19 @@ pub struct Funcion {
 }
 
 // Registros de la configuración.
-const MANDO: usize = 0x04;
+pub const MANDO: usize = 0x04;
 const CLASE: usize = 0x08;
 const CABECERA: usize = 0x0C;
 const BAR0: usize = 0x10;
 const CAPACIDADES: usize = 0x34;
-const MANDO_MEMORIA: u32 = 1 << 1;
-const MANDO_BUS_MASTER: u32 = 1 << 2;
-const MANDO_SIN_INTX: u32 = 1 << 10;
+pub const MANDO_MEMORIA: u32 = 1 << 1;
+pub const MANDO_BUS_MASTER: u32 = 1 << 2;
+pub const MANDO_SIN_INTX: u32 = 1 << 10;
 const ESTADO_CAPACIDADES: u32 = 1 << (16 + 4);
-const CAP_MSI: u32 = 0x05;
-const CAP_MSIX: u32 = 0x11;
+pub const CAP_MSI: u32 = 0x05;
+pub const CAP_MSIX: u32 = 0x11;
+/// La capacidad de PCI Express (X11: FLR y Device Control).
+pub const CAP_PCIE: u32 = 0x10;
 
 impl Funcion {
     pub fn leer(&self, off: usize) -> u32 {
@@ -50,6 +52,61 @@ impl Funcion {
         if off < 4096 {
             self.cfg.escribir32(self.base + off, v);
         }
+    }
+
+    /// Lee `bytes` (1, 2 o 4) de la configuración en `off`, alineado a su tamaño (X11). Si no vale, todo unos.
+    pub fn leer_n(&self, off: usize, bytes: usize) -> u32 {
+        if off.checked_add(bytes).is_none_or(|f| f > 4096) { u32::MAX } else { self.cfg.leer(self.base + off, bytes) }
+    }
+
+    /// Escribe `bytes` (1, 2 o 4) en la configuración en `off`, alineado a su tamaño (X11).
+    pub fn escribir_n(&self, off: usize, bytes: usize, v: u32) {
+        if off.checked_add(bytes).is_some_and(|f| f <= 4096) {
+            self.cfg.escribir(self.base + off, bytes, v);
+        }
+    }
+
+    /// El tipo de cabecera (bits 6:0 del byte 0x0E): 0 un aparato, 1 un puente.
+    pub fn tipo_cabecera(&self) -> u32 {
+        (self.leer(CABECERA) >> 16) & 0x7f
+    }
+
+    /// El registro de mando (16 bits).
+    pub fn mando(&self) -> u32 {
+        self.leer_n(MANDO, 2)
+    }
+
+    /// Pone el registro de mando (16 bits), sin tocar el de estado.
+    pub fn poner_mando(&self, v: u32) {
+        self.escribir_n(MANDO, 2, v & 0xffff);
+    }
+
+    /// Callado (X11): sin decodificar memoria ni E/S, sin bus master, sin INTx y con la MSI y la MSI-X apagadas. Así
+    /// queda un aparato que no es de nadie.
+    pub fn callar(&self) {
+        self.poner_mando(MANDO_SIN_INTX);
+        if let Some(p) = self.capacidad(CAP_MSIX) {
+            // Bit 15 del control (byte 2 de la capacidad): MSI-X encendida.
+            let c = self.leer_n(p + 2, 2);
+            self.escribir_n(p + 2, 2, c & !(1 << 15));
+        }
+        if let Some(p) = self.capacidad(CAP_MSI) {
+            let c = self.leer_n(p + 2, 2);
+            self.escribir_n(p + 2, 2, c & !1);
+        }
+    }
+
+    /// FLR (PCI Express 6.0, 6.6.2): si el aparato lo admite (Device Capabilities, bit 28, en la capacidad de PCI
+    /// Express), lo pide (Device Control, bit 15) y devuelve verdad. Quien llama espera 100 ms antes de volver a tocar
+    /// el aparato y le repone las BAR (el FLR las borra).
+    pub fn pedir_flr(&self) -> bool {
+        let Some(p) = self.capacidad(CAP_PCIE) else { return false };
+        if self.leer(p + 4) & (1 << 28) == 0 {
+            return false;
+        }
+        let c = self.leer_n(p + 8, 2);
+        self.escribir_n(p + 8, 2, c | (1 << 15));
+        true
     }
 
     /// La BAR `i` (0 a 5) de memoria: (física, tamaño). La mide escribiendo unos con la decodificación apagada, y deja
@@ -100,7 +157,7 @@ impl Funcion {
     }
 
     /// Dónde empieza la capacidad `id` en la configuración, si la tiene.
-    fn capacidad(&self, id: u32) -> Option<usize> {
+    pub fn capacidad(&self, id: u32) -> Option<usize> {
         if self.leer(MANDO) & ESTADO_CAPACIDADES == 0 {
             return None;
         }

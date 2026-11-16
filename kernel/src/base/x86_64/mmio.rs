@@ -1,6 +1,6 @@
 //! Registros de los aparatos que toca el kernel en x86-64 (X5): el espacio de configuración del PCIe (ECAM) y las
 //! tablas de MSI-X de las BAR. Una `Ventana` es un tramo de física fuera de la RAM proyectado sin caché en el GB de los
-//! aparatos (`mapa::proyectar_aparato`); los accesos son de 32 bits (o de 64, X5b), alineados y dentro del tramo. Así, como
+//! aparatos (`mapa::proyectar_aparato`); los accesos son de 32 bits (o de 64, X5b; o de 1, 2 y 4, X11), alineados y dentro del tramo. Así, como
 //! `RegLe32` en ARM, un registro nunca es memoria normal del kernel.
 
 use core::ptr::{read_volatile, write_volatile};
@@ -38,6 +38,39 @@ impl Ventana {
     pub fn escribir32(&self, off: usize, v: u32) {
         if self.vale(off) {
             unsafe { write_volatile((self.va + off) as *mut u32, v) }
+        }
+    }
+
+    /// Lee `bytes` (1, 2 o 4) en `off`, alineado a su tamaño (X11: la configuración del PCI que pide el monitor de una
+    /// máquina con un aparato). Fuera del tramo, sin alinear o con otro tamaño, todo unos.
+    pub fn leer(&self, off: usize, bytes: usize) -> u32 {
+        if !matches!(bytes, 1 | 2 | 4) || off % bytes != 0 || off.checked_add(bytes).is_none_or(|f| f > self.tamano) {
+            return u32::MAX;
+        }
+        let p = self.va + off;
+        // SAFETY: dentro del tramo proyectado, alineado a su tamaño.
+        unsafe {
+            match bytes {
+                1 => read_volatile(p as *const u8) as u32,
+                2 => read_volatile(p as *const u16) as u32,
+                _ => read_volatile(p as *const u32),
+            }
+        }
+    }
+
+    /// Escribe `bytes` (1, 2 o 4) de `v` en `off`, alineado a su tamaño. Fuera del tramo o sin alinear, nada.
+    pub fn escribir(&self, off: usize, bytes: usize, v: u32) {
+        if !matches!(bytes, 1 | 2 | 4) || off % bytes != 0 || off.checked_add(bytes).is_none_or(|f| f > self.tamano) {
+            return;
+        }
+        let p = self.va + off;
+        // SAFETY: como `leer`.
+        unsafe {
+            match bytes {
+                1 => write_volatile(p as *mut u8, v as u8),
+                2 => write_volatile(p as *mut u16, v as u16),
+                _ => write_volatile(p as *mut u32, v),
+            }
         }
     }
 

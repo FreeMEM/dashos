@@ -456,7 +456,10 @@ usuario-x86-servicios: FORCE
 # con iommu_platform=on: si no, QEMU le deja hacer DMA saltándose la IOMMU. Los esperados son los de siempre más los de
 # la IOMMU (`pruebas/*_iommu.txt`, todos con "~") y la línea de su unidad. En arranque-x86, además, ni un fallo de DMA;
 # en prueba-x86 lo mira la prueba de X5b (solo los suyos).
-IOMMU_QEMU := $(if $(filter intel,$(IOMMU)),-device intel-iommu,$(if $(filter amd,$(IOMMU)),-device amd-iommu$(coma)dma-remap=on))
+# X11: la AMD-Vi con intremap=on (el remapeo de interrupciones de los aparatos pasados a una máquina; sin él, QEMU tira
+# las MSI de un aparato con IV = 1). Con KVM, eso pide kernel-irqchip=split.
+IOMMU_QEMU := $(if $(filter intel,$(IOMMU)),-device intel-iommu,$(if $(filter amd,$(IOMMU)),-device amd-iommu$(coma)dma-remap=on$(coma)intremap=on))
+MAQUINA_IOMMU := $(if $(and $(filter kvm,$(ACCEL)),$(filter amd,$(IOMMU))),MAQUINA=kernel-irqchip=split)
 ifneq ($(IOMMU),)
 ifeq ($(IOMMU_QEMU),)
 $(error IOMMU tiene que ser intel o amd)
@@ -487,7 +490,7 @@ arranque-x86: x86 $(DISCO_NVME)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(NUCLEO_X86)) cargo build --release --target x86_64-unknown-uefi
 	rm -f target/sonido-x86.wav target/captura-x86.ppm
 	$(call esperados_x86,pruebas/arranque_x86.txt,pruebas/arranque_x86_iommu.txt,target/esperados_arranque_x86.txt)
-	$(ACCEL_QEMU) GUARDAR=$(abspath target/salida_x86.txt) CAPTURA=$(abspath target/captura-x86.ppm) ARQ=x86_64 TECLAS=simple QEMU_EXTRA="$(IOMMU_QEMU) -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv -audiodev wav,id=snd0,path=$(abspath target/sonido-x86.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0$(VSONIDO_IOMMU)" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_arranque_x86.txt 90
+	$(ACCEL_QEMU) $(MAQUINA_IOMMU) GUARDAR=$(abspath target/salida_x86.txt) CAPTURA=$(abspath target/captura-x86.ppm) ARQ=x86_64 TECLAS=simple QEMU_EXTRA="$(IOMMU_QEMU) -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv -audiodev wav,id=snd0,path=$(abspath target/sonido-x86.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0$(VSONIDO_IOMMU)" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_arranque_x86.txt 90
 	@if grep -q "fallo de DMA" target/salida_x86.txt; then echo "MAL: fallos de DMA en el arranque"; grep "fallo de DMA" target/salida_x86.txt | head; exit 1; fi
 	python3 ../tools/disco_archivos.py --comprobar-basico $(DISCO_NVME) $(VER)
 	python3 ../tools/captura_ventanas.py target/captura-x86.ppm target/salida_x86.txt --sin-barra
@@ -495,7 +498,7 @@ arranque-x86: x86 $(DISCO_NVME)
 
 # Los programas de usuario de x86-64 que no tocan aparatos (S30, X4), y el PIE de C29 (con las binutils del sistema).
 PIE_X86 := ../usuario/target/pie_x86
-BINES_X86 := hola fpu_a fpu_b malo tenis repartos tls trampas hijo padre llaves grupos lanzador tiempo muchos hilos maquina relevo
+BINES_X86 := hola fpu_a fpu_b malo tenis repartos tls trampas hijo padre llaves grupos lanzador tiempo muchos hilos maquina maquina_pci relevo
 
 usuario-x86: FORCE
 	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86) $(RELEVO_PATCH) $(addprefix --bin ,$(BINES_X86))
@@ -506,12 +509,16 @@ usuario-x86: FORCE
 # interrupciones; procesos en el anillo 3 con los programas de usuario.
 NUCLEO_X86_PRUEBAS := target/kernel-x86-pruebas.elf
 
+# X11: el aparato `edu` de QEMU, para pasarlo a una máquina (con DMA de 32 bits: la prueba le hace escribir en
+# 0xFEE0_0000).
+EDU_X11 := -device edu,dma_mask=0xffffffff
 prueba-x86: usuario-x86 FORCE
 	cargo build $(CARGO_PERFIL) --target x86_64-unknown-none --features pruebas$(if $(PCID),$(coma)pcid)
 	$(OBJCOPY_X86) --strip-debug $(ELF_X86) $(NUCLEO_X86_PRUEBAS)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(NUCLEO_X86_PRUEBAS)) cargo build --release --target x86_64-unknown-uefi
 	$(call esperados_x86,pruebas/esperado_x86.txt,pruebas/esperado_x86_iommu.txt,target/esperados_x86.txt)
-	$(ACCEL_QEMU) GUARDAR=$(abspath target/salida_x86_pruebas.txt) ARQ=x86_64 $(if $(IOMMU),QEMU_EXTRA="$(IOMMU_QEMU) -device nvme$(coma)serial=prueba") ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_x86.txt 150
+	$(if $(filter amd,$(IOMMU)),echo "~X11: con el remapeo de AMD-Vi$(coma) su MSI llega y otra no bien" >> target/esperados_x86.txt)
+	$(ACCEL_QEMU) $(MAQUINA_IOMMU) GUARDAR=$(abspath target/salida_x86_pruebas.txt) ARQ=x86_64 QEMU_EXTRA="$(EDU_X11) $(if $(IOMMU),$(IOMMU_QEMU) -device nvme$(coma)serial=prueba)" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_x86.txt 150
 
 clean:
 	cargo clean

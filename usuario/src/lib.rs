@@ -319,6 +319,14 @@ pub const MAX_GLOBO: usize = 256;
 
 /// Lo que dice `maquina_correr` de por qué volvió el invitado (`kernel/src/maquinas.rs`).
 pub mod maquina {
+    /// X11, lo que dice `maquina_aparato`: las interrupciones del aparato pasan por el remapeo de la IOMMU (si no, el
+    /// aparato podría mandar cualquier MSI); se le hizo FLR.
+    pub const APARATO_REMAPEADAS: u64 = 1;
+    pub const APARATO_FLR: u64 = 2;
+    /// X11, las banderas de una BAR (`maquina_aparato_info`): de 64 bits, prefetchable, de E/S.
+    pub const BAR_64: u64 = 1;
+    pub const BAR_PREFETCH: u64 = 2;
+    pub const BAR_ES: u64 = 4;
     pub const HVC: i64 = 1;
     pub const LECTURA: i64 = 2;
     pub const ESCRITURA: i64 = 3;
@@ -509,6 +517,38 @@ pub fn maquina_parar(llave: u32) -> i64 {
     llamada(48, [llave as u64, 7, 0, 0, 0]).0 as i64
 }
 
+/// X11 (solo x86, llamada 60): pasa el aparato del PCIe `aparato` (una llave de aparato) a la máquina de la vCPU
+/// `llave`. Devuelve (la llave de su interrupción, 0 si no tiene MSI, o un error negativo; las banderas:
+/// `maquina::APARATO_REMAPEADAS`, `maquina::APARATO_FLR`). `E_NO_HAY` sin IOMMU o sin hipervisor; `E_LIMITE` si ya está
+/// en una máquina.
+pub fn maquina_aparato(llave: u32, aparato: u32) -> (i64, u64) {
+    let (r, b) = llamada(60, [llave as u64, aparato as u64, 0, 0, 0]);
+    (r as i64, b)
+}
+
+/// X11: proyecta la BAR `bar` del aparato (ya en la máquina) en la dirección física del invitado `gpa` (sin caché, sin
+/// las páginas de la tabla de MSI-X). 0 o un error negativo.
+pub fn maquina_aparato_bar(llave: u32, aparato: u32, bar: u64, gpa: u64) -> i64 {
+    llamada(60, [llave as u64, aparato as u64, 1, bar, gpa]).0 as i64
+}
+
+/// X11: (tamaño, banderas `maquina::BAR_*`) de la BAR `bar` del aparato; tamaño 0 si no hay. O un error negativo.
+pub fn maquina_aparato_info(llave: u32, aparato: u32, bar: u64) -> (i64, u64) {
+    let (r, b) = llamada(60, [llave as u64, aparato as u64, 2, bar, 0]);
+    (r as i64, b)
+}
+
+/// X11: lee `bytes` (1, 2 o 4) de la configuración del aparato en `off`. Las BAR y la ROM dan 0.
+pub fn maquina_aparato_leer(llave: u32, aparato: u32, off: u64, bytes: u64) -> i64 {
+    llamada(60, [llave as u64, aparato as u64, 3, off, bytes]).0 as i64
+}
+
+/// X11: escribe `bytes` (1, 2 o 4) de `valor` en la configuración del aparato en `off`. `E_DERECHOS` si es algo que el
+/// invitado no puede cambiar (las BAR, la MSI, las capacidades: los emula el monitor).
+pub fn maquina_aparato_escribir(llave: u32, aparato: u32, off: u64, bytes: u64, valor: u64) -> i64 {
+    llamada(60, [llave as u64, aparato as u64, 4, off | bytes << 16, valor]).0 as i64
+}
+
 /// Barrera de memoria entre núcleos (`dmb ish`): lo escrito antes lo ven los demás antes que lo escrito después. Para
 /// la memoria que se comparte con un invitado (sus colas de virtio).
 pub fn barrera() {
@@ -614,6 +654,8 @@ pub const E_PLAZO: i64 = -9;
 pub const E_ARGUMENTO: i64 = -1;
 /// El otro lado del canal ya no está.
 pub const E_CERRADO: i64 = -4;
+/// La llave no tiene los derechos que hacen falta, o es algo que no se deja cambiar.
+pub const E_DERECHOS: i64 = -3;
 /// Un límite: la tabla de llaves o la cola del canal llenas (`canal_escribir`).
 pub const E_LIMITE: i64 = -8;
 

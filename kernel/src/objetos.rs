@@ -73,6 +73,10 @@ pub enum Objeto {
     /// Una máquina virtual (H9; en x86, X10): con escribir se corre (llamada 46). Se para y se suelta al cerrar su última
     /// llave.
     Maquina(Arc<crate::maquinas::Maquina>),
+    /// Un aparato del PCIe que se puede pasar a una máquina virtual (X11, solo x86): con escribir, la llamada 60. Solo
+    /// lo crea el kernel; el aparato ya no es de ningún servicio.
+    #[cfg(target_arch = "x86_64")]
+    AparatoPci(Arc<crate::pasar::Aparato>),
     /// Una llave revocable (C41): apunta al objeto a través de un intermediario que se puede vaciar.
     Revocable(Arc<Revocable>),
     /// La llave con la que se revoca: vacía el intermediario, y todas las llaves que pasan por él dejan de valer.

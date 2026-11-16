@@ -235,6 +235,12 @@ pub fn atender(marco: &mut Marco) {
         },
         // X6 (solo x86): los puertos de E/S de una llave de puertos, para el proceso que llama.
         56 => puertos_permitir(a[0] as u32),
+        // X11 (solo x86): pasar un aparato del PCIe a una máquina virtual (a[0] una vCPU, a[1] el aparato, a[2] la
+        // operación). En ARM, `E_NO_HAY`.
+        #[cfg(target_arch = "x86_64")]
+        60 => maquina_aparato(marco, a[0] as u32, a[1] as u32, a[2], a[3], a[4]),
+        #[cfg(not(target_arch = "x86_64"))]
+        60 => E_NO_HAY,
         n => {
             kprintln!("  [hilo {}] llamada desconocida {}", planificador::actual_id(), n);
             E_ARGUMENTO
@@ -1578,6 +1584,76 @@ fn maquina_globo(h: u32, op: u64, tabla: u64, n: u64) -> u64 {
     match r {
         Ok(k) => k as u64,
         Err(e) => error_hiper(e),
+    }
+}
+
+/// X11 (solo x86, `pasar.rs`): el aparato del PCIe `ha` (una llave de aparato, con escribir) y la máquina de la vCPU
+/// `h` (escribir):
+///   0 asignárselo: FLR si lo admite, su DMA con la memoria del invitado (dirección = física del invitado) y su MSI en
+///     el anfitrión. Devuelve la llave de su interrupción (0 si no tiene MSI ni MSI-X) y, en x1, las banderas
+///     (`pasar::REMAPEADAS`, `pasar::CON_FLR`). `E_NO_HAY` sin IOMMU o sin hipervisor; `E_LIMITE` si ya está en una
+///     máquina; `E_ARGUMENTO` si la máquina está parada;
+///   1 proyectar su BAR `a` en la física del invitado `b` (alineada a 4 KB), sin las páginas de MSI-X;
+///   2 la información de su BAR `a`: el tamaño, y en x1 las banderas (`pasar::BAR_*`);
+///   3 leer su configuración: `a` el desplazamiento, `b` el tamaño (1, 2 o 4) → el valor;
+///   4 escribirla: `a` el desplazamiento y en sus bits 23:16 el tamaño, `b` el valor. `E_DERECHOS` si no se deja.
+/// Las 1, 3 y 4 piden el aparato ya en esa máquina (si no, `E_ARGUMENTO`).
+#[cfg(target_arch = "x86_64")]
+fn maquina_aparato(marco: &mut Marco, h: u32, ha: u32, op: u64, a: u64, b: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let (l, la) = {
+        let t = proc_.llaves.tomar();
+        let Some(l) = t.ver(h) else { return E_LLAVE };
+        let Some(la) = t.ver(ha) else { return E_LLAVE };
+        (l, la)
+    };
+    let Objeto::Maquina(m) = l.objeto else { return E_TIPO };
+    let Objeto::AparatoPci(ap) = la.objeto else { return E_TIPO };
+    if l.derechos & objetos::ESCRIBIR == 0 || la.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    let cfg = |r: Result<u64, crate::pasar::ErrorCfg>| match r {
+        Ok(v) => v,
+        Err(crate::pasar::ErrorCfg::Argumento) => E_ARGUMENTO,
+        Err(crate::pasar::ErrorCfg::Derechos) => E_DERECHOS,
+    };
+    match op {
+        0 => {
+            if !crate::base::hiper::hay() {
+                return E_NO_HAY;
+            }
+            if proc_.llaves.tomar().huecos() == 0 {
+                return E_LIMITE;
+            }
+            match m.asignar(&ap) {
+                Ok((irq, banderas)) => {
+                    marco.poner_x1(banderas);
+                    match irq {
+                        Some(i) => match proc_.llaves.tomar().instalar(objetos::Llave::nueva(Objeto::Interrupcion(i), objetos::TODOS)) {
+                            Ok(n) => n as u64,
+                            Err(_) => E_LIMITE,
+                        },
+                        None => 0,
+                    }
+                }
+                Err(e) => error_hiper(e),
+            }
+        }
+        1 => match m.proyectar_bar(&ap, a, b, &proc_.cupo) {
+            Ok(()) => 0,
+            Err(e) => error_hiper(e),
+        },
+        2 => match ap.info_bar(a as usize) {
+            Some((tamano, banderas)) => {
+                marco.poner_x1(banderas);
+                tamano
+            }
+            None => E_ARGUMENTO,
+        },
+        3 | 4 if !m.tiene(&ap) => E_ARGUMENTO,
+        3 => cfg(ap.config_leer(a as usize, b as usize).map(|v| v as u64)),
+        4 => cfg(ap.config_escribir((a & 0xfff) as usize, ((a >> 16) & 0xff) as usize, b as u32).map(|()| 0)),
+        _ => E_ARGUMENTO,
     }
 }
 

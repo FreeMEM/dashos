@@ -39,6 +39,7 @@ pub fn ejecutar(a: &Acpi, n: u32, funciones: &[crate::pci::Funcion]) {
     prueba_recogida();
     prueba_iommu(funciones);
     crate::pruebas_procesos_x86::ejecutar();
+    crate::pruebas_procesos_x86::prueba_pasar(funciones);
     prueba_desborde();
 }
 

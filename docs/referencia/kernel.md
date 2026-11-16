@@ -191,6 +191,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 55 | `maquina_globo` | `x0` vCPU (con escribir), `x1` 0 soltar, 1 reponer, `x2` tabla de direcciones físicas del invitado (u64, alineadas a 4 KB, en el orden de bytes del proceso), `x3` cuántas (de 1 a 256) | Cuántas páginas se soltaron o repusieron. El globo de la caja Linux (aviso-cajas): soltar quita la página de la etapa 2 y de las proyecciones de quien llama, vacía las TLB y la devuelve al sistema (y sus bytes al grupo del objeto); reponer pone una nueva a cero (cobrada a ese grupo). Solo memoria que no tiene nadie más: las páginas de un objeto que esté en otra máquina, otro proceso, un mensaje, una vista o tras una llave revocable se saltan. `E_ARGUMENTO` si una dirección no es de su RAM o no está alineada (no se toca nada), `E_TAMANO`, `E_MEMORIA` si no se pudo reponer ninguna, `E_NO_HAY` sin hipervisor en el núcleo |
 | 49 | `pagina_cero` | `x0` permiso de página 0 (con escribir), `x1` llave de memoria de una página (con leer; no revocable) | 0. La proyecta en la dirección 0, de solo lectura y sin ejecutar (H4). `E_TIPO` si `x0` no es el permiso, `E_TAMANO` si el objeto no mide una página, `E_ARGUMENTO` si ya hay página 0 o la llave es revocable |
 | 56 | `puertos_permitir` | `x0` llave de puertos de E/S (solo x86) | 0 |
+| 60 | `maquina_aparato` | `x0` vCPU (con escribir), `x1` llave de aparato del PCIe (con escribir), `x2` operación (0 asignar, 1 proyectar una BAR, 2 información de una BAR, 3 leer la configuración, 4 escribirla), `x3` y `x4` según la operación | Solo x86 (X11); en ARM, `E_NO_HAY`. Ver "Pasar un aparato a una máquina" en la sección de x86-64 |
 
 ### Detalles
 
@@ -528,6 +529,7 @@ Tipos de objeto:
 | Permiso DMA | Solo el kernel | Crear memoria DMA (escribir) |
 | Registro | Solo el kernel | Sacar el registro del sistema (leer) |
 | Puertos de E/S | Solo el kernel, en x86 | Usarlos desde el proceso (`puertos_permitir`); la consola, COM1 (X6) |
+| Aparato del PCIe | Solo el kernel, en x86 (X11; por ahora, solo las pruebas: `inicio_x86.rs` no lanza monitor de máquinas) | Pasarlo a una máquina virtual (escribir; llamada 60). Un aparato que tiene un servicio no tiene objeto, y al revés |
 | Permiso de plazo | Solo el kernel (`inicio` lo reparte, S3) | Pedir la clase de plazo (escribir) |
 | Permiso de página 0 | Solo el kernel (`inicio` lo da a la caja Amiga, H4) | Proyectar la página 0 de solo lectura (escribir; llamada 49) |
 | Grupo | `grupo_crear` | Crear procesos en él y matarlo (escribir), ver su uso (leer) |
@@ -559,7 +561,7 @@ Los programas Dash para DashOS se compilan con `./dash --dashos` en la rama `aar
 - Saltar a una dirección del kernel termina el proceso.
 - Las FIQ van enmascaradas. Un SError mientras corre el proceso lo termina.
 
-## x86-64 (S30, X4 a X6, X5b y X10)
+## x86-64 (S30, X4 a X6, X5b, X10 y X11)
 
 En x86-64 (rama `x86`, `make -C kernel prueba-x86` y `make -C kernel arranque-x86`) un programa ve lo mismo que en ARM: las mismas llamadas con los
 mismos números, argumentos, resultados y errores, las mismas llaves y objetos, el mismo mapa de direcciones y los
@@ -635,9 +637,41 @@ mismos límites. Cambian los registros y lo que es de la CPU:
     GICV) da `E_NO_HAY`. 4, otra vCPU (su ID de APIC). 5, reiniciarla, con un argumento más: `x4` es el modo, 0
     protegido de 32 bits (como al crearla) o 1 real, como tras una SIPI (CS = `x2` / 16, IP = `x2` % 16; para la SIPI
     del vector V, `x2` = V × 4096). 6 y 7, igual.
-  - **Para pasar aparatos (X11)**: la dirección física del invitado de cada página será la misma que vea el aparato, y
-    el kernel ya sabe dar cada par (física del invitado, física de verdad) para el dominio de la IOMMU
-    (`hiper::Espacio::por_cada_pagina`).
+  - **Pasar un aparato a una máquina** (X11, llamada 60, `kernel/src/pasar.rs`). Con la llave de una vCPU y la de un
+    aparato del PCIe (una función con cabecera de tipo 0 que no es de ningún servicio). **Sin IOMMU, se niega**
+    (`E_NO_HAY`): el aparato alcanzaría por DMA toda la memoria. Operaciones (`x2`):
+    - **0, asignar** a la máquina. FLR si el aparato lo admite (Device Capabilities de PCI Express; luego 100 ms y sus
+      BAR repuestas). Su dominio de la IOMMU traduce con la memoria del invitado: **la dirección de DMA es la física
+      del invitado**, y la memoria que se añada después (`maquina_memoria`) entra también. Su MSI la programa el
+      kernel, nunca el invitado; llega al anfitrión como una interrupción de aparato, y la llamada devuelve su llave
+      (0 si no tiene MSI ni MSI-X; de la MSI-X, solo la entrada 0). El monitor la asocia a un canal y la entrega a la
+      vCPU por el bloque de interrupciones, con el vector que haya puesto el invitado en la MSI que el monitor emula.
+      En `x1`, las banderas: 1, sus interrupciones pasan por el remapeo de la IOMMU; 2, se hizo FLR. Con **AMD-Vi**,
+      el aparato tiene una tabla de remapeo de una sola entrada (la suya: dato 0 a 0xFEE0_0000): aunque el invitado
+      le haga escribir por DMA en 0xFEE0_0000 lo que quiera, no llega otra interrupción, y las NMI, INIT, ExtInt y LINT
+      se abortan. Con **VT-d**, todavía sin remapeo (bandera 1 a 0): el aparato podría mandar al anfitrión cualquier
+      MSI. Con la memoria del invitado y la MSI listas, deja la memoria y el bus master encendidos y la INTx apagada.
+      `E_LIMITE` si ya está en una máquina (o sin huecos en la tabla de llaves), `E_ARGUMENTO` si la máquina está
+      parada, `E_NO_HAY` sin IOMMU o sin hipervisor.
+    - **1, proyectar la BAR** `x3` en la física del invitado `x4` (alineada a 4 KB), sin caché y sin ejecutar (NPT con
+      PCD y PWT; EPT de tipo UC). Las páginas de la tabla y la PBA de MSI-X no se proyectan: un acceso ahí sale al
+      monitor como LECTURA o ESCRITURA, y las emula él. Una vez por asignación; las BAR de menos de 4 KB no se pasan
+      (en su página podría haber registros de otro aparato). Nada puede ponerse encima después (ni memoria).
+    - **2, información de la BAR** `x3`: su tamaño (0 si no hay), y en `x1` las banderas: 1 de 64 bits, 2
+      prefetchable, 4 de E/S (no se proyecta). Para que el monitor emule las BAR.
+    - **3, leer la configuración**: `x3` el desplazamiento (alineado), `x4` el tamaño (1, 2 o 4). Todo menos las BAR
+      y la ROM, que dan 0 (las emula el monitor).
+    - **4, escribirla**: `x3` el desplazamiento, con el tamaño en sus bits 23:16; `x4` el valor. Solo el mando
+      (memoria, bus master, paridad y SERR; la E/S nunca y la INTx siempre apagada), el estado (sus bits de borrar con
+      1), el tamaño de línea de caché, la latencia, la línea de interrupción y el Device Control de PCI Express (sin
+      pedir FLR). Lo demás (las BAR, la MSI, la MSI-X, las otras capacidades, lo propio del fabricante) da
+      `E_DERECHOS`: lo emula el monitor o se ignora.
+
+    Las 1, 3 y 4 piden el aparato ya en esa máquina (`E_ARGUMENTO` si no). **Al parar la máquina** (`maquina_estado`
+    7, o un fallo del invitado) **o al soltarse su última vCPU** (el monitor murió), el kernel espera a que sus vCPU
+    salgan del invitado (100 ms como mucho) y suelta el aparato: sin memoria, sin E/S, sin bus master, sin MSI, con su
+    dominio vacío (todo su DMA falla) y sus interrupciones abortadas (AMD-Vi). Queda libre para otra máquina. La llave
+    de su interrupción sigue valiendo: si se vuelve a asignar, es la misma interrupción.
   - **Lo que falta.** El globo (55: `E_NO_HAY`). APIC virtual por hardware (AVIC, APICv) e interrupciones entregadas
     sin salir (posted interrupts). PAE de 32 bits sin modo largo en VT-x (los PDPTE no se cargan). INS y OUTS. Los
     registros de depuración no se cambian de mundo (DR0 a DR3 y DR6 los ve el invitado siguiente; DR7 sí es de cada
@@ -687,7 +721,8 @@ mismos límites. Cambian los registros y lo que es de la CPU:
   falla: el aparato no lee nada o no escribe, el kernel lo cuenta y escribe en la consola el aparato, la dirección y el
   motivo, y sigue. El controlador no recibe aviso (lo que haga el aparato con el error depende de él: el NVMe de QEMU
   contesta como si nada). Un aparato de virtio debe aceptar `VIRTIO_F_ACCESS_PLATFORM` (bit 33) si lo ofrece.
-  Las MSI no pasan por la IOMMU (sin remapeo de interrupciones).
+  Las MSI de los aparatos de los servicios no pasan por la IOMMU (sin remapeo de interrupciones); las de un aparato
+  pasado a una máquina, sí con AMD-Vi (X11).
 - **Sin IOMMU** (X5): sin DMAR ni IVRS, el permiso DMA da memoria por debajo de 4 GB, pero un aparato con el bus
   master encendido alcanza toda la memoria física: un controlador de un aparato del PCIe puede leer y escribir
   cualquier cosa por DMA. En ARM (`virt`) pasa lo mismo sin SMMU; en la Pi, el PCIe se limita al primer GB (C51).

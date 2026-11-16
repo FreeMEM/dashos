@@ -736,3 +736,148 @@ fn prueba_relevo() {
     kprintln!("  relevo acabó: {:?}; usado en su grupo al final: {} bytes", fin, usado);
     kprintln!("X7a: RelevoJIT dentro de un proceso {}", bien(fin == Some(Fin::Salida(70)) && usado == 0));
 }
+
+/// X11: pasar un aparato del PCIe a una máquina virtual (`pasar.rs`, llamada 60), con el `edu` de QEMU (`make -C
+/// kernel prueba-x86` lo añade) y el programa `maquina_pci`, que hace de monitor con un invitado mínimo. Sin IOMMU, la
+/// llamada se niega (el programa sale con 12). Con ella, el programa sale con 10 si el invitado leyó su configuración,
+/// usó la BAR, hizo DMA en su memoria y recibió la interrupción. Aquí se mira además que el DMA fuera de su memoria se
+/// bloqueó (sin tocar esa física del anfitrión), que, muerto el monitor, el aparato está callado, libre y sin alcanzar
+/// nada, y, con AMD-Vi, que el remapeo de interrupciones no deja pasar otra MSI que la suya (`msi_remapeada`).
+static MAQUINA_PCI: &[u8] = programa_x86!("maquina_pci");
+
+/// Lo que el invitado manda copiar fuera de su memoria (en `maquina_pci.rs`).
+const MUESTRA_X11: &[u8; 64] = b"DashOS X11: un aparato pasado a una maquina copia esto por DMA!!";
+
+pub fn prueba_pasar(funciones: &[crate::pci::Funcion]) {
+    use crate::base::iommu as hw;
+    use objetos::Fin;
+    let Some(f) = funciones.iter().find(|f| f.id == 0x11e8_1234) else {
+        kprintln!("X11: sin el aparato edu de QEMU MAL");
+        return;
+    };
+    let Some(ap) = crate::pasar::Aparato::nuevo(*f) else {
+        kprintln!("X11: el objeto del aparato MAL");
+        return;
+    };
+    // Ya tiene dueño: no se puede hacer otro objeto, ni dárselo a un servicio.
+    let reclamado = crate::pasar::Aparato::nuevo(*f).is_none() && !crate::pasar::reclamar(f);
+    let iommu = crate::iommu::activa();
+    let fallos_antes = hw::fallos();
+    let llaves = alloc::vec![
+        objetos::Llave::nueva(objetos::Objeto::PermisoMaquina, objetos::TODOS),
+        objetos::Llave::nueva(objetos::Objeto::AparatoPci(ap.clone()), objetos::TODOS),
+    ];
+    let fin = lanzar_elf_en(MAQUINA_PCI, llaves, 2, crate::cupo::Cupo::raiz()).and_then(|c| esperar_fin(&c, 10000));
+    if !iommu {
+        kprintln!("  sin IOMMU: el programa acabó {:?}; el aparato ya tenía dueño: {}", fin, reclamado);
+        kprintln!("X11: pasar un aparato a una máquina virtual {}", bien(fin == Some(Fin::Salida(12)) && reclamado && !ap.asignado()));
+        return;
+    }
+    hw::atender();
+    // El DMA fuera de su memoria (0x0800_0000 del invitado): bloqueado, y la física del anfitrión con ese número, sin
+    // la muestra (sin IOMMU, ahí habría ido a parar).
+    let del_edu = |desde: &[hw::Fallo]| desde.iter().filter(|x| x.origen == ap.numero()).count();
+    let fuera = del_edu(&hw::fallos_recientes()) > 0 && hw::fallos() > fallos_antes;
+    let mut ahi = [0u8; 64];
+    // SAFETY: 0x0800_0000 es RAM del anfitrión (QEMU con 2 GB), vista por el mapa lineal; solo se lee.
+    unsafe { core::ptr::copy_nonoverlapping(crate::mmu::virt(0x0800_0000) as *const u8, ahi.as_mut_ptr(), 64) };
+    let intacta = &ahi != MUESTRA_X11;
+    kprintln!("X11: el DMA fuera de la memoria del invitado se bloquea {}", bien(fuera && intacta));
+    // Muerto el monitor: callado, libre, y su DMA no alcanza nada (ni lo que era memoria del invitado).
+    let libre = !ap.asignado();
+    let callado = ap.funcion().mando() & (crate::pci::MANDO_MEMORIA | crate::pci::MANDO_BUS_MASTER) == 0;
+    let bloqueado = dma_del_edu_bloqueado(&ap);
+    kprintln!("  muerto el monitor: libre {}, callado {}, su DMA bloqueado {}", libre, callado, bloqueado);
+    kprintln!("X11: al morir el monitor, el aparato queda bloqueado y libre {}", bien(libre && callado && bloqueado));
+    let remapeo = match msi_remapeada(&ap) {
+        Some((buena, falsa_parada)) => {
+            kprintln!("X11: con el remapeo de AMD-Vi, su MSI llega y otra no {}", bien(buena && falsa_parada));
+            buena && falsa_parada
+        }
+        None => {
+            kprintln!("  sin remapeo de interrupciones (VT-d): el aparato podría mandar cualquier MSI");
+            !hw::unidades().iter().any(|u| u.0 == hw::Tipo::Amd)
+        }
+    };
+    kprintln!("  el programa acabó {:?}", fin);
+    kprintln!(
+        "X11: pasar un aparato a una máquina virtual {}",
+        bien(fin == Some(Fin::Salida(10)) && reclamado && fuera && intacta && libre && callado && bloqueado && remapeo && !ap.asignado())
+    );
+}
+
+/// Con AMD-Vi (`None` si no hay remapeo): el kernel asigna el aparato a un espacio de invitado vacío, como haría la
+/// llamada, y le hace levantar una interrupción: llega. Luego cambia a mano el dato de su MSI de verdad por el vector de
+/// su MSI en el anfitrión, como iría un mensaje sin remapeo (lo que mandaría un aparato reprogramado por el invitado),
+/// y vuelve a levantarla: con la tabla de remapeo de una entrada, no llega. (Devuelve si llegó la buena y si se paró
+/// la otra.) El aparato queda suelto.
+fn msi_remapeada(ap: &alloc::sync::Arc<crate::pasar::Aparato>) -> Option<(bool, bool)> {
+    let espacio = crate::base::hiper::Espacio::nuevo(&crate::cupo::Cupo::raiz()).ok()?;
+    ap.tomar().ok()?;
+    let Ok((Some(irq), banderas)) = ap.conectar(&espacio) else {
+        ap.soltar();
+        return None;
+    };
+    if banderas & crate::pasar::REMAPEADAS == 0 {
+        ap.soltar();
+        return None;
+    }
+    let (mio, suyo) = objetos::Canal::nuevo();
+    let (c, lado) = extremo(&mio);
+    let (cs, ls) = extremo(&suyo);
+    irq.asociar(cs, ls, alloc::vec::Vec::new(), 0);
+    let f = ap.funcion();
+    let r = f.bar(0).and_then(|(bar, _)| crate::mmio::Ventana::nueva(bar, 4096));
+    let Some(r) = r else {
+        ap.soltar();
+        return None;
+    };
+    let levantar = || {
+        r.escribir32(0x60, 1);
+        let mut llego = false;
+        for _ in 0..100 {
+            esperar_tics(1);
+            if c.intentar_leer(lado).is_some() {
+                llego = true;
+                break;
+            }
+        }
+        r.escribir32(0x64, 1);
+        irq.terminar();
+        llego
+    };
+    let buena = levantar();
+    let p = f.capacidad(crate::pci::CAP_MSI);
+    if let Some(p) = p {
+        let dato = if f.leer(p) & (1 << 23) != 0 { p + 12 } else { p + 8 };
+        f.escribir_n(dato, 2, ap.vector().unwrap_or(0) as u32);
+    }
+    let falsa = p.is_some() && levantar();
+    kprintln!("  remapeo: la MSI del aparato {}; con el dato cambiado a mano, {}", if buena { "llega" } else { "NO llega" }, if falsa { "LLEGA" } else { "no llega" });
+    ap.soltar();
+    Some((buena, p.is_some() && !falsa))
+}
+
+/// El kernel pone en marcha el `edu` a mano (memoria y bus master) y le pide copiar 64 bytes de su búfer a 0x11000,
+/// donde el invitado tenía su memoria: con su dominio vacío, la IOMMU lo bloquea. Lo deja callado.
+fn dma_del_edu_bloqueado(ap: &crate::pasar::Aparato) -> bool {
+    use crate::base::iommu as hw;
+    let f = ap.funcion();
+    let Some((bar, _)) = f.bar(0) else { return false };
+    let Some(r) = crate::mmio::Ventana::nueva(bar, 4096) else { return false };
+    let total = hw::fallos();
+    f.poner_mando(crate::pci::MANDO_MEMORIA | crate::pci::MANDO_BUS_MASTER | crate::pci::MANDO_SIN_INTX);
+    r.escribir32(0x80, 0x40000);
+    r.escribir32(0x88, 0x11000);
+    r.escribir32(0x90, 64);
+    r.escribir32(0x98, 3);
+    let t0 = reloj::ahora();
+    while r.leer32(0x98) & 1 != 0 && reloj::ahora() - t0 < reloj::frecuencia() {
+        core::hint::spin_loop();
+    }
+    let hecho = r.leer32(0x98) & 1 == 0;
+    f.callar();
+    hw::atender();
+    let despues = hw::fallos_recientes().iter().filter(|x| x.origen == ap.numero()).count();
+    hecho && hw::fallos() > total && despues > 0
+}

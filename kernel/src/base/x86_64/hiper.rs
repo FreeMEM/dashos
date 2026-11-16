@@ -586,9 +586,11 @@ fn poner(tabla: u64, i: usize, v: u64) {
 /// La memoria de una máquina virtual tal como la ven sus vCPU: sus tablas NPT o EPT (de 4 niveles) sobre objetos de
 /// memoria. La comparten todas sus vCPU; se suelta con la última.
 ///
-/// Para pasar aparatos a la máquina (X11): la dirección física del invitado de cada página es la misma que verá el
-/// aparato (la IOVA), y `por_cada_pagina` da cada par (física del invitado, física de verdad) para proyectarlas en el
-/// dominio de la IOMMU de ese aparato. Lo que se añada o se suelte después tendrá que ir también a ese dominio.
+/// Para pasar aparatos a la máquina (X11, `pasar.rs`): la dirección física del invitado de cada página es la misma que
+/// ve el aparato (la IOVA), y `por_cada_pagina` da cada par (física del invitado, física de verdad) para proyectarlas en
+/// el dominio de la IOMMU de ese aparato; lo que se añade después entra también (`maquinas_x86.rs`). Sus BAR se
+/// proyectan sin caché (`proyectar_registros`). Si algún día se suelta memoria (el globo), tendrá que salir antes de esos
+/// dominios.
 pub struct Espacio {
     /// El nivel 4 (física): no cambia mientras viva.
     raiz: u64,
@@ -602,6 +604,8 @@ struct Interior {
     tablas: Vec<u64>,
     /// Lo que ve el invitado: (desde dónde, cuánto, el objeto).
     memorias: Vec<(u64, u64, Arc<Memoria>)>,
+    /// Los registros de aparatos que se le han pasado (X11): (desde dónde, cuánto). No son RAM: no se sueltan.
+    registros: Vec<(u64, u64)>,
     cargos: Vec<crate::cupo::Cargo>,
 }
 
@@ -612,7 +616,7 @@ impl Espacio {
             return Err(Error::NoHay);
         }
         let cargo = cupo.cobrar(PAGINA).ok_or(Error::Memoria)?;
-        let mut interior = Interior { tablas: Vec::new(), memorias: Vec::new(), cargos: Vec::new() };
+        let mut interior = Interior { tablas: Vec::new(), memorias: Vec::new(), registros: Vec::new(), cargos: Vec::new() };
         interior.cargos.try_reserve(8).map_err(|_| Error::Memoria)?;
         interior.tablas.try_reserve(8).map_err(|_| Error::Memoria)?;
         interior.cargos.push(cargo);
@@ -636,7 +640,7 @@ impl Espacio {
             return Err(Error::Argumento);
         }
         let mut i = self.interior.tomar();
-        if i.memorias.iter().any(|(b, t, _)| gpa < b + t && *b < gpa + tam) {
+        if i.pisa(gpa, tam) {
             return Err(Error::Argumento);
         }
         let ultima = gpa + tam - 1;
@@ -679,10 +683,56 @@ impl Espacio {
         true
     }
 
+    /// Proyecta registros de un aparato (X11: una BAR de un aparato que se pasa a la máquina) desde `gpa`: `tam` bytes
+    /// desde la física `fisica` (fuera de la RAM), sin caché y sin ejecutar, salvo los tramos de `huecos` (desplazamientos
+    /// desde el principio, en páginas enteras: la tabla de MSI-X, que emula el servicio), que siguen saliendo como
+    /// accesos a aparatos. El tramo entero queda para el aparato: nada más se puede poner encima. Lo que cuestan sus
+    /// tablas se cobra a `cupo`. Puede ser con las vCPU en marcha (solo se añaden entradas).
+    pub fn proyectar_registros(&self, gpa: u64, fisica: u64, tam: u64, huecos: &[(u64, u64)], cupo: &Arc<crate::cupo::Cupo>) -> Result<(), Error> {
+        if tam == 0 || gpa % PAGINA != 0 || fisica % PAGINA != 0 || tam % PAGINA != 0 || gpa.checked_add(tam).is_none_or(|f| f > IPA_MAX) {
+            return Err(Error::Argumento);
+        }
+        if !memoria::paginas().fuera_de_la_ram(fisica, tam) {
+            return Err(Error::Argumento);
+        }
+        let mut i = self.interior.tomar();
+        if i.pisa(gpa, tam) {
+            return Err(Error::Argumento);
+        }
+        let ultima = gpa + tam - 1;
+        let n = (ultima >> 30) - (gpa >> 30) + 1 + (ultima >> 21) - (gpa >> 21) + 1 + 1;
+        let cargo = cupo.cobrar(n * PAGINA).ok_or(Error::Memoria)?;
+        i.registros.try_reserve(1).map_err(|_| Error::Memoria)?;
+        i.cargos.try_reserve(1).map_err(|_| Error::Memoria)?;
+        i.tablas.try_reserve(n as usize).map_err(|_| Error::Memoria)?;
+        i.cargos.push(cargo);
+        i.registros.push((gpa, tam));
+        // Sin caché: en NPT, PCD y PWT (la entrada 3 de la PAT del anfitrión, UC) y NX; en EPT, tipo 0 (UC), leer y
+        // escribir, sin ejecutar.
+        let h = if TIPO.load(Ordering::Relaxed) == VMX { 0b011 } else { 0b111 | 1 << 3 | 1 << 4 | 1 << 63 };
+        for k in 0..tam / PAGINA {
+            let d = k * PAGINA;
+            if huecos.iter().any(|&(b, t)| d >= b && d < b + t) {
+                continue;
+            }
+            let a = gpa + d;
+            let l3 = i.siguiente(self.raiz, ((a >> 39) & 511) as usize)?;
+            let l2 = i.siguiente(l3, ((a >> 30) & 511) as usize)?;
+            let l1 = i.siguiente(l2, ((a >> 21) & 511) as usize)?;
+            poner(l1, ((a >> 12) & 511) as usize, (fisica + d) | h);
+        }
+        Ok(())
+    }
+
     /// Para pasar aparatos a la máquina (X11): cada página de su memoria, como (física del invitado, física de verdad).
     pub fn por_cada_pagina(&self, f: &mut dyn FnMut(u64, u64)) {
+        self.por_cada_pagina_de(None, f);
+    }
+
+    /// Como `por_cada_pagina`, solo con la memoria que empieza en `gpa` (si es `Some`): la que se acaba de añadir.
+    pub fn por_cada_pagina_de(&self, gpa: Option<u64>, f: &mut dyn FnMut(u64, u64)) {
         let i = self.interior.tomar();
-        for (b, _, m) in &i.memorias {
+        for (b, _, m) in i.memorias.iter().filter(|(b, _, _)| gpa.is_none_or(|g| g == *b)) {
             for (k, fisica) in m.fisicas().enumerate() {
                 if fisica != 0 {
                     f(b + k as u64 * PAGINA, fisica);
@@ -693,6 +743,11 @@ impl Espacio {
 }
 
 impl Interior {
+    /// ¿El tramo [gpa, gpa + tam) pisa memoria o registros que ya ve el invitado?
+    fn pisa(&self, gpa: u64, tam: u64) -> bool {
+        self.memorias.iter().map(|(b, t, _)| (*b, *t)).chain(self.registros.iter().copied()).any(|(b, t)| gpa < b + t && b < gpa + tam)
+    }
+
     /// La tabla a la que apunta la entrada `i` de `tabla`; si no hay, una nueva a cero.
     fn siguiente(&mut self, tabla: u64, i: usize) -> Result<u64, Error> {
         let d = leer(tabla, i);

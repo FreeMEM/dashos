@@ -17,8 +17,10 @@
 //! - Los fallos se avisan por una interrupción del kernel (`apic::VECTOR_IOMMU`, al núcleo 0): se cuentan, se guardan
 //!   los últimos y se escriben en la consola (aparato, dirección, motivo). El aparato no se para: su DMA solo falla.
 //!
-//! Sin remapeo de interrupciones: las MSI (0xFEE0_0000 a 0xFEEF_FFFF) pasan sin traducir en las dos (VT-d, 5.1; AMD,
-//! 2.2.5, con IV = 0 en la entrada del aparato).
+//! Sin remapeo de interrupciones para los aparatos de los servicios: las MSI (0xFEE0_0000 a 0xFEEF_FFFF) pasan sin
+//! traducir en las dos (VT-d, 5.1; AMD, 2.2.5, con IV = 0 en la entrada del aparato). Los que se pasan a una máquina
+//! virtual (X11) sí, en AMD-Vi: una tabla de remapeo de una entrada por aparato (`remapear_interrupciones`). En VT-d
+//! todavía no (haría falta remapear todas las del sistema: con la VT-d, el remapeo es de toda la unidad).
 
 use super::cerrojo::Cerrojo;
 use super::mmio::Ventana;
@@ -58,6 +60,8 @@ struct EstadoDominio {
     /// Física de la tabla de arriba.
     raiz: u64,
     aparato: u16,
+    /// AMD-Vi (X11): la tabla de remapeo de interrupciones del aparato (una página), si se le ha hecho; 0 si no.
+    irt: u64,
 }
 
 struct Unidad {
@@ -598,7 +602,7 @@ pub fn dominio(unidad: usize, aparato: u16) -> Option<Dominio> {
         }
     }
     u.siguiente_id += 1;
-    e.dominios.push(EstadoDominio { unidad, id, raiz, aparato });
+    e.dominios.push(EstadoDominio { unidad, id, raiz, aparato, irt: 0 });
     Some(Dominio((e.dominios.len() - 1) as u16))
 }
 
@@ -611,32 +615,92 @@ impl Dominio {
         let e = &mut *g;
         let Some(d) = e.dominios.get(self.0 as usize) else { return false };
         let Some(u) = e.unidades.get_mut(d.unidad) else { return false };
-        let limite = 1u64 << (12 + 9 * u.niveles as u64);
-        let ok = (|| {
-            for k in 0..paginas as u64 {
-                let (va, fa) = (iova.checked_add(k * PAGINA)?, fisica + k * PAGINA);
-                if va >= limite || va % PAGINA != 0 {
-                    return None;
-                }
-                let mut tabla = d.raiz;
-                for nivel in (2..=u.niveles).rev() {
-                    let entrada = tabla + ((va >> (12 + 9 * (nivel as u64 - 1))) & 0x1ff) * 8;
-                    let mut v = leer_f(entrada);
-                    if !presente(v) {
-                        let t = pagina_nueva(1)?;
-                        v = entrada_tabla(u.tipo, t, nivel - 1);
-                        poner_f(entrada, v, u.coherente);
-                    }
-                    tabla = v & DIRECCION;
-                }
-                poner_f(tabla + ((va >> 12) & 0x1ff) * 8, entrada_hoja(u.tipo, fa, escribir), u.coherente);
-            }
-            Some(())
-        })()
-        .is_some();
+        let ok = (0..paginas as u64).all(|k| {
+            iova.checked_add(k * PAGINA).is_some_and(|va| proyectar_una(u, d.raiz, va, fisica + k * PAGINA, escribir))
+        });
         barrera();
         invalidar(u, d.id);
         ok
+    }
+
+    /// Como `proyectar` con una página, sin invalidar la IOTLB (X11: toda la memoria de un invitado, página a página,
+    /// en un dominio vacío). Solo para direcciones que no estaban proyectadas; quien llama invalida al final
+    /// (`invalidar`).
+    pub fn proyectar_pagina(self, iova: u64, fisica: u64, escribir: bool) -> bool {
+        let mut g = ESTADO.tomar();
+        let e = &mut *g;
+        let Some(d) = e.dominios.get(self.0 as usize) else { return false };
+        let Some(u) = e.unidades.get_mut(d.unidad) else { return false };
+        proyectar_una(u, d.raiz, iova, fisica, escribir)
+    }
+
+    /// Invalida la IOTLB del dominio (tras `proyectar_pagina`).
+    pub fn invalidar(self) {
+        let mut g = ESTADO.tomar();
+        let e = &mut *g;
+        let Some(d) = e.dominios.get(self.0 as usize) else { return };
+        let Some(u) = e.unidades.get_mut(d.unidad) else { return };
+        barrera();
+        invalidar(u, d.id);
+    }
+
+    /// Quita todo lo proyectado (X11): el aparato ya no alcanza nada (las tablas de en medio se quedan, vacías, para la
+    /// próxima vez). Al volver, la IOTLB está invalidada.
+    pub fn vaciar(self) {
+        let mut g = ESTADO.tomar();
+        let e = &mut *g;
+        let Some(d) = e.dominios.get(self.0 as usize) else { return };
+        let Some(u) = e.unidades.get_mut(d.unidad) else { return };
+        vaciar_tabla(u, d.raiz, u.niveles);
+        barrera();
+        invalidar(u, d.id);
+    }
+
+    /// AMD-Vi (X11; AMD 48882, 2.2.5.1 y tabla 7): las interrupciones fijas del aparato pasan por su tabla de remapeo,
+    /// de una sola entrada (IntTabLen 0): la 0, a `vector` del APIC `destino` (físico, de 8 bits), fija. El aparato
+    /// tiene que mandar su MSI con el dato 0 (el índice, bits 10:0) a 0xFEE0_0000. Cualquier otro mensaje que mande
+    /// (otro dato, por DMA a 0xFEE0_0000) da con una entrada sin RemapEn y se aborta; las NMI, INIT, ExtInt y LINT,
+    /// también (sus pases a 0). Falso en VT-d (sin remapeo todavía), con un destino de más de 8 bits o sin memoria.
+    pub fn remapear_interrupciones(self, destino: u32, vector: u8) -> bool {
+        let mut g = ESTADO.tomar();
+        let e = &mut *g;
+        let Some(d) = e.dominios.get_mut(self.0 as usize) else { return false };
+        let Some(u) = e.unidades.get_mut(d.unidad) else { return false };
+        if u.tipo != Tipo::Amd || destino > 0xff {
+            return false;
+        }
+        if d.irt == 0 {
+            // Una página entera a cero: alineada a 128 bytes, y lo que haya detrás de la entrada 0 no remapea.
+            let Some(t) = pagina_nueva(1) else { return false };
+            d.irt = t;
+        }
+        // La entrada (figura 15): RemapEn (bit 0), IntType 0 (fija), DM 0 (física), Destination (15:8), Vector (23:16).
+        let irte = 1u64 | (destino as u64) << 8 | (vector as u64) << 16;
+        poner_f(d.irt, irte, true);
+        // La palabra 2 de la entrada del aparato (bits 191:128): IV, IntTabLen 0, la tabla (179:134 son sus bits 51:6)
+        // e IntCtl = 10b (bits 189:188). Una escritura de 64 bits y luego las invalidaciones (2.2.2.2).
+        let dte = u.tabla_aparatos + d.aparato as u64 * 32;
+        poner_f(dte + 16, 1 | (d.irt & 0x000F_FFFF_FFFF_FFC0) | 2 << 60, true);
+        barrera();
+        let aparato = d.aparato;
+        amd_orden(u, [aparato as u64 | 5 << 60, 0]) && amd_invalidar_aparato(u, aparato) && amd_esperar_ordenes(u)
+    }
+
+    /// AMD-Vi (X11): todas las interrupciones del aparato se abortan (IV = 1 e IntCtl = 00b, sin pases). Es como queda
+    /// un aparato que se ha pasado a una máquina y ya no es de nadie. En VT-d, nada.
+    pub fn bloquear_interrupciones(self) {
+        let mut g = ESTADO.tomar();
+        let e = &mut *g;
+        let Some(d) = e.dominios.get(self.0 as usize) else { return };
+        let Some(u) = e.unidades.get_mut(d.unidad) else { return };
+        if u.tipo != Tipo::Amd {
+            return;
+        }
+        let dte = u.tabla_aparatos + d.aparato as u64 * 32;
+        poner_f(dte + 16, 1, true);
+        barrera();
+        let aparato = d.aparato;
+        let _ = amd_orden(u, [aparato as u64 | 5 << 60, 0]) && amd_invalidar_aparato(u, aparato) && amd_esperar_ordenes(u);
     }
 
     /// Quita `paginas` páginas desde `iova`; al volver, el aparato ya no las alcanza (la IOTLB está invalidada).
@@ -670,9 +734,53 @@ impl Dominio {
         ESTADO.tomar().dominios.get(self.0 as usize).map(|d| d.aparato).unwrap_or(0)
     }
 
+    /// ¿Es de una AMD-Vi? (Si no, de una VT-d.)
+    pub fn es_amd(self) -> bool {
+        let e = ESTADO.tomar();
+        e.dominios.get(self.0 as usize).and_then(|d| e.unidades.get(d.unidad)).is_some_and(|u| u.tipo == Tipo::Amd)
+    }
+
     /// Su número de dominio en la IOMMU.
     pub fn id(self) -> u16 {
         ESTADO.tomar().dominios.get(self.0 as usize).map(|d| d.id).unwrap_or(0)
+    }
+}
+
+/// Proyecta una página de 4 KB en las tablas que empiezan en `raiz`, con las de en medio que falten. Falso si la
+/// dirección no cabe o falta memoria.
+fn proyectar_una(u: &Unidad, raiz: u64, va: u64, fa: u64, escribir: bool) -> bool {
+    let limite = 1u64 << (12 + 9 * u.niveles as u64);
+    if va >= limite || va % PAGINA != 0 {
+        return false;
+    }
+    let mut tabla = raiz;
+    for nivel in (2..=u.niveles).rev() {
+        let entrada = tabla + ((va >> (12 + 9 * (nivel as u64 - 1))) & 0x1ff) * 8;
+        let mut v = leer_f(entrada);
+        if !presente(v) {
+            let Some(t) = pagina_nueva(1) else { return false };
+            v = entrada_tabla(u.tipo, t, nivel - 1);
+            poner_f(entrada, v, u.coherente);
+        }
+        tabla = v & DIRECCION;
+    }
+    poner_f(tabla + ((va >> 12) & 0x1ff) * 8, entrada_hoja(u.tipo, fa, escribir), u.coherente);
+    true
+}
+
+/// Pone a 0 las hojas de la tabla `tabla` de nivel `nivel` y de las que cuelgan de ella (solo hay hojas de 4 KB, en el
+/// nivel 1).
+fn vaciar_tabla(u: &Unidad, tabla: u64, nivel: u8) {
+    for i in 0..512u64 {
+        let v = leer_f(tabla + 8 * i);
+        if !presente(v) {
+            continue;
+        }
+        if nivel <= 1 {
+            poner_f(tabla + 8 * i, 0, u.coherente);
+        } else {
+            vaciar_tabla(u, v & DIRECCION, nivel - 1);
+        }
     }
 }
 

@@ -159,6 +159,10 @@ pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
         }) else {
             continue;
         };
+        // X11: el aparato es de este servicio; ya no se puede pasar a una máquina virtual.
+        if !crate::pasar::reclamar(f) {
+            continue;
+        }
         // Con IOMMU (X5b), su dominio: la memoria DMA que pida con su permiso es lo único que alcanza.
         let permiso = match crate::iommu::dominio_para(f) {
             Ok(Some(d)) => {

@@ -65,6 +65,9 @@ mod inicio_x86;
 mod pci;
 #[cfg(target_arch = "x86_64")]
 mod iommu;
+// X11: pasar un aparato del PCIe a una máquina virtual.
+#[cfg(target_arch = "x86_64")]
+mod pasar;
 
 // Solo ARM: los aparatos de las placas, el árbol de dispositivos y las máquinas virtuales (el hipervisor es de EL2).
 #[cfg(target_arch = "aarch64")]
