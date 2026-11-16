@@ -23,6 +23,7 @@ no encuentra nada roto en él. Y que lo que DashOS escribió en el volumen cifra
 """
 import gzip
 import os
+import re
 import struct
 import subprocess
 import time
@@ -71,6 +72,30 @@ CAJA_LIBS.append(("rota.library", b"\x00\x00\x03\xf3 esto no es un ejecutable"))
 # S28: la papelera de la caja (la crea el servicio de archivos), con lo que borran el troyano (sus datos, dos ficheros
 # con el mismo nombre y uno de nombre largo: `caja/pruebas68k/malware/troyano.c`) y el virus de guiones (`inocente`).
 PAPELERA = CAJA + ".papelera"
+# S6, S36: el registro común (`Estado:Registros/`, de `sesiones`, 0700), con `programas` ya casi en su tope (64 KB) de
+# líneas de "ayer": la primera que apunte un programa lo hace pasar a `programas.1` (rotar, de punta a punta). Lo de
+# antes se sigue leyendo con la orden `Registro`.
+REGISTROS = "Estado/Registros"
+TOPE_REGISTRO = 64 * 1024
+
+
+def registro_viejo():
+    lineas, total, i = [], 0, 0
+    while True:
+        l = f"2026-01-01T00:{i // 60 % 60:02d}:{i % 60:02d}Z prueba sistema programa línea vieja {i} de la prueba de rotar\n".encode()
+        if total + len(l) > TOPE_REGISTRO - 200:
+            break
+        lineas.append(l)
+        total += len(l)
+        i += 1
+    # La última, rellena hasta 10 bytes del tope: cualquier línea nueva lo pasa.
+    falta = TOPE_REGISTRO - 10 - total
+    cab = f"2026-01-01T00:59:59Z prueba sistema programa la última de ayer ".encode()
+    lineas.append(cab + b"z" * (falta - len(cab) - 1) + b"\n")
+    return b"".join(lineas)
+
+
+REGISTRO_VIEJO = registro_viejo()
 LARGO = "largo_" + "x" * 84
 # Paso 2 de las asignaciones: los cajones de `SYS:` del árbol de S4b ("El árbol de `SYS:`, completo") y los guiones de
 # `S`. Los .info (iconos) aún no: el formato de iconos con PNG está por hacer.
@@ -93,8 +118,8 @@ SHELL = os.path.join(ORDENES_BIN, "shell")
 # copia de lo común y entre todas ocupan 880 KB, que en este disco de 7 MB dejan sin sitio a las pruebas de archivos.
 # Con DASHOS_ORDENES_SUELTAS=1 va además cada una en su programa (`C/Dir`, `C/Copy`...), que el Shell prefiere.
 ORDENES = os.path.join(ORDENES_BIN, "ordenes")
-SUELTAS = ["Ask", "Assign", "Cd", "Copy", "Date", "Delete", "Dir", "Echo", "Filenote", "Info", "List", "MakeDir", "Protect",
-           "Rename", "Type", "Version", "Wait"] if os.environ.get("DASHOS_ORDENES_SUELTAS") else []
+SUELTAS = ["Ask", "Assign", "Cd", "Copy", "Date", "Delete", "Dir", "Echo", "Filenote", "Info", "List", "MakeDir", "Permiso",
+           "Protect", "Registro", "Rename", "Type", "Version", "Wait"] if os.environ.get("DASHOS_ORDENES_SUELTAS") else []
 
 
 def orden(nombre):
@@ -295,6 +320,58 @@ PRUEBA_SHELL = "\n".join([
     "Break 1",
     "Wait 1",
     "Status",
+    "; S6, S36: el registro común (Estado:Registros/). Lo que apunta un guion lleva el programa que lo lanza (el Shell),",
+    "; y la hora y el usuario los pone sesiones.",
+    'Registro APUNTA "hola desde el guion del Shell" MOTIVO "una prueba"',
+    "Registro PROGRAMA Shell CLASE programa ULTIMAS 1",
+    "; Lo de antes de rotar (programas.1) se sigue leyendo; lo del hostil (usuario de Carla) Ana no lo ve.",
+    "Registro DE programas PROGRAMA prueba ULTIMAS 1",
+    "Registro PROGRAMA hostil",
+    "; Lo hostil: escapes y saltos de línea, una línea larga, más deprisa de lo que se deja, y tocar los ficheros a mano.",
+    'Registro APUNTA "*e[2J*e[31mrojo*Nfalsa" MOTIVO "*e]0;titulo"',
+    "Registro PROGRAMA Shell ULTIMAS 1",
+    'Registro APUNTA "' + "larga " * 60 + '"',
+    "Registro APUNTA rafaga VECES 60",
+    'Echo "deprisa: $RC"',
+    "Wait 2",
+    'Registro APUNTA "tras la ráfaga"',
+    "Registro CLASE registro PROGRAMA Shell ULTIMAS 1",
+    "Echo >>SYS:Estado/Registros/seguridad hola",
+    "Delete SYS:Estado/Registros/seguridad",
+    "Type SYS:Estado/Registros/seguridad",
+    "Registro CLASE inventada",
+    "; Leer el de todos pide la contraseña de un administrador (en la prueba la da guardian, como Ana).",
+    "Registro TODO PROGRAMA hostil CLASE permiso ULTIMAS 5",
+    "; En vivo: lo que llega mientras mira.",
+    "Run >seguir.txt Registro SEGUIR PROGRAMA Shell CLASE programa ULTIMAS 0",
+    "Wait 2",
+    'Registro APUNTA "una línea en vivo"',
+    "Wait 3",
+    "Break 1",
+    "Wait 1",
+    "Type seguir.txt",
+    "; S6b, S36: los permisos, en Home:Prefs/Permisos/. Verlos es libre; dar y quitar los confirma el usuario en la",
+    "; ventana del sistema (en la prueba, el guion de QEMU: a pide, que sí; a otro, que no).",
+    "Permiso",
+    "Permiso DAR pide eco",
+    "Permiso",
+    "Type Home:Prefs/Permisos/concedidos",
+    "Permiso DAR hostil eco",
+    'Echo "dar a hostil: $RC"',
+    "Permiso DAR pide inventado",
+    "; Lo hostil: escribir el fichero a mano, borrarlo, o poner otro cajón en su sitio: no se lee ni se escribe ahí.",
+    'Echo >>Home:Prefs/Permisos/concedidos "hostil eco"',
+    "Delete Home:Prefs/Permisos/concedidos",
+    "Rename Home:Prefs/Permisos TO Home:Prefs/Permisos.viejo",
+    "MakeDir Home:Prefs/Permisos",
+    'Echo >Home:Prefs/Permisos/concedidos "hostil eco"',
+    "Permiso",
+    "Permiso DAR pide plazo",
+    "Delete Home:Prefs/Permisos ALL QUIET",
+    "Rename Home:Prefs/Permisos.viejo TO Home:Prefs/Permisos",
+    "Permiso QUITAR pide plazo",
+    "Permiso QUITAR pide eco",
+    "Type Home:Prefs/Permisos/concedidos",
     "; Se deja todo como estaba.",
     "Cd Home:",
     "Assign Prueba: REMOVE",
@@ -456,8 +533,10 @@ if sys.argv[1] == "--comprobar":
             f"{DASH_VENTANA}/Locale/Catalogs/español/ cajón",
             f"{DASH_VENTANA}/Locale/Catalogs/español/DashVentana.catalog {os.path.getsize(CATALOGO_DASH)}"]),
         "Estado/Servicios/sesiones/ cajón",
-        # U4: lo que el usuario (`guardian`, en la prueba) concedió y luego retiró: el fichero queda vacío.
-        "Estado/Servicios/sesiones/permisos 0",
+        # S6b, S36: lo concedido ya no va en el cajón de `sesiones`: el de los programas del sistema, en la capa de la
+        # máquina (el de las personas, en su Home:Prefs/Permisos, cifrado: lo mira el guion del Shell). Su fichero, aparte.
+        "Estado/Prefs/ cajón",
+        "Estado/Prefs/Permisos/ cajón",
         "Imagenes/ cajón",
         "Imagenes/disquete.adf 901120",
         # S10: un nombre con un tabulador (RedoxFS no admite ":"), que el Workbench no enseña.
@@ -507,6 +586,9 @@ if sys.argv[1] == "--comprobar":
     # U6: el registro de seguridad de `sesiones`, en su cajón: la cuenta (8 bytes) y un anillo de entradas de 40 (tipo,
     # estado, quién y qué). Tiene que tener los tres intentos del hostil (matar, la llave de un servicio y entrar).
     REGISTRO = "Estado/Servicios/sesiones/registro"
+    # S6, S36: el registro común y lo concedido del sistema miden lo que haya pasado: se miran aparte, más abajo.
+    arbol_entero = arbol
+    arbol = [l for l in arbol if not l.startswith(REGISTROS + "/") and not l.startswith("Estado/Prefs/Permisos/concedidos ")]
     linea = [l for l in arbol if l.startswith(REGISTRO + " ")]
     arbol = [l for l in arbol if not l.startswith(REGISTRO + " ")]
     if not linea:
@@ -534,9 +616,38 @@ if sys.argv[1] == "--comprobar":
     esperado = sorted(set(esperado) | sys_esperado(), key=lambda l: [p for p in l.split(" ")[0].split("/")])
     if arbol != esperado:
         fallos.append(f"árbol: {arbol}")
-    permisos = subprocess.run([ver, disco, desde, "Estado/Servicios/sesiones/permisos"], capture_output=True).stdout
-    if permisos != b"":
-        fallos.append(f"permisos concedidos: {permisos!r}")
+    # S6b, S36: lo concedido a los programas del sistema (a `pide`, eco y plazo), retirado al final: solo la cabecera.
+    if any(l.startswith("Estado/Servicios/sesiones/permisos") for l in arbol_entero):
+        fallos.append("sigue el fichero de permisos en el cajón de sesiones")
+    permisos = subprocess.run([ver, disco, desde, "Estado/Prefs/Permisos/concedidos"], capture_output=True).stdout
+    if not permisos.startswith(b"# ") or [l for l in permisos.split(b"\n") if l and not l.startswith(b"#")]:
+        fallos.append(f"permisos concedidos del sistema: {permisos!r}")
+    # S6, S36: el registro común. `programas.1`, lo de "ayer" tal cual (rotó con la primera línea nueva); los tres de
+    # ahora, en texto, una línea por hecho, sin letras de control; con lo que se espera de la prueba.
+    regs = {l.split(" ")[0][len(REGISTROS) + 1:]: l for l in arbol_entero if l.startswith(REGISTROS + "/")}
+    leer_reg = lambda n: subprocess.run([ver, disco, desde, f"{REGISTROS}/{n}"], capture_output=True).stdout
+    if set(regs) != {"", "seguridad", "sistema", "programas", "programas.1"}:
+        fallos.append(f"Estado/Registros: {sorted(regs)}")
+    elif leer_reg("programas.1") != REGISTRO_VIEJO:
+        fallos.append("Estado/Registros/programas.1 no es lo de antes de rotar")
+    else:
+        hora = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ|arranque\+\d+\.\d{3}s) \S+ \S+ \S+ .+$")
+        texto = {n: leer_reg(n).decode("utf-8", errors="replace") for n in ("seguridad", "sistema", "programas")}
+        for n, t in texto.items():
+            # Cada línea, de las que da `registro::linea`: como mucho 384 bytes con su salto.
+            malas = [l for l in t.split("\n")[:-1] if not hora.match(l) or any(ord(c) < 32 or 0x7f <= ord(c) < 0xa0 for c in l) or len(l.encode()) > 383]
+            if malas or not t.endswith("\n"):
+                fallos.append(f"Estado/Registros/{n}: líneas que no valen: {malas[:3]}")
+        for n, quiere in [("seguridad", " hostil Carla permiso no se da \"eco\""), ("seguridad", " pide sistema permiso se da \"eco\""),
+                          ("seguridad", " pide Ana permiso se quita \"eco\""), ("seguridad", "no escribe lo concedido de Ana"),
+                          ("sistema", " servicio vuelve: "), ("sistema", " memoria topa con su tope de memoria"),
+                          ("programas", " Shell Ana programa hola desde el guion del Shell: una prueba"),
+                          ("programas", " Shell Ana programa ?[2J?[31mrojo"), ("programas", " Shell Ana registro "),
+                          ("sistema", " caja-amiga Ana guardia niega "), ("sistema", " pide sistema memoria topa con su tope"),
+                          ("programas", " Shell Ana programa larga larga ")]:
+            if quiere not in texto[n]:
+                fallos.append(f"Estado/Registros/{n}: falta {quiere!r}")
+
     informe = subprocess.run([ver, disco, desde, "C/informe.txt"], capture_output=True).stdout
     if informe != "segunda versión\n".encode():
         fallos.append(f"C/informe.txt: {informe!r}")
@@ -619,6 +730,13 @@ with tempfile.TemporaryDirectory() as t:
     # U6: el cajón de `sesiones` (S6b: `Estado:Servicios/<nombre>`), suyo (usuario 1) y de nadie más.
     os.makedirs(os.path.join(raiz, "Estado", "Servicios", "sesiones"))
     os.chmod(os.path.join(raiz, "Estado", "Servicios", "sesiones"), 0o700)
+    # S6, S36: el registro común, con `programas` casi lleno (de `sesiones`, 0700); y `Estado:Prefs`, la capa de la
+    # máquina (S4b), donde `sesiones` crea `Permisos` para lo concedido a los programas del sistema.
+    os.makedirs(os.path.join(raiz, *REGISTROS.split("/")))
+    os.chmod(os.path.join(raiz, *REGISTROS.split("/")), 0o700)
+    with open(os.path.join(raiz, *REGISTROS.split("/"), "programas"), "wb") as f:
+        f.write(REGISTRO_VIEJO)
+    os.makedirs(os.path.join(raiz, "Estado", "Prefs"))
     # `Work:` (el cajón `Work`), provisional: no hay aún un segundo disco. `RAM:` no está en el disco: es un volumen en
     # memoria que `sesiones` crea al entrar cada usuario.
     os.makedirs(os.path.join(raiz, "Work"))
@@ -776,6 +894,7 @@ with tempfile.TemporaryDirectory() as t:
     subprocess.run([os.path.join(os.path.dirname(duenos), "poner"), fs, "0", "Carla", "1001:1001", PREFS_CARLA, prefs],
                    input=b"clave de Carla\n", check=True)
     subprocess.run([duenos, fs, "0", "1:1", "camino=Estado/Servicios/sesiones"], check=True)
+    subprocess.run([duenos, fs, "0", "1:1", "camino=" + REGISTROS], check=True)
     subprocess.run([duenos, fs, "0", "1001:1001", "camino=DeCarla"], check=True)
     # A10: un daño que la comprobación encuentra y la reparación arregla (los enlaces de LEEME.txt, 7 en vez de 1).
     # El servicio de archivos repara al arrancar; al final, la comprobación desde Linux tiene que salir limpia.
