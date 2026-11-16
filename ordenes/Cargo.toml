@@ -40,6 +40,16 @@ test = false
 # Y cada una en su programa.
 
 [[bin]]
+name = "orden-abrir"
+path = "src/bin/sueltas/abrir.rs"
+test = false
+
+[[bin]]
+name = "orden-administrar"
+path = "src/bin/sueltas/administrar.rs"
+test = false
+
+[[bin]]
 name = "orden-ask"
 path = "src/bin/sueltas/ask.rs"
 test = false
@@ -145,3 +155,4 @@ test = false
 name = "exchange"
 path = "src/bin/exchange.rs"
 test = false
+

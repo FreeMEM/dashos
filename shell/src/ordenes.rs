@@ -5,6 +5,9 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 // Las de base (`SYS:C`).
+/// S6b, S36: abrir encerrado un programa instalado, como con doble clic; y la tanda de acciones de administrador.
+pub const ABRIR: &str = "PROGRAMA/A,ESPERAR/S";
+pub const ADMINISTRAR: &str = "ACCION/M,DESDE/K";
 /// Ajustes en texto (`docs/bitacoras/ajustes-texto.md`): leer y poner un ajuste suelto.
 pub const AJUSTE: &str = "NOMBRE,VALOR,GUARDAR/S,LISTA/S";
 pub const ASK: &str = "PROMPT/A";
@@ -31,6 +34,8 @@ pub const WAIT: &str = "TIME/N,SEC=SECS/S,MIN=MINS/S";
 
 /// Las de base, por su nombre.
 pub const BASE: &[(&str, &str)] = &[
+    ("Abrir", ABRIR),
+    ("Administrar", ADMINISTRAR),
     ("Ajuste", AJUSTE),
     ("Ask", ASK),
     ("Assign", ASSIGN),
