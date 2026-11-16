@@ -49,25 +49,31 @@ Son consecuencia directa del principio de S0. Los diseños se corrigen para cump
 
 - **Controladores de Linux**: S12b dio por aceptado LKL (el kernel de Linux como biblioteca dentro de un proceso de
   DashOS) y `hilos-de-usuario.md` se diseñó para él; S35, escrito después, pone los controladores en máquinas virtuales
-  y no nombra LKL. S35 se escribió sin cotejar S12b. **Por decidir** (abajo).
+  y no nombra LKL. S35 se escribió sin cotejar S12b. **Decidido el 2026-11-16**: vale S35 y LKL se retira.
 - **Quién cambia el tema**: S26 dice que solo el centro de control; S10 promete cambiarlo por guion y S10b tiene un
   servicio de apariencia. Con la regla 1 gana "fichero de texto, ventana y orden".
-- **"Pantallas" o "espacios de trabajo"**: S10 y S23 usan un nombre y unas teclas; S27, otros. **Por decidir.**
+- **"Pantallas" o "espacios de trabajo"**: S10 y S23 usan un nombre y unas teclas; S27, otros. **Decidido el
+  2026-11-16**: tres nombres para tres cosas, y las teclas de S27.
 
 ## Por decidir el usuario
 
+Las cuatro están **decididas** (2026-11-16). El detalle, en "Las cuatro decisiones", abajo.
+
 1. Tres hallazgos chocan con decisiones ya tomadas; no se tocan si no se dice: la contraseña en cada acción de
    administrador; que las aplicaciones encerradas no carguen de `Home:Libs`; la guardia contra malware de Amiga, que
-   pregunta.
-2. LKL o dominios de controladores (o cada uno para algo).
-3. "Pantallas" o "espacios de trabajo", y sus teclas.
+   pregunta. **Decidido**: las tres se quedan, con un ajuste cada una (decisión 1).
+2. LKL o dominios de controladores (o cada uno para algo). **Decidido**: máquinas virtuales (S35); LKL se retira
+   (decisión 2).
+3. "Pantallas" o "espacios de trabajo", y sus teclas. **Decidido**: monitor, espacio de trabajo y pantalla, cada uno
+   su nombre; mandan las teclas de S27 (decisión 3).
 4. Juegos del Amiga recién instalado: hoy hay que poner una ROM y elegir modo de caja. La propuesta del repaso es
    llevar una ROM libre de serie y que la caja elija sola; llevar una ROM es una decisión de licencia y de la regla "sin
-   ROMs en el repositorio".
+   ROMs en el repositorio". **Decidido**: la ROM de AROS, en la imagen de `SYS:` y nunca en git (decisión 4).
 
-## Estudio y recomendación de las cuatro decisiones (2026-11-16)
+## Las cuatro decisiones (aceptadas por el usuario el 2026-11-16)
 
-Pedido por el usuario. Son recomendaciones: no están decididas hasta que él lo diga.
+Estudio pedido por el usuario. Aceptó las cuatro recomendaciones el 2026-11-16, y están aplicadas a los documentos
+(ver "Aplicado después: las cuatro decisiones").
 
 ### 1. Las tres decisiones ya tomadas: se quedan, con un ajuste cada una
 
@@ -99,7 +105,7 @@ Pedido por el usuario. Son recomendaciones: no están decididas hasta que él lo
 | Protección del propio Linux | La de un proceso | La de un proceso y, además, el código del kernel protegido desde fuera (capa 3) |
 | Memoria | Sin medir | Sin medir (objetivo 48 MB) |
 
-Recomendado: **máquinas virtuales**. La razón que pesa: LKL se pensó para usar la pila de red y los sistemas de
+Decidido: **máquinas virtuales**. La razón que pesa: LKL se pensó para usar la pila de red y los sistemas de
 ficheros de Linux dentro de un programa, no para llevar aparatos de verdad; lo que S12b quería ahorrar (escribir la
 unión con cada bus) habría que escribirlo igual, y sobre un Linux que no es el oficial. Comprobado: LKL sigue fuera
 del kernel oficial (las propuestas para meterlo llegan hasta 2021). No comprobado: si hoy admite varios procesadores
@@ -187,8 +193,8 @@ Nombres nuevos y provisionales: `Estado:Prefs` y `Estado:Devs` (la capa de la m�
 | S25 | 1, 2 | Registro de reinicios de la GPU; quién la tiene; ajuste para forzar la CPU |
 | S11 | 1 | Puerto ARexx de serie por aplicación; ajustes en `ENVARC:`; herramienta de traza; aviso si falta MUI |
 | S12 | 2, 7 | Registro de reinicios; los controladores salen en `Status` |
-| S12b | (nota) | Línea de cabecera: contradicción con S35, por decidir |
-| S35 | 2, 4, 7 | Línea de cabecera; los dominios se listan y sacan su registro; imagen propia solo en modo de desarrollo; aviso a la tercera vez |
+| S12b | (nota) | Línea de cabecera: contradicción con S35 (después, sustituido en lo de LKL: ver abajo) |
+| S35 | 2, 4, 7 | Línea de cabecera (después, la decisión: ver abajo); los dominios se listan y sacan su registro; imagen propia solo en modo de desarrollo; aviso a la tercera vez |
 | S21 | 1, 2 | Orden y registro de qué chip hace cada trabajo; ajuste para forzar la CPU |
 | S24 | 2, 8 | Lista llana de lo que aún no funciona; la línea de la CPU, al registro |
 | S1 | 3 | Llamada de solo lectura que lista las llaves de un proceso |
@@ -210,18 +216,26 @@ Nombres nuevos y provisionales: `Estado:Prefs` y `Estado:Devs` (la capa de la m�
 | S32 | 2, 8 | El plan como fichero de texto y registro; aviso de IOMMU con un botón; guía para encoger; deshacer en vez de doble confirmación |
 | S33 | 2, 8 | Aviso con un solo botón si falta un códec; orden y registro de por dónde se decodifica |
 
+## Aplicado después: las cuatro decisiones (2026-11-16)
+
+Con las cuatro decisiones aceptadas se aplicaron siete hallazgos que estaban en "No aplicado", y lo que quedaba a
+medias de S4-1. Con ellos son 152 aplicados de 162.
+
+| Hallazgo | Documentos | Qué se puso |
+|---|---|---|
+| H17 | S6, S6b, S8 | Sin "vale durante 5 minutos". Una tanda es una acción: una ventana con la lista entera y una contraseña; lo que no está en la lista no se hace |
+| H23 | S6b, S6, S4b, S29 | Las encerradas siguen sin cargar de `Home:Libs`. Modo de desarrollo por aplicación, con confirmación de `guardian`, a la vista en su ficha y en el registro; y una orden para lanzar desde el Shell un programa encerrado |
+| H43 | S28 | Con la sesión delante la pregunta espera, sin plazo; la caja no se para mientras pregunta; sin nadie es "no", con aviso que se queda y "Volver a intentar"; la versión anterior va siempre a la papelera. Dicho como por hacer: hoy el código tiene el plazo y la parada |
+| S12-3, S12b-1 | S35, S12b, S12, S13, hilos, S19b, RESUMEN | Máquinas virtuales; LKL se retira. S12b marcado como sustituido en lo de LKL (lo de red sigue). Tabla comparativa y porqué en S35. El dominio de red entra si su tope medido cabe; los de gráficas, desde 4 GB. Los hilos siguen, pero ya no por LKL |
+| S27-4 | S10, S23, S27, S10b, S10c, S9, S4, RESUMEN | "Monitor" el aparato, "espacio de trabajo" lo de todos los días, "pantalla" solo la propia de un programa de Amiga. Teclas de S27; Amiga+M y N como atajo; se conserva arrastrar hacia abajo |
+| S18-2, S4-1 | S18, S4, S32, PLAN | La ROM de AROS en la imagen de `SYS:`, bajada al construir, nunca en git. Manda el Kickstart del usuario si lo hay. La caja elige sola el modo. Se dice que no irán todos los juegos. Fase 2 de S18 |
+
+Con el cambio de nombres, la categoría de Ajustes y el programa de `SYS:Prefs` pasan a llamarse "Monitores", y el
+poder de S10b, "Espacios de trabajo". La orden `Pantalla` de S9 no se ha renombrado (duda 7).
+
 ## No aplicado
 
-Diecisiete hallazgos enteros y la mitad de otros nueve. Quedan pendientes de que decida el usuario.
-
-Decididos antes, o en la lista de "Por decidir" de arriba:
-
-- **H17** (S6, S6b): la contraseña en cada acción de administrador. Decidido.
-- **H23** (S6b): las aplicaciones encerradas no cargan de `Home:Libs`. Decidido.
-- **H43** (S28): la guardia que pregunta y caduca a los 30 segundos. Decidido.
-- **S12-3 y S12b-1**: LKL frente a dominios. Solo llevan la línea de cabecera S12b y S35.
-- **S27-4**: "pantallas" frente a "espacios de trabajo" y sus teclas.
-- **S18-2**, y la parte de **S4-1** que era llevar una ROM de serie.
+Diez hallazgos enteros y la mitad de otros ocho. Quedan pendientes de que decida el usuario.
 
 Decisión nueva de seguridad, o cambia algo decidido con el usuario:
 
@@ -255,3 +269,10 @@ Dudas que salieron al aplicar:
    no se tocó.
 6. Las órdenes de S21 (qué chip hace cada trabajo), S24 (describir la máquina), S33 (clases de DataTypes) y S20
    (montar imágenes) quedan sin nombre.
+7. La orden `Pantalla` (S9) cambia el modo de un monitor. Con los tres nombres le tocaría llamarse de otra forma,
+   pero "Monitor" choca con el Monitor del sistema. Se deja como está hasta que se decida. Tampoco se ha tocado
+   "modo de pantalla" ni `Prefs/ScreenMode`, que son nombres del Amiga.
+8. En S18, pasar un programa de la caja nativa a máquina entera "al primer acceso a los chips" obliga a volver a
+   abrirlo: cómo se hace sin que el usuario lo note queda por diseñar.
+9. `AGENTS.md` (regla 2 y la nota de `DASH_KICKSTART`) no se ha tocado: sigue diciendo "nada de código de la ROM en
+   el repositorio", que la decisión no rompe. Si conviene nombrar ahí la ROM de AROS, es cosa del usuario.
