@@ -192,17 +192,18 @@ arranque-virt-shell: virt-uso $(DISCO_NVME)
 # y una copia del disco de pruebas. `tools/guion_menus.py` entra como Ana y mira los menús del Shell (el kit nativo) y
 # de `dash-ventana` (kit-c) dentro de la ventana; los pasa a la barra con `Ajuste menus barra` (tecleado en el Shell),
 # los abre allí con un clic y con el botón derecho, elige en ellos, y vuelve dentro; con una captura en cada momento
-# (target/menus/menus.*.png; y en ~/recuperar/geosian-7d/menus-capturas/, fuera de git).
+# (target/menus/menus.*.png; y en ~/recuperar/geosian-7d/menus-pulido-capturas/, fuera de git).
 VIRT_MENUS := target/kernel8-virt-menus.img
-MENUS_CAPTURAS := 01-kitc-dentro 02-kitc-dentro-abierto 03-shell-dentro 04-shell-dentro-abierto 05-barra-shell 06-barra-shell-abierto 07-barra-elegido 08-barra-boton-derecho 09-barra-kitc 10-barra-kitc-abierto 11-kitc-elegido 12-dentro-otra-vez 13-f10
-MENUS_FUERA ?= $(HOME)/recuperar/geosian-7d/menus-capturas
+MENUS_CAPTURAS := 01-kitc-dentro 02-kitc-dentro-abierto 03-shell-dentro 04-shell-dentro-abierto 05-barra-shell 06-barra-shell-abierto 07-barra-elegido 08-barra-boton-derecho 09-barra-kitc 10-barra-kitc-abierto 11-kitc-elegido 12-dentro-otra-vez 13-f10 \
+	14-shell-teclas 15-kitc-teclas-fin 16-kitc-rueda 17-barra-submenu-teclas 18-barra-largo-rueda 19-barra-submenu-rueda 20-clic-que-cierra 21-cambia-desplegado 22-dentro-submenu-teclas 23-dentro-largo-rueda 24-ventana-cerrada
+MENUS_FUERA ?= $(HOME)/recuperar/geosian-7d/menus-pulido-capturas
 arranque-virt-menus: usuario $(DISCO_NVME) FORCE
 	cargo build $(CARGO_PERFIL) --features virt,uso,menus
 	$(OBJCOPY) -O binary $(ELF) $(VIRT_MENUS)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_MENUS)) cargo build --release
 	rm -rf target/menus && mkdir -p target/menus
 	cp --reflink=auto $(DISCO_NVME) target/menus/disco.img
-	GUARDAR=$(abspath target/salida_virt_menus.txt) MENUS_CAPTURAS=$(abspath target/menus/menus) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU) -drive file=$(abspath target/menus/disco.img),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_menus.txt 400
+	GUARDAR=$(abspath target/salida_virt_menus.txt) MENUS_CAPTURAS=$(abspath target/menus/menus) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU) -drive file=$(abspath target/menus/disco.img),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_menus.txt 900
 	@cat target/menus/menus.guion.txt
 	for c in $(MENUS_CAPTURAS); do test -s target/menus/menus.$$c.png || { echo "FALTA la captura $$c"; exit 1; }; done
 	mkdir -p $(MENUS_FUERA) && for c in $(MENUS_CAPTURAS); do cp target/menus/menus.$$c.png $(MENUS_FUERA)/$$c.png; done

@@ -489,3 +489,11 @@ name = "nocapslock"
 path = "src/bin/nocapslock.rs"
 test = false
 required-features = ["ventanas"]
+
+# S10, los menús (docs/bitacoras/menus-pulido.md): un programa del kit nativo con un submenú y menús que no caben, para
+# `make arranque-virt-menus`.
+[[bin]]
+name = "menus-prueba"
+path = "src/bin/menus_prueba.rs"
+test = false
+required-features = ["ventanas"]
