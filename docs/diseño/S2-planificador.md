@@ -64,7 +64,8 @@ demás.** Más una idea de seL4 para los mensajes entre procesos.
   turno.
 - La aplicación que tiene el foco del teclado sube de peso mientras lo tiene. Esto no adivina nada: lo dice el
   compositor, que sabe qué ventana está delante.
-- Las tareas de fondo bajan de peso, y el usuario puede marcar un programa como "de fondo".
+- Las tareas de fondo bajan de peso, y el usuario puede marcar un programa como "de fondo": en el menú de su
+  ventana, con un tooltype en su icono (queda guardado) o con una opción de la orden que lo lanza desde el Shell.
 
 ### Mensajes entre procesos: el servidor trabaja con el tiempo del cliente
 
@@ -111,7 +112,8 @@ servidor corre con el presupuesto y la prioridad de la aplicación. Se consiguen
 1. ¿Las tareas Amiga mantienen la prioridad estricta de exec dentro de la caja, aunque una tarea en bucle congele la
    caja entera? Recomendado: sí, porque solo se congela la caja.
 2. ¿Perfil de energía por defecto "responder" (frecuencia máxima en cuanto hay carga) o "ahorrar"? Recomendado:
-   responder.
+   responder. El perfil es una línea del fichero de texto de los ajustes de energía (S22, S4b): lo escriben Ajustes y
+   la orden `Ajuste`.
 
 ## Cómo encaja
 
@@ -166,7 +168,10 @@ El micronúcleo (S1) lo resuelve de raíz:
 - **El escritorio detecta los cuelgues.** El compositor manda un "¿sigues ahí?" a cada ventana, como el `ping` de
   Wayland. Si no contesta en unos segundos, la ventana se oscurece y ofrece "forzar salida".
 - **Un gestor de tareas** lista procesos, consumo de CPU y memoria, y permite los dos pasos. Es una aplicación más,
-  con la capacidad de terminar procesos del usuario.
+  con la capacidad de terminar procesos del usuario. Es el "Monitor del sistema" de S4b.
+- **Lo mismo desde el Shell**, con dos órdenes de `C:` con los nombres del Amiga. `Status` lista los procesos con su
+  CPU y su memoria, lo usado y el tope de su grupo (S3, S16), sus hilos y sus llaves (S1). `Break` pide el cierre y, si
+  hace falta, lo fuerza. Así un guion hace lo que hace la ventana (S0).
 
 ### Dentro de la caja Amiga: el exec de DashOS lleva la cuenta
 
@@ -175,7 +180,10 @@ Aquí DashOS puede hacerlo mejor que AmigaOS, porque el exec de la caja es nuest
 - **Cada recurso se apunta con su tarea dueña**: `AllocMem` y `AllocVec`, ventanas y pantallas, `Lock` y ficheros
   abiertos, bibliotecas y dispositivos abiertos, puertos, semáforos y señales reservadas.
 - **Cada tarea 68k es un hilo del kernel.** La caja puede detener una tarea en cualquier momento, aunque esté en un
-  bucle sin llamar al sistema.
+  bucle sin llamar al sistema. (Esto cambió: desde el 2026-11-14 vale lo decidido en S4, "un solo hilo de emulación
+  por caja". Lo de aquí se queda como estaba hasta rehacerlo con S4.)
+- **Las tareas de cada caja se ven.** El gestor de tareas y `Status` enseñan las tareas 68k bajo su caja, y dejan
+  cerrar una sola (`Break`). Así, si una tarea en bucle bloquea la caja, no hay que matar la caja entera.
 - **Matar una tarea Amiga** sigue este orden:
   1. Se manda `SIGBREAKF_CTRL_C`, como en el Amiga, y se esperan unos segundos.
   2. Si no sale, se detiene su hilo.

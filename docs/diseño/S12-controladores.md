@@ -89,7 +89,11 @@ con un controlador CDC Ethernet. No se ha comprobado.
   Nada más (S6).
 - Lo escribe en Rust, con el tipo de registro que da la vuelta a los bytes.
 - Habla con sus clientes por canales y anillos en memoria compartida (S1).
-- Si se cuelga, el gestor de servicios lo reinicia, y sus clientes reintentan.
+- Si se cuelga, el gestor de servicios lo reinicia, y sus clientes reintentan. Cada reinicio deja una línea en
+  `Estado:Registros/` (S6, S14) con el controlador, el motivo y la hora; se lee con la orden `Registro`. Si pasa varias
+  veces seguidas, sale un aviso en llano ("El USB está fallando"), con el detalle a un clic.
+- Se deja mirar. `Status` (S2) lista cada controlador con su aparato, su estado y sus llaves: registros, interrupción
+  y memoria para DMA. El Monitor del sistema enseña lo mismo. Los dominios de S35 salen en la misma lista.
 
 ## Lo que queda abierto
 

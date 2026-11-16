@@ -160,7 +160,8 @@ Esa mezcla causa los hallazgos 7 y 10 de la auditoría. Recomendado, como seL4: 
 
 Cada proceso pertenece a un grupo con un presupuesto de memoria del kernel, que le da quien lo crea. Todo objeto que
 crea se cobra ahí: páginas, tablas de páginas, llaves y mensajes en cola. Al agotarse, la llamada devuelve
-`E_SIN_MEMORIA`. Matar el grupo libera todo. Es también la base de "matar siempre funciona" (S2).
+`E_MEMORIA` (el nombre del código, como en S3). Matar el grupo libera todo. Es también la base de "matar siempre
+funciona" (S2). Lo cobrado se puede mirar: la orden `Status` (S2) enseña, por grupo, lo usado y el tope.
 
 **Recomendado: sí.**
 
