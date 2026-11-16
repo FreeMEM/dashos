@@ -53,7 +53,7 @@ const FONDO: u32 = 0xff20_4060;
 
 /// Los globales de cada tipo de cliente, sin los `wl_output`: esos van uno por salida (multimonitor), con los
 /// números `GLOBAL_SALIDAS` (el 6, el de siempre, es la principal).
-static GLOBALES: [Global; 9] = [
+static GLOBALES: [Global; 10] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
@@ -68,9 +68,10 @@ static GLOBALES: [Global; 9] = [
     PORTAPAPELES,
     PRIMARIA,
     DECORACIONES,
+    MENUS,
 ];
 /// Los de un escritorio (S10b, G4): además, las capas y el bloqueo de la sesión (G5). Un cliente sin el poder ni los ve; si los pide igual, error.
-static GLOBALES_ESCRITORIO: [Global; 12] = [
+static GLOBALES_ESCRITORIO: [Global; 13] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
@@ -83,10 +84,11 @@ static GLOBALES_ESCRITORIO: [Global; 12] = [
     PORTAPAPELES,
     PRIMARIA,
     DECORACIONES,
+    MENUS,
 ];
 /// Los de las capas del escritorio (S10): solo las capas, sin el bloqueo de la sesión ni los avisos de inactividad. Con
 /// el bloqueo, un programa podría enseñar una pantalla de bloqueo falsa y quedarse con la contraseña.
-static GLOBALES_CAPAS: [Global; 10] = [
+static GLOBALES_CAPAS: [Global; 11] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
@@ -98,6 +100,7 @@ static GLOBALES_CAPAS: [Global; 10] = [
     PORTAPAPELES,
     PRIMARIA,
     DECORACIONES,
+    MENUS,
 ];
 /// `wl_data_device_manager` (v3): copiar y pegar entre programas (H9, `wayland::escena::portapapeles`). Muchos programas
 /// de Linux no arrancan sin él (foot: "no clipboard available"). El número 14: tras los de las salidas.
@@ -110,6 +113,10 @@ const DECORACIONES: Global = Global { nombre: 16, interfaz: &tablas::ZXDG_DECORA
 /// dice `sesiones` (`escena::AVISO_PODER`); a los demás no se les anuncia, y pedirlo es "global que no existe". El 21,
 /// lejos de los de las salidas.
 const COMMODITIES: Global = Global { nombre: 21, interfaz: &tablas::DASHOS_COMMODITIES_V1, version: 1 };
+/// S10: los menús de los programas, en la ventana o en la barra (`docs/bitacoras/menus.md`). Todos lo ven: un programa
+/// solo da los menús de sus ventanas; poner el sitio es del centro y ser la barra, de la barra. El 40, lejos de los
+/// demás.
+const MENUS: Global = Global { nombre: 40, interfaz: &tablas::DASHOS_MENUS_V1, version: 1 };
 
 /// H9: quien pinta la barra de DashOS de las ventanas que la llevan, con el kit (Material 3): el contenedor de
 /// superficie (alto si tiene el teclado), las esquinas de arriba redondeadas, el título (title small: 14, medium) a 16
@@ -330,6 +337,19 @@ fn avisar_inactividad(escena: &mut Escena<Proyecciones>, clientes: &mut BTreeMap
     // S10: lo de las commodities (atajos pulsados, inactividad, Exchange) y lo que pasó, al registro.
     for linea in core::mem::take(&mut escena.cx.registro) {
         println!("  [compositor] commodities: {}", linea);
+    }
+    // S10: los menús (el sitio a todos, el menú del programa activo a la barra, lo elegido a su programa).
+    escena.revisar_menus();
+    for linea in core::mem::take(&mut escena.mn.registro) {
+        println!("  [compositor] menús: {}", linea);
+    }
+    for (cl, aviso) in core::mem::take(&mut escena.mn.avisos) {
+        if let Some(cli) = clientes.get_mut(&cl) {
+            escena::menus::escribir_aviso(&mut cli.con, &aviso);
+            if !mandar(cli) {
+                caidos.push(cl);
+            }
+        }
     }
     for (cl, aviso) in core::mem::take(&mut escena.cx.avisos) {
         if let Some(cli) = clientes.get_mut(&cl) {
