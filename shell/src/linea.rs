@@ -219,6 +219,20 @@ pub fn partir(linea: &str) -> Result<Vec<Orden>, Error> {
     Ok(ordenes)
 }
 
+/// El nombre de la orden de una línea tecleada (su primera palabra, sin la ruta), para el título de la pestaña;
+/// `None` si la línea está vacía o es un comentario. Con tope: un título no es la línea entera.
+pub fn nombre_de_orden(linea: &str) -> Option<String> {
+    let primera = linea.split_whitespace().next()?;
+    if primera.starts_with(';') {
+        return None;
+    }
+    let nombre = primera.rsplit([':', '/']).find(|n| !n.is_empty()).unwrap_or(primera);
+    Some(nombre.chars().filter(|c| !c.is_control()).take(MAX_NOMBRE_DE_ORDEN).collect())
+}
+
+/// Lo más que mide el nombre de una orden en un título, en letras.
+pub const MAX_NOMBRE_DE_ORDEN: usize = 24;
+
 #[cfg(test)]
 mod pruebas {
     use super::*;
@@ -305,5 +319,22 @@ mod pruebas {
         assert_eq!(sustituir("$bucle", 100, v).unwrap(), "$bucle$bucle");
         // Y lo que crece más de la cuenta, no.
         assert_eq!(sustituir(&"$nombre ".repeat(100), 200, v), None);
+    }
+
+    #[test]
+    fn nombre_para_el_titulo() {
+        assert_eq!(nombre_de_orden("List SYS:").as_deref(), Some("List"));
+        assert_eq!(nombre_de_orden("   Dir   ").as_deref(), Some("Dir"));
+        assert_eq!(nombre_de_orden("SYS:C/Dir ALL").as_deref(), Some("Dir"));
+        assert_eq!(nombre_de_orden("sub/orden x").as_deref(), Some("orden"));
+        assert_eq!(nombre_de_orden(">nota.txt Echo hola").as_deref(), Some(">nota.txt"));
+        assert_eq!(nombre_de_orden(""), None);
+        assert_eq!(nombre_de_orden("   "), None);
+        assert_eq!(nombre_de_orden("; un comentario"), None);
+        // Hostil: un nombre enorme, acabado en ruta, solo separadores o con letras de control.
+        assert_eq!(nombre_de_orden(&"x".repeat(100_000)).map(|n| n.chars().count()), Some(MAX_NOMBRE_DE_ORDEN));
+        assert_eq!(nombre_de_orden("Home:cajon/").as_deref(), Some("cajon"));
+        assert_eq!(nombre_de_orden(":/:/").as_deref(), Some(":/:/"));
+        assert_eq!(nombre_de_orden("a\u{1b}[31mb x").as_deref(), Some("a[31mb"));
     }
 }

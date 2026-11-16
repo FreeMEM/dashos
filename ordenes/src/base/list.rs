@@ -44,7 +44,9 @@ fn entrada(o: &mut Orden, op: &Opciones, c: &mut Cuenta, nombre: &str, d: &Datos
     }
     let tam = if d.cajon() { String::from("Dir") } else { alloc::format!("{}", d.tamano) };
     let relleno = 24usize.saturating_sub(nombre.chars().count());
-    di!(o, "{}{}{}{:relleno$} {:>9} {} {}\n", color, nombre, fin, "", tam, d.proteccion(), shell::fecha::texto(d.fecha));
+    // En la hora local del sistema, como la barra.
+    let cuando = shell::fecha::texto(o.s.local_s(d.fecha));
+    di!(o, "{}{}{}{:relleno$} {:>9} {} {}\n", color, nombre, fin, "", tam, d.proteccion(), cuando);
     if !comentario.is_empty() {
         di!(o, ": {}\n", comentario);
     }

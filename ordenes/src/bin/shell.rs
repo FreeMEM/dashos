@@ -45,7 +45,7 @@ use shell::{indicador, perfil, plantilla, ruta, RC_AVISO, RC_BIEN, RC_ERROR, RC_
 use wayland::canal::{self, Juntador, TROZO_CONECTAR, TROZO_DATOS};
 use wayland::tablas::{
     dashos_tema_v1, wl_buffer, wl_callback, wl_compositor, wl_display, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool,
-    wl_surface, xdg_surface, xdg_toplevel, xdg_wm_base,
+    wl_surface, xdg_surface, xdg_toplevel, xdg_wm_base, zxdg_decoration_manager_v1, zxdg_toplevel_decoration_v1,
 };
 use wayland::{leer_args, Escritor};
 
@@ -89,6 +89,15 @@ const TECLADO: u32 = 14;
 const POOLES: [u32; 2] = [20, 22];
 const BUFERES: [u32; 2] = [21, 23];
 const TEMA: u32 = 43;
+/// La decoración del compositor (`zxdg_decoration_manager_v1`): su gestor y la de nuestra ventana.
+const DECORACIONES: u32 = 44;
+const DECORACION: u32 = 45;
+/// El modo "la barra la pone el compositor" de `zxdg_toplevel_decoration_v1`.
+const DECORACION_DEL_COMPOSITOR: u32 = 2;
+/// El título de la ventana sin cajón (y lo que se le pone delante): el del programa.
+const TITULO: &str = "Shell";
+/// Entre el cajón y la orden, en el título de una pestaña y de la ventana.
+const SEPARADOR_TITULO: &str = " · ";
 const AVISO: u32 = 100;
 
 /// El borde de cada panel, en píxeles, y las columnas de un Shell sin ventana que no sabe las de su consola.
@@ -241,6 +250,8 @@ struct Ventana {
     pp: portapapeles_cliente::Portapapeles,
     con_portapapeles: bool,
     serie: u32,
+    /// El título que tiene la ventana (el de la pestaña con el teclado).
+    titulo: String,
 }
 
 /// Lo que llega de la ventana para el Shell.
@@ -356,7 +367,15 @@ impl Ventana {
         e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
         e.empezar(XDG, xdg_wm_base::req::GET_XDG_SURFACE).uint(XDG_SUPERFICIE).uint(SUPERFICIE).fin();
         e.empezar(XDG_SUPERFICIE, xdg_surface::req::GET_TOPLEVEL).uint(VENTANA).fin();
-        e.empezar(VENTANA, xdg_toplevel::req::SET_TITLE).texto(Some("Shell")).fin();
+        e.empezar(VENTANA, xdg_toplevel::req::SET_TITLE).texto(Some(TITULO)).fin();
+        // La barra de la ventana (título, maximizar, cerrar, moverla y cambiarle el tamaño) la pone el compositor, la
+        // de todo el sistema (`wayland/src/decoracion.rs`): el kit no tiene una cabecera que compartir y el Shell no
+        // dibuja la suya. Se pide antes del primer búfer, como manda el protocolo.
+        if let Some(gd) = global("zxdg_decoration_manager_v1") {
+            e.empezar(REGISTRO, wl_registry::req::BIND).uint(gd).texto(Some("zxdg_decoration_manager_v1")).uint(1).uint(DECORACIONES).fin();
+            e.empezar(DECORACIONES, zxdg_decoration_manager_v1::req::GET_TOPLEVEL_DECORATION).uint(DECORACION).uint(VENTANA).fin();
+            e.empezar(DECORACION, zxdg_toplevel_decoration_v1::req::SET_MODE).uint(DECORACION_DEL_COMPOSITOR).fin();
+        }
         e.empezar(VENTANA, xdg_toplevel::req::SET_APP_ID).texto(Some("shell")).fin();
         e.empezar(VENTANA, xdg_toplevel::req::SET_MIN_SIZE).int(20 * cw + 2 * BORDE).int(4 * ch + 2 * BORDE).fin();
         e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
@@ -394,6 +413,7 @@ impl Ventana {
             pp,
             con_portapapeles,
             serie: 0,
+            titulo: String::from(TITULO),
         })
     }
 
@@ -832,6 +852,8 @@ struct Panel {
     /// Dónde empezó a arrastrarse el ratón.
     arrastre: Option<Punto>,
     rect: RectPanel,
+    /// La última orden tecleada (su nombre), en marcha o acabada: va en el título de la pestaña, tras el cajón.
+    ultima: String,
 }
 
 impl Panel {
@@ -858,6 +880,7 @@ impl Panel {
             por_mirar: false,
             arrastre: None,
             rect: RectPanel::default(),
+            ultima: String::new(),
         }
     }
 }
@@ -2285,13 +2308,18 @@ impl Shell {
     }
 
     /// Quita el panel número `k` (que ya acabó): sus trabajos se matan. Falso si era el último de la ventana.
-    fn quitar_panel(&mut self, k: usize) -> bool {
-        self.entrar(k);
+    /// Mata los trabajos del panel en que se trabaja.
+    fn matar_trabajos(&mut self) {
         for t in core::mem::take(&mut self.p.trabajos) {
             matar(t.pid);
             dashos::cerrar(t.canal);
             self.cerrar_destino(t.salida);
         }
+    }
+
+    fn quitar_panel(&mut self, k: usize) -> bool {
+        self.entrar(k);
+        self.matar_trabajos();
         let id = self.p.id;
         if !self.disp.cerrar(id) || self.paneles.len() <= 1 {
             return false;
@@ -2353,7 +2381,8 @@ impl Shell {
         let hora = match dashos::hora_ns() {
             0 => None,
             ns => {
-                let (_, _, _, h, m, _) = shell::fecha::partes(ns / 1_000_000_000);
+                // En la hora local del sistema, como la barra.
+                let (_, _, _, h, m, _) = shell::fecha::partes(self.s.local_s(ns / 1_000_000_000));
                 Some((h, m))
             }
         };
@@ -2779,11 +2808,14 @@ impl Shell {
     fn titulo_de_pestana(&self, k: usize) -> String {
         let ids = self.disp.paneles_de(k);
         let id = if k == self.disp.pestana() { self.disp.activo() } else { ids.first().copied().unwrap_or(0) };
-        match self.numero_de(id) {
-            Some(n) if n == self.en => self.s.actual.clone(),
-            Some(n) => self.paneles[n].actual.clone(),
-            None => String::new(),
-        }
+        let (cajon, ultima) = match self.numero_de(id) {
+            Some(n) if n == self.en => (&self.s.actual, &self.p.ultima),
+            Some(n) => (&self.paneles[n].actual, &self.paneles[n].ultima),
+            None => return String::new(),
+        };
+        // El cajón y la última orden tecleada (como Terminator, que pone lo que corre): así dos pestañas en el mismo
+        // cajón se distinguen.
+        if ultima.is_empty() { cajon.clone() } else { format!("{}{}{}", cajon, SEPARADOR_TITULO, ultima) }
     }
 
     // --- El bucle ---
@@ -2832,6 +2864,9 @@ impl Shell {
                         self.p.salir = Some(self.p.int.rc);
                         return;
                     } else if let Some(l) = self.p.tecleadas.pop_front() {
+                        if let Some(n) = shell::linea::nombre_de_orden(&l) {
+                            self.p.ultima = n;
+                        }
                         self.con_interprete(|i, _| i.linea(&l));
                     } else {
                         if !self.p.indicador_puesto {
@@ -2914,7 +2949,18 @@ impl Shell {
                             );
                         }
                     }
-                    Entrada::Cerrar => return self.p.int.rc,
+                    Entrada::Cerrar => {
+                        // Cerrar la ventana (su botón en la barra) es cerrar todos sus paneles: sus trabajos se matan
+                        // sin preguntar, como al cerrar un panel (decisión 7).
+                        let mut matados = 0;
+                        for k in 0..self.paneles.len() {
+                            self.entrar(k);
+                            matados += self.p.trabajos.len();
+                            self.matar_trabajos();
+                        }
+                        println!("  [shell] ventana cerrada desde su barra; trabajos matados: {}", matados);
+                        return self.p.int.rc;
+                    }
                     e => {
                         self.raton_real += 1;
                         self.raton(e)
@@ -2978,6 +3024,16 @@ impl Shell {
                 self.resaltar();
                 self.columnas = self.p.consola.columnas();
                 let pestanas: Vec<(String, bool)> = (0..self.disp.pestanas()).map(|k| (self.titulo_de_pestana(k), k == self.disp.pestana())).collect();
+                // El título de la ventana, el de la pestaña con el teclado (lo enseñan su barra y la de la pantalla).
+                let titulo = pestanas.iter().find(|p| p.1).map(|p| p.0.as_str()).filter(|t| !t.is_empty()).unwrap_or(TITULO);
+                if let Some(v) = &mut self.ventana
+                    && v.titulo != titulo
+                {
+                    v.titulo = String::from(titulo);
+                    let mut e = Escritor::new();
+                    e.empezar(VENTANA, xdg_toplevel::req::SET_TITLE).texto(Some(titulo)).fin();
+                    self.buzon.mandar(&e);
+                }
                 let area = self.area();
                 let activo_id = self.disp.activo();
                 let rects = self.disp.rects(area, 1);

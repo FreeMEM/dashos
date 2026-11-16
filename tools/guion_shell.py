@@ -17,7 +17,9 @@ Shell por guion, con `Teclea`, se salta):
 6. `Dir SYS:S` y Tab dos veces: el menú de completar con el primero elegido (PREFIJO.5-menu-tab.ppm).
 7. Ctrl+Mayús+E (partir en vertical) y otra orden en el panel nuevo (PREFIJO.6-paneles.ppm).
 8. Ctrl+Mayús+T (pestaña nueva) y otra orden en ella (PREFIJO.7-pestana.ppm).
-9. `Assign CapturasHechas: RAM:`: `sesiones` lo dice en el registro, y es la última línea que espera la prueba.
+9. `Assign CapturasHechas: RAM:` (`sesiones` lo dice en el registro: llegaron las teclas) y `Run Wait 100`, un trabajo
+   de fondo. Arrastra la ventana por su barra (la del compositor) y la captura con su título (PREFIJO.8-titulo.ppm).
+10. La cierra con el botón de su barra: el Shell dice que se cierra y que mató el trabajo de fondo.
 
 Cada captura queda también en PNG al lado. Lo que hace el guion, con la hora, en PREFIJO.guion.txt.
 Teclado español: lo que hay que pulsar para cada letra, en `ESPECIALES` (nombres de `sendkey`, posición de EE. UU.).
@@ -187,9 +189,27 @@ def principal():
     time.sleep(2)
     teclear("Version")
     capturar("7-pestana", 3)
-    # 9. La señal del final: `sesiones` dice la asignación.
+    # 9. Que llegaron las teclas (`sesiones` dice la asignación) y un trabajo de fondo que sigue en marcha.
     teclear("Assign CapturasHechas: RAM:")
-    apuntar("fin")
+    time.sleep(1)
+    teclear("Run Wait 100")
+    time.sleep(1.5)
+    if not v:
+        apuntar("sin el sitio de la ventana: ni se mueve ni se cierra")
+        return
+    # Se arrastra por su barra 60 px a la derecha y 40 abajo.
+    ir_a(x + 200, max(y - 20, 1))
+    mandar("mouse_button 1", pausa=0.2)
+    mandar(*["mouse_move 10 0"] * 6, *["mouse_move 0 10"] * 4, pausa=0.08)
+    mandar("mouse_button 0", pausa=0.2)
+    x, y = x + 60, y + 40
+    ir_a(790, 590)
+    capturar("8-titulo")
+    # 10. El botón de cerrar de su barra: a 4 + 16 del borde derecho, en medio de la barra (40 de alto).
+    w = re.findall(r"\[compositor\] ventana de Shell en \(\d+, \d+\) de (\d+)x", texto())
+    ancho = int(w[-1]) if w else 656
+    clic(x + ancho - 4 - 16, max(y - 20, 1))
+    apuntar("cierra")
 
 
 try:

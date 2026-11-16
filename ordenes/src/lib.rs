@@ -179,7 +179,13 @@ pub struct Sistema {
     pub tabla: Tabla,
     /// El cajón actual, absoluto (`Home:Trabajo`).
     pub actual: String,
+    /// La zona horaria del sistema, leída la primera vez que hace falta (`Some(None)`: no hay o no se entiende).
+    zona: Option<Option<&'static dashos::zona::Zona>>,
 }
+
+/// La zona horaria del sistema: la misma que leen la barra y el crate `idioma` (una línea con su nombre).
+pub const ZONA: &str = "SYS:Prefs/zona";
+const MAX_ZONA: usize = 256;
 
 fn bien(r: asig::Resp) -> Result<asig::Resp, i32> {
     if r.e == a::BIEN { Ok(r) } else { Err(r.e) }
@@ -191,7 +197,23 @@ impl Sistema {
         let tabla = asig::pedir_tabla(SESIONES).unwrap_or_default();
         // De serie, `Home:` si hay; si no, `SYS:`.
         let actual = if tabla.buscar(b"Home").is_some() { "Home:" } else { "SYS:" };
-        Some(Sistema { fs, tabla, actual: String::from(actual) })
+        Some(Sistema { fs, tabla, actual: String::from(actual), zona: None })
+    }
+
+    /// La zona horaria del sistema (`SYS:Prefs/zona`), leída una vez. `None` si no está, no se deja leer o no está en
+    /// la tabla de zonas: entonces las horas van en UTC, como en la barra.
+    pub fn zona(&mut self) -> Option<&'static dashos::zona::Zona> {
+        if self.zona.is_none() {
+            let z = self.leer_entero(ZONA, MAX_ZONA).ok().and_then(|b| dashos::zona::de_fichero(&b));
+            self.zona = Some(z);
+        }
+        self.zona.flatten()
+    }
+
+    /// Una hora del reloj (segundos desde 1970, en UTC) en la hora local del sistema, con su hora de verano.
+    pub fn local_s(&mut self, utc_s: u64) -> u64 {
+        let d = self.zona().map_or(0, |z| dashos::zona::desfase_s(z, utc_s));
+        shell::fecha::con_desfase(utc_s, d)
     }
 
     /// Vuelve a pedir la tabla de nombres (tras un `Assign`).

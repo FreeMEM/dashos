@@ -498,6 +498,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [shell] hex.txt
 # El resumen de List, con el singular ("1 fichero", no "1 ficheros"; visto en pantalla, 2026-11-16).
 ~│   [shell] 1 fichero - 0 cajones -
+# Date, en la zona del sistema (la del disco de pruebas, Europe/Madrid: UTC+1 o UTC+2 según la época), como la barra.
+~ (Europe/Madrid, UTC+
 ~│   [shell]      [1;34msub[0m (dir)
 ~│   [shell]   nota.txt                               otra.txt
 # Assign: poner, añadir una capa (por ella se ve SYS:S), ver; y lo que `sesiones` no deja: tapar un volumen.

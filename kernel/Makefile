@@ -168,9 +168,10 @@ virt-uso: usuario FORCE
 # El Shell nativo en pantalla (docs/bitacoras/shell-nativa.md, "Visto en pantalla"): la imagen de usar (`virt-uso`),
 # con una copia del disco de pruebas. `tools/guion_shell.py` entra como Ana, abre el Shell desde el lanzador de la barra
 # y teclea en él con el teclado de QEMU (mapa de teclado y modificadores de verdad), con una captura en cada momento:
-# recién abierto, `List`, la sugerencia, una orden que no existe, el menú de Tab, dos paneles y una segunda pestaña
-# (target/shell/shell.*.png; y en capturas-agente/, fuera de git).
-SHELL_CAPTURAS := 1-recien-abierto 2-list 3-sugerencia 4-orden-mala 5-menu-tab 6-paneles 7-pestana
+# recién abierto, `List`, la sugerencia, una orden que no existe, el menú de Tab, dos paneles, una segunda pestaña y la
+# ventana movida por su barra (target/shell/shell.*.png; y en capturas-agente/, fuera de git). Al final la cierra con el
+# botón de su barra.
+SHELL_CAPTURAS := 1-recien-abierto 2-list 3-sugerencia 4-orden-mala 5-menu-tab 6-paneles 7-pestana 8-titulo
 arranque-virt-shell: virt-uso $(DISCO_NVME)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_USO)) cargo build --release
 	rm -rf target/shell && mkdir -p target/shell

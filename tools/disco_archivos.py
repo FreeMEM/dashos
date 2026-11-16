@@ -126,6 +126,8 @@ PRUEBA_SHELL = "\n".join([
     "Copy nota.txt uno QUIET",
     "List uno",
     "Delete uno ALL QUIET",
+    "; La fecha, en la zona del sistema (SYS:Prefs/zona, la de la barra).",
+    "Date",
     "MakeDir sub",
     "Copy #?.txt sub QUIET",
     "Dir",
