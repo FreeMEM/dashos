@@ -27,9 +27,18 @@ todo se hace con el kit (Material 3) sobre los servicios de DashOS.
 ## Lo que se hace distinto (por seguridad, S6b)
 
 - **Ajustes es un programa del sistema**, como `guardian` y `selector`: lo lanza `inicio` con ese nombre, y nadie más
-  puede llamarse así. Solo él puede pedir a `sesiones` lo que cambia permisos o cuentas.
-- **Nadie cambia un ajuste desde fuera.** En DMS cualquiera con el socket hace `settings set clave valor`. En DashOS el
-  canal "ajustes" solo **abre** una categoría; cambiar algo lo hace el usuario en la ventana.
+  puede llamarse así.
+- **Los ajustes del usuario se cambian también desde fuera, por su fichero** (corregido por el repaso de S0, S36,
+  regla 1; antes decía "nadie cambia un ajuste desde fuera"). Cada ajuste es un fichero de texto en `ENVARC:` que
+  manda (S4b, S27 apartado 7). Lo escriben la ventana, el editor suelto de `SYS:Prefs` y la orden `Ajuste`; editarlo
+  a mano vale igual. Quien puede escribir ese fichero es su dueño y los programas a los que él dio ese alcance (el
+  Shell; una aplicación encerrada no ve `ENVARC:` de otros, S6b). El canal "ajustes" sigue sirviendo solo para
+  **abrir** una categoría: no hace falta un `settings set` por socket, porque el fichero ya es la interfaz.
+- **Protegido queda solo lo de seguridad**: permisos, cuentas y ajustes de la máquina (`Estado:Prefs`, S4b). Eso pasa
+  por `guardian`, venga de la ventana o del Shell: ni Ajustes ni una orden lo cambian por su cuenta.
+- **Los permisos se leen** (S36, regla 3). Lo concedido está en un solo sitio, `Home:Prefs/Permisos/` (S6b), en texto
+  que su dueño lee y solo `sesiones` escribe. Ver los propios es libre: en Ajustes y con la orden `Permiso`. Dar o
+  quitar uno, también desde el Shell, pide la confirmación de `guardian`.
 - **Las acciones de administrador piden contraseña** (U5, `ADMINISTRAR`): `guardian` la pide, no Ajustes.
 - **Los complementos de terceros** (sus propias categorías) van con los permisos de su paquete (S8), en su proceso, y
   dibujan dentro de su hueco de la ventana.
@@ -38,7 +47,7 @@ todo se hace con el kit (Material 3) sobre los servicios de DashOS.
 
 | Fase | Qué | Prueba |
 |---|---|---|
-| C1 | Ventana de Ajustes con barra lateral y búsqueda. Primera categoría, **Permisos** (Prefs de U6): lo concedido a cada programa, y quitarlo (se revoca en el acto). Después **Seguridad** (el registro de `sesiones`) y **Discos** (comprobar, instantáneas, volúmenes) | Un programa que no es Ajustes no puede listar ni quitar permisos; quitar uno revoca la llave del programa abierto |
+| C1 | Ventana de Ajustes con barra lateral y búsqueda. Primera categoría, **Permisos** (Prefs de U6): lo concedido a cada programa, y quitarlo (se revoca en el acto). Después **Seguridad** (el registro de `sesiones`, que es el de `Estado:Registros/` y se lee también con la orden `Registro`, S6) y **Discos** (comprobar, instantáneas, volúmenes; lo mismo que la orden `Instantanea`, S5) | Un programa encerrado no puede listar los permisos de otros ni dar o quitar ninguno sin la confirmación de `guardian`; el usuario lista los suyos con `Permiso`; quitar uno revoca la llave del programa abierto. (Hoy la prueba hecha es la de antes: solo Ajustes lista y quita; se cambia al hacer la orden) |
 | C2 | Panel rápido desde la barra: volumen, brillo, modo noche, no molestar, bloquear, salir. Mosaicos que se añaden, quitan y ordenan (modo de edición) | El panel no se lleva el teclado de otra ventana sin un clic (S8) |
 | C3 | Apariencia: claro, oscuro o automático; colores sacados del fondo (esquema de Material 3 hecho aquí, desde la especificación); letras; movimiento | Los colores salen con contraste suficiente en claro y oscuro |
 | C4 | Sonido y pantallas con aparatos fijados; entrada (teclado, ratón, distribución) | |

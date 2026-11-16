@@ -147,7 +147,7 @@ Proceso del sistema, con la clase de plazo del planificador (S2), en `SYS:`, fir
 Procesos del sistema sin interfaz. Guardan el estado y lo comparten con quien tenga permiso:
 
 - **Avisos**: reciben las notificaciones (nativas, de la caja Amiga por su puente, de la caja Linux por la norma de
-  freedesktop) y guardan el historial.
+  freedesktop) y guardan el historial. El historial se lee como texto y con la orden `Avisos` (S10).
 - **Bandeja**: los iconos de estado de los programas y sus menús.
 - **Música**: qué suena y sus controles, como MPRIS en Linux.
 - **Apariencia**: el tema activo, los colores sacados del fondo, el fondo de cada pantalla (sección 7).
@@ -158,9 +158,9 @@ Procesos del sistema sin interfaz. Guardan el estado y lo comparten con quien te
 
 Uno o varios procesos del usuario, con los poderes que el usuario le dio:
 
-- Barra (con los menús del programa activo al botón derecho, S10), dock, lanzador, centro de control, centro de
-  avisos, avisos en pantalla de volumen y brillo, menú de apagado, calendario, fondo de pantalla, módulos en el
-  escritorio, la cara del bloqueo.
+- Barra (con los menús del programa activo a la vista y al botón derecho, S10), dock, lanzador, centro de control,
+  centro de avisos, avisos en pantalla de volumen y brillo, menú de apagado, calendario, fondo de pantalla, módulos
+  en el escritorio, la cara del bloqueo.
 - Todo lo que dibuja va en superficies propias. No toca las ventanas de nadie ni ve lo que tienen dentro.
 
 ## 3. Los poderes de un escritorio
@@ -197,6 +197,9 @@ tienen herramientas concretas: la de capturas, la de accesibilidad, el historial
   cada canal lleva la identidad de quien lo abrió (S6). Es lo mismo que ya hace el buzón con sus etiquetas.
 - **Los poderes los guarda el sistema**, en un registro que solo cambia `Prefs` tras una confirmación que dibuja el
   compositor. Nunca salen de un fichero que el usuario o un programa puedan escribir (la lección de KWin).
+- **Los poderes se leen.** Que no se escriban a mano no quiere decir que no se vean: el usuario lee los de sus
+  programas con la orden `Permiso` (S6b), que los lista junto a los permisos, y en el panel de poderes. Darlos o
+  quitarlos desde el Shell pide la misma confirmación del compositor que desde `Prefs`.
 - **Un cliente sin el poder no ve el protocolo.** El compositor no le anuncia ese global. Si lo pide igual, error
   de protocolo y se corta la conexión.
 - **Los protocolos nuevos nacen ocultos** para todos menos para el escritorio oficial de pruebas, hasta que se
@@ -228,7 +231,9 @@ Para guiones y para escritorios que prefieran no hablar Wayland para todo:
   en una pantalla que ya no existe.
 - **Formato que solo añade**: los campos no se renombran ni se quitan; una versión nueva solo suma.
 - **El mismo canal es el puerto ARexx del compositor** (S10 ya pedía el puerto del escritorio). ARexx necesita
-  permiso para hablar con otro programa (S6), así que un guion sin ese permiso no mueve ventanas.
+  permiso para hablar con otro programa (S6), así que un guion sin ese permiso no mueve ventanas. El permiso se
+  concede como a un programa: la primera vez sale la pregunta de permisos (`arexx:<puerto>`, S6b). Si se niega, el
+  guion recibe un error que lo dice en llano ("Este guion no tiene permiso para mover ventanas") y cómo darlo.
 - **El canal pide los mismos poderes** que el protocolo de Wayland. No es una puerta trasera: niri avisa de que su
   socket deja lanzar clientes con todos los poderes, y aquí no puede pasar.
 
@@ -373,6 +378,9 @@ Lección de `workbench.library`: los sustitutos tenían que parchear sus vectore
 - **Si cae tres veces en un minuto**, el compositor lanza el **escritorio mínimo**: está en `SYS:`, firmado, escrito
   en Rust, sin módulos ni complementos. Trae una barra simple con reloj, una lista de ventanas, un lanzador y un botón
   para volver a elegir escritorio.
+- **Se dice lo que pasó.** El escritorio mínimo sale con un aviso en llano: "Tu escritorio falló y se cambió por el
+  básico. Volver a probar". El motivo queda a un clic, y cada caída deja una línea en `Estado:Registros/` (S6), que
+  se lee con la orden `Registro`.
 - **El compositor también vigila el bucle de cada escritorio**, con el mismo "¿sigues ahí?" que usa con las ventanas
   (S2). Un escritorio que no contesta cuenta como caído.
 - **El atajo de rescate** es del compositor y no llega a nadie más. Abre un menú que dibuja el propio compositor:
@@ -434,7 +442,7 @@ miró un fotograma cada 4 segundos; puede haber detalles entre medias que no se 
 | Selector de tema: claro u oscuro y paletas sacadas del fondo ("monochrome", "tinted"...) | Servicio de apariencia | Colores calculados del fondo, para todos los escritorios y programas |
 | Selector de fondo a pantalla completa: la imagen grande, una tira de miniaturas con su paleta al lado y el resto desenfocado | Escritorio y servicio de apariencia | Desenfoque de lo que hay detrás de una capa: efecto del compositor |
 | Una ventana que se abre con un zoom mientras el fondo se desenfoca | Compositor | Animaciones de ventanas y desenfoque, configurables |
-| Menú de apagado: bloquear, cerrar sesión, suspender, reiniciar, apagar, con confirmación | Escritorio pide; sesión decide | Poder de pedir el apagado; la confirmación de lo que no se deshace la pone el sistema |
+| Menú de apagado: bloquear, cerrar sesión, suspender, reiniciar, apagar, con confirmación | Escritorio pide; sesión decide | Poder de pedir el apagado; la confirmación de lo que no se deshace la pone el sistema. Por "deshacer antes que preguntar" (S0): bloquear y suspender no preguntan; apagar y reiniciar llevan una cuenta atrás corta que se cancela; se pregunta solo si hay algo sin guardar |
 
 Lo que añade al compositor (fase E3 o E4): desenfoque detrás de las capas que lo pidan, esquinas redondeadas del
 área de ventanas, animaciones de abrir y cerrar con zoom, y el tono de color del modo noche. Lo que añade a los
