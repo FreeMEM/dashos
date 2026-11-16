@@ -36,6 +36,11 @@ impl<T: Read + Write + Seek> Disk for DiskIo<T> {
         Ok(size)
     }
 
+    /// No se sabe qué hay debajo: no se toma por límite.
+    fn size_is_limit(&self) -> bool {
+        false
+    }
+
     fn flush(&mut self) -> Result<()> {
         self.0.flush().map_err(|_| Error::new(EIO))
     }

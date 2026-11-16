@@ -47,9 +47,12 @@ pub const REGISTRO: u32 = 8;
 /// `Programas/`: lo lanza como la persona que está delante.
 /// `sesiones` lo lee por el servicio de archivos, lo crea en su propio grupo y le da ficha.
 /// Contesta un i32 (0, o el error) y el número del proceso nuevo (u64).
-/// Si la petición trae una llave más (tras la de contestar), es la cuarta del programa: su canal de arranque
+/// Si la petición trae una llave más (tras la de contestar), es el canal de arranque del programa ("arranque" en su tabla de llaves)
 /// (`shell::protocolo`), por donde quien lo lanza le da argumentos.
 pub const LANZAR: u32 = 9;
+/// El nombre del canal de arranque en la tabla de llaves del programa lanzado (el mismo que `shell::protocolo`, que no
+/// depende de esta biblioteca).
+pub const NOMBRE_ARRANQUE: &str = "arranque";
 /// De un programa (U2): su tabla de nombres. Contesta cuántos (u32) y hasta `MAX_NOMBRES` entradas de
 /// `ENTRADA_NOMBRE` bytes: el nombre (12, sin los dos puntos), la raíz del servicio de archivos donde está (1 byte;
 /// `SIN_RAIZ` si no tiene una propia y va por volumen y subcamino desde su raíz 0), el volumen (11; vacío es el disco)
@@ -76,7 +79,8 @@ pub const ASIGNAR: u32 = 31;
 /// (u32), la raíz de quien pide donde estaba (u8, `RAIZ_*`; `SIN_RAIZ` si no se dice), el largo del nombre (u8) y el
 /// del cajón dentro de esa raíz (u16), el nombre (como `lanzables::nombre_valido`) y el cajón (hasta
 /// `MAX_CAJON_AYUDANTE` bytes). Llaves: la de contestar, la memoria (con leer) y, si se quiere, una más, que será la
-/// cuarta del ayudante (su canal de arranque, `shell::protocolo`).
+/// del canal de arranque del ayudante ("arranque", `shell::protocolo`). Nace con las llaves y la tabla de llaves de lo que
+/// lanza `LANZAR` (con el selector, si la persona tiene uno).
 ///
 /// El ayudante nace con el usuario, el grupo, la identidad (el nombre de la ficha, por el que van los permisos), las
 /// raíces y las asignaciones de quien lo lanza. Su `PROGDIR:` es una raíz más (`RAIZ_PROGDIR_AYUDANTE`) en el cajón
@@ -90,14 +94,13 @@ pub const MAX_AYUDANTES: usize = 32;
 pub const RAIZ_PROGDIR_AYUDANTE: u8 = 5;
 /// Los huecos de raíz del servicio de archivos de cada volumen (la tabla de nombres dice "`SYS:` es la raíz 1"). Así los
 /// da `sesiones` a lo que lanza (`PROGDIR:` es la 0, el cajón de donde salió), y así se los cede el escritorio
-/// (Workbench, explorador). `RAM:` y `Work:`, provisionales: cajones del disco (`Estado/RAM/<cuenta>` y `Work`).
+/// (Workbench, explorador). `RAM:` es el volumen en memoria de la sesión (`sesiones` lo crea al entrar y da su raíz a
+/// lo que lanza y al escritorio); `Work:`, provisional: un cajón del disco (`Work`).
 pub const RAIZ_PROGDIR: u8 = 0;
 pub const RAIZ_SYS: u8 = 1;
 pub const RAIZ_HOME: u8 = 2;
 pub const RAIZ_RAM: u8 = 3;
 pub const RAIZ_WORK: u8 = 4;
-/// El cajón de `RAM:` de una cuenta, desde la raíz del disco (provisional: no hay aún disco en memoria).
-pub const CAMINO_RAM: &str = "Estado/RAM/";
 /// El cajón de `Work:`, desde la raíz del disco (provisional: no es aún un disco aparte).
 pub const CAMINO_WORK: &str = "Work";
 /// De `guardian` (U4): mándame las preguntas por esta llave (la segunda del mensaje). Contesta 0.

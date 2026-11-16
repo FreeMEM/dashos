@@ -115,6 +115,11 @@ pub enum Problem {
     Keys { name: String },
     /// Something wrong in a volume other than the main one.
     InVolume { name: String, problem: Box<Problem> },
+    /// DashOS (S32): the header says the file system has `size` bytes and the disk (the partition) has only `disk`:
+    /// what was beyond is gone. If nothing was in use there, shrinking to the disk fixes it.
+    BeyondDisk { size: u64, disk: u64 },
+    /// DashOS (the quota): the count of blocks a volume keeps is not the number it uses.
+    VolumeUsed { name: String, stored: u64, counted: u64 },
 }
 
 impl fmt::Display for EntryFault {
@@ -185,6 +190,12 @@ impl fmt::Display for Problem {
                 write!(f, "main volume: {problem}")
             }
             Problem::InVolume { name, problem } => write!(f, "volume {name:?}: {problem}"),
+            Problem::VolumeUsed { name, stored, counted } => {
+                write!(f, "volume {name:?}: {stored} blocks counted, {counted} used")
+            }
+            Problem::BeyondDisk { size, disk } => {
+                write!(f, "the file system says {size} bytes and the disk has only {disk}")
+            }
         }
     }
 }
@@ -200,6 +211,8 @@ pub struct Report {
     pub used: u64,
     pub free: u64,
     pub total: u64,
+    /// The blocks each volume uses, by its number (not the main one).
+    pub volume_used: BTreeMap<u64, u64>,
     /// Where each node was found first: (directory, name). For the paths of the report.
     places: BTreeMap<u32, (u32, String)>,
     // For `repair`.
@@ -375,6 +388,14 @@ pub fn check<D: Disk>(
     if !allocator_read {
         c.problems.push(Problem::AllocLog);
     }
+    if c.tx.fs.disk.size_is_limit()
+        && let Ok(disk) = c.tx.fs.disk.size()
+    {
+        let size = c.tx.header.size();
+        if (c.tx.fs.block * BLOCK_SIZE).saturating_add(size) > disk {
+            c.problems.push(Problem::BeyondDisk { size, disk: disk.saturating_sub(c.tx.fs.block * BLOCK_SIZE) });
+        }
+    }
     let focus = c.tx.volume();
     c.tx.leave_volume()?;
     // The list as this transaction has it (a repair may have changed it), not as the disk had it.
@@ -382,22 +403,32 @@ pub fn check<D: Disk>(
     c.alloc_log(allocator_read);
     // Every volume (FS10), each as if it were the only one. The report is of the volume the transaction is in:
     // what is found in the others goes in `InVolume` (the main one has no name).
-    let mut all = vec![(0, String::new())];
+    let mut all = vec![(0, String::new(), 0)];
     all.extend(
         c.volume_list()
             .into_iter()
-            .map(|v| (v.id(), String::from(v.name()))),
+            .map(|v| (v.id(), String::from(v.name()), v.used())),
     );
+    let mut volume_used = BTreeMap::new();
     let mut kept = VolumeState::default();
     let mut node_ptrs = Vec::new();
-    for (id, name) in all {
+    for (id, name, stored) in all {
         if c.tx.enter_volume(id).is_err() {
             c.problems.push(Problem::VolumeUnreadable { name });
             continue;
         }
         let outer = mem::take(&mut c.problems);
+        let before = c.usage.used;
         let ptrs = c.volume();
         let inner = mem::replace(&mut c.problems, outer);
+        if id != 0 {
+            let counted = c.usage.used - before;
+            volume_used.insert(id, counted);
+            // 0 is "not counted yet" (a volume from before the quota).
+            if stored != 0 && stored != counted {
+                c.problems.push(Problem::VolumeUsed { name: name.clone(), stored, counted });
+            }
+        }
         let state = c.take_state();
         c.tx.leave_volume()?;
         if id == focus {
@@ -424,6 +455,7 @@ pub fn check<D: Disk>(
         free,
         total: total.saturating_sub(FIRST_BLOCK),
         problems: c.problems,
+        volume_used,
         places: c.places,
         shared: c.usage.shared,
         used_bits: c.usage.bits,

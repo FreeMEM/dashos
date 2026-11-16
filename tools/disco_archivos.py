@@ -38,8 +38,12 @@ HOLA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "usuario",
 PIDE = os.path.join(os.path.dirname(HOLA), "pide")
 # U6: `cambio`, la prueba del cambio rápido de usuario (lo lanza `guardian`, como Ana y como Carla).
 CAMBIO = os.path.join(os.path.dirname(HOLA), "cambio")
+# `RAM:` en memoria: `ram`, su prueba (la lanza `guardian`, como Ana y como Carla).
+RAM = os.path.join(os.path.dirname(HOLA), "ram")
 # S10: un programa del disco que avisa (lo lanza la barra).
 AVISA = os.path.join(os.path.dirname(HOLA), "avisa")
+# El selector de ficheros: un programa del disco que guarda con "Guardar como" (lo lanza la barra, al final).
+GUARDA = os.path.join(os.path.dirname(HOLA), "guarda")
 # Trasfondo: un programa que espera 90 s (lo lanza la barra; el monitor del sistema lo cierra).
 ESPERA = os.path.join(os.path.dirname(HOLA), "espera")
 # S28: el cajón de la caja Amiga (su `Caja:`), con lo que atacan sus virus de laboratorio (`caja/pruebas68k/malware/`):
@@ -48,6 +52,10 @@ ESPERA = os.path.join(os.path.dirname(HOLA), "espera")
 # de la caja), un ejecutable nuevo que deja el virus de enlace (crear sí puede) y `C/viejo`, que actualiza un programa
 # honrado con permiso del usuario.
 CAJA = "Estado/Servicios/caja-amiga"
+# S13: `Prefs/Red/hosts` y `Prefs/Red/hora` (el vecino de la prueba, `tools/red_vecino.py`, da la hora) y `Prefs/zona`.
+RED_HOSTS = "# Nombres que se saben sin preguntar a nadie.\n10.0.2.53 hora.prueba vecino.prueba\nfec0::53 vecino.prueba\nesto no es una línea de hosts\n"
+RED_HORA = "hora.prueba\n"
+ZONA = "Europe/Madrid\n"
 SALUDO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "caja", "pruebas68k", "saludo.exe")
 CAJA_ICONO = bytes([0xE3, 0x10, 0, 1]) + bytes(74) + b"saludo\0"
 CAJA_GUION = b"; el arranque de la caja Amiga\nsaludo\n"
@@ -298,10 +306,46 @@ SYS_FICHEROS = [
     ("S/Startup-Sequence", b"; El arranque de la maquina (S14): lo hace el sistema antes de que entre nadie.\n"),
     ("S/Shell-Startup", b"; Lo que hace cada Shell al abrirse.\n"),
     ("S/User-Startup", b""),
+    # `ENVARC:` de fábrica: lo que `sesiones` copia a `ENV:` (en el `RAM:` de la sesión) al entrar; encima va lo del
+    # usuario (`Home:Prefs/Env-Archive`). Lo mira la prueba `ram`.
+    ("Prefs/Env-Archive/Sys/idioma", b"es\n"),
+    ("Prefs/Env-Archive/Sys/teclado", b"es\n"),
     # Un complemento de serie del Shell: unos alias. Los de cada usuario van en su `Home:S/Shell-Complementos`.
     ("S/Shell-Complementos/alias", "; Alias de serie del Shell. Los tuyos, en Home:S/Shell-Complementos.\nAlias ll List\nAlias la Dir ALL\nAlias md MakeDir\n".encode()),
     ("S/Prueba-Shell", PRUEBA_SHELL),
 ]
+
+
+# Idiomas (paso 4 de docs/REVISION_LOOP.md): el árbol de `LOCALE:` que deja `make catalogos` en build/Locale (catálogos
+# en inglés, los textos del inglés y los países), en `Locale/` del disco. Y dos catálogos malos para la prueba hostil
+# de `cambio`: rota.catalog (el del kit, cortado por la mitad) y ajena.catalog (el del kit con otro nombre de fichero).
+# Y el `locale.prefs` de Carla (inglés, Reino Unido), en su capa de `ENVARC:`, que está en su volumen cifrado
+# (`Home:Prefs/Env-Archive/Sys`): de ahí lo copia `sesiones` a su `ENV:` (en su `RAM:`, en memoria) al entrar. Ana no
+# tiene, y va en castellano.
+import catalogo  # noqa: E402
+LOCALE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "build", "Locale")
+PREFS_CARLA = "Prefs/Env-Archive/Sys/locale.prefs"
+
+
+def locale_ficheros():
+    """[(camino en el disco, bytes)] de lo de idiomas."""
+    ficheros = []
+    for carpeta, _, nombres in os.walk(LOCALE):
+        for n in nombres:
+            camino = os.path.join(carpeta, n)
+            ficheros.append(("Locale/" + os.path.relpath(camino, LOCALE).replace(os.sep, "/"), open(camino, "rb").read()))
+    kit = dict(ficheros).get("Locale/Catalogs/english/kit.catalog")
+    if kit is None:
+        sys.exit("disco de pruebas: falta build/Locale (make -C kernel catalogos)")
+    ficheros.append(("Locale/Catalogs/english/rota.catalog", kit[: len(kit) // 2]))
+    ficheros.append(("Locale/Catalogs/english/ajena.catalog", kit))
+    return sorted(ficheros)
+
+
+def prefs_carla():
+    """El `locale.prefs` de Carla: inglés y Reino Unido, con el país que dejó `make catalogos`."""
+    gb = dict(locale_ficheros())["Locale/Countries/great_britain.country"]
+    return catalogo.hacer_prefs("great_britain", ["english"], 0, gb)
 
 
 def sys_esperado():
@@ -311,8 +355,11 @@ def sys_esperado():
         partes = c.split("/")
         for i in range(1, len(partes) + 1):
             lineas.add("/".join(partes[:i]) + "/ cajón")
-    for n, d in SYS_FICHEROS:
+    for n, d in SYS_FICHEROS + locale_ficheros():
         lineas.add(f"{n} {len(d)}")
+        partes = n.split("/")[:-1]
+        for i in range(1, len(partes) + 1):
+            lineas.add("/".join(partes[:i]) + "/ cajón")
     return lineas
 
 
@@ -362,6 +409,8 @@ if sys.argv[1] == "--comprobar":
         "C/datos.bin 614400",
         "C/frio.bin 1048576",
         "C/grande.txt 313890",
+        # El selector de ficheros: lo que `guarda` guardó con "Guardar como" y sustituyó después (queda lo segundo).
+        "C/informe.txt 17",
         "C/raro|nombre.txt 14",
         # S10: el cajón de otra persona (Carla, 0700), que el Workbench de Ana no lista ni abre.
         "DeCarla/ cajón",
@@ -369,15 +418,7 @@ if sys.argv[1] == "--comprobar":
         "Escrito/ cajón",
         "Escrito/hola.txt 19 bits=0x4 : Saludo de DashOS, ñandú",
         "Estado/ cajón",
-        # Paso 2 de las asignaciones: el `RAM:` de cada cuenta (provisional, en el disco), con su `T:` y su `ENV:`; lo
-        # que crea `cambio` en `T:` lo borra.
-        "Estado/RAM/ cajón",
-        "Estado/RAM/Ana/ cajón",
-        "Estado/RAM/Ana/Env/ cajón",
-        "Estado/RAM/Ana/T/ cajón",
-        "Estado/RAM/Carla/ cajón",
-        "Estado/RAM/Carla/Env/ cajón",
-        "Estado/RAM/Carla/T/ cajón",
+        # `RAM:` ya no está en el disco: es un volumen en memoria por sesión (nada de `Estado/RAM`).
         "Estado/Servicios/ cajón",
         f"{CAJA}/ cajón",
         f"{CAJA}/C/ cajón",
@@ -416,14 +457,21 @@ if sys.argv[1] == "--comprobar":
         "Imagenes/raro\tdos.txt 14",
         "LEEME.txt 19",
         "Prefs/ cajón",
+        # S13: lo que se configura de la red (el servicio de red lo lee) y la zona horaria (la lee la barra).
+        "Prefs/Red/ cajón",
+        f"Prefs/Red/hora {len(RED_HORA)}",
+        f"Prefs/Red/hosts {len(RED_HOSTS.encode())}",
         "Prefs/fuente 8",
+        f"Prefs/zona {len(ZONA)}",
         "Programas/ cajón",
         f"Programas/avisa {os.path.getsize(AVISA)}",
         f"Programas/cambio {os.path.getsize(CAMBIO)}",
         f"Programas/espera {os.path.getsize(ESPERA)}",
+        f"Programas/guarda {os.path.getsize(GUARDA)}",
         f"Programas/hola {os.path.getsize(HOLA)}",
         f"Programas/panel {os.path.getsize(CAMBIO)}",
         f"Programas/pide {os.path.getsize(PIDE)}",
+        f"Programas/ram {os.path.getsize(RAM)}",
         # `Work:` (provisional, un cajón del disco).
         "Work/ cajón",
     ]
@@ -482,6 +530,9 @@ if sys.argv[1] == "--comprobar":
     permisos = subprocess.run([ver, disco, desde, "Estado/Servicios/sesiones/permisos"], capture_output=True).stdout
     if permisos != b"":
         fallos.append(f"permisos concedidos: {permisos!r}")
+    informe = subprocess.run([ver, disco, desde, "C/informe.txt"], capture_output=True).stdout
+    if informe != "segunda versión\n".encode():
+        fallos.append(f"C/informe.txt: {informe!r}")
     if hola != b"hola desde DashOS!\n":
         fallos.append(f"Escrito/hola.txt: {hola!r}")
     if grande != "".join(f"línea {i}\n" for i in range(25000)).encode():
@@ -547,6 +598,11 @@ with tempfile.TemporaryDirectory() as t:
         f.write(frio)
     with open(os.path.join(raiz, "Prefs", "fuente"), "w") as f:
         f.write("Topaz 8\n")
+    # S13: `Prefs/Red` (hosts y el servidor de hora, que es el vecino de la prueba) y la zona horaria.
+    os.makedirs(os.path.join(raiz, "Prefs", "Red"))
+    for nombre, texto in (("Red/hosts", RED_HOSTS), ("Red/hora", RED_HORA), ("zona", ZONA)):
+        with open(os.path.join(raiz, "Prefs", *nombre.split("/")), "w") as f:
+            f.write(texto)
     os.makedirs(os.path.join(raiz, "Programas"))
     if os.path.exists(CATALOGO_DASH):
         cat = os.path.join(raiz, *DASH_VENTANA.split("/"), "Locale", "Catalogs", "español")
@@ -556,18 +612,15 @@ with tempfile.TemporaryDirectory() as t:
     # U6: el cajón de `sesiones` (S6b: `Estado:Servicios/<nombre>`), suyo (usuario 1) y de nadie más.
     os.makedirs(os.path.join(raiz, "Estado", "Servicios", "sesiones"))
     os.chmod(os.path.join(raiz, "Estado", "Servicios", "sesiones"), 0o700)
-    # Paso 2 de las asignaciones: `RAM:` de cada cuenta (`Estado/RAM/<cuenta>`, solo suyo, con `T` y `Env`: sus `T:` y
-    # `ENV:`) y `Work:` (el cajón `Work`), provisionales: no hay aún disco en memoria ni un segundo disco.
-    for cuenta in ("Ana", "Carla"):
-        for sub in ("T", "Env"):
-            os.makedirs(os.path.join(raiz, "Estado", "RAM", cuenta, sub))
-        os.chmod(os.path.join(raiz, "Estado", "RAM", cuenta), 0o700)
+    # `Work:` (el cajón `Work`), provisional: no hay aún un segundo disco. `RAM:` no está en el disco: es un volumen en
+    # memoria que `sesiones` crea al entrar cada usuario.
     os.makedirs(os.path.join(raiz, "Work"))
     # Paso 2 de las asignaciones: la raíz del disco es `SYS:`, con los cajones del árbol de S4b (vacíos donde aún no hay
     # nada; `C` ya existe y guarda, provisional, lo del Home del escritorio). `Prefs` ya existe (con `fuente`).
     for cajon in SYS_CAJONES:
         os.makedirs(os.path.join(raiz, *cajon.split("/")), exist_ok=True)
-    for nombre, datos in SYS_FICHEROS:
+    for nombre, datos in SYS_FICHEROS + locale_ficheros():
+        os.makedirs(os.path.dirname(os.path.join(raiz, *nombre.split("/"))), exist_ok=True)
         with open(os.path.join(raiz, *nombre.split("/")), "wb") as f:
             f.write(datos)
     # S28: el cajón de la caja Amiga (de Ana, como todo; solo suyo).
@@ -592,6 +645,9 @@ with tempfile.TemporaryDirectory() as t:
     with open(os.path.join(raiz, "Programas", "pide"), "wb") as f:
         f.write(open(PIDE, "rb").read())
     os.chmod(os.path.join(raiz, "Programas", "pide"), 0o755)
+    with open(os.path.join(raiz, "Programas", "guarda"), "wb") as f:
+        f.write(open(GUARDA, "rb").read())
+    os.chmod(os.path.join(raiz, "Programas", "guarda"), 0o755)
     with open(os.path.join(raiz, "Programas", "avisa"), "wb") as f:
         f.write(open(AVISA, "rb").read())
     os.chmod(os.path.join(raiz, "Programas", "avisa"), 0o755)
@@ -601,6 +657,9 @@ with tempfile.TemporaryDirectory() as t:
     with open(os.path.join(raiz, "Programas", "cambio"), "wb") as f:
         f.write(open(CAMBIO, "rb").read())
     os.chmod(os.path.join(raiz, "Programas", "cambio"), 0o755)
+    with open(os.path.join(raiz, "Programas", "ram"), "wb") as f:
+        f.write(open(RAM, "rb").read())
+    os.chmod(os.path.join(raiz, "Programas", "ram"), 0o755)
     # U6, paso 2, prueba hostil: una copia de `cambio` con el nombre del panel rápido; lanzada del disco no tiene sus poderes.
     with open(os.path.join(raiz, "Programas", "panel"), "wb") as f:
         f.write(open(CAMBIO, "rb").read())
@@ -703,9 +762,14 @@ with tempfile.TemporaryDirectory() as t:
                    env={**os.environ, "DASHFS_DUENO": "1001:1001"})
     duenos = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "archivos", "herramientas", "target", "release", "duenos")
     subprocess.run([duenos, fs, "0", "1000:1000"], check=True)
+    # Idiomas: el `locale.prefs` de Carla, en su volumen (su capa de `ENVARC:`), suyo.
+    prefs = os.path.join(t, "locale.prefs")
+    with open(prefs, "wb") as f:
+        f.write(prefs_carla())
+    subprocess.run([os.path.join(os.path.dirname(duenos), "poner"), fs, "0", "Carla", "1001:1001", PREFS_CARLA, prefs],
+                   input=b"clave de Carla\n", check=True)
     subprocess.run([duenos, fs, "0", "1:1", "camino=Estado/Servicios/sesiones"], check=True)
     subprocess.run([duenos, fs, "0", "1001:1001", "camino=DeCarla"], check=True)
-    subprocess.run([duenos, fs, "0", "1001:1001", "camino=Estado/RAM/Carla"], check=True)
     # A10: un daño que la comprobación encuentra y la reparación arregla (los enlaces de LEEME.txt, 7 en vez de 1).
     # El servicio de archivos repara al arrancar; al final, la comprobación desde Linux tiene que salir limpia.
     estropear = os.path.join(os.path.dirname(duenos), "estropear")

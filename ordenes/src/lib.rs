@@ -1,5 +1,5 @@
 //! Lo que usa una orden del Shell nativo (`docs/bitacoras/shell-nativa.md`), y el propio Shell: su arranque (el cajón
-//! actual y los argumentos, por la llave 4), escribir y leer por el Shell que la lanzó, y los ficheros por su ruta con
+//! actual y los argumentos, por su canal de arranque), escribir y leer por el Shell que la lanzó, y los ficheros por su ruta con
 //! nombre (`Home:Trabajo/nota.txt`, o relativa al cajón actual) sobre `dashos::asignaciones`.
 //!
 //! Llaves: 1 `sesiones`, 2 archivos, 3 el compositor y 4 el canal de arranque, si quien la lanza lo da.
@@ -462,11 +462,27 @@ pub struct Arranque {
     pub filas: usize,
 }
 
-/// Lee el arranque de la llave 4. Sin ella (o con algo que no cuadra), no hay argumentos ni Shell.
+/// La llave del canal de arranque (por su nombre en la tabla de llaves del programa), o 0 si no hay.
+fn llave_arranque() -> u32 {
+    static LLAVE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(u32::MAX);
+    let l = LLAVE.load(core::sync::atomic::Ordering::Relaxed);
+    if l != u32::MAX {
+        return l;
+    }
+    let l = dashos::llaves::Tabla::leer().buscar(p::NOMBRE_ARRANQUE).unwrap_or(0);
+    LLAVE.store(l, core::sync::atomic::Ordering::Relaxed);
+    l
+}
+
+/// Lee el arranque de su canal. Sin él (o con algo que no cuadra), no hay argumentos ni Shell.
 pub fn arranque() -> Option<Arranque> {
     let mut b = [0u8; 256];
     let mut ll = [0u32; 8];
-    let (n, k, _) = dashos::canal_leer_plazo(p::LLAVE_ARRANQUE, &mut b, &mut ll, 200_000);
+    let canal = llave_arranque();
+    if canal == 0 {
+        return None;
+    }
+    let (n, k, _) = dashos::canal_leer_plazo(canal, &mut b, &mut ll, 200_000);
     let u32_en = |b: &[u8], i: usize| u32::from_le_bytes(b[i..i + 4].try_into().unwrap());
     if n < p::LARGO_ARRANQUE as i64 || u32_en(&b, 0) != p::ARRANQUE {
         ll[..k.min(8)].iter().for_each(|&l| {
@@ -485,7 +501,7 @@ pub fn arranque() -> Option<Arranque> {
     }
     let mut datos = Vec::with_capacity(la + ln + lg);
     while datos.len() < la + ln + lg {
-        let (n, k, _) = dashos::canal_leer_plazo(p::LLAVE_ARRANQUE, &mut b, &mut ll, 200_000);
+        let (n, k, _) = dashos::canal_leer_plazo(canal, &mut b, &mut ll, 200_000);
         ll[..k.min(8)].iter().for_each(|&l| {
             dashos::cerrar(l);
         });
@@ -536,7 +552,7 @@ impl Cli {
         }
         let mut r = [0u8; 256];
         let mut ll = [0u32; 8];
-        let (n, k, _) = dashos::canal_leer_plazo(p::LLAVE_ARRANQUE, &mut r, &mut ll, plazo_us);
+        let (n, k, _) = dashos::canal_leer_plazo(llave_arranque(), &mut r, &mut ll, plazo_us);
         ll[..k.min(8)].iter().for_each(|&l| {
             dashos::cerrar(l);
         });

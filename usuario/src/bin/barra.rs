@@ -7,7 +7,8 @@
 //! - En medio, el título de la ventana con el teclado. Se lo dice el compositor por `dashos_tema_v1` (evento `titulo`,
 //!   solo a la barra): es el de la ventana en la que escribe quien está delante, nunca el de otra, y vacío con la
 //!   sesión bloqueada.
-//! - A la derecha, la hora (`dashos::hora_ns`, UTC: aún no hay zona horaria) y el botón del panel rápido, que lo pide
+//! - A la derecha, la hora (`dashos::hora_ns`, en la zona horaria de `Prefs/zona` del disco del sistema, que lee al
+//!   arrancar por su raíz 1; sin ella, UTC; `dashos::zona`) y el botón del panel rápido, que lo pide
 //!   como Super+A (petición `panel`, que el compositor solo le acepta a la barra).
 //!
 //! El lanzador es otra capa, arriba a la izquierda bajo su botón, con el teclado mientras se ve. Se abre con el botón
@@ -48,6 +49,7 @@ mod lanzables;
 mod lanzador_lista;
 #[path = "../reloj.rs"]
 mod reloj;
+use dashos::zona;
 #[path = "../monitor.rs"]
 #[allow(dead_code)]
 mod monitor;
@@ -498,12 +500,12 @@ fn icono_campana(l: &mut Lienzo, r: Rect, color: Color) {
     punto(l, 2 * cx, 2 * cy + 13, 4, color);
 }
 
-/// La hora (UTC) de `ns`, como "hh:mm"; sin hora, vacío.
+/// La hora de `ns` en la zona horaria (S13), como "hh:mm"; sin hora, vacío.
 fn hora_de(ns: u64) -> String {
     if ns == 0 {
         return String::new();
     }
-    let min = ns / 60_000_000_000 % 1440;
+    let min = zona::local_ns(zona_de_ahora(), ns) / 60_000_000_000 % 1440;
     alloc::format!("{:02}:{:02}", min / 60, min % 60)
 }
 
@@ -1180,10 +1182,77 @@ fn cerrar_procesos(c: &mut Cliente, b: &mut Barra, p: &mut Procesos) {
     println!("  [barra] procesos cerrados");
 }
 
-/// La fecha y la hora de ahora (UTC), si se sabe la hora.
+/// S13: la zona horaria (su puesto en `zona::ZONAS`; 0 es UTC). La pone `leer_zona` al arrancar.
+static ZONA: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+fn zona_de_ahora() -> &'static zona::Zona {
+    zona::ZONAS.get(ZONA.load(core::sync::atomic::Ordering::Relaxed)).unwrap_or(&zona::UTC)
+}
+
+/// S13: lee la zona horaria de `Prefs/zona` (una línea con su nombre, como "Europe/Madrid"), por la raíz 1 de la barra
+/// en el servicio de archivos (los ajustes del sistema, solo para leer). Si no hay fichero, no se entiende o la zona no
+/// está en la tabla, se queda UTC. Devuelve el porqué si no se pudo.
+fn leer_zona() -> Result<(), &'static str> {
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut cab = [0u8; a::CABECERA];
+    cab[0..4].copy_from_slice(&a::SESION.to_le_bytes());
+    let mut r = [0u8; 32];
+    let mut ll = [0u32; 1];
+    let (n, k, _) = if dashos::canal_escribir(ARCHIVOS, &cab, &[suyo]) == 0 {
+        dashos::canal_leer_plazo(lectura, &mut r, &mut ll, PLAZO_ARCHIVOS_US)
+    } else {
+        (-1, 0, 0)
+    };
+    if n != 32 || k != 1 || dashos::memoria_proyectar(ll[0], VA_ARCHIVOS, false) != 0 {
+        if n >= 0 && k == 1 {
+            dashos::cerrar(ll[0]);
+        }
+        dashos::cerrar(lectura);
+        return Err("sin servicio de archivos");
+    }
+    dashos::cerrar(ll[0]);
+    // Una orden: estado, asa y el primer número de la respuesta.
+    let pedir = |orden: u32, asa: u32, y: u64, nombre: &str| -> (i32, u32, u64) {
+        let mut p = [0u8; a::CABECERA + 16];
+        p[0..4].copy_from_slice(&orden.to_le_bytes());
+        p[4..8].copy_from_slice(&asa.to_le_bytes());
+        p[16..24].copy_from_slice(&y.to_le_bytes());
+        p[24..28].copy_from_slice(&(nombre.len() as u32).to_le_bytes());
+        p[32..32 + nombre.len()].copy_from_slice(nombre.as_bytes());
+        let mut r = [0u8; 32];
+        if dashos::canal_escribir(ARCHIVOS, &p[..32 + nombre.len()], &[]) != 0 || dashos::canal_leer_plazo(lectura, &mut r, &mut [], PLAZO_ARCHIVOS_US).0 != 32 {
+            return (-1, 0, 0);
+        }
+        (i32::from_le_bytes(r[0..4].try_into().unwrap()), u32::from_le_bytes(r[4..8].try_into().unwrap()), u64::from_le_bytes(r[8..16].try_into().unwrap()))
+    };
+    let mut resultado = Err("no hay Prefs/zona");
+    // La raíz 1: `Prefs` del disco del sistema.
+    let (e, asa, tam) = pedir(a::BUSCAR, 1, 0, "zona");
+    if e == a::BIEN {
+        let (e, _, leidos) = pedir(a::LEER, asa, tam.min(64), "");
+        resultado = Err("Prefs/zona no se lee");
+        if e == a::BIEN {
+            let v = unsafe { core::slice::from_raw_parts(VA_ARCHIVOS as *const u8, (leidos as usize).min(64)) };
+            let nombre = core::str::from_utf8(v).ok().and_then(|t| t.lines().next()).unwrap_or("");
+            resultado = match zona::ZONAS.iter().position(|z| z.nombre.eq_ignore_ascii_case(nombre.trim())) {
+                Some(i) => {
+                    ZONA.store(i, core::sync::atomic::Ordering::Relaxed);
+                    Ok(())
+                }
+                None => Err("la zona de Prefs/zona no está en la tabla"),
+            };
+        }
+        pedir(a::CERRAR, asa, 0, "");
+    }
+    dashos::memoria_quitar(VA_ARCHIVOS);
+    dashos::cerrar(lectura);
+    resultado
+}
+
+/// La fecha y la hora de ahora en la zona horaria (`ZONA`), si se sabe la hora.
 fn hora_ahora() -> Option<reloj::Fecha> {
     let ns = dashos::hora_ns();
-    (ns > 0).then(|| reloj::fecha(ns))
+    (ns > 0).then(|| reloj::fecha(zona::local_ns(zona_de_ahora(), ns)))
 }
 
 /// Cuánto falta para el próximo minuto (o 10 s si no se sabe la hora), en microsegundos.
@@ -1226,6 +1295,10 @@ fn principal() -> u64 {
     e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
     c.mandar(&e);
 
+    // S13: la zona horaria, antes de la primera hora.
+    if let Err(porque) = leer_zona() {
+        println!("  [barra] zona horaria: {}; se queda UTC", porque);
+    }
     let mut b = Barra { tema: Tema::CLARO, ancho: 0, titulo: String::new(), hora: hora_ahora(), encima: None, lanzador_abierto: false, sin_leer: 0, historial_abierto: false, espacio: 1, ocupados: 0, estado: None, uso: (None, None), procesos_abierto: false };
     // Trasfondo: lo que se mide (la píldora y el desplegable) y el desplegable.
     let mut med = monitor::Medidor::default();
@@ -1480,7 +1553,18 @@ fn principal() -> u64 {
                     let ca = d.campana;
                     println!("  [barra] campana en ({}, {})", ca.x + ca.w / 2, ca.y + ca.h / 2);
                     match b.hora {
-                        Some(f) => println!("  [barra] hora: {:02}:{:02} (UTC), {} {}", f.hora, f.minuto, d.hora, d.fecha),
+                        Some(f) => {
+                            // S13: la hora local de la zona, cómo va respecto a UTC ahora, y la hora en UTC.
+                            let ns = dashos::hora_ns();
+                            let z = zona_de_ahora();
+                            let mut eti = [0u8; 10];
+                            let n = zona::etiqueta(z, ns / 1_000_000_000, &mut eti);
+                            let utc = reloj::fecha(ns);
+                            println!(
+                                "  [barra] hora: {:02}:{:02} ({}, {}; en UTC, las {:02}:{:02}), {} {}",
+                                f.hora, f.minuto, z.nombre, core::str::from_utf8(&eti[..n]).unwrap_or("?"), utc.hora, utc.minuto, d.hora, d.fecha
+                            );
+                        }
                         None => println!("  [barra] hora: no se sabe"),
                     }
                 }

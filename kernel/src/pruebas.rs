@@ -309,6 +309,7 @@ fn crear_proceso_opc(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usiz
         cupo: crate::cupo::Cupo::raiz(),
         _cargo: crate::cupo::Cupo::raiz().cobrar(0).expect("el grupo raíz no tiene límite"),
         control: Default::default(),
+        nombres: objetos::NombresLlaves::NINGUNO,
     });
     let ptr = alloc::sync::Arc::into_raw(p) as usize;
     unsafe { planificador::crear_en(arrancar_proceso, ptr, nucleo, ptr) };

@@ -1,4 +1,5 @@
 //! La rejilla de permisos de la Información (S10), para el kit: la usan el Workbench y el explorador.
+//! Sus textos van en el catálogo del kit (`kit::textos::tr`; `locale/programas.txt` la cuenta con las fuentes del kit).
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -8,6 +9,7 @@ use kit::lienzo::{Lienzo, Rect};
 use kit::objetos::{atr, Atr, Clase, Valor};
 use kit::tema::{self, con_opacidad, Estado};
 use kit::texto::Fuente;
+use kit::textos::tr;
 
 fn centrado(f: &mut Fuente, l: &mut Lienzo, cx: i32, base: i32, texto: &str, tam: u32, color: kit::lienzo::Color) {
     let w = f.medir(texto, tam).ancho;
@@ -24,9 +26,20 @@ const PERM_ETIQUETA: i32 = 76;
 const PERM_COL: i32 = 80;
 const PERM_CAB: i32 = 24;
 const PERM_FILA: i32 = 40;
-const COLUMNAS: [&str; 4] = ["Leer", "Escribir", "Ejecutar", "No borrar"];
-const FILAS: [&str; 3] = ["Dueño", "Grupo", "Otros"];
-const COLUMNAS_AMIGA: [&str; 4] = ["Guion", "Puro", "Archivado", "Residente"];
+
+/// Las cabeceras de las columnas (las de Unix y las del Amiga) y los nombres de las cuatro filas, en el idioma del
+/// usuario.
+fn columnas() -> [&'static str; 4] {
+    [tr(14, "Leer"), tr(15, "Escribir"), tr(16, "Ejecutar"), tr(17, "No borrar")]
+}
+
+fn columnas_amiga() -> [&'static str; 4] {
+    [tr(18, "Guion"), tr(19, "Puro"), tr(20, "Archivado"), tr(21, "Residente")]
+}
+
+fn filas() -> [&'static str; 4] {
+    [tr(22, "Dueño"), tr(23, "Grupo"), tr(24, "Otros"), tr(25, "Amiga")]
+}
 
 impl Permisos {
     /// El bit de la casilla (fila 0 a 3, columna 0 a 3) en el valor junto.
@@ -72,14 +85,14 @@ impl Clase for Permisos {
         let valor = attrs.get(&atr::VALOR).map_or(0, Valor::int);
         let pulsada = if e.pulsado { attrs.get(&atr::CURSOR).map_or(-1, Valor::int) } else { -1 };
         let suave = if e.desactivado { tema::apagado(t.sobre_superficie) } else { t.sobre_variante_superficie };
-        for (cab, nombres) in [(0, COLUMNAS), (PERM_CAB + 3 * PERM_FILA, COLUMNAS_AMIGA)] {
+        for (cab, nombres) in [(0, columnas()), (PERM_CAB + 3 * PERM_FILA, columnas_amiga())] {
             for (c, n) in nombres.iter().enumerate() {
                 let cx = r.x + PERM_ETIQUETA + c as i32 * PERM_COL + PERM_COL / 2;
                 centrado(&mut ctx.medium, l, cx, r.y + cab + 16, n, 12, suave);
             }
         }
         let tinta = if e.desactivado { tema::apagado(t.sobre_superficie) } else { t.sobre_superficie };
-        for (fila, n) in FILAS.iter().chain(["Amiga"].iter()).enumerate() {
+        for (fila, n) in filas().iter().enumerate() {
             let (_, cy) = Self::centro(r, fila, 0);
             ctx.regular.dibujar(l, r.x, cy + 5, n, 14, tinta);
             for col in 0..4 {

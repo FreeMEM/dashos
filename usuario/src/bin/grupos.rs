@@ -171,12 +171,105 @@ fn principal() -> u64 {
     if ok != 0 {
         return ok;
     }
+    // 40-59: memoria dispersa (llamadas 57 y 58), para el `RAM:` de una sesión.
+    let (ok, puestas) = dispersa(tamano);
+    if ok != 0 {
+        return ok;
+    }
     println!("  [grupos] cupo agotado en {} trozos de 64 KB, devuelto entero, y grupos que se matan", trozos);
     println!("  [grupos] ciclos soltados al matar el grupo, y matanzas a la vez sin caerse");
     println!("  [grupos] topes: el propio no se sube, uno por debajo de lo usado no quita nada y no deja cobrar, y el aviso de memoria pide su permiso");
     println!("  [grupos] topes: un nieto con tope de 64 MB bajo uno de 2 MB se para en {} KB; con la memoria llena ({} MB) falla limpio y todo vuelve", trozos_nieto * 64, lleno);
     println!("  [grupos] tiempo de CPU: el hijo que gira gastó {} ms en su grupo, cuenta también en el de arriba y no se pierde al matarlo", cpu_hijo / 1000);
+    println!("  [grupos] memoria dispersa: vacía no cobra más que su lista, cada página se cobra al ponerla y vuelve al soltarla, el tope de su grupo la para en {} KB, un hueco es un fallo y lo ajeno o compartido no se toca", puestas * 4);
     42
+}
+
+/// Memoria dispersa (llamadas 57 y 58): un objeto de 4 MB en un grupo de 1 MB. El paso que falla y 0, o 0 y cuántas
+/// páginas dejó poner el tope.
+fn dispersa(tamano: usize) -> (u64, u64) {
+    use dashos::{memoria_dispersa, memoria_paginas, memoria_proyectar};
+    const VA: usize = 0x31_0000_0000;
+    const PAGINAS: usize = 1024;
+    let g = grupo_crear(MB);
+    if g <= 0 {
+        return (40, 0);
+    }
+    let g = g as u32;
+    // 41: más grande que el tope de su grupo y nace igual: vacío solo cuesta su lista (256 bytes y 8 por página).
+    let m = memoria_dispersa(PAGINAS * 4096, g);
+    let fijo = grupo_uso(g).1;
+    if m <= 0 || fijo != 256 + 8 * PAGINAS as u64 || dashos::memoria_tamano(m as u32) != (PAGINAS * 4096) as i64 {
+        return (41, 0);
+    }
+    let m = m as u32;
+    // 42: lo que no vale. Tamaño 0 o de más de 1 GB, un grupo que no es un grupo o sin escribir.
+    let solo_leer = dashos::llave_duplicar(g, dashos::LEER, 0);
+    if memoria_dispersa(0, g) != -5 || memoria_dispersa((1 << 30) + 1, g) != -5 || memoria_dispersa(4096, m) != -6 || solo_leer <= 0 || memoria_dispersa(4096, solo_leer as u32) != -3 {
+        return (42, 0);
+    }
+    // 43: proyectada entera sin ninguna página; se ponen 16 desde la 8, se cobran y se escriben y leen.
+    if memoria_proyectar(m, VA, true) != 0 || memoria_paginas(m, true, 8, 16) != 16 || grupo_uso(g).1 != fijo + 16 * 4096 {
+        return (43, 0);
+    }
+    let pagina = |k: usize| (VA + k * 4096) as *mut u64;
+    for k in 8..24 {
+        unsafe { core::ptr::write_volatile(pagina(k), 0xD15C0 + k as u64) };
+    }
+    if (8..24).any(|k| unsafe { core::ptr::read_volatile(pagina(k)) } != 0xD15C0 + k as u64) {
+        return (44, 0);
+    }
+    // 45: poner las que ya están no cobra otra vez ni las borra; soltar las que no están no hace nada.
+    if memoria_paginas(m, true, 8, 16) != 16 || grupo_uso(g).1 != fijo + 16 * 4096 || unsafe { core::ptr::read_volatile(pagina(9)) } != 0xD15C0 + 9 || memoria_paginas(m, false, 100, 50) != 50 {
+        return (45, 0);
+    }
+    // 46: soltadas, vuelven al grupo; puesta otra vez, la página llega a cero (no con lo que tenía).
+    if memoria_paginas(m, false, 8, 16) != 16 || grupo_uso(g).1 != fijo || memoria_paginas(m, true, 9, 1) != 1 || unsafe { core::ptr::read_volatile(pagina(9)) } != 0 {
+        return (46, 0);
+    }
+    // 47: el tope del grupo (1 MB) para el llenado: se ponen menos de las 256 de 1 MB, las del final no, y nada pasa
+    // del tope. Con el tope lleno, poner una más da E_MEMORIA.
+    let puestas = memoria_paginas(m, true, 256, 256);
+    let usado = grupo_uso(g).1;
+    if !(200..256).contains(&puestas) || usado > MB || usado != fijo + (puestas as u64 + 1) * 4096 || memoria_paginas(m, true, 600, 1) != -7 {
+        return (47, 0);
+    }
+    // 48: tramos y llaves que no valen: fuera del objeto, 0 o más de 256 páginas, otra operación, una llave que no es
+    // de memoria, una sin escribir.
+    let sin_escribir = dashos::llave_duplicar(m, dashos::LEER | dashos::TRANSFERIR, 0);
+    if memoria_paginas(m, true, PAGINAS - 1, 2) != -5 || memoria_paginas(m, true, PAGINAS, 1) != -5 || memoria_paginas(m, true, usize::MAX, 1) != -5
+        || memoria_paginas(m, true, 0, 0) != -5 || memoria_paginas(m, false, 0, 257) != -5 || dashos::llamada(58, [m as u64, 2, 0, 1, 0]).0 as i64 != -1
+        || memoria_paginas(g, false, 0, 1) != -6 || sin_escribir <= 0 || memoria_paginas(sin_escribir as u32, false, 9, 1) != -3
+    {
+        return (48, 0);
+    }
+    // 49: compartida no se toca. Una copia de la llave viaja en un mensaje (el canal la tiene): ni soltar ni poner.
+    // Leído el mensaje y cerrada la copia, otra vez sí.
+    let (a, b) = canal_crear();
+    let mut ll = [0u32; 1];
+    if canal_escribir(a, &[1], &[sin_escribir as u32]) != 0 || memoria_paginas(m, false, 9, 1) != -3 || memoria_paginas(m, true, 700, 1) != -3 {
+        return (49, 0);
+    }
+    if dashos::canal_leer(b, &mut [0u8; 8], &mut ll).1 != 1 || dashos::cerrar(ll[0]) != 0 || memoria_paginas(m, false, 9, 1) != 1 {
+        return (50, 0);
+    }
+    dashos::cerrar(a);
+    dashos::cerrar(b);
+    // 51: soltado lo que puso el llenado, el grupo vuelve a lo fijo. Y un hijo que lee un hueco de su objeto disperso
+    // muere por fallo (clase 2), y lo suyo vuelve.
+    if memoria_paginas(m, false, 256, 256) != 256 || grupo_uso(g).1 != fijo {
+        return (51, 0);
+    }
+    let p = hijo_en(g, tamano, &[18]);
+    if p <= 0 || proceso_esperar(p as u32).0 != 2 {
+        return (51, 0);
+    }
+    // 52: quitada la proyección y cerradas las llaves, el grupo vuelve a cero: páginas puestas y lista.
+    if dashos::memoria_quitar(VA) != 0 || dashos::cerrar(m) != 0 || dashos::cerrar(solo_leer as u32) != 0 || !vuelve_a_cero(g) {
+        return (52, 0);
+    }
+    dashos::cerrar(g);
+    (0, puestas as u64)
 }
 
 /// Lanza en `grupo` un hijo con la orden `orden` (5 o 13) y el ELF de `hijo`: crea su subgrupo de 64 MB y un nieto

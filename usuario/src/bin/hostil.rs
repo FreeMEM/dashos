@@ -1115,11 +1115,14 @@ fn disco() -> bool {
 }
 
 /// A14: nadie pone la hora con la llamada de leerla (ni con otros valores), y la hora no va hacia atrás. En `virt`, la
-/// del reloj de la placa: creíble.
+/// del reloj de la placa: creíble. S13: con 1 la llamada pone la hora, pero pide el permiso del reloj, que solo tiene
+/// `hora`: con cada llave del hostil (y con números que no son llaves) da error y la hora no salta.
 fn hora() -> bool {
     let antes = dashos::hora_ns();
-    let rechazos = [1u64, 2, u64::MAX, 1 << 63].iter().all(|&q| dashos::llamada(39, [q, 1_000_000_000, 0, 0, 0]).0 as i64 == -1);
+    let rechazos = [2u64, u64::MAX, 1 << 63].iter().all(|&q| dashos::llamada(39, [q, 1_000_000_000, 0, 0, 0]).0 as i64 == -1)
+        && (0..64u64).chain([1_000_000_000, u64::MAX]).all(|l| (dashos::llamada(39, [1, l, 1_900_000_000_000_000_000, 0, 0]).0 as i64) < 0);
     let despues = dashos::hora_ns();
+    let rechazos = rechazos && despues - antes.min(despues) < 60_000_000_000;
     let creible = antes == 0 || antes / 1_000_000_000 >= 1_704_067_200;
     rechazos && despues >= antes && creible && (antes == 0) == (despues == 0)
 }

@@ -98,7 +98,7 @@ pub struct Volume {
     pub latest: Le<u64>,
     pub snapshots: BlockPtr<SnapshotList>,
     pub dead: BlockPtr<DeadList>,
-    /// The most blocks it may use, 0 if there is no limit. FS10: kept, not yet enforced.
+    /// The most blocks it may use, 0 if there is no limit. DashOS: enforced (`Transaction::note_volume`).
     pub quota: Le<u64>,
     pub ctime: Le<u64>,
     pub ctime_nsec: Le<u32>,
@@ -107,7 +107,10 @@ pub struct Volume {
     pub keys: BlockPtr<VolumeKeys>,
     pub keys_copy: BlockPtr<VolumeKeys>,
     name_len: u8,
-    _reserved: [u8; 7],
+    /// DashOS (la cuota): los bloques que usa, en 7 bytes (los que eran de relleno): los de su árbol, los que solo
+    /// ven sus instantáneas (los de sus listas de muertos) y los de sus listas. Un bloque que comparten el volumen y
+    /// una instantánea cuenta una vez. 0 es "sin contar" (un volumen de antes): se cuenta la primera vez que cambia.
+    used: [u8; 7],
     name: [u8; VOLUME_NAME_MAX],
 }
 
@@ -127,7 +130,7 @@ impl Default for Volume {
             keys: BlockPtr::default(),
             keys_copy: BlockPtr::default(),
             name_len: 0,
-            _reserved: [0; 7],
+            used: [0; 7],
             name: [0; VOLUME_NAME_MAX],
         }
     }
@@ -150,6 +153,22 @@ impl Volume {
     /// Whether it is encrypted (FS10c).
     pub fn is_encrypted(&self) -> bool {
         self.flags.to_ne() & VOLUME_ENCRYPTED != 0
+    }
+
+    /// Los bloques que usa (ver el campo); 0 si aún no se han contado.
+    pub fn used(&self) -> u64 {
+        let mut bytes = [0u8; 8];
+        bytes[..7].copy_from_slice(&self.used);
+        u64::from_le_bytes(bytes)
+    }
+
+    pub(crate) fn set_used(&mut self, used: u64) {
+        self.used.copy_from_slice(&used.min((1 << 56) - 1).to_le_bytes()[..7]);
+    }
+
+    /// Los bloques que puede usar como mucho; 0 si no tiene tope.
+    pub fn quota(&self) -> u64 {
+        self.quota.to_ne()
     }
 }
 
@@ -318,6 +337,7 @@ impl<D: Disk> Transaction<'_, D> {
         fields.apply(&mut self.header);
         self.entered = Some(fields);
         self.volume = id;
+        self.grown = 0;
         self.sealed = volume.is_encrypted();
         self.cipher = self.fs.unlocked.get(&id).cloned();
         Ok(())
@@ -329,7 +349,7 @@ impl<D: Disk> Transaction<'_, D> {
             return Ok(());
         };
         self.write_dead()?;
-        self.note_volume();
+        self.note_volume()?;
         main.apply(&mut self.header);
         self.main = None;
         self.entered = None;
@@ -340,13 +360,19 @@ impl<D: Disk> Transaction<'_, D> {
     }
 
     /// If the fields of the volume this transaction is in changed, notes them for the list.
-    pub(crate) fn note_volume(&mut self) {
+    ///
+    /// DashOS (la cuota): y con ellos los bloques que usa ahora. Si la transacción lo ha hecho crecer y pasa de su
+    /// tope, falla con ENOSPC ("lleno"): la transacción no se confirma y a los demás volúmenes no les pasa nada. Se
+    /// mira aquí, y no al reservar cada bloque, porque con copia al escribir una transacción reserva los bloques
+    /// nuevos antes de soltar los viejos: lo que cuenta es cómo queda. Lo que no lo hace crecer (borrar, recortar,
+    /// escribir encima) vale siempre, también por encima del tope.
+    pub(crate) fn note_volume(&mut self) -> Result<()> {
         if self.main.is_none() {
-            return;
+            return Ok(());
         }
         let here = VolumeFields::of(&self.header);
-        if self.entered == Some(here) {
-            return;
+        if self.entered == Some(here) && self.grown == 0 {
+            return Ok(());
         }
         let id = self.volume;
         let mut volume = match self.volume_changes.get(&id) {
@@ -354,15 +380,62 @@ impl<D: Disk> Transaction<'_, D> {
             _ => match self.volumes_on_disk() {
                 Ok((list, _)) => match list.into_iter().find(|v| v.id() == id) {
                     Some(volume) => volume,
-                    None => return,
+                    None => return Ok(()),
                 },
-                Err(_) => return,
+                Err(_) => return Ok(()),
             },
         };
+        let grown = self.grown;
+        let used = match volume.used() {
+            // Sin contar (un volumen de antes, o uno recién hecho): se cuenta ahora, como queda. Si no se puede
+            // leer entero, se queda sin contar, y sin tope, hasta que se repare.
+            0 => self.count_volume_blocks().unwrap_or(0),
+            used => used.saturating_add_signed(grown).max(1),
+        };
+        if !self.unlimited && grown > 0 && used != 0 && volume.quota() != 0 && used > volume.quota() {
+            return Err(Error::new(syscall::error::ENOSPC));
+        }
+        self.grown = 0;
         here.apply_volume(&mut volume);
+        volume.set_used(used);
         self.volume_changes.insert(id, Some(volume));
         self.entered = Some(here);
         self.header_changed = true;
+        Ok(())
+    }
+
+    /// Los bloques que usa el volumen en que está la transacción, contados: los de su árbol, los de sus listas de
+    /// muertos (los que solo ven sus instantáneas: todo bloque de una instantánea está en el árbol o en una de esas
+    /// listas) y los de sus listas.
+    pub(crate) fn count_volume_blocks(&mut self) -> Result<u64> {
+        let mut blocks = 0;
+        let root = self.header.tree;
+        self.tree_blocks(root, &mut |addr| {
+            blocks += addr.level().blocks::<u64>();
+            true
+        })?;
+        for addr in self.dead_entries()? {
+            blocks += addr.level().blocks::<u64>();
+        }
+        blocks += self.snapshot_list_blocks()?.len() as u64;
+        blocks += self.read_release(self.header.release)?.1.len() as u64;
+        Ok(blocks)
+    }
+
+    /// Pone el tope de un volumen, en bloques (0: sin tope). Solo desde el principal, que no tiene tope. Se puede
+    /// poner por debajo de lo que ya usa: entonces no crece hasta que baje de ahí.
+    pub fn set_volume_quota(&mut self, id: u64, quota: u64) -> Result<()> {
+        let mut volume = self.volume_by_id(id)?;
+        volume.quota = quota.into();
+        self.volume_changes.insert(id, Some(volume));
+        self.header_changed = true;
+        Ok(())
+    }
+
+    /// Lo que usa un volumen y su tope, en bloques (0: sin contar aún; sin tope). Solo desde el principal.
+    pub fn volume_space(&mut self, id: u64) -> Result<(u64, u64)> {
+        let volume = self.volume_by_id(id)?;
+        Ok((volume.used(), volume.quota()))
     }
 
     /// Writes the list of volumes anew with the changes of this transaction. Called by `sync`.
@@ -374,6 +447,14 @@ impl<D: Disk> Transaction<'_, D> {
     }
 
     fn write_volume_changes_always(&mut self) -> Result<()> {
+        // La lista de volúmenes es del disco: no cuenta para ninguno.
+        let was = mem::replace(&mut self.global, true);
+        let done = self.write_volume_list();
+        self.global = was;
+        done
+    }
+
+    fn write_volume_list(&mut self) -> Result<()> {
         let (on_disk, _) = self.volumes_on_disk()?;
         let (_, _, own) = self.volume_copies();
         let mut map: BTreeMap<u64, Volume> = on_disk.into_iter().map(|v| (v.id(), v)).collect();
@@ -558,6 +639,7 @@ impl<D: Disk> Transaction<'_, D> {
         let main = self.main.take().unwrap();
         main.apply(&mut self.header);
         self.entered = None;
+        self.grown = 0;
         self.volume = 0;
         self.sealed = false;
         self.cipher = None;

@@ -196,6 +196,50 @@ fn principal() -> u64 {
     if unsafe { core::ptr::read_volatile(va as *const u64) } != 1 {
         return 30;
     }
+    dashos::memoria_quitar(va);
+    // La tabla de llaves. 31: un hijo con dos llaves con nombre las encuentra por su nombre (2 por 16, y los cuatro
+    // bits); 32: uno lanzado sin nombres tiene la tabla vacía.
+    let n16 = dashos::llaves::nombre16;
+    let (a, b) = dashos::canal_crear();
+    let m = dashos::memoria_crear(4096);
+    if dashos::canal_escribir(a, &[17], &[]) != 0 {
+        return 31;
+    }
+    let p = dashos::proceso_crear_con_nombres(0, 1, tamano, &[b, m], &[n16("orden"), n16("datos")]);
+    if p <= 0 || dashos::proceso_esperar(p as u32) != (0, 2 * 16 + 15) {
+        return 31;
+    }
+    let (p, _) = hijo(tamano, &[17]);
+    if p <= 0 || dashos::proceso_esperar(p as u32) != (0, 12) {
+        return 32;
+    }
+    // 33-35: lo hostil. Un nombre de menos o de más; más llaves de las que caben; y unos nombres que no se pueden leer
+    // (los números de llave acaban justo donde acaba la página): no se crea nada y la llave no se mueve.
+    let (a, b) = dashos::canal_crear();
+    if dashos::proceso_crear_con_nombres(0, 1, tamano, &[b], &[]) != E_ARGUMENTO || dashos::proceso_crear_con_nombres(0, 1, tamano, &[b], &[n16("a"), n16("b")]) != E_ARGUMENTO {
+        return 33;
+    }
+    let muchas = [b; 9];
+    if llamada(12, [1, tamano as u64, muchas.as_ptr() as u64, 9 | dashos::llaves::CON_NOMBRES, 0]).0 as i64 != E_TAMANO {
+        return 34;
+    }
+    let m = dashos::memoria_crear(4096);
+    if dashos::memoria_proyectar(m, va, true) != 0 {
+        return 35;
+    }
+    unsafe { core::ptr::write_volatile((va + 4092) as *mut u32, b) };
+    if llamada(12, [1, tamano as u64, (va + 4092) as u64, 1 | dashos::llaves::CON_NOMBRES, 0]).0 as i64 != E_ARGUMENTO {
+        return 35;
+    }
+    // La llave sigue siendo suya: por ella escribe, y sin nombres el hijo nace (y sale con 6).
+    if dashos::canal_escribir(a, &[1, 6], &[]) != 0 {
+        return 36;
+    }
+    let p = llamada(12, [1, tamano as u64, (va + 4092) as u64, 1, 0]).0 as i64;
+    if p <= 0 || dashos::proceso_esperar(p as u32) != (0, 6) {
+        return 36;
+    }
+    println!("  [padre] tabla de llaves: el hijo encuentra las suyas por su nombre; sin nombres, vacía; nombres que no se leen, nada");
     println!("  [padre] proyecciones quitadas, y revocar quita las hechas con la copia revocable");
     println!("  [padre] hijos que salen, giran, se bloquean y fallan: creados, matados y esperados");
     println!("  [padre] lados cerrados al morir, sin ciclos, y lados perdidos en mensajes cerrados");

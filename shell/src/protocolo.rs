@@ -1,16 +1,18 @@
 //! Lo que hablan una orden y quien la lanza (`docs/bitacoras/shell-nativa.md`, "El arranque de una orden").
 //!
-//! Un programa lanzado por `sesiones` nace con tres llaves (su canal con `sesiones`, archivos y el compositor). Quien
-//! lo lanza puede darle una cuarta: **el canal de arranque**. Por él le llegan, ya puestos en la cola antes de que
+//! Un programa lanzado por `sesiones` nace con sus llaves (su canal con `sesiones`, archivos, el compositor y, si lo
+//! hay, el selector), cada una con su nombre en su tabla de llaves. Quien lo lanza puede darle una más: **el canal de
+//! arranque** ("arranque"). Por él le llegan, ya puestos en la cola antes de que
 //! nazca, `ARRANQUE` y los `DATOS` con su cajón actual y sus argumentos. Si quien lo lanza es un Shell, `ARRANQUE` trae
 //! además una llave: **la puerta**, por la que la orden le pide cosas (escribir, leer, cambiar de cajón...). El Shell
 //! contesta por el canal de arranque. Todo en little-endian; cada mensaje, hasta 256 bytes.
 //!
-//! Sin cuarta llave (lanzado por la barra), el programa no tiene argumentos, su cajón actual es `Home:` (o `SYS:`) y
+//! Sin canal de arranque (lanzado por la barra), el programa no tiene argumentos, su cajón actual es `Home:` (o `SYS:`) y
 //! lo que escribe va al registro del sistema.
 
-/// La llave del canal de arranque en el programa lanzado.
-pub const LLAVE_ARRANQUE: u32 = 4;
+/// El nombre del canal de arranque en la tabla de llaves del programa lanzado (`dashos::llaves`): su número depende de
+/// las demás que tenga (el selector, si lo hay, va antes).
+pub const NOMBRE_ARRANQUE: &str = "arranque";
 
 /// Del que lanza: orden (u32), marcas (u32, `SERVIDO`...), largo del cajón actual (u32), largo de los argumentos (u32),
 /// columnas y filas de la consola (u16 y u16; 0 si no hay) y largo del nombre con que se llama al programa (u32; 0 si

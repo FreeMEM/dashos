@@ -660,7 +660,9 @@ if modo == "gpu":
         capturar(prefijo + ".kms")
     esperar(r"cuadros_gl: kms: al acabar", 120)
     time.sleep(3.0)
-    # La terminal sigue viva (comparte conexión con la ventana de la pantalla).
+    # La terminal sigue viva (comparte conexión con la ventana de la pantalla). Con su clic, como los demás pasos: al
+    # quitarse la ventana de la pantalla de Linux, el teclado pasa a la ventana que quede arriba, sea la que sea.
+    clic_en_ventana()
     paso("echo terminal viva", r"linux: terminal viva", 60)
     clic_en_ventana()
     teclear("poweroff")

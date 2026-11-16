@@ -13,7 +13,7 @@
 //!
 //! Raíces (S6b): la ficha es de Ana (1000) con el derecho de repartir, como el selector. Al empezar se cede a sí mismo
 //! las raíces de sus volúmenes, en los mismos huecos que da `sesiones` (`RAIZ_*` del protocolo): el disco solo para leer
-//! (`SYS:`), `C` para leer y escribir (`Home:`), su `RAM:` y `Work:`; y solo va por ellas. Los iconos del escritorio son
+//! (`SYS:`), `C` para leer y escribir (`Home:`) y `Work:`, y `sesiones` le pone `RAM:` al entrar su usuario; y solo va por ellas. Los iconos del escritorio son
 //! los volúmenes de su tabla de nombres (paso 2 de las asignaciones, `ASIGNACIONES` de `sesiones`), con su nombre. `Home`
 //! es `C` de forma provisional: el `Home:` de verdad es el volumen cifrado de Ana, y abrir un volumen por su nombre
 //! pide el derecho de administrar; tendrá que cedérselo `sesiones` al entrar. El icono de `Home` sale solo mientras la
@@ -38,6 +38,8 @@ extern crate alloc;
 mod ventana_cliente;
 #[path = "../permisos_kit.rs"]
 mod permisos_kit;
+#[path = "../idiomas.rs"]
+mod idiomas;
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -62,6 +64,20 @@ use wayland::Escritor;
 
 dashos::programa!(principal);
 dashos::monton!();
+
+/// Idiomas (paso 4): el nombre de su catálogo y su versión (`tools/catalogo.py` lo lee de aquí), y el catálogo en uso.
+const CATALOGO: (&str, u32) = ("workbench", 1);
+static TEXTOS: idiomas::Puesto = idiomas::Puesto::nuevo();
+
+/// Un texto, en el idioma del usuario (el castellano si no hay catálogo).
+fn tr(numero: u32, de_siempre: &'static str) -> &'static str {
+    TEXTOS.texto(numero, de_siempre)
+}
+
+/// Un texto con huecos y sus valores.
+fn trf(numero: u32, de_siempre: &'static str, valores: &[&dyn core::fmt::Display]) -> String {
+    TEXTOS.con(numero, de_siempre, valores)
+}
 
 const ARCHIVOS: u32 = 2;
 const SESIONES: u32 = 3;
@@ -182,8 +198,9 @@ impl Archivos {
     }
 
     /// Se cede a sí mismo sus raíces (S6b, capa 2): el disco solo para leer, como `SYS:`; `C` para leer y escribir, como
-    /// `Home:`; y su `RAM:` y `Work:` (provisionales, cajones del disco). El estado de cada una.
-    fn ceder_raices(&self, c: &mut Cliente) -> [i32; 4] {
+    /// `Home:`; y `Work:` (provisional, un cajón del disco). El estado de cada una. `RAM:` no se la cede: es el volumen
+    /// en memoria de la sesión, y su raíz se la pone `sesiones` cuando entra su usuario (y se va cuando sale).
+    fn ceder_raices(&self, c: &mut Cliente) -> [i32; 3] {
         let mut ceder = |camino: &[u8], derechos: u64, hueco: u32| {
             let r = self.pedir_una(c, a::BUSCAR, 0, 0, 0, camino);
             if r.e != a::BIEN {
@@ -193,7 +210,7 @@ impl Archivos {
             self.pedir_una(c, a::CERRAR, r.asa, 0, 0, b"");
             e
         };
-        [ceder(b"", 4, RAIZ_SISTEMA), ceder(b"C", 4 | 2, RAIZ_HOME), ceder(b"Estado/RAM/Ana", 4 | 2, RAIZ_RAM), ceder(s::CAMINO_WORK.as_bytes(), 4 | 2, RAIZ_WORK)]
+        [ceder(b"", 4, RAIZ_SISTEMA), ceder(b"C", 4 | 2, RAIZ_HOME), ceder(s::CAMINO_WORK.as_bytes(), 4 | 2, RAIZ_WORK)]
     }
 
     fn pedir_una(&self, c: &mut Cliente, orden: u32, asa: u32, x: u64, y: u64, nombre: &[u8]) -> Resp {
@@ -227,6 +244,25 @@ impl Archivos {
         if asa >= a::RAICES {
             self.pedir(c, a::CERRAR, asa, 0, 0, b"");
         }
+    }
+}
+
+/// El servicio de archivos para `dashos::asignaciones` (con él lee `idiomas` los ficheros de idioma), con el cliente del
+/// compositor para no dejar de leerle mientras se espera.
+struct PorNombres<'a> {
+    ar: &'a Archivos,
+    c: &'a mut Cliente,
+}
+
+impl dashos::asignaciones::Fs for PorNombres<'_> {
+    fn pedir(&mut self, orden: u32, asa: u32, x: u64, y: u64, nombre: &[u8]) -> dashos::asignaciones::Resp {
+        // Sin ceder las raíces otra vez si una no vale: leer el idioma no arregla nada, y lo que falte no está.
+        let r = self.ar.pedir_una(self.c, orden, asa, x, y, nombre);
+        dashos::asignaciones::Resp { e: r.e, asa: r.asa, a: r.a, b: r.b, c: r.c }
+    }
+
+    fn ventana(&self) -> &[u8] {
+        self.ar.ventana()
     }
 }
 
@@ -331,12 +367,23 @@ fn lanzar(c: &mut Cliente, nombre: &str) -> (i32, u64) {
 // ---------------------------------------------------------------------------------------------------------------
 // Textos.
 
+/// El tamaño para la consola: siempre en castellano (lo comprueban las pruebas).
 fn tamano(b: u64) -> String {
     match b {
         1 => String::from("1 byte"),
         0..1024 => alloc::format!("{} bytes", b),
         1024..1_048_576 => alloc::format!("{} KB", b.div_ceil(1024)),
         _ => alloc::format!("{},{} MB", b / 1_048_576, b % 1_048_576 * 10 / 1_048_576),
+    }
+}
+
+/// El tamaño para las ventanas, en el idioma del usuario.
+fn tamano_visible(b: u64) -> String {
+    match b {
+        1 => String::from(tr(1, "1 byte")),
+        0..1024 => trf(2, "{} bytes", &[&b]),
+        1024..1_048_576 => trf(3, "{} KB", &[&b.div_ceil(1024)]),
+        _ => trf(4, "{},{} MB", &[&(b / 1_048_576), &(b % 1_048_576 * 10 / 1_048_576)]),
     }
 }
 
@@ -610,15 +657,15 @@ fn pintar_contenido(l: &mut Lienzo, r: Rect, cj: &Cajon, t: &Tema, f: &mut Fuent
     l.redondeado(r, 12, t.contenedor_bajo());
     l.recortar(r);
     if cj.entradas.is_empty() {
-        centrado(f, l, r.x + r.w / 2, r.y + r.h / 2, "Vacío", 14, t.sobre_variante_superficie);
+        centrado(f, l, r.x + r.w / 2, r.y + r.h / 2, tr(5, "Vacío"), 14, t.sobre_variante_superficie);
     }
     let x_tam = r.x + r.w - 140;
     let x_fecha = r.x + r.w - 124;
     if cj.lista {
-        m.dibujar(l, r.x + 48, r.y + 17, "Nombre", 12, t.sobre_variante_superficie);
-        let w = m.medir("Tamaño", 12).ancho;
-        m.dibujar(l, x_tam - w, r.y + 17, "Tamaño", 12, t.sobre_variante_superficie);
-        m.dibujar(l, x_fecha, r.y + 17, "Fecha", 12, t.sobre_variante_superficie);
+        m.dibujar(l, r.x + 48, r.y + 17, tr(6, "Nombre"), 12, t.sobre_variante_superficie);
+        let w = m.medir(tr(7, "Tamaño"), 12).ancho;
+        m.dibujar(l, x_tam - w, r.y + 17, tr(7, "Tamaño"), 12, t.sobre_variante_superficie);
+        m.dibujar(l, x_fecha, r.y + 17, tr(8, "Fecha"), 12, t.sobre_variante_superficie);
     }
     for (i, c) in celdas(r, cj) {
         let e = &cj.entradas[i];
@@ -632,7 +679,7 @@ fn pintar_contenido(l: &mut Lienzo, r: Rect, cj: &Cajon, t: &Tema, f: &mut Fuent
             let nombre = que_quepa(f, &e.nombre, 14, x_tam - 80 - (c.x + 44));
             f.dibujar(l, c.x + 44, c.y + 21, &nombre, 14, tinta);
             if !e.cajon {
-                let tt = tamano(e.tam);
+                let tt = tamano_visible(e.tam);
                 let w = f.medir(&tt, 13).ancho;
                 f.dibujar(l, x_tam - w, c.y + 21, &tt, 13, t.sobre_variante_superficie);
             }
@@ -686,9 +733,9 @@ fn nombre_volumen(raiz: u32) -> &'static str {
 }
 
 /// Los volúmenes de su tabla de nombres (`ASIGNACIONES` de `sesiones`), en su orden: los que conoce, con la raíz que dice
-/// la tabla. Sin tabla, los de siempre.
-fn volumenes_de_la_tabla() -> Vec<(&'static str, u32)> {
-    let Some(t) = dashos::asignaciones::pedir_tabla(SESIONES) else {
+/// la tabla. Sin tabla, los de siempre. Los nombres de los volúmenes no se traducen.
+fn volumenes_de_la_tabla(tabla: Option<dashos::asignaciones::Tabla>) -> Vec<(&'static str, u32)> {
+    let Some(t) = tabla else {
         println!("  [workbench] sin tabla de nombres: los volúmenes de siempre");
         return VOLUMENES_DE_SIEMPRE.to_vec();
     };
@@ -710,8 +757,9 @@ fn volumenes_de_la_tabla() -> Vec<(&'static str, u32)> {
 
 impl Escritorio {
     fn colocar(&mut self) {
-        // Los volúmenes de su tabla de nombres, en su orden; `Home:`, solo con la sesión de Ana abierta.
-        let mut v: Vec<Icono> = self.volumenes.iter().filter(|&&(_, r)| r != RAIZ_HOME || self.home).map(|&(nombre, raiz)| Icono { nombre, raiz, r: Rect::default() }).collect();
+        // Los volúmenes de su tabla de nombres, en su orden; `Home:` y `RAM:` (que es de la sesión: sin ella no
+        // existe), solo con la sesión de Ana abierta.
+        let mut v: Vec<Icono> = self.volumenes.iter().filter(|&&(_, r)| (r != RAIZ_HOME && r != RAIZ_RAM) || self.home).map(|&(nombre, raiz)| Icono { nombre, raiz, r: Rect::default() }).collect();
         if v.is_empty() {
             v.push(Icono { nombre: "SYS", raiz: RAIZ_SISTEMA, r: Rect::default() });
         }
@@ -876,8 +924,14 @@ impl App {
 
     fn avisar_home(&self) {
         match self.esc.iconos.iter().find(|ic| ic.raiz == RAIZ_HOME) {
-            Some(ic) => println!("  [workbench] icono de Home en ({}, {})", ic.r.x + ic.r.w / 2, ic.r.y + 36),
-            None => println!("  [workbench] sin icono de Home: la sesión de Ana no está abierta"),
+            Some(ic) => {
+                println!("  [workbench] icono de Home en ({}, {})", ic.r.x + ic.r.w / 2, ic.r.y + 36);
+                // Con la sesión llega también `RAM:` (su volumen en memoria), y los de debajo cambian de sitio.
+                for ic in self.esc.iconos.iter().skip(1).filter(|ic| ic.raiz != RAIZ_HOME) {
+                    println!("  [workbench] icono de {} en ({}, {})", ic.nombre, ic.r.x + ic.r.w / 2, ic.r.y + 36);
+                }
+            }
+            None => println!("  [workbench] sin icono de Home ni de RAM: la sesión de Ana no está abierta"),
         }
     }
 
@@ -1059,10 +1113,10 @@ impl App {
         // El título: el camino, con lo de delante cortado si es largo.
         let corto = if texto.chars().count() > 28 { alloc::format!("…{}", &texto[texto.len() - texto.chars().rev().take(27).map(char::len_utf8).sum::<usize>()..]) } else { texto.clone() };
         let titulo = texto_obj(&mut arbol, &corto, 1);
-        let cerrar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cerrar".into())), (atr::ESTILO, Valor::Int(2))]);
+        let cerrar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto(tr(9, "Cerrar").into())), (atr::ESTILO, Valor::Int(2))]);
         let estado = texto_obj(&mut arbol, "", 2);
-        let vista = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Lista".into())), (atr::ESTILO, Valor::Int(1))]);
-        let info = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Información".into())), (atr::ESTILO, Valor::Int(1))]);
+        let vista = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto(tr(10, "Lista").into())), (atr::ESTILO, Valor::Int(1))]);
+        let info = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto(tr(11, "Información").into())), (atr::ESTILO, Valor::Int(1))]);
         let hueco = arbol.crear(Hueco, &[]);
         let marca = texto_obj(&mut arbol, "", 0);
         for (o, que) in [(vista, "vista"), (info, "info"), (cerrar, "cerrar")] {
@@ -1088,8 +1142,8 @@ impl App {
     fn poner_estado(i: &mut Interfaz, cj: &mut Cajon, aviso: Option<&str>) {
         let t = match aviso {
             Some(a) => String::from(a),
-            None if cj.entradas.len() == 1 => String::from("1 elemento"),
-            None => alloc::format!("{} elementos", cj.entradas.len()),
+            None if cj.entradas.len() == 1 => String::from(tr(12, "1 elemento")),
+            None => trf(13, "{} elementos", &[&cj.entradas.len()]),
         };
         i.arbol.poner(cj.estado, atr::TEXTO, Valor::Texto(t));
     }
@@ -1133,10 +1187,10 @@ impl App {
             let aviso = if e.programa() && lugar.de_programas() {
                 let (estado, pid) = lanzar(&mut self.c, &e.nombre);
                 println!("  [workbench] lanza Programas/{}: {} (proceso {})", e.nombre, estado, pid);
-                if estado == 0 { alloc::format!("En marcha: {}", e.nombre) } else { alloc::format!("No se lanzó ({})", estado) }
+                if estado == 0 { trf(14, "En marcha: {}", &[&e.nombre]) } else { trf(15, "No se lanzó ({})", &[&estado]) }
             } else {
                 println!("  [workbench] {} no se abre: solo se lanzan los programas de SYS:Programas", ruta);
-                String::from("Solo se lanzan los de Programas")
+                String::from(tr(16, "Solo se lanzan los de Programas"))
             };
             self.aviso_cajon(k, &aviso);
             return;
@@ -1171,7 +1225,7 @@ impl App {
             }
             Err(err) => {
                 println!("  [workbench] no abre {}: {}", ruta, err);
-                let aviso = if err == a::PROTEGIDO { alloc::format!("Sin permiso para abrir {}", e.nombre) } else { alloc::format!("No se abre {} ({})", e.nombre, err) };
+                let aviso = if err == a::PROTEGIDO { trf(17, "Sin permiso para abrir {}", &[&e.nombre]) } else { trf(18, "No se abre {} ({})", &[&e.nombre, &err]) };
                 self.aviso_cajon(k, &aviso);
             }
         }
@@ -1193,7 +1247,7 @@ impl App {
         cj.lista = !cj.lista;
         cj.primera = 0;
         cj.ultimo = None;
-        v.i.arbol.poner(cj.vista, atr::TEXTO, Valor::Texto(String::from(if cj.lista { "Iconos" } else { "Lista" })));
+        v.i.arbol.poner(cj.vista, atr::TEXTO, Valor::Texto(String::from(if cj.lista { tr(19, "Iconos") } else { tr(10, "Lista") })));
         // El botón cambia de ancho: se vuelve a colocar.
         v.i.colocar(Rect::new(0, 0, v.w, v.h));
         let detalle: Vec<String> = cj.entradas.iter().map(|e| {
@@ -1244,7 +1298,7 @@ impl App {
                 let r = self.ar.pedir(&mut self.c, a::BUSCAR, asa, 0, 0, nombre.as_bytes());
                 if r.e != a::BIEN {
                     println!("  [workbench] sin Información de {}/{}: {}", lugar.texto(), nombre, r.e);
-                    self.aviso_cajon(k, &alloc::format!("Sin acceso a {}", nombre));
+                    self.aviso_cajon(k, &trf(20, "Sin acceso a {}", &[&nombre]));
                     return;
                 }
                 let ruta = alloc::format!("{}/{}", lugar.texto(), nombre);
@@ -1287,13 +1341,14 @@ impl App {
         let (dueno, grupo, yo) = (du.a, du.b, du.c);
         let puede = dueno == yo && raiz == RAIZ_HOME;
         let porque = if raiz != RAIZ_HOME {
-            "Por SYS: solo se puede leer"
+            tr(21, "Por SYS: solo se puede leer")
         } else if dueno != yo {
-            "Solo lo puede cambiar su dueño"
+            tr(22, "Solo lo puede cambiar su dueño")
         } else {
             ""
         };
         let nombre = ruta.rsplit('/').next().map_or_else(|| ruta.clone(), String::from);
+        // Lo que es, para la consola (en castellano); la línea de la ventana, entera y por catálogo.
         let que = match (tipo, padre.is_none()) {
             (a::CAJON, true) if !ruta.contains('/') => String::from("Volumen"),
             (a::CAJON, _) => String::from("Cajón"),
@@ -1302,19 +1357,31 @@ impl App {
         };
         let mut arbol = Arbol::new();
         let titulo = texto_obj(&mut arbol, &nombre, 1);
-        let linea1 = texto_obj(&mut arbol, &alloc::format!("{} · cambiado el {}", que, fecha(d.b)), 2);
+        let cambiado = fecha(d.b);
+        let que_es = match (tipo, padre.is_none()) {
+            (a::CAJON, true) if !ruta.contains('/') => trf(23, "Volumen · cambiado el {}", &[&cambiado]),
+            (a::CAJON, _) => trf(24, "Cajón · cambiado el {}", &[&cambiado]),
+            _ if modo & 0o111 != 0 => trf(25, "Programa · {} · cambiado el {}", &[&tamano_visible(d.a), &cambiado]),
+            _ => trf(26, "Fichero · {} · cambiado el {}", &[&tamano_visible(d.a), &cambiado]),
+        };
+        let linea1 = texto_obj(&mut arbol, &que_es, 2);
         let tu = if dueno == yo { " (tú)" } else { "" };
-        let linea2 = texto_obj(&mut arbol, &alloc::format!("Dueño: usuario {}{} · grupo {}", dueno, tu, grupo), 2);
+        let de_quien = if dueno == yo {
+            trf(27, "Dueño: usuario {} (tú) · grupo {}", &[&dueno, &grupo])
+        } else {
+            trf(28, "Dueño: usuario {} · grupo {}", &[&dueno, &grupo])
+        };
+        let linea2 = texto_obj(&mut arbol, &de_quien, 2);
         let campo = arbol.crear(
             Campo,
-            &[(atr::TEXTO, Valor::Texto(comentario.clone())), (atr::ETIQUETA, Valor::Texto("Comentario".into())), (atr::DESACTIVADO, Valor::Bool(!puede))],
+            &[(atr::TEXTO, Valor::Texto(comentario.clone())), (atr::ETIQUETA, Valor::Texto(tr(29, "Comentario").into())), (atr::DESACTIVADO, Valor::Bool(!puede))],
         );
         let valor = bits << 16 | modo;
         let rejilla = arbol.crear(Permisos, &[(atr::VALOR, Valor::Int(valor)), (atr::CURSOR, Valor::Int(-1)), (atr::DESACTIVADO, Valor::Bool(!puede))]);
         let aviso = texto_obj(&mut arbol, porque, 2);
         let hueco = texto_obj(&mut arbol, "", 0);
-        let cancelar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto(String::from(if puede { "Cancelar" } else { "Cerrar" }))), (atr::ESTILO, Valor::Int(2))]);
-        let guardar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Guardar".into()))]);
+        let cancelar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto(String::from(if puede { tr(30, "Cancelar") } else { tr(9, "Cerrar") }))), (atr::ESTILO, Valor::Int(2))]);
+        let guardar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto(tr(31, "Guardar").into()))]);
         let marca = texto_obj(&mut arbol, "", 0);
         arbol.notificar(cancelar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("cancelar".into())));
         arbol.notificar(guardar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("guardar".into())));
@@ -1349,7 +1416,7 @@ impl App {
         );
         println!("  [workbench] ventana {}: campo en ({}, {}), Archivado en ({}, {}), {} en ({}, {})", n, cx, cy, ax, ay, if puede { "Guardar" } else { "Cerrar" }, gx, gy);
         let inf = Info { ruta, asa, cerrar_asa, padre, comentario, valor, puede, campo, rejilla, aviso };
-        let titulo_v = alloc::format!("Información de {}", nombre);
+        let titulo_v = trf(32, "Información de {}", &[&nombre]);
         if !self.nueva_ventana(&titulo_v, ANCHO_INFO, alto, i, marca, Que_::Info(inf)) && cerrar_asa {
             self.ar.cerrar(&mut self.c, asa);
         }
@@ -1372,7 +1439,7 @@ impl App {
             let e = if texto.len() > 200 { a::MAL_FORMADO } else { self.ar.pedir(&mut self.c, a::COMENTAR, asa, 0, 0, texto.as_bytes()).e };
             partes.push(alloc::format!("comentario \"{}\": {}", texto, e));
             if e != a::BIEN {
-                fallo = Some(if e == a::MAL_FORMADO { "El comentario es demasiado largo" } else { "No se pudo cambiar el comentario" });
+                fallo = Some(if e == a::MAL_FORMADO { tr(33, "El comentario es demasiado largo") } else { tr(34, "No se pudo cambiar el comentario") });
             }
         }
         if valor != valor_viejo {
@@ -1380,7 +1447,7 @@ impl App {
             let e = self.ar.pedir(&mut self.c, a::PROTEGER, asa, bits, modo, b"").e;
             partes.push(alloc::format!("protección bits {:#x} modo {:o}: {}", bits, modo, e));
             if e != a::BIEN {
-                fallo = Some("No se pudo cambiar la protección");
+                fallo = Some(tr(35, "No se pudo cambiar la protección"));
             }
         }
         if partes.is_empty() {
@@ -1637,18 +1704,24 @@ fn principal() -> u64 {
         println!("  [workbench] sin servicio de archivos");
         return 4;
     };
-    let [sistema, home, ram, work] = ar.ceder_raices(&mut c);
-    println!("  [workbench] raíces: SYS: solo para leer {}, Home: {}, RAM: {}, Work: {}", sistema, home, ram, work);
+    let [sistema, home, work] = ar.ceder_raices(&mut c);
+    println!("  [workbench] raíces: SYS: solo para leer {}, Home: {}, Work: {}; RAM: la pone sesiones al entrar", sistema, home, work);
     if sistema != a::BIEN || home != a::BIEN {
         return 5;
     }
     comprobar_lo_ajeno(&ar, &mut c);
+    // Idiomas (paso 4): con sus raíces ya cedidas y antes de hacer ninguna interfaz, el idioma del usuario y su
+    // catálogo. La tabla de nombres es la misma que da luego los volúmenes; si no llega, se sigue en castellano.
+    let tabla = dashos::asignaciones::pedir_tabla(SESIONES);
+    if let Some(t) = &tabla {
+        let _ = idiomas::arrancar(&mut PorNombres { ar: &ar, c: &mut c }, t, &TEXTOS, CATALOGO);
+    }
     let mut app = App {
         c,
         ar,
         tema: Tema::CLARO,
         medio: Fuente::medium(),
-        esc: Escritorio { w: 0, h: 0, mem: 0, pool: 0, bufer: 0, iconos: Vec::new(), elegido: None, encima: None, ultimo: None, home: false, volumenes: volumenes_de_la_tabla() },
+        esc: Escritorio { w: 0, h: 0, mem: 0, pool: 0, bufer: 0, iconos: Vec::new(), elegido: None, encima: None, ultimo: None, home: false, volumenes: volumenes_de_la_tabla(tabla) },
         esc_configurado: false,
         ventanas: Vec::new(),
         siguiente_id: PRIMER_ID,

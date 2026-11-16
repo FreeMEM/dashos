@@ -18,5 +18,9 @@ name = "duenos"
 path = "src/duenos.rs"
 
 [[bin]]
+name = "poner"
+path = "src/poner.rs"
+
+[[bin]]
 name = "estropear"
 path = "src/estropear.rs"

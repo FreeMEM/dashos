@@ -23,6 +23,10 @@ use dashos::protocolo::archivos::*;
 use dashfs::{AmigaBits, BLOCK_SIZE, Disk, FileSystem, Node, TreeData, TreePtr};
 use syscall::error::{EACCES, EBUSY, EEXIST, EINVAL, EIO, EISDIR, ENOENT, ENOSPC, ENOTDIR, ENOTEMPTY, EROFS, Error, Result};
 
+#[path = "../disco_ram.rs"]
+mod disco_ram;
+use disco_ram::{DiscoRam, Paginas as PaginasRam};
+
 dashos::programa!(principal);
 dashos::monton!();
 
@@ -596,7 +600,244 @@ impl Disco {
     }
 }
 
-type Fs = FileSystem<Disco>;
+/// Donde se proyectan los discos de memoria de las sesiones (`RAM:`): 1 GB cada uno, lo más que mide un objeto disperso.
+const VA_RAM: usize = 0x68_0000_0000;
+const HUECO_RAM: usize = 1 << 30;
+/// Volúmenes en memoria a la vez: las sesiones abiertas que admite `sesiones`.
+const MAX_RAM: usize = 8;
+/// Lo menos que mide el objeto de memoria de un `RAM:`.
+const MIN_RAM: usize = 1 << 20;
+/// El volumen en memoria de una sesión: este bit y la sesión en los de abajo. Los volúmenes del disco son números
+/// pequeños; así las asas, lo recordado y la caché de páginas distinguen los de memoria sin más.
+const VOL_RAM: u64 = 1 << 31;
+/// Con menos libre que esto (más lo que se escribe), un `RAM:` da "lleno" a quien crea o escribe: queda sitio para
+/// borrar, que en DashFS también gasta bloques (copia al escribir).
+const RESERVA_RAM: u64 = 64 * 1024;
+
+fn es_ram(vol: u64) -> bool {
+    vol & VOL_RAM != 0
+}
+
+/// La clave de un nodo abierto en `node_usages` de su sistema de archivos (`Transaction::usage_key`): dentro del suyo,
+/// un volumen en memoria es el volumen 0.
+fn clave_uso(vol: u64, id: u32) -> u64 {
+    (if es_ram(vol) { 0 } else { vol } << 32) | u64::from(id)
+}
+
+/// Las páginas del disco de un `RAM:`: un objeto de memoria disperso (llamadas 57 y 58), proyectado entero, que llega
+/// de `sesiones` cobrado al grupo de la sesión. Al soltarse, la memoria vuelve entera al sistema.
+struct MemoriaDispersa {
+    llave: u32,
+    va: usize,
+}
+
+impl PaginasRam for MemoriaDispersa {
+    fn poner(&mut self, primera: u64, n: u64) -> u64 {
+        let mut hechas = 0;
+        while hechas < n {
+            let k = (n - hechas).min(256);
+            let r = dashos::memoria_paginas(self.llave, true, (primera + hechas) as usize, k as usize);
+            hechas += r.max(0) as u64;
+            if r < k as i64 {
+                break;
+            }
+        }
+        hechas
+    }
+
+    fn soltar(&mut self, primera: u64, n: u64) {
+        let mut hechas = 0;
+        while hechas < n {
+            let k = (n - hechas).min(256);
+            if dashos::memoria_paginas(self.llave, false, (primera + hechas) as usize, k as usize) != k as i64 {
+                println!("  [archivos] RAM: no se sueltan {} páginas desde la {}", k, primera + hechas);
+            }
+            hechas += k;
+        }
+    }
+
+    fn pagina(&mut self, p: u64) -> &mut [u8] {
+        // Proyectada entera en `va`; `DiscoRam` solo pide las páginas que tiene puestas.
+        unsafe { core::slice::from_raw_parts_mut((self.va + p as usize * BLOCK_SIZE as usize) as *mut u8, BLOCK_SIZE as usize) }
+    }
+}
+
+impl Drop for MemoriaDispersa {
+    fn drop(&mut self) {
+        dashos::memoria_quitar(self.va);
+        dashos::cerrar(self.llave);
+    }
+}
+
+/// Sobre qué va un DashFS de este servicio: el disco de verdad (por el servicio de disco) o el de memoria de una sesión.
+enum Medio {
+    Nvme(Disco),
+    Ram(DiscoRam<MemoriaDispersa>),
+}
+
+impl Medio {
+    /// A7: se está llenando un trozo de la caché de páginas (solo lo mira el disco de verdad).
+    fn llenando(&mut self, si: bool) {
+        if let Medio::Nvme(d) = self {
+            d.llenando = si;
+        }
+    }
+
+    /// Los bloques escritos que esperan al siguiente guardado (el de memoria no tiene: escribe en el acto).
+    fn sucios(&self) -> usize {
+        match self {
+            Medio::Nvme(d) => d.cache.sucios.len(),
+            Medio::Ram(_) => 0,
+        }
+    }
+}
+
+impl Disk for Medio {
+    unsafe fn read_at(&mut self, block: u64, buffer: &mut [u8]) -> Result<usize> {
+        match self {
+            Medio::Nvme(d) => unsafe { d.read_at(block, buffer) },
+            Medio::Ram(d) => unsafe { d.read_at(block, buffer) },
+        }
+    }
+
+    unsafe fn write_at(&mut self, block: u64, buffer: &[u8]) -> Result<usize> {
+        match self {
+            Medio::Nvme(d) => unsafe { d.write_at(block, buffer) },
+            Medio::Ram(d) => unsafe { d.write_at(block, buffer) },
+        }
+    }
+
+    unsafe fn write_at_batched(&mut self, batch: &[(u64, &[u8])]) -> Result<usize> {
+        match self {
+            Medio::Nvme(d) => unsafe { d.write_at_batched(batch) },
+            Medio::Ram(d) => unsafe { d.write_at_batched(batch) },
+        }
+    }
+
+    fn size(&mut self) -> Result<u64> {
+        match self {
+            Medio::Nvme(d) => d.size(),
+            Medio::Ram(d) => d.size(),
+        }
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        match self {
+            Medio::Nvme(d) => d.flush(),
+            Medio::Ram(d) => d.flush(),
+        }
+    }
+
+    fn last_read_from_memory(&self) -> bool {
+        match self {
+            Medio::Nvme(d) => d.last_read_from_memory(),
+            Medio::Ram(d) => d.last_read_from_memory(),
+        }
+    }
+
+    fn forget(&mut self, block: u64, count: u64) {
+        match self {
+            Medio::Nvme(d) => d.forget(block, count),
+            Medio::Ram(d) => d.forget(block, count),
+        }
+    }
+
+    fn reading_data(&mut self, data: bool) {
+        match self {
+            Medio::Nvme(d) => d.reading_data(data),
+            Medio::Ram(d) => d.reading_data(data),
+        }
+    }
+
+    fn discard(&mut self, ranges: &[(u64, u64)]) {
+        match self {
+            Medio::Nvme(d) => d.discard(ranges),
+            Medio::Ram(d) => d.discard(ranges),
+        }
+    }
+}
+
+/// El volumen en memoria de una sesión: su DashFS propio, sobre su disco de memoria.
+struct Ram {
+    sesion: u32,
+    /// Cuál de los `MAX_RAM` huecos de direcciones ocupa su disco.
+    hueco: usize,
+    fs: FileSystem<Medio>,
+}
+
+/// Todo lo que sirve este servicio: el DashFS del disco, con sus volúmenes, y un DashFS en memoria por sesión abierta
+/// (`RAM:`). Lo que no dice volumen (`fs.tx`, `fs.header`, guardar, sujetar...) es del disco; lo que lo dice
+/// (`tx_in`, las cuentas de nodos abiertos) va al suyo.
+struct Mundo {
+    disco: FileSystem<Medio>,
+    ram: Vec<Ram>,
+}
+
+type Fs = Mundo;
+
+impl core::ops::Deref for Mundo {
+    type Target = FileSystem<Medio>;
+    fn deref(&self) -> &Self::Target {
+        &self.disco
+    }
+}
+
+impl core::ops::DerefMut for Mundo {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.disco
+    }
+}
+
+impl Mundo {
+    /// El DashFS en memoria del volumen `vol`, si su sesión sigue abierta.
+    fn ram_de(&mut self, vol: u64) -> Option<&mut FileSystem<Medio>> {
+        let sesion = (vol & (VOL_RAM - 1)) as u32;
+        self.ram.iter_mut().find(|r| es_ram(vol) && r.sesion == sesion).map(|r| &mut r.fs)
+    }
+
+    /// Una transacción en el volumen `vol`: del disco, o el de memoria de una sesión. En este, lo confirmado se cierra
+    /// en el acto (no hay disco al que esperar): ahí DashFS descarta lo que soltó y su memoria vuelve al sistema.
+    fn tx_in<F: FnOnce(&mut dashfs::Transaction<Medio>) -> Result<T>, T>(&mut self, vol: u64, f: F) -> Result<T> {
+        if !es_ram(vol) {
+            return self.disco.tx_in(vol, f);
+        }
+        let Some(r) = self.ram_de(vol) else { return Err(Error::new(ENOENT)) };
+        let t = r.tx_in(0, f);
+        if r.pending()
+            && let Err(e) = r.durable()
+        {
+            println!("  [archivos] RAM: no se cierra una transacción: {}", e);
+        }
+        t
+    }
+
+    /// Las cuentas de nodos abiertos del sistema de archivos de `vol`.
+    fn usos(&mut self, vol: u64) -> Option<&mut BTreeMap<u64, u64>> {
+        if es_ram(vol) { self.ram_de(vol).map(|r| &mut r.node_usages) } else { Some(&mut self.disco.node_usages) }
+    }
+
+    /// Cuenta una apertura más del nodo `id` de `vol`. Falso si no cabe o el volumen ya no está.
+    fn contar_uso(&mut self, vol: u64, id: u32) -> bool {
+        let Some(usos) = self.usos(vol) else { return false };
+        let cuenta = usos.entry(clave_uso(vol, id)).or_insert(0);
+        match cuenta.checked_add(1) {
+            Some(mas) => {
+                *cuenta = mas;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Lo que mide y lo que tiene libre, en bytes, el sistema de archivos de `vol` (el de memoria, sin su anillo de
+    /// cabeceras, que no ocupa).
+    fn medidas(&mut self, vol: u64) -> (u64, u64) {
+        match self.ram_de(vol) {
+            Some(r) => (r.header.size() - dashfs::HEADER_RING * BLOCK_SIZE, r.allocator().free() * BLOCK_SIZE),
+            None => (self.disco.header.size(), self.disco.allocator().free() * BLOCK_SIZE),
+        }
+    }
+}
 
 /// Un cliente: su marca, el canal por el que se le contesta, su ventana y sus asas (número → volumen y nodo; FS10:
 /// el volumen 0 es el principal).
@@ -706,12 +947,15 @@ struct Cliente {
 /// Las asas 0 a 15 son raíces; las demás empiezan aquí.
 const RAICES: usize = 16;
 
-/// El tope de la asa `asa` de `c`: lo más que deja hacer por ella, además de los permisos del fichero.
+/// El tope de la asa `asa` de `c`: lo más que deja hacer por ella, además de los permisos del fichero. El de una asa
+/// cedida (`CEDER`) son los derechos con que se cedió: con una cedida solo para leer no se escribe, ni se cambia el
+/// tamaño, el comentario, la protección o la fecha, aunque el fichero sea de quien la recibe (el selector cede para leer
+/// ficheros del mismo usuario que el programa).
 fn tope(c: &Cliente, asa: u32) -> u16 {
     match asa as usize {
         0 => R | W,
         k if k < RAICES => c.raices[k].map_or(0, |r| r.2),
-        _ => c.topes.get(&asa).copied().unwrap_or(R | W),
+        _ => c.cedidas.get(&asa).map(|d| d & (R | W)).unwrap_or_else(|| c.topes.get(&asa).copied().unwrap_or(R | W)),
     }
 }
 
@@ -776,14 +1020,17 @@ fn un_nombre(b: &[u8]) -> Option<&str> {
 /// esperando a que se cierren (la lista de liberar del volumen principal, vacía); si no, `on_close_node`, que los
 /// suelta (F2).
 fn cerrar_nodo(fs: &mut Fs, vol: u64, n: TreePtr<Node>) {
-    let clave = (vol << 32) | u64::from(n.id());
-    match fs.node_usages.get_mut(&clave) {
+    let clave = clave_uso(vol, n.id());
+    let sin_borrados = vol == 0 && fs.header.release.is_null();
+    // Un volumen en memoria cuya sesión ya salió: no queda nada que cerrar.
+    let Some(usos) = fs.usos(vol) else { return };
+    match usos.get_mut(&clave) {
         Some(c) if *c > 1 => {
             *c -= 1;
             return;
         }
-        Some(_) if vol == 0 && fs.header.release.is_null() => {
-            fs.node_usages.remove(&clave);
+        Some(_) if sin_borrados => {
+            usos.remove(&clave);
             return;
         }
         _ => {}
@@ -868,9 +1115,9 @@ fn ceder(fs: &mut Fs, clientes: &mut [Option<Cliente>], i: usize, p: &Peticion, 
         if otro.raices[hueco].is_some() {
             return mal(SIN_SITIO);
         }
-        let cuenta = fs.node_usages.entry((vol << 32) | u64::from(nodo.id())).or_insert(0);
-        let Some(mas) = cuenta.checked_add(1) else { return mal(SIN_SITIO) };
-        *cuenta = mas;
+        if !fs.contar_uso(vol, nodo.id()) {
+            return mal(SIN_SITIO);
+        }
         otro.raices[hueco] = Some((vol, nodo.ptr(), derechos));
         return Respuesta { estado: BIEN, asa: hueco as u32, ..Default::default() };
     }
@@ -886,9 +1133,9 @@ fn ceder(fs: &mut Fs, clientes: &mut [Option<Cliente>], i: usize, p: &Peticion, 
 fn dar_asa(fs: &mut Fs, c: &mut Cliente, vol: u64, n: &TreeData<Node>) -> Respuesta {
     // Contar la apertura no necesita una transacción (F2: una vacía cuesta unos 30 µs): es lo que hace
     // `on_open_node`, la cuenta en `node_usages` con la clave de `usage_key`.
-    let cuenta = fs.node_usages.entry((vol << 32) | u64::from(n.id())).or_insert(0);
-    let Some(mas) = cuenta.checked_add(1) else { return mal(SIN_SITIO) };
-    *cuenta = mas;
+    if !fs.contar_uso(vol, n.id()) {
+        return mal(SIN_SITIO);
+    }
     let asa = c.siguiente;
     c.siguiente = c.siguiente.wrapping_add(1).max(RAICES as u32);
     c.asas.insert(asa, (vol, n.ptr()));
@@ -1056,7 +1303,7 @@ impl Paginas {
         let m = Self::memoria(h);
         let desde = indice * TROZO_U64;
         let cuanto = nodo.data().size().saturating_sub(desde).min(TROZO_U64) as usize;
-        fs.disk.llenando = true;
+        fs.disk.llenando(true);
         let r = fs.tx_in(vol, |tx| {
             let mut hecho = 0;
             while hecho < cuanto {
@@ -1068,7 +1315,7 @@ impl Paginas {
             }
             Ok(hecho)
         });
-        fs.disk.llenando = false;
+        fs.disk.llenando(false);
         let Ok(hecho) = r else {
             self.libres.push(h);
             return None;
@@ -1338,10 +1585,21 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
     if por_asa && (tope(c, p.asa) & W == 0 || p.orden == RENOMBRAR && tope(c, p.b as u32) & W == 0) {
         return mal(PROTEGIDO);
     }
+    // En un `RAM:`: quien crea o escribe recibe "lleno" un poco antes de que no quede nada, para que siempre se pueda
+    // borrar; y no hay instantáneas (guardarían en memoria lo que se borra).
+    if let Some((vol, _)) = nodo_de(c, p.asa).filter(|(vol, _)| es_ram(*vol)) {
+        let pide = if matches!(p.orden, ESCRIBIR | GUARDAR) { p.b } else { 0 };
+        if matches!(p.orden, ESCRIBIR | GUARDAR | CREAR | COMENTAR) && fs.medidas(vol).1 < pide.saturating_add(RESERVA_RAM) {
+            return mal(LLENO);
+        }
+        if matches!(p.orden, INSTANTANEAS | TOMAR | DESCARTAR | VOLVER) {
+            return mal(MAL_FORMADO);
+        }
+    }
     let ficha = c.ficha;
     // Las órdenes de volúmenes, instantáneas y comprobación, solo con el derecho de administrar (A13). Pedir la raíz
     // propia (VOLUMEN sin nombre) no lo necesita.
-    let de_administrar = matches!(p.orden, COMPROBAR | SUJETAR | SOLTAR | INSTANTANEAS | TOMAR | DESCARTAR | VOLVER | VOLUMENES | HACER_VOLUMEN | QUITAR_VOLUMEN | ABRIR_VOLUMEN | CERRAR_VOLUMEN | COMPROBAR_CLAVE)
+    let de_administrar = matches!(p.orden, COMPROBAR | SUJETAR | SOLTAR | INSTANTANEAS | TOMAR | DESCARTAR | VOLVER | VOLUMENES | HACER_VOLUMEN | QUITAR_VOLUMEN | ABRIR_VOLUMEN | CERRAR_VOLUMEN | COMPROBAR_CLAVE | CRECER | CUOTA)
         || (p.orden == VOLUMEN && !p.nombre.is_empty());
     if de_administrar && ficha.derechos & D_ADMINISTRAR == 0 {
         return mal(PROTEGIDO);
@@ -1743,13 +2001,15 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
         }
         TAMANO => {
             let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            // Como `ESCRIBIR`: con una asa cedida mandan los derechos con que se cedió, no los permisos del fichero.
+            let cedida = c.cedidas.get(&p.asa).copied();
             rec.olvidar_nodo(vol, n.id());
             let r = fs.tx_in(vol, |tx| {
                 let nodo = tx.read_tree(n)?;
                 if nodo.data().is_dir() {
                     return Err(Error::new(EISDIR));
                 }
-                if sin_escritura(&ficha, nodo.data()) {
+                if cedida.map_or_else(|| sin_escritura(&ficha, nodo.data()), |d| d & W == 0) {
                     return Err(Error::new(EACCES));
                 }
                 tx.truncate_node(n, p.a, hora.0, hora.1)
@@ -2015,6 +2275,28 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 Err(e) => mal(estado_de(e)),
             }
         }
+        // S32: crecer en uso. Una transacción: añade los bloques nuevos al asignador y pone el tamaño.
+        CRECER => {
+            let pedido = if p.a == 0 { fs.disk.size().map(|t| t.saturating_sub(fs.block * BLOCK_SIZE)).unwrap_or(0) } else { p.a };
+            match fs.grow(pedido) {
+                Ok(tamano) => Respuesta { estado: BIEN, a: tamano, ..Default::default() },
+                Err(e) => mal(estado_de(Error::new(e.errno()))),
+            }
+        }
+        // S32: el tope de un volumen, y lo que usa.
+        CUOTA => {
+            let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
+            match fs.tx(|tx| {
+                let id = tx.find_volume(nombre)?;
+                if p.b == 1 {
+                    tx.set_volume_quota(id, p.a / BLOCK_SIZE)?;
+                }
+                tx.volume_space(id)
+            }) {
+                Ok((usado, tope)) => Respuesta { estado: BIEN, a: usado * BLOCK_SIZE, b: tope * BLOCK_SIZE, ..Default::default() },
+                Err(e) => mal(estado_de(e)),
+            }
+        }
         QUITAR_VOLUMEN => {
             let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
             match fs.tx(|tx| {
@@ -2067,13 +2349,11 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
         }
         // Todo al disco; o el fallo de un guardado anterior con algo suyo dentro (A2).
         VACIAR => Respuesta { estado: c.fallo.take().unwrap_or_else(|| guardar(fs)), ..Default::default() },
-        INFO => Respuesta {
-            estado: BIEN,
-            a: fs.header.size(),
-            b: fs.allocator().free() * BLOCK_SIZE,
-            c: BLOCK_SIZE,
-            ..Default::default()
-        },
+        // Del sistema de archivos de la asa: el disco o, por una asa de `RAM:`, el volumen en memoria de su sesión.
+        INFO => {
+            let (mide, libre) = fs.medidas(nodo_de(c, p.asa).map_or(0, |(vol, _)| vol));
+            Respuesta { estado: BIEN, a: mide, b: libre, c: BLOCK_SIZE, ..Default::default() }
+        }
         _ => mal(MAL_FORMADO),
     }
 }
@@ -2107,9 +2387,15 @@ fn alta(fs: &mut Fs, altas: &mut BTreeMap<u64, Ficha>, clientes: &mut [Option<Cl
         let (hueco, tope, lv, lc) = (hueco as usize, tope as u16, lv as usize, lc as usize);
         let (Some(vol), Some(cam)) = (m.get(o + 4..o + 4 + lv), m.get(o + 4 + lv..o + 4 + lv + lc)) else { break };
         o += 4 + lv + lc;
-        let (Ok(vol), Ok(cam)) = (core::str::from_utf8(vol), core::str::from_utf8(cam)) else { continue };
+        // `RAM:`: el volumen en memoria de una sesión (un byte que no es UTF-8 y la sesión), no uno del disco.
+        let ram = (vol.first() == Some(&VOLUMEN_RAM)).then(|| vol.get(1..5).map_or(0, |s| VOL_RAM | u32::from_le_bytes(s.try_into().unwrap()) as u64));
+        let (Ok(vol), Ok(cam)) = (core::str::from_utf8(if ram.is_some() { b"" } else { vol }), core::str::from_utf8(cam)) else { continue };
         // S28: la papelera, fuera de sus raíces; se crea si falta.
         if hueco == HUECO_PAPELERA as usize {
+            // La papelera va en el disco: lo de un `RAM:` se borra de verdad.
+            if ram.is_some() {
+                continue;
+            }
             papelera = hacer_papelera(fs, vol, cam, uid, gid);
             if papelera.is_none() {
                 println!("  [archivos] alta: sin papelera ({}:{})", vol, cam);
@@ -2119,7 +2405,11 @@ fn alta(fs: &mut Fs, altas: &mut BTreeMap<u64, Ficha>, clientes: &mut [Option<Cl
         if hueco == 0 || hueco >= RAICES || (tope != R && tope != R | W) {
             continue;
         }
-        let id = if vol.is_empty() { Ok(0) } else { fs.tx(|tx| tx.find_volume(vol)) };
+        let id = match ram {
+            Some(id) => Ok(id),
+            None if vol.is_empty() => Ok(0),
+            None => fs.tx(|tx| tx.find_volume(vol)),
+        };
         let nodo = id.and_then(|id| {
             fs.tx_in(id, |tx| {
                 let mut n = tx.read_tree(TreePtr::<Node>::root())?;
@@ -2177,6 +2467,283 @@ fn hacer_papelera(fs: &mut Fs, vol: &str, cam: &str, uid: u32, gid: u32) -> Opti
     .ok()
 }
 
+/// Las órdenes de los volúmenes en memoria (`RAM_CREAR`, `RAM_QUITAR`, `RAM_RAIZ`, `RAM_COPIAR`), sin marca: `m` es el
+/// mensaje entero y `ll` sus llaves. La última es la de la respuesta (en crear, tras la de la memoria); las que no se
+/// usan se cierran.
+fn ram_orden(fs: &mut Fs, altas: &mut BTreeMap<u64, Ficha>, clientes: &mut [Option<Cliente>], rec: &mut Recuerdos, m: &[u8], ll: &[u32]) {
+    let u32_en = |i: usize| u32::from_le_bytes(m[i..i + 4].try_into().unwrap());
+    let (orden, sesion, uid, gid) = (u32_en(0), u32_en(4), u32_en(8), u32_en(12));
+    let vol = VOL_RAM | sesion as u64;
+    // La sesión es un usuario: ni 0 ni un número que no quepa bajo el bit de los volúmenes en memoria.
+    let sesion_vale = sesion != 0 && (sesion as u64) < VOL_RAM;
+    let (memoria, respuesta) = match (orden, ll) {
+        (RAM_CREAR, [m, r, ..]) => (Some(*m), Some(*r)),
+        (RAM_CREAR, [m]) => (Some(*m), None),
+        (RAM_CREAR, []) => (None, None),
+        (_, [r, ..]) => (None, Some(*r)),
+        (_, []) => (None, None),
+    };
+    for &l in ll.iter().skip(memoria.is_some() as usize + respuesta.is_some() as usize) {
+        dashos::cerrar(l);
+    }
+    let r = match orden {
+        _ if !sesion_vale => {
+            if let Some(l) = memoria {
+                dashos::cerrar(l);
+            }
+            mal(MAL_FORMADO)
+        }
+        RAM_CREAR => match memoria {
+            Some(llave) => match ram_crear(fs, sesion, uid, gid, llave) {
+                Ok((mide, ocupa)) => Respuesta { estado: BIEN, a: mide, b: ocupa, ..Default::default() },
+                Err(e) => mal(e),
+            },
+            None => mal(MAL_FORMADO),
+        },
+        RAM_QUITAR => match fs.ram.iter().position(|r| r.sesion == sesion) {
+            Some(i) => {
+                // Nadie se queda con una asa o una raíz a un volumen que ya no está, ni con sus páginas prestadas.
+                for c in clientes.iter_mut().flatten() {
+                    let fuera: Vec<u32> = c.asas.iter().filter(|(_, v)| v.0 == vol).map(|(&asa, _)| asa).collect();
+                    for asa in fuera {
+                        c.asas.remove(&asa);
+                        c.cambiadas.remove(&asa);
+                        c.cedidas.remove(&asa);
+                        c.topes.remove(&asa);
+                    }
+                    for raiz in c.raices.iter_mut().chain(c.ficha.raices.iter_mut()) {
+                        if raiz.is_some_and(|r| r.0 == vol) {
+                            *raiz = None;
+                        }
+                    }
+                }
+                for f in altas.values_mut() {
+                    for raiz in f.raices.iter_mut() {
+                        if raiz.is_some_and(|r| r.0 == vol) {
+                            *raiz = None;
+                        }
+                    }
+                }
+                rec.olvidar();
+                rec.paginas.olvidar_volumen(vol);
+                let quitado = fs.ram.swap_remove(i);
+                let ocupaba = match &quitado.fs.disk {
+                    Medio::Ram(d) => d.puestas() * BLOCK_SIZE,
+                    Medio::Nvme(_) => 0,
+                };
+                // Aquí vuelve su memoria: se suelta el disco, con su proyección y su llave.
+                drop(quitado);
+                Respuesta { estado: BIEN, a: ocupaba, ..Default::default() }
+            }
+            None => mal(NO_EXISTE),
+        },
+        RAM_RAIZ => {
+            let de = u64::from_le_bytes(m[8..16].try_into().unwrap());
+            let (hueco, tope) = (m[16] as usize, m[17] as u16);
+            if hueco == 0 || hueco >= RAICES || (tope != R && tope != R | W) || de == 0 {
+                mal(MAL_FORMADO)
+            } else if fs.ram_de(vol).is_none() {
+                mal(NO_EXISTE)
+            } else {
+                let raiz = Some((vol, TreePtr::<Node>::root(), tope));
+                let mut estado = NO_EXISTE;
+                if let Some(f) = altas.get_mut(&de) {
+                    f.raices[hueco] = raiz;
+                    estado = BIEN;
+                }
+                if let Some(c) = clientes.iter_mut().flatten().find(|c| c.marca == de) {
+                    // Si tenía otra cosa en ese hueco, se cierra; la nueva cuenta como abierta mientras la tenga.
+                    if let Some((v, n, _)) = c.raices[hueco].take() {
+                        cerrar_nodo(fs, v, n);
+                    }
+                    fs.contar_uso(vol, TreePtr::<Node>::root().id());
+                    c.raices[hueco] = raiz;
+                    c.ficha.raices[hueco] = raiz;
+                    estado = BIEN;
+                }
+                Respuesta { estado, ..Default::default() }
+            }
+        }
+        _ => {
+            let (lv, lo, ld, solo_cajon) = (m[16] as usize, m[17] as usize, m[18] as usize, m[19] == 1);
+            let texto = |desde: usize, largo: usize| m.get(desde..desde + largo).and_then(|b| core::str::from_utf8(b).ok());
+            match (texto(CABECERA, lv), texto(CABECERA + lv, lo), texto(CABECERA + lv + lo, ld)) {
+                (Some(v), Some(origen), Some(destino)) => {
+                    let r = ram_copiar(fs, vol, (uid, gid), v, origen, destino, solo_cajon);
+                    rec.olvidar();
+                    match r {
+                        Ok((ficheros, bytes)) => Respuesta { estado: BIEN, a: ficheros, b: bytes, ..Default::default() },
+                        Err(e) => mal(estado_de(e)),
+                    }
+                }
+                _ => mal(MAL_FORMADO),
+            }
+        }
+    };
+    if let Some(l) = respuesta {
+        contestar(l, &r, &[]);
+        dashos::cerrar(l);
+    }
+}
+
+/// `RAM_CREAR`: un DashFS nuevo sobre el objeto de memoria disperso `llave`, que pasa a ser de este servicio. Su raíz
+/// es de `uid` y `gid` y de nadie más (0700). Da lo que mide el volumen y lo que ocupa recién hecho, en bytes. Si no se
+/// puede, la llave se cierra.
+fn ram_crear(fs: &mut Fs, sesion: u32, uid: u32, gid: u32, llave: u32) -> core::result::Result<(u64, u64), i32> {
+    let hueco = (0..MAX_RAM).find(|h| fs.ram.iter().all(|r| r.hueco != *h));
+    let tam = dashos::memoria_tamano(llave);
+    let estado = match hueco {
+        _ if fs.ram.iter().any(|r| r.sesion == sesion) => YA_EXISTE,
+        None => SIN_SITIO,
+        _ if tam < MIN_RAM as i64 || tam > HUECO_RAM as i64 => MAL_FORMADO,
+        Some(_) => BIEN,
+    };
+    let va = VA_RAM + hueco.unwrap_or(0) * HUECO_RAM;
+    if estado != BIEN || dashos::memoria_proyectar(llave, va, true) != 0 {
+        dashos::cerrar(llave);
+        return Err(if estado != BIEN { estado } else { SIN_SITIO });
+    }
+    // Desde aquí, soltar `memoria` quita la proyección y cierra la llave.
+    let memoria = MemoriaDispersa { llave, va };
+    // Si la memoria no es solo de este servicio (la tiene otro, o no deja escribir), no se le puede poner ni una página.
+    let disco = DiscoRam::nuevo(memoria, tam as u64 / BLOCK_SIZE).ok_or(PROTEGIDO)?;
+    let mut uuid = [0u8; 16];
+    let _ = dashos::azar(&mut uuid);
+    let hora = ahora();
+    let mut nuevo = FileSystem::create_plain(Medio::Ram(disco), uuid, hora.0, hora.1).map_err(estado_de)?;
+    nuevo
+        .tx(|tx| {
+            let mut raiz = tx.read_tree(TreePtr::<Node>::root())?;
+            raiz.data_mut().set_uid(uid);
+            raiz.data_mut().set_gid(gid);
+            raiz.data_mut().set_mode(Node::MODE_DIR | 0o700);
+            tx.sync_tree(raiz)
+        })
+        .and_then(|()| nuevo.durable())
+        .map_err(estado_de)?;
+    let ocupa = match &nuevo.disk {
+        Medio::Ram(d) => d.puestas() * BLOCK_SIZE,
+        Medio::Nvme(_) => 0,
+    };
+    let mide = nuevo.header.size() - dashfs::HEADER_RING * BLOCK_SIZE;
+    fs.ram.push(Ram { sesion, hueco: hueco.unwrap_or(0), fs: nuevo });
+    Ok((mide, ocupa))
+}
+
+/// Lo más hondo que baja `RAM_COPIAR`, y los ficheros y bytes de un fichero que copia como mucho.
+const COPIA_NIVELES: usize = 16;
+const COPIA_FICHEROS: u64 = 4096;
+const COPIA_FICHERO_MAX: u64 = 4 << 20;
+
+/// `RAM_COPIAR`: crea el cajón `destino` del volumen en memoria `vol` (con los que falten) y, si no es `solo_cajon`,
+/// copia en él lo que hay bajo `origen` en el volumen `de` del disco (vacío, el principal), pisando lo que se llame
+/// igual. Todo queda de `dueno` (uid, gid). Da cuántos ficheros copió y sus bytes. Un origen que no existe no es un
+/// error: no hay nada que copiar. Los enlaces y los ficheros de más de `COPIA_FICHERO_MAX` se saltan.
+fn ram_copiar(fs: &mut Fs, vol: u64, dueno: (u32, u32), de: &str, origen: &str, destino: &str, solo_cajon: bool) -> Result<(u64, u64)> {
+    if fs.ram_de(vol).is_none() {
+        return Err(Error::new(ENOENT));
+    }
+    let hora = ahora();
+    // Un cajón `nombre` en `dir` del volumen en memoria: el que hay, o uno nuevo del dueño.
+    let cajon = |fs: &mut Fs, dir: TreePtr<Node>, nombre: &str| -> Result<TreePtr<Node>> {
+        fs.tx_in(vol, |tx| {
+            if let Ok(n) = tx.find_node(dir, nombre) {
+                return if n.data().is_dir() { Ok(n.ptr()) } else { Err(Error::new(ENOTDIR)) };
+            }
+            let n = tx.create_node(dir, nombre, Node::MODE_DIR | 0o755, hora.0, hora.1)?;
+            let mut d = tx.read_tree(n.ptr())?;
+            d.data_mut().set_uid(dueno.0);
+            d.data_mut().set_gid(dueno.1);
+            tx.sync_tree(d)?;
+            Ok(n.ptr())
+        })
+    };
+    let mut llegada = TreePtr::<Node>::root();
+    for parte in destino.split('/').filter(|p| !p.is_empty()) {
+        if un_nombre(parte.as_bytes()).is_none() {
+            return Err(Error::new(EINVAL));
+        }
+        llegada = cajon(fs, llegada, parte)?;
+    }
+    if solo_cajon {
+        return Ok((0, 0));
+    }
+    // El origen, desde la raíz de su volumen, sin mirar permisos (como las raíces de un alta).
+    let partida = fs.disco.tx(|tx| if de.is_empty() { Ok(0) } else { tx.find_volume(de) }).and_then(|id| {
+        fs.disco.tx_in(id, |tx| {
+            let mut n = tx.read_tree(TreePtr::<Node>::root())?;
+            for parte in origen.split('/').filter(|p| !p.is_empty()) {
+                n = tx.find_node(n.ptr(), parte)?;
+            }
+            if n.data().is_dir() { Ok((id, n.ptr())) } else { Err(Error::new(ENOTDIR)) }
+        })
+    });
+    let (de, partida) = match partida {
+        Ok(p) => p,
+        Err(e) if e.errno == ENOENT => return Ok((0, 0)),
+        Err(e) => return Err(e),
+    };
+    let (mut ficheros, mut bytes) = (0u64, 0u64);
+    let mut pendientes: Vec<(TreePtr<Node>, TreePtr<Node>, usize)> = alloc::vec![(partida, llegada, 0)];
+    while let Some((desde, hasta, nivel)) = pendientes.pop() {
+        let hijos = fs.disco.tx_in(de, |tx| {
+            let mut hijos = Vec::new();
+            tx.child_nodes(desde, &mut hijos)?;
+            Ok(hijos)
+        })?;
+        for hijo in &hijos {
+            let Some(nombre) = hijo.name() else { continue };
+            let nodo = fs.disco.tx_in(de, |tx| tx.read_tree(hijo.node_ptr()))?;
+            if nodo.data().is_dir() {
+                if nivel + 1 < COPIA_NIVELES {
+                    pendientes.push((nodo.ptr(), cajon(fs, hasta, nombre)?, nivel + 1));
+                }
+                continue;
+            }
+            let tam = nodo.data().size();
+            if nodo.data().is_symlink() || tam > COPIA_FICHERO_MAX || ficheros >= COPIA_FICHEROS {
+                continue;
+            }
+            let mut datos = alloc::vec![0u8; tam as usize];
+            fs.disco.tx_in(de, |tx| {
+                let mut hecho = 0;
+                while hecho < datos.len() {
+                    let k = tx.read_node_inner(&nodo, hecho as u64, &mut datos[hecho..])?;
+                    if k == 0 {
+                        break;
+                    }
+                    hecho += k;
+                }
+                Ok(())
+            })?;
+            // Con sitio para borrar después (como `ESCRIBIR`).
+            if fs.medidas(vol).1 < tam.saturating_add(RESERVA_RAM) {
+                return Err(Error::new(ENOSPC));
+            }
+            let modo = Node::MODE_FILE | (nodo.data().mode() & 0o777);
+            fs.tx_in(vol, |tx| {
+                let n = match tx.find_node(hasta, nombre) {
+                    Ok(n) if n.data().is_dir() => return Err(Error::new(EISDIR)),
+                    Ok(n) => {
+                        tx.truncate_node(n.ptr(), 0, hora.0, hora.1)?;
+                        n.ptr()
+                    }
+                    Err(_) => tx.create_node(hasta, nombre, modo, hora.0, hora.1)?.ptr(),
+                };
+                tx.write_node(n, 0, &datos, hora.0, hora.1)?;
+                let mut d = tx.read_tree(n)?;
+                d.data_mut().set_uid(dueno.0);
+                d.data_mut().set_gid(dueno.1);
+                d.data_mut().set_mode(modo);
+                tx.sync_tree(d)
+            })?;
+            ficheros += 1;
+            bytes += tam;
+        }
+    }
+    Ok((ficheros, bytes))
+}
+
 /// Abre la sesión de quien tiene la marca `marca`, con su canal de respuesta: le da su ventana. Si ya tenía sesión,
 /// cambia el canal de respuesta y le da la misma ventana. Sin alta no hay sesión (R6).
 fn sesion(fs: &mut Fs, clientes: &mut [Option<Cliente>], altas: &BTreeMap<u64, Ficha>, marca: u64, respuesta: u32, pide: u64) -> (i32, Option<u32>, usize) {
@@ -2203,7 +2770,7 @@ fn sesion(fs: &mut Fs, clientes: &mut [Option<Cliente>], altas: &BTreeMap<u64, F
             clientes[i] = Some(Cliente { marca, ficha, respuesta, ventana: m, va, asas: BTreeMap::new(), cambiadas: alloc::collections::BTreeSet::new(), siguiente: RAICES as u32, pendiente: false, fallo: None, tam, cedidas: BTreeMap::new(), raices: ficha.raices, topes: BTreeMap::new() });
             // Las raíces de su alta cuentan como abiertas mientras dure la sesión (se cierran al soltarlo).
             for (vol, n, _) in ficha.raices.into_iter().flatten() {
-                *fs.node_usages.entry((vol << 32) | u64::from(n.id())).or_insert(0) += 1;
+                fs.contar_uso(vol, n.id());
             }
             i
         }
@@ -2259,7 +2826,7 @@ fn principal() -> u64 {
     // El primer bloque del anillo de cabeceras: sin `Some(0)`, RedoxFS busca en los 65536 primeros.
     // `cleanup`: suelta los nodos borrados que seguían abiertos cuando se paró la última vez.
     let t_abrir = dashos::ahora_us();
-    let mut fs = match FileSystem::open(disco, None, Some(0), true) {
+    let mut fs = match FileSystem::open(Medio::Nvme(disco), None, Some(0), true) {
         Ok(fs) => fs,
         Err(e) => {
             println!("  [archivos] RedoxFS no se abre: {}", e);
@@ -2291,6 +2858,8 @@ fn principal() -> u64 {
     // con las órdenes de `SIEMPRE_AL_DISCO`, al juntarse `MAX_SUCIO` o tras `PLAZO_US`. Si se va la luz, el disco
     // queda como tras el último guardado, entero (RedoxFS no reusa hasta entonces los bloques que suelta).
     fs.deferred = true;
+    // Y con él, los volúmenes en memoria de las sesiones (`RAM:`), que van llegando.
+    let mut fs = Mundo { disco: fs, ram: Vec::new() };
     // El plazo del siguiente guardado y la llave de su temporizador (0 sin él: se mira al llegar cada mensaje).
     let mut plazo: Option<(u64, u32)> = None;
     let mut clientes: Vec<Option<Cliente>> = (0..MAX_CLIENTES).map(|_| None).collect();
@@ -2340,6 +2909,11 @@ fn principal() -> u64 {
             for &l in &ll[..k] {
                 dashos::cerrar(l);
             }
+            continue;
+        }
+        // `RAM:`: los volúmenes en memoria de las sesiones, también de quien reparte las llaves (`sesiones`).
+        if marca == 0 && n >= CABECERA && matches!(u32_en(0), RAM_CREAR | RAM_QUITAR | RAM_RAIZ | RAM_COPIAR) {
+            ram_orden(&mut fs, &mut altas, &mut clientes, &mut recuerdos, &buf[..n], &ll[..k]);
             continue;
         }
         // Sin marca no se sabe de quién es; sin cabecera entera, tampoco qué pide.
@@ -2417,7 +2991,7 @@ fn principal() -> u64 {
                     for raiz in c.raices.iter_mut() {
                         match *raiz {
                             Some((vol, n, _)) if vol == r.a && n.id() == raiz_del_volumen => {
-                                *fs.node_usages.entry((vol << 32) | u64::from(n.id())).or_insert(0) += 1;
+                                fs.contar_uso(vol, n.id());
                             }
                             Some((vol, _, _)) if vol == r.a => *raiz = None,
                             _ => {}
@@ -2427,7 +3001,7 @@ fn principal() -> u64 {
             }
             r
         };
-        if SIEMPRE_AL_DISCO.contains(&orden) || fs.disk.cache.sucios.len() >= MAX_SUCIO {
+        if SIEMPRE_AL_DISCO.contains(&orden) || fs.disk.sucios() >= MAX_SUCIO {
             guardar(&mut fs);
         }
         tras_guardar(&mut clientes, &mut solo_lectura);
@@ -2462,7 +3036,7 @@ fn tras_guardar(clientes: &mut [Option<Cliente>], solo_lectura: &mut bool) {
 }
 
 /// Las que cambian instantáneas o volúmenes: raras, y van al disco en seguida.
-const SIEMPRE_AL_DISCO: &[u32] = &[TOMAR, DESCARTAR, VOLVER, HACER_VOLUMEN, QUITAR_VOLUMEN, ABRIR_VOLUMEN, CERRAR_VOLUMEN];
+const SIEMPRE_AL_DISCO: &[u32] = &[TOMAR, DESCARTAR, VOLVER, HACER_VOLUMEN, QUITAR_VOLUMEN, ABRIR_VOLUMEN, CERRAR_VOLUMEN, CRECER, CUOTA];
 
 /// Pone o quita el temporizador del siguiente guardado según quede algo por guardar.
 fn al_disco(fs: &Fs, plazo: &mut Option<(u64, u32)>) {

@@ -64,6 +64,10 @@ const ARCHIVOS_ALTAS: u32 = 8;
 /// Los programas del escritorio que se ceden a sí mismos esas mismas raíces (S6b): su tabla de nombres lleva también
 /// los volúmenes.
 const CEDEN_RAICES: &[&str] = &["workbench", "explorador"];
+/// Idiomas (paso 4): programas de `inicio` que nacen con el disco en la raíz 1, solo para leer (`RAICES_DE_MAS` de
+/// `inicio`), y a los que `sesiones` pone en la 3, también solo para leer, el `RAM:` de la sesión de su usuario cuando
+/// entra (`ram_entrar`): su tabla de nombres trae `SYS:` y `RAM:`, y por ellos leen `LOCALE:` y `ENV:`.
+const LEEN_IDIOMA: &[&str] = &["centro"];
 /// Lo que reparte, con la llave sin marca de cada uno: servicios (canales) y permisos del kernel, como el de la clase de
 /// plazo (U4). A un canal se le dice quién es el nuevo cliente (su entrada de directorio); a un permiso, no.
 /// U6: el sonido, con la llave sin marca que da `inicio` (`CANAL_SISTEMA`), no con un número fijo (`SIN_NUMERO`).
@@ -418,19 +422,134 @@ fn alta_archivos(pid: u64, uid: u32, gid: u32, dir: &[u8], cuenta: Option<&[u8]>
     if let Some(c) = cuenta {
         let c = &c[..c.len().min(16)];
         raiz(RAIZ_HOME, 6, c, b"");
-        // Paso 2 de las asignaciones: su `RAM:` y `Work:` (provisionales, cajones del disco; si no están, archivos no
-        // da esa raíz y los nombres que pasan por ella no resuelven).
-        let mut ram = [0u8; 32];
-        let l = CAMINO_RAM.len();
-        ram[..l].copy_from_slice(CAMINO_RAM.as_bytes());
-        ram[l..l + c.len()].copy_from_slice(c);
-        raiz(RAIZ_RAM, 6, b"", &ram[..l + c.len()]);
+        // Su `RAM:`: el volumen en memoria de su sesión (la raíz entera), que `sesiones` crea al entrar. Y `Work:`
+        // (provisional, un cajón del disco). Si no están, archivos no da esa raíz y los nombres que pasan por ella no
+        // resuelven.
+        let mut ram = [dashos::protocolo::archivos::VOLUMEN_RAM; 5];
+        ram[1..].copy_from_slice(&uid.to_le_bytes());
+        raiz(RAIZ_RAM, 6, &ram, b"");
         raiz(RAIZ_WORK, 6, b"", CAMINO_WORK.as_bytes());
     }
     if let Some((hueco, tope, vol, cam)) = extra {
         raiz(hueco, tope, vol, cam);
     }
     dashos::canal_escribir(ARCHIVOS_ALTAS, &m[..o], &[]);
+}
+
+/// `RAM:` en memoria (docs/bitacoras/asignaciones.md): lo que mide como mucho el de una sesión. La 32.ª parte de la
+/// memoria de la máquina, entre 16 y 256 MB, en megas enteros (32 MB con 1 GB, 128 con 4). Vacío no ocupa: es un tope.
+/// Pendiente del usuario: que sea un ajuste.
+fn tope_ram() -> usize {
+    let ram = (dashos::medir(5, 0).max(0) as usize) << 12;
+    ((ram / 32).clamp(16 << 20, 256 << 20) >> 20) << 20
+}
+
+/// Lo que el grupo de una sesión puede tener cobrado además de las páginas de su `RAM:`: la lista de páginas del
+/// objeto disperso (8 bytes por página) y el grupo en sí.
+fn margen_ram(tope: usize) -> u64 {
+    (tope as u64 / 4096) * 8 + 64 * 1024
+}
+
+/// Una orden de los volúmenes en memoria al servicio de archivos (sin marca, como el alta), con `llave` delante de la
+/// de la respuesta si la hay: (estado, a, b) de la respuesta. Sin respuesta en 5 s, -1.
+fn orden_ram(m: &[u8], llave: Option<u32>) -> (i32, u64, u64) {
+    let (lectura, suyo) = dashos::canal_crear();
+    let llaves = [llave.unwrap_or(suyo), suyo];
+    let llaves = if llave.is_some() { &llaves[..] } else { &llaves[..1] };
+    let mut r = [0u8; 32];
+    let leido = if dashos::canal_escribir(ARCHIVOS_ALTAS, m, llaves) == 0 {
+        dashos::canal_leer_plazo(lectura, &mut r, &mut [], 5_000_000).0
+    } else {
+        // No salió: las llaves siguen aquí.
+        dashos::cerrar(suyo);
+        if let Some(l) = llave {
+            dashos::cerrar(l);
+        }
+        -1
+    };
+    dashos::cerrar(lectura);
+    if leido != 32 {
+        return (-1, 0, 0);
+    }
+    (i32::from_le_bytes(r[0..4].try_into().unwrap()), u64::from_le_bytes(r[8..16].try_into().unwrap()), u64::from_le_bytes(r[16..24].try_into().unwrap()))
+}
+
+/// La cabecera de una orden de los volúmenes en memoria: la orden, la sesión (el usuario) y de quién es lo que se haga.
+fn cabecera_ram(orden: u32, uid: u32, gid: u32) -> [u8; 232] {
+    let mut m = [0u8; 232];
+    m[0..4].copy_from_slice(&orden.to_le_bytes());
+    m[4..8].copy_from_slice(&uid.to_le_bytes());
+    m[8..12].copy_from_slice(&uid.to_le_bytes());
+    m[12..16].copy_from_slice(&gid.to_le_bytes());
+    m
+}
+
+/// `RAM_COPIAR`: al cajón `destino` del `RAM:` de `uid`, lo que hay en `origen` del volumen `vol` del disco (vacío, el
+/// principal); con `solo_cajon`, solo se crea el cajón. (estado, ficheros copiados).
+fn copiar_a_ram(uid: u32, vol: &[u8], origen: &[u8], destino: &[u8], solo_cajon: bool) -> (i32, u64) {
+    use dashos::protocolo::archivos as a;
+    let mut m = cabecera_ram(a::RAM_COPIAR, uid, uid);
+    let vol = &vol[..vol.len().min(16)];
+    m[16..20].copy_from_slice(&[vol.len() as u8, origen.len() as u8, destino.len() as u8, solo_cajon as u8]);
+    let mut o = a::CABECERA;
+    for parte in [vol, origen, destino] {
+        m[o..o + parte.len()].copy_from_slice(parte);
+        o += parte.len();
+    }
+    let (e, ficheros, _) = orden_ram(&m[..o], None);
+    (e, ficheros)
+}
+
+/// Al entrar `cuenta` (el usuario `uid`): el grupo de recursos de su sesión y, cobrado a él, su `RAM:`, un volumen en
+/// memoria que crea el servicio de archivos sobre un objeto de memoria disperso; con `T` (`T:`) y `Env` (`ENV:`), que es
+/// una copia de `ENVARC:`: lo de fábrica (`SYS:Prefs/Env-Archive`) y, encima, lo suyo (`Home:Prefs/Env-Archive`). A los
+/// programas del escritorio que son suyos se les da la raíz. Devuelve la llave del grupo (0 si no se pudo: entra sin
+/// `RAM:`, y se dice).
+fn ram_entrar(uid: u32, cuenta: &str, fichas: &[Option<Ficha>], desde_us: u64) -> u32 {
+    use dashos::protocolo::archivos as a;
+    let t0 = dashos::ahora_us();
+    let tope = tope_ram();
+    let g = dashos::grupo_crear(tope as u64 + margen_ram(tope));
+    let m = if g > 0 { dashos::memoria_dispersa(tope, g as u32) } else { g };
+    let (e, _, _) = if m > 0 { orden_ram(&cabecera_ram(a::RAM_CREAR, uid, uid)[..a::CABECERA], Some(m as u32)) } else { (m as i32, 0, 0) };
+    if e != a::BIEN {
+        println!("  [sesiones] RAM: de {}: no se crea ({}): entra sin RAM:, T: ni ENV:", cuenta, e);
+        if g > 0 {
+            dashos::cerrar(g as u32);
+        }
+        return 0;
+    }
+    let t_creada = dashos::ahora_us();
+    let (e_t, _) = copiar_a_ram(uid, b"", b"", b"T", true);
+    let (e_fabrica, de_fabrica) = copiar_a_ram(uid, b"", b"Prefs/Env-Archive", b"Env", false);
+    let (e_suyo, suyos) = copiar_a_ram(uid, cuenta.as_bytes(), b"Prefs/Env-Archive", b"Env", false);
+    // El escritorio nace antes de que entre nadie: su raíz de `RAM:` llega ahora. Al Workbench y al explorador, para
+    // leer y escribir; a quien solo lee su idioma de `ENV:` (el centro de control), solo para leer.
+    for f in fichas.iter().flatten().filter(|f| f.uid == uid && (es(f, CEDEN_RAICES) || es(f, LEEN_IDIOMA))) {
+        let mut r = cabecera_ram(a::RAM_RAIZ, uid, uid);
+        r[8..16].copy_from_slice(&f.marca.to_le_bytes());
+        r[16] = RAIZ_RAM;
+        r[17] = if es(f, CEDEN_RAICES) { 6 } else { 4 };
+        orden_ram(&r[..a::CABECERA], None);
+    }
+    let ahora = dashos::ahora_us();
+    println!(
+        "  [sesiones] RAM: de {}: en memoria, hasta {} MB; T: {}, ENV: copiado de ENVARC: ({} de fábrica {}, {} suyos {}); ocupa {} KB, cobrados al grupo de su sesión",
+        cuenta, tope >> 20, e_t, de_fabrica, e_fabrica, suyos, e_suyo, dashos::grupo_uso(g as u32).1 / 1024
+    );
+    println!("  [sesiones] RAM: de {}: creada en {} µs y ENV: en {} µs; entrar, {} µs en total", cuenta, t_creada - t0, ahora - t_creada, ahora - desde_us);
+    g as u32
+}
+
+/// Al salir: el `RAM:` de la sesión se destruye con todo lo que tenga, y su grupo con él.
+fn ram_salir(uid: u32, cuenta: &str, grupo: u32) {
+    use dashos::protocolo::archivos as a;
+    let cobrado = dashos::grupo_uso(grupo).1;
+    let (e, ocupaba, _) = orden_ram(&cabecera_ram(a::RAM_QUITAR, uid, uid)[..a::CABECERA], None);
+    let queda = dashos::grupo_uso(grupo).1;
+    dashos::grupo_matar(grupo);
+    dashos::cerrar(grupo);
+    println!("  [sesiones] RAM: de {}: destruida al salir ({}): ocupaba {} KB; su grupo pasa de {} KB cobrados a {}", cuenta, e, ocupaba / 1024, cobrado / 1024, queda / 1024);
 }
 
 /// Las asignaciones con que empieza un proceso del usuario `uid` que no las hereda de nadie: las de la sesión (S4b) si
@@ -443,6 +562,11 @@ fn asignaciones_de(uid: u32) -> Tabla {
     t
 }
 
+/// En qué volumen está el `PROGDIR:` de un ayudante: el disco, el de la cuenta o su `RAM:`.
+const EN_DISCO: u8 = 0;
+const EN_CUENTA: u8 = 1;
+const EN_RAM: u8 = 2;
+
 /// Shell nativo: la raíz donde un proceso tiene su `PROGDIR:`: la 0, salvo los ayudantes (`LANZAR_AYUDANTE`).
 fn progdir_de(ayudantes: &[(u64, u8)], marca: u64) -> u8 {
     ayudantes.iter().find(|a| a.0 == marca && marca != 0).map_or(RAIZ_PROGDIR, |a| a.1)
@@ -450,9 +574,9 @@ fn progdir_de(ayudantes: &[(u64, u8)], marca: u64) -> u8 {
 
 /// Shell nativo: dónde está en el disco el cajón `sub` de la raíz `raiz` de quien lanza (cuyo `PROGDIR:`, la raíz 0, es
 /// `dir`), para dárselo al ayudante como raíz: el tope (4 leer, 6 leer y escribir: el de la raíz de origen), si es del
-/// volumen de la cuenta y cuánto se escribió en `cam`. `None` si esa raíz no la tiene, si el cajón no vale (sube, tiene
+/// volumen (`EN_DISCO`, `EN_CUENTA` o `EN_RAM`) y cuánto se escribió en `cam`. `None` si esa raíz no la tiene, si el cajón no vale (sube, tiene
 /// partes vacías o letras de control) o si no cabe: entonces el ayudante nace sin `PROGDIR:`.
-fn progdir_ayudante(raiz: u8, sub: &[u8], dir: &[u8], cuenta: Option<&[u8]>, cam: &mut [u8; 160]) -> Option<(u8, bool, usize)> {
+fn progdir_ayudante(raiz: u8, sub: &[u8], dir: &[u8], cuenta: Option<&[u8]>, cam: &mut [u8; 160]) -> Option<(u8, u8, usize)> {
     let parte_vale = |p: &[u8]| !p.is_empty() && p != b"." && p != b".." && p.iter().all(|&b| b >= 0x20 && b != 0x7f && b != b':');
     if sub.len() > MAX_CAJON_AYUDANTE || core::str::from_utf8(sub).is_err() || !(sub.is_empty() || sub.split(|&c| c == b'/').all(parte_vale)) {
         return None;
@@ -462,32 +586,29 @@ fn progdir_ayudante(raiz: u8, sub: &[u8], dir: &[u8], cuenta: Option<&[u8]>, cam
         cam[*largo..*largo + x.len()].copy_from_slice(x);
         *largo += x.len();
     };
-    let (tope, de_cuenta) = match raiz {
+    let (tope, volumen) = match raiz {
         RAIZ_PROGDIR => {
             poner(&mut largo, dir);
-            (6, false)
+            (6, EN_DISCO)
         }
-        RAIZ_SYS => (4, false),
-        RAIZ_HOME => (6, true),
-        RAIZ_RAM => {
-            poner(&mut largo, CAMINO_RAM.as_bytes());
-            poner(&mut largo, &cuenta?[..cuenta?.len().min(16)]);
-            (6, false)
-        }
+        RAIZ_SYS => (4, EN_DISCO),
+        RAIZ_HOME => (6, EN_CUENTA),
+        // `RAM:` es un volumen en memoria (el de la sesión), desde su raíz.
+        RAIZ_RAM => (6, EN_RAM),
         RAIZ_WORK => {
             poner(&mut largo, CAMINO_WORK.as_bytes());
-            (6, false)
+            (6, EN_DISCO)
         }
         _ => return None,
     };
-    if de_cuenta && cuenta.is_none() {
+    if volumen != EN_DISCO && cuenta.is_none() {
         return None;
     }
     if largo > 0 && !sub.is_empty() {
         poner(&mut largo, b"/");
     }
     poner(&mut largo, sub);
-    Some((tope, de_cuenta, largo))
+    Some((tope, volumen, largo))
 }
 
 /// La tabla de nombres entera de `f`: sus volúmenes (según las raíces que tiene: lo lanzado por `sesiones` y los
@@ -502,6 +623,10 @@ fn tabla_de(f: &Ficha, asignaciones: &Tabla, progdir: u8) -> Tabla {
             let _ = propia.poner_volumen(b"RAM", RAIZ_RAM, b"");
             let _ = propia.poner_volumen(b"Work", RAIZ_WORK, b"");
         }
+    }
+    if es(f, LEEN_IDIOMA) {
+        let _ = propia.poner_volumen(b"SYS", RAIZ_SYS, b"");
+        let _ = propia.poner_volumen(b"RAM", RAIZ_RAM, b"");
     }
     // Shell nativo: el `PROGDIR:` de un ayudante está en otra raíz (o no está).
     if lanzado && progdir != SIN_RAIZ {
@@ -700,6 +825,23 @@ impl Siguen {
             (_, n) => n,
         }
     }
+}
+
+/// El selector de ficheros (S6b): si lo que se lanza como el usuario `uid` nace con su llave. El selector corre como
+/// una persona y enseña lo suyo: solo lo reciben los programas de esa misma persona (así el programa de Carla no abre
+/// el selector de Ana, ni un servicio el de nadie). Hasta que haya un selector por sesión, los de las demás personas
+/// se quedan sin él.
+fn con_selector(fichas: &[Option<Ficha>], uid: u32) -> bool {
+    uid >= PRIMERA_PERSONA && fichas.iter().flatten().any(|f| lanzables::del_sistema(f.marca, nombre(&f.nombre), &["selector"]) && f.uid == uid)
+}
+
+/// Presenta al selector (por su llave sin marca) el programa `marca`, que se llama `nombre_`: como la entrada de
+/// directorio de `inicio`. Con el nombre vacío, que se fue: el selector lo olvida y cierra lo que tuviera pedido.
+fn presentar_al_selector(canal: u32, marca: u64, nombre_: &[u8; 16]) {
+    let mut dir = [0u8; 24];
+    dir[..8].copy_from_slice(&marca.to_le_bytes());
+    dir[8..].copy_from_slice(nombre_);
+    avisar(canal, &dir);
 }
 
 /// U6: un aviso al compositor o al sonido. Si su cola está llena, se reintenta un rato: sin él, uno de detrás se vería.
@@ -978,10 +1120,15 @@ fn principal() -> u64 {
     // Las últimas bajas, para decir cuándo vuelve un servicio relanzado por `inicio`.
     // Los usuarios con la sesión abierta (U2/U3): solo como ellos puede `guardian` lanzar algo.
     let mut abiertas = [0u32; 8];
+    // El grupo de recursos de cada sesión abierta (en el mismo hueco que en `abiertas`), al que se cobra su `RAM:`.
+    let mut grupos_sesion = [0u32; 8];
     // U6: el usuario de la sesión de delante (0: nadie).
     let mut activa = 0u32;
     // U6, paso 2: las llaves de los que siguen las sesiones y lo último que se les dijo de quién está detrás.
     let mut siguen = Siguen::default();
+    // La llave sin marca del selector de ficheros (0 hasta que llegue de `inicio`): de ella sale la que se da a lo que
+    // se lanza, y por ella se le presenta.
+    let mut selector = 0u32;
     let mut detras_dicho = [0u32; MAX_DETRAS];
     let mut idos = [0u64; 8];
     let mut ido = 0;
@@ -1062,6 +1209,10 @@ fn principal() -> u64 {
                         aviso_persona(c, f.marca, 0, &f.nombre);
                     }
                 }
+                // Y el selector, de lo que lanzó `sesiones` (si tenía algo pedido, su ventana se cierra).
+                if f.marca >= PRIMER_PID_PROPIO && selector != 0 {
+                    presentar_al_selector(selector, f.marca, &[0; 16]);
+                }
                 idos[ido % idos.len()] = f.marca;
                 ido += 1;
             }
@@ -1100,6 +1251,12 @@ fn principal() -> u64 {
                             "compositor" => avisar_todo(siguen.compositor, &fichas, &detras_dicho),
                             "sonido" => avisar_todo(siguen.sonido, &fichas, &detras_dicho),
                             "avisos" => avisar_todo(siguen.avisos, &fichas, &detras_dicho),
+                            // El selector relanzado no conoce a nadie de lo que lanzó `sesiones`: otra vez.
+                            "selector" if selector != 0 => {
+                                for x in fichas.iter().flatten().filter(|x| x.marca >= PRIMER_PID_PROPIO && x.uid == f.uid) {
+                                    presentar_al_selector(selector, x.marca, &x.nombre);
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -1116,6 +1273,11 @@ fn principal() -> u64 {
                 // U6: la llave sin marca de uno que sigue las sesiones; se le dice lo que haya ya.
                 let mut quien = [0u8; 16];
                 quien.copy_from_slice(&m[4..20]);
+                if nombre(&quien) == "selector" && selector == 0 {
+                    selector = ll[0];
+                    usadas = 1;
+                    println!("  [sesiones] dará el selector de ficheros a lo que lance");
+                }
                 let hueco = match nombre(&quien) {
                     "compositor" => Some(&mut siguen.compositor),
                     "sonido" => Some(&mut siguen.sonido),
@@ -1179,6 +1341,7 @@ fn principal() -> u64 {
                     dashos::canal_escribir(respuesta, &r[..8 + ENTRADA_MEMORIA * i], &[]);
                 }
                 ENTRAR | SALIR | VOLVER => {
+                    let t_entrar = dashos::ahora_us();
                     // Solo de `guardian` (U3): nadie más abre ni cierra el volumen de un usuario.
                     let guardian = yo.is_some_and(|f| es(&f, GUARDIANES));
                     let (nl, cl) = (u32_en(4) as usize, u32_en(8) as usize);
@@ -1217,11 +1380,23 @@ fn principal() -> u64 {
                         if let Some(&(uid, _)) = CUENTAS.iter().find(|c| c.1.as_bytes() == quien.as_bytes()) {
                             match u32_en(0) {
                                 ENTRAR if !abiertas.contains(&uid) => {
-                                    if let Some(x) = abiertas.iter_mut().find(|x| **x == 0) {
-                                        *x = uid;
+                                    if let Some(i) = abiertas.iter().position(|x| *x == 0) {
+                                        abiertas[i] = uid;
+                                        // Su `RAM:`, con `T:` y `ENV:`, antes de que corra nada suyo.
+                                        grupos_sesion[i] = ram_entrar(uid, quien, &fichas, t_entrar);
                                     }
                                 }
-                                SALIR => abiertas.iter_mut().filter(|x| **x == uid).for_each(|x| *x = 0),
+                                SALIR => {
+                                    for i in 0..abiertas.len() {
+                                        if abiertas[i] == uid {
+                                            abiertas[i] = 0;
+                                            if grupos_sesion[i] != 0 {
+                                                ram_salir(uid, quien, grupos_sesion[i]);
+                                                grupos_sesion[i] = 0;
+                                            }
+                                        }
+                                    }
+                                }
                                 _ => {}
                             }
                             // U6: quién está delante. Entrar o volver con la contraseña buena pone delante esa sesión (si
@@ -1304,20 +1479,47 @@ fn principal() -> u64 {
                                 } else {
                                     -1
                                 };
-                                // Shell nativo: una llave de más en la petición es la cuarta del programa (su canal
-                                // de arranque).
+                                // La cuarta, la del selector de ficheros (S6b: por él llega un programa encerrado al
+                                // fichero que el usuario elige), si es de la persona del selector. Antes, el selector
+                                // sabe quién es (solo atiende a quien le presentan).
+                                let selector_suyo = if selector != 0 && con_selector(&fichas, uid) {
+                                    presentar_al_selector(selector, pid, &corto16);
+                                    dashos::llave_duplicar(selector, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, pid)
+                                } else {
+                                    -1
+                                };
+                                // Shell nativo: una llave de más en la petición es el canal de arranque del programa
+                                // (sus argumentos), con el nombre "arranque" en su tabla. Va detrás de las demás.
                                 let arranque = if k >= 2 { ll[1] as i64 } else { -1 };
                                 usadas = k.min(2);
-                                let todas = [canal_suyo as u32, archivos_suyo as u32, ventanas_suyo as u32, arranque as u32];
+                                let las_suyas = [canal_suyo, archivos_suyo, ventanas_suyo, selector_suyo];
+                                // Qué es cada una (la tabla de llaves del programa, `dashos::llaves`).
+                                let nombres_de = ["sesiones", "archivos", "ventanas", "selector"].map(dashos::llaves::nombre16);
                                 // Las que hay, en su sitio: si falta una, ninguna de las de detrás.
-                                let hay = [canal_suyo, archivos_suyo, ventanas_suyo, arranque].iter().take_while(|&&l| l > 0).count();
-                                for (j, &l) in [canal_suyo, archivos_suyo, ventanas_suyo, arranque].iter().enumerate().skip(hay) {
+                                let hay = las_suyas.iter().take_while(|&&l| l > 0).count();
+                                let mut todas = [0u32; 5];
+                                let mut nombres = [[0u8; dashos::llaves::NOMBRE]; 5];
+                                for j in 0..hay {
+                                    todas[j] = las_suyas[j] as u32;
+                                    nombres[j] = nombres_de[j];
+                                }
+                                let hay = if arranque > 0 && hay >= 3 {
+                                    todas[hay] = arranque as u32;
+                                    nombres[hay] = dashos::llaves::nombre16(NOMBRE_ARRANQUE);
+                                    hay + 1
+                                } else {
+                                    if arranque > 0 {
+                                        dashos::cerrar(arranque as u32);
+                                    }
+                                    hay
+                                };
+                                for (j, &l) in las_suyas.iter().enumerate().skip(hay.min(4)) {
                                     if l > 0 && j > hay {
                                         dashos::cerrar(l as u32);
                                     }
                                 }
                                 let llaves: &[u32] = &todas[..hay];
-                                let p = if g > 0 { dashos::proceso_crear_en(g as u32, mem, tam, llaves) } else { g };
+                                let p = if g > 0 { dashos::proceso_crear_con_nombres(g as u32, mem, tam, llaves, &nombres[..hay]) } else { g };
                                 if p <= 0 {
                                     for &l in llaves {
                                         dashos::cerrar(l);
@@ -1327,6 +1529,10 @@ fn principal() -> u64 {
                                 if p <= 0 {
                                     if g > 0 {
                                         dashos::cerrar(g as u32);
+                                    }
+                                    // No nació: el selector lo olvida.
+                                    if selector_suyo > 0 {
+                                        presentar_al_selector(selector, pid, &[0; 16]);
                                     }
                                     (p as i32, 0)
                                 } else {
@@ -1397,7 +1603,16 @@ fn principal() -> u64 {
                             let largo_dir = f.progdir.iter().position(|&c| c == 0).unwrap_or(24);
                             let mut cam = [0u8; 160];
                             let progdir = progdir_ayudante(raiz_origen, sub, &f.progdir[..largo_dir], cuenta, &mut cam);
-                            let extra = progdir.map(|(tope, de_cuenta, largo)| (RAIZ_PROGDIR_AYUDANTE, tope, if de_cuenta { cuenta.unwrap_or(b"") } else { &b""[..] }, &cam[..largo]));
+                            let mut ram = [dashos::protocolo::archivos::VOLUMEN_RAM; 5];
+                            ram[1..].copy_from_slice(&f.uid.to_le_bytes());
+                            let extra = progdir.map(|(tope, volumen, largo)| {
+                                let vol: &[u8] = match volumen {
+                                    EN_CUENTA => cuenta.unwrap_or(b""),
+                                    EN_RAM => &ram,
+                                    _ => b"",
+                                };
+                                (RAIZ_PROGDIR_AYUDANTE, tope, vol, &cam[..largo])
+                            });
                             alta_archivos(pid, f.uid, f.gid, &f.progdir[..largo_dir], cuenta, extra);
                             let archivos_suyo = dashos::llave_duplicar(ARCHIVOS_ALTAS, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, pid);
                             // El compositor y el sonido saben de quién es, con el nombre del fichero (solo para sus
@@ -1411,15 +1626,34 @@ fn principal() -> u64 {
                             } else {
                                 -1
                             };
-                            let todas = [canal_suyo as u32, archivos_suyo as u32, ventanas_suyo as u32, arranque];
+                            // Y el selector, como lo que lanza `LANZAR`, si la persona tiene uno.
+                            let selector_suyo = if selector != 0 && con_selector(&fichas, f.uid) {
+                                presentar_al_selector(selector, pid, &corto16);
+                                dashos::llave_duplicar(selector, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, pid)
+                            } else {
+                                -1
+                            };
+                            // Su tabla de llaves (`dashos::llaves`): las que hay, con su nombre.
+                            let mut todas = [0u32; 5];
+                            let mut nombres = [[0u8; dashos::llaves::NOMBRE]; 5];
+                            let mut hay = 0;
+                            for (l, n) in [(canal_suyo, "sesiones"), (archivos_suyo, "archivos"), (ventanas_suyo, "ventanas"), (selector_suyo, "selector"), (arranque as i64, NOMBRE_ARRANQUE)] {
+                                if l > 0 {
+                                    todas[hay] = l as u32;
+                                    nombres[hay] = dashos::llaves::nombre16(n);
+                                    hay += 1;
+                                }
+                            }
                             let completas = g > 0 && canal_suyo > 0 && archivos_suyo > 0 && ventanas_suyo > 0;
-                            let llaves: &[u32] = if arranque != 0 { &todas } else { &todas[..3] };
-                            let p_nuevo = if completas { dashos::proceso_crear_en(g as u32, ll[1], tam, llaves) } else { -1 };
+                            let p_nuevo = if completas { dashos::proceso_crear_con_nombres(g as u32, ll[1], tam, &todas[..hay], &nombres[..hay]) } else { -1 };
                             if p_nuevo <= 0 {
-                                for l in [canal_suyo, archivos_suyo, ventanas_suyo] {
+                                for l in [canal_suyo, archivos_suyo, ventanas_suyo, selector_suyo] {
                                     if l > 0 {
                                         dashos::cerrar(l as u32);
                                     }
+                                }
+                                if selector_suyo > 0 {
+                                    presentar_al_selector(selector, pid, &[0; 16]);
                                 }
                                 if g > 0 {
                                     dashos::cerrar(g as u32);
@@ -1768,6 +2002,9 @@ fn principal() -> u64 {
                                     let f = fichas[j].take().unwrap();
                                     dashos::grupo_matar(f.grupo);
                                     dashos::cerrar(f.grupo);
+                                    if f.marca >= PRIMER_PID_PROPIO && selector != 0 {
+                                        presentar_al_selector(selector, f.marca, &[0; 16]);
+                                    }
                                     println!("  [sesiones] {} mata a {} (usuario {}), con permiso de administrador", nombre(&programa), nombre(&f.nombre), f.uid);
                                     Some((BIEN, objetivo))
                                 }
@@ -2172,6 +2409,9 @@ fn principal() -> u64 {
                                 dashos::grupo_matar(f.grupo);
                                 dashos::cerrar(f.grupo);
                                 fichas[i] = None;
+                                if f.marca >= PRIMER_PID_PROPIO && selector != 0 {
+                                    presentar_al_selector(selector, f.marca, &[0; 16]);
+                                }
                                 println!("  [sesiones] {} mata a {} (los dos, usuario {})", nombre(&yo.nombre), nombre(&f.nombre), f.uid);
                                 BIEN
                             }

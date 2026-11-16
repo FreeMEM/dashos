@@ -76,6 +76,15 @@ pub const DUENO: u32 = 34;
 /// La fecha de modificación de lo que tiene la asa: a, los segundos desde 1970; b, los nanosegundos (menos de mil
 /// millones). Solo el dueño, como comentar y proteger. Es lo que piden `SetFileDate` de la caja y `file_set_date` de Dash.
 pub const FECHAR: u32 = 35;
+/// S32: crecer el sistema de archivos en uso hasta a bytes (0: todo el disco; si no es múltiplo de 4096, el múltiplo
+/// de antes). Solo con el derecho de administrar. Contesta en a con el tamaño que queda. `MAL_FORMADO` si a es menos
+/// que ahora o más que el disco. Encoger no se hace en uso: es de la herramienta de discos, sin montar.
+pub const CRECER: u32 = 40;
+/// S32: el tope de un volumen (su nombre en el mensaje; el principal no tiene). Con b = 1 lo pone a a bytes (0: sin
+/// tope; se guarda en bloques de 4096). Contesta en a con lo que usa y en b con su tope, en bytes (a = 0: aún sin
+/// contar). Cuenta lo del volumen y lo que solo ven sus instantáneas. Pasado el tope, lo que lo haría crecer da
+/// `LLENO` en ese volumen y en ningún otro; borrar y escribir encima siguen valiendo. Solo con el derecho de administrar.
+pub const CUOTA: u32 = 41;
 pub const TROZO_PRESTADO: usize = 512 * 1024;
 pub const POR_PRESTAMO: usize = 4;
 pub const MAX_PRESTADOS: usize = 8;
@@ -87,6 +96,34 @@ pub const ALTA: u32 = 100;
 /// Sin marca, como el alta (de `sesiones`): el programa de la marca de los bytes 8 a 15 acabó. Se suelta su sesión,
 /// con sus asas y sus raíces, y su alta.
 pub const BAJA: u32 = 101;
+/// `RAM:` en memoria (docs/bitacoras/asignaciones.md): sin marca, como el alta (de `sesiones`), con una llave para la
+/// respuesta (32 bytes, como las demás: estado, asa, a, b y c). Cada sesión de usuario tiene un volumen en memoria: un
+/// DashFS sobre un "disco" de páginas que se piden al escribir y se devuelven al descartar.
+///
+/// Crear el de la sesión `sesion` (u32 en los bytes 4 a 7: el usuario; uid y gid de su raíz, 0700, en 8 a 11 y 12 a
+/// 15). Dos llaves: un objeto de memoria disperso (`dashos::memoria_dispersa`) que no tiene nadie más, cobrado al grupo
+/// de la sesión, y la de la respuesta. Lo que mide el objeto es el tope del volumen. Contesta en `a` lo que mide el
+/// volumen y en `b` lo que ocupa recién hecho, en bytes. `YA_EXISTE`, `SIN_SITIO` (ocho a la vez), `MAL_FORMADO`.
+pub const RAM_CREAR: u32 = 102;
+/// Quitar el volumen en memoria de la sesión de los bytes 4 a 7, con todo lo que tenga: las asas y las raíces que
+/// llevan a él dejan de valer para todos (`ASA_MALA`) y su memoria vuelve al sistema. Contesta en `a` los bytes que
+/// ocupaba. `NO_EXISTE` si no lo había.
+pub const RAM_QUITAR: u32 = 103;
+/// Dar al cliente de la marca de los bytes 8 a 15 la raíz del volumen en memoria de la sesión (bytes 4 a 7) en el hueco
+/// del byte 16 (1 a 15), con el tope del byte 17 (4, o 4 | 2): para los programas del escritorio, que nacen antes de
+/// que entre nadie. Vale también para su alta, si aún no ha abierto sesión. La llave de la respuesta es opcional.
+pub const RAM_RAIZ: u32 = 104;
+/// Copiar al volumen en memoria de la sesión (bytes 4 a 7) un árbol del disco: lo que hay en el cajón `origen` del
+/// volumen `vol` (vacío, el principal) va al cajón `destino`, que se crea con los que falten. Lo copiado es del usuario
+/// de los bytes 8 a 11 y 12 a 15 (uid y gid); lo que ya esté en el destino con el mismo nombre se pisa: así se montan
+/// capas (`ENV:` es `ENVARC:` de fábrica y, encima, el del usuario). Bytes 16, 17 y 18: lo que miden `vol`, `origen` y
+/// `destino`, que van seguidos desde el byte 32; con el byte 19 a 1 no se copia nada: solo se crea `destino`. El
+/// origen se lee sin mirar permisos (lo pide quien reparte las llaves); si no existe, no se copia nada y va bien.
+/// Contesta en `a` cuántos ficheros copió y en `b` sus bytes. `LLENO` si no cabe (lo copiado hasta ahí se queda).
+pub const RAM_COPIAR: u32 = 105;
+/// En el alta, el primer byte del volumen de una raíz que es el volumen en memoria de una sesión; detrás, la sesión
+/// (u32). No es UTF-8: no se confunde con el nombre de ningún volumen del disco.
+pub const VOLUMEN_RAM: u8 = 0xff;
 pub const D_ADMINISTRAR: u32 = 1;
 /// Derecho de repartir: ceder asas (U1).
 pub const D_REPARTIR: u32 = 2;

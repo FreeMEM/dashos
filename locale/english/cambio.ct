@@ -1,0 +1,10 @@
+## version $VER: cambio.catalog 1.0 (15.11.2026)
+## language english
+## codeset 106
+;
+MSG_1
+Hello, I am the user switching test
+; Hola, soy la prueba del cambio de usuario
+MSG_2
+{} windows of {}
+; {} ventanas de {}

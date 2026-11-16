@@ -36,6 +36,10 @@ pub struct Allocator {
     ///
     /// Each inner array contains a list of free block indices,
     levels: Vec<BTreeSet<u64>>,
+
+    /// DashOS (encoger): mientras hay tope, lo que se libera en el tope o más allá no vuelve al asignador: ese tramo
+    /// se está quitando del sistema de archivos y nada nuevo debe ir a él (`resize.rs`).
+    limit: Option<u64>,
 }
 
 impl Allocator {
@@ -74,6 +78,62 @@ impl Allocator {
         allocator
     }
 
+    /// El tope puesto con `set_limit`.
+    pub fn limit(&self) -> Option<u64> {
+        self.limit
+    }
+
+    /// Pone el tope (y quita del asignador lo libre que hubiera en él o más allá) o lo quita. Devuelve cuántos bloques
+    /// libres se quitaron.
+    pub fn set_limit(&mut self, limit: Option<u64>) -> u64 {
+        self.limit = limit;
+        match limit {
+            Some(limit) => self.truncate(limit),
+            None => 0,
+        }
+    }
+
+    /// Añade como libres los `count` bloques desde `start`, juntándolos con sus vecinos libres. Hace lo mismo que
+    /// liberarlos uno a uno, en pocos pasos: el tramo se parte en los bloques alineados más grandes que caben.
+    pub fn free_run(&mut self, mut start: u64, count: u64) {
+        let end = start + count;
+        while start < end {
+            let mut level = 0;
+            while start.is_multiple_of(2 << level) && start + (2 << level) <= end {
+                level += 1;
+            }
+            self.deallocate_level(start, level);
+            start += 1 << level;
+        }
+    }
+
+    /// Quita del asignador todo lo libre desde el bloque `limit`: lo que empieza ahí o después, entero; del bloque
+    /// libre que lo cruza se queda la parte de antes. Devuelve cuántos bloques se quitaron.
+    pub fn truncate(&mut self, limit: u64) -> u64 {
+        let mut removed = 0;
+        let mut keep = Vec::new();
+        for level in 0..self.levels.len() {
+            let size = 1u64 << level;
+            let beyond = self.levels[level].split_off(&limit);
+            removed += beyond.len() as u64 * size;
+            // Como mucho uno de este nivel cruza el tope: el último que empieza antes.
+            if let Some(&start) = self.levels[level].last()
+                && start + size > limit
+            {
+                self.levels[level].remove(&start);
+                removed += start + size - limit;
+                keep.push((start, limit - start));
+            }
+        }
+        for (start, count) in keep {
+            self.free_run(start, count);
+        }
+        while self.levels.last().is_some_and(|l| l.is_empty()) {
+            self.levels.pop();
+        }
+        removed
+    }
+
     /// Find a free block of the given level, mark it as "used", and return its address.
     /// Returns [`None`] if there are no free blocks with this level.
     pub fn allocate(&mut self, meta: BlockMeta) -> Option<BlockAddr> {
@@ -106,6 +166,19 @@ impl Allocator {
             self.levels[level].insert(index + level_size);
         }
 
+        Some(unsafe { BlockAddr::new(index, meta) })
+    }
+
+    /// Como `allocate`, pero del bloque libre más pequeño que sirva (y, de esos, el más cercano al principio), no del
+    /// más cercano al principio: al encoger, lo pequeño llena los huecos pequeños y los grandes quedan para los
+    /// registros grandes, que necesitan sitio seguido.
+    pub fn allocate_snug(&mut self, meta: BlockMeta) -> Option<BlockAddr> {
+        let mut level = (meta.level.0..self.levels.len()).find(|&l| !self.levels[l].is_empty())?;
+        let index = self.levels[level].pop_first()?;
+        while level > meta.level.0 {
+            level -= 1;
+            self.levels[level].insert(index + (1 << level));
+        }
         Some(unsafe { BlockAddr::new(index, meta) })
     }
 
@@ -152,8 +225,23 @@ impl Allocator {
         // If it does, we join the two to create one free block in the next (higher) level.
         //
         // We repeat this until we no longer have a sibling to join.
-        let mut index = addr.index();
-        let mut level = addr.level().0;
+        let index = addr.index();
+        let level = addr.level().0;
+        if let Some(limit) = self.limit {
+            // Encogiendo: lo del tramo que se quita no vuelve; de un bloque que cruza el tope, solo la parte de antes.
+            if index >= limit {
+                return;
+            }
+            if index + (1 << level) > limit {
+                self.free_run(index, limit - index);
+                return;
+            }
+        }
+        self.deallocate_level(index, level);
+    }
+
+    /// Libera el bloque de nivel `level` que empieza en `index`, juntándolo con su hermano si está libre.
+    fn deallocate_level(&mut self, mut index: u64, mut level: usize) {
         loop {
             while level >= self.levels.len() {
                 self.levels.push(BTreeSet::new());
@@ -418,4 +506,88 @@ fn from_free_runs_test() {
     }
     assert_eq!(built.levels, freed.levels);
     assert_eq!(built.free(), 91);
+}
+
+#[test]
+fn free_run_and_truncate_test() {
+    // Lo mismo que liberar uno a uno, con tramos que tocan a lo que ya había.
+    let mut x = 0x9e37_79b9_7f4a_7c15u64;
+    let mut azar = |n: u64| {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x % n
+    };
+    let limpio = |a: &mut Allocator| {
+        while a.levels.last().is_some_and(|l| l.is_empty()) {
+            a.levels.pop();
+        }
+    };
+    for _ in 0..200 {
+        let mut libres = alloc::vec![false; 2048];
+        let mut uno = Allocator::default();
+        let mut tramos = Allocator::default();
+        for _ in 0..12 {
+            let start = azar(2048);
+            let count = 1 + azar(300).min(2047 - start);
+            // Solo lo que no estaba libre ya: liberar dos veces no vale.
+            let mut i = start;
+            while i < start + count {
+                if libres[i as usize] {
+                    i += 1;
+                    continue;
+                }
+                let mut j = i;
+                while j < start + count && !libres[j as usize] {
+                    libres[j as usize] = true;
+                    uno.deallocate(unsafe { BlockAddr::new(j, BlockMeta::default()) });
+                    j += 1;
+                }
+                tramos.free_run(i, j - i);
+                i = j;
+            }
+        }
+        limpio(&mut uno);
+        limpio(&mut tramos);
+        assert_eq!(uno.levels, tramos.levels);
+
+        // Cortar: lo mismo que reservar uno a uno lo libre desde el tope.
+        let limit = azar(2049);
+        let antes = tramos.free();
+        let quitados = tramos.truncate(limit);
+        let mut esperados = 0;
+        for i in limit..2048 {
+            if libres[i as usize] {
+                let addr = unsafe { BlockAddr::new(i, BlockMeta::default()) };
+                assert_eq!(uno.allocate_exact(addr), Some(addr));
+                esperados += 1;
+            }
+        }
+        limpio(&mut uno);
+        assert_eq!(quitados, esperados);
+        assert_eq!(tramos.free(), antes - quitados);
+        assert_eq!(uno.levels, tramos.levels);
+    }
+}
+
+#[test]
+fn limit_test() {
+    let mut a = Allocator::default();
+    a.free_run(1, 1000);
+    assert_eq!(a.set_limit(Some(600)), 401);
+    assert_eq!(a.free(), 599);
+    // Lo liberado más allá del tope no vuelve; lo que lo cruza, solo la parte de antes.
+    a.deallocate(unsafe { BlockAddr::new(700, BlockMeta::default()) });
+    assert_eq!(a.free(), 599);
+    let mut b = Allocator::default();
+    b.set_limit(Some(600));
+    b.deallocate(unsafe { BlockAddr::new(592, BlockMeta::new(BlockLevel(4))) });
+    assert_eq!(b.free(), 8);
+    // Nada de lo que se reserva queda en el tope o más allá.
+    while let Some(addr) = a.allocate(BlockMeta::default()) {
+        assert!(addr.index() < 600);
+    }
+    a.set_limit(None);
+    a.deallocate(unsafe { BlockAddr::new(700, BlockMeta::default()) });
+    assert_eq!(a.free(), 1);
 }

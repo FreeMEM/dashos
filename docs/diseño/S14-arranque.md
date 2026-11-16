@@ -64,8 +64,14 @@ donde las instantáneas hacen el trabajo.
 
 ### El gestor de servicios
 
-- **Declarativo**: cada servicio es un fichero corto con su programa, su usuario (S6), sus capacidades, sus
-  dependencias y su clase de planificador (S2). Viven en `SYS:Servicios` y en `Paquetes:*/Servicios`.
+- **Declarativo**: cada servicio es un fichero corto, de texto, con su programa, su usuario (S6), sus capacidades,
+  sus dependencias y su clase de planificador (S2). Viven en `SYS:Servicios` y en `Paquetes:*/Servicios`.
+- **Lo activado y lo desactivado** se apunta en un fichero de texto de la máquina (en `Estado:`, S4b), que se lee
+  y que escribe la orden `servicio`. Su sitio y su formato, por diseñar.
+- **Un servicio propio, sin hacer un paquete**: con el modo de desarrollo (S6), el gestor mira dos capas más, una
+  de la máquina (en `Estado:`, con acción de administrador) y una de la sesión (en `Home:`). Fuera de ese modo no
+  se miran. Los nombres de los cajones, por diseñar: `Estado:Servicios` ya es el cajón de datos de cada servicio
+  (S6b). Qué llaves puede pedir un servicio de esas capas, con la revisión de seguridad del modo de desarrollo.
 - **En paralelo**, como launchd o systemd. Lo que no hace falta para el escritorio no lo retrasa.
 - **Bajo demanda**: la caja Linux, la impresión y similares no arrancan hasta que alguien los usa (S7). Salvo que
   se activen para arrancar con el sistema, como la caja Linux con servidores dentro (abajo).
@@ -94,8 +100,10 @@ caja Linux que arranquen al reiniciar.
 - **Los datos**: en el disco virtual de la caja, que es rápido. `Home:` compartido (virtio-fs, S7) sirve para
   ficheros, no para bases de datos.
 - **Vigilancia**: si un servicio se cae, se reinicia, con espera creciente. Si se cae muchas veces seguidas, se
-  avisa en el escritorio.
-- **Registro**: lo que dicen los servicios va a un registro en memoria, que se guarda en disco con calma.
+  avisa en el escritorio, en llano.
+- **Registro**: lo que dicen los servicios va a un registro en memoria, que se guarda en disco con calma, en texto:
+  `Estado:Registros/<servicio>` (S6). Lo de un servicio que se cae o se reinicia se escribe en el momento, con el
+  motivo, para no perder justo lo que importa. Se lee con `servicio registro` y con la orden `Registro`.
 
 ### Lo que se conserva del Amiga
 
@@ -104,9 +112,12 @@ caja Linux que arranquen al reiniciar.
 - **`WBStartup`**: un cajón del usuario con lo que se lanza al entrar en la sesión, como en el Workbench.
 - **El menú de arranque temprano.** En el Amiga, con los dos botones del ratón pulsados al encender, salía el Early
   Startup Control. DashOS tiene el suyo, con una tecla al arrancar:
-  - Arrancar con la instantánea anterior de `SYS:` o de `Paquetes:`.
-  - Modo seguro: sin paquetes de terceros ni `WBStartup`.
+  - Arrancar con la instantánea anterior de `SYS:` o con la generación anterior de `Paquetes:` (S8).
+  - Modo seguro: sin paquetes de terceros ni `WBStartup`, y sin el modo de desarrollo (S6).
   - Una consola de emergencia.
+- **El menú no depende de saberse la tecla.** El arranque dura menos de un segundo y no da tiempo a pulsarla. Por
+  eso sale solo tras dos arranques fallidos seguidos, y el menú de apagar lleva "Reiniciar en modo recuperación",
+  que también se pide con una orden. La tecla se queda para quien la conoce.
 
 ### Actualizaciones
 
@@ -116,7 +127,9 @@ caja Linux que arranquen al reiniciar.
 2. Se reinicia con `tryboot`.
 3. El sistema nuevo arranca. Si en un tiempo fijo llega a estar sano (escritorio y servicios básicos en marcha), se
    cambia `autoboot.txt` y queda como la de siempre.
-4. Si no llega, el vigilante reinicia y el firmware vuelve solo a la ranura buena.
+4. Si no llega, el vigilante reinicia y el firmware vuelve solo a la ranura buena. Al entrar, el usuario ve un
+   aviso en llano ("La actualización no arrancó bien. Sigues con la versión de antes") y el motivo queda en el
+   registro (`Estado:Registros/`, S6).
 
 **De `SYS:`**, con instantáneas:
 
@@ -147,7 +160,8 @@ pendiente y se cierra limpio. Si algo no para, se le mata (S2).
 - Con S2: cada servicio declara su clase; matar al apagar.
 - Con S4 y S4b: `S:Startup-Sequence` para la caja, `WBStartup` para la sesión, espacio de nombres del sistema.
 - Con S5: `SYS:` y `Paquetes:` por instantáneas; desmontaje limpio.
-- Con S6: firma de `SYS:` al arrancar; cada servicio con su usuario.
+- Con S6: firma de `SYS:` al arrancar; cada servicio con su usuario; el registro en `Estado:Registros/` y el modo
+  de desarrollo.
 - Con S7: EL2 para el hipervisor; la caja Linux bajo demanda.
 - Con S8: la imagen de `SYS:` y los paquetes.
 - Con S12: vigilante, y los controladores mínimos en la imagen de arranque.

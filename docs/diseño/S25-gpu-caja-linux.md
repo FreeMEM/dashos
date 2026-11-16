@@ -63,7 +63,8 @@ verdad, salvo lo que es peligroso:
   emulado que acaba en el de verdad.
 - **La interrupción** (SPI 74): la recibe DashOS y la inyecta en el GIC virtual de la caja.
 - **Los plazos**: si un trabajo del invitado no acaba (bucles en una lista, `v3d.md`, 10.1), DashOS reinicia la GPU y
-  se lo dice al invitado como un reinicio. El invitado no puede dejar la GPU colgada para DashOS.
+  se lo dice al invitado como un reinicio. El invitado no puede dejar la GPU colgada para DashOS. Cada reinicio por
+  plazo deja una línea en `Estado:Registros/` (S6), con la caja y la hora.
 
 A favor: **el invitado no necesita nada nuevo** (el Linux y el Mesa de Arch), corre a velocidad de la GPU (las
 listas no se tocan, la MMU confina), y casi todo lo que pide a DashOS sirve después para A. En contra: la GPU es de la
@@ -95,6 +96,9 @@ El invitado no es de fiar. Con cualquier camino:
 - **Tiempo**: ningún trabajo de la GPU dura para siempre (plazo y reinicio); ninguna orden hace trabajar a DashOS sin
   tope (las colas se vacían como mucho de su tamaño por aviso).
 - **Estado**: un fallo del invitado lo deja a él sin GPU (DEVICE_NEEDS_RESET, o la V3D reiniciada), nunca a DashOS.
+- **Rastro**: lo que se niega o se reinicia se apunta en `Estado:Registros/` (S6), con la caja, el motivo y la hora:
+  cada reinicio de la GPU por plazo y cada entrada de la tabla del invitado que la sombra rechaza (lo repetido se
+  resume). Se lee con la orden `Registro`. Si se repite, aviso en llano al usuario.
 - **Lo que se ve**: lo que el invitado muestra va a una ventana suya, con su título; nunca a una capa o al bloqueo.
 
 ## Recomendación
@@ -112,6 +116,9 @@ El invitado no es de fiar. Con cualquier camino:
    reparte la GPU entre sus programas y las cajas.
 
 B no se recomienda: necesita Mesa portado a DashOS para dar a la caja lo que C da sin portarlo.
+
+Para depurar, un ajuste de texto en el fichero de la caja en `ENVARC:` (S7) fuerza el dibujo por CPU (llvmpipe)
+aunque haya GPU. Así se ve si un fallo es de la GPU. El nombre del ajuste, por diseñar al hacerlo.
 
 ### Lo que C pide al kernel de DashOS
 
@@ -134,6 +141,8 @@ B no se recomienda: necesita Mesa portado a DashOS para dar a la caja lo que C d
 ### Lo que C pide al servicio `gpu` de DashOS
 
 1. Encender la V3D (ya lo hace, sin probar) y dejarla a una caja: un canal con "dámela", "suéltala" y "reiníciala".
+   Y una pregunta de solo lectura para saber quién tiene la GPU y cuánto lleva gastado del presupuesto de su caja. La
+   enseña una orden de Shell (la orden `Caja` de S7 lo dice para cada caja), no solo los servicios entre sí.
 2. La tabla sombra (4 MB contiguos, sin caché) y su página de relleno, y programar la MMU con ellas.
 3. Los registros atrapados: leer y escribir en la V3D lo que pide el invitado, salvo los de la MMU y los de energía,
    que emula.

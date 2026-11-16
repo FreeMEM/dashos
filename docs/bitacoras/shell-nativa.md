@@ -78,7 +78,8 @@ iban una tras otra.
 
 ### El arranque de una orden
 
-Un programa de DashOS nace sin argumentos. Quien lo lanza puede darle una cuarta llave, **el canal de arranque**, con
+Un programa de DashOS nace sin argumentos. Quien lo lanza puede darle una llave más, **el canal de arranque** (en su
+tabla de llaves, "arranque"; tras la unión con `union`, ya no es la cuarta por fuerza: el selector puede ir antes), con
 `ARRANQUE` y `DATOS` ya en la cola: su cajón actual y sus argumentos. Si lo lanza un Shell, `ARRANQUE` trae **la
 puerta**: una llave para escribir en el buzón del Shell, marcada con el número del trabajo. Por ella la orden pide
 (escribir, leer una línea, cambiar el cajón actual, cambiar una asignación, acabar con un código) y el Shell contesta
@@ -108,7 +109,7 @@ ayudante)" de S6b.
 - Solo lo pide un programa lanzado del disco, y como mucho 32 procesos por usuario a la vez (que uno malo no llene la
   tabla de fichas).
 
-Y en `LANZAR`, un cambio pequeño: si la petición trae una llave más, es la cuarta del programa (su canal de arranque).
+Y en `LANZAR`, un cambio pequeño: si la petición trae una llave más, es el canal de arranque del programa.
 Así `guardian` lanza el Shell de la prueba con argumentos.
 
 ## Decisiones pendientes del usuario
@@ -262,6 +263,20 @@ Los colores cuestan entre un 10 % y un 35 % más en la consola. Frente al viaje 
 Tubería de 313 KB (`Type grande.txt | Type NUMBER`, 463.890 bytes a la consola): 7,4 s leyendo del tubo línea a
 línea; 4,1 s con varias líneas por viaje. Sigue siendo lento (el mismo fichero sin tubería tarda 0,3 s): no he
 separado cuánto es del tubo y cuánto de la orden que numera, que trabaja línea a línea.
+
+### Unión con `union` (2026-11-16)
+
+Choques en `sesiones.rs`, `usuario/Cargo.toml`, `tools/disco_archivos.py` y `servicios.md`. Lo que cambió de fondo:
+
+- **La tabla de llaves** (llamada 56): ahora cada llave con que nace un programa tiene nombre, y lo que lanza
+  `sesiones` puede llevar el selector como cuarta. El canal de arranque deja de ser "la llave 4": va el último, se
+  llama `arranque`, y las órdenes lo buscan por su nombre. Los ayudantes (`LANZAR_AYUDANTE`) nacen también con su
+  tabla y con el selector, como lo de `LANZAR`.
+- **`RAM:` en memoria**: el `PROGDIR:` de un ayudante que sale de `RAM:` va a ese volumen, no al cajón de antes.
+- No he usado llamadas del kernel nuevas: no hay choque con las 56 a 58.
+
+Sobre la unión: `make prueba`, `make arranque-virt`, `make arranque-virt-2` y `make arranque-virt-linux`, bien. Las
+medidas del Shell, parecidas (302 ms, 761 ms y 4,2 s).
 
 ## El Shell potente (encargo del 2026-11-15)
 

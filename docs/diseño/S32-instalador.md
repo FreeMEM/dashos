@@ -27,6 +27,7 @@ herramienta en plan gparted". Lo que sigue es diseño; nada está hecho salvo lo
 3. **Encoger a otro solo si es seguro**, y mejor que lo haga su propio sistema:
    - NTFS: solo si no está hibernado ni con BitLocker sin suspender; si no, se para y se dice por qué. Encoger NTFS
      desde fuera es lo más arriesgado; recomendación: pedir al usuario que lo encoja desde Windows y usar el hueco.
+     Para quien no es informático, el instalador lleva dentro una guía paso a paso, con dibujos, de cómo hacerlo.
    - ext4: se puede encoger desmontado; btrfs, montado; LUKS y APFS, no desde DashOS.
    - Primera versión: **solo usar hueco libre o un disco entero**. Encoger particiones ajenas, después y con
      herramientas probadas.
@@ -37,6 +38,9 @@ herramienta en plan gparted". Lo que sigue es diseño; nada está hecho salvo lo
 5. **Deshacer.** Antes de escribir, copia de las tablas de particiones (las dos GPT y el MBR) en un fichero fuera
    del disco (un USB) y en el propio instalador. Si algo se corta, volver a las tablas de antes. Lo que se formatea
    no tiene vuelta: se dice así.
+6. **El plan es un fichero de texto.** Además de enseñarse con su dibujo, se puede guardar, revisar y pasar al
+   instalador para instalar sin manos (la versión de órdenes hace lo mismo). Lo que se hizo queda en un registro
+   legible en el disco nuevo (`Estado:Registros/`, S6). El formato del plan, por diseñar al hacerlo.
 
 ## La herramienta de discos (como GParted)
 
@@ -45,7 +49,9 @@ Una app del escritorio (y su versión de órdenes) que hace lo mismo que el inst
 - Ver discos y particiones con su uso; crear, borrar y cambiar la etiqueta; formatear DashFS, FAT y exFAT.
 - **Volúmenes de DashFS**: crear, quitar, renombrar, poner tope (cuando `quota` se aplique), instantáneas.
 - **Crecer DashFS** montado (es lo más útil: tras ampliar la partición). **Encoger** desmontado y moviendo datos.
-- Lo de otros sistemas, solo leer, salvo borrar una partición entera con doble confirmación.
+- Lo de otros sistemas, solo leer, salvo borrar una partición entera. En vez de dos confirmaciones, una sola
+  pregunta que dice qué se pierde, y un "Deshacer" que repone la tabla guardada (punto 5) mientras no se haya escrito
+  encima (S0: deshacer antes que preguntar).
 - Comprobar y reparar DashFS (`check.rs` y `repair.rs` ya existen).
 - Por encima de todo, el mismo plan con dibujo y confirmación del instalador.
 
@@ -60,6 +66,21 @@ Una app del escritorio (y su versión de órdenes) que hace lo mismo que el inst
 4. **Pruebas hostiles**: cortar la corriente en mitad de crecer y de encoger (como la prueba de cortes de los
    paquetes), encoger con el disco casi lleno, encoger por debajo de lo usado, una partición más pequeña que lo que
    dice la cabecera.
+
+**Hecho (2026-11-15, rama `dashfs-tamano`, `docs/bitacoras/dashfs-tamano.md`)**: los cuatro puntos, en
+`archivos/dashfs/src/resize.rs` (`FileSystem::grow`, `shrink`, `shrink_min`, `min_size`), `volume.rs` (la cuota) y
+`dashfs-resize`. Lo que conviene saber al escribir el instalador:
+
+- Encoger es sin montar (un sistema de archivos en uso da "en uso"), y un volumen cifrado cerrado con algo en el tramo
+  que se quita no deja encoger: hay que pedir su contraseña (`dashfs-resize --abrir`), porque el cifrado y la firma de
+  cada bloque llevan su dirección.
+- El mínimo depende de cómo esté repartido lo libre: los registros de 128 KiB necesitan hueco seguido. `shrink_min`
+  prueba desde lo usado más una reserva hacia arriba hasta que cabe.
+- El orden al encoger una partición: primero el sistema de archivos, luego la partición. Al revés (una cabecera que
+  dice más de lo que tiene la partición) el servicio no monta; el comprobador lo dice y, si en lo que falta no había
+  nada, encoger hasta la partición lo arregla.
+- Crecer es al revés: primero la partición, luego la orden 40 del servicio `archivos` (o `dashfs-resize` sin montar).
+  Falta que el servicio de disco diga el tamaño nuevo de una partición que ha cambiado sin reiniciar.
 
 ## Controladores: qué va de serie y qué se baja (decidido el 2026-11-15)
 
@@ -92,7 +113,10 @@ y paquetes de controladores en el propio USB de instalación.
   "controladores adicionales" de Ubuntu. Un controlador propio de DashOS sustituye al del dominio cuando exista.
 
 **Requisito**: el dominio de controladores y pasar aparatos a la caja Linux necesitan IOMMU (VT-d, AMD-Vi), que
-DashOS x86 aún no lleva. Sin IOMMU, un aparato servido así alcanza toda la memoria: no se hace.
+DashOS x86 aún no lleva. Sin IOMMU, un aparato servido así alcanza toda la memoria: no se hace. Muchos PC lo traen
+apagado, y el usuario solo vería que no hay Wi-Fi. Por eso el instalador lo mira y lo dice en llano, con un solo
+botón (S36, regla 8): "Para usar el Wi-Fi hay que encender una opción de la placa. Te digo cómo". El detalle (VT-d,
+AMD-Vi), a un clic.
 
 ## Lo que queda abierto
 
@@ -102,8 +126,12 @@ DashOS x86 aún no lleva. Sin IOMMU, un aparato servido así alcanza toda la mem
 3. ¿Particiones aparte para `SYS:`, `Usuarios:`, `Work:`? Recomendado: una sola partición de DashFS con volúmenes
    elásticos dentro (FS10), salvo `SYS:`, que es una imagen firmada (S8, S14) y puede ir en dos ranuras A/B.
 4. Cifrado del disco entero o por volumen (DashFS ya cifra volúmenes, `adiantum.rs`).
+5. ¿Reserva el instalador el sitio de la imagen de hibernación, o es un volumen elástico (S22)?
 
 ## Cómo encaja
 
 - S5 y FS10: DashFS y sus volúmenes. S14: arranque y la imagen firmada de `SYS:`. S8: el plan con confirmación, el
   mismo estilo que los paquetes. S24: las máquinas donde se instala. S6b: instalar el sistema es de administrador.
+- S18: la imagen de `SYS:` que se instala lleva la ROM de AROS para 68k (licencia APL), para los juegos del Amiga de
+  quien no tenga Kickstart. Se baja al construir la imagen, con su huella comprobada, y la imagen dice dónde está su
+  código fuente. No va en git.

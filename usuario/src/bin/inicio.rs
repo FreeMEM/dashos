@@ -4,11 +4,16 @@
 //! (C50), y se queda esperando: no acaba nunca. En cada canal, el primer servicio que lo nombra es el servidor; los
 //! demás reciben una copia marcada del otro extremo, y el servidor un mensaje sin marca por cliente: 8 bytes de marca y
 //! 16 de nombre (auditoría de la fase 4, M6).
+//!
+//! A cada programa le dice qué es cada llave que le da (la tabla de llaves, `usuario/src/llaves.rs`): un aparato se
+//! llama como en el paquete; un canal, como el servicio ("ventanas", "archivos"...), tanto para quien lo sirve como
+//! para sus clientes; la copia para escribirse a sí mismo, "yo:" y el canal; y la copia sin marca del canal de
+//! archivos que recibe `sesiones`, "archivos.altas".
 
 #![no_std]
 #![no_main]
 
-use dashos::{canal_crear, grupo_crear, llave_duplicar, UNA_VEZ, memoria_crear, memoria_proyectar, println, proceso_crear_en, proceso_esperar};
+use dashos::{canal_crear, grupo_crear, llave_duplicar, UNA_VEZ, memoria_crear, memoria_proyectar, println, proceso_crear_con_nombres, proceso_esperar};
 
 dashos::programa!(principal);
 
@@ -61,6 +66,9 @@ const FICHAS: &[(&str, u32, u32, u32, &str)] = &[
     // kit-c: la prueba de las ventanas de Dash, de Ana, sin derechos y encerrada en su cajón: lee su catálogo de
     // `Locale/Catalogs` de ahí (LOCALE:, provisional hasta las asignaciones).
     ("dash-ventana", 1000, 1000, 0, "Estado/Servicios/dash-ventana"),
+    // S13: el servicio de red, para leer lo que se configura en `Prefs/Red` del disco del sistema (`hosts` y `hora`):
+    // del sistema, sin derechos y encerrado ahí.
+    ("red", 1, 1, 0, "Prefs/Red"),
 ];
 /// Raíces de más en el alta de archivos (U2, S6b capa 2): programa, hueco (1 a 15), tope (4 leer, 6 leer y escribir) y
 /// camino desde la raíz del disco.
@@ -70,6 +78,13 @@ const RAICES_DE_MAS: &[(&str, u8, u8, &str)] = &[
     // S28 (decisión del usuario del 2026-11-13): la papelera de la caja Amiga, junto a su cajón y fuera de su alcance:
     // lo que borra va ahí (`HUECO_PAPELERA`). Provisional, como su cajón.
     ("caja-amiga", dashos::protocolo::archivos::HUECO_PAPELERA, 6, "Estado/Servicios/caja-amiga.papelera"),
+    // S13: los ajustes del sistema, solo para leer, para la barra: de ahí saca la zona horaria (`Prefs/zona`).
+    ("barra", 1, 4, "Prefs"),
+    // Idiomas (paso 4): el centro de control lee su idioma y sus catálogos del disco (su `SYS:`, donde está `LOCALE:`),
+    // solo para leer, y de `ENV:`, que está en el `RAM:` de la sesión: esa raíz (la 3, solo para leer) no va aquí,
+    // porque `RAM:` es un volumen en memoria que no existe hasta que entra su usuario: se la pone `sesiones` entonces
+    // (`LEEN_IDIOMA`), como al Workbench. `sesiones` le pone los dos volúmenes en su tabla de nombres.
+    ("centro", 1, 4, ""),
 ];
 /// Los servicios cuyas llaves reparte `sesiones` (U4): de ellos recibe una copia sin marca, para hacer copias marcadas
 /// con el número de cada programa al que se las da. Del resto (archivos), una con la suya, como cualquier cliente.
@@ -79,6 +94,14 @@ const REPARTE: &[&str] = &["eco"];
 /// avisarles de quién es cada programa y qué sesión está detrás, y para dar a lo que lanza su llave marcada.
 /// S10: también `avisos`: lo de una sesión de detrás se guarda sin salir a la de delante.
 const SIGUEN_SESIONES: &[&str] = &["compositor", "sonido", "avisos"];
+/// Otros servicios de cuyo canal recibe `sesiones` una copia sin marca, igual que de los de arriba: el selector de
+/// ficheros, para dar su llave a los programas que lanza y presentárselos (S6b: el selector es el camino por el que un
+/// programa encerrado llega a un fichero que el usuario elige).
+const A_SESIONES: &[&str] = &["selector"];
+/// Si `sesiones` recibe una copia sin marca del canal que sirve `programa`.
+fn va_a_sesiones(programa: &str) -> bool {
+    SIGUEN_SESIONES.contains(&programa) || A_SESIONES.contains(&programa)
+}
 
 /// Programas de prueba que llevan alguna llave de aparato y que, aun así, se esperan (como los que no llevan ninguna):
 /// la caja Amiga, con el permiso de página 0 (H4).
@@ -257,6 +280,7 @@ fn principal() -> u64 {
             9 => "permiso de página 0",
             10 => "permiso de apagar",
             11 => "permiso del aviso de memoria",
+            12 => "permiso del reloj",
             _ => "?",
         };
         println!("  [inicio]   llave {}: {} de {}", u32_en(p + 20), tipo, nombre(p));
@@ -286,7 +310,14 @@ fn principal() -> u64 {
     let programas = u32_en(p) as usize;
     p += 4;
     let cabeceras = p;
-    let mut datos = cabeceras + CABECERA * programas;
+    // Tras las cabeceras, los nombres de los canales (16 bytes cada uno, en el orden de sus bits): para la tabla de
+    // llaves de cada programa.
+    let n_canales = (u32_en(cabeceras + CABECERA * programas) as usize).min(32);
+    let nombres_canales = cabeceras + CABECERA * programas + 4;
+    let nombre_canal = |c: usize| -> [u8; 16] {
+        if c < n_canales { unsafe { core::ptr::read_volatile((nombres_canales + 16 * c) as *const [u8; 16]) } } else { [0; 16] }
+    };
+    let mut datos = nombres_canales + 16 * n_canales;
     // Los canales entre servicios: el extremo que reciben, en copias, los demás programas que lo nombran (0: aún no
     // creado). El primero recibe el otro extremo.
     let mut pendientes = [0u32; 32];
@@ -314,10 +345,13 @@ fn principal() -> u64 {
         // `inicio` conserva la suya y puede dar el mismo aparato a otro (el permiso DMA, por ejemplo). La copia llega
         // sin el derecho de transferir (S4): un controlador no puede pasar sus registros a otro programa.
         let mut suyas = [0u32; 8];
+        // Qué es cada una (la tabla de llaves del programa): el nombre del aparato o el del canal.
+        let mut nombres = [[0u8; 16]; 8];
         let mut k = 0;
         for j in 0..8 {
             let a = unsafe { *((cab + 8 + j) as *const u8) } as usize;
             if a < n && k < suyas.len() {
+                nombres[k] = unsafe { core::ptr::read_volatile((aparatos + 24 * a) as *const [u8; 16]) };
                 // Con UNA_VEZ: llega sin el derecho de transferirla (S4). Salvo a `sesiones`, que reparte los permisos
                 // (U4, la llave de plazo): a él, con el derecho, para que pueda dar copias.
                 let una_vez = if nombre(nombre_cab) == "sesiones" { 0 } else { UNA_VEZ };
@@ -342,11 +376,12 @@ fn principal() -> u64 {
                     lector[c] = cab;
                     // U6: si lo sirve uno que sigue las sesiones y `sesiones` ya está, su copia sin marca (si no, se la
                     // da al lanzarlo).
-                    if sesiones != 0 && SIGUEN_SESIONES.contains(&nombre(nombre_cab)) {
+                    if sesiones != 0 && va_a_sesiones(nombre(nombre_cab)) {
                         canal_a_sesiones(sesiones, b, nombre_cab);
                     }
                     lee |= 1 << c;
                     suyas[k] = a;
+                    nombres[k] = nombre_canal(c);
                     k += 1;
                     if np < propios.len() {
                         propios[np] = b;
@@ -362,12 +397,14 @@ fn principal() -> u64 {
                         // Sin entrada en el directorio: quien escribe por ella es `sesiones` en nombre de otros.
                         if copia > 0 {
                             suyas[k] = copia as u32;
+                            nombres[k] = nombre_canal(c);
                             k += 1;
                         }
                         continue;
                     }
                     if copia > 0 {
                         suyas[k] = copia as u32;
+                        nombres[k] = nombre_canal(c);
                         k += 1;
                         let mut dir = [0u8; 24];
                         dir[..8].copy_from_slice(&marca.to_le_bytes());
@@ -399,13 +436,17 @@ fn principal() -> u64 {
                 }
             }
         }
-        for &b in &propios[..np] {
+        for (j, &b) in propios[..np].iter().enumerate() {
             if k < suyas.len() {
                 // A `sesiones`, sin marca (U2): con ella hace las copias marcadas que da a lo que lanza.
                 let marca_propia = if nombre(nombre_cab) == "sesiones" { 0 } else { u64::MAX };
                 let copia = llave_duplicar(b, dashos::ESCRIBIR | dashos::TRANSFERIR, marca_propia);
                 if copia > 0 {
                     suyas[k] = copia as u32;
+                    // "yo:" y el canal: el j-ésimo de los que lee.
+                    let canal = (0..32).filter(|&c| lee & (1 << c) != 0).nth(j).map_or([0; 16], nombre_canal);
+                    nombres[k][..3].copy_from_slice(b"yo:");
+                    nombres[k][3..].copy_from_slice(&canal[..13]);
                     k += 1;
                 }
             }
@@ -417,6 +458,7 @@ fn principal() -> u64 {
                 let copia = llave_duplicar(pendientes[c], 7, 0);
                 if copia > 0 {
                     suyas[k] = copia as u32;
+                    nombres[k] = dashos::llaves::nombre16("archivos.altas");
                     k += 1;
                 }
             }
@@ -481,7 +523,7 @@ fn principal() -> u64 {
         if g > 0 && nombre(nombre_cab) == "caja-amiga" {
             println!("  [inicio] caja-amiga: tope de {} MB, {} para que crezca su 68k", cupo >> 20, (cupo >> 20).saturating_sub(32));
         }
-        let proceso = if g > 0 { proceso_crear_en(g as u32, m, tamano, &suyas[..k]) } else { g };
+        let proceso = if g > 0 { proceso_crear_con_nombres(g as u32, m, tamano, &suyas[..k], &nombres[..k]) } else { g };
         if proceso <= 0 {
             println!("  [inicio] {}: no se pudo lanzar ({})", nombre(nombre_cab), proceso);
             continue;
@@ -492,7 +534,7 @@ fn principal() -> u64 {
             if let Some(c) = (0..32).find(|&c| lee & (1 << c) != 0) {
                 sesiones = pendientes[c];
             }
-            for c in (0..32).filter(|&c| pendientes[c] != 0 && SIGUEN_SESIONES.contains(&nombre(lector[c] + 16))) {
+            for c in (0..32).filter(|&c| pendientes[c] != 0 && va_a_sesiones(nombre(lector[c] + 16))) {
                 canal_a_sesiones(sesiones, pendientes[c], lector[c] + 16);
             }
             apagar_a_sesiones(sesiones);
@@ -511,7 +553,7 @@ fn principal() -> u64 {
         if lee != 0 && i < servicios.len() {
             let aviso = llave_duplicar(avisos_a, dashos::ESCRIBIR, i as u64 + 1).max(0) as u32;
             if aviso > 0 && dashos::proceso_avisar(proceso as u32, aviso) == 0 {
-                servicios[i] = Some(Servicio { cab: nombre_cab, m, tamano, guardadas, k, cupo, lee, aviso, proceso: proceso as u32, grupo: g as u32, veces: 0 });
+                servicios[i] = Some(Servicio { cab: nombre_cab, m, tamano, guardadas, nombres, k, cupo, lee, aviso, proceso: proceso as u32, grupo: g as u32, veces: 0 });
                 vigilado = true;
             }
         }
@@ -580,6 +622,8 @@ struct Servicio {
     m: u32,
     tamano: usize,
     guardadas: [u32; 8],
+    /// Qué es cada una (la tabla de llaves).
+    nombres: [[u8; 16]; 8],
     k: usize,
     cupo: u64,
     /// Los canales que lee (bits).
@@ -635,7 +679,7 @@ fn relanzar(s: &mut Servicio, pendientes: &[u32; 32], clientes_de: &[u64; 32], l
         suyas[j] = c as u32;
     }
     let g = grupo_crear(s.cupo);
-    let proceso = if g > 0 { proceso_crear_en(g as u32, s.m, s.tamano, &suyas[..s.k]) } else { g };
+    let proceso = if g > 0 { proceso_crear_con_nombres(g as u32, s.m, s.tamano, &suyas[..s.k], &s.nombres[..s.k]) } else { g };
     if proceso <= 0 {
         return false;
     }

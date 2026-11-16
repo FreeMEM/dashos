@@ -1,0 +1,7 @@
+# De qué fuentes sale el catálogo de cada programa (tools/catalogo.py todo): ficheros .rs o carpetas, desde la raíz
+# del repositorio. El nombre del catálogo y su versión los dice el código (`const CATALOGO`).
+kit/src usuario/src/permisos_kit.rs
+usuario/src/bin/cambio.rs
+usuario/src/bin/centro.rs
+usuario/src/bin/workbench.rs
+usuario/src/bin/explorador.rs usuario/src/explorador/entrada.rs usuario/src/explorador/iconos.rs usuario/src/explorador/logica.rs usuario/src/explorador/ops.rs usuario/src/explorador/pintar.rs
