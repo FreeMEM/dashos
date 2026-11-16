@@ -2245,3 +2245,28 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   completa: 11 de 12 a la primera; `arranque-virt-wayland` falló por el título de Firefox ("FALTA: título: Linux ·
   Index of file:///usr/local/share/dashos/", el paso inestable ya apuntado) y pasó al repetirla sola;
   `arranque-virt-shell` bien.
+- **Unidas `dominio-red`, `cuentas` y `menus-pulido` (2026-11-16, en una sola tanda)**.
+  - `dominio-red` (S35 paso 2): `make arranque-virt-dominio`; el servicio `dominio` arranca el Linux mínimo en una
+    máquina de 24 MB, le presta la e1000 de QEMU (sin IOMMU: solo en QEMU) y Linux devuelve una virtio-net por un
+    transporte virtio por mensajes; DHCP, eco TCP y UDP; hostiles (oferta falsa, descriptores ajenos, 20 000 avisos,
+    leer fuera, colgarse y morir a media transferencia, relanzado por el vigilante); 13 MB, listo en 0,7-0,8 s. Por
+    decidir: PCI sin IOMMU hasta el USB, `/dev/mem` sin filtro en el dominio, si el permiso de máquinas se puede
+    quitar, registro por dominio, aviso tras tres caídas. Siguiente: USB/IP sobre vsock.
+  - `cuentas`: `Estado:Cuentas/usuarios` y `grupos` leídos por `sesiones` (fuera `CUENTAS` y `ADMIN` del código;
+    líneas malas se saltan y se registran), crear/borrar/devolver/grupos como acciones de la tanda (prueba en copia
+    antes de preguntar; volumen cifrado y código de recuperación, que solo ve `guardian`), orden `Usuario`. Argon2
+    baja a 16 MB y 3 pasadas (con 64 MB `archivos` caía sin memoria). Por decidir: 30 días para devolver, coste de
+    Argon2, mínimo de 8 letras sin confirmar, nombres reservados, una cuenta por tanda, grupos que se crean y borran
+    solos. Queda: entrar con el código, cambiar la propia contraseña, grupos extra con acceso a ficheros, programa
+    `Usuarios`, primer arranque sin cuentas; `archivos` cae al quedarse sin memoria en vez de dar error.
+  - `menus-pulido`: el clic que cierra un menú de la barra lo descarta el compositor (no llega a la ventana);
+    teclas y rueda en submenús que no caben (dos fallos de la rueda arreglados); menú dentro de la ventana se cierra
+    al perder el teclado. Programa `menus-prueba` en la imagen de menús.
+  - Conflicto en `kernel/Cargo.toml` (características `demo` y `dominio`): las dos. Tanda completa: 11 de 12 a la
+    primera; Wayland falló otra vez en el título de Firefox y pasó sola (es la segunda de tres en la tanda: ya no es
+    suelto; agente en `firefox-firme` buscando la causa). `arranque-virt-shell` y `arranque-virt-dominio` bien;
+    `arranque-virt-menus` falló con carga 31 (le faltó "cambia su menú: vuelta 20 de 20"; salida en
+    `~/recuperar/geosian-7d/salida_menus_fallo_carga31.txt`) y pasó al repetirla, con carga 29.
+- **x86 (rama `x86-uso`, para la sesión de x86)**: `revision` unida en x86 y `make -C kernel x86-uso` (q35, OVMF, KVM,
+  ventana GTK). Cambian números de la rama x86: `puertos_permitir` 56 → 59, llave de puertos 12 → 13. Sin cajas.
+  Avisada la sesión de x86 para unirla.
