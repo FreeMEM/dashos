@@ -2173,3 +2173,11 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   `S:Shell-Complementos/`). Tanda completa sobre la rama: 12 de 12 a la primera. **Nadie lo ha visto en pantalla**:
   las pruebas lo manejan por guion, sin captura. Diseñado y sin hacer: el terminal completo (pantalla alternativa).
   Decisiones por confirmar con el usuario: en `docs/bitacoras/shell-nativa.md`.
+- **Unida `red-zona` (2026-11-16)**: ninguna prueba sale a Internet (el servidor de hora es el ajuste
+  `Prefs/Red/hora`, `pool.ntp.org` de serie, `ninguno` lo apaga; sin ajustes legibles no se pregunta a nadie;
+  `restrict=on` en `arranque-virt` y `-2`); una sola zona horaria con cambio de hora para la barra y para `idioma`
+  (la prueba de `cambio` ve 18:05 también con Carla). Tanda completa: 12 de 12 a la primera. Sin comprobar: en las
+  variantes de Arch la red de QEMU sigue abierta (por `pacman`) y la hora se pregunta a 10.0.2.53.
+- **El Shell, visto en pantalla** (rama `shell-capturas`, por unir): nueva variante `make arranque-virt-shell` con
+  capturas (`~/recuperar/geosian-7d/shell-capturas/`, no van en git); arreglado el indicador ilegible y "1 ficheros";
+  en curso: barra de título, horas de `List` en zona local y pestañas que digan qué corre.
