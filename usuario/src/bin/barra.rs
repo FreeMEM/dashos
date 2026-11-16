@@ -53,6 +53,9 @@ use dashos::zona;
 #[path = "../monitor.rs"]
 #[allow(dead_code)]
 mod monitor;
+// S10: los menús del programa activo en la barra (la opción clásica del Amiga).
+#[path = "../barra_menus.rs"]
+mod barra_menus;
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -195,6 +198,8 @@ struct Barra {
     /// Trasfondo: la CPU y la memoria en uso (décimas), si ya se midieron, y si el desplegable está abierto.
     uso: (Option<u32>, Option<u32>),
     procesos_abierto: bool,
+    /// S10: los menús del programa activo, si van en la barra.
+    mb: barra_menus::MenusBarra,
 }
 
 /// Dónde va cada cosa de la barra (se calcula al pintar y al mirar dónde cae el ratón).
@@ -211,6 +216,8 @@ struct Disposicion {
     campana: Rect,
     monitor: Rect,
     textos_monitor: (String, String),
+    /// S10: dónde van los títulos de los menús del programa activo (tras su título), si van en la barra.
+    menus: Option<Rect>,
 }
 
 /// Cuántos espacios se enseñan: hasta el más alto con ventanas o el que se ve, y al menos `MIN_ESPACIOS`.
@@ -253,12 +260,31 @@ fn disponer(b: &Barra, fuente: &mut Fuente, medio: &mut Fuente) -> Disposicion {
     // cabe).
     let x_titulo = espacios.x + espacios.w + HUECO;
     let tope = if reloj.x > x_titulo + 80 { reloj.x - HUECO } else { monitor.x - HUECO };
+    // S10: con los menús en la barra, el título más corto, y los menús detrás.
+    let con_menus = b.mb.en_barra();
     let titulo = (!b.titulo.is_empty() && tope - x_titulo > 48).then(|| {
-        let texto = que_quepa(fuente, &b.titulo, 14, (tope - x_titulo - 28).min(420));
+        let texto = que_quepa(fuente, &b.titulo, 14, (tope - x_titulo - 28).min(if con_menus { 160 } else { 420 }));
         let ancho = fuente.medir(&texto, 14).ancho + 28;
         (pildora(x_titulo, ancho), texto)
     });
-    Disposicion { lanzador, espacios, celdas, titulo, reloj, hora, fecha, estado, campana, monitor, textos_monitor }
+    let x_menus = titulo.as_ref().map_or(x_titulo, |t| t.0.x + t.0.w + HUECO);
+    // Si los títulos no caben antes del reloj, el reloj va detrás de ellos; si tampoco cabe ahí, no se ve.
+    let mut reloj = reloj;
+    let menus = if con_menus {
+        let fin = x_menus + b.mb.ancho_fila(medio);
+        if fin + HUECO > reloj.x {
+            if fin + HUECO + reloj.w <= monitor.x - HUECO {
+                reloj.x = fin + HUECO;
+            } else {
+                reloj.w = 0;
+            }
+        }
+        let tope = if reloj.w > 0 { reloj.x - HUECO } else { monitor.x - HUECO };
+        (tope > x_menus).then(|| Rect::new(x_menus, TIRA_Y, tope - x_menus, TIRA_ALTO))
+    } else {
+        None
+    };
+    Disposicion { lanzador, espacios, celdas, titulo, reloj, hora, fecha, estado, campana, monitor, textos_monitor, menus }
 }
 
 impl Disposicion {
@@ -426,14 +452,20 @@ fn pintar_barra(px: &mut [u32], b: &Barra, fuente: &mut Fuente, medio: &mut Fuen
         pildora(&mut l, *r, false, None);
         fuente.dibujar(&mut l, r.x + 14, r.y + 17, texto, 14, t.sobre_superficie);
     }
-    // El reloj: la hora en medium y la fecha, tras un punto, en el color suave.
-    pildora(&mut l, d.reloj, false, None);
-    let x = d.reloj.x + 14;
-    medio.dibujar(&mut l, x, d.reloj.y + 17, &d.hora, 14, t.sobre_superficie);
-    if !d.fecha.is_empty() {
-        let x = x + medio.medir(&d.hora, 14).ancho + 8;
-        punto(&mut l, 2 * x + 4, 2 * (d.reloj.y + d.reloj.h / 2), 4, t.sobre_variante_superficie);
-        fuente.dibujar(&mut l, x + 12, d.reloj.y + 17, &d.fecha, 14, t.sobre_variante_superficie);
+    // S10: los menús del programa activo, si van en la barra.
+    if let Some(fila) = d.menus {
+        b.mb.pintar_fila(&mut l, t, fuente, medio, fila, w);
+    }
+    // El reloj: la hora en medium y la fecha, tras un punto, en el color suave. (Sin sitio, con menús en la barra, no.)
+    if d.reloj.w > 0 {
+        pildora(&mut l, d.reloj, false, None);
+        let x = d.reloj.x + 14;
+        medio.dibujar(&mut l, x, d.reloj.y + 17, &d.hora, 14, t.sobre_superficie);
+        if !d.fecha.is_empty() {
+            let x = x + medio.medir(&d.hora, 14).ancho + 8;
+            punto(&mut l, 2 * x + 4, 2 * (d.reloj.y + d.reloj.h / 2), 4, t.sobre_variante_superficie);
+            fuente.dibujar(&mut l, x + 12, d.reloj.y + 17, &d.fecha, 14, t.sobre_variante_superficie);
+        }
     }
     // La campana, con el punto de error si hay avisos sin leer.
     let tinta = pildora(&mut l, d.campana, b.historial_abierto, Some(Boton::Campana));
@@ -1182,6 +1214,15 @@ fn cerrar_procesos(c: &mut Cliente, b: &mut Barra, p: &mut Procesos) {
     println!("  [barra] procesos cerrados");
 }
 
+/// S10: dónde cae el ratón para los menús: la barra, lo desplegado u otra cosa.
+fn donde_menus(sobre: u32) -> barra_menus::Donde {
+    match sobre {
+        SUPERFICIE => barra_menus::Donde::Barra,
+        s if barra_menus::es_suya(s) => barra_menus::Donde::Menu(s),
+        _ => barra_menus::Donde::Otro,
+    }
+}
+
 /// S13: la zona horaria (su puesto en `zona::ZONAS`; 0 es UTC). La pone `leer_zona` al arrancar.
 static ZONA: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
@@ -1276,6 +1317,7 @@ fn principal() -> u64 {
         println!("  [barra] el compositor no le da capas o tema");
         return 3;
     };
+    let global_menus = global("dashos_menus_v1");
     let mut e = Escritor::new();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gc).texto(Some("wl_compositor")).uint(6).uint(COMPOSITOR).fin();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gs).texto(Some("wl_shm")).uint(1).uint(SHM).fin();
@@ -1284,6 +1326,11 @@ fn principal() -> u64 {
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(5).uint(TEMA).fin();
     e.empezar(ASIENTO, wl_seat::req::GET_POINTER).uint(PUNTERO).fin();
     e.empezar(ASIENTO, wl_seat::req::GET_KEYBOARD).uint(TECLADO).fin();
+    // S10: los menús del programa activo (si el compositor los tiene).
+    let mut mb = barra_menus::MenusBarra::default();
+    if let Some(gm) = global_menus {
+        mb.enlazar(&mut e, gm, globales.iter().find(|g| g.1 == "wl_output").map(|g| g.0));
+    }
     // La barra: arriba (anclas 1 arriba, 4 izquierda, 8 derecha), a todo lo ancho, en la capa de arriba (2), con su
     // zona exclusiva y sin teclado.
     e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
@@ -1299,7 +1346,7 @@ fn principal() -> u64 {
     if let Err(porque) = leer_zona() {
         println!("  [barra] zona horaria: {}; se queda UTC", porque);
     }
-    let mut b = Barra { tema: Tema::CLARO, ancho: 0, titulo: String::new(), hora: hora_ahora(), encima: None, lanzador_abierto: false, sin_leer: 0, historial_abierto: false, espacio: 1, ocupados: 0, estado: None, uso: (None, None), procesos_abierto: false };
+    let mut b = Barra { tema: Tema::CLARO, ancho: 0, titulo: String::new(), hora: hora_ahora(), encima: None, lanzador_abierto: false, sin_leer: 0, historial_abierto: false, espacio: 1, ocupados: 0, estado: None, uso: (None, None), procesos_abierto: false, mb };
     // Trasfondo: lo que se mide (la píldora y el desplegable) y el desplegable.
     let mut med = monitor::Medidor::default();
     b.uso = medir_uso(&mut med);
@@ -1468,6 +1515,13 @@ fn principal() -> u64 {
             let (estado, pid) = lanzar(c, &nombre);
             println!("  [barra] lanza Programas/{}: {} (proceso {})", nombre, estado, pid);
         };
+        // S10: lo de los menús del programa activo.
+        if let Some(repintar) = b.mb.evento(&mut c, o, orden, &cuerpo, &b.tema.clone(), &mut fuente, &mut medio) {
+            if repintar {
+                pantalla_barra(&mut c, &b, &mut fuente, &mut medio);
+            }
+            continue;
+        }
         match (o, orden) {
             (TEMA, dashos_tema_v1::ev::TEMA) => {
                 b.tema = Tema::del_sistema(palabra(0) | 0xff00_0000, palabra(1) != 0);
@@ -1626,6 +1680,15 @@ fn principal() -> u64 {
                     dashos::cerrar(l);
                 }
             }
+            // S10: con un menú abierto (su capa tiene el teclado), las teclas son suyas; y si el teclado se va, se cierra.
+            (TECLADO, wl_keyboard::ev::KEY) if b.mb.tecla(&mut c, palabra(2), palabra(3) == 1, &b.tema.clone(), &mut fuente, &mut medio) => {
+                pantalla_barra(&mut c, &b, &mut fuente, &mut medio);
+            }
+            (TECLADO, wl_keyboard::ev::LEAVE) => {
+                if b.mb.teclado_sale(&mut c, palabra(1), &b.tema.clone(), &mut fuente, &mut medio) {
+                    pantalla_barra(&mut c, &b, &mut fuente, &mut medio);
+                }
+            }
             (TECLADO, wl_keyboard::ev::KEY) if b.lanzador_abierto => {
                 let (codigo, pulsada) = (palabra(2), palabra(3) == 1);
                 if codigo == KEY_ESC {
@@ -1663,6 +1726,11 @@ fn principal() -> u64 {
                     wl_pointer::ev::LEAVE => sobre = 0,
                     _ => (x, y) = (palabra(1) as i32 >> 8, palabra(2) as i32 >> 8),
                 }
+                // S10: los menús (pasar por los títulos, por las entradas).
+                let donde = donde_menus(sobre);
+                if b.mb.raton(&mut c, donde, x, y, None, &b.tema.clone(), &mut fuente, &mut medio) == Some(true) {
+                    pantalla_barra(&mut c, &b, &mut fuente, &mut medio);
+                }
                 // La capa de estado de lo que queda bajo el puntero: se repinta solo si cambia.
                 let encima = if sobre == SUPERFICIE && b.ancho > 0 { disponer(&b, &mut fuente, &mut medio).boton_en(x, y) } else { None };
                 if encima != b.encima {
@@ -1694,6 +1762,13 @@ fn principal() -> u64 {
                         pantalla_lanzador(&mut c, &mut la, &b.tema, &mut fuente, &mut medio);
                     }
                 }
+            }
+            // S10: un botón sobre los menús (los títulos en la barra, lo desplegado): suyo.
+            (PUNTERO, wl_pointer::ev::BUTTON) if b.mb.raton(&mut c, donde_menus(sobre), x, y, Some((palabra(2), palabra(3) == 1)), &b.tema.clone(), &mut fuente, &mut medio).is_some() => {
+                pantalla_barra(&mut c, &b, &mut fuente, &mut medio);
+            }
+            (PUNTERO, wl_pointer::ev::AXIS) if barra_menus::es_suya(sobre) && palabra(1) == 0 => {
+                b.mb.rueda(&mut c, x, y, kit::controles::pasos_rueda(palabra(2)), &b.tema.clone(), &mut fuente, &mut medio);
             }
             (PUNTERO, wl_pointer::ev::BUTTON) if palabra(2) == BOTON_IZQUIERDO && palabra(3) == 1 => {
                 let en_barra = if sobre == SUPERFICIE && b.ancho > 0 { disponer(&b, &mut fuente, &mut medio).boton_en(x, y) } else { None };
