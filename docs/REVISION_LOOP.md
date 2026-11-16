@@ -2180,4 +2180,8 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   variantes de Arch la red de QEMU sigue abierta (por `pacman`) y la hora se pregunta a 10.0.2.53.
 - **El Shell, visto en pantalla** (rama `shell-capturas`, por unir): nueva variante `make arranque-virt-shell` con
   capturas (`~/recuperar/geosian-7d/shell-capturas/`, no van en git); arreglado el indicador ilegible y "1 ficheros";
-  en curso: barra de título, horas de `List` en zona local y pestañas que digan qué corre.
+  barra de ventana del compositor (título con el cajón y la última orden, maximizar, cerrar; cerrar mata los
+  trabajos sin preguntar), horas de `List` y `Date` en la zona del sistema, pestañas con la última orden. Unida el
+  2026-11-16: tanda completa 12 de 12 y `arranque-virt-shell` bien, a la primera. Por decidir con el usuario: tres
+  de gusto (menú de Tab, rojo al teclear, color del indicador) y si las ventanas del sistema usan la barra del
+  compositor.
