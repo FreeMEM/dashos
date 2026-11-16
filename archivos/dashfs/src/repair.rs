@@ -53,6 +53,8 @@ pub fn repair<D: Disk>(
         return Err(syscall::error::Error::new(syscall::error::EIO));
     }
     let mut tx = Transaction::new(fs);
+    // Reparar no falla porque un volumen pase de su tope.
+    tx.unlimited = true;
 
     // Until the new header is written, only blocks that the old one does not use can be written.
     let total = tx.header.size() / crate::BLOCK_SIZE;
@@ -85,6 +87,16 @@ pub fn repair<D: Disk>(
     }
     // What every volume uses now.
     let report = check::check(&mut tx, meta, true)?;
+    // The count each volume keeps (the quota), as counted.
+    for mut volume in tx.volumes()? {
+        if let Some(&counted) = report.volume_used.get(&volume.id())
+            && counted != volume.used()
+        {
+            volume.set_used(counted);
+            tx.volume_changes.insert(volume.id(), Some(volume));
+            tx.header_changed = true;
+        }
+    }
 
     // The new allocation log: free is what neither header uses; what only the old one uses is freed after it.
     let used = |i| before.is_used(i) || report.is_used(i);
@@ -229,6 +241,8 @@ fn fix<D: Disk>(tx: &mut Transaction<D>, report: &Report, lost: &str) -> Result<
             // FS10d: each volume is repaired in its own turn; their blocks stay in use.
             | Problem::Volumes
             | Problem::VolumeUnreadable { .. }
+            | Problem::BeyondDisk { .. }
+            | Problem::VolumeUsed { .. }
             | Problem::InVolume { .. } => {}
         }
     }

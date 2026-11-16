@@ -76,6 +76,15 @@ pub const DUENO: u32 = 34;
 /// La fecha de modificación de lo que tiene la asa: a, los segundos desde 1970; b, los nanosegundos (menos de mil
 /// millones). Solo el dueño, como comentar y proteger. Es lo que piden `SetFileDate` de la caja y `file_set_date` de Dash.
 pub const FECHAR: u32 = 35;
+/// S32: crecer el sistema de archivos en uso hasta a bytes (0: todo el disco; si no es múltiplo de 4096, el múltiplo
+/// de antes). Solo con el derecho de administrar. Contesta en a con el tamaño que queda. `MAL_FORMADO` si a es menos
+/// que ahora o más que el disco. Encoger no se hace en uso: es de la herramienta de discos, sin montar.
+pub const CRECER: u32 = 40;
+/// S32: el tope de un volumen (su nombre en el mensaje; el principal no tiene). Con b = 1 lo pone a a bytes (0: sin
+/// tope; se guarda en bloques de 4096). Contesta en a con lo que usa y en b con su tope, en bytes (a = 0: aún sin
+/// contar). Cuenta lo del volumen y lo que solo ven sus instantáneas. Pasado el tope, lo que lo haría crecer da
+/// `LLENO` en ese volumen y en ningún otro; borrar y escribir encima siguen valiendo. Solo con el derecho de administrar.
+pub const CUOTA: u32 = 41;
 pub const TROZO_PRESTADO: usize = 512 * 1024;
 pub const POR_PRESTAMO: usize = 4;
 pub const MAX_PRESTADOS: usize = 8;
