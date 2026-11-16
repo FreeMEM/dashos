@@ -488,7 +488,8 @@ struct Lista(core::cell::UnsafeCell<cu::Cuentas>);
 unsafe impl Sync for Lista {}
 static CUENTAS: Lista = Lista(core::cell::UnsafeCell::new(cu::Cuentas::vacia()));
 
-/// El Argon2 de los volúmenes de las cuentas nuevas: el de verdad del servicio (`Cost::SERVICE`, 16 MiB y 3 pasadas).
+/// El Argon2 de los volúmenes de las cuentas nuevas: el de verdad del servicio (`Cost::NORMAL`, 64 MiB y 3 pasadas, el
+/// de S6b, desde la rama `archivos-memoria`).
 const COSTE_BARATO: bool = false;
 
 fn con_cuentas<R>(f: impl FnOnce(&cu::Cuentas) -> R) -> R {

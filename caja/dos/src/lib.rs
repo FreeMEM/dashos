@@ -210,6 +210,7 @@ pub(crate) fn de_fs(e: fs::ErrorFs, op: Op) -> E {
         },
         EnUso => ERROR_OBJECT_IN_USE,
         SinAzar => ERROR_NOT_IMPLEMENTED,
+        SinMemoria => ERROR_NO_FREE_STORE,
         NoSoportado => ERROR_ACTION_NOT_KNOWN,
     })
 }

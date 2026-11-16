@@ -72,6 +72,9 @@ DashOS en marcha con 4 núcleos.
 ~│   [ficheros] A15 sujetar sin soltar: bien
 ~│   [ficheros] FS9 instantáneas: bien
 ~│   [ficheros] FS10 volúmenes: bien
+# Rama `archivos-memoria`: lo que agota la memoria del servicio (un Argon2 que no cabe, con 100 ficheros abiertos sin
+# guardar) da SIN_MEMORIA y el servicio sigue; el de 64 MiB de S6b cabe y su memoria vuelve; el disco queda limpio.
+~│   [ficheros] memoria: bien
 # S20, fase 1: un ADF (FFS internacional, kernel/pruebas/disquete.adf.gz) montado como volumen de solo lectura por el
 # servicio imagen, que lo lee por el de archivos.
 ~│   [imagen] Disquete montado: FFS internacional, 1760 bloques

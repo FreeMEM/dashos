@@ -21,7 +21,7 @@ use alloc::vec::Vec;
 use dashos::println;
 use dashos::protocolo::archivos::*;
 use dashfs::{AmigaBits, BLOCK_SIZE, Disk, FileSystem, Node, TreeData, TreePtr};
-use syscall::error::{EACCES, EBUSY, EEXIST, EINVAL, EIO, EISDIR, ENOENT, ENOSPC, ENOTDIR, ENOTEMPTY, EROFS, Error, Result};
+use syscall::error::{EACCES, EBUSY, EEXIST, EINVAL, EIO, EISDIR, ENOENT, ENOMEM, ENOSPC, ENOTDIR, ENOTEMPTY, EROFS, Error, Result};
 
 #[path = "../disco_ram.rs"]
 mod disco_ram;
@@ -64,6 +64,8 @@ const VENTANA_DISCO: usize = 64 * 1024;
 const CANAL: u32 = 2;
 /// Hasta 64 clientes (R6): con un programa por aplicación (S6b), 8 se quedaban cortos.
 const MAX_CLIENTES: usize = 64;
+/// Lo que suman las ventanas de los clientes que las piden más grandes que la de serie (rama `archivos-memoria`).
+const VENTANAS_TOPE: usize = 16 * 1024 * 1024;
 
 // Órdenes del protocolo de ficheros.
 /// Lo más largo de una contraseña de volumen, que llega por la ventana (A13).
@@ -157,6 +159,12 @@ struct Cache {
 const MAX_BLOQUES: usize = 16 * 1024 * 1024 / BLOCK_SIZE as usize;
 
 impl Cache {
+    /// Suelta los bloques que se pueden volver a leer del disco (no los sucios). Rama `archivos-memoria`.
+    fn soltar_limpios(&mut self) {
+        let sucios = &self.sucios;
+        self.bloques.retain(|b, _| sucios.contains(b));
+    }
+
     fn leer(&mut self, bloque: u64, destino: &mut [u8]) -> bool {
         self.reloj += 1;
         let r = self.reloj;
@@ -1000,6 +1008,7 @@ fn estado_de(e: Error) -> i32 {
         EINVAL => MAL_FORMADO,
         EACCES => PROTEGIDO,
         EBUSY => EN_USO,
+        ENOMEM => SIN_MEMORIA,
         _ => ERROR_DEL_DISCO,
     }
 }
@@ -1232,6 +1241,16 @@ fn con_padre(c: &Cliente, asa: u32, vol: u64, n: u32) -> [(u64, u32, Cambio); 2]
 
 fn mal(estado: i32) -> Respuesta {
     Respuesta { estado, ..Default::default() }
+}
+
+/// Una copia de `datos` que puede no caber (rama `archivos-memoria`): lo que trae un cliente (hasta 1 MB de su
+/// ventana) o lo que se lee de un fichero (hasta 4 MB) va aparte en el montón, y si el kernel no lo da, ENOMEM (en vez
+/// de un pánico que tumbaba el servicio).
+fn copia_de(datos: &[u8]) -> Result<Vec<u8>> {
+    let mut v = Vec::new();
+    v.try_reserve_exact(datos.len()).map_err(|_| Error::new(ENOMEM))?;
+    v.extend_from_slice(datos);
+    Ok(v)
 }
 
 /// A7 (docs/REVISION_ARQUITECTURA.md): la caché de páginas. Los datos de los ficheros de `TROZO_PRESTADO` o más se
@@ -1677,6 +1696,10 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
             for (nombre, (v, c)) in ["leer", "escribir", "vaciar"].iter().zip(PERFIL_DATOS.disco.iter()) {
                 t += &format!("{}={}/{} ", nombre, v.load(Ordering::Relaxed), us(c.load(Ordering::Relaxed)));
             }
+            // Rama `archivos-memoria`: el montón, en KB (en uso, máximo y reservado), y cuántos pedidos no cupieron y
+            // cuántas veces se gastó el colchón.
+            let m = dashos::monton::uso();
+            t += &format!("monton={}/{}/{} fallos={} colchones={} ", m.en_uso >> 10, m.maximo >> 10, m.reservado >> 10, m.fallos, m.colchones);
             let n = t.len().min(4096);
             let v = unsafe { core::slice::from_raw_parts_mut(c.va as *mut u8, n) };
             v.copy_from_slice(&t.as_bytes()[..n]);
@@ -1897,7 +1920,10 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 return mal(MAL_FORMADO);
             }
             // Se copia antes: el cliente puede cambiar la ventana mientras tanto.
-            let datos = c.ventana()[..p.b as usize].to_vec();
+            let datos = match copia_de(&c.ventana()[..p.b as usize]) {
+                Ok(d) => d,
+                Err(e) => return mal(estado_de(e)),
+            };
             rec.olvidar_nodo(vol, n.id());
             let escribir = |fs: &mut Fs| {
                 fs.tx_in(vol, |tx| {
@@ -1971,7 +1997,10 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
             if p.b > c.tam as u64 {
                 return mal(MAL_FORMADO);
             }
-            let datos = c.ventana()[..p.b as usize].to_vec();
+            let datos = match copia_de(&c.ventana()[..p.b as usize]) {
+                Ok(d) => d,
+                Err(e) => return mal(estado_de(e)),
+            };
             rec.olvidar_nodo(vol, dir.id());
             let r = fs.tx_in(vol, |tx| {
                 let cajon = tx.read_tree(dir)?;
@@ -2306,10 +2335,23 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
             // calidad, no.
             // S6b, rama `cuentas`: con `CON_RECUPERACION`, también la ranura del código de recuperación (su azar y su sal
             // van detrás de las llaves), que se contesta en la ventana.
+            // Rama `archivos-memoria`: la memoria de Argon2 en MiB, en a desde `MEMORIA_ARGON2` (0: la de serie).
             let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
             let recuperacion = p.a & CON_RECUPERACION != 0;
-            let tipo = p.a & !CON_RECUPERACION;
-            if tipo > 2 || p.b as usize > MAX_CLAVE || (tipo != 0 && p.b == 0) || (recuperacion && tipo == 0) {
+            let mib = (p.a >> MEMORIA_ARGON2) as u32;
+            let tipo = p.a & 0xFFFF_FFFF & !CON_RECUPERACION;
+            if tipo > 2 || p.b as usize > MAX_CLAVE || (tipo != 0 && p.b == 0) || (recuperacion && tipo == 0) || (mib != 0 && tipo != 1) {
+                return mal(MAL_FORMADO);
+            }
+            // El de verdad, de 64 MiB y tres pasadas (S6b: medio segundo en una Pi 4), o la memoria que se pida. Desde
+            // que lo grande del montón va aparte y vuelve al kernel, y lo que no cabe da SIN_MEMORIA en vez de tumbar el
+            // servicio (rama `archivos-memoria`), vuelve a ser el de S6b; la rama `cuentas` lo había bajado a 16 MiB.
+            let coste = match (tipo, mib) {
+                (1, 0) => dashfs::seal::Cost::NORMAL,
+                (1, m) => dashfs::seal::Cost { memory: m.saturating_mul(1024), passes: 3, lanes: 1 },
+                _ => dashfs::seal::Cost::CHEAP,
+            };
+            if !coste.is_reasonable() {
                 return mal(MAL_FORMADO);
             }
             let mut clave = [0u8; MAX_CLAVE];
@@ -2324,9 +2366,6 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                     return mal(SIN_AZAR);
                 }
             }
-            // Rama `cuentas`: el de verdad cabe en el servicio (`Cost::SERVICE`, 16 MiB); con `NORMAL` (64 MiB) se quedaba
-            // sin memoria y caía.
-            let coste = if tipo == 1 { dashfs::seal::Cost::SERVICE } else { dashfs::seal::Cost::CHEAP };
             let mut codigo = dashos::cuentas::codigo_recuperacion(llaves[64..79].try_into().unwrap());
             let hecho = fs.tx(|tx| {
                 // Su raíz, de quien lo hace (R6), desde el principio.
@@ -2862,7 +2901,9 @@ fn ram_copiar(fs: &mut Fs, vol: u64, dueno: (u32, u32), de: &str, origen: &str, 
             if nodo.data().is_symlink() || tam > COPIA_FICHERO_MAX || ficheros >= COPIA_FICHEROS {
                 continue;
             }
-            let mut datos = alloc::vec![0u8; tam as usize];
+            let mut datos = Vec::new();
+            datos.try_reserve_exact(tam as usize).map_err(|_| Error::new(ENOMEM))?;
+            datos.resize(tam as usize, 0);
             fs.disco.tx_in(de, |tx| {
                 let mut hecho = 0;
                 while hecho < datos.len() {
@@ -2986,8 +3027,12 @@ fn sesion(fs: &mut Fs, clientes: &mut [Option<Cliente>], altas: &BTreeMap<u64, F
         None => {
             let Some(&ficha) = altas.get(&marca) else { return (PROTEGIDO, None, 0) };
             let Some(i) = clientes.iter().position(|c| c.is_none()) else { return (SIN_SITIO, None, 0) };
-            // La que pida, entre 64 KB y 1 MB, en páginas enteras (A4). Cada cliente tiene un hueco de 1 MB.
+            // La que pida, entre 64 KB y 1 MB, en páginas enteras (A4). Cada cliente tiene un hueco de 1 MB. Rama
+            // `archivos-memoria`: entre todos, hasta `VENTANAS_TOPE`; pasado, la de 64 KB (el cliente usa la que se le
+            // da). Las ventanas se cobran al grupo de este servicio: 64 clientes de 1 MB lo llenaban.
             let tam = (pide as usize).clamp(VENTANA, VENTANA_MAX).next_multiple_of(4096);
+            let usadas: usize = clientes.iter().flatten().map(|c| c.tam).sum();
+            let tam = if usadas + tam > VENTANAS_TOPE { VENTANA } else { tam };
             let m = dashos::memoria_crear(tam);
             let va = VA_CLIENTES + i * VENTANA_MAX;
             if (m as i32) <= 0 || dashos::memoria_proyectar(m, va, true) != 0 {
@@ -3048,7 +3093,35 @@ fn contestar(llave: u32, r: &Respuesta, llaves: &[u32]) -> i64 {
     dashos::canal_escribir(llave, &b, llaves)
 }
 
+/// El colchón del montón (rama `archivos-memoria`): lo que se aparta para que, cuando el kernel no dé más memoria, lo
+/// pequeño que no puede fallar (bloques de la caché, nodos, entradas de las tablas de DashFS) siga cabiendo hasta acabar
+/// la orden. Una escritura de 1 MB pone unos 260 bloques en la caché.
+const COLCHON: usize = 2 * 1024 * 1024;
+/// Ya se dijo que no se pudo reponer el colchón (para no repetirlo en cada mensaje).
+static SIN_COLCHON_DICHO: AtomicBool = AtomicBool::new(false);
+
+/// Se gastó el colchón: fuera lo que se puede volver a leer del disco (la caché de bloques limpios y los nodos y
+/// nombres recordados), y se repone. Hasta que se pueda reponer, se intenta tras cada mensaje.
+fn aliviar(fs: &mut Fs, rec: &mut Recuerdos) {
+    let antes = dashos::monton::uso().en_uso;
+    if let Medio::Nvme(d) = &mut fs.disco.disk {
+        d.cache.soltar_limpios();
+    }
+    rec.olvidar();
+    let suelto = antes.saturating_sub(dashos::monton::uso().en_uso);
+    if dashos::monton::rearmar(&MONTON) {
+        SIN_COLCHON_DICHO.store(false, Ordering::Relaxed);
+        println!("  [archivos] memoria justa: suelta las cachés ({} KB) y repone el colchón", suelto >> 10);
+    } else if !SIN_COLCHON_DICHO.swap(true, Ordering::Relaxed) {
+        println!("  [archivos] memoria justa: suelta las cachés ({} KB); el colchón, aún no", suelto >> 10);
+    }
+}
+
 fn principal() -> u64 {
+    // Antes que nada: el colchón (rama `archivos-memoria`).
+    if !dashos::monton::colchon(&MONTON, COLCHON) {
+        println!("  [archivos] sin memoria para el colchón");
+    }
     let disco = match Disco::abrir() {
         Ok(d) => d,
         Err(e) => {
@@ -3107,6 +3180,10 @@ fn principal() -> u64 {
     let mut reintento: Option<(u64, u32)> = None;
     let mut buf = [0u8; 256];
     loop {
+        // Tras la orden anterior: si se gastó el colchón, se sueltan las cachés (rama `archivos-memoria`).
+        if dashos::monton::en_apuro() {
+            aliviar(&mut fs, &mut recuerdos);
+        }
         let mut ll = [0u32; 8];
         let (n, k, marca) = dashos::canal_leer_marca(CANAL, &mut buf, &mut ll);
         if let Some((cuando, _)) = plazo
