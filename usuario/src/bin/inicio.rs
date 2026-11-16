@@ -497,6 +497,9 @@ fn principal() -> u64 {
             // le den (trozos de 16 MB hasta `E_MEMORIA`).
             "caja-linux" if tiene_aparato(cab, aparatos, n, "linux") => dashos::maquina::memoria_invitado_con(ram, pedida) + dashos::maquina::MARGEN_SERVICIO,
             "caja-linux" => dashos::maquina::MARGEN_SERVICIO,
+            // S35, paso 2: el dominio de red: los 24 MB de RAM del dominio, los 2 de la DMA de su tarjeta, las tablas de la
+            // etapa 2, su montón y la pila de su hilo.
+            "dominio" => 40 << 20,
             // H4 y H5: la caja Amiga, con su ejecutable (2 MB y 2 de datos), 4 MB de código traducido, 4 de montón de
             // Emu68, 8 del de Rust (las bibliotecas nativas y los lienzos: el del Workbench, de hasta 1024 x 768, son 3
             // MB), 4 del 68k, 1 de pilas y los búferes de sus ventanas: 32 MB. Y lo que crezca el 68k según sus

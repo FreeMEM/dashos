@@ -50,6 +50,9 @@ medir_fs = []
 # Con `virt`: la caja Linux (H9) arranca un kernel de Linux de verdad (`make arranque-virt-linux`): su Image, que no va
 # en git, entra en el paquete de arranque desde target/linux/Image y llega a `caja-linux` como datos.
 linux = []
+# Con `virt`: un dominio de controladores (S35, paso 2; `make arranque-virt-dominio`): el kernel y el initramfs del
+# dominio de red (fuera de git, de target/dominio/) y la e1000 de QEMU, que se le presta sin IOMMU (solo en QEMU).
+dominio = ["virt"]
 
 # El build.rs comprime los programas del paquete de arranque (LZ4, formato de bloque); el kernel no depende de nada.
 [build-dependencies]

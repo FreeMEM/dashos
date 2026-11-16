@@ -1,0 +1,30 @@
+# Un dominio de controladores (S35, paso 2; `make arranque-virt-dominio`, docs/bitacoras/dominio-red.md): DashOS presta
+# la e1000 de QEMU a un Linux mínimo en una máquina virtual y usa la red virtio que ese Linux le devuelve.
+Hipervisor: el kernel arrancó en EL2
+DashOS en marcha con 4 núcleos
+~[dominio] dominio de red: la tarjeta 8086:100e
+~[dominio] generación 1: el dominio ofrece una red virtio
+~[dominio] generación 1: listo a los
+# (DHCP implica que virtio-red montó el aparato del dominio.)
+~[dominio-prueba] DHCP por el dominio: 10.0.2.15
+~[dominio-prueba] normal: eco TCP de 64 KB con 10.0.2.100:7 por el dominio en
+~[dominio-prueba] eco UDP con el vecino 10.0.2.53:4007: bien
+# Hostil: una oferta que miente, usados que no son del conductor, una tormenta de avisos y leer fuera de su memoria.
+~[dominio] generación 2: el dominio ofrece algo que no vale
+~[dominio] generación 2: el dominio ofrece una red virtio
+~[dominio] el dominio toca 0x40200000, donde no tiene nada: se le da un aborto
+~hostil: leer en 0x40200000: el hijo muere con SIGBUS
+~hostil: leer en 0xf0000000: el hijo muere con SIGBUS
+~[virtio-red] el aparato devuelve un descriptor que no es suyo; se ignora
+~[dominio-prueba] hostil, oferta y descriptores: eco TCP de 64 KB
+~[dominio-prueba] eco UDP con el vecino 10.0.2.53:4007: bien
+# Hostil: se cuelga con un eco en marcha; el vigilante lo relanza.
+~[dominio] generación 3: el dominio dejó de latir (colgado); se relanza
+~[dominio-prueba] hostil, se cuelga: eco TCP de 256 KB
+~[dominio-prueba] hostil, se cuelga: el dominio cayó a media transferencia y volvió
+# Hostil: muere a media transferencia (pánico de su kernel); se relanza.
+~: el dominio pidió reiniciar (pánico de su kernel); se relanza
+~[dominio-prueba] hostil, muere: eco TCP de 256 KB
+~[dominio-prueba] hostil, muere: el dominio cayó a media transferencia y volvió
+~[dominio-prueba] al final: eco TCP de 16 KB
+~[dominio-prueba] el dominio de red de punta a punta: bien

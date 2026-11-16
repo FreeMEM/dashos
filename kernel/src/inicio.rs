@@ -223,10 +223,10 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("presa", programa!("presa"), &[], &["sesiones"]),
     // Las pruebas de la red (el servicio va antes del fondo): una con permiso (el eco del PC, caudal, basura), un glotón
     // de conexiones y uno sin la llave.
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso"), not(feature = "dominio")))]
     ("red-gloton", programa!("red-gloton"), &[], &["red"]),
     // S13, segunda parte: `red-prueba` tiene además el permiso de escuchar; el glotón, no (y lo intenta).
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso"), not(feature = "dominio")))]
     ("red-prueba", programa!("red-prueba"), &[], &["red", "red-escuchar"]),
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
     ("sin-red", programa!("sin-red"), &[], &[]),
@@ -270,11 +270,11 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // de los de después, que no se usan en ningún sitio). Solo en las imágenes de prueba.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
     ("presion", programa!("presion"), &[], &["presion"]),
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso"), not(feature = "dominio")))]
     ("caja-linux", programa!("caja-linux"), &[("sistema", DATOS), ("linux", DATOS | OPCIONAL), ("initrd", DATOS | OPCIONAL)], &["ventanas", "sesiones", "red", "disco", "presion"]),
     #[cfg(all(feature = "virt", feature = "uso"))]
     ("caja-linux", programa!("caja-linux"), &[("sistema", DATOS), ("linux", DATOS | OPCIONAL), ("initrd", DATOS | OPCIONAL)], &["ventanas", "sesiones", "red", "disco"]),
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso"), not(feature = "dominio")))]
     ("sin-maquina", programa!("sin-maquina"), &[("sistema", DATOS)], &["sesiones"]),
     // En la Pi 4 (decisión del usuario del 2026-11-12: no en la Pi 3, sin virtualización): la caja, que solo hace algo
     // si el firmware entró en EL2. Allí aún no hay `sesiones` (es solo de `virt`): hasta que lo haya, el permiso se lo
@@ -316,6 +316,18 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Al final, para no cambiar las marcas de los de antes.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux"), not(feature = "uso")))]
     ("commodity-prueba", programa!("commodity-prueba"), &[], &["ventanas", "sesiones"]),
+    // S35, paso 2 (`docs/bitacoras/dominio-red.md`): el dominio de red. El conductor de siempre, `virtio-red`, sin aparato
+    // PCI: con "dominio-red" usa el transporte por mensajes (nombra ese canal antes que nadie: lo lee él). Su prueba, que
+    // lee "dominio-control". Y el servicio del dominio, con la Image y el initramfs del dominio, la e1000 que se le presta
+    // (sus registros, su configuración, su INTx y un permiso DMA; sin IOMMU, solo en QEMU) y el permiso de máquinas
+    // virtuales directamente (es del sistema, como un controlador: pendiente del usuario). Al final, para no cambiar las
+    // marcas de los de antes.
+    #[cfg(feature = "dominio")]
+    ("virtio-red", programa!("virtio-red"), &[], &["red", "dominio-red"]),
+    #[cfg(feature = "dominio")]
+    ("dominio-prueba", programa!("dominio-prueba"), &[], &["red", "dominio-control"]),
+    #[cfg(feature = "dominio")]
+    ("dominio", programa!("dominio"), &[("hipervisor", MAQUINAS), ("dominio-linux", DATOS), ("dred-bar", REGISTROS), ("dred-cfg", REGISTROS), ("dred-irq", INTERRUPCION), ("dma-dred", PERMISO_DMA)], &["dominio-red", "dominio-control"]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", programa!("medir-fs"), &[], &["archivos"]),
     #[cfg(feature = "medir")]
@@ -756,6 +768,31 @@ pub fn lanzar() -> bool {
         }
         let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, 0)));
         apuntar(&mut llaves, "dma-vred", PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
+    }
+    // S35, paso 2: la e1000 de QEMU (Intel 82540EM), para prestarla al dominio de red sin IOMMU (solo en QEMU, solo en
+    // esta imagen). Su BAR 0, su espacio de configuración (el servicio del dominio lo emula para el dominio y le pone el
+    // maestro de bus), su INTx y un permiso DMA (la zona de DMA del dominio). Y el kernel y el initramfs del dominio.
+    #[cfg(feature = "dominio")]
+    {
+        if let Some((fisica, tamano, irq, cfg)) = aparato_pci(&d, Pci::Id(0x8086, 0x100e), 0x10, "dominio-red") {
+            apuntar(&mut llaves, "dred-bar", REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano }, DERECHOS));
+            apuntar(&mut llaves, "dred-cfg", REGISTROS, Llave::nueva(Objeto::Registros { fisica: cfg, tamano: memoria::PAGINA }, DERECHOS));
+            if let Some(irq) = irq.and_then(interrupciones::Interrupcion::nueva) {
+                apuntar(&mut llaves, "dred-irq", INTERRUPCION, Llave::nueva(Objeto::Interrupcion(irq), DERECHOS));
+            }
+            let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, 0)));
+            apuntar(&mut llaves, "dma-dred", PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
+        }
+        // Los dos en un objeto (un programa nace con 8 llaves como mucho): el largo de cada uno (u64) y detrás, seguidos.
+        static IMAGEN: &[u8] = include_bytes!("../target/dominio/Image");
+        static INITRD: &[u8] = include_bytes!("../target/dominio/initrd");
+        if let Some(m) = memoria::Memoria::nueva(16 + IMAGEN.len() + INITRD.len(), &crate::cupo::Cupo::raiz()) {
+            m.escribir(0, &(IMAGEN.len() as u64).to_le_bytes());
+            m.escribir(8, &(INITRD.len() as u64).to_le_bytes());
+            m.escribir(16, IMAGEN);
+            m.escribir(16 + IMAGEN.len(), INITRD);
+            apuntar(&mut llaves, "dominio-linux", DATOS, Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), LEER | crate::objetos::TRANSFERIR));
+        }
     }
     // La GPU de virtio (multimonitor): virtio 1.2, 4.1.2, el aparato 0x1040 más el tipo, 16; solo el moderno. Como el
     // sonido: registros de la BAR 4 y su configuración, para leer las capacidades.

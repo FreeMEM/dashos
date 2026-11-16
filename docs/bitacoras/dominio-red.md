@@ -92,3 +92,74 @@ prueba.** Es un paso intermedio y no vale fuera de QEMU:
   llevar transferencias de control, masivas y de interrupción (con cancelación); el servicio del dominio habla USB/IP
   (protocolo documentado en `Documentation/usb/usbip_protocol.rst`) por un vsock con el dominio, y el Linux del dominio
   lo engancha con su `vhci-hcd` de serie. Así el dominio no ve ningún registro de DashOS y vale en todas las máquinas.
+
+## 2026-11-16: hecho, con la e1000 por PCI (paso intermedio) y TCP
+
+### Qué funciona
+
+`make arranque-virt-dominio`: DashOS arranca en QEMU `virt` con `virtualization=on` y sin virtio-net-pci; su única
+tarjeta es una e1000 de QEMU. El servicio `dominio` arranca un Linux 7.3.4 mínimo (el del paso 1, con `paso.config`)
+en una máquina de 24 MB y una vCPU, le presta la e1000 y el Linux la lleva con su controlador (`e1000`) y devuelve a
+DashOS una virtio-net. `virtio-red` (el conductor de siempre, con el transporte nuevo) la monta, el servicio de red
+toma dirección por DHCP (10.0.2.15, de la red de usuario de QEMU) y `dominio-prueba` hace un eco TCP con 10.0.2.100:7
+(el eco del PC por la red de QEMU, con `restrict=on`: nada sale del PC) y el eco UDP del vecino de prueba
+(10.0.2.53:4007). Después relanza el dominio en modos hostiles y la red sigue. Nada va a Internet.
+
+### Cómo va
+
+```
+e1000 (QEMU) ──registros en la etapa 2, INTx reenviada, DMA en su zona──▶ Linux del dominio (controlador e1000)
+                                                                              │ socket de paquetes
+                                                                              ▼
+                                                               /init (dominio_red.c): el aparato virtio-net
+                                                                  │ colas en la ventana   ▲ canal (UIO): avisos
+                                                                  ▼                       │
+virtio-red (DashOS) ◀── la ventana es su memoria ──▶ servicio `dominio` ◀── mensajes (virtio_msg) ──▶ virtio-red
+     │ tramas (protocolo::red)
+     ▼
+servicio de red (smoltcp, DHCP, TCP) ──▶ dominio-prueba
+```
+
+- **Kernel de DashOS** (`base/hiper.rs`, `maquinas.rs`, `llamadas.rs`): dos operaciones nuevas de `maquina_estado`,
+  con números altos: 40 presta al invitado los registros de una llave de registros en su misma dirección física
+  (memoria de dispositivo, sin ejecutar) y 41 pone un objeto de memoria DMA en su dirección de bus. Comprueban que no
+  pisan nada de lo que ya ve el invitado y que la llave no es revocable (revocarla no quitaría nada de la etapa 2).
+- **El crate `caja-linux/vmm`**, módulo `dominio` (sin `unsafe`, con pruebas en el PC): el canal del dominio (una
+  página de registros y una interrupción: estado, funciones, ventana y colas que pidió el conductor; avisos en los dos
+  sentidos; la oferta del aparato y el latido), la comprobación de la oferta (`validar_oferta_red`), el PCIe del
+  dominio (un ECAM con un solo aparato: la cabecera de verdad sin capacidades, la BAR 0 fija, el mando, la INTx) y los
+  nodos del árbol (zona de DMA como `restricted-dma-pool`, la ventana reservada, el canal, el PCIe). `arbol` gana
+  `generar_dtb_con` para añadir nodos.
+- **El transporte** (`usuario/src/protocolo/virtio_msg.rs`, con pruebas): HOLA, INFO, FUNCIONES, MEMORIA, COLA,
+  ESTADO y AVISO del conductor; USADOS y APARATO del servicio. Cada mensaje lleva la generación del aparato: lo de una
+  generación vieja se rechaza.
+- **El servicio `dominio`** (`usuario/src/bin/dominio.rs`): carga el Linux, corre su vCPU, emula el PL011 (cada línea
+  de la consola al registro común con "linux:" delante, con tope), el canal y el PCIe, reenvía la INTx de la e1000
+  (sube la línea al llegar la interrupción de DashOS; al terminarla el dominio, la baja y la vuelve a habilitar),
+  contesta al conductor y pone su memoria como ventana. Un vigilante: sin latido 3 s, o sin oferta en 30 s, el dominio
+  está colgado. Al acabar una generación (apagado, reinicio por pánico, fallo, colgado, orden de la prueba): apaga el
+  maestro de bus de la e1000 (deja de escribir en la memoria) antes de soltar nada, dice APARATO falso al conductor,
+  deja una línea con el motivo y las cuentas, y relanza. Más de 5 caídas en un minuto: se deja apagado.
+- **`virtio-red`**: con la llave "dominio-red" usa el transporte por mensajes. Monta el aparato de cero en cada
+  generación (memoria nueva, colas nuevas); las tramas del servicio de red y su canal duran lo que el programa. El
+  bucle de mover tramas es el de siempre, para los dos transportes; ahora además vuelve a escribir cada descriptor
+  antes de dárselo al aparato (en la ventana, el dominio puede cambiarlos).
+- **El /init del dominio** (`caja-linux/dominios/dominio_red.c`, sin biblioteca C): espera la e1000 y `/dev/uio0`,
+  levanta la tarjeta, ofrece la red con su MAC, dice "listo" con su reloj y su memoria, y pasa tramas entre el socket
+  de paquetes y las colas. Comprueba direcciones, largos y cadenas de lo que lee en la ventana.
+- **La e1000 y sus puertos**: el controlador de Linux de la 82540EM hace el reinicio por la BAR de puertos (la 1);
+  sin ella, su primera escritura cayó fuera y el kernel del dominio entró en pánico (el vigilante lo relanzó 6 veces y
+  lo dejó apagado, como debe). Esa BAR es otra puerta a los mismos registros (IOADDR e IODATA, documentado en el manual
+  de la familia 8254x), así que el servicio la emula sobre la BAR 0 (`PuertosE1000`). Es propio de esta tarjeta y de
+  este paso.
+- **Las imágenes** van fuera de git: `tools/dominio_red.py preparar` compila el kernel (tinyconfig, `comun.config`,
+  `arm64.config` y `paso.config`: e1000, `DMA_RESTRICTED_POOL`, UIO y `/dev/mem`) y el initramfs en
+  `~/recuperar/geosian-7d/dominio-red/`. En la imagen de DashOS van juntos en un objeto ("dominio-linux"): un programa
+  nace con 8 llaves como mucho.
+
+### Lo comprobado antes de escribir el servicio
+
+En QEMU solo, con un árbol de `virt` cambiado a mano (`tools/dominio_red.py` hace lo mismo): `uio_pdrv_genirq` con
+`of_id=dashos,canal-dominio` en la línea del kernel engancha el nodo y da `/dev/uio0`; `/dev/mem` proyecta una zona de
+`reserved-memory` dentro de la RAM y los accesos desalineados funcionan (memoria normal); el `memory-region` en el nodo
+del PCIe hace que la e1000 use la `restricted-dma-pool` ("assigned reserved memory node").
