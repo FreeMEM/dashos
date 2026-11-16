@@ -16,8 +16,8 @@
 //!
 //! Seguridad (S6b): la ficha es de Ana (1000) con el derecho de repartir. Se cede a sí mismo sus raíces, en los huecos de
 //! cada volumen del protocolo (`RAIZ_*`, paso 2 de las asignaciones): el disco solo para leer (1, `SYS:`), `C` para leer
-//! y escribir (2, `Home:`, provisional como en el Workbench), su `RAM:` (3) y `Work:` (4), y el cajón de la caja Amiga
-//! (5). Los caminos se escriben como en el Amiga: `SYS:Programas`, `Home:Privado/nota.txt`. Solo va por ellas, por asas y un nombre cada vez; los nombres raros ni se enseñan ni se abren
+//! y escribir (2, `Home:`, provisional como en el Workbench), `Work:` (4) y el cajón de la caja Amiga (5). `RAM:` (3)
+//! es el volumen en memoria de la sesión: se lo pone `sesiones` al entrar su usuario. Los caminos se escriben como en el Amiga: `SYS:Programas`, `Home:Privado/nota.txt`. Solo va por ellas, por asas y un nombre cada vez; los nombres raros ni se enseñan ni se abren
 //! (`explorador/logica.rs`). Copiar es leer y escribir con sus permisos: el servicio no hace nada que su ficha no deje.
 //!
 //! Llaves: 1 el canal "ventanas", 2 "archivos", 3 "sesiones" (lanzar y saber quién está) y 4 su canal "explorador",
@@ -226,8 +226,9 @@ impl Servicio {
         Resp { e: i32::from_le_bytes(r[0..4].try_into().unwrap()), asa: u32::from_le_bytes(r[4..8].try_into().unwrap()), a: u64_en(8), b: u64_en(16), c: u64_en(24) }
     }
 
-    /// Se cede a sí mismo sus raíces (S6b, capa 2): el estado de cada una.
-    fn ceder_raices(&self, c: &mut Cliente) -> [i32; 5] {
+    /// Se cede a sí mismo sus raíces (S6b, capa 2): el estado de cada una. `RAM:` no: es el volumen en memoria de la
+    /// sesión, y su raíz se la pone `sesiones` cuando entra su usuario.
+    fn ceder_raices(&self, c: &mut Cliente) -> [i32; 4] {
         let mut ceder = |camino: &[u8], derechos: u64, hueco: u32| {
             let r = self.pedir_una(c, a::BUSCAR, 0, 0, 0, camino);
             if r.e != a::BIEN {
@@ -240,7 +241,6 @@ impl Servicio {
         [
             ceder(b"", 4, RAIZ_SISTEMA),
             ceder(b"C", 4 | 2, RAIZ_HOME),
-            ceder(b"Estado/RAM/Ana", 4 | 2, RAIZ_RAM),
             ceder(s::CAMINO_WORK.as_bytes(), 4 | 2, RAIZ_WORK),
             ceder(CAMINO_AMIGA, 4 | 2, RAIZ_AMIGA),
         ]
@@ -2178,8 +2178,8 @@ pub fn preparar(app: &mut App) {
 }
 
 /// Paso 2 de las asignaciones: pide su tabla de nombres a `sesiones` y mira que los caminos con nombre llevan donde
-/// deben, por sus capas: `C:` a `SYS:C` (no hay `Home:C`), `LIBS:` y `ENVARC:` a `SYS:`, `T:` a `RAM:T`, `Programas:`
-/// a `SYS:Programas`; que un camino que sube no vale; que por un nombre no se abre lo de Carla; y que un nombre que no
+/// deben, por sus capas: `C:` a `SYS:C` (no hay `Home:C`), `LIBS:` y `ENVARC:` a `SYS:`, `Programas:` a `SYS:Programas`;
+/// que `T:` (`RAM:T`) no existe todavía, porque `RAM:` es de la sesión y aún no ha entrado nadie; que un camino que sube no vale; que por un nombre no se abre lo de Carla; y que un nombre que no
 /// está deja paso a lo de siempre.
 fn comprobar_nombres(app: &mut App) {
     match dashos::asignaciones::pedir_tabla(SESIONES) {
@@ -2193,7 +2193,7 @@ fn comprobar_nombres(app: &mut App) {
     };
     let casos = ["C:grande.txt", "LIBS:", "ENVARC:Sys", "T:", "Programas:hola", "Home:../DeCarla", "SYS:/Libs", "Nada:x", "Amiga:", "SYS:DeCarla"];
     let quiere = [
-        "SYS:C/grande.txt", "SYS:Libs", "SYS:Prefs/Env-Archive/Sys", "RAM:T", "SYS:Programas/hola", "ese camino no vale", "ese camino no vale", "sin ese nombre",
+        "SYS:C/grande.txt", "SYS:Libs", "SYS:Prefs/Env-Archive/Sys", "no existe en ninguna de sus capas", "SYS:Programas/hola", "ese camino no vale", "ese camino no vale", "sin ese nombre",
         "sin ese nombre", "SYS:DeCarla",
     ];
     let dan: Vec<String> = casos.iter().map(|c| ver(app, c)).collect();
@@ -2320,8 +2320,8 @@ fn principal() -> u64 {
     };
     let raices = sv.ceder_raices(&mut c);
     println!(
-        "  [explorador] raíces: SYS: solo para leer {}, Home: {}, RAM: {}, Work: {}, Amiga {}; ventana del servicio de {} KB",
-        raices[0], raices[1], raices[2], raices[3], raices[4], sv.tam / 1024
+        "  [explorador] raíces: SYS: solo para leer {}, Home: {}, Work: {}, Amiga {}; RAM: la pone sesiones al entrar; ventana del servicio de {} KB",
+        raices[0], raices[1], raices[2], raices[3], sv.tam / 1024
     );
     if raices[0] != a::BIEN || raices[1] != a::BIEN {
         return 5;

@@ -417,16 +417,130 @@ fn alta_archivos(pid: u64, uid: u32, gid: u32, dir: &[u8], cuenta: Option<&[u8]>
     if let Some(c) = cuenta {
         let c = &c[..c.len().min(16)];
         raiz(RAIZ_HOME, 6, c, b"");
-        // Paso 2 de las asignaciones: su `RAM:` y `Work:` (provisionales, cajones del disco; si no están, archivos no
-        // da esa raíz y los nombres que pasan por ella no resuelven).
-        let mut ram = [0u8; 32];
-        let l = CAMINO_RAM.len();
-        ram[..l].copy_from_slice(CAMINO_RAM.as_bytes());
-        ram[l..l + c.len()].copy_from_slice(c);
-        raiz(RAIZ_RAM, 6, b"", &ram[..l + c.len()]);
+        // Su `RAM:`: el volumen en memoria de su sesión (la raíz entera), que `sesiones` crea al entrar. Y `Work:`
+        // (provisional, un cajón del disco). Si no están, archivos no da esa raíz y los nombres que pasan por ella no
+        // resuelven.
+        let mut ram = [dashos::protocolo::archivos::VOLUMEN_RAM; 5];
+        ram[1..].copy_from_slice(&uid.to_le_bytes());
+        raiz(RAIZ_RAM, 6, &ram, b"");
         raiz(RAIZ_WORK, 6, b"", CAMINO_WORK.as_bytes());
     }
     dashos::canal_escribir(ARCHIVOS_ALTAS, &m[..o], &[]);
+}
+
+/// `RAM:` en memoria (docs/bitacoras/asignaciones.md): lo que mide como mucho el de una sesión. La 32.ª parte de la
+/// memoria de la máquina, entre 16 y 256 MB, en megas enteros (32 MB con 1 GB, 128 con 4). Vacío no ocupa: es un tope.
+/// Pendiente del usuario: que sea un ajuste.
+fn tope_ram() -> usize {
+    let ram = (dashos::medir(5, 0).max(0) as usize) << 12;
+    ((ram / 32).clamp(16 << 20, 256 << 20) >> 20) << 20
+}
+
+/// Lo que el grupo de una sesión puede tener cobrado además de las páginas de su `RAM:`: la lista de páginas del
+/// objeto disperso (8 bytes por página) y el grupo en sí.
+fn margen_ram(tope: usize) -> u64 {
+    (tope as u64 / 4096) * 8 + 64 * 1024
+}
+
+/// Una orden de los volúmenes en memoria al servicio de archivos (sin marca, como el alta), con `llave` delante de la
+/// de la respuesta si la hay: (estado, a, b) de la respuesta. Sin respuesta en 5 s, -1.
+fn orden_ram(m: &[u8], llave: Option<u32>) -> (i32, u64, u64) {
+    let (lectura, suyo) = dashos::canal_crear();
+    let llaves = [llave.unwrap_or(suyo), suyo];
+    let llaves = if llave.is_some() { &llaves[..] } else { &llaves[..1] };
+    let mut r = [0u8; 32];
+    let leido = if dashos::canal_escribir(ARCHIVOS_ALTAS, m, llaves) == 0 {
+        dashos::canal_leer_plazo(lectura, &mut r, &mut [], 5_000_000).0
+    } else {
+        // No salió: las llaves siguen aquí.
+        dashos::cerrar(suyo);
+        if let Some(l) = llave {
+            dashos::cerrar(l);
+        }
+        -1
+    };
+    dashos::cerrar(lectura);
+    if leido != 32 {
+        return (-1, 0, 0);
+    }
+    (i32::from_le_bytes(r[0..4].try_into().unwrap()), u64::from_le_bytes(r[8..16].try_into().unwrap()), u64::from_le_bytes(r[16..24].try_into().unwrap()))
+}
+
+/// La cabecera de una orden de los volúmenes en memoria: la orden, la sesión (el usuario) y de quién es lo que se haga.
+fn cabecera_ram(orden: u32, uid: u32, gid: u32) -> [u8; 232] {
+    let mut m = [0u8; 232];
+    m[0..4].copy_from_slice(&orden.to_le_bytes());
+    m[4..8].copy_from_slice(&uid.to_le_bytes());
+    m[8..12].copy_from_slice(&uid.to_le_bytes());
+    m[12..16].copy_from_slice(&gid.to_le_bytes());
+    m
+}
+
+/// `RAM_COPIAR`: al cajón `destino` del `RAM:` de `uid`, lo que hay en `origen` del volumen `vol` del disco (vacío, el
+/// principal); con `solo_cajon`, solo se crea el cajón. (estado, ficheros copiados).
+fn copiar_a_ram(uid: u32, vol: &[u8], origen: &[u8], destino: &[u8], solo_cajon: bool) -> (i32, u64) {
+    use dashos::protocolo::archivos as a;
+    let mut m = cabecera_ram(a::RAM_COPIAR, uid, uid);
+    let vol = &vol[..vol.len().min(16)];
+    m[16..20].copy_from_slice(&[vol.len() as u8, origen.len() as u8, destino.len() as u8, solo_cajon as u8]);
+    let mut o = a::CABECERA;
+    for parte in [vol, origen, destino] {
+        m[o..o + parte.len()].copy_from_slice(parte);
+        o += parte.len();
+    }
+    let (e, ficheros, _) = orden_ram(&m[..o], None);
+    (e, ficheros)
+}
+
+/// Al entrar `cuenta` (el usuario `uid`): el grupo de recursos de su sesión y, cobrado a él, su `RAM:`, un volumen en
+/// memoria que crea el servicio de archivos sobre un objeto de memoria disperso; con `T` (`T:`) y `Env` (`ENV:`), que es
+/// una copia de `ENVARC:`: lo de fábrica (`SYS:Prefs/Env-Archive`) y, encima, lo suyo (`Home:Prefs/Env-Archive`). A los
+/// programas del escritorio que son suyos se les da la raíz. Devuelve la llave del grupo (0 si no se pudo: entra sin
+/// `RAM:`, y se dice).
+fn ram_entrar(uid: u32, cuenta: &str, fichas: &[Option<Ficha>], desde_us: u64) -> u32 {
+    use dashos::protocolo::archivos as a;
+    let t0 = dashos::ahora_us();
+    let tope = tope_ram();
+    let g = dashos::grupo_crear(tope as u64 + margen_ram(tope));
+    let m = if g > 0 { dashos::memoria_dispersa(tope, g as u32) } else { g };
+    let (e, _, _) = if m > 0 { orden_ram(&cabecera_ram(a::RAM_CREAR, uid, uid)[..a::CABECERA], Some(m as u32)) } else { (m as i32, 0, 0) };
+    if e != a::BIEN {
+        println!("  [sesiones] RAM: de {}: no se crea ({}): entra sin RAM:, T: ni ENV:", cuenta, e);
+        if g > 0 {
+            dashos::cerrar(g as u32);
+        }
+        return 0;
+    }
+    let t_creada = dashos::ahora_us();
+    let (e_t, _) = copiar_a_ram(uid, b"", b"", b"T", true);
+    let (e_fabrica, de_fabrica) = copiar_a_ram(uid, b"", b"Prefs/Env-Archive", b"Env", false);
+    let (e_suyo, suyos) = copiar_a_ram(uid, cuenta.as_bytes(), b"Prefs/Env-Archive", b"Env", false);
+    // El escritorio (Workbench, explorador) nace antes de que entre nadie: su raíz de `RAM:` llega ahora.
+    for f in fichas.iter().flatten().filter(|f| f.uid == uid && es(f, CEDEN_RAICES)) {
+        let mut r = cabecera_ram(a::RAM_RAIZ, uid, uid);
+        r[8..16].copy_from_slice(&f.marca.to_le_bytes());
+        r[16] = RAIZ_RAM;
+        r[17] = 6;
+        orden_ram(&r[..a::CABECERA], None);
+    }
+    let ahora = dashos::ahora_us();
+    println!(
+        "  [sesiones] RAM: de {}: en memoria, hasta {} MB; T: {}, ENV: copiado de ENVARC: ({} de fábrica {}, {} suyos {}); ocupa {} KB, cobrados al grupo de su sesión",
+        cuenta, tope >> 20, e_t, de_fabrica, e_fabrica, suyos, e_suyo, dashos::grupo_uso(g as u32).1 / 1024
+    );
+    println!("  [sesiones] RAM: de {}: creada en {} µs y ENV: en {} µs; entrar, {} µs en total", cuenta, t_creada - t0, ahora - t_creada, ahora - desde_us);
+    g as u32
+}
+
+/// Al salir: el `RAM:` de la sesión se destruye con todo lo que tenga, y su grupo con él.
+fn ram_salir(uid: u32, cuenta: &str, grupo: u32) {
+    use dashos::protocolo::archivos as a;
+    let cobrado = dashos::grupo_uso(grupo).1;
+    let (e, ocupaba, _) = orden_ram(&cabecera_ram(a::RAM_QUITAR, uid, uid)[..a::CABECERA], None);
+    let queda = dashos::grupo_uso(grupo).1;
+    dashos::grupo_matar(grupo);
+    dashos::cerrar(grupo);
+    println!("  [sesiones] RAM: de {}: destruida al salir ({}): ocupaba {} KB; su grupo pasa de {} KB cobrados a {}", cuenta, e, ocupaba / 1024, cobrado / 1024, queda / 1024);
 }
 
 /// Las asignaciones con que empieza un proceso del usuario `uid` que no las hereda de nadie: las de la sesión (S4b) si
@@ -922,6 +1036,8 @@ fn principal() -> u64 {
     // Las últimas bajas, para decir cuándo vuelve un servicio relanzado por `inicio`.
     // Los usuarios con la sesión abierta (U2/U3): solo como ellos puede `guardian` lanzar algo.
     let mut abiertas = [0u32; 8];
+    // El grupo de recursos de cada sesión abierta (en el mismo hueco que en `abiertas`), al que se cobra su `RAM:`.
+    let mut grupos_sesion = [0u32; 8];
     // U6: el usuario de la sesión de delante (0: nadie).
     let mut activa = 0u32;
     // U6, paso 2: las llaves de los que siguen las sesiones y lo último que se les dijo de quién está detrás.
@@ -1123,6 +1239,7 @@ fn principal() -> u64 {
                     dashos::canal_escribir(respuesta, &r[..8 + ENTRADA_MEMORIA * i], &[]);
                 }
                 ENTRAR | SALIR | VOLVER => {
+                    let t_entrar = dashos::ahora_us();
                     // Solo de `guardian` (U3): nadie más abre ni cierra el volumen de un usuario.
                     let guardian = yo.is_some_and(|f| es(&f, GUARDIANES));
                     let (nl, cl) = (u32_en(4) as usize, u32_en(8) as usize);
@@ -1161,11 +1278,23 @@ fn principal() -> u64 {
                         if let Some(&(uid, _)) = CUENTAS.iter().find(|c| c.1.as_bytes() == quien.as_bytes()) {
                             match u32_en(0) {
                                 ENTRAR if !abiertas.contains(&uid) => {
-                                    if let Some(x) = abiertas.iter_mut().find(|x| **x == 0) {
-                                        *x = uid;
+                                    if let Some(i) = abiertas.iter().position(|x| *x == 0) {
+                                        abiertas[i] = uid;
+                                        // Su `RAM:`, con `T:` y `ENV:`, antes de que corra nada suyo.
+                                        grupos_sesion[i] = ram_entrar(uid, quien, &fichas, t_entrar);
                                     }
                                 }
-                                SALIR => abiertas.iter_mut().filter(|x| **x == uid).for_each(|x| *x = 0),
+                                SALIR => {
+                                    for i in 0..abiertas.len() {
+                                        if abiertas[i] == uid {
+                                            abiertas[i] = 0;
+                                            if grupos_sesion[i] != 0 {
+                                                ram_salir(uid, quien, grupos_sesion[i]);
+                                                grupos_sesion[i] = 0;
+                                            }
+                                        }
+                                    }
+                                }
                                 _ => {}
                             }
                             // U6: quién está delante. Entrar o volver con la contraseña buena pone delante esa sesión (si

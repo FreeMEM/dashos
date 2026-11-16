@@ -117,9 +117,7 @@ La capa de paquetes (`Paquetes:*/C`…) no está: espera a S8, que dirá qué pa
 
 ### Lo provisional
 
-- **`RAM:` es un cajón del disco**, `Estado/RAM/<cuenta>`, no memoria: DashOS aún no tiene disco en memoria. Lo de
-  una sesión no lo ve otra (cajón 0700 de su dueño), pero no se borra al salir. Pendiente: un volumen en memoria en
-  el servicio de archivos.
+- ~~`RAM:` es un cajón del disco~~. Ya no: es un volumen en memoria por sesión (abajo, "`RAM:` en memoria").
 - **`Work:` es el cajón `Work` del disco principal**, no un disco aparte. Igual que `Estado:` y `Programas:`.
 - **`Home:` del escritorio** (Workbench, explorador) sigue siendo `SYS:C`, como hasta ahora; el de lo que lanza
   `sesiones` es el volumen cifrado del usuario. La caja Amiga lee sus ajustes de `SYS:C/Prefs` (`caja/pegamento`),
@@ -132,7 +130,7 @@ La capa de paquetes (`Paquetes:*/C`…) no está: espera a S8, que dirá qué pa
 2. **Los hijos heredan las asignaciones cambiadas del padre** (Plan 9) y no las de la sesión. Un programa que se
    cambie `LIBS:` se lo cambia también a lo que lance. Es lo que dice S4b; se apunta porque cambia lo que ve un
    programa lanzado desde otro.
-3. **`RAM:` en disco** hasta que haya un volumen en memoria (arriba).
+3. ~~`RAM:` en disco~~: hecha en memoria (abajo, "`RAM:` en memoria", con sus propias decisiones pendientes).
 
 ## Bitácora
 
@@ -238,9 +236,9 @@ ventana va a `Home:Viaje` escribiendo el camino con su nombre, y la primera a `S
 ## Lo que falta del todo
 
 - La capa de paquetes (`Paquetes:*/C`…): espera a S8.
-- `RAM:` en memoria y `Work:` como disco aparte (hoy cajones del disco).
+- `Work:` como disco aparte (hoy, un cajón del disco). `RAM:` ya está en memoria.
 - `Home:` del escritorio: hoy `SYS:C`; el de lo que lanza `sesiones` sí es el volumen cifrado.
-- `ENV:` copiado de `ENVARC:` al entrar; `User-Startup` y `WBStartup` por usuario.
+- `User-Startup` y `WBStartup` por usuario. `ENV:` ya se copia de `ENVARC:` al entrar.
 - Perfiles en las fichas: la tabla del perfil encerrado está hecha y probada en el PC, pero ninguna ficha es aún
   "aplicación" o "suelto".
 - Los `.info` de los cajones de `SYS:` y su `Disk.info`.
@@ -248,3 +246,122 @@ ventana va a `Home:Viaje` escribiendo el camino con su nombre, y la primera a `S
 
 `make prueba` bien; `make arranque-virt` bien a la tercera (las dos primeras, la prueba de `SYS:DeCarla` esperaba que
 mirarlo fallara: el servicio deja abrir y mirar un cajón ajeno y niega listarlo; ahora se prueba listando).
+
+## `RAM:` en memoria (rama `ram-volumen`, desde `revision` 41e5b81)
+
+Encargo: la tercera decisión de asignaciones. Que `RAM:` sea un volumen en memoria de verdad, uno por sesión de usuario,
+y sobre él `ENV:` (copiado de `ENVARC:` al entrar) y `T:`.
+
+### Diseño
+
+En tres frases: al entrar un usuario, `sesiones` crea el grupo de recursos de su sesión y, cobrado a él, un objeto de
+memoria disperso (sin páginas) que entrega al servicio de archivos; `archivos` monta encima un DashFS propio cuyo
+"disco" pide una página la primera vez que se escribe un bloque y la devuelve al sistema cuando DashFS lo descarta
+(TRIM); al salir, `sesiones` manda quitarlo y la memoria vuelve entera.
+
+Las piezas:
+
+- **Kernel: memoria dispersa** (llamadas 56 y 57, `docs/referencia/kernel.md`). `memoria_dispersa(tamaño, grupo)` da
+  un objeto de memoria sin ninguna página puesta, cobrado al grupo que se diga (con escribir sobre su llave, como para
+  crear un proceso en él). `memoria_paginas(llave, poner o soltar, primera, cuántas)` pone páginas nuevas a cero
+  (cobradas a ese grupo; se para donde no cabe en su tope) o las suelta (fuera de las proyecciones, TLB vaciadas,
+  devueltas al sistema). Reutiliza lo que ya había para el globo de las máquinas (páginas soltadas de un objeto), con
+  la misma condición: solo con un objeto que no tiene nadie más. Vacío cuesta su lista (8 bytes por página), cobrada
+  también: un objeto de 1 GB vacío no sale gratis. Tocar un hueco es un fallo del programa.
+- **`usuario/src/disco_ram.rs`**: el disco de memoria como `dashfs::Disk`, sin saber de dónde salen las páginas (un
+  rasgo; en DashOS, el objeto disperso; en las pruebas del PC, memoria normal con tope). Un mapa de bits dice qué
+  bloques tienen página; un bloque sin escribir se lee como ceros. Un lote se escribe entero o nada: primero se piden
+  todas las páginas y, si falta una, se devuelven las recién pedidas y se da "lleno". El anillo de cabeceras de DashFS
+  (256 bloques, 1 MB) no ocupa: el disco no se abre nunca por segunda vez, así que solo guarda la última, en una página.
+- **DashFS**: `FileSystem::create_plain`, crear sin `std` (sin cifrar, con el UUID que da quien llama) y ya en modo
+  diferido, para que lo que suelta al crearse también se descarte. Nada más: el TRIM ya lo mandaba (A14).
+- **`archivos`**: su `Fs` es ahora un "mundo": el DashFS del disco y un DashFS en memoria por sesión. Los volúmenes en
+  memoria llevan un bit propio en su número (`VOL_RAM | sesión`), así que asas, raíces, lo recordado y la caché de
+  páginas los distinguen sin cambiar. En ellos cada transacción se cierra en el acto (`durable`): ahí DashFS descarta lo
+  soltado y la memoria vuelve. Cuatro órdenes sin marca, de `sesiones` (`docs/referencia/servicios.md`): crear, quitar,
+  dar la raíz a un cliente y copiar un árbol del disco. Quien crea o escribe recibe "lleno" cuando quedan menos de
+  64 KB además de lo que escribe: siempre se puede borrar. Sin instantáneas ni papelera en `RAM:`.
+- **`sesiones`**: al entrar (sesión nueva), `grupo_crear`, `memoria_dispersa` en ese grupo, crear el volumen, `T`,
+  `Env` con `SYS:Prefs/Env-Archive` y, encima, `Home:Prefs/Env-Archive` (lo del usuario pisa lo de fábrica), y la raíz
+  de `RAM:` para el escritorio (Workbench y explorador nacen antes de que entre nadie). Lo que lanza nace con la raíz 3
+  en el volumen de su sesión. Al salir, quitar el volumen y matar el grupo. Si no se puede crear, el usuario entra
+  igual, sin `RAM:`, y se dice.
+- **Escritorio**: Workbench y explorador ya no se ceden `Estado/RAM/Ana`. El icono de `RAM:` del Workbench sale con la
+  sesión de Ana abierta, como el de `Home:`. El disco de pruebas ya no tiene `Estado/RAM`.
+
+### Por qué dentro de `archivos` y no un servicio aparte
+
+El encargo dejaba elegir. Un servicio de archivos por sesión (otro proceso con el mismo protocolo) aísla por proceso y
+cobra todo a la sesión sin tocar el kernel, pero cada programa tendría dos servicios de archivos: dos llaves, asas que
+hay que saber de cuál son, y la tabla de nombres dejaría de ser "nombre a raíz" (S6b, capa 2). Habría que cambiar
+todos los clientes (la biblioteca de asignaciones, el explorador, el Workbench, la caja Amiga, el runtime de Dash), no
+se podría ceder una asa de `RAM:` como las demás, y cada sesión cargaría con otro proceso y sus cachés. Dentro de
+`archivos`, `RAM:` es una raíz más y ningún programa cambia. Lo que se pierde, que la memoria se cobre sola a la
+sesión, se recupera con el objeto disperso cobrado a su grupo: los datos de `RAM:` se cobran a la sesión; a `archivos`,
+solo sus tablas y lo que DashFS guarda en su montón.
+
+### Pruebas
+
+- **Kernel** (`make prueba`, `grupos` e `hijo`): un objeto de 4 MB en un grupo de 1 MB nace igual y solo cobra su lista;
+  cada página se cobra al ponerla y vuelve al soltarla; puesta otra vez llega a cero; el tope del grupo para el
+  llenado (252 páginas) y una más da `E_MEMORIA`; tramos fuera, 0 o 257 páginas, otra operación, una llave que no es
+  memoria o sin escribir, un grupo sin escribir: rechazado; con una copia de la llave viajando en un mensaje, ni poner
+  ni soltar; un hijo que lee un hueco muere él solo (clase 2); al final el grupo queda a cero.
+- **PC** (`archivos/herramientas`, 6 pruebas con DashFS de verdad sobre el disco de memoria): recién hecho ocupa menos
+  de 12 páginas; mil guardados no gastan el megabyte del anillo; llenar da "lleno", lo escrito sigue entero, lleno del
+  todo se puede borrar y la memoria vuelve; sin memoria a medias (el disco dice 16 MB y hay 1) falla limpio 50 veces
+  sin perder una página; reescribir no crece y recortar devuelve; y lo que no vale (fuera del disco, medio bloque,
+  números que dan la vuelta, descartar lo que no está). En todas, lo puesto es justo lo que DashFS dice usar.
+- **QEMU** (`make arranque-virt`, programa nuevo `Programas/ram`, que `guardian` lanza como Ana y como Carla):
+  - Ana: `ENV:Sys/idioma` trae lo de `ENVARC:`; cambiado en `ENV:`, `ENVARC:` sigue igual. Llena `RAM:` con datos que
+    no se comprimen hasta que da -11 (lleno); escribir en otro fichero, -11; lo de antes se lee y el disco sigue. La
+    memoria libre de la máquina baja lo escrito y, al borrar, vuelve.
+  - Carla, con la sesión de Ana abierta: su `RAM:` tiene 2 entradas (`T` y `Env`); el secreto que Ana dejó en la suya
+    no está, 0 caminos llegan a él por sus 16 raíces, pedir el volumen por nombre da -12 y las órdenes de `sesiones`
+    con la llave de un programa, -1.
+  - Carla sale y entra (`guardian`, sin la pantalla): la huella de `T:` y el cambio de `ENV:` no están; `ENV:` trae
+    ahora su capa (la que guardó en `Home:Prefs/Env-Archive`) encima de la de fábrica; cambiar `ENV:` no toca
+    `ENVARC:` ni `Home:`.
+
+Cambios en lo esperado (`kernel/pruebas/arranque_virt.txt`, con sus programas, en el mismo commit): las líneas de
+raíces del Workbench y del explorador (ya sin `RAM:`; "la pone sesiones al entrar"); en los nombres del explorador,
+`T:` al arrancar "no existe en ninguna de sus capas" (aún no ha entrado nadie); el Workbench dice los iconos de `RAM` y
+`Work` otra vez al abrirse la sesión; y las líneas nuevas de `sesiones`, `ram` y `guardian`. `esperado.txt`: la línea
+de memoria dispersa de `grupos`. El guion `tools/prueba_uefi.sh` no cambia.
+
+### Medido (QEMU `virt`, 2 GB, con otras pruebas corriendo en la máquina)
+
+| Qué | Antes (cajón del disco) | Ahora (en memoria) |
+|---|---|---|
+| Entrar en la sesión (`sesiones`, de recibir la orden a contestar; el volumen ya se abrió una vez) | 0,7 a 1,2 ms | 10 a 15 ms (25 la más lenta): unos 5 de crear el volumen y de 4,5 a 9 de `T` y `ENV:` |
+| Memoria en reposo por sesión abierta | 0 (y cuatro cajones en el disco) | 188 KB cobrados al grupo de la sesión: 60 KB de páginas (15) y 128 KB de la lista del objeto de 64 MB; 200 KB con una capa de `ENVARC:` del usuario |
+| Memoria de `archivos` (lo que le cobra el kernel, con las sesiones de la prueba abiertas) | 36,6 MB | 36,8 MB |
+| Salir | 2,2 a 2,4 ms | sin medir aparte; el grupo de la sesión pasa de 188 o 196 KB a 0 |
+
+Llenar y vaciar (Ana, tope de 64 MB): 65.216 KB escritos en 588 ms (unos 110 MB/s en QEMU) hasta "lleno"; quedan 216 KB
+libres en `RAM:`. La memoria libre de la máquina pasa de 934.004 KB a 870.632 (baja 63.372) y, tras borrar el fichero,
+a 935.852 (vuelven 65.220). Libre en `RAM:`: 65.468 KB antes, 216 llena, 65.436 después.
+
+La entrada es unas diez veces más lenta que antes, en milisegundos: el volumen se crea entero (DashFS nuevo, unas
+cuantas transacciones) y `ENV:` son tres órdenes con sus viajes. No se ha afinado. En una máquina de verdad, abrir el
+volumen cifrado del usuario (Argon2 con su coste normal, no el de prueba) tarda mucho más que esto.
+
+### Pendiente del usuario
+
+1. **El tope de `RAM:`**: la 32.ª parte de la memoria de la máquina, entre 16 y 256 MB (64 MB con 2 GB). Vacía no
+   ocupa. Podría ser un ajuste, o no tener más tope que la memoria libre (como en el Amiga).
+2. **El grupo de la sesión solo tiene su `RAM:`.** Hoy cada programa lanzado va en su grupo propio (64 MB), hermano
+   del de la sesión, no dentro. Que la sesión entera (programas y `RAM:`) tenga un tope común pide que `grupo_crear`
+   admita un padre y decidir ese tope (S4b, "Cupos").
+3. **El escritorio es de Ana** (provisional, de antes): Workbench y explorador reciben la `RAM:` de Ana cuando ella
+   entra. Con Carla delante y Ana detrás, siguen teniendo la de Ana. Se arregla con el escritorio por usuario.
+4. **`ENV:` se copia al entrar y no se guarda al salir**: lo que un programa cambie en `ENV:` se pierde si no lo
+   escribe también en `ENVARC:`, como en el Amiga.
+
+### Lo que queda
+
+- Si `sesiones` se cae y `inicio` la relanza, los volúmenes en memoria de las sesiones abiertas se quedan en `archivos`
+  sin dueño (y las sesiones, perdidas, como hoy).
+- `RAM_COPIAR` salta enlaces y ficheros de más de 4 MB, y baja 16 niveles: de sobra para `ENVARC:`.
+- La caja Amiga tiene su propio `RAM:` (`caja/dos/src/memfs.rs`); no usa este.
+- `User-Startup` y `WBStartup` por usuario, que ya tienen dónde dejar sus cosas (`T:`, `ENV:`).

@@ -519,6 +519,8 @@ fn esperar_fin(pid: u64, max_us: u64) -> bool {
 /// lanza `cambio` como Carla (la espía) y se espera a que acabe; se bloquea la sesión de Carla, Esc, y vuelve Ana. El
 /// testigo, que siguió en marcha detrás, acaba al ver que vuelve a estar delante.
 fn cambio_rapido(preguntas: u32) -> bool {
+    // `RAM:` en memoria: con Ana recién entrada, su prueba (llena su `RAM:` y la vacía, y deja un secreto en ella).
+    let ram_ana = prueba_ram(1000);
     let (e_ana, ana) = lanzar_como("Programas/cambio", 1000);
     println!("  [guardian] U6: lanza cambio como Ana: {} (proceso {})", e_ana, ana);
     // Paso 2: el testigo pide el permiso de plazo (Ana dice que sí); luego, que empiece delante un rato (con su ventana
@@ -541,6 +543,8 @@ fn cambio_rapido(preguntas: u32) -> bool {
             break;
         }
     }
+    // `RAM:` en memoria: Carla, con la sesión de Ana detrás, no llega a la `RAM:` de Ana; deja algo en la suya.
+    let ram_carla = e_carla == 0 && prueba_ram(1001);
     // Carla sigue un rato con su sesión (el guion teclea y pulsa, y captura la pantalla: la ventana de Ana no está).
     dashos::dormir_us(3_000_000);
     println!("  [guardian] U6: se bloquea la sesión de Carla; Esc para volver a la de Ana");
@@ -549,12 +553,52 @@ fn cambio_rapido(preguntas: u32) -> bool {
     let testigo_acaba = e_ana == 0 && esperar_fin(ana, 30_000_000);
     let permisos = si_ana == 1 && no_carla == 1;
     println!("  [guardian] U6: el permiso de plazo de cambio, preguntado como Ana {} y como Carla {}: {}", si_ana, no_carla, if permisos { "bien" } else { "MAL" });
-    let bien = carla && espia_acaba && vuelve && testigo_acaba && permisos;
+    // `RAM:` en memoria: Carla sale y vuelve a entrar; lo que dejó en su `RAM:` no está. Con las contraseñas de las
+    // cuentas de la prueba (las mismas que teclea el guion), sin pasar por la pantalla. Después vuelve Ana delante, con
+    // Carla detrás, como estaba.
+    let mut salir = -13;
+    for _ in 0..20 {
+        salir = sesion_de_prueba(SALIR, "Carla", "");
+        if salir != -13 {
+            break;
+        }
+        dashos::dormir_us(100_000);
+    }
+    let entrar = sesion_de_prueba(ENTRAR, "Carla", "clave de Carla");
+    let ram_otra_vez = salir == 0 && entrar == 0 && prueba_ram(1001);
+    let volver = sesion_de_prueba(VOLVER, "Ana", "clave de Ana");
+    let ram = ram_ana && ram_carla && ram_otra_vez && volver == 0;
+    println!(
+        "  [guardian] RAM: en memoria: la de Ana {}, la de Carla {}; Carla sale {} y entra {}, la nueva {}; vuelve Ana {}: {}",
+        ram_ana, ram_carla, salir, entrar, ram_otra_vez, volver, if ram { "bien" } else { "MAL" }
+    );
+    let bien = carla && espia_acaba && vuelve && testigo_acaba && permisos && ram;
     println!("  [guardian] cambio rápido: Ana, Carla y otra vez Ana: {}", if bien { "bien" } else { "MAL" });
     if !bien {
         println!("  [guardian] U6: entra Carla {}, la espía acaba {}, vuelve Ana {}, el testigo acaba {}", carla, espia_acaba, vuelve, testigo_acaba);
     }
     bien
+}
+
+/// `RAM:` en memoria: lanza su prueba (`Programas/ram`) como el usuario `como` y espera a que acabe (hasta dos minutos:
+/// llenar el `RAM:` de Ana tarda). Lo que comprueba lo dice ella.
+fn prueba_ram(como: u32) -> bool {
+    let (e, p) = lanzar_como("Programas/ram", como);
+    let acaba = e == 0 && esperar_fin(p, 120_000_000);
+    println!("  [guardian] RAM: lanza Programas/ram como el usuario {}: {}, acaba: {}", como, e, acaba);
+    acaba
+}
+
+/// Entrar, volver o salir de una sesión desde la prueba, sin la pantalla: el estado que da `sesiones`.
+fn sesion_de_prueba(orden: u32, usuaria: &str, clave: &str) -> i32 {
+    let mut m = [0u8; 96];
+    let (u, c) = (usuaria.as_bytes(), clave.as_bytes());
+    m[0..4].copy_from_slice(&orden.to_le_bytes());
+    m[4..8].copy_from_slice(&(u.len() as u32).to_le_bytes());
+    m[8..12].copy_from_slice(&(c.len() as u32).to_le_bytes());
+    m[12..12 + u.len()].copy_from_slice(u);
+    m[12 + u.len()..12 + u.len() + c.len()].copy_from_slice(c);
+    pedir(&m[..12 + u.len() + c.len()], &[])
 }
 
 /// S28: lo que se espera de la caja Amiga en la prueba: una pregunta de cada virus de laboratorio que cambia ficheros

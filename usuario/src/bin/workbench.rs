@@ -13,7 +13,7 @@
 //!
 //! Raíces (S6b): la ficha es de Ana (1000) con el derecho de repartir, como el selector. Al empezar se cede a sí mismo
 //! las raíces de sus volúmenes, en los mismos huecos que da `sesiones` (`RAIZ_*` del protocolo): el disco solo para leer
-//! (`SYS:`), `C` para leer y escribir (`Home:`), su `RAM:` y `Work:`; y solo va por ellas. Los iconos del escritorio son
+//! (`SYS:`), `C` para leer y escribir (`Home:`) y `Work:`, y `sesiones` le pone `RAM:` al entrar su usuario; y solo va por ellas. Los iconos del escritorio son
 //! los volúmenes de su tabla de nombres (paso 2 de las asignaciones, `ASIGNACIONES` de `sesiones`), con su nombre. `Home`
 //! es `C` de forma provisional: el `Home:` de verdad es el volumen cifrado de Ana, y abrir un volumen por su nombre
 //! pide el derecho de administrar; tendrá que cedérselo `sesiones` al entrar. El icono de `Home` sale solo mientras la
@@ -182,8 +182,9 @@ impl Archivos {
     }
 
     /// Se cede a sí mismo sus raíces (S6b, capa 2): el disco solo para leer, como `SYS:`; `C` para leer y escribir, como
-    /// `Home:`; y su `RAM:` y `Work:` (provisionales, cajones del disco). El estado de cada una.
-    fn ceder_raices(&self, c: &mut Cliente) -> [i32; 4] {
+    /// `Home:`; y `Work:` (provisional, un cajón del disco). El estado de cada una. `RAM:` no se la cede: es el volumen
+    /// en memoria de la sesión, y su raíz se la pone `sesiones` cuando entra su usuario (y se va cuando sale).
+    fn ceder_raices(&self, c: &mut Cliente) -> [i32; 3] {
         let mut ceder = |camino: &[u8], derechos: u64, hueco: u32| {
             let r = self.pedir_una(c, a::BUSCAR, 0, 0, 0, camino);
             if r.e != a::BIEN {
@@ -193,7 +194,7 @@ impl Archivos {
             self.pedir_una(c, a::CERRAR, r.asa, 0, 0, b"");
             e
         };
-        [ceder(b"", 4, RAIZ_SISTEMA), ceder(b"C", 4 | 2, RAIZ_HOME), ceder(b"Estado/RAM/Ana", 4 | 2, RAIZ_RAM), ceder(s::CAMINO_WORK.as_bytes(), 4 | 2, RAIZ_WORK)]
+        [ceder(b"", 4, RAIZ_SISTEMA), ceder(b"C", 4 | 2, RAIZ_HOME), ceder(s::CAMINO_WORK.as_bytes(), 4 | 2, RAIZ_WORK)]
     }
 
     fn pedir_una(&self, c: &mut Cliente, orden: u32, asa: u32, x: u64, y: u64, nombre: &[u8]) -> Resp {
@@ -710,8 +711,9 @@ fn volumenes_de_la_tabla() -> Vec<(&'static str, u32)> {
 
 impl Escritorio {
     fn colocar(&mut self) {
-        // Los volúmenes de su tabla de nombres, en su orden; `Home:`, solo con la sesión de Ana abierta.
-        let mut v: Vec<Icono> = self.volumenes.iter().filter(|&&(_, r)| r != RAIZ_HOME || self.home).map(|&(nombre, raiz)| Icono { nombre, raiz, r: Rect::default() }).collect();
+        // Los volúmenes de su tabla de nombres, en su orden; `Home:` y `RAM:` (que es de la sesión: sin ella no
+        // existe), solo con la sesión de Ana abierta.
+        let mut v: Vec<Icono> = self.volumenes.iter().filter(|&&(_, r)| (r != RAIZ_HOME && r != RAIZ_RAM) || self.home).map(|&(nombre, raiz)| Icono { nombre, raiz, r: Rect::default() }).collect();
         if v.is_empty() {
             v.push(Icono { nombre: "SYS", raiz: RAIZ_SISTEMA, r: Rect::default() });
         }
@@ -876,8 +878,14 @@ impl App {
 
     fn avisar_home(&self) {
         match self.esc.iconos.iter().find(|ic| ic.raiz == RAIZ_HOME) {
-            Some(ic) => println!("  [workbench] icono de Home en ({}, {})", ic.r.x + ic.r.w / 2, ic.r.y + 36),
-            None => println!("  [workbench] sin icono de Home: la sesión de Ana no está abierta"),
+            Some(ic) => {
+                println!("  [workbench] icono de Home en ({}, {})", ic.r.x + ic.r.w / 2, ic.r.y + 36);
+                // Con la sesión llega también `RAM:` (su volumen en memoria), y los de debajo cambian de sitio.
+                for ic in self.esc.iconos.iter().skip(1).filter(|ic| ic.raiz != RAIZ_HOME) {
+                    println!("  [workbench] icono de {} en ({}, {})", ic.nombre, ic.r.x + ic.r.w / 2, ic.r.y + 36);
+                }
+            }
+            None => println!("  [workbench] sin icono de Home ni de RAM: la sesión de Ana no está abierta"),
         }
     }
 
@@ -1637,8 +1645,8 @@ fn principal() -> u64 {
         println!("  [workbench] sin servicio de archivos");
         return 4;
     };
-    let [sistema, home, ram, work] = ar.ceder_raices(&mut c);
-    println!("  [workbench] raíces: SYS: solo para leer {}, Home: {}, RAM: {}, Work: {}", sistema, home, ram, work);
+    let [sistema, home, work] = ar.ceder_raices(&mut c);
+    println!("  [workbench] raíces: SYS: solo para leer {}, Home: {}, Work: {}; RAM: la pone sesiones al entrar", sistema, home, work);
     if sistema != a::BIEN || home != a::BIEN {
         return 5;
     }

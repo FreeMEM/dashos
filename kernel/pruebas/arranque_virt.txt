@@ -270,7 +270,7 @@ DashOS en marcha con 4 núcleos.
 # S10: el Workbench de Ana. Sus raíces: el disco solo para leer (SYS:) y `C` (Home, provisional). No lista el cajón
 # de `sesiones` ni el de Carla, no abre sus ficheros, no crea por SYS: ni sube por encima de Home; y los nombres con
 # '|' o ':' no salen.
-~│   [workbench] raíces: SYS: solo para leer 0, Home: 0, RAM: 0, Work: 0
+~│   [workbench] raíces: SYS: solo para leer 0, Home: 0, Work: 0; RAM: la pone sesiones al entrar
 ~│   [workbench] lo ajeno: listar el cajón de sesiones -12, abrir su registro -12; listar DeCarla -12, abrir su fichero -12; crear por SYS: -12; ".." desde Home: no se abre: bien
 ~│   [workbench] nombres raros: 1 sin enseñar en Home:, 1 en SYS:Imagenes; "..", "a/b", "x:y" no se buscan: bien
 # Sus iconos, en una capa de abajo (una columna a la derecha, bajo la barra); el de Home, con la sesión de Ana abierta.
@@ -283,11 +283,11 @@ DashOS en marcha con 4 núcleos.
 # El explorador de archivos (como Nautilus): de Ana, con sus raíces (SYS: para leer, Home y el cajón de la caja
 # Amiga). Lo de Carla no se lista ni se copia, no sube con "..", no crea por SYS:, ni él ni el servicio aceptan "." y
 # ".." como nombres, y nada se mete dentro de sí mismo. Crea su papelera en Home.
-~│   [explorador] raíces: SYS: solo para leer 0, Home: 0, RAM: 0, Work: 0, Amiga 0; ventana del servicio de 256 KB
+~│   [explorador] raíces: SYS: solo para leer 0, Home: 0, Work: 0, Amiga 0; RAM: la pone sesiones al entrar; ventana del servicio de 256 KB
 ~│   [explorador] lo ajeno: listar DeCarla Some(-12), abrir su carta -12, copiarla no; ".." desde Home: no; crear por SYS: -12; renombrar a ".." -1 (servicio -1), crear ".." -1; Privado dentro de sí no (servicio
 ~): bien
 ~│   [explorador] papelera en Home:.Papelera: lista
-~│   [explorador] nombres: C:grande.txt = SYS:C/grande.txt; LIBS: = SYS:Libs; ENVARC:Sys = SYS:Prefs/Env-Archive/Sys; T: = RAM:T;
+~│   [explorador] nombres: C:grande.txt = SYS:C/grande.txt; LIBS: = SYS:Libs; ENVARC:Sys = SYS:Prefs/Env-Archive/Sys; T: = no existe en ninguna de sus capas;
 ~Amiga: = sin ese nombre; SYS:DeCarla = SYS:DeCarla; listar SYS:DeCarla Some(-12): bien
 ~│   [explorador] listo: espera a que el Workbench le pida abrir algo
 # Con el ratón y el teclado (el guion, al final): el doble clic en el icono de SYS: del Workbench lo abre; DeCarla
@@ -421,7 +421,18 @@ DashOS en marcha con 4 núcleos.
 ~│   [guardian] se bloquea la sesión de Carla
 ~│   [guardian] pantalla de bloqueo en pantalla
 ~│   [guardian] desbloqueado con la contraseña buena tras 1 mala: bien
+# `RAM:` en memoria (docs/bitacoras/asignaciones.md): al entrar, `sesiones` crea el grupo de la sesión y, cobrado a él,
+# su `RAM:`: un DashFS que el servicio de archivos monta sobre un objeto de memoria disperso, con `T:` y con `ENV:`
+# copiado de `ENVARC:`.
+~│   [sesiones] RAM: de Ana: en memoria, hasta 
 ~│   [guardian] entra Ana tras 1 intento malo: bien
+# Su prueba (`Programas/ram`, como Ana): `ENV:` trae lo de `ENVARC:` y cambiarlo no toca `ENVARC:`; llena `RAM:` hasta
+# el tope con datos que no se comprimen y da "lleno" sin tumbar nada (lo de antes se lee, el disco sigue); la memoria
+# libre de la máquina baja lo escrito y, al borrar, vuelve.
+~│   [ram] Ana: RAM: con T y Env true; ENV:Sys/idioma trae lo de ENVARC: true; cambiado en ENV: (0), ENVARC: sigue igual true: bien
+~(lleno, -11); escribir en otro -11; lo de antes se lee true y el disco también (0): bien
+~│   [ram] Ana: memoria libre de la máquina: 
+~│   [ram] Ana: ENV: de ENVARC:, RAM: llena sin tumbar nada y la memoria que vuelve al borrar: bien
 # U6: el cambio rápido de usuario (docs/diseño/U6-cambio-rapido.md). Con Ana dentro, `guardian` lanza `cambio` como
 # ella y bloquea su sesión; en la pantalla, Esc, y entra Carla con Ana detrás. El `cambio` de Carla no ve ni mata los
 # procesos de Ana, no es Ana ante `sesiones` y no llega a su volumen ni a su fichero. El de Ana sigue en marcha detrás,
@@ -444,6 +455,10 @@ DashOS en marcha con 4 núcleos.
 # El permiso que Ana concedió a `cambio` no vale para el de Carla: se le pregunta a ella (y dice que no).
 ~│   [cambio] Carla: pide plazo (concedido a cambio como Ana) -2: bien
 ~│   [cambio] Carla delante (1), con Ana detrás: nada de Ana a su alcance: bien
+# `RAM:` en memoria, hostil: Carla, con la sesión de Ana abierta, tiene otra `RAM:`: el secreto que Ana dejó en la suya
+# no está ni se llega a él por ninguna raíz ni pidiendo el volumen, y las órdenes de `sesiones` no son para un programa.
+~│   [ram] Carla: su RAM: tiene 2 entradas (T y Env); el secreto de Ana: -2 en la suya, 0 caminos llegan a él; pedir el volumen [-12, -12, -12]; órdenes de sesiones [-1, -1, -1, -1]: bien
+~(ENV: sigue como al entrar: true): bien
 ~│   [guardian] cambio de usuario: entra Ana (0 intentos malos); Carla sigue detrás
 ~│   [sesiones] delante, la sesión de Ana; detrás, 1
 # Detrás, a la ventana de Ana no le llegó nada del teclado ni del ratón (el guion tecleaba y pulsaba en la sesión de
@@ -454,6 +469,11 @@ DashOS en marcha con 4 núcleos.
 ~│   [compositor] sesiones de detrás: [1001]
 ~│   [cambio] Ana vuelve delante: su fichero sigue, con lo escrito detrás: bien
 ~│   [guardian] U6: el permiso de plazo de cambio, preguntado como Ana 1 y como Carla 1: bien
+# `RAM:` en memoria: Carla sale (su `RAM:` se destruye y su memoria vuelve) y entra otra vez: lo que dejó no está, y
+# `ENV:` trae ahora su capa de `ENVARC:` (la que guardó en `Home:`) encima de la de fábrica.
+~│   [sesiones] RAM: de Carla: destruida al salir (0): ocupaba 
+~│   [ram] Carla, tras salir y entrar: RAM: nueva (2 entradas, T:huella -2, ENV:Sys/teclado otra vez de fábrica true); ENV: con su capa encima true; cambiar ENV: no toca ENVARC: ni Home: true; limpia true: bien
+~│   [guardian] RAM: en memoria: la de Ana true, la de Carla true; Carla sale 0 y entra 0, la nueva true; vuelve Ana 0: bien
 ~│   [guardian] cambio rápido: Ana, Carla y otra vez Ana: bien
 ~│   [guardian] U6: retirar a cambio el permiso de plazo: 0; a pide el de eco: 
 ~│   [guardian] S28: retirar a caja-amiga el permiso ejec:actualiza: 0

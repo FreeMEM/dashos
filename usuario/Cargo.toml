@@ -275,6 +275,13 @@ path = "src/bin/cambio.rs"
 test = false
 required-features = ["ventanas", "sonido"]
 
+# `RAM:` en memoria: la prueba (en el disco; la lanza `guardian` como Ana y como Carla).
+[[bin]]
+name = "ram"
+path = "src/bin/ram.rs"
+test = false
+required-features = ["monton"]
+
 [[bin]]
 name = "ventana-a"
 path = "src/bin/ventana_a.rs"

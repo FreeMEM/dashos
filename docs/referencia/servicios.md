@@ -241,6 +241,23 @@ fuera de sus raíces (no la ve ni la vacía); si falta, se crea, suya y 0700. Ho
 `sesiones` cuando acaba algo que lanzó): se sueltan la sesión de esa marca (bytes 8-15), sus asas y raíces, y su alta.
 Las fichas provisionales están en `usuario/src/bin/inicio.rs` (`FICHAS`). Con ellas:
 
+**`RAM:` en memoria** (`bitacoras/asignaciones.md`). Cada sesión de usuario tiene un volumen en memoria: un DashFS
+propio sobre un "disco" de páginas que se piden la primera vez que se escribe un bloque y vuelven al sistema cuando
+DashFS lo descarta. Lo maneja `sesiones` con cuatro órdenes sin marca, como el alta, con una llave para la respuesta
+(los 32 bytes de siempre):
+
+| Orden | Mensaje | Hace |
+|---|---|---|
+| 102 crear | sesión (bytes 4-7: el usuario), uid y gid de su raíz (8-11 y 12-15); llaves: un objeto de memoria disperso (llamada 56 del kernel) que no tenga nadie más, y la respuesta | Un DashFS nuevo sobre ese objeto, que pasa a ser del servicio. Lo que mide el objeto es el tope del volumen; la memoria se cobra al grupo con el que se creó (el de la sesión). Su raíz es de ese usuario, 0700. En `a`, lo que mide; en `b`, lo que ocupa recién hecho. -9 si ya lo había, -6 con ocho a la vez, -12 si la memoria la tiene alguien más |
+| 103 quitar | sesión | Lo quita con todo: las asas y las raíces que llevan a él dejan de valer para todos (-5) y su memoria vuelve. En `a`, lo que ocupaba. -2 si no lo había |
+| 104 raíz | sesión, marca del cliente (8-15), hueco (byte 16) y tope (byte 17) | Da a ese cliente (y a su alta) la raíz del volumen en ese hueco: para el escritorio, que nace antes de que entre nadie |
+| 105 copiar | sesión, uid y gid de lo copiado, largos de volumen, origen y destino (bytes 16, 17 y 18), solo crear el cajón (byte 19 a 1); los tres textos desde el byte 32 | Crea el cajón `destino` del volumen en memoria y copia en él el árbol `origen` del volumen del disco (vacío, el principal), pisando lo que se llame igual: así se monta `ENV:` con las capas de `ENVARC:`. Sin mirar permisos del origen; si no existe, no copia nada. En `a`, ficheros; en `b`, bytes. -11 si no cabe |
+
+En el alta, una raíz cuyo volumen empieza por el byte 0xff y sigue con la sesión (u32) es la del volumen en memoria de
+esa sesión. Por sus asas todo va como en el disco, con tres diferencias: `INFO` da lo que mide y lo libre de ese
+volumen; no hay instantáneas (-1); y quien crea o escribe recibe "lleno" (-11) cuando quedan menos de 64 KB además de lo
+que escribe, para que siempre se pueda borrar. Lo borrado se borra de verdad (no va a la papelera).
+
 - La asa 0 es la raíz del cliente, no la del disco. Por encima no se llega: no hay "cajón padre" ni se siguen enlaces.
 - Las asas 1 a 15 son más raíces, cada una con su tope (leer, o leer y escribir). Las pone quien tiene el derecho de
   repartir con ceder (orden 30) a un hueco libre; el cliente no las cierra. Por una raíz se mira el permiso del
@@ -258,7 +275,7 @@ Un mensaje sin marca que no sea un alta se tira.
 Todo va en little-endian.
 
 Lo que lanza `sesiones` nace con sus raíces en el alta (paso 2 de las asignaciones): 0 el cajón de donde salió, 1 el
-disco para leer, y si su usuario tiene cuenta, 2 su volumen, 3 `Estado/RAM/<cuenta>` (su `RAM:`, provisional) y 4
+disco para leer, y si su usuario tiene cuenta, 2 su volumen, 3 su `RAM:` (el volumen en memoria de su sesión) y 4
 `Work` (su `Work:`, provisional), las dos para leer y escribir.
 
 **Petición**: 32 bytes de cabecera y, detrás, el nombre en UTF-8 (hasta 224 bytes; el mensaje entero, hasta 256).

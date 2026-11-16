@@ -38,6 +38,8 @@ HOLA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "usuario",
 PIDE = os.path.join(os.path.dirname(HOLA), "pide")
 # U6: `cambio`, la prueba del cambio rápido de usuario (lo lanza `guardian`, como Ana y como Carla).
 CAMBIO = os.path.join(os.path.dirname(HOLA), "cambio")
+# `RAM:` en memoria: `ram`, su prueba (la lanza `guardian`, como Ana y como Carla).
+RAM = os.path.join(os.path.dirname(HOLA), "ram")
 # S10: un programa del disco que avisa (lo lanza la barra).
 AVISA = os.path.join(os.path.dirname(HOLA), "avisa")
 # Trasfondo: un programa que espera 90 s (lo lanza la barra; el monitor del sistema lo cierra).
@@ -80,6 +82,10 @@ SYS_FICHEROS = [
     ("S/Startup-Sequence", b"; El arranque de la maquina (S14): lo hace el sistema antes de que entre nadie.\n"),
     ("S/Shell-Startup", b"; Lo que hace cada Shell al abrirse.\n"),
     ("S/User-Startup", b""),
+    # `ENVARC:` de fábrica: lo que `sesiones` copia a `ENV:` (en el `RAM:` de la sesión) al entrar; encima va lo del
+    # usuario (`Home:Prefs/Env-Archive`). Lo mira la prueba `ram`.
+    ("Prefs/Env-Archive/Sys/idioma", b"es\n"),
+    ("Prefs/Env-Archive/Sys/teclado", b"es\n"),
 ]
 
 
@@ -144,15 +150,7 @@ if sys.argv[1] == "--comprobar":
         "Escrito/ cajón",
         "Escrito/hola.txt 19 bits=0x4 : Saludo de DashOS, ñandú",
         "Estado/ cajón",
-        # Paso 2 de las asignaciones: el `RAM:` de cada cuenta (provisional, en el disco), con su `T:` y su `ENV:`; lo
-        # que crea `cambio` en `T:` lo borra.
-        "Estado/RAM/ cajón",
-        "Estado/RAM/Ana/ cajón",
-        "Estado/RAM/Ana/Env/ cajón",
-        "Estado/RAM/Ana/T/ cajón",
-        "Estado/RAM/Carla/ cajón",
-        "Estado/RAM/Carla/Env/ cajón",
-        "Estado/RAM/Carla/T/ cajón",
+        # `RAM:` ya no está en el disco: es un volumen en memoria por sesión (nada de `Estado/RAM`).
         "Estado/Servicios/ cajón",
         f"{CAJA}/ cajón",
         f"{CAJA}/C/ cajón",
@@ -199,6 +197,7 @@ if sys.argv[1] == "--comprobar":
         f"Programas/hola {os.path.getsize(HOLA)}",
         f"Programas/panel {os.path.getsize(CAMBIO)}",
         f"Programas/pide {os.path.getsize(PIDE)}",
+        f"Programas/ram {os.path.getsize(RAM)}",
         # `Work:` (provisional, un cajón del disco).
         "Work/ cajón",
     ]
@@ -331,12 +330,8 @@ with tempfile.TemporaryDirectory() as t:
     # U6: el cajón de `sesiones` (S6b: `Estado:Servicios/<nombre>`), suyo (usuario 1) y de nadie más.
     os.makedirs(os.path.join(raiz, "Estado", "Servicios", "sesiones"))
     os.chmod(os.path.join(raiz, "Estado", "Servicios", "sesiones"), 0o700)
-    # Paso 2 de las asignaciones: `RAM:` de cada cuenta (`Estado/RAM/<cuenta>`, solo suyo, con `T` y `Env`: sus `T:` y
-    # `ENV:`) y `Work:` (el cajón `Work`), provisionales: no hay aún disco en memoria ni un segundo disco.
-    for cuenta in ("Ana", "Carla"):
-        for sub in ("T", "Env"):
-            os.makedirs(os.path.join(raiz, "Estado", "RAM", cuenta, sub))
-        os.chmod(os.path.join(raiz, "Estado", "RAM", cuenta), 0o700)
+    # `Work:` (el cajón `Work`), provisional: no hay aún un segundo disco. `RAM:` no está en el disco: es un volumen en
+    # memoria que `sesiones` crea al entrar cada usuario.
     os.makedirs(os.path.join(raiz, "Work"))
     # Paso 2 de las asignaciones: la raíz del disco es `SYS:`, con los cajones del árbol de S4b (vacíos donde aún no hay
     # nada; `C` ya existe y guarda, provisional, lo del Home del escritorio). `Prefs` ya existe (con `fuente`).
@@ -371,6 +366,9 @@ with tempfile.TemporaryDirectory() as t:
     with open(os.path.join(raiz, "Programas", "cambio"), "wb") as f:
         f.write(open(CAMBIO, "rb").read())
     os.chmod(os.path.join(raiz, "Programas", "cambio"), 0o755)
+    with open(os.path.join(raiz, "Programas", "ram"), "wb") as f:
+        f.write(open(RAM, "rb").read())
+    os.chmod(os.path.join(raiz, "Programas", "ram"), 0o755)
     # U6, paso 2, prueba hostil: una copia de `cambio` con el nombre del panel rápido; lanzada del disco no tiene sus poderes.
     with open(os.path.join(raiz, "Programas", "panel"), "wb") as f:
         f.write(open(CAMBIO, "rb").read())
@@ -475,7 +473,6 @@ with tempfile.TemporaryDirectory() as t:
     subprocess.run([duenos, fs, "0", "1000:1000"], check=True)
     subprocess.run([duenos, fs, "0", "1:1", "camino=Estado/Servicios/sesiones"], check=True)
     subprocess.run([duenos, fs, "0", "1001:1001", "camino=DeCarla"], check=True)
-    subprocess.run([duenos, fs, "0", "1001:1001", "camino=Estado/RAM/Carla"], check=True)
     # A10: un daño que la comprobación encuentra y la reparación arregla (los enlaces de LEEME.txt, 7 en vez de 1).
     # El servicio de archivos repara al arrancar; al final, la comprobación desde Linux tiene que salir limpia.
     estropear = os.path.join(os.path.dirname(duenos), "estropear")

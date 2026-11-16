@@ -70,14 +70,13 @@ pub const POR_PAGINA_ASIGNACIONES: usize = 248;
 pub const ASIGNAR: u32 = 31;
 /// Los huecos de raíz del servicio de archivos de cada volumen (la tabla de nombres dice "`SYS:` es la raíz 1"). Así los
 /// da `sesiones` a lo que lanza (`PROGDIR:` es la 0, el cajón de donde salió), y así se los cede el escritorio
-/// (Workbench, explorador). `RAM:` y `Work:`, provisionales: cajones del disco (`Estado/RAM/<cuenta>` y `Work`).
+/// (Workbench, explorador). `RAM:` es el volumen en memoria de la sesión (`sesiones` lo crea al entrar y da su raíz a
+/// lo que lanza y al escritorio); `Work:`, provisional: un cajón del disco (`Work`).
 pub const RAIZ_PROGDIR: u8 = 0;
 pub const RAIZ_SYS: u8 = 1;
 pub const RAIZ_HOME: u8 = 2;
 pub const RAIZ_RAM: u8 = 3;
 pub const RAIZ_WORK: u8 = 4;
-/// El cajón de `RAM:` de una cuenta, desde la raíz del disco (provisional: no hay aún disco en memoria).
-pub const CAMINO_RAM: &str = "Estado/RAM/";
 /// El cajón de `Work:`, desde la raíz del disco (provisional: no es aún un disco aparte).
 pub const CAMINO_WORK: &str = "Work";
 /// De `guardian` (U4): mándame las preguntas por esta llave (la segunda del mensaje). Contesta 0.

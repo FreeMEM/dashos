@@ -230,7 +230,7 @@ fn nombres_ana(arch: &Archivos) -> bool {
     });
     let temporal = asig::crear(&mut fs, &t, b"T:cambio.tmp", a::FICHERO);
     let temporal = cerrar(&mut fs, temporal);
-    // Y se borra: el cajón de RAM: está en el disco (provisional) y la prueba del disco lo mira.
+    // Y se borra, por su raíz de `RAM:` (el volumen en memoria de su sesión).
     let t_ = fs.0.orden(a::BUSCAR, s::RAIZ_RAM as u32, 0, 0, b"T");
     let borrado = t_.0 == a::BIEN && fs.0.orden(a::BORRAR, t_.1, 0, 0, b"cambio.tmp").0 == a::BIEN;
     fs.0.orden(a::CERRAR, t_.1, 0, 0, b"");
