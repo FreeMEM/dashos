@@ -70,6 +70,7 @@ pub fn ejecutar() {
     prueba_reparto();
     prueba_hilos_usuario();
     prueba_maquinas();
+    prueba_relevo();
 }
 
 fn bien(b: bool) -> &'static str {
@@ -718,4 +719,20 @@ fn prueba_maquinas() {
         crate::base::hiper::descripcion(),
         fin
     );
+}
+
+/// X7a: RelevoJIT (el intérprete y el JIT del 68k para x86-64) en un proceso, sin caja Amiga, con el programa `relevo`:
+/// los programas de `jit-host/pruebas68k` con los dos motores dan lo mismo que en Linux, y el banco de RelevoJIT acaba
+/// igual en los dos. La memoria de código del JIT es un objeto de memoria proyectado para escribir y, en otra dirección,
+/// para ejecutar (permiso 4). El programa sale con 70 si todo cuadra.
+static RELEVO: &[u8] = programa_x86!("relevo");
+
+fn prueba_relevo() {
+    use objetos::Fin;
+    llamadas::SALIDAS_VISIBLES.store(true, Ordering::Relaxed);
+    let Some(grupo) = crate::cupo::Cupo::raiz().hijo(128 << 20) else { return };
+    let fin = lanzar_elf_en(RELEVO, alloc::vec::Vec::new(), 2, grupo.clone()).and_then(|c| esperar_fin(&c, 12000));
+    let usado = esperar_cero(&grupo);
+    kprintln!("  relevo acabó: {:?}; usado en su grupo al final: {} bytes", fin, usado);
+    kprintln!("X7a: RelevoJIT dentro de un proceso {}", bien(fin == Some(Fin::Salida(70)) && usado == 0));
 }

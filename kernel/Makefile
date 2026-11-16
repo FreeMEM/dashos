@@ -440,11 +440,16 @@ NUCLEO_X86  := target/kernel-x86.elf
 
 # Los servicios que lanza `inicio` en x86 (X5, `inicio_x86.rs`). Las mismas características que `usuario-x86`, para
 # no recompilar la biblioteca entre una y otra.
-FUNCIONES_X86 := archivos,ventanas,sonido
+FUNCIONES_X86 := archivos,ventanas,sonido,relevo
+
+# X7a: el crate `relevo` (RelevoJIT) viene por git con `rev` fijo (usuario/Cargo.toml). RELEVO_DIR=<ruta> lo cambia por
+# un RelevoJIT local, para probar cambios suyos sin subirlos (un `[patch]` por `--config`). La `rev` de Cargo.toml tiene
+# que estar en GitHub igual, y Cargo.lock cambia mientras se use: no se sube así.
+RELEVO_PATCH := $(if $(RELEVO_DIR),--config 'patch."https://github.com/FreeMEM/RelevoJIT".relevo.path="$(abspath $(RELEVO_DIR))"')
 SERVICIOS_X86 := inicio consola compositor xhci nvme disco archivos ficheros sonido virtio-sonido tono-a tono-b ventana-a ventana-b ajustes hola
 
 usuario-x86-servicios: FORCE
-	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86) $(addprefix --bin ,$(SERVICIOS_X86))
+	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86) $(RELEVO_PATCH) $(addprefix --bin ,$(SERVICIOS_X86))
 
 # X5b: IOMMU=intel pone en QEMU la VT-d (`-device intel-iommu`) e IOMMU=amd la AMD-Vi (`-device amd-iommu,dma-remap=on`:
 # sin dma-remap, la AMD-Vi de QEMU deja pasar sin traducir el DMA de los aparatos que emula). Con IOMMU, virtio-sound va
@@ -490,10 +495,10 @@ arranque-x86: x86 $(DISCO_NVME)
 
 # Los programas de usuario de x86-64 que no tocan aparatos (S30, X4), y el PIE de C29 (con las binutils del sistema).
 PIE_X86 := ../usuario/target/pie_x86
-BINES_X86 := hola fpu_a fpu_b malo tenis repartos tls trampas hijo padre llaves grupos lanzador tiempo muchos hilos maquina
+BINES_X86 := hola fpu_a fpu_b malo tenis repartos tls trampas hijo padre llaves grupos lanzador tiempo muchos hilos maquina relevo
 
 usuario-x86: FORCE
-	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86) $(addprefix --bin ,$(BINES_X86))
+	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86) $(RELEVO_PATCH) $(addprefix --bin ,$(BINES_X86))
 	as --64 -o $(PIE_X86).o ../usuario/asm/pie_x86.s
 	ld -pie --no-dynamic-linker -z noexecstack -z stack-size=32768 -o $(PIE_X86) $(PIE_X86).o
 

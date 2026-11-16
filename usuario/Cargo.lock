@@ -181,6 +181,7 @@ dependencies = [
  "dashos-wayland",
  "linked_list_allocator",
  "redox_syscall 0.9.5",
+ "relevo",
  "smoltcp",
 ]
 
@@ -441,6 +442,11 @@ checksum = "580c875845b41ecb1564ad1ae4703044cef774145e3d7a94dc2b3fa7c97868fd"
 dependencies = [
  "bitflags 2.13.2",
 ]
+
+[[package]]
+name = "relevo"
+version = "0.1.0"
+source = "git+https://github.com/FreeMEM/RelevoJIT?rev=ac26a328c3a910667999140b442a2566db3d8683#ac26a328c3a910667999140b442a2566db3d8683"
 
 [[package]]
 name = "scopeguard"

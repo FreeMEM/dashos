@@ -65,11 +65,17 @@ Dos líneas a la vez (decisión 4 de S30):
   - Otras llamadas largas con las interrupciones cerradas: `memoria_dma` pone a cero hasta 4 MB con el cerrojo del
     repartidor tomado, y soltar 4 MB o un proceso grande también va de una vez. Solo `memoria_crear` tiene pausas.
   - Lo que quedaba de X4 sigue igual: el camino con PCID sin probar, y `vaciar_tlb_otros` vacía la TLB entera.
-- [~] X7a **RelevoJIT dentro de DashOS x86, sin caja Amiga.** La caja Amiga aún no está en `main` (vive en las ramas
-  `caja-amiga*` de la otra sesión), así que primero RelevoJIT corre en un proceso de DashOS: compilado sin libc
-  (capa de puertos en RelevoJIT: memoria, `memcpy`, matemáticas), su memoria de código sobre objetos de memoria de
-  DashOS (doble proyección RW y RX), y un programa que ejecuta los programas de `jit-host/pruebas68k` con el
-  intérprete y con el JIT, con la misma salida que en Linux. El cargador avisa con `relevo_invalidate`.
+- [x] X7a **RelevoJIT dentro de DashOS x86, sin caja Amiga.** El crate `relevo` (Rust, sin std) en un proceso de
+  DashOS (`usuario/src/bin/relevo.rs`, característica "relevo"), su memoria de código sobre un objeto de memoria de
+  DashOS (doble proyección RW y RX), y los programas de `jit-host/pruebas68k` con el intérprete y con el JIT, con la
+  misma salida que en Linux. El cargador avisa con `relevo_invalidate`. En `make -C kernel prueba-x86`. La capa de
+  puertos de la versión en C (rama `puertos` de RelevoJIT y el commit WIP c1cfa51) quedó obsoleta. Lo que queda
+  abierto:
+  - La dependencia va por git con `rev` fijo: hasta que la rama `x7a` de RelevoJIT esté en GitHub, solo compila
+    `usuario/` donde Cargo ya tenga ese commit (`~/.cargo/git`).
+  - Una sola CPU con JIT viva a la vez en el programa (direcciones fijas de la memoria de código).
+  - La copia del banco (`copy`) va un 20 % más lenta con KVM que en Linux (1315 frente a 1699 MIPS); lo demás, igual.
+    Sin mirar por qué (¿páginas de 4 KB y la paginación anidada?).
 - [x] X5b **IOMMU** (VT-d de Intel y AMD-Vi): tablas DMAR e IVRS de ACPI, un dominio por aparato, el DMA de cada
   servicio limitado a sus ventanas, y el aviso de fallos de DMA. Requisito para pasar aparatos a la caja Linux y
   para el dominio de controladores de la zona GPL (S32 y S33 de `revision`). En QEMU: `-device intel-iommu` y
@@ -581,3 +587,48 @@ KVM, como en shiva). Tampoco: una máquina de verdad sin anidar; la ayuda para d
 dan); varias vCPU corriendo a la vez en núcleos distintos (la prueba corre una y luego la otra); el globo. Lo que queda
 está en la tarea X10.
 
+
+### 2026-11-15 — X7a: RelevoJIT dentro de un proceso de DashOS x86
+
+Hecho con el crate de Rust de RelevoJIT (rama `x7a` de su repositorio, commits ac26a32 y 42fe7e6), no con la capa de
+puertos de la versión en C (rama `puertos` y el WIP c1cfa51, obsoletos: no se fusionan).
+
+- RelevoJIT: `relevo_config.code_memory`, una tabla de funciones con la que el anfitrión da la memoria de código del
+  JIT en dos vistas del mismo objeto (escribir y ejecutar) y recibe el aviso de lo escrito. Sin ella, la del sistema
+  (memfd en Linux), como antes; sin `std`, el JIT necesita esta. `Cargo.toml` solo con `rlib` (una `staticlib` sin
+  `std` pedía manejador de pánico y asignador, y Cargo la compilaba también como dependencia). `tests/runbin.c`
+  ejecuta binarios 68k planos con los dos motores: es la referencia. Detalle en su `docs/BITACORA.md`.
+- `usuario/`: la característica "relevo" trae el crate por git con `rev` fijo (ac26a32), sin `std`; el programa
+  `relevo` (`usuario/src/bin/relevo.rs`) da la memoria de código con un objeto de 8 MB proyectado para escribir en
+  384 GB y para ejecutar en 388 GB (`memoria_proyectar_codigo`, permiso 4), y tras cada escritura un CPUID. Ejecuta
+  los 7 programas de `jit-host/pruebas68k` con el intérprete y con el JIT (una CPU por motor; tras copiar cada
+  programa, `relevo_invalidate`) y compara las 14 líneas con las de Linux (`jit-host/pruebas68k/ref/relevo.txt`, de
+  `build/runbin` de RelevoJIT). Luego el banco de RelevoJIT (`arith`, `copy`, `bytes`) con los dos motores. Sale con 70.
+- Se quitó lo de `RELEVO_LIB_DIR` de `usuario/build.rs` (la `librelevo.a` sin libc del intento en C).
+- `kernel/Makefile`: "relevo" en `FUNCIONES_X86`, `relevo` en `BINES_X86`, y `RELEVO_DIR=<ruta>` para probar un
+  RelevoJIT local (un `[patch]` por `--config`; la `rev` tiene que estar en GitHub igual y Cargo.lock cambia mientras).
+- Prueba `prueba_relevo` en `pruebas_procesos_x86.rs`, con sus líneas en `pruebas/esperado_x86.txt`.
+- `hilos` (C52): esperaba en la dirección de la función `nada` sin alinearla a 4; con opt-level "s" las funciones de
+  x86 no se alinean, y al cambiar las características cayó en 0x400bd5 y C52 daba MAL (salía con 10). Se alinea.
+- `docs/referencia/kernel.md`: en x86, tras escribir código por la otra proyección, una instrucción que serializa.
+
+MIPS del banco (68020; 12, 4,1 y 20,8 millones de instrucciones), intérprete / JIT:
+
+| | Linux en shiva | DashOS, QEMU con KVM | DashOS, QEMU con TCG |
+|---|---|---|---|
+| arith | 187 / 5975 | 192 / 5949 | 10 / 511 |
+| copy | 141 / 1699 | 137 / 1315 | 11 / 147 |
+| bytes | 190 / 3115 | 192 / 3049 | 10 / 198 |
+
+Los 14 programas, con TCG: 0,35 a 0,5 s; con KVM, 31 ms. JIT: 724 bloques, 632 instrucciones al intérprete, 1412
+escrituras avisadas, 1,7 MB de código, sin vaciados.
+
+Comprobado: `make -C kernel prueba-x86` BIEN, también con `IOMMU=amd`; `make -C kernel arranque-x86` BIEN (salida,
+disco, captura y sonido); con `ACCEL=kvm`, X7a bien y falla solo C28, como ya fallaba con KVM. ARM: `make -C kernel
+prueba` y `make -C kernel arranque-virt` BIEN. RelevoJIT: `make test` con gcc y clang, `make sst` y `make sst JIT=1`
+(317 500/317 500), `cargo test`, `cargo clippy -D warnings` (con y sin `std`), `cargo fmt --check`.
+
+No comprobado: compilar `usuario/` desde GitHub (la rama `x7a` no está subida: aquí se trajo el commit del repositorio
+local con `url.insteadOf` y `CARGO_NET_GIT_FETCH_WITH_CLI`, y Cargo lo guarda en `~/.cargo/git`); `prueba-x86` con
+`IOMMU=intel` (no se pidió); el banco de Linux bajo `qemu-x86_64` (la glibc de shiva usa instrucciones que el TCG no
+tiene), así que la columna de TCG no tiene contraparte en Linux; una máquina de verdad.

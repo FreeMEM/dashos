@@ -254,6 +254,8 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
     ejecutar por la misma dirección (2 y 4 juntos) da `E_ARGUMENTO`. Un JIT proyecta el mismo objeto dos veces: para
     escribir en una dirección y para ejecutar en otra. Tras escribir código, limpia la caché de datos por la dirección
     de escribir (`dc cvau`) e invalida la de instrucciones por la de ejecutar (`ic ivau`), con `dsb ish` e `isb`.
+    En x86-64 no hay cachés que limpiar, pero el código se escribió por otra dirección lineal: antes de ejecutarlo,
+    una instrucción que serializa, como `cpuid` (lo hacen `malo` y `relevo`, X7a).
     La memoria de DMA no se ejecuta nunca (`E_ARGUMENTO`).
   - El mismo objeto proyectado en dos procesos es memoria compartida.
   - Sus páginas vuelven al sistema cuando no queda ninguna llave ni ninguna proyección.

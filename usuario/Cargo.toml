@@ -18,8 +18,8 @@ imagenes = ["monton", "dep:amigados"]
 red = ["monton", "dep:smoltcp"]
 # La caja Linux (H9): los aparatos de la máquina virtual (virtio, PL011, distribuidor del GIC, PSCI, DTB).
 caja = ["monton", "dep:caja-vmm"]
-# RelevoJIT en un proceso de x86-64 (X7a): enlaza librelevo.a sin libc (RELEVO_LIB_DIR, ver build.rs).
-relevo = ["monton"]
+# RelevoJIT (intérprete y JIT del 68k para x86-64, MPL-2.0) en un proceso de x86-64 (X7a): el crate `relevo` sin std.
+relevo = ["monton", "dep:relevo"]
 
 [dependencies]
 linked_list_allocator = { version = "0.10.6", default-features = false, optional = true }
@@ -31,6 +31,10 @@ sonido = { package = "dashos-sonido", path = "../sonido", optional = true }
 audiodevice = { package = "dashos-audiodevice", path = "../audiodevice", optional = true }
 amigados = { package = "dashos-amigados", path = "../amigados", optional = true }
 caja-vmm = { package = "dashos-caja-vmm", path = "../caja-linux/vmm", optional = true }
+# Por git con `rev` fijo: el repositorio es público y Cargo.lock queda igual en cualquier máquina. Para probar un
+# RelevoJIT local sin subirlo: `make -C kernel prueba-x86 RELEVO_DIR=<ruta>` (un `[patch]` por `--config`; ver
+# kernel/Makefile).
+relevo = { git = "https://github.com/FreeMEM/RelevoJIT", rev = "ac26a328c3a910667999140b442a2566db3d8683", default-features = false, optional = true }
 smoltcp = { version = "0.14.0", default-features = false, optional = true, features = ["alloc", "medium-ethernet", "proto-ipv4", "proto-dhcpv4", "socket-tcp", "socket-tcp-reno", "socket-dhcpv4"] }
 
 [lib]
@@ -338,6 +342,12 @@ test = false
 name = "maquina"
 path = "src/bin/maquina.rs"
 test = false
+
+[[bin]]
+name = "relevo"
+path = "src/bin/relevo.rs"
+test = false
+required-features = ["relevo"]
 
 # aviso-cajas: provoca el aviso de memoria baja para ver que las cajas sueltan memoria (solo en las pruebas).
 [[bin]]

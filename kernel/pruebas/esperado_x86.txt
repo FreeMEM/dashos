@@ -102,6 +102,15 @@ C52: hilos de usuario bien
 [maquina] modo largo (tablas del invitado, dirección alta, 8 bytes, REX): bien
 [maquina] segunda vCPU en modo real (como tras una SIPI) y parar la máquina: bien
 X10: máquinas virtuales bien
+# X7a: RelevoJIT en un proceso (`usuario/src/bin/relevo.rs`): los programas de jit-host/pruebas68k con el intérprete y
+# con el JIT, comparados con lo que da RelevoJIT en Linux (jit-host/pruebas68k/ref/relevo.txt), y su banco.
+[relevo] JIT: 
+[relevo] memoria de código: 
+[relevo] 7 programas de jit-host/pruebas68k con el intérprete y con el JIT, igual que en Linux
+[relevo] banco arith: 
+[relevo] banco copy: 
+[relevo] banco bytes: 
+X7a: RelevoJIT dentro de un proceso bien
 X2: desborde de la pila del arranque
 Excepción 8 (fallo doble (#DF)) en el kernel
 en la pila de emergencia (IST 1)

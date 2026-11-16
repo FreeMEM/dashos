@@ -259,8 +259,10 @@ fn prueba(ajeno: u64) -> u64 {
             return 9;
         }
     }
-    // En el código sí se puede leer: se puede esperar ahí (con otro valor, vuelve en el acto).
-    if hilos::esperar(&palabra, 4, 0) != 1 || hilos::esperar_en(malas[5], 0x1234_5678, 0) != 1 {
+    // En el código sí se puede leer: se puede esperar ahí (con otro valor, vuelve en el acto). La palabra va alineada a
+    // 4: en x86, con opt-level "s", las funciones no se alinean, y `nada` puede caer en cualquier byte (X7a: al añadir
+    // la característica "relevo" cayó desalineada y esto daba 10).
+    if hilos::esperar(&palabra, 4, 0) != 1 || hilos::esperar_en(malas[5] & !3, 0x1234_5678, 0) != 1 {
         return 10;
     }
     let t = dashos::ahora_us();
