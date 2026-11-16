@@ -109,7 +109,7 @@ while time.time() - inicio < total:
 PY
     TECLAS_PID=$!
 elif [ -n "${TECLAS:-}" ]; then
-    python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" "${CAPTURA_PREGUNTA:-}" "${DIAG_REGISTROS:-}" "${CAPTURA_SELECTOR:-}" "${CAPTURA_CENTRO:-}" <<'PY' >/dev/null 2>"${GUION_ERRORES:-/dev/null}" &
+    ESPERADOS_GUION="$ESPERADOS" python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" "${CAPTURA_PREGUNTA:-}" "${DIAG_REGISTROS:-}" "${CAPTURA_SELECTOR:-}" "${CAPTURA_CENTRO:-}" <<'PY' >/dev/null 2>"${GUION_ERRORES:-/dev/null}" &
 import os, socket, sys, time
 ruta, total, serie, captura_pregunta, diag_registros, captura_selector, captura_centro = sys.argv[1], float(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7]
 diag_hecho = False
@@ -198,12 +198,38 @@ amiga = 0
 amiga_desde = 0
 v_amiga = None
 dash_amiga = 0
+dash_nativo = 0
+dash_desde = 0
+dash_intentos = 0
+dash_entradas = 0
+dash_fila_n = 2
+dash_subidas = 0
 gt_amiga = 0
 gt_dash = 0
 ra_capturas = 0
 gt_mirado = 0
 gt_movida = 0
 req_dash = 0
+# El selector de ficheros desde un programa del disco (`Programas/guarda`): lo último de la prueba. Sus líneas esperadas
+# (las que llevan alguna de estas marcas) y las demás, que tienen que haber salido antes de empezar.
+MARCAS_GUARDA = ("[guarda]", "para guarda", "Programas/guarda", "[selector] guarda ", "el usuario guarda ", "informe.txt", "el nombre del campo",
+                 # S10, Commodities: su atajo se pulsa tras guarda (abajo), así que guarda no las espera.
+                 "[commodity-prueba]", "commodity Prueba se va")
+# S10, Commodities: cuántas veces se pulsó Ctrl+Alt+K (una por cada "pulsa" de la prueba, hasta 6).
+commodity_pulsadas = 0
+guarda_paso = 0
+guarda_desde = 0
+guarda_mirado = 0
+guarda_abiertos = 0
+guarda_suyas, guarda_otras = [], []
+if os.environ.get("ESPERADOS_GUION"):
+    try:
+        for l in open(os.environ["ESPERADOS_GUION"], errors="replace").read().splitlines():
+            if l and not l.startswith("#"):
+                l = l[1:] if l.startswith("~") else l
+                (guarda_suyas if any(m in l for m in MARCAS_GUARDA) else guarda_otras).append(l)
+    except OSError:
+        pass
 reinicio = 0
 reinicio_hasta = 0
 reinicio_abiertos = 0
@@ -261,6 +287,93 @@ while time.time() - inicio < total:
                 reinicio = 4
             time.sleep(0.25)
             continue
+        # "Guardar como" desde un programa del disco: cuando ya salió todo lo demás que se espera (así no se cruza con
+        # los otros pasos ni con el selector del hostil o de dash-ventana), el lanzador de la barra (1), "guarda" (2) e
+        # Intro (3): `sesiones` lo lanza como Ana, con la llave del selector. Pide guardar "informe.txt": un clic en
+        # "Guardar" (4). Pide otra vez: clic en el campo, Fin, se borra el nombre e Intro (5: vacío no vale); se teclea
+        # otra vez e Intro (6: ya existe, se pregunta) y un clic en "Sustituir" (7). Y pide abrir con un patrón: un
+        # clic en la ventana, Fin e Intro (8). Cada paso, como mucho 40 s.
+        if guarda_paso == 0 and guarda_suyas and time.time() - guarda_mirado > 2:
+            import re
+            guarda_mirado = time.time()
+            limpio = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", texto).replace("\r", "")
+            guarda_otras = [l for l in guarda_otras if l not in limpio]
+            if not guarda_otras:
+                guarda_paso, guarda_desde = 1, time.time()
+        if 1 <= guarda_paso <= 8:
+            import re
+            if time.time() - guarda_desde > 40:
+                guarda_paso = 99                 # (no siguió: faltarán sus líneas)
+                continue
+            def clic_guarda(x, y):
+                ir_a(x, y)
+                time.sleep(0.3)
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
+                ir_a(790, 590)
+            def en_selector(patron):
+                # El último sitio que dijo el selector (dentro de su ventana), ya en la pantalla.
+                v = re.findall(r"\[compositor\] ventana de selector en \((\d+), (\d+)\)", texto)
+                s = re.findall(patron, texto)
+                return (int(v[-1][0]) + int(s[-1][0]), int(v[-1][1]) + int(s[-1][1])) if v and s else None
+            con_nombre = texto.count("[selector] campo Nombre en (") - texto.count("), con 0 letras")
+            hecho = False
+            if guarda_paso == 1:
+                bb = re.search(r"\[barra\] botones: lanzador en \((\d+), (\d+)\)", texto)
+                if bb:
+                    guarda_abiertos = texto.count("[barra] lanzador abierto")
+                    clic_guarda(int(bb.group(1)), int(bb.group(2)))
+                    hecho = True
+            elif guarda_paso == 2 and texto.count("[barra] lanzador abierto") > guarda_abiertos:
+                time.sleep(0.5)
+                mandar(*["sendkey " + c for c in "guarda"], pausa=0.3)
+                hecho = True
+            elif guarda_paso == 3 and '[barra] busca "guarda": guarda' in texto:
+                time.sleep(0.5)
+                mandar("sendkey ret")
+                hecho = True
+            elif guarda_paso == 4 and con_nombre >= 1:
+                time.sleep(1)
+                sitio = en_selector(r"\[selector\] botón Guardar en \((\d+), (\d+)\)")
+                if sitio:
+                    clic_guarda(*sitio)
+                    hecho = True
+            elif guarda_paso == 5 and con_nombre >= 2 and "[guarda] guardar: " in texto:
+                time.sleep(1)
+                sitio = en_selector(r"\[selector\] campo Nombre en \((\d+), (\d+)\)")
+                if sitio:
+                    clic_guarda(*sitio)
+                    time.sleep(0.5)
+                    mandar("sendkey end", *["sendkey backspace"] * 11, "sendkey ret", pausa=0.2)
+                    hecho = True
+            elif guarda_paso == 6 and "[selector] el nombre del campo no vale" in texto:
+                time.sleep(0.5)
+                mandar(*["sendkey " + ("dot" if c == "." else c) for c in "informe.txt"], "sendkey ret", pausa=0.2)
+                hecho = True
+            elif guarda_paso == 7 and "[selector] botón Sustituir en (" in texto:
+                time.sleep(0.7)
+                sitio = en_selector(r"\[selector\] botón Sustituir en \((\d+), (\d+)\)")
+                if sitio:
+                    clic_guarda(*sitio)
+                    hecho = True
+            elif guarda_paso == 8 and "[selector] ventana de abrir en pantalla, para guarda" in texto:
+                time.sleep(1)
+                v = re.findall(r"\[compositor\] ventana de selector en \((\d+), (\d+)\)", texto)
+                if v:
+                    # Un clic en el título de la ventana (no en la lista), para que tenga el teclado.
+                    clic_guarda(int(v[-1][0]) + 230, int(v[-1][1]) + 36)
+                    time.sleep(0.5)
+                    mandar("sendkey end", "sendkey ret", pausa=0.4)
+                    hecho = True
+            if hecho:
+                guarda_paso, guarda_desde = guarda_paso + 1, time.time()
+            time.sleep(0.25)
+            continue
+        # S10, Commodities: acabado guarda (o sin él), cada vez que `commodity-prueba` pide su atajo, Ctrl+Alt+K. Si el
+        # atajo funciona no llega a ninguna ventana; si no, a la que tenga el teclado (y la prueba lo dirá).
+        if (guarda_paso >= 9 or not guarda_suyas) and commodity_pulsadas < 6 and texto.count("[commodity-prueba] pulsa Ctrl+Alt+K") > commodity_pulsadas:
+            commodity_pulsadas += 1
+            time.sleep(0.5)
+            mandar("sendkey ctrl-alt-k")
         # Los pasos de las capturas de la caja Amiga (GadTools, el ejemplo de Dash y el requester), al principio de la
         # vuelta: los pasos de más abajo esperan con "continue" y no se llegaría a ellos.
         libre_caja = texto.count("[guardian] pregunta en pantalla: ") <= texto.count("El usuario dice ")
@@ -268,6 +381,113 @@ while time.time() - inicio < total:
         bloqueo_caja = max(texto.rfind("[guardian] sesión bloqueada"), texto.rfind("pantalla de bloqueo pintada"),
                            texto.rfind("pantalla de entrada pintada"))
         libre_caja = libre_caja and bloqueo_caja <= max(texto.rfind("[guardian] desbloqueado"), texto.rfind("[guardian] entra "))
+        # Las ventanas de Dash en DashOS (kit-c): el programa de Dash `dash-ventana` (`kit-c/pruebas/ventana.dash`) dice
+        # cuándo está en pantalla y dónde están sus botones, y el compositor dónde está la ventana. Con CAPTURA_DASHOS=
+        # fichero.ppm, la pantalla así (tras un clic en su margen, que la trae delante); luego un clic en su botón
+        # "Añadir" (1). El programa pregunta si guardar (mui_request): con la captura (fichero-pregunta.ppm), un clic en
+        # "Guardar" (2); guarda en su cajón y pide al selector un fichero: doble clic en Privado y en nota.txt (3 y 4); y
+        # una carpeta: "Elegir esta carpeta", C (5). Luego acaba (6). Cuando `guardian` acabó su prueba (sus bloqueos se
+        # llevarían los clics y las teclas), tras el selector del hostil y el desplegable de Ajustes, sin el centro de
+        # control, sin preguntas ni bloqueo. Al principio de la vuelta: mientras dura, los pasos de abajo esperan (con
+        # "continue"), y cada paso, como mucho 30 s.
+        import re
+        centro_fuera = "[guardian] el centro de control abrirá" not in texto or "[centro] cerrado" in texto
+        # Si el clic no llegó (una pregunta de `guardian` salió encima mientras), otra vez, hasta tres.
+        if dash_nativo == 1 and "[dash-ventana] pulsado" not in texto and time.time() - dash_desde > 8 \
+                and dash_intentos < 3:
+            dash_nativo = 0
+        # Tampoco con la ventana Amiga de H5 esperando su clic: delante, la de Dash la taparía.
+        amiga_fuera = amiga >= 2 or "[caja-amiga] ventana Amiga en pantalla" not in texto
+        if dash_nativo == 0 and menu == 2 and centro_fuera and amiga_fuera and libre_caja and \
+                "[guardian] prueba acabada" in texto and "[hostil] selector:" in texto and \
+                selector not in (1, 2, 4, 5, 17, 18):
+            d = re.search(r'\[dash-ui\] ventana "Dash (?:en|on) DashOS" en pantalla \((\d+)x\d+\).*?"Añadir" en \((\d+), (\d+)\)', texto)
+            v = re.search(r"\[compositor\] ventana de dash-ventana en \((\d+), (\d+)\)", texto)
+            if d and v:
+                dash_nativo, dash_desde, dash_intentos = 1, time.time(), dash_intentos + 1
+                vx, vy = int(v.group(1)), int(v.group(2))
+                # Delante primero: un clic en su margen de arriba a la derecha (sale detrás de Ajustes y de otras).
+                ir_a(vx + int(d.group(1)) - 12, vy + 10)
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
+                time.sleep(0.5)
+                if os.environ.get("CAPTURA_DASHOS"):
+                    ir_a(790, 590)
+                    time.sleep(0.5)
+                    mandar("screendump " + os.environ["CAPTURA_DASHOS"])
+                    time.sleep(0.5)
+                ir_a(vx + int(d.group(2)), vy + int(d.group(3)))
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
+                ir_a(790, 590)
+                continue
+        if dash_nativo in (1, 2, 3, 31, 4, 5) and time.time() - dash_desde > 30:
+            dash_nativo = 9                      # (no siguió: faltarán sus líneas)
+        if dash_nativo == 1 and "[dash-ventana] pulsado" in texto:
+            # La pregunta: su ventana es la última de dash-ventana que pone el compositor.
+            dp = re.search(r'\[dash-ui\] ventana "Guardar" en pantalla \(\d+x\d+\); "Guardar" en \((\d+), (\d+)\)', texto)
+            vs = re.findall(r"\[compositor\] ventana de dash-ventana en \((\d+), (\d+)\)", texto)
+            if dp and len(vs) >= 2:
+                time.sleep(0.5)
+                if os.environ.get("CAPTURA_DASHOS"):
+                    mandar("screendump " + os.environ["CAPTURA_DASHOS"].replace(".ppm", "-pregunta.ppm"))
+                    time.sleep(0.5)
+                ir_a(int(vs[-1][0]) + int(dp.group(1)), int(vs[-1][1]) + int(dp.group(2)))
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
+                ir_a(790, 590)
+                dash_nativo, dash_desde = 2, time.time()
+            time.sleep(0.25)
+            continue
+        # El selector, para dash-ventana: dónde está (el compositor) y su lista (él). Doble clic en la fila de Privado y,
+        # dentro, en la 2 (nota.txt; la primera es "../"). Las filas miden 56. Privado es la tercera (tras Fondos y
+        # Prefs) si en C no hay más cajones: si entra en otro, Retroceso y la fila siguiente.
+        def dash_fila(fila):
+            vs = re.findall(r"\[compositor\] ventana de selector en \((\d+), (\d+)\)", texto)
+            ls = re.findall(r"\[selector\] lista en \((\d+), (\d+)\)", texto)
+            if not vs or not ls:
+                return False
+            ir_a(int(vs[-1][0]) + int(ls[-1][0]) + 60, int(vs[-1][1]) + int(ls[-1][1]) + 28 + 56 * fila)
+            time.sleep(0.3)
+            mandar("mouse_button 1", "mouse_button 0", "mouse_button 1", "mouse_button 0", pausa=0.08)
+            ir_a(790, 590)
+            return True
+        if dash_nativo == 2 and "[selector] ventana de abrir en pantalla, para dash-ventana" in texto:
+            time.sleep(0.8)
+            dash_entradas, dash_fila_n = texto.count("[selector] entra en C/"), 2
+            if dash_fila(dash_fila_n):
+                dash_nativo, dash_desde = 3, time.time()
+            continue
+        if dash_nativo == 3 and texto.count("[selector] entra en C/") > dash_entradas:
+            time.sleep(0.8)
+            if re.findall(r"\[selector\] entra en (C/[^,]+),", texto)[-1] == "C/Privado":
+                if dash_fila(1):
+                    dash_nativo, dash_desde = 4, time.time()
+            elif dash_fila_n < 8:
+                dash_subidas = texto.count("[selector] sube a C,")
+                mandar("sendkey backspace")
+                dash_nativo = 31
+            continue
+        if dash_nativo == 31 and texto.count("[selector] sube a C,") > dash_subidas:
+            time.sleep(0.8)
+            dash_entradas, dash_fila_n = texto.count("[selector] entra en C/"), dash_fila_n + 1
+            if dash_fila(dash_fila_n):
+                dash_nativo = 3
+            continue
+        if dash_nativo == 4 and "[selector] ventana de elegir carpeta en pantalla, para dash-ventana" in texto:
+            time.sleep(0.8)
+            vs = re.findall(r"\[compositor\] ventana de selector en \((\d+), (\d+)\)", texto)
+            bs = re.findall(r"\[selector\] botón Elegir en \((\d+), (\d+)\)", texto)
+            if vs and bs:
+                ir_a(int(vs[-1][0]) + int(bs[-1][0]), int(vs[-1][1]) + int(bs[-1][1]))
+                time.sleep(0.3)
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+                ir_a(790, 590)
+                dash_nativo, dash_desde = 5, time.time()
+            continue
+        if dash_nativo == 5 and "[dash-ventana] fin" in texto:
+            dash_nativo = 6
+        if dash_nativo in (2, 3, 31, 4, 5):
+            # (El programa acaba y su ventana se va: hasta entonces, nada más: taparía lo que se pulse.)
+            time.sleep(0.25)
+            continue
         # La ventana de GadTools (`caja/pruebas68k/gadtools.c`), tras la de Dash: cuando se ve entera (una captura
         # comprueba que sus cuatro esquinas y un sitio vacío de dentro son de los colores del Workbench: si otra ventana
         # del arranque la tapa, los clics irían a esa; se mira otra vez en la vuelta siguiente), la captura
@@ -474,6 +694,16 @@ while time.time() - inicio < total:
             captura_u6_hecha = 2
             time.sleep(0.3)
             mandar("screendump " + captura_u6 + ".carla.ppm")
+        # S36, decisión 1 (rama admin-desarrollo): la tanda de acciones de administrador del guion del Shell: `guardian`
+        # enseña la lista y pide la contraseña. A las tres primeras, la de Ana; a la cuarta (la de la prueba hostil), una
+        # mala.
+        tandas_en = texto.count("[guardian] tanda en pantalla: ")
+        if tandas_en > globals().get("tandas_vistas", 0):
+            globals()["tandas_vistas"] = globals().get("tandas_vistas", 0) + 1
+            time.sleep(1.3)
+            teclear("no es esta" if tandas_vistas == 4 else "clave de Ana")
+            time.sleep(0.5)
+            continue
         # U4: las preguntas de permisos de `guardian`. A `pide`, que sí; a los demás, una "s" enseguida (en el primer
         # segundo no cuenta) y luego que no.
         vistas = [l for l in texto.splitlines() if "[guardian] pregunta en pantalla: " in l]
@@ -502,6 +732,17 @@ while time.time() - inicio < total:
             if "¿pide " in linea:
                 time.sleep(1.3)
                 mandar("sendkey shift-s")
+            elif "pregunta en pantalla: cambiar permiso: " in linea:
+                # S6b, S36: la orden `Permiso` del Shell: a `pide`, que sí; a otro, que no. La primera vez, antes, la D
+                # (los detalles: el nombre interno del permiso).
+                time.sleep(1.3)
+                globals()["cambios_vistos"] = globals().get("cambios_vistos", 0) + 1
+                if cambios_vistos == 1 and sigue_preguntando():
+                    mandar("sendkey d")
+                    time.sleep(0.5)
+                if sigue_preguntando():
+                    # S6b, S36: y a `espera`, el modo de desarrollo (dar y quitar).
+                    mandar("sendkey " + ("shift-s" if " a pide " in linea or " a espera " in linea else "n"))
             elif " quiere cambiar " in linea:
                 time.sleep(1.3)
                 if sigue_preguntando():
@@ -523,7 +764,11 @@ while time.time() - inicio < total:
         if not selector_espera and centro == 0 and "[guardian] el centro de control abrirá Permisos" in texto:
             centro = 1
         if not selector_espera and centro == 1:
-            if "[centro] Permisos en pantalla" not in texto:
+            # Con todo lo que hace falta para el clic ya leído: el centro dice dónde están la lista y el botón, y el
+            # compositor, dónde está la ventana, cada uno por su lado. Si se seguía con solo lo primero, a veces la línea
+            # del compositor aún no había llegado y se quitaba con Supr en vez de con el botón (fallaba la prueba).
+            if "[centro] Permisos en pantalla" not in texto or "[centro] botón Quitar en (" not in texto \
+                    or "[compositor] ventana de centro en (" not in texto:
                 time.sleep(0.25)
                 continue
             centro = 2
@@ -1084,8 +1329,8 @@ while time.time() - inicio < total:
                             ultimo("pantalla de entrada pintada"))
         bloqueado_ahora = bloqueo_desde > max(ultimo("[guardian] desbloqueado"), ultimo("[guardian] entra "))
         # El explorador de archivos, al final (tras la barra), con la sesión de Ana delante y sin bloquear: el doble clic
-        # en el icono de Sistema del Workbench lo abre; luego DeCarla (no se lista), Atrás, Programas, hola (lo lanza
-        # `sesiones`), sus Propiedades (por Sistema no se cambian), la carpeta personal, Privado como lista, las
+        # en el icono de SYS: del Workbench lo abre; luego DeCarla (no se lista), Atrás, Programas, hola (lo lanza
+        # `sesiones`), sus Propiedades (por SYS: no se cambian), la carpeta personal, Privado como lista, las
         # Propiedades de nota.txt (comentario y Archivado), buscar escribiendo, carpeta nueva (y un nombre que no vale),
         # copiar y pegar, cambiar el nombre (F2), la papelera y restaurar, las miniaturas de Fondos, una pestaña, otra
         # ventana con el camino escrito (Ctrl+L), moverla por su barra y arrastrar un fichero a la primera. Los sitios
@@ -1115,7 +1360,7 @@ while time.time() - inicio < total:
                 mandar("mouse_button 1", "mouse_button 0", "mouse_button 1", "mouse_button 0", pausa=0.08)
             def escribir_ex(t):
                 # Como `teclear`, sin el Intro del final.
-                mandar(*[("sendkey spc" if c == " " else "sendkey shift-" + c.lower() if c.isupper() else "sendkey shift-7" if c == "/" else "sendkey " + c) for c in t], pausa=0.15)
+                mandar(*[("sendkey spc" if c == " " else "sendkey shift-" + c.lower() if c.isupper() else "sendkey shift-7" if c == "/" else "sendkey shift-dot" if c == ":" else "sendkey " + c) for c in t], pausa=0.15)
             def tecla_ex(*t):
                 mandar(*["sendkey " + x for x in t], pausa=0.25)
             def capa_ex():
@@ -1139,41 +1384,41 @@ while time.time() - inicio < total:
                 return en_ex(n, que, "menú")
             def cuenta(t):
                 return texto.count(t)
-            espera = {1: "[explorador] ventana 1 en Sistema:" in texto and origen_ex(1),
-                      2: "[explorador] no abre Sistema/DeCarla: -12" in texto,
-                      3: cuenta("[explorador] ventana 1 en Sistema:") >= 2,
-                      4: "[explorador] ventana 1 en Sistema/Programas:" in texto,
+            espera = {1: "[explorador] ventana 1 en SYS:," in texto and origen_ex(1),
+                      2: "[explorador] no abre SYS:DeCarla: -12" in texto,
+                      3: cuenta("[explorador] ventana 1 en SYS:,") >= 2,
+                      4: "[explorador] ventana 1 en SYS:Programas," in texto,
                       5: "[explorador] lanza Programas/hola" in texto,
                       6: "[explorador] ventana 1, menú:" in texto,
                       7: "[explorador] ventana 1, propiedades:" in texto,
                       8: "[explorador] ventana 1: diálogo cancelado" in texto,
-                      9: "[explorador] ventana 1 en Home:" in texto,
-                      10: "[explorador] ventana 1 en Home/Privado:" in texto,
+                      9: "[explorador] ventana 1 en Home:," in texto,
+                      10: "[explorador] ventana 1 en Home:Privado," in texto,
                       11: "[explorador] ventana 1 como lista" in texto,
                       12: "[explorador] ventana 1: por Tamano" in texto,
-                      13: "[explorador] Propiedades de Home/Privado/nota.txt" in texto and cuenta("[explorador] ventana 1, propiedades:") >= 2,
-                      14: "[explorador] guarda Home/Privado/nota.txt" in texto,
-                      15: cuenta("[explorador] ventana 1 en Home:") >= 2,
+                      13: "[explorador] Propiedades de Home:Privado/nota.txt" in texto and cuenta("[explorador] ventana 1, propiedades:") >= 2,
+                      14: "[explorador] guarda Home:Privado/nota.txt" in texto,
+                      15: cuenta("[explorador] ventana 1 en Home:,") >= 2,
                       16: "[explorador] búsqueda de \"nota\" acabada" in texto,
-                      17: cuenta("[explorador] ventana 1 en Home:") >= 3,
-                      18: "[explorador] crea la carpeta Home/Viaje: 0" in texto,
+                      17: cuenta("[explorador] ventana 1 en Home:,") >= 3,
+                      18: "[explorador] crea la carpeta Home:Viaje: 0" in texto,
                       19: "[explorador] ventana 1: el nombre \"..\" no vale" in texto,
                       20: "[explorador] copia 2 elementos" in texto,
-                      21: "[explorador] ventana 1 en Home/Viaje:" in texto,
+                      21: "[explorador] ventana 1 en Home:Viaje," in texto,
                       22: "[explorador] acabado: Copiar 2 elementos a Viaje" in texto,
-                      23: "[explorador] cambia el nombre de Home/Viaje/grande.txt a \"texto grande.txt\": 0" in texto,
+                      23: "[explorador] cambia el nombre de Home:Viaje/grande.txt a \"texto grande.txt\": 0" in texto,
                       24: "[explorador] acabado: Mover \"texto grande.txt\" a la papelera" in texto,
-                      25: "[explorador] ventana 1 en Papelera:" in texto,
+                      25: "[explorador] ventana 1 en Papelera," in texto,
                       26: cuenta("[explorador] ventana 1, menú:") >= 2,
                       27: "[explorador] acabado: Restaurar" in texto,
-                      28: "[explorador] ventana 1 en Home/Fondos:" in texto,
-                      29: "[explorador] miniatura de Home/Fondos/" in texto,
+                      28: "[explorador] ventana 1 en Home:Fondos," in texto,
+                      29: "[explorador] miniatura de Home:Fondos/" in texto,
                       30: "[explorador] ventana 1: pestaña nueva (2 pestañas)" in texto,
                       31: "[explorador] ventana 1: cierra una pestaña (1 quedan)" in texto,
-                      32: cuenta("[explorador] ventana 1 en Home/Privado:") >= 2,
+                      32: cuenta("[explorador] ventana 1 en Home:Privado,") >= 2,
                       33: "[explorador] ventana 2 en pantalla" in texto and origen_ex(2),
                       34: "[explorador] ventana 2: camino escrito \"Home/../DeCarla\": no vale" in texto,
-                      35: "[explorador] ventana 2 en Home/Viaje:" in texto,
+                      35: "[explorador] ventana 2 en Home:Viaje," in texto,
                       36: True,
                       37: "[explorador] acabado: Mover \"datos.bin\" a Privado" in texto,
                       38: "[explorador] cierra la ventana 2" in texto,
@@ -1187,15 +1432,24 @@ while time.time() - inicio < total:
             time.sleep(0.6)
             sitio = None
             if ex == 1:
-                sitio = icono_ex("Sistema")
+                sitio = icono_ex("SYS")
                 if sitio:
                     ir_ex(*sitio)
                     doble_ex()
-            elif ex in (2, 4, 5, 10):
-                sitio = en_ex(1, {2: "DeCarla", 4: "Programas", 5: "hola", 10: "Privado"}[ex])
+            elif ex in (2, 5, 10):
+                sitio = en_ex(1, {2: "DeCarla", 5: "hola", 10: "Privado"}[ex])
                 if sitio:
                     ir_ex(*sitio)
                     doble_ex()
+            elif ex == 4:
+                # Paso 2 de las asignaciones: SYS: tiene ya todos sus cajones y Programas no cabe a la vista; se va por su
+                # nombre, como en el Amiga (Ctrl+L y "SYS:Programas").
+                sitio = True
+                tecla_ex("ctrl-l")
+                time.sleep(0.4)
+                tecla_ex("ctrl-a")
+                escribir_ex("SYS:Programas")
+                tecla_ex("ret")
             elif ex == 3:
                 sitio = en_ex(1, "Atrás")
                 if sitio:
@@ -1383,7 +1637,8 @@ while time.time() - inicio < total:
                 tecla_ex("ctrl-l")
                 time.sleep(0.4)
                 tecla_ex("ctrl-a")
-                escribir_ex("Home/Viaje")
+                # Paso 2 de las asignaciones: con su nombre, como en el Amiga (lo resuelve su tabla de nombres).
+                escribir_ex("Home:Viaje")
                 tecla_ex("ret")
             elif ex == 35:
                 # La segunda ventana, por su barra (el título "Archivos"), 300 a la derecha.
@@ -1396,7 +1651,18 @@ while time.time() - inicio < total:
                     mandar(*["mouse_move 30 0"] * 10, pausa=0.05)
                     time.sleep(0.3)
                     mandar("mouse_button 0")
+                    # Dónde acabó de verdad (lo dice el compositor al soltar): si empezó a arrastrar tarde, se movió
+                    # menos de 300, y suponer 300 dejaba el arrastre siguiente encima de la segunda ventana ("aquí no").
                     ex_mov[2] = (300, 0)
+                    fin_mov = time.time() + 5
+                    while time.time() < fin_mov:
+                        texto = open(serie, errors="replace").read()
+                        m = re.findall(r"\[compositor\] arrastre: [^\n]*; acaba en \((-?\d+), (-?\d+)\)", texto)
+                        t2 = re.findall(r"\[compositor\] ventana de explorador en \((\d+), (\d+)\)", texto)
+                        if m and len(t2) >= 2:
+                            ex_mov[2] = (int(m[-1][0]) - int(t2[1][0]), int(m[-1][1]) - int(t2[1][1]))
+                            break
+                        time.sleep(0.2)
             elif ex == 36:
                 # Arrastrar datos.bin de la segunda ventana a la carpeta de la primera (Privado), por la parte que se ve.
                 desde = en_ex(2, "datos.bin")
@@ -1408,6 +1674,11 @@ while time.time() - inicio < total:
                     time.sleep(0.3)
                     x, y = desde
                     hx, hy = o1[0] + 290, o1[1] + 330
+                    # Lejos del borde de la segunda ventana (su sombra y el borde de redimensionar se llevan el soltar):
+                    # a 30 px de ella como poco, sin salir de la zona de ficheros de la primera (desde +240).
+                    o2 = origen_ex(2)
+                    if o2 and hx > o2[0] - 30:
+                        hx = max(o1[0] + 240, o2[0] - 30)
                     pasos = []
                     while (x, y) != (hx, hy):
                         dx = max(-25, min(25, hx - x))
@@ -1878,6 +2149,17 @@ if [ -n "${CAJA_LINUX:-}" ]; then
     python3 -I "$(dirname "$0")/guion_caja_linux.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$CAJA_LINUX" "${CAJA_MODO:-busybox}" >/dev/null 2>&1 &
     CAJA_PID=$!
 fi
+# El Shell nativo en pantalla: con SHELL_CAPTURAS=prefijo, `tools/guion_shell.py` entra, abre el Shell desde el
+# lanzador, teclea en él y lo captura en cada momento (`make arranque-virt-shell`).
+if [ -n "${SHELL_CAPTURAS:-}" ]; then
+    python3 -I "$(dirname "$0")/guion_shell.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$SHELL_CAPTURAS" >/dev/null 2>&1 &
+    SHELL_PID=$!
+fi
+# S10, los menús: con MENUS_CAPTURAS=prefijo, `tools/guion_menus.py` (`make arranque-virt-menus`).
+if [ -n "${MENUS_CAPTURAS:-}" ]; then
+    python3 -I "$(dirname "$0")/guion_menus.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$MENUS_CAPTURAS" >/dev/null 2>&1 &
+    MENUS_PID=$!
+fi
 # Se para en cuanto han salido todas las líneas esperadas, en cualquier orden (o al acabar el tiempo); el orden se
 # mira después. Antes se paraba en la última del fichero, y con procesos que acaban a su ritmo (W8, K7) la última en
 # el fichero no siempre es la última en salir. Con CAPTURA=fichero.ppm, antes guarda la pantalla (U4).
@@ -1927,6 +2209,8 @@ wait "$QEMU" 2>/dev/null
 [ -n "${TECLAS_PID:-}" ] && kill "$TECLAS_PID" 2>/dev/null
 [ -n "${MULTI_PID:-}" ] && kill "$MULTI_PID" 2>/dev/null
 [ -n "${CAJA_PID:-}" ] && kill "$CAJA_PID" 2>/dev/null
+[ -n "${SHELL_PID:-}" ] && kill "$SHELL_PID" 2>/dev/null
+[ -n "${MENUS_PID:-}" ] && kill "$MENUS_PID" 2>/dev/null
 # Lo que escribe EDK2 lleva secuencias de escape de terminal: fuera, para comparar el texto.
 sed -e 's/\x1b\[[0-9;]*[A-Za-z]//g' -e 's/\r//g' "$SALIDA" > "$SALIDA.txt"
 

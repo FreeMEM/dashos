@@ -108,6 +108,20 @@ pub enum Permiso {
 /// Intermediarios revocables por proyección, como mucho: los que puede haber uno dentro de otro (objetos.rs).
 pub const VIAS: usize = 4;
 
+/// Páginas como mucho por llamada 58 (`Espacio::paginas_de`), como en ARM.
+pub const MAX_PAGINAS_SUELTAS: usize = 256;
+
+/// Por qué no se ponen o sueltan páginas de un objeto de memoria (llamada 58), como en ARM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FalloPaginas {
+    /// El tramo se sale del objeto, o son demasiadas páginas de una vez.
+    Fuera,
+    /// El objeto lo tiene alguien más, o es memoria DMA o una vista.
+    Compartida,
+    /// No se pudo poner ni la primera: no cabe en el tope de su grupo o no queda memoria.
+    Memoria,
+}
+
 pub struct Espacio {
     pml4: u64, // dirección física
     pcid: u64,
@@ -116,7 +130,8 @@ pub struct Espacio {
     propias: alloc::vec::Vec<u64>,
     /// Objetos de memoria proyectados, con la dirección donde empiezan y los intermediarios revocables por los que se
     /// hizo cada uno (como en ARM: C18, C45, M2).
-    proyectados: alloc::vec::Vec<(u64, alloc::sync::Arc<super::memoria::Memoria>, [usize; VIAS])>,
+    /// Y el permiso con que se proyectó (para poner una página nueva del objeto, llamada 58).
+    proyectados: alloc::vec::Vec<(u64, alloc::sync::Arc<super::memoria::Memoria>, [usize; VIAS], Permiso)>,
     /// El grupo al que se cobran sus tablas y sus páginas propias, y cuánto lleva cobrado (C42).
     cupo: alloc::sync::Arc<crate::cupo::Cupo>,
     cobrado: u64,
@@ -389,7 +404,7 @@ impl Espacio {
             return Err(Error::Direccion);
         }
         unsafe { e.write_volatile((f & DIRECCION) | PRESENTE | USUARIO | ACCEDIDA | nx()) };
-        self.proyectados.push((0, m.clone(), [0; VIAS]));
+        self.proyectados.push((0, m.clone(), [0; VIAS], Permiso::SoloLectura));
         Ok(())
     }
 
@@ -423,25 +438,25 @@ impl Espacio {
         }
         let mut vias = [0usize; VIAS];
         vias[..via.len()].copy_from_slice(via);
-        self.proyectados.push((va, m.clone(), vias));
+        self.proyectados.push((va, m.clone(), vias, permiso));
         Ok(())
     }
 
     /// ¿Hay en `va` una proyección hecha a través del intermediario `via`? (para purgar sus listas, M2)
     pub fn proyectada_via(&self, va: u64, via: usize) -> bool {
-        self.proyectados.iter().any(|(v, _, vs)| *v == va && vs.contains(&via))
+        self.proyectados.iter().any(|(v, _, vs, _)| *v == va && vs.contains(&via))
     }
 
     /// Quita la proyección que empieza en `va` (C45), con las mismas condiciones que en ARM (`m`, `via`). Borra sus
     /// entradas y las saca de la TLB de todos los núcleos antes de soltar el objeto: en este, la próxima vez que se
     /// cargue el PCID; en los demás, ya (el proceso puede estar corriendo en otro). Falso si no había.
     pub fn quitar_proyeccion(&mut self, va: u64, m: Option<&alloc::sync::Arc<super::memoria::Memoria>>, via: Option<usize>) -> bool {
-        let Some(i) = self.proyectados.iter().position(|(v, o, vs)| {
+        let Some(i) = self.proyectados.iter().position(|(v, o, vs, _)| {
             *v == va && m.is_none_or(|m| alloc::sync::Arc::ptr_eq(o, m)) && via.is_none_or(|x| vs.contains(&x))
         }) else {
             return false;
         };
-        let (_, objeto, _) = self.proyectados.swap_remove(i);
+        let (_, objeto, _, _) = self.proyectados.swap_remove(i);
         for k in 0..objeto.paginas() as u64 {
             if let Some(e) = self.hoja(va + k * PAGINA) {
                 unsafe { e.write_volatile(0) };
@@ -452,6 +467,88 @@ impl Espacio {
         // El objeto se suelta aquí, ya sin entradas que lo vean.
         drop(objeto);
         true
+    }
+
+    /// Cuántas proyecciones de `m` tiene (para saber si alguien más lo tiene, llamada 58).
+    pub fn proyecciones_de(&self, m: &alloc::sync::Arc<super::memoria::Memoria>) -> usize {
+        self.proyectados.iter().filter(|(_, o, _, _)| alloc::sync::Arc::ptr_eq(o, m)).count()
+    }
+
+    /// Llamada 58, como en ARM (`../espacio.rs`, `paginas_de`): pone (`poner`) o suelta las páginas
+    /// `primera..primera + n` del objeto `m` (`n` hasta [`MAX_PAGINAS_SUELTAS`]) en las proyecciones de este espacio, y
+    /// dice cuántas quedaron como se pedía desde la primera. Solo con un objeto que no tiene nadie más que este proceso
+    /// (sus `Arc` son las proyecciones de aquí más `mias`), ni memoria DMA ni una vista. Al soltar, las entradas se
+    /// borran y salen de la TLB de todos los núcleos (este, al volver al proceso; los demás, ya) antes de devolver las
+    /// páginas al sistema.
+    pub fn paginas_de(&mut self, m: &alloc::sync::Arc<super::memoria::Memoria>, primera: usize, n: usize, poner: bool, mias: usize) -> Result<usize, FalloPaginas> {
+        if n == 0 || n > MAX_PAGINAS_SUELTAS || primera.checked_add(n).is_none_or(|fin| fin > m.paginas()) {
+            return Err(FalloPaginas::Fuera);
+        }
+        if m.bus().is_some() || m.es_vista() || alloc::sync::Arc::strong_count(m) != self.proyecciones_de(m) + mias {
+            return Err(FalloPaginas::Compartida);
+        }
+        let mut hechas = 0;
+        if poner {
+            for k in primera..primera + n {
+                if m.fisica(k) == 0 {
+                    let Some(f) = crate::memoria::pagina_usuario() else { break };
+                    if !m.reponer_pagina(k, f) {
+                        // SAFETY: recién sacada del repartidor y sin poner en ningún sitio: nadie más la tiene.
+                        unsafe { paginas().liberar(f, 1) };
+                        break;
+                    }
+                    // Sus tablas ya existen (se crearon al proyectar el objeto entero) y la entrada está vacía: una
+                    // entrada nueva no pide vaciar ninguna TLB.
+                    let destinos: alloc::vec::Vec<(u64, Permiso)> =
+                        self.proyectados.iter().filter(|(_, o, _, _)| alloc::sync::Arc::ptr_eq(o, m)).map(|(va, _, _, p)| (*va + k as u64 * PAGINA, *p)).collect();
+                    for (va, permiso) in destinos {
+                        let _ = self.proyectar(va, f, permiso);
+                    }
+                }
+                hechas += 1;
+            }
+            if hechas == 0 {
+                return Err(FalloPaginas::Memoria);
+            }
+            return Ok(hechas);
+        }
+        let mut sueltas = [0u64; MAX_PAGINAS_SUELTAS];
+        let mut n_sueltas = 0;
+        let mut quitadas = false;
+        for k in primera..primera + n {
+            if m.fisica(k) != 0 {
+                for i in 0..self.proyectados.len() {
+                    let (va, ref o, _, _) = self.proyectados[i];
+                    if alloc::sync::Arc::ptr_eq(o, m)
+                        && let Some(e) = self.hoja(va + k as u64 * PAGINA)
+                    {
+                        unsafe { e.write_volatile(0) };
+                        quitadas = true;
+                    }
+                }
+            }
+        }
+        if quitadas {
+            // Primero fuera de las TLB: en este núcleo, al volver al proceso (su PCID, sucio); en los demás, ya.
+            ensuciar(self.pcid);
+            super::nucleos::vaciar_tlb_otros();
+        }
+        for k in primera..primera + n {
+            if m.fisica(k) != 0
+                && let Some(f) = m.soltar_pagina(k)
+            {
+                sueltas[n_sueltas] = f;
+                n_sueltas += 1;
+            }
+            hechas += 1;
+        }
+        let mut p = paginas();
+        for &f in &sueltas[..n_sueltas] {
+            // SAFETY: eran del objeto, que solo tiene este proceso (contado arriba, con su tabla de llaves tomada por
+            // quien llama): ya no están en sus tablas ni en ninguna TLB, y `soltar_pagina` las sacó del objeto.
+            unsafe { p.liberar(f, 1) };
+        }
+        Ok(hechas)
     }
 
     /// Proyecta memoria del firmware (C50; en un PC, la pantalla del GOP): fuera de la RAM que reparte el kernel, o

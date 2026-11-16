@@ -92,6 +92,10 @@ cerrojo, porque saben que nadie más corre a la vez. `Forbid()` solo evita que o
 
 ### Recomendación: una caja, un núcleo a la vez
 
+> **Cambiado el 2026-11-14** (abajo, "Decidido el 2026-11-15", último párrafo): hay un solo hilo de emulación por
+> caja, con planificador propio. Donde este apartado y "Cómo encaja" dicen "cada tarea 68k es un hilo del kernel",
+> manda lo decidido después. El testigo y la regla de un núcleo a la vez siguen igual.
+
 - **Cada tarea 68k es un hilo del kernel** (lo pide matar tareas, S2). Pero la caja tiene un testigo: solo el hilo
   que lo tiene puede correr código de la caja. Es como el cerrojo global de Python.
 - **El planificador de la caja** decide quién tiene el testigo, con la prioridad estricta de exec y turnos entre
@@ -123,7 +127,7 @@ Newbench quería que cada programa Amiga fuera una ventana del escritorio, pero 
 En DashOS sale de forma natural, porque Intuition es nativa:
 
 - **La pantalla de Workbench es el escritorio de DashOS.** Cada ventana que abre un programa en ella es una ventana
-  del compositor, con su borde, su sitio en el mosaico o flotante, y su escritorio virtual (S10).
+  del compositor, con su borde, su sitio en el mosaico o flotante, y su espacio de trabajo (S10).
 - **Los adornos de Intuition** (barra de título, gadgets de cerrar y de profundidad) los puede dibujar el programa
   como en el Amiga o el compositor como en DashOS. Recomiendo el estilo Amiga por dentro y el borde de DashOS por
   fuera.
@@ -149,7 +153,10 @@ En DashOS sale de forma natural, porque Intuition es nativa:
 ## 5. Varias cajas
 
 - **Una caja principal**, la del Workbench, que arranca con la sesión del usuario.
-- **Cajas aparte** para programas dudosos o que fallan mucho. Si una cae, no se lleva a las demás.
+- **Cajas aparte** para programas dudosos o que fallan mucho. Si una cae, no se lleva a las demás. Quién lo pide:
+  el usuario, con "Abrir aparte" en el menú del icono, que se guarda como tooltype del icono (se ve en Información y
+  se edita a mano); la misma opción está en la orden de Shell que lanza el programa. Y el sistema lo propone solo
+  cuando un programa ha tirado la caja. El nombre del tooltype, por diseñar al hacerlo.
 - **Entre cajas** se comparten los ficheros, el portapapeles y los puertos ARexx con nombre, a través de un servicio
   que hace de puente.
 - Lanzar una caja es crear un proceso y cargar las bibliotecas nativas, que ya están en memoria. La meta de S0
@@ -163,7 +170,15 @@ Reescribir todas las bibliotecas de AmigaOS 3.1 lleva tiempo. Mientras tanto hay
   tenga en nativo, y ejecutarlas en el JIT sobre el exec de DashOS. Por ejemplo utility, mathieee o icon.
 - Solo sirven las que no tocan el chipset. graphics, layers e intuition de la ROM no valen, porque hablan con el
   hardware del Amiga.
-- DashOS no lleva ninguna ROM. La pone el usuario, como en Amiberry o en WinUAE.
+- DashOS no lleva ninguna ROM de Commodore. El Kickstart lo pone el usuario, como en Amiberry o en WinUAE. Lo que
+  sí lleva la imagen de `SYS:` desde el 2026-11-16 es la ROM libre de AROS (licencia APL), para que la máquina entera
+  de S18 arranque sin Kickstart. Se baja al construir, nunca va en git, y si el usuario tiene Kickstart manda el
+  suyo. Para cargar bibliotecas en la caja nativa, como dice este apartado, sigue haciendo falta el Kickstart.
+- Dónde se pone: en un cajón fijo y con nombre dentro de `Home:Amiga` (el cajón de la caja, S4b), que se llena
+  arrastrando el fichero. El nombre del cajón, por diseñar al hacerlo.
+- Sin ROM, lo de serie tiene que seguir sirviendo. Si a un programa le falta una biblioteca, sale un aviso en llano
+  ("Este programa necesita icon.library, que DashOS aún no trae"), con el detalle a un clic (qué biblioteca, qué
+  versión y dónde poner la ROM) y una línea en `Estado:Registros/` (S6).
 - Es el mismo fichero que el oráculo de las pruebas (`AGENTS.md`).
 
 ## 7. Lo que queda fuera
@@ -173,7 +188,9 @@ Reescribir todas las bibliotecas de AmigaOS 3.1 lleva tiempo. Mientras tanto hay
   aplicación más, con sus ventanas en el escritorio como quería Newbench.
 - **Programas que tocan la MMU o el modo supervisor del 68k**: Enforcer original, VMM y similares. DashOS ya trae su
   Enforcer.
-- **Programas que cuentan ciclos de CPU** para medir el tiempo. Con el JIT van demasiado rápido.
+- **Programas que cuentan ciclos de CPU** para medir el tiempo. Con el JIT van demasiado rápido. La salida para el
+  usuario son los perfiles de velocidad de la máquina entera (S18, "A500" y "A1200"), que se ofrecen desde el menú
+  del icono del programa y se recuerdan en él.
 
 ## Recomendación, resumida
 
@@ -189,10 +206,15 @@ Reescribir todas las bibliotecas de AmigaOS 3.1 lleva tiempo. Mientras tanto hay
 ## Decidido el 2026-11-15: qué máquina dice ser la caja (para los paquetes, S8)
 
 Un paquete Amiga puede pedir una máquina (`68060`, `FPU`, `AGA`, `RTG`) o traer un fichero por procesador. Quien
-contesta es la caja, no un texto fijo: `Paq` le pregunta su perfil y la caja dice lo que tiene de verdad.
+contesta es la caja, no un texto fijo: `Paq` le pregunta su perfil y la caja dice lo que tiene de verdad. Ese mismo
+perfil (procesador, FPU, RTG, memoria) lo imprime la orden `Caja` (S7), para saber por qué un paquete eligió una
+variante.
 
 - Hoy: 68040 con coprocesador matemático (lo que ya pone en `AttnFlags`: 68010 a 68040, 68881, 68882 y FPU40), sin
   68060, sin MMU, sin chips del Amiga (ni `AGA` ni `ECS`, ni memoria chip) y con la memoria del ajuste "memoria amiga".
+  Ese ajuste es un fichero de texto en `ENVARC:` (S3). Cuando la caja llega a su tope, un programa 68k solo ve un
+  `AllocMem` fallido; el usuario ve un aviso en llano ("Los programas Amiga han llegado a su memoria, 256 MB") con
+  un botón para subirla, y queda una línea en `Estado:Registros/`.
 - `RTG` no se dice hasta que haya cybergraphics o picasso96api. `MUI` y `TCP/IP`, solo si están instalados.
 - Si el perfil cambia (llega cybergraphics), `Paq` vuelve a elegir las variantes de lo instalado.
 - Sin comprobar: qué procesador declara Emu68 por dentro (registros del 68k); lo mirado es lo que la caja enseña a
@@ -212,8 +234,8 @@ tarea hija al acabar pasa a quien la creó; una tarea hija que cae se quita y el
 ## Cómo encaja
 
 - Con S1: la caja es un proceso del micronúcleo.
-- Con S2: corrige la idea de repartir una caja entre núcleos; la caja usa un testigo. Las tareas son hilos, y se
-  pueden matar.
+- Con S2: corrige la idea de repartir una caja entre núcleos; la caja usa un testigo. Las tareas se pueden matar.
+  Desde el 2026-11-14 no son hilos del kernel: hay un hilo de emulación por caja (ver arriba).
 - Con S3: usa el hueco de 4 GB, la página 0 de solo lectura y el Enforcer.
 - S4b define los volúmenes y asignaciones que ve la caja.
 - S9 y S10 reciben las ventanas Amiga como ventanas normales.

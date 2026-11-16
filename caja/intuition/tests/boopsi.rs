@@ -386,9 +386,9 @@ fn gadgets_en_una_ventana() {
     assert!(!p.c.1.boopsi_pendiente());
     // El botón está pintado (no es todo del color de fondo).
     let bm = rl32(&p, rl32(&p, w + win::RPORT) + 4);
-    let l = p.c.1.lienzo(bm).unwrap();
-    let fondo = l.pixel(5, 150);
-    assert!((20..100).any(|x| l.pixel(x, 20) != fondo), "el borde del botón");
+    let l = |x: i32, y: i32| p.c.1.pixel_de(&p.c.0, bm, x, y).unwrap_or(0);
+    let fondo = l(5, 150);
+    assert!((20..100).any(|x| l(x, 20) != fondo), "el borde del botón");
     // Un clic en el botón: GADGETUP con su IAddress.
     clic(&mut p, w, 50, 26);
     let m = mensajes(&mut p, w);

@@ -1,0 +1,357 @@
+; Los textos de explorador (versión 1), de usuario/src/bin/explorador.rs, usuario/src/explorador/entrada.rs, usuario/src/explorador/iconos.rs, usuario/src/explorador/logica.rs, usuario/src/explorador/ops.rs, usuario/src/explorador/pintar.rs
+; Hecho con tools/catalogo.py cd: no se edita a mano.
+;
+MSG_1 (1//)
+Carpeta personal
+MSG_2 (2//)
+Papelera
+MSG_3 (3//)
+Buscar \"{}\"
+MSG_4 (4//)
+Archivos
+MSG_5 (5//)
+No tienes permiso para ver esta carpeta
+MSG_6 (6//)
+\"{}\" está en marcha
+MSG_7 (7//)
+\"{}\" no se pudo lanzar ({})
+MSG_8 (8//)
+No hay ningún programa para abrir \"{}\" ({})
+MSG_9 (9//)
+Mover \"{}\" a la papelera
+MSG_10 (10//)
+Mover {} elementos a la papelera
+MSG_11 (11//)
+\"{}\" se ha movido a la papelera
+MSG_12 (12//)
+{} elementos movidos a la papelera
+MSG_13 (13//)
+Un elemento restaurado
+MSG_14 (14//)
+{} elementos restaurados
+MSG_15 (15//)
+Un elemento borrado para siempre
+MSG_16 (16//)
+{} elementos borrados para siempre
+MSG_17 (17//)
+Un elemento movido
+MSG_18 (18//)
+{} elementos movidos
+MSG_19 (19//)
+Un elemento copiado
+MSG_20 (20//)
+{} elementos copiados
+MSG_21 (21//)
+¿Borrar \"{}\" para siempre?
+MSG_22 (22//)
+¿Borrar {} elementos para siempre?
+MSG_23 (23//)
+Aquí no hay papelera: no se podrá recuperar.
+MSG_24 (24//)
+No se podrá recuperar.
+MSG_25 (25//)
+Borrar
+MSG_26 (26//)
+Borrar \"{}\"
+MSG_27 (27//)
+Borrar {} elementos
+MSG_28 (28//)
+Restaurar \"{}\"
+MSG_29 (29//)
+Restaurar {} elementos
+MSG_30 (30//)
+La papelera ya está vacía
+MSG_31 (31//)
+¿Vaciar la papelera?
+MSG_32 (32//)
+Se borrará para siempre {} elemento.
+MSG_33 (33//)
+Se borrarán para siempre {} elementos.
+MSG_34 (34//)
+Vaciar
+MSG_35 (35//)
+\"{}\" listo para mover
+MSG_36 (36//)
+\"{}\" listo para copiar
+MSG_37 (37//)
+{} elementos listos para mover
+MSG_38 (38//)
+{} elementos listos para copiar
+MSG_39 (39//)
+Mover \"{}\" a {}
+MSG_40 (40//)
+Mover {} elementos a {}
+MSG_41 (41//)
+Copiar \"{}\" a {}
+MSG_42 (42//)
+Copiar {} elementos a {}
+MSG_43 (43//)
+\"{}\" ahora se llama \"{}\"
+MSG_44 (44//)
+Carpeta nueva
+MSG_45 (45//)
+Crear
+MSG_46 (46//)
+Carpeta sin nombre
+MSG_47 (47//)
+Cambiar el nombre
+MSG_48 (48//)
+Cambiar
+MSG_49 (49//)
+El nombre no puede llevar \"/\" ni \":\"
+MSG_50 (50//)
+\".\" y \"..\" no valen como nombre
+MSG_51 (51//)
+Escribe un nombre
+MSG_52 (52//)
+Ese nombre no vale
+MSG_53 (53//)
+Ya hay una carpeta o un fichero con ese nombre
+MSG_54 (54//)
+Ya hay otro con ese nombre
+MSG_55 (55//)
+No se pudo crear \"{}\": {}
+MSG_56 (56//)
+No se pudo cambiar el nombre: {}
+MSG_57 (57//)
+\"{}\" está en marcha (aún no recibe el fichero)
+MSG_58 (58//)
+Por SYS: solo se puede leer
+MSG_59 (59//)
+Solo lo puede cambiar su dueño
+MSG_60 (60//)
+Carpeta
+MSG_61 (61//)
+{} · cambiado: {}
+MSG_62 (62//)
+Dueño: usuario {} (tú) · grupo {} · en {}
+MSG_63 (63//)
+Dueño: usuario {} · grupo {} · en {}
+MSG_64 (64//)
+Comentario
+MSG_65 (65//)
+Cancelar
+MSG_66 (66//)
+Cerrar
+MSG_67 (67//)
+Guardar
+MSG_68 (68//)
+El comentario es demasiado largo
+MSG_69 (69//)
+No se pudo cambiar el comentario
+MSG_70 (70//)
+No se pudo cambiar la protección
+MSG_71 (71//)
+Esconder los ocultos
+MSG_72 (72//)
+Mostrar los ocultos
+MSG_73 (73//)
+Restaurar
+MSG_74 (74//)
+Borrar para siempre
+MSG_75 (75//)
+Propiedades
+MSG_76 (76//)
+Abrir
+MSG_77 (77//)
+Abrir en una pestaña nueva
+MSG_78 (78//)
+Abrir con…
+MSG_79 (79//)
+Cortar
+MSG_80 (80//)
+Copiar
+MSG_81 (81//)
+Pegar dentro
+MSG_82 (82//)
+Cambiar el nombre…
+MSG_83 (83//)
+Mover a la papelera
+MSG_84 (84//)
+Borrar para siempre…
+MSG_85 (85//)
+Vaciar la papelera
+MSG_86 (86//)
+Elegir todo
+MSG_87 (87//)
+Carpeta nueva…
+MSG_88 (88//)
+Pegar
+MSG_89 (89//)
+Ventana nueva
+MSG_90 (90//)
+Pestaña nueva
+MSG_91 (91//)
+Iconos
+MSG_92 (92//)
+Lista
+MSG_93 (93//)
+Volver a leer
+MSG_94 (94//)
+ese camino no vale
+MSG_95 (95//)
+esa asignación lleva a sí misma
+MSG_96 (96//)
+ese camino es demasiado largo
+MSG_97 (97//)
+sin permiso
+MSG_98 (98//)
+no existe en ninguna de sus capas
+MSG_99 (99//)
+lleva a donde no llega
+MSG_100 (100//)
+Programa
+MSG_101 (101//)
+Imagen
+MSG_102 (102//)
+Imagen {}
+MSG_103 (103//)
+Texto
+MSG_104 (104//)
+Imagen de disco
+MSG_105 (105//)
+Icono de Amiga
+MSG_106 (106//)
+Datos
+MSG_107 (107//)
+Fichero
+MSG_108 (108//)
+Escribe un camino
+MSG_109 (109//)
+El camino tiene letras que no valen
+MSG_110 (110//)
+No hay ningún lugar con ese nombre
+MSG_111 (111//)
+No se puede subir con \"..\": usa Atrás o Arriba
+MSG_112 (112//)
+Una parte del camino no vale
+MSG_113 (113//)
+El camino es demasiado largo
+MSG_114 (114//)
+1 byte
+MSG_115 (115//)
+{} bytes
+MSG_116 (116//)
+{},{} kB
+MSG_117 (117//)
+{},{} MB
+MSG_118 (118//)
+{},{} GB
+MSG_119 (119//)
+ene
+MSG_120 (120//)
+feb
+MSG_121 (121//)
+mar
+MSG_122 (122//)
+abr
+MSG_123 (123//)
+may
+MSG_124 (124//)
+jun
+MSG_125 (125//)
+jul
+MSG_126 (126//)
+ago
+MSG_127 (127//)
+sep
+MSG_128 (128//)
+oct
+MSG_129 (129//)
+nov
+MSG_130 (130//)
+dic
+MSG_131 (131//)
+\"{}\" elegida
+MSG_132 (132//)
+\"{}\" elegido ({})
+MSG_133 (133//)
+{} carpetas elegidas
+MSG_134 (134//)
+{} elementos elegidos ({})
+MSG_135 (135//)
+{} elementos elegidos ({} sin contar las carpetas)
+MSG_136 (136//)
+ya no existe
+MSG_137 (137//)
+no es una carpeta
+MSG_138 (138//)
+es una carpeta
+MSG_139 (139//)
+no caben más cosas abiertas
+MSG_140 (140//)
+error del disco
+MSG_141 (141//)
+el disco es de solo lectura
+MSG_142 (142//)
+ya hay uno con ese nombre
+MSG_143 (143//)
+la carpeta no está vacía
+MSG_144 (144//)
+no queda sitio en el disco
+MSG_145 (145//)
+no tienes permiso
+MSG_146 (146//)
+está en uso
+MSG_147 (147//)
+el nombre no vale
+MSG_148 (148//)
+el lugar ya no vale
+MSG_149 (149//)
+no se pudo
+MSG_150 (150//)
+Cancelado
+MSG_151 (151//)
+\"{}\": no se puede meter una carpeta dentro de sí misma
+MSG_152 (152//)
+El destino
+MSG_153 (153//)
+No hay papelera
+MSG_154 (154//)
+La papelera
+MSG_155 (155//)
+\"{}\": demasiado honda, no se sigue
+MSG_156 (156//)
+copia
+MSG_157 (157//)
+\"{}\": no se sabe de dónde vino
+MSG_158 (158//)
+\"{}\": la carpeta de donde vino {}
+MSG_159 (159//)
+restaurado
+MSG_160 (160//)
+{} libres de {}
+MSG_161 (161//)
+Buscar en {}
+MSG_162 (162//)
+Escribe un camino, como Home/Privado
+MSG_163 (163//)
+Nombre
+MSG_164 (164//)
+Tamaño
+MSG_165 (165//)
+Tipo
+MSG_166 (166//)
+Modificado
+MSG_167 (167//)
+No hay resultados
+MSG_168 (168//)
+Prueba con otras palabras
+MSG_169 (169//)
+Buscando…
+MSG_170 (170//)
+La papelera está vacía
+MSG_171 (171//)
+La carpeta está vacía
+MSG_172 (172//)
+Preparando…
+MSG_173 (173//)
+{} de {}
+MSG_174 (174//)
+Deshacer
+MSG_175 (175//)
+Abrir con
+MSG_176 (176//)
+Elige un programa para {}
+MSG_177 (177//)
+No hay programas en SYS:Programas

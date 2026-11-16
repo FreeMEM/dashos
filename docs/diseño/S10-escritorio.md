@@ -32,16 +32,27 @@ Lo que ya está decidido o recomendado:
 
 ## Recomendación
 
-### Pantallas: escritorios virtuales a lo Amiga
+### Espacios de trabajo: escritorios virtuales a lo Amiga
+
+**Tres nombres, uno para cada cosa** (decidido por el usuario el 2026-11-16, S36):
+
+- **Monitor**: el aparato.
+- **Espacio de trabajo**: lo de todos los días, del 1 al 9, cada uno con su disposición (S27). Es la palabra que ve
+  el usuario. Este documento los llamaba "pantallas".
+- **Pantalla**: solo la pantalla propia de un programa de Amiga (`OpenScreen`, S23). Se ve como un espacio de trabajo
+  más.
 
 En el Amiga, cada programa podía abrir su propia pantalla, y se pasaba de una a otra arrastrándolas hacia abajo o con
-Amiga izquierda + M. **En DashOS, los escritorios virtuales son "pantallas"**, con ese mismo gesto:
+Amiga izquierda + M. **En DashOS, los escritorios virtuales son espacios de trabajo**, con ese mismo gesto:
 
-- Cada monitor tiene sus propias pantallas, como en niri. Se crean y se borran solas, siempre con una vacía.
-- Se cambia de pantalla con el teclado (Amiga + M / N, o Super + flechas), con un gesto del panel táctil, o
-  arrastrando la barra de la pantalla hacia abajo, como en el Amiga. Al arrastrar se ve la de detrás.
-- Una pantalla Amiga propia (`OpenScreen` de un programa 68k, S4) es una pantalla más de esta lista.
-- Al desconectar un monitor, sus pantallas pasan a otro y vuelven al reconectarlo, como en niri.
+- Cada monitor tiene sus propios espacios de trabajo, como en niri. Se crean y se borran solos, siempre con uno vacío.
+- Se cambia de espacio con el teclado, con un gesto del panel táctil, o arrastrando la barra hacia abajo, como en el
+  Amiga. Al arrastrar se ve el de detrás.
+- **Teclas**: mandan las de S27, que son las que existen. Super+1..9 va a un espacio, y Super+arriba y Super+abajo
+  pasan al anterior y al siguiente. Amiga + M y Amiga + N quedan como atajo del Amiga para lo mismo (siguiente y
+  anterior).
+- Una pantalla Amiga propia (`OpenScreen` de un programa 68k, S4) es un espacio de trabajo más de esta lista.
+- Al desconectar un monitor, sus espacios de trabajo pasan a otro y vuelven al reconectarlo, como en niri.
 
 ### Mosaico y flotantes a la vez, de forma natural
 
@@ -51,25 +62,29 @@ modos:
 
 - **Arrastrar saca una ventana del mosaico.** Si coges una ventana por su barra y la sueltas lejos de la tira, se
   queda flotando donde la sueltas. Si la arrastras de vuelta a la tira, se coloca en la columna que marca una guía.
-- **Los bordes ayudan.** Llevar una ventana flotante al borde de la pantalla la encaja a media pantalla o a un
+- **Los bordes ayudan.** Llevar una ventana flotante al borde del monitor la encaja a media pantalla o a un
   cuarto, como en GNOME o Windows.
 - **Cada ventana nace donde le toca.** Los diálogos, las ventanas pequeñas y las de tamaño fijo nacen flotando; las
-  normales, en el mosaico. Cada pantalla dice si las nuevas llegan al mosaico o flotando; la pantalla de Workbench,
-  flotando.
-- **Se recuerda.** Si una aplicación se dejó flotando, la próxima vez vuelve a flotar en el mismo sitio.
+  normales, en el mosaico. Cada espacio de trabajo dice si las nuevas llegan al mosaico o flotando; el del
+  Workbench, flotando.
+- **Se recuerda.** Si una aplicación se dejó flotando, la próxima vez vuelve a flotar en el mismo sitio. Lo
+  recordado va en un fichero de texto de `ENVARC:`, una línea por programa; borrar la línea lo olvida (el nombre del
+  fichero, por diseñar al hacerlo).
 - **El teclado también vale**: una tecla manda la ventana al mosaico o la saca, para quien no use el ratón.
 
-### Cada pantalla elige su disposición
+### Cada espacio de trabajo elige su disposición
 
 - **Flotante**: como el Workbench clásico.
 - **Mosaico con desplazamiento**: como niri. Es la disposición de mosaico por defecto.
 - **Maestro y pila**, **rejilla** y **monóculo**: como mango, para quien las prefiera.
-- **Cualquier ventana puede flotar** encima de una pantalla en mosaico. Los diálogos y las ventanas pequeñas flotan
-  solas.
+- **Cualquier ventana puede flotar** encima de un espacio de trabajo en mosaico. Los diálogos y las ventanas pequeñas
+  flotan solas.
 - **Columnas con pestañas**, como niri.
-- **Vista general** de todas las ventanas y pantallas, con una tecla.
+- **Vista general** de todas las ventanas y espacios de trabajo, con una tecla y también con el ratón: un botón en
+  la barra.
 
-Se configura en `Prefs/Escritorio`, con aplicación inmediata (S4b), y por teclado se cambia al momento.
+Se configura en `Prefs/Escritorio`, con aplicación inmediata (S4b). La disposición se cambia al momento por teclado y
+desde el menú de la barra.
 
 ### Workbench
 
@@ -78,12 +93,24 @@ Se configura en `Prefs/Escritorio`, con aplicación inmediata (S4b), y por tecla
 - Los programas dejan iconos de aplicación (AppIcons) donde soltar ficheros, como en el Amiga.
 - "Información" de un icono enseña y cambia sus tooltypes, su comentario, sus permisos (S6) y su dueño.
 
-### La barra de la pantalla
+### La barra
 
-Arriba de cada pantalla, como en el Amiga, y con lo de DMS a la derecha:
+Arriba de cada espacio de trabajo, como en las pantallas del Amiga, y con lo de DMS a la derecha:
 
-- **A la izquierda**: el título de la pantalla y, con el botón derecho, **los menús del programa activo**, como en el
-  Amiga. Los programas Wayland de Linux con menú propio lo siguen teniendo dentro de su ventana.
+- **A la izquierda**: el título del espacio de trabajo y, si el usuario eligió los menús clásicos (abajo), **los
+  menús del programa activo**.
+
+**Dónde van los menús de un programa** (decidido por el usuario el 2026-11-16, pasado por la sesión de Dash): dos
+maneras, elegidas para todo el sistema en Ajustes, categoría Escritorio (y con la orden `Ajuste`, S36 regla 1):
+
+- **Moderna, de serie**: una fila de menús dentro de cada ventana, como ya pinta kit-c. Se ve sin saber nada del
+  Amiga (S36, regla 9).
+- **Clásica del Amiga**: los menús del programa activo en la barra de arriba de la pantalla. Los títulos se ven y se
+  abren con el clic normal; el botón derecho los abre desde cualquier sitio, como en el Amiga.
+
+El kit nativo y kit-c leen el ajuste y pintan el menú en un sitio u otro; el programa no cambia. Cambiar el ajuste se
+aplica sin reiniciar los programas (aviso de cambio de `ENV:`). Los programas Wayland de Linux con menú propio lo
+siguen teniendo dentro de su ventana. La caja Amiga sigue su propio modelo dentro de sus pantallas.
 - **A la derecha**: bandeja de iconos de programas, red, sonido, batería si la hay, reloj y notificaciones.
 
 ### Lanzador, notificaciones y Commodities
@@ -91,18 +118,43 @@ Arriba de cada pantalla, como en el Amiga, y con lo de DMS a la derecha:
 - **Lanzador por teclado** (Amiga derecha + espacio, o Super), como el de DMS: busca programas nativos, Amiga y Linux
   (S7, S8), ficheros, órdenes y ajustes.
 - **Notificaciones** con historial. Los programas de Linux llegan por la norma de freedesktop a través de la caja
-  Linux. Los Amiga, por un puente.
+  Linux. Los Amiga, por un puente. El historial es del usuario y se lee como texto, y hay una orden `Avisos` (listar,
+  borrar y mandar uno) sobre el servicio de notificaciones (S10b), para usarla en guiones. El formato, por diseñar.
 - **Commodities**, como en el Amiga: atajos de teclado globales y utilidades de fondo, que se ven y se paran desde
   `Exchange`.
+
+### Commodities y Exchange (decidido el 2026-11-15)
+
+En el Amiga, una commodity se engancha a toda la entrada del sistema. En DashOS eso sería un registrador de teclas,
+justo lo que S6b impide. Así que:
+
+- **Nadie recibe toda la entrada.** Una commodity pide al compositor lo concreto, y el compositor filtra y le pasa
+  solo lo suyo:
+  - una combinación de teclas ("Ctrl+Alt+E");
+  - inactividad ("cinco minutos sin tocarse": salvapantallas, bloqueo);
+  - un comportamiento del propio compositor que activa o desactiva (activar la ventana bajo el ratón, traer al
+    frente con un clic, ocultar el puntero al teclear);
+  - avisos de qué ventana se activa, sin su contenido.
+  Cada cosa es un permiso de la commodity (S6b, "atajos" y "fondo"), que se concede y se ve en Ajustes.
+- **Exchange** (`SYS:Tools/Commodities/Exchange`, y una categoría de Ajustes, S27): la lista de commodities en
+  marcha, con activar, desactivar, enseñar su ventana y quitar; las teclas que tiene cada una; y aviso si dos piden la
+  misma combinación (la primera se la queda, la segunda se entera y lo dice).
+- **Las clásicas, nativas**, en `SYS:Tools/Commodities`: Blanker (salvapantallas), ClickToFront, AutoPoint, FKey
+  (teclas que lanzan programas o guiones), NoCapsLock, y las de portapapeles cuando el compositor copie entre
+  programas. Arrancan solas si están en `WBStartup` del usuario, como en el Amiga.
+- **En la caja Amiga**, `commodities.library` para los programas 68k de siempre (Exchange, Yak, MCP, los
+  salvapantallas): funcionan, pero solo ven la entrada de las ventanas de la caja, no la de todo DashOS. Si una pide
+  una tecla global, la caja se la pide al compositor como una commodity nativa más, con el mismo permiso.
+- **Por ARexx** (el puerto del escritorio, S10b): activar, desactivar y quitar commodities desde un guion.
 
 ### ARexx en el escritorio
 
 El escritorio tiene su puerto ARexx, como Workbench desde AmigaOS 3.5: abrir cajones, mover ventanas, cambiar de
-pantalla, lanzar programas. Así se automatiza con guiones, igual que con el IPC de niri y mango.
+espacio de trabajo, lanzar programas. Así se automatiza con guiones, igual que con el IPC de niri y mango.
 
 ### Varios monitores
 
-- Cada monitor, su escala y sus pantallas (S9).
+- Cada monitor, su escala y sus espacios de trabajo (S9).
 - Mover una ventana a otro monitor con el teclado o arrastrando.
 - La barra en cada monitor.
 
@@ -134,7 +186,7 @@ Petición del usuario (2026-11-03): un sistema de personalización tan moderno c
 - **Fondo de pantalla**: imagen, pase de imágenes, color o degradado, y vídeo. El usuario usa fondos de vídeo a diario
   (mpvpaper en shiva). En la Pi 4, el vídeo de fondo usa el decodificador por hardware cuando lo haya (fase B de S9);
   si no, cuesta CPU, y el sistema lo avisa.
-- **Fondo distinto por monitor y por pantalla virtual.**
+- **Fondo distinto por monitor y por espacio de trabajo.**
 - **Ventanas**: radio de las esquinas, grosor y color del borde, separación entre ventanas del mosaico, sombras y
   transparencia. El desenfoque detrás de las ventanas, solo con la GPU (fase C de S9), porque por CPU es caro.
 - **Barra**: qué módulos lleva y en qué orden, arrastrándolos; arriba o abajo; en todos los monitores o en uno.
@@ -151,7 +203,8 @@ Petición del usuario (2026-11-03): un sistema de personalización tan moderno c
 - Todo se ve al momento, sin reiniciar nada.
 - Para quien prefiera escribir: los mismos ajustes en ficheros de texto en `ENVARC:`, que se vuelven a leer solos al
   guardarlos, como la configuración de niri.
-- Por ARexx, para cambiar el tema o el fondo con un guion.
+- Por ARexx y con la orden `Ajuste` (S27, apartado 7), para cambiar el tema o el fondo con un guion. Todos escriben
+  el mismo fichero de `ENVARC:`, que es el que manda.
 
 **Temas y módulos para compartir**
 
@@ -175,8 +228,8 @@ Como DMS con niri: **el compositor y el escritorio son procesos distintos.**
 Decidido por el usuario (2026-11-03): **aspecto de Material Design** (Material 3), con el modelo de MUI por debajo
 (S11).
 
-- La estructura es la del Amiga: pantallas, barra arriba con los menús al botón derecho, Workbench con iconos y
-  cajones, gadgets de cerrar y de profundidad.
+- La estructura es la del Amiga: espacios de trabajo que se arrastran como sus pantallas, barra arriba con los menús (a
+  la vista y también al botón derecho), Workbench con iconos y cajones, gadgets de cerrar y de profundidad.
 - El dibujo es el de Material 3: esquinas redondeadas, superficies con tono, tipografía y espaciado de Material, y
   animaciones cortas que se pueden quitar.
 - Colores sacados del fondo de pantalla, como Material You y como hace DMS con matugen. Tema claro y oscuro.
@@ -185,20 +238,23 @@ Decidido por el usuario (2026-11-03): **aspecto de Material Design** (Material 3
 ## Lo que queda abierto
 
 1. ¿Escritorios virtuales como "pantallas" del Amiga, con el gesto de arrastrar hacia abajo? Recomendado: sí.
-2. ¿Disposición por defecto de una pantalla nueva: flotante (Workbench clásico) o mosaico con desplazamiento (niri)?
-   Recomendado: Workbench flotante, y el resto en mosaico con desplazamiento.
-3. ¿Menús del programa en la barra de la pantalla con el botón derecho, como el Amiga? Recomendado: sí.
+   Decidido el 2026-11-16 (S36): el gesto se conserva y el nombre es "espacio de trabajo"; "pantalla" queda para la
+   pantalla propia de un programa de Amiga, y "monitor" para el aparato.
+2. ¿Disposición por defecto de un espacio de trabajo nuevo: flotante (Workbench clásico) o mosaico con desplazamiento
+   (niri)? Recomendado: Workbench flotante, y el resto en mosaico con desplazamiento.
+3. ~~¿Menús del programa en la barra de la pantalla?~~ Decidido el 2026-11-16: dentro de la ventana de serie; la
+   barra de arriba, como opción de todo el sistema (ver "Dónde van los menús de un programa").
 
 ## Cómo encaja
 
 - Con S0: principio 1 (el compositor no se traba) y principio 4 (un solo escritorio).
 - Con S2: el compositor tiene plazo; el escritorio es un proceso normal.
-- Con S4: las pantallas Amiga son pantallas del escritorio, y sus ventanas, ventanas normales.
+- Con S4: cada pantalla Amiga se ve como un espacio de trabajo más, y sus ventanas, ventanas normales.
 - Con S4b: Workbench muestra volúmenes, cajones e iconos `.info`; `Prefs/Escritorio`.
 - Con S6: "Información" enseña dueño y permisos; el escritorio no puede leer lo que no le toca.
 - Con S7 y S8: el lanzador encuentra programas de los tres mundos.
 - Con S9: escala por monitor y conexión en caliente.
-- S11: el kit de interfaz nativo trae los menús a la barra.
+- S11: el kit de interfaz nativo pinta los menús en la ventana o en la barra, según el ajuste.
 
 ## Fuentes
 

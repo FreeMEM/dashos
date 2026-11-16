@@ -20,6 +20,11 @@ Sin montarlos, pasar las cosas de un usuario a DashOS cuesta mucho.
 
 - **Un disco DashFS en una zona de memoria reservada.** El tamaño se elige en las preferencias, como el MountList
   del Amiga (`DEVS:DOSDrivers/RAD`), y lo lee el arranque, que reserva la zona antes de dar memoria a nadie.
+- **Dónde se escribe ese ajuste**: es de la máquina, un fichero de texto en la capa de la máquina de `DEVS:`
+  (`Estado:Devs/DOSDrivers/RAD`, S4b), porque `SYS:` no se escribe. Cambiarlo es acción de administrador, desde
+  Ajustes o desde el Shell, y la ventana dice que el cambio entra al reiniciar.
+- **Recién instalado no hay nada que configurar**: o trae un tamaño de serie o viene apagado sin estorbar. Cuál de
+  los dos, abierto (abajo).
 - **Un volumen por usuario**, con los volúmenes de DashFS 5 (FS10): el de cada usuario va cifrado con su llave, que se
   abre al entrar (S14: la pantalla de entrada está siempre). En memoria y tras un reinicio, el contenido sigue
   cifrado: otro usuario, o quien arranque otra cosa en la máquina, no lo lee.
@@ -52,8 +57,14 @@ Sin montarlos, pasar las cosas de un usuario a DashOS cuesta mucho.
 - **"Meter en DF0:"**: para los programas que buscan la disquetera, la caja Amiga asigna `DF0:` a la imagen y la
   cambia cuando se pide, como cambiar de disquete.
 - **Copia al escribir.** Por defecto, lo que se escribe va a una capa de cambios al lado de la imagen (los bloques
-  cambiados, por número). Al desmontar se elige: guardar los cambios en la imagen o tirarlos. El original no se toca
-  hasta entonces. También se puede montar de solo lectura, o escribiendo directamente si se pide.
+  cambiados, por número). El original no se toca. También se puede montar de solo lectura, o escribiendo
+  directamente si se pide.
+- **Al desmontar no se pregunta nada.** La capa de cambios se queda al lado de la imagen, como un fichero que se ve,
+  y se vuelve a usar al montar. "Aplicar a la imagen" y "Descartar cambios" son acciones del menú del icono. Lo
+  descartado va a la papelera, así que se puede deshacer.
+- **Desde el Shell**: órdenes para montar una imagen (con solo lectura y con nombre de aparato), desmontarla,
+  meterla en `DF0:`, y aplicar o descartar sus cambios. Así un guion cambia de disquete. Los nombres de las órdenes,
+  por diseñar.
 - **Las mismas imágenes** sirven a la máquina Amiga entera de S18.
 
 ### Qué se lee
@@ -86,8 +97,8 @@ Sin montarlos, pasar las cosas de un usuario a DashOS cuesta mucho.
   Después, al revés: DashOS escribe y guarda, y `xdftool` valida la imagen y lee lo escrito.
 - **Imágenes reales del usuario** (sus ADF de Workbench y juegos, sus HDF de Amiberry): se montan de solo lectura y se
   compara el listado con el de amitools. No van al repositorio.
-- **Copia al escribir:** escribir, tirar los cambios y ver que la imagen no cambió ni un byte; escribir, guardar y
-  validar con `xdftool`.
+- **Copia al escribir:** escribir, descartar los cambios y ver que la imagen no cambió ni un byte; escribir,
+  aplicar a la imagen y validar con `xdftool`; desmontar sin más, montar otra vez y ver que los cambios siguen.
 - **RAD:** en QEMU, escribir, reinicio en caliente, leer lo mismo; dañar un bloque de la zona a propósito y ver que el
   arranque lo detecta y carga la copia de la tarjeta; quitar la corriente (parar QEMU) y recuperar desde la copia.
 
@@ -105,14 +116,14 @@ Sin montarlos, pasar las cosas de un usuario a DashOS cuesta mucho.
 
 ## Lo que queda abierto
 
-- El tamaño de RAD: por defecto, y si se reparte entre usuarios o cada uno pide el suyo.
+- El tamaño de RAD: por defecto (o apagado de serie), y si se reparte entre usuarios o cada uno pide el suyo.
 - Cada cuánto se copia RAD: a la tarjeta por defecto (o solo al apagar), pensando en el desgaste de la tarjeta (FS11).
 - Si los nombres largos de OS 3.2 (DOS\6 y DOS\7) tienen especificación pública.
 - La licencia de la documentación de PFS3.
 
 ## Cómo encaja
 
-- Con S4b: `RAD:` junto a `RAM:`; `IMG0:` y `DF0:` para las imágenes.
+- Con S4b: `RAD:` junto a `RAM:`; `IMG0:` y `DF0:` para las imágenes; el ajuste de RAD:, en la capa de la máquina.
 - Con S5 y FS10: RAD: es un disco DashFS con un volumen cifrado por usuario; los sistemas del Amiga, procesos aparte.
 - Con S6 y S14: el volumen de RAD: de cada usuario se abre al entrar, con su llave.
 - Con S14: el reinicio en caliente propio, distinto del reinicio por el firmware.

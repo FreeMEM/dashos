@@ -12,6 +12,35 @@
 //! | `AVISO` | conexión | | ninguna: mira sus anillos |
 //! | `CERRAR` | conexión | | ninguna: manda lo que quede y cierra |
 //! | `ESTADO` | | un extremo de escritura | `R_ESTADO` por él |
+//! | `RESOLVER` | tipo (4: A, 6: AAAA; en la mitad alta de la palabra, el puerto del servidor, 0 para el 53), servidor (IPv4; 0: el del sistema), largo y el nombre (hasta `MAX_NOMBRE` bytes) | un extremo de escritura | `R_RESOLVER` por él |
+//! | `UDP` | puerto local (0: el que toque), tamaño de cada anillo | el extremo de escritura de un canal del programa | `R_CONECTAR` por ese canal |
+//! | `ESCUCHAR` | puerto TCP, tamaño de cada anillo | el extremo de escritura de un canal del programa | `R_ESCUCHAR` al momento y `R_CONECTAR` cuando alguien entra |
+//!
+//! **Escuchar es otro permiso** (`red-escuchar`, S6b): `ESCUCHAR` y `UDP` con un puerto elegido solo valen si llegan por
+//! el canal "red-escuchar" (quien tiene su llave tiene el permiso); por el canal "red" dan `SIN_PERMISO`. Por
+//! "red-escuchar" también valen `AVISO`, `CERRAR` y `ESTADO`, y nada más: para conectar hace falta la llave de "red".
+//! El cortafuegos de entrada está cerrado de serie (`usuario/src/cortafuegos.rs`): solo pasa lo que va a un puerto en
+//! que alguien con el permiso escucha, y las respuestas a lo que salió de aquí.
+//!
+//! **UDP**: la memoria es la de una conexión, y en cada anillo van los datagramas seguidos, cada uno con una cabecera
+//! de `UDP_CABECERA` bytes: largo de los datos (u16), puerto (u16), familia (u8: 4 o 6), tres bytes a 0 y la dirección
+//! (16 bytes; IPv4 en los 4 primeros): a quién va (envío) o de quién viene (recepción). Un datagrama lleva como mucho
+//! `MAX_DATAGRAMA` bytes. Si el anillo de recepción está lleno, lo que llega se pierde y se cuenta (`PERDIDOS`): ese es
+//! el tope de la cola. Un zócalo abierto sin el permiso de escuchar (puerto 0) solo recibe de las direcciones y puertos
+//! a los que ha enviado en los últimos `UDP_MEMORIA_S` segundos; lo demás se tira y se cuenta en `PERDIDOS`.
+//!
+//! **`ESCUCHAR`** es un `CONECTAR` al revés: una conexión que espera a que alguien entre por ese puerto. `R_ESCUCHAR`
+//! (orden, conexión, estado) llega al momento; `R_CONECTAR`, con la memoria, cuando alguien entra, y entonces
+//! `REMOTO_*` de la cabecera dice quién. Cada `ESCUCHAR` atiende a uno: para atender a varios a la vez se piden varios
+//! en el mismo puerto (cuentan como conexiones del programa). Un puerto en que escucha un programa no lo puede usar
+//! otro (`OCUPADO`).
+//!
+//! **`RESOLVER`**: el servicio lleva un resolvedor con caché (`usuario/src/dns.rs`). Mira primero `hosts`
+//! (`Prefs/Red/hosts` del disco del sistema, y `localhost`), después la caché y después pregunta al servidor de nombres
+//! que dio el DHCP (o al que diga la petición: sus respuestas se guardan aparte y no valen para los demás). `R_RESOLVER`:
+//! orden, estado, cuántas direcciones (hasta 8), segundos que valen y de dónde salen (`DE_RED`, `DE_CACHE`, `DE_HOSTS`);
+//! detrás, las direcciones, de 16 bytes (IPv4 en los 4 primeros). Como mucho `RESOLVER_POR_PROGRAMA` preguntas en curso
+//! por programa; la siguiente da `LIMITE`.
 //!
 //! `R_CONECTAR`: orden, conexión, estado (i32). Llega cuando la conexión queda abierta (`BIEN`, con la llave de la
 //! memoria de la conexión) o no se pudo (`RECHAZADA`, `SIN_DIRECCION`, `LIMITE`...). Después, por el mismo canal,
@@ -44,6 +73,12 @@ pub const CONECTAR: u32 = 1;
 pub const AVISO: u32 = 2;
 pub const CERRAR: u32 = 3;
 pub const ESTADO: u32 = 4;
+pub const RESOLVER: u32 = 5;
+pub const UDP: u32 = 7;
+pub const ESCUCHAR: u32 = 8;
+/// Solo del propio servicio (su hilo del canal "red-escuchar" pasa así al bucle principal lo que le llega: la marca de
+/// quien lo mandó, en 8 bytes, y el mensaje detrás). De otro, se rechaza.
+pub const REENVIADO: u32 = 104;
 /// Solo del controlador.
 pub const TARJETA: u32 = 100;
 pub const TRAMAS: u32 = 101;
@@ -66,8 +101,29 @@ pub const EVENTO: u32 = 2;
 pub const R_ESTADO: u32 = 4;
 /// Un mensaje sin más, para saber si el programa sigue vivo (si su canal está cerrado, se suelta la conexión).
 pub const LATIDO: u32 = 5;
+pub const R_RESOLVER: u32 = 7;
+pub const R_ESCUCHAR: u32 = 8;
 
 pub const IPV4: u32 = 4;
+pub const IPV6: u32 = 6;
+
+// De dónde sale una respuesta de `RESOLVER`.
+pub const DE_RED: u32 = 0;
+pub const DE_CACHE: u32 = 1;
+pub const DE_HOSTS: u32 = 2;
+/// El nombre más largo de `RESOLVER`: lo que cabe en un mensaje de 256 bytes tras sus cuatro palabras (DNS deja 253).
+pub const MAX_NOMBRE: usize = 240;
+pub const MAX_DIRECCIONES: usize = 8;
+/// Preguntas de `RESOLVER` en curso, por programa y en total.
+pub const RESOLVER_POR_PROGRAMA: usize = 8;
+pub const RESOLVER_EN_TOTAL: usize = 64;
+
+// UDP.
+pub const UDP_CABECERA: usize = 24;
+/// Lo que cabe en un datagrama sin fragmentar por Ethernet con IPv4 (1500 - 20 - 8); con IPv6, 20 menos.
+pub const MAX_DATAGRAMA: usize = 1472;
+/// Lo que un zócalo sin el permiso de escuchar recuerda a quién ha enviado, para dejar pasar sus respuestas.
+pub const UDP_MEMORIA_S: u64 = 120;
 
 // Estados (i32).
 pub const BIEN: i32 = 0;
@@ -82,8 +138,20 @@ pub const RECHAZADA: i32 = -4;
 pub const CORTADA: i32 = -5;
 /// No es suya, o no existe.
 pub const NO_EXISTE: i32 = -6;
-/// Familia que aún no se sabe (IPv6, por ahora).
+/// Familia que no se sabe.
 pub const NO_SOPORTADA: i32 = -7;
+/// El puerto ya lo tiene otro programa (o el propio servicio).
+pub const OCUPADO: i32 = -8;
+/// `RESOLVER`: el nombre no existe o no tiene direcciones de ese tipo.
+pub const SIN_NOMBRE: i32 = -9;
+/// `RESOLVER`: el servidor de nombres no contestó tras los reintentos, o no hay servidor.
+pub const SIN_RESPUESTA: i32 = -10;
+/// `RESOLVER`: el servidor contestó que no puede, o algo que no se entiende.
+pub const FALLO_SERVIDOR: i32 = -11;
+/// `RESOLVER`: la respuesta no cabía en UDP (aún no se pregunta por TCP).
+pub const TRUNCADA: i32 = -12;
+/// Escuchar sin el permiso `red-escuchar` (la orden no llegó por su canal).
+pub const SIN_PERMISO: i32 = -13;
 
 // Fases (palabra `FASE`).
 pub const CONECTANDO: i32 = 0;
@@ -98,6 +166,14 @@ pub const REC_COLA: usize = 3;
 pub const FASE: usize = 4;
 pub const CLIENTE_ESPERA: usize = 5;
 pub const SERVICIO_ESPERA: usize = 6;
+/// El puerto de este lado, y quién es el otro (conexiones TCP; en las que entran, quien entró): puerto, familia (4 o 6)
+/// y dirección (16 bytes, palabras 10 a 13).
+pub const LOCAL_PUERTO: usize = 7;
+pub const REMOTO_PUERTO: usize = 8;
+pub const REMOTO_FAMILIA: usize = 9;
+pub const REMOTO_DIR: usize = 10;
+/// UDP: datagramas que llegaron y se tiraron (anillo lleno, o de alguien a quien no se había enviado).
+pub const PERDIDOS: usize = 14;
 /// Desde dónde van los datos.
 pub const DATOS: usize = 64;
 pub const ANILLO_MIN: usize = 4096;
@@ -148,4 +224,21 @@ pub const E_RECHAZOS: usize = 14;
 /// palabras, la baja primero), también las de la caja Linux. El monitor del sistema saca de ahí lo que va por segundo.
 pub const E_ENTRAN: usize = 15;
 pub const E_SALEN: usize = 17;
-pub const E_PALABRAS: usize = 19;
+/// IPv6: 1 si hay una dirección global (por SLAAC), y la dirección (16 bytes, palabras 20 a 23).
+pub const E_IP6: usize = 19;
+pub const E_IP6_DIR: usize = 20;
+/// El cortafuegos de entrada: intentos de conexión TCP y datagramas UDP cortados.
+pub const E_CORTADOS_TCP: usize = 24;
+pub const E_CORTADOS_UDP: usize = 25;
+/// El resolvedor: respuestas tiradas (otro origen, otro identificador, otra pregunta, mal hechas), preguntas hechas a
+/// los servidores, respuestas dadas desde la caché y entradas en la caché.
+pub const E_DNS_TIRADAS: usize = 26;
+pub const E_DNS_PREGUNTAS: usize = 27;
+pub const E_DNS_CACHE: usize = 28;
+pub const E_DNS_GUARDADAS: usize = 29;
+/// El servidor de hora (SNTP) de `Prefs/Red/hora`, ya resuelto (IPv4; 0 si no hay o aún no se sabe). Lo usa `hora`.
+pub const E_HORA: usize = 30;
+/// 1 si no hay servidor de hora a propósito: `Prefs/Red/hora` dice `ninguno` (o no se entiende), o el servicio no pudo
+/// leer sus ajustes. `hora` entonces no pregunta a nadie.
+pub const E_HORA_APAGADA: usize = 31;
+pub const E_PALABRAS: usize = 32;

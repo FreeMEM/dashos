@@ -9,6 +9,7 @@
 //! Sale una `Imagen` en ARGB sin premultiplicar (`0xAARRGGBB`); de 16 bits se queda el byte alto. Los trozos
 //! auxiliares (gamma, perfil de color, texto...) se saltan.
 
+use crate::textos::tr;
 use crate::imagen::Imagen;
 use alloc::vec::Vec;
 
@@ -35,13 +36,13 @@ impl Error {
     /// El porqué, para decírselo al usuario.
     pub fn texto(&self) -> &'static str {
         match self {
-            Error::NoEsPng => "no es un PNG",
-            Error::Corto => "se acaba antes de tiempo",
-            Error::Crc => "un trozo está roto (su CRC no cuadra)",
-            Error::MalFormado => "no sigue el formato",
-            Error::Comprimido => "lo comprimido está roto",
-            Error::Grande(..) => "demasiado grande",
-            Error::SinMemoria => "no cabe en la memoria",
+            Error::NoEsPng => tr(3, "no es un PNG"),
+            Error::Corto => tr(4, "se acaba antes de tiempo"),
+            Error::Crc => tr(5, "un trozo está roto (su CRC no cuadra)"),
+            Error::MalFormado => tr(6, "no sigue el formato"),
+            Error::Comprimido => tr(7, "lo comprimido está roto"),
+            Error::Grande(..) => tr(8, "demasiado grande"),
+            Error::SinMemoria => tr(9, "no cabe en la memoria"),
         }
     }
 }

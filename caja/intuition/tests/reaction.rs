@@ -218,13 +218,13 @@ fn ventana_como_la_de_dash() {
     assert!(cx > ax + aa, "{:?} {:?}", caja_g(&p, v.aceptar), caja_g(&p, v.cancelar));
     // Se ve algo: el texto de los botones y el marco del grupo.
     let bm = rl32(&p, rl32(&p, w + win::RPORT) + 4);
-    let l = p.c.1.lienzo(bm).unwrap();
-    let fondo = l.pixel(an - 2, al / 2);
+    let l = |x: i32, y: i32| p.c.1.pixel_de(&p.c.0, bm, x, y).unwrap_or(0);
+    let fondo = l(an - 2, al / 2);
     let (bx, by) = centro(&p, v.aceptar);
-    assert!((bx - 20..bx + 20).any(|x| l.pixel(x, by) != fondo), "el botón no se pintó");
+    assert!((bx - 20..bx + 20).any(|x| l(x, by) != fondo), "el botón no se pintó");
     // La etiqueta "Nombre", en la columna de la izquierda del campo.
     let (cx0, cy0, _, ch) = caja_g(&p, v.cadena);
-    assert!((lx..cx0).any(|x| (cy0..cy0 + ch).any(|y| l.pixel(x, y) != l.pixel(lx + 1, cy0 - 1))), "la etiqueta no se pintó");
+    assert!((lx..cx0).any(|x| (cy0..cy0 + ch).any(|y| l(x, y) != l(lx + 1, cy0 - 1))), "la etiqueta no se pintó");
     // Clic en "Aceptar": WMHI_GADGETUP con su GA_ID.
     clic(&mut p, w, bx, by);
     let e = eventos(&mut p, v.wo);
@@ -379,14 +379,14 @@ fn cajas_con_tema(tema: Option<Tokens>) -> (Cajas, u32, u32) {
     let v = ventana_ajustes(&mut p);
     let cajas = [v.cadena, v.casilla, v.deslizador, v.entero, v.aceptar, v.cancelar].iter().map(|&g| caja_g(&p, g)).collect();
     let bm = rl32(&p, rl32(&p, v.w + win::RPORT) + 4);
-    let l = p.c.1.lienzo(bm).unwrap();
+    let l = |x: i32, y: i32| p.c.1.pixel_de(&p.c.0, bm, x, y).unwrap_or(0);
     let (x, y) = centro(&p, v.aceptar);
-    let fondo = l.pixel(2, l16(&p.c, v.w + win::HEIGHT) as i32 - 3);
-    let boton = l.pixel(x - 20, y);
+    let fondo = l(2, l16(&p.c, v.w + win::HEIGHT) as i32 - 3);
+    let boton = l(x - 20, y);
     // Para mirarla: DUMP_RA=carpeta escribe la ventana en PNG.
     if let Ok(d) = std::env::var("DUMP_RA") {
-        let (an, al) = (l.ancho(), l.alto());
-        let pix: Vec<u32> = (0..al as i32).flat_map(|y| (0..an as i32).map(move |x| (x, y))).map(|(x, y)| l.pixel(x, y)).collect();
+        let (an, al) = p.c.1.lienzo(bm).map_or((0, 0), |k| (k.ancho(), k.alto()));
+        let pix: Vec<u32> = (0..al as i32).flat_map(|y| (0..an as i32).map(move |x| (x, y))).map(|(x, y)| l(x, y)).collect();
         let nombre = if tema.is_some() { "ra-dashos.png" } else { "ra-clasico.png" };
         std::fs::write(format!("{d}/{nombre}"), png(an, al, &pix)).unwrap();
     }

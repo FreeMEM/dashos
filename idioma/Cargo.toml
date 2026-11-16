@@ -1,0 +1,12 @@
+[package]
+name = "dashos-idioma"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "Idiomas y catálogos de DashOS (S4b): locale.prefs, catálogos IFF CTLG, países y formatos"
+
+[lib]
+name = "idioma"
+path = "src/lib.rs"
+
+[dependencies]

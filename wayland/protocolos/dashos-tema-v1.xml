@@ -4,7 +4,7 @@
     Protocolo propio de DashOS (S10c, C3). Licencia MPL-2.0, como el resto de DashOS.
   </copyright>
 
-  <interface name="dashos_tema_v1" version="5">
+  <interface name="dashos_tema_v1" version="7">
     <description summary="el tema del sistema: color de acento y modo">
       El compositor guarda el tema y se lo dice a cada programa que se suscribe: al enlazar y cada vez que cambia.
       Solo el centro de control lo cambia; a otro, poner es un error de protocolo.
@@ -71,6 +71,27 @@
       <arg name="red" type="uint"/>
       <arg name="nivel" type="uint"/>
       <arg name="silencio" type="uint"/>
+    </request>
+
+    <request name="marca" since="6">
+      <description summary="el hueco de la pestaña de la marca en una ventana de la caja Amiga">
+        La caja Amiga: dónde va la pestaña de la marca ("68K") en la barra de intuition de una ventana suya que no lleva
+        la barra de DashOS: a cuánto del borde derecho y su alto. Solo de una superficie del mismo cliente; los números,
+        tal cual (el compositor los recorta a la ventana). Puesto a mano en `tablas.rs` en su día; aquí desde
+        `commodities`, para que regenerar las tablas no lo borre.
+      </description>
+      <arg name="superficie" type="object" interface="wl_surface"/>
+      <arg name="derecha" type="int"/>
+      <arg name="alto" type="int"/>
+    </request>
+
+    <request name="apilar" since="7">
+      <description summary="una ventana de la caja Amiga delante o detrás de las demás">
+        La caja Amiga (`ScreenToFront`, `ScreenToBack`): una ventana suya de primer nivel delante (fondo 0) o detrás
+        (otro valor), sin tocar el teclado. A otro cliente, o con una superficie que no es una ventana suya, nada.
+      </description>
+      <arg name="superficie" type="object" interface="wl_surface"/>
+      <arg name="fondo" type="uint"/>
     </request>
 
     <event name="tema">

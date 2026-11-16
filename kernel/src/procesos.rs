@@ -4,7 +4,7 @@ use crate::cerrojo::Cerrojo;
 use crate::cupo::{Cupo, COSTE_PROCESO};
 use crate::elf;
 use crate::espacio::Espacio;
-use crate::objetos::{Control, Llave, Proceso, TablaLlaves};
+use crate::objetos::{Control, Llave, NombresLlaves, Proceso, TablaLlaves};
 use crate::planificador;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -21,15 +21,16 @@ pub enum Error {
 /// Un proceso nuevo desde `binario`, con `llaves` como sus llaves 1, 2... Si no se puede, devuelve las llaves.
 /// Todo se cobra al grupo `cupo` (C42), y el proceso queda apuntado en él.
 pub fn lanzar(binario: &[u8], llaves: Vec<Llave>, nucleo: Option<usize>, cupo: Arc<Cupo>) -> Result<(Arc<Control>, elf::Cargado), (Error, Vec<Llave>)> {
-    lanzar_con(binario, llaves, nucleo, cupo, false)
+    lanzar_con(binario, llaves, nucleo, cupo, false, NombresLlaves::NINGUNO)
 }
 
-/// Como `lanzar`, desde una llamada al sistema sin cerrojos tomados: la carga tiene puntos de corte (S2).
-pub fn lanzar_en_llamada(binario: &[u8], llaves: Vec<Llave>, nucleo: Option<usize>, cupo: Arc<Cupo>) -> Result<(Arc<Control>, elf::Cargado), (Error, Vec<Llave>)> {
-    lanzar_con(binario, llaves, nucleo, cupo, true)
+/// Como `lanzar`, desde una llamada al sistema sin cerrojos tomados: la carga tiene puntos de corte (S2). Con los
+/// nombres de sus llaves, si quien lo lanza los dio.
+pub fn lanzar_en_llamada(binario: &[u8], llaves: Vec<Llave>, nucleo: Option<usize>, cupo: Arc<Cupo>, nombres: NombresLlaves) -> Result<(Arc<Control>, elf::Cargado), (Error, Vec<Llave>)> {
+    lanzar_con(binario, llaves, nucleo, cupo, true, nombres)
 }
 
-fn lanzar_con(binario: &[u8], llaves: Vec<Llave>, nucleo: Option<usize>, cupo: Arc<Cupo>, cortar: bool) -> Result<(Arc<Control>, elf::Cargado), (Error, Vec<Llave>)> {
+fn lanzar_con(binario: &[u8], llaves: Vec<Llave>, nucleo: Option<usize>, cupo: Arc<Cupo>, cortar: bool, nombres: NombresLlaves) -> Result<(Arc<Control>, elf::Cargado), (Error, Vec<Llave>)> {
     let Some(cargo) = cupo.cobrar(COSTE_PROCESO) else { return Err((Error::SinMemoria, llaves)) };
     let Some(mut e) = Espacio::nuevo(cupo.clone()) else { return Err((Error::SinMemoria, llaves)) };
     let cargado = match elf::cargar_cortando(&mut e, binario, cortar) {
@@ -62,6 +63,7 @@ fn lanzar_con(binario: &[u8], llaves: Vec<Llave>, nucleo: Option<usize>, cupo: A
         cupo,
         _cargo: cargo,
         control: control.clone(),
+        nombres,
     });
     // Sin memoria para el proceso o su hilo (S1), sus llaves ya están en su tabla y se cierran con él: es como un
     // proceso que muere nada más nacer. Quien lo pidió recibe el error sin ellas.

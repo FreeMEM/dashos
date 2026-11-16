@@ -8,7 +8,8 @@
 //! (little-endian; lo lee `usuario/src/bin/inicio.rs`):
 //! - u32 cuántos aparatos; por cada uno, 24 bytes: nombre (16, relleno con 0), tipo (u32: 1 registros,
 //!   2 interrupción, 3 permiso DMA, 4 registro, 5 memoria del firmware, 6 datos, 7 permiso de plazo, 8 permiso de
-//!   máquinas virtuales, 9 permiso de página 0, 10 permiso de apagar, 11 permiso del aviso de memoria) y número de
+//!   máquinas virtuales, 9 permiso de página 0, 10 permiso de apagar, 11 permiso del aviso de memoria, 12 permiso del
+//!   reloj) y número de
 //!   llave (u32);
 //! - u32 cuántos programas; por cada uno, 32 bytes: tamaño (u32), qué canales (u32: el bit i es el canal i; C50),
 //!   qué aparatos le pasa `inicio` (8 bytes: el número de cada uno en la lista de arriba, en el orden en que los pide
@@ -16,6 +17,8 @@
 //!   orden, y después los canales. `inicio` le da una
 //!   copia de cada llave de aparato (se queda la suya) y crea cada canal la primera vez que se nombra: el primer
 //!   programa que lo nombra recibe un extremo y el segundo, el otro;
+//! - u32 cuántos canales; por cada uno, su nombre (16, relleno con 0), en el orden de sus bits: con ellos `inicio`
+//!   dice a cada programa qué es cada llave que le da (la tabla de llaves, `usuario/src/llaves.rs`);
 //! - los ELF seguidos, cada uno desde un múltiplo de 8.
 
 use crate::dtb::Dtb;
@@ -124,7 +127,10 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Trasfondo: va antes del fondo, que lee "red-estado" para su panel (el primero que nombra un canal lo sirve).
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     // También "red-estado": solo el estado, para leer (decisión del usuario del 2026-11-13); lo atiende un hilo aparte.
-    ("red", programa!("red"), &[], &["red", "red-estado"]),
+    // S13, segunda parte: "red-escuchar" es el permiso de escuchar (S6b), aparte del de conectar: lo atiende otro hilo
+    // del servicio. Y es cliente de "archivos": lee `Prefs/Red` (hosts y el servidor de hora). Sus llaves: 1 archivos, 2
+    // red, 3 red-estado, 4 red-escuchar y 5 a 7 las copias para escribirse.
+    ("red", programa!("red"), &[], &["archivos", "red", "red-estado", "red-escuchar"]),
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     ("virtio-red", programa!("virtio-red"), &[("dma-vred", PERMISO_DMA), ("virtio-red", REGISTROS), ("vred-cfg", REGISTROS), ("virtio-red", INTERRUPCION | OPCIONAL)], &["red"]),
     // C3: el fondo de escritorio, una capa de fondo con la imagen de `C/Fondos` (poder de escritorio). Nombra "fondo" antes
@@ -219,8 +225,9 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // de conexiones y uno sin la llave.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
     ("red-gloton", programa!("red-gloton"), &[], &["red"]),
+    // S13, segunda parte: `red-prueba` tiene además el permiso de escuchar; el glotón, no (y lo intenta).
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
-    ("red-prueba", programa!("red-prueba"), &[], &["red"]),
+    ("red-prueba", programa!("red-prueba"), &[], &["red", "red-escuchar"]),
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
     ("sin-red", programa!("sin-red"), &[], &[]),
     // C2 de S10c: el panel rápido (Super+A), con el poder de escritorio para su capa, el canal del centro para el modo y
@@ -289,6 +296,29 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // portapapeles de los demás mientras el guion teclea contraseñas. Al final, para no cambiar las marcas de los de antes.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux"), not(feature = "uso")))]
     ("espia", programa!("espia"), &[], &["ventanas"]),
+    // Las ventanas de Dash (kit-c): un programa de Dash con ventana, botón y lista (`kit-c/pruebas/ventana.dash`, en
+    // `build/dash-ventana` si estaba Dash al compilar). Sus llaves (en el orden de los canales de esta lista): 1
+    // ventanas, 2 archivos, 3 sesiones (no la usa) y 4 el selector de ficheros, que `sesiones` aún no reparte. El
+    // runtime de Dash sabe dónde está cada una por cuántas trae: 2 o 4, así; 3, lo que lanza `sesiones` (1 su canal, 2
+    // archivos, 3 ventanas). Al final, para no cambiar las marcas de los de antes ni la cascada de sus ventanas (antes de
+    // la caja Amiga, Ajustes salía encima del botón de cerrar de su ventana).
+    // Con `linux`, fuera (como `espia`): a su ventana solo la lleva el guion de `arranque-virt`; en las pruebas de la
+    // caja Linux nadie la cierra, sale encima de la terminal de la caja cuando acaba la caja Amiga y se queda con el
+    // teclado y con los clics del guion (`arranque-virt-gpu` perdía así "terminal viva").
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux"), not(feature = "uso"), dash_ventana))]
+    ("dash-ventana", programa!("dash-ventana"), &[], &["ventanas", "archivos", "sesiones", "selector"]),
+    // S10, los menús (`make arranque-virt-menus`): la misma prueba en la imagen de usar, para verla con sus menús.
+    #[cfg(all(feature = "menus", dash_ventana))]
+    ("dash-ventana", programa!("dash-ventana"), &[], &["ventanas", "archivos", "sesiones", "selector"]),
+    // S13: la hora por la red (SNTP). El único con el permiso del reloj; de la red solo tiene la llave de conectar. Al
+    // final, para no cambiar las marcas de los de antes.
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    ("hora", programa!("hora"), &[("reloj", RELOJ)], &["red"]),
+    // S10, Commodities (`docs/bitacoras/commodities.md`): la prueba de punta a punta y hostil (sin permiso, reservados,
+    // cien atajos, dos con la misma, Exchange, el atajo de verdad que pulsa el guion). Llaves: 1 ventanas, 2 sesiones.
+    // Al final, para no cambiar las marcas de los de antes.
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux"), not(feature = "uso")))]
+    ("commodity-prueba", programa!("commodity-prueba"), &[], &["ventanas", "sesiones"]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", programa!("medir-fs"), &[], &["archivos"]),
     #[cfg(feature = "medir")]
@@ -314,6 +344,8 @@ const APAGAR: u32 = 10;
 /// El permiso del aviso de memoria baja (llamada 53, S3): como el de apagar, `inicio` lo busca por su nombre
 /// ("memoria") y se lo manda a `sesiones` (`PERMISO_MEMORIA`).
 const AVISO_MEMORIA: u32 = 11;
+/// El permiso de poner la hora del calendario (llamada 39 con 1, S13): solo para `hora`.
+const RELOJ: u32 = 12;
 /// Marca de un aparato que el servicio puede no tener: si falta, se lanza igual, sin esa llave (y las siguientes
 /// corren un puesto).
 const OPCIONAL: u32 = 0x100;
@@ -762,6 +794,8 @@ pub fn lanzar() -> bool {
     apuntar(&mut llaves, "apagar", APAGAR, Llave::nueva(Objeto::PermisoApagar, DERECHOS));
     // S3: el del aviso de memoria baja, para `sesiones`. El último, por lo mismo.
     apuntar(&mut llaves, "memoria", AVISO_MEMORIA, Llave::nueva(Objeto::PermisoMemoria, DERECHOS));
+    // S13: el de poner la hora, para `hora`. El último, por lo mismo.
+    apuntar(&mut llaves, "reloj", RELOJ, Llave::nueva(Objeto::PermisoReloj, DERECHOS));
     // Un servicio al que le falta algún aparato no se lanza (la GPU en QEMU, por ejemplo).
     let lanzables: Vec<_> = PROGRAMAS
         .iter()
@@ -806,6 +840,11 @@ pub fn lanzar() -> bool {
         paquete.extend_from_slice(&de_canales.to_le_bytes());
         paquete.extend_from_slice(&suyos_aparatos);
         paquete.extend_from_slice(&nombre16(nombre));
+    }
+    // Los nombres de los canales, para la tabla de llaves de cada programa.
+    paquete.extend_from_slice(&(canales.len() as u32).to_le_bytes());
+    for c in &canales {
+        paquete.extend_from_slice(&nombre16(c));
     }
     for (nombre, elf, _, _) in lanzables.iter() {
         while paquete.len() % 8 != 0 {

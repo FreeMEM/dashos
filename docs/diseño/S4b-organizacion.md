@@ -37,14 +37,14 @@ Así, `LIBS:` o `ENVARC:` pueden ser distintos para cada usuario, sin que ningú
 | `Usuarios:` | Un cajón por usuario | Cada usuario el suyo |
 | `RAM:` | Disco en memoria, uno por sesión | El usuario de la sesión |
 | `Work:`, `DH1:`, ... | Discos de datos, como en el Amiga | Según sus permisos |
-| `Estado:` | Lo que escribe el sistema y no es de ningún usuario: cuentas, cajones de los servicios (S6b) | Cada servicio el suyo; `Cuentas`, solo `sesiones` |
+| `Estado:` | Lo que escribe el sistema y no es de ningún usuario: cuentas, cajones de los servicios (S6b), los registros (`Estado:Registros/`, S6) y la capa de la máquina (`Estado:Prefs`, `Estado:Devs`) | Cada servicio el suyo; `Cuentas`, solo `sesiones`; la capa de la máquina, con acción de administrador |
 
 El nombre `Paquetes:` es provisional. En el Amiga los programas solían ir a `Work:` o a un cajón suelto.
 
 ### Asignaciones del sistema, por capas
 
 Cada asignación de sistema es una multiasignación con tres capas. Se busca de arriba abajo. Lo que se escribe va a la
-primera capa en la que el usuario tiene permiso.
+primera capa en la que el usuario tiene permiso. `ENVARC:` y `DEVS:` tienen además una capa de la máquina (abajo).
 
 | Asignación | Capa del usuario | Capa de paquetes | Capa del sistema |
 |---|---|---|---|
@@ -56,9 +56,22 @@ primera capa en la que el usuario tiene permiso.
 | `ENVARC:` | `Home:Prefs/Env-Archive` | — | `SYS:Prefs/Env-Archive` (valores de fábrica) |
 | `S:` | `Home:S` | — | `SYS:S` |
 
+**La capa de la máquina** (2026-11-15, S36). Dos asignaciones tienen una capa más, en `Estado:`, para lo que es de
+la máquina y no de un usuario. Va entre la del usuario y la de paquetes. La leen todos; escribir en ella es acción
+de administrador (S6b). Los nombres son provisionales.
+
+| Asignación | Capa de la máquina | Qué lleva |
+|---|---|---|
+| `ENVARC:` | `Estado:Prefs` | Los ajustes de la máquina: hora, red, actualizaciones (ver "Prefs") |
+| `DEVS:` | `Estado:Devs` | Monitores, teclados, impresoras y listas de montaje que se activan en esta máquina |
+
+**Ver las capas.** `Assign` enseña las capas de cada nombre, en orden. `Which` dice de qué capa sale un fichero. La
+vista de otro proceso propio se pide por su PID, con la misma orden y en el Monitor del sistema (S6b, "Procesos").
+
 Las aplicaciones encerradas (perfil "aplicación" y "suelto" de S6b) no tienen la capa del usuario en `LIBS:`, `C:`
 ni `FONTS:`: solo su paquete, `Paquetes:` y `SYS:`. Así un programa no deja una biblioteca en `Home:Libs` que se
-cuele en todas las demás.
+cuele en todas las demás. La excepción es la aplicación que el usuario marca en modo de desarrollo, con la
+confirmación de `guardian`: esa sí tiene la capa del usuario (S6b, decidido el 2026-11-16).
 
 Otras asignaciones:
 
@@ -73,13 +86,20 @@ gestor de paquetes las crea y las quita al desinstalar (S8).
 ### Prefs
 
 - Los editores de preferencias están en `SYS:Prefs`, como en el Amiga. Guardan en `ENVARC:` y usan en `ENV:`.
+- **Cada ajuste es un fichero de texto en `ENVARC:`, y ese fichero manda** (S0, S36). Lo escriben la ventana de
+  Ajustes (S27), el editor suelto de `SYS:Prefs` y la orden `Ajuste`, que lee y pone un ajuste suelto desde el Shell
+  o un guion. Editarlo a mano vale igual. El nombre y el formato de cada fichero, por diseñar al hacerlo.
+- **Los ajustes de la máquina** (hora, red, actualizaciones) son también texto, en la capa de la máquina
+  (`Estado:Prefs`). Los leen todos. Cambiarlos es acción de administrador (S6b), desde Ajustes o con `Ajuste`.
 - **Los servicios vigilan `ENV:`** con avisos de cambio, como el `StartNotify` del Amiga, y aplican el cambio al
   momento. No hay que reiniciar nada.
-- **Formatos**: las preferencias que también leen los programas 68k (idioma, fuentes, modo de pantalla, teclado,
-  puntero) siguen en el formato IFF del Amiga, para que la caja las vea igual. Las que solo usa DashOS van en texto,
-  en el mismo árbol de `ENVARC:`.
+- **Formatos**: todas van en texto. Las preferencias que también leen los programas 68k (idioma, fuentes, modo de
+  pantalla, teclado, puntero) tienen además su fichero en el formato IFF del Amiga, para que la caja las vea igual.
+  Ese IFF se genera del texto. Si un programa 68k escribe el IFF, el cambio se pasa al texto. Cómo se casan, por
+  diseñar al hacerlo.
 - Las preferencias de fábrica viven en `SYS:Prefs/Env-Archive`, y nunca se tocan. "Volver a los valores de fábrica"
-  es borrar la capa del usuario.
+  quita la capa del usuario, pero no la borra: la aparta a un cajón con fecha y ofrece "Deshacer". Se puede volver a
+  fábrica un solo ajuste o una categoría, no solo todos. Dónde se aparta, por diseñar.
 
 ### `DEVS:`
 
@@ -87,7 +107,7 @@ gestor de paquetes las crea y las quita al desinstalar (S8).
   hay dos: `HDMI-0` y `HDMI-1`. El controlador es un servicio de DashOS (S12); el fichero de monitor dice qué
   controlador usa y con qué ajustes. El modo de pantalla se elige en `Prefs/ScreenMode` (S9, S10).
 - **`DEVS:DOSDrivers`**: listas de montaje, como en el Amiga. Cada una describe un volumen y qué sistema de archivos
-  lo sirve (S5).
+  lo sirve (S5). Las que se añaden en esta máquina van a la capa de la máquina (`Estado:Devs/DOSDrivers`).
 - **Dispositivos de exec** (`serial.device`, `timer.device`, `input.device`, `audio.device`...): para la caja son
   ficheros en `DEVS:`, como siempre. Por debajo, cada uno habla con un servicio de DashOS (S12).
 - **`DEVS:DataTypes`**: se conservan los DataTypes del Amiga. Las clases nativas de DashOS (PNG, JPEG, WebP, SVG,
@@ -109,7 +129,8 @@ gestor de paquetes las crea y las quita al desinstalar (S8).
 - Un cajón es un directorio. Workbench lo muestra con su icono `.info`, como en el Amiga.
 - **Iconos `.info`** con imagen PNG dentro, como los de AmigaOS 3.5 en adelante. Los tooltypes siguen sirviendo para
   configurar programas.
-- "Mostrar todos los ficheros" enseña los que no tienen icono, como en el Amiga.
+- "Mostrar todos los ficheros" enseña los que no tienen icono, como en el Amiga. También lo interno que de serie
+  no estorba (el almacén de versiones de `Paq`, S8): ordenado, no escondido (S0).
 
 ### Rutas
 
@@ -138,19 +159,118 @@ gestor de paquetes las crea y las quita al desinstalar (S8).
   usuario puede tener sus programas en su capa (S8).
 - El gestor de arranque monta el espacio de nombres de cada sesión con las capas de ese usuario (S14).
 
+## El árbol de `SYS:`, completo (2026-11-15)
+
+Lo que tenía el AmigaOS, cajón a cajón, y lo que es en DashOS. Los programas 68k de la caja ven el mismo árbol.
+
+```
+SYS:
+  C/            órdenes del Shell (List, Copy, Assign, Info, Version, Wait, Execute…, nativas)
+  Classes/      clases BOOPSI y MUI/ReAction: DataTypes/ (clases de los tipos), Gadgets/, Images/, MUI/
+  Devs/         DataTypes/ (descriptores), DOSDrivers/ (listas de montaje), Keymaps/, Monitors/, Printers/,
+                y los .device que la caja enseña a los 68k
+  Fonts/        fuentes (las del Amiga y las nativas: TrueType/OpenType)
+  L/            manejadores de sistema de archivos y la consola (lo que eran FileSystem y CON-Handler)
+  Libs/         bibliotecas (nativas de DashOS y las de la caja para los 68k)
+  Locale/       Catalogs/<idioma>/, Languages/, Countries/, Help/
+  Prefs/        los editores de preferencias (S27), Env-Archive/ (valores de fábrica, Sys/ y los demás),
+                Presets/ (preajustes de fábrica con su icono)
+  Rexx/         guiones ARexx del sistema (es `REXX:`)
+  S/            Startup-Sequence (de la máquina, S14), Shell-Startup, User-Startup de fábrica (vacío)
+  Storage/      lo que no se usa pero se guarda: DOSDrivers/, Keymaps/, Monitors/, Printers/ (se activan
+                arrastrándolos a su cajón de Devs/, como en el Amiga; lo arrastrado se escribe en la capa de
+                la máquina, Estado:Devs, con acción de administrador, porque SYS: no se escribe)
+  System/       programas del sistema: Shell, Format, DiskCopy, Instalar (S32), Discos (S32), Monitor del
+                sistema, Usuarios
+  Tools/        herramientas: Calculadora, Reloj, Capturas, IconEdit, KeyShow, Lens, Commodities/ (Exchange,
+                Blanker, ClickToFront, AutoPoint…)
+  Utilities/    utilidades: MultiView (todo lo que entienda DataTypes), Editor de texto, Visor de imágenes,
+                Reproductor, Editor de catálogos (en Dash), Más/Menos
+  WBStartup/    vacío: lo de cada usuario va en su Home:WBStartup
+  Disk.info     el icono del volumen
+```
+
+Asignaciones que faltaban en la tabla de capas:
+
+| Asignación | Capa del usuario | Capa de paquetes | Capa del sistema |
+|---|---|---|---|
+| `CLASSES:` (y `MUI:`) | `Home:Classes` | `Paquetes:*/Classes` | `SYS:Classes` |
+| `REXX:` | `Home:Rexx` | `Paquetes:*/Rexx` | `SYS:Rexx` |
+| `L:` | — | — | `SYS:L` (solo el sistema: manejadores de sistemas de archivos) |
+| `KEYMAPS:` | — | `Paquetes:*/Devs/Keymaps` | `SYS:Devs/Keymaps` |
+| `HELP:` | — | `Paquetes:*/Locale/Help` | `SYS:Locale/Help` |
+| `PRINTERS:` | — | `Paquetes:*/Devs/Printers` | `SYS:Devs/Printers` |
+
+Los iconos de los volúmenes y de las unidades (`Disk.info` en la raíz de cada uno, y los de los discos que se
+enchufan) los pone el sistema de archivos si el volumen no trae el suyo. Los cajones del árbol llevan su `.info`.
+
+## Cada usuario, su mundo (2026-11-15)
+
+Lo junta todo, de S4b, S6b, S8, S10 y S14. Cada usuario tiene **un volumen cifrado propio**, que se abre con su
+contraseña y se ve como `Home:` (S6b). Al entrar, `sesiones` monta su espacio de nombres: las asignaciones del sistema
+con su capa encima. Así cada uno tiene sus programas, sus ajustes y su escritorio sin que los demás lo vean ni lo
+noten, y sin que ningún programa tenga que saber de usuarios.
+
+```
+Home:                       (Usuarios:<nombre>, cifrado, solo suyo)
+  Prefs/Env-Archive/         sus ajustes guardados: la capa de usuario de ENVARC: (los de fábrica, en SYS:)
+    Sys/                     los del sistema que él cambia: idioma, país, teclado, pantalla, fuentes, puntero
+    Escritorio/              tema, fondo, colores, barra, panel rápido, espacios de trabajo, atajos
+  Prefs/Permisos/            lo concedido a cada programa (S6b): texto que él lee y solo sesiones escribe
+  C/  Libs/  Fonts/  S/      su capa de C:, LIBS:, FONTS: y S: (lo que instala él, sin administrador)
+  S/User-Startup             lo que se hace al entrar en su sesión (asignaciones, órdenes), como en el Amiga
+  WBStartup/                 lo que se lanza al entrar en su escritorio, como en el Workbench
+  Paquetes/                  lo que instala él con Paq (su capa de paquetes; los de todos, en Paquetes:)
+  Escritorio/                lo que deja en el escritorio: iconos sueltos, accesos, papelera (también lo que
+                             borra la caja Amiga, con su marca, S28)
+  Documentos/ Imágenes/ Música/ Descargas/   cajones de siempre, con su icono (nombres según su idioma)
+  Datos/                     los datos de cada aplicación (S6, S6b): un cajón por programa, con su icono y el
+                             nombre que se ve en el escritorio
+  Amiga/                     el cajón de la caja Amiga: lo que guarda de él (su ENVARC: de 68k, sus Prefs del
+                             Amiga). Dentro de la caja se ve como Caja: (S28)
+  Linux/                     el /home de la caja Linux
+  Instantáneas/              cada instantánea de su volumen, como cajón de solo lectura (S5; nombre provisional)
+```
+
+El cajón de la caja Amiga es `Home:Amiga`, y este documento es el que manda: S28 lo cita. Nada del usuario vive
+donde él no lo pueda encontrar (S0).
+
+- **Arranque de la máquina y arranque de la sesión, separados.** `SYS:S/Startup-Sequence` es de la máquina y lo
+  hace el sistema antes de que entre nadie (S14). `Home:S/User-Startup` y `Home:WBStartup` son de cada usuario y se
+  hacen al entrar en su sesión.
+- **Ajustes**: `ENV:` (en uso) es de la sesión, en su `RAM:`; se copia de `ENVARC:` al entrar. Lo que cambia un
+  usuario va a su capa; "volver a fábrica" aparta su capa y se puede deshacer (ver "Prefs"). Lo que es de la máquina
+  (hora, red, actualizaciones) no está en `Home:`: va en `Estado:Prefs`, la capa de la máquina de `ENVARC:`, en
+  texto que todos leen, y cambiarlo es acción de administrador (S6b).
+- **Programas**: los de todos, en `Paquetes:` (los instala un administrador); los de cada uno, en su `Home:Paquetes`,
+  sin administrador. Un programa instalado por un usuario no existe para los demás.
+- **`Work:` y los discos de datos** son compartidos, con dueño, grupo y permisos por fichero (S6b). Quien quiera algo
+  solo suyo lo pone en `Home:`.
+- **`RAM:` y `T:`**, una por sesión: lo de un usuario no lo ve otro, ni con cambio rápido de usuario (U6).
+- **Cupos**: cada sesión es un grupo de recursos con su tope de memoria (cupos como topes); el espacio de disco de
+  cada `Home:`, con el tope del volumen (FS10, `quota`, aún sin aplicar).
+- **Sin sesión de invitado** (decisión del usuario, 2026-11-15): todo el que entra tiene su cuenta y su volumen.
+
+Hecho hoy: entrada, bloqueo, cambio rápido de usuario y un volumen por usuario (U2, U6). Las asignaciones con nombre
+en lo nativo, por proceso y heredadas (paso 2, `docs/bitacoras/asignaciones.md`), sin la capa de paquetes y con `RAM:`
+y `Work:` provisionales en el disco. Falta: crear y borrar cuentas (hoy fijas en el código), el árbol de `Home:` de
+arriba, `User-Startup` y `WBStartup` por usuario, `ENV:` copiado de `ENVARC:` al entrar, y el tope de disco.
+
 ## Lo que queda abierto
 
 1. ¿Nombre del volumen de paquetes? Propuestas: `Paquetes:`, `Programas:` o `Apps:`.
 2. ¿Sin distinguir mayúsculas en todo el sistema, como el Amiga y macOS, con volúmenes que sí distinguen para quien
    los pida? Recomendado: sí.
 3. ¿Preferencias compartidas con la caja en IFF del Amiga, y las solo de DashOS en texto? Recomendado: sí.
+   Cambiado con S36 (2026-11-15): todas en texto, y el IFF de las compartidas se genera del texto (ver "Prefs").
+4. Los nombres de la capa de la máquina (`Estado:Prefs`, `Estado:Devs`) y del cajón de las instantáneas.
 
 ## Cómo encaja
 
 - Con S1: el espacio de nombres por proceso lo da el lanzador, sin nada nuevo en el kernel.
 - Con S4: la caja ve estas mismas asignaciones, con las capas de su usuario.
 - S5 guarda dueños y permisos, decide cómo se ignoran mayúsculas y monta `SYS:` de solo lectura.
-- S6 detalla usuarios, grupos y administrador.
+- S6 detalla usuarios, grupos y administrador, y define el registro (`Estado:Registros/`, orden `Registro`).
 - S7 monta la vista POSIX para los programas de Linux.
 - S8 instala en `Paquetes:` y en `Home:`, y crea las asignaciones que declara cada paquete.
 - S9 y S10 usan `DEVS:Monitors` y `Prefs/ScreenMode`.

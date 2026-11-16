@@ -3,7 +3,8 @@
 # DHCP; el eco de 4 MB con el PC con el glotón en su tope, un puerto cerrado y la basura del PC.
 ~virtio-red: en el PCIe 0:
 ~│   [virtio-red] MAC 52:54:00:12:34:56; colas de 128 y 64; avisos 
-~│   [red] DHCP: 10.0.2.15/24, puerta 10.0.2.2, DNS 10.0.2.3
+# Desde la unión con `revision`, la red de usuario de QEMU va con restrict=on: su DHCP no da puerta ni DNS.
+~│   [red] DHCP: 10.0.2.15/24
 ~│   [red-prueba] hacerse pasar por el controlador o tocar lo ajeno: 
 ~[-1, -1, -7]: bien
 ~│   [red-gloton] tope en 8 conexiones; 50 intentos más dan -3: bien

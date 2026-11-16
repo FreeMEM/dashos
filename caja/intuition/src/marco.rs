@@ -5,7 +5,7 @@
 use alloc::vec::Vec;
 
 use crate::estructuras::{drawinfo as dri, wflg};
-use crate::lienzo::{Lienzo, Rect};
+use crate::lienzo::{Pinta, Rect};
 use crate::{CajaGrafica, Compositor, fuente};
 
 /// Anchos de los gadgets de la barra de título y tamaño del de tamaño (provisional, a comprobar con el oráculo).
@@ -63,17 +63,12 @@ impl Geometria {
     }
 }
 
-fn llenar(l: &mut Lienzo, r: Rect, c: u32) {
-    let r = r.interseccion(&l.rect());
-    for y in r.y0..=r.y1 {
-        for x in r.x0..=r.x1 {
-            l.poner(x, y, c);
-        }
-    }
+fn llenar(l: &mut dyn Pinta, r: Rect, c: u32) {
+    l.rellenar(r, c);
 }
 
 /// Un marco en relieve: claro arriba y a la izquierda, oscuro abajo y a la derecha (al revés si `hundido`).
-fn relieve(l: &mut Lienzo, r: Rect, claro: u32, oscuro: u32, hundido: bool) {
+fn relieve(l: &mut dyn Pinta, r: Rect, claro: u32, oscuro: u32, hundido: bool) {
     let (a, b) = if hundido { (oscuro, claro) } else { (claro, oscuro) };
     llenar(l, Rect::nuevo(r.x0, r.y0, r.x1, r.y0), a);
     llenar(l, Rect::nuevo(r.x0, r.y0, r.x0, r.y1), a);
@@ -81,13 +76,13 @@ fn relieve(l: &mut Lienzo, r: Rect, claro: u32, oscuro: u32, hundido: bool) {
     llenar(l, Rect::nuevo(r.x1, r.y0, r.x1, r.y1), b);
 }
 
-fn contorno(l: &mut Lienzo, r: Rect, c: u32) {
+fn contorno(l: &mut dyn Pinta, r: Rect, c: u32) {
     relieve(l, r, c, c, false);
 }
 
 impl<C: Compositor> CajaGrafica<C> {
     /// Dibuja los adornos de una ventana en su lienzo.
-    pub(crate) fn dibujar_marco(&mut self, w: u32) {
+    pub(crate) fn dibujar_marco<M: caja_exec::Memoria>(&mut self, ex: &mut caja_exec::Exec<M>, w: u32) {
         let tema = self.tema_de(w);
         let Some(v) = self.intui.ventanas.get(&w) else { return };
         let g = v.geometria;
@@ -98,7 +93,8 @@ impl<C: Compositor> CajaGrafica<C> {
         // dentro: ni barra ni gadgets.
         if g.barra_dashos {
             let (bm, fondo) = (v.bm, v.fondo);
-            let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return };
+            let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) else { return };
+            let l = &mut l;
             let [bi, ba, bd, bb] = g.bordes;
             let (an, al) = (g.ancho, g.alto);
             llenar(l, Rect::nuevo(0, 0, an - 1, ba - 1), fondo);
@@ -111,7 +107,8 @@ impl<C: Compositor> CajaGrafica<C> {
         if let crate::tema::Elegido::Material(m) = tema {
             let (bm, titulo, activa) = (v.bm, v.titulo.clone(), v.activa);
             let glifos = &self.intui.glifos;
-            let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return };
+            let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) else { return };
+            let l = &mut l;
             let vista = crate::tema::VistaMarco { ancho: g.ancho, alto: g.alto, flags: g.flags, bordes: g.bordes, activa, titulo: &titulo };
             use crate::tema::Tema;
             m.marco(l, glifos, &vista);
@@ -120,14 +117,15 @@ impl<C: Compositor> CajaGrafica<C> {
         let activa = v.activa;
         let titulo: Vec<u8> = v.titulo.clone();
         let bm = v.bm;
-        let pen = |i: usize| self.intui.wb.plumas[i] as u8;
-        let cm = self.intui.wb.cm;
+        let (plumas, cm) = { let pa = self.pantalla_de(w); (pa.plumas, pa.cm) };
+        let pen = |i: usize| plumas[i] as u8;
         let col = |i: usize| self.color(cm, pen(i));
         let (claro, oscuro) = (col(dri::SHINEPEN), col(dri::SHADOWPEN));
         let relleno = if activa { col(dri::FILLPEN) } else { col(dri::BACKGROUNDPEN) };
         let tinta = if activa { col(dri::FILLTEXTPEN) } else { col(dri::TEXTPEN) };
         let glifos = &self.intui.glifos;
-        let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return };
+        let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) else { return };
+        let l = &mut l;
         let (an, al) = (g.ancho, g.alto);
         let [bi, ba, bd, bb] = g.bordes;
         // Las cuatro franjas del borde.

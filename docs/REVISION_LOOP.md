@@ -1987,3 +1987,255 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
 - Decisiones del usuario (2026-11-15) sobre lo abierto del formato de paquetes, escritas en S4, S8 y S6b: perfil de
   la caja (lo dice ella), vocabulario aarch64 (ARMv8.0, 16 KB, `hypervisor` y memoria), instaladores con capa de
   captura, firma de fichero opcional con sus reglas.
+- **MatchFirst y AddDataTypes al arrancar, en revision** (5c29dd2 y este commit). Tanda completa sobre f9878b8: todo
+  rc=0 salvo av, por "[panel] delante:" (el panel rápido no salió delante a tiempo); repetido, bien: fallo suelto
+  nuevo, a vigilar. Con el AmigaOS del usuario (`DASHOS_AMIGAOS=~/.cache/dash-emu/sys32mui MEMORIA=3G`), su `C:` no
+  se asigna: AddDataTypes se lee de `AmigaOS:C/AddDataTypes`. Corre: `REFRESH QUIET` acaba con 0 en 68 ms, 1155
+  llamadas nativas, 17 bloques pasan al sistema; le falta `InternalLoadSeg` (dos, LVO -756), que usa para el código
+  de reconocimiento de algunos descriptores (lo lee de memoria con funciones de lectura 68k propias). Sin comprobar
+  si quedan tipos registrados (hace falta un NewDTObject de un ILBM). Lo siguiente: `InternalLoadSeg` (llamar a las
+  funciones 68k que pasa) y una prueba que abra un ILBM por datatypes.
+- **Pasos nuevos pedidos por el usuario (2026-11-15)**, por este orden, detrás de InternalLoadSeg:
+  1. **El árbol del Amiga, completo en S4b**: `Classes:` (MUI, ReAction), `REXX:`, `KEYMAPS:`, `HELP:`, `L:`,
+     `Storage` (DOSDrivers, Monitors, Keymaps que no se usan), los iconos de unidades, `WBStartup` (S14),
+     `Utilities` y `Tools` con su contenido, `Prefs/Presets`, `Env-Archive/Sys`.
+  2. **Asignaciones con nombre en el lado nativo**: hoy los programas nativos ven raíces numeradas ("Sistema",
+     "Home"). Hacer el espacio de nombres de S4b: volúmenes y asignaciones por proceso, heredadas del que lanza, con
+     las tres capas (usuario, paquetes, sistema); y que la imagen del sistema y el disco de pruebas tengan de verdad
+     la forma de `SYS:` (C, Libs, Devs, L, S, Fonts, Locale, Prefs, System, Utilities, Tools). Toca `archivos`,
+     el arranque y el escritorio: por pasos, cada uno con su prueba hostil.
+  3. **Instalador y herramienta de discos** (S32, borrador): lo que le falta a DashFS (encoger moviendo datos, crecer
+     montado, aplicar `quota`, pruebas de cortes) y la escritura de particiones con plan y copia de las tablas.
+     Decisiones abiertas en S32. Averiguado: `dashfs-resize` crece y encoge solo fuera de uso y sin mover datos (un
+     `assert` si hay bloques usados en el tramo); los volúmenes de FS10 son elásticos y su `quota` no se aplica.
+  4. **Idiomas y catálogos, como en el Workbench** (pedido del usuario, 2026-11-15). Diseñado en S4b y S11
+     (`LOCALE:Catalogs/<idioma>/<programa>.catalog`, `LOCALE:Languages`, `LOCALE:Countries`, Prefs/Locale), pero sin
+     código en el lado nativo: los textos de los programas y del kit van escritos en castellano dentro del código.
+     Hacer: un servicio o biblioteca de idioma (idioma, país, formato de fecha, hora, números y moneda, desde
+     Prefs/Locale, con aviso de cambio), catálogos en el formato IFF CTLG del Amiga pero en UTF-8, con el texto de
+     siempre dentro del programa como respaldo (como `GetCatalogStr`); que el kit y los programas del sistema pasen por
+     ahí; una herramienta que saque los textos de un programa a un catálogo (Dash ya tiene `tools/catalogo.py`); y en
+     la caja, `locale.library` dando los catálogos en Latin-1 a los programas 68k. Primer idioma además del castellano:
+     inglés.
+     **Hecho en lo nativo (rama `idiomas`, `docs/bitacoras/idiomas.md`)**: el crate `idioma`, `tools/catalogo.py`,
+     `locale/`, y el kit, el centro, el explorador y el Workbench por catálogo, con el inglés. Falta: el aviso de
+     cambio en `archivos`, el editor de idioma en Ajustes, los demás programas y `locale.library` en la caja.
+     **Y un editor de catálogos en `SYS:Utilities`, escrito en Dash** (pedido del usuario): crear un catálogo nuevo
+     desde los textos de un programa (su `.cd`), traducirlo cadena a cadena viendo el original al lado, avisar de lo
+     que falta o sobra, y guardar el `.catalog` (y el `.ct` de texto, como FlexCat). Mientras no haya backend ARM de
+     Dash, corre en la caja Amiga (y vale también para AmigaOS); en nativo, cuando lo haya. Encargárselo a la sesión
+     de Dash, o hacerlo aquí con su compilador.
+  5. **Códecs de sonido y vídeo** (S33, borrador; pedido del usuario 2026-11-15, también x86-64 con AMD, Nvidia e
+     Intel): DataTypes como en el Amiga; primero sonido libre (Opus, Vorbis, FLAC, MP3, WAV, AIFF, 8SVX, MOD), luego AV1
+     y VP9 por CPU, luego decodificador de la Pi y, en x86, la gráfica para la caja Linux. Abiertos en S33.
+- **InternalLoadSeg con flujo propio** (este commit; la parte del fichero de dos fue en c7d55e5): la caja llama a la
+  función de leer 68k del programa (`funcarray[0]`, como `Read`) hasta acabar y carga lo leído como LoadSeg
+  (`internal_load_seg_68k` en pegamento; `Dos::apuntar_segmentos` para que UnLoadSeg lo acepte). Prueba 68k nueva
+  `pruebas68k/ils.c` (8b3d en caja.c): carga un ejecutable desde memoria y lo hostil (-1, de más, basura, sin función,
+  vacío) da 0. Con el AmigaOS del usuario, AddDataTypes REFRESH acaba sin avisos de funciones que falten (18 bloques al
+  sistema). make prueba bien; arranque-virt bien (el fallo suelto del explorador salió dos veces, y en la comparación
+  a la vez salió SIN el cambio y no con él: suelto). Sin comprobar todavía: que datatypes tenga los tipos registrados
+  (siguiente: una prueba que abra un ILBM por NewDTObject).
+  6. **Ajustes de todo DashOS al estilo de DankMaterialShell** (S27, sección 7; pedido del usuario 2026-11-15): una
+     cara con categorías y buscador sobre las Prefs del Amiga (`SYS:Prefs`, `ENVARC:`, `ENV:` vigilado). Faltan las
+     categorías de Red, Sonido, Teclado, Idioma, Fecha y hora y Usuarios, el buscador por ajuste y guardar en
+     `ENVARC:` (tras el paso 2).
+- **datatypes con tipos registrados** (este commit): prueba 68k `pruebas68k/dtprueba.c`, que solo corre si se lanzó
+  AddDataTypes (AmigaOS del usuario): "una ILBM abre por datatypes (ILBM), de 12 x 11", sin avisos. Al abrirla,
+  picture.datatype pide cybergraphics.library: es lo siguiente. make prueba bien; arranque-virt con el fallo suelto del
+  explorador ("suelta en la ventana 1"), que no pasa por este cambio (dtprueba solo corre con el AmigaOS del usuario).
+  Ese fallo suelto sale ya en una de cada dos o tres vueltas: hay que arreglarlo (paso aparte, antes de que tape otros).
+- **Fallo suelto del explorador arreglado** ("suelta en la ventana 1: mueve a Home/Privado"): el guion soltaba
+  datos.bin a 10 px del borde de la segunda ventana cuando esta acababa en x=340 (otras veces en 372), y su borde se
+  llevaba el soltar ("suelta en la ventana 2: aquí no"). Ahora el compositor dice dónde acaba una ventana arrastrada
+  ("arrastre: …; acaba en (x, y)", `Escena::tomar_ultimo_arrastre`, con prueba en wayland) y el guion suelta a 30 px
+  de ella como poco. cargo test de wayland bien; make prueba bien; cuatro vueltas de arranque-virt seguidas, todas bien.
+  Pendiente (2026-11-15 noche, límite de uso): agente de cybergraphics en `.worktrees/caja-amiga-cgx` sin acabar.
+- **Emu68: parche 0015** (`7c457be` de upstream, "invalidate entries in LRU if removed during validation", 3 líneas):
+  aplicado a mano en revision, fusion-fondo, prueba1 y prueba3; make prueba y arranque-virt bien. Falta aplicarlo en
+  caja-amiga-cgx al unir. La rama `dashos` de github.com/FreeMEM/Emu68 (3419b41, con el sí del usuario) lleva la base
+  af63580, los parches 0001-0014 como commits y el 0015; src/ e include/ idénticos a los de revision. Los cambios sin
+  commit del third_party/Emu68 de main son exactamente 0001+0002 (copia en ~/recuperar): se quedan hasta que main use
+  la rama del fork.
+- **Paso 1 hecho (en papel): el árbol de `SYS:` completo en S4b** (C, Classes, Devs, Fonts, L, Libs, Locale, Prefs con
+  Presets, Rexx, S, Storage, System, Tools con Commodities, Utilities, WBStartup) y las asignaciones que faltaban
+  (`CLASSES:`/`MUI:`, `REXX:`, `L:`, `KEYMAPS:`, `HELP:`, `PRINTERS:`). Lo siguiente es el paso 2, el código:
+  asignaciones con nombre en el lado nativo y la imagen con esa forma.
+  7. **Commodities y Exchange** (S10, decidido 2026-11-15): sin acceso a toda la entrada; cada commodity pide al
+     compositor lo concreto (una tecla, inactividad, un comportamiento) con su permiso; Exchange como herramienta y
+     como categoría de Ajustes; las clásicas nativas (Blanker, ClickToFront, AutoPoint, FKey, NoCapsLock); y
+     `commodities.library` en la caja Amiga, limitada a sus ventanas.
+- **cybergraphics y Picasso96API unidos a revision** (33a26a3, rama `caja-amiga-cgx` hasta 9c3a0d8; detalle en
+  `docs/bitacoras/caja-amiga.md`, 2026-11-15 y (2)): las dos bibliotecas nativas; mapas de color verdadero en la
+  memoria del 68k, cada uno en su formato (los 13 de cybergraphics, con alfa y conversión al presentar), LockBitMap sin
+  copia (de 40-60 ms a menos de un tic en 640x480); un monitor RTG propio con varios tamaños y 8/15/16/24/32 bits,
+  base de datos de pantallas y pantallas propias. Tachyon pinta en color los iconos de su barra (el logo sigue vacío:
+  es un PNG que decodifica él). Tanda completa sobre 33a26a3: todo rc=0. Sigue el agente en la rama con lo pendiente:
+  paletas y plumas de pantallas propias, pantallas públicas, 8 bits chunky, ventanas y Workbench sin copia, el logo.
+- **Paso 2 hecho en lo principal: asignaciones con nombre en lo nativo** (rama `asignaciones`, bitácora
+  `docs/bitacoras/asignaciones.md`). `dashos::asignaciones` (tabla de volúmenes y asignaciones con capas, resolver,
+  abrir, crear en la primera capa que deja, listar uniendo capas); `sesiones` guarda la tabla de cada proceso, monta
+  las de la sesión de S4b y los hijos heredan las del padre (órdenes 30 `ASIGNACIONES` y 31 `ASIGNAR`; `ASIGNAR` no
+  pone raíces ni tapa volúmenes); lo que lanza nace con `RAM:` y `Work:` (provisionales, cajones del disco); el disco de
+  pruebas tiene los cajones de `SYS:`; el Workbench y el explorador enseñan `SYS:`, `Home:`, `RAM:`, `Work:` y el
+  explorador resuelve los caminos con nombre por su tabla. Pendientes del usuario y lo que falta por pasar, en la
+  bitácora.
+- **Asignaciones nativas unidas a revision** (2c412e9, rama `asignaciones`; detalle en `docs/bitacoras/asignaciones.md`).
+  Tanda completa sobre 2c412e9: todo rc=0 salvo av, por el fallo suelto conocido del explorador (ahora "no abre
+  SYS:DeCarla: -12"); repetido, bien. Decisiones propuestas al usuario (recomendación entre paréntesis): una
+  asignación no puede llamarse como un volumen (no, como en el Amiga); los hijos heredan las asignaciones cambiadas del
+  padre (sí, Plan 9); `RAM:` hoy es un cajón del disco (hacerla disco en memoria de verdad, por sesión). Por pasar a
+  nombres: el Workbench por dentro, selector, centro, fondo, panel, lanzar por nombre, la tabla vieja `NOMBRES`; y
+  copiar `ENV:` de `ENVARC:` al entrar, iconos `.info` de los cajones, orden `Assign` nativa.
+  8. **Caja Linux en dos perfiles** (S7, decisión del usuario 2026-11-15): completa desde 4 GB; de terminal (Claude
+     Code, herramientas) desde 2 GB, sin escritorio, con globo, memoria comprimida y carpetas compartidas con DAX; sin
+     caja con 1 GB o menos. Claude Code, a corto plazo en la caja Linux.
+- **Pantallas y gráficos de la caja Amiga, completos, en revision** (7d754fa, rama `caja-amiga-cgx` hasta c1b406d;
+  detalle en `docs/bitacoras/caja-amiga.md`, 2026-11-15 (2) y siguientes). Con el criterio del usuario de hacerlo como
+  debe funcionar: lienzos de ventanas y Workbench en la memoria del 68k (LockBitMap sin copia también ahí), los 13
+  formatos de píxel, modos RTG con su base de datos, pantallas de 8 bits LUT8 con paleta, pantallas propias completas
+  (paleta, plumas, públicas con su lista, `SA_BitMap` que se presenta solo donde cambia, orden delante/detrás con las
+  ventanas dentro), T: y ENV: de la caja (el logo de Tachyon ya se ve). Toca el compositor: `dashos_tema_v1.apilar`
+  v7, solo para la caja Amiga y sus propias ventanas, con prueba hostil (revisado). Conflicto al fusionar en
+  wayland/src/escena.rs resuelto conservando `tomar_ultimo_arrastre` y `bajar`. Tanda completa sobre 7d754fa (tras el
+  reinicio de shiva): todo rc=0.
+- **Ventanas de Dash en DashOS unidas a revision** (e27ca49, rama `dash-ventanas` de la sesión de Dash; bitácora
+  `docs/bitacoras/dash-ventanas.md`): crate `kit-c` (los controles de DashOS con ABI de C para el runtime de Dash) y un
+  programa Dash con ventana, catálogo y botón en la prueba (`[dash-ventana] abierta`, `pulsado`, `guardar`). Dash
+  necesario: main de FreeMEMLang desde 5aff093 (antes, `path_free_kb` dejaba fuera las funciones de ficheros en
+  DashOS). Tanda sobre e27ca49: todo rc=0 salvo av por eso; repetido con el Dash arreglado, bien.
+  Pendientes de DashOS que dejó la sesión de Dash: (1) `sesiones` no da la llave del selector a lo que lanza; (2) el
+  selector solo devuelve la asa (ni nombre elegido ni campo de nombre para guardar); (3) `archivos` sin orden para
+  cambiar la fecha (`file_set_date`); (5) que `sesiones` e `inicio` digan qué es cada llave que dan, en vez de que el
+  runtime lo adivine por cuántas recibe. El (4), que el runtime de Dash use las asignaciones, es de la sesión de Dash.
+  Los menús de Dash esperan decisión del usuario: no tocarlos.
+- **Orden 35 `FECHAR` en `archivos`** (pendiente (3) de la sesión de Dash, para `file_set_date` y `SetFileDate`): la
+  fecha de modificación (segundos y nanosegundos); solo el dueño y con la W del tope de su raíz (entra en `por_asa`,
+  como comentar y proteger). Prueba en `ficheros`: se pone y se lee con DATOS, y lo hostil (nanosegundos de más, fecha
+  fuera de rango, asa que no es) se rechaza; al acabar devuelve la fecha original (la comprobación del disco mira que lo
+  escrito sea de hoy). make prueba y arranque-virt bien. Documentada en `docs/referencia/servicios.md`. Falta: que la
+  caja Amiga (`SetFileDate` de dos) y el runtime de Dash la usen.
+- La prueba de Dash con ventana (`kit-c/pruebas/ventana.dash`) pone y lee la fecha de un fichero por `file_set_date` y
+  `file_date`, contra el servicio real (FECHAR): "fecha: puesta true, leída true". Necesita el compilador de Dash para
+  DashOS rehecho desde main 9151482 (`./dash` no rehace `dashc/dashc-a64` solo). arranque-virt bien.
+- **Asignaciones: las tres decisiones, cerradas** (el usuario pidió revisarlas y seguir, 2026-11-15):
+  1. Una asignación no puede llamarse como un volumen ni como `PROGDIR:` (como en AmigaDOS). Quien decide qué ve un
+     programa es quien lo lanza con sus raíces (`sesiones`), no un nombre que tapa a otro. Ya está así.
+  2. Los hijos heredan las asignaciones del padre tal como estén al lanzar (una copia: lo que cambie luego el hijo no
+     toca al padre), pero filtradas por el perfil del hijo: un programa encerrado no recibe la capa de usuario de
+     `LIBS:`, `C:` ni `FONTS:` (S4b). El filtro está hecho y probado solo en el PC: falta probarlo en QEMU.
+  3. `RAM:` de verdad: un volumen en memoria por sesión, no un cajón del disco. Diseño: DashFS sobre un disco de
+     memoria disperso dentro de `archivos` (páginas que se piden al escribir y se devuelven con TRIM, que DashFS ya
+     manda), cobrado al grupo de la sesión, con tope; se destruye al salir de la sesión. Sobre él, `ENV:` (copiado de
+     `ENVARC:` al entrar) y `T:`. En marcha (rama `ram-volumen`).
+  9. **Dominios de controladores con Linux** (S35, decidido 2026-11-15): aparatos servidos a DashOS por virtio; primero
+     medir un Linux mínimo (tope de memoria dinámico, objetivo 48 MB para red), luego prestar USB y recibir red, las seis
+     capas de seguridad, IOMMU y PCI, y las gráficas (S34). En S7: CachyOS en la caja en PC. En S8: propuesta de
+     generaciones al estilo NixOS: **aceptadas por el usuario** (2026-11-15) con la condición de que sean elegantes y
+     no le den trabajo a quien usa el sistema; quedan decididas en S8 (rutas sin versión, "Deshacer la última
+     actualización", limpieza sola). Sin código todavía.
+- **Principio nuevo y repaso de los diseños** (usuario, 2026-11-15 y 16): S0 lleva "amigable de 2026, con fondo para
+  informáticos" (sencillo por delante, todo a la vista por detrás). Se repasaron 39 diseños contra él: 162 hallazgos
+  (`docs/revisiones/repaso-s0/`), diez reglas comunes en S36, y 145 hallazgos aplicados a los documentos (rama
+  `repaso-s0`, unida). Es solo diseño: ningún código cumple aún las reglas nuevas (órdenes `Ajuste`, `Registro`,
+  `Permiso`, `Instantanea`, `Caja`; `Estado:Registros/`; modo de desarrollo). Sin aplicar, 17, con su motivo en S36.
+  Pendiente del usuario: las cuatro recomendaciones de S36 y los nombres provisionales (`Estado:Prefs`, `Estado:Devs`,
+  `Home:Instantáneas/`, el volumen `Linux:`). Generaciones de `Paq` decididas (S8).
+- **Las cuatro decisiones de S36, aceptadas por el usuario (2026-11-16)** y aplicadas a los diseños: contraseña de
+  administrador por tanda; modo de desarrollo por aplicación; la guardia del Amiga espera y siempre se puede deshacer;
+  controladores de Linux en máquinas virtuales (LKL retirado); monitor, espacio de trabajo y pantalla; ROM de AROS en
+  la imagen de `SYS:`, nunca en git. Solo diseño.
+- **Red (rama `red-dns`, por unir)**: el usuario acepta (2026-11-16) que la zona horaria sea del sistema por ahora
+  (por usuario, cuando estén unidas las ramas del escritorio) y `pool.ntp.org` de serie, con ajuste para cambiarlo o
+  apagarlo. Pendiente al unir: que ninguna prueba salga a Internet (en `arranque-virt-linux` el servicio de red
+  preguntó por `pool.ntp.org`).
+- **`RAM:` (rama `ram-volumen`, por unir)**: el usuario acepta (2026-11-16) el tope (la 32.ª parte de la memoria,
+  entre 16 y 256 MB) como ajuste, que `ENV:` no se guarde al salir (como en el Amiga), y dejar para después el tope de
+  memoria de la sesión entera. La orden de S9 se llama `ModoMonitor`; `AGENTS.md` nombra la ROM de AROS en su regla 2.
+- **Unidas a `revision` (2026-11-16)**, por la rama `union`: `selector-llaves` (tabla de llaves con nombre, llamada
+  56; selector para los programas de `sesiones`, "Guardar como"; arreglo de seguridad en las asas cedidas), `red-dns`
+  (UDP, DNS, escuchar con permiso, cortafuegos de entrada cerrado, IPv6 por SLAAC, hora por SNTP con zona),
+  `dashfs-tamano` (encoger moviendo datos, crecer en uso, cuota; órdenes 40 y 41 de `archivos`), `idiomas` (crate
+  `idioma`, catálogos CTLG, inglés; kit, centro, explorador y Workbench por catálogo) y `ram-volumen` (`RAM:` en
+  memoria por sesión con `T:` y `ENV:` desde `ENVARC:`; llamadas 57 y 58). Choques resueltos: llamada 56 y modo 17 de
+  `hijo` (RAM: pasa a 57, 58 y 18), `cambio.rs`, `RAICES_DE_MAS` de `inicio.rs`; carrera del guion en el paso del
+  centro que quita un permiso. **Arreglo de una rotura que ya estaba en `revision`**: la ventana de la prueba de Dash
+  salía encima de la terminal de la caja Linux y se quedaba con el teclado (`arranque-virt-gpu` perdía "terminal
+  viva"); fuera de las pruebas con `linux`, y el guion hace clic en la terminal (rama `diag-terminal`).
+  Tanda completa sobre la unión: 10 de 12 a la primera; con el arreglo, gráfica, Wayland, Linux, prueba y arranque
+  bien. Wayland ya había fallado una vez con carga y pasado sola. Pendiente: que ninguna prueba salga a Internet
+  (`red` pregunta por `pool.ntp.org` en las variantes sin disco de prueba); la zona horaria de idiomas (UTC+1 fijo)
+  debe tomar la de `red`; decisiones de idiomas, cuota y selector por confirmar con el usuario.
+- **Unida `shell-nativa` (2026-11-16)**: Shell nativo al estilo AmigaDOS (crate `shell`, `SYS:System/Shell`, 17
+  órdenes juntas en `SYS:C/Ordenes`, lanzar con la ficha propia por la orden 40 de `sesiones`) y el Shell potente que
+  pidió el usuario (Tab, historial en `ENVARC:Shell/Historial`, sugerencia y resaltado, indicador por segmentos,
+  pestañas y paneles con las teclas de Terminator, colores ANSI, tuberías a la vez, complementos en
+  `S:Shell-Complementos/`). Tanda completa sobre la rama: 12 de 12 a la primera. **Nadie lo ha visto en pantalla**:
+  las pruebas lo manejan por guion, sin captura. Diseñado y sin hacer: el terminal completo (pantalla alternativa).
+  Decisiones por confirmar con el usuario: en `docs/bitacoras/shell-nativa.md`.
+- **Unida `red-zona` (2026-11-16)**: ninguna prueba sale a Internet (el servidor de hora es el ajuste
+  `Prefs/Red/hora`, `pool.ntp.org` de serie, `ninguno` lo apaga; sin ajustes legibles no se pregunta a nadie;
+  `restrict=on` en `arranque-virt` y `-2`); una sola zona horaria con cambio de hora para la barra y para `idioma`
+  (la prueba de `cambio` ve 18:05 también con Carla). Tanda completa: 12 de 12 a la primera. Sin comprobar: en las
+  variantes de Arch la red de QEMU sigue abierta (por `pacman`) y la hora se pregunta a 10.0.2.53.
+- **El Shell, visto en pantalla** (rama `shell-capturas`, por unir): nueva variante `make arranque-virt-shell` con
+  capturas (`~/recuperar/geosian-7d/shell-capturas/`, no van en git); arreglado el indicador ilegible y "1 ficheros";
+  barra de ventana del compositor (título con el cajón y la última orden, maximizar, cerrar; cerrar mata los
+  trabajos sin preguntar), horas de `List` y `Date` en la zona del sistema, pestañas con la última orden. Unida el
+  2026-11-16: tanda completa 12 de 12 y `arranque-virt-shell` bien, a la primera. Por decidir con el usuario: tres
+  de gusto (menú de Tab, rojo al teclear, color del indicador) y si las ventanas del sistema usan la barra del
+  compositor.
+- **Menús de las ventanas** (decidido por el usuario, 2026-11-16, por la sesión de Dash): de serie, una fila dentro
+  de cada ventana (como kit-c); opción de todo el sistema en Ajustes para llevarlos a la barra de arriba, al estilo
+  clásico del Amiga. Escrito en S10. Por hacer: el ajuste, el kit nativo y kit-c pintando en un sitio u otro, y la
+  barra mostrando los menús del programa activo.
+- **S35 paso 1 hecho: medido un Linux mínimo** (rama `medir-linux`, unida; 2026-11-16). Linux 7.3.4 oficial, sin
+  módulos ni distribución, desde `tinyconfig`, en QEMU: dominio de red y Wi-Fi juntos arranca con 15 a 17 MB en
+  aarch64 y usa 14 a 17 MB parado (+0,7 MB por procesador, +0,3 a 1,5 MB con tráfico); x86-64, 17 MB con
+  `CONFIG_PHYSICAL_START=0x200000`. El objetivo de 48 MB se cumple con margen. Sin medir: Wi-Fi real con firmware,
+  `wpa_supplicant`/`iwd` en el dominio, el servidor virtio de verdad, hardware real. Guion `tools/medir_dominios.py`,
+  configuración en `caja-linux/dominios/`; los kernels, fuera de git. Por decidir: si el kernel de los dominios y el
+  de la caja Linux (6.18) van en la misma versión. Siguiente de S35: prestar un aparato USB a un dominio y recibir
+  red por virtio.
+- **Unida `registro-permisos` (2026-11-16)**: registro común en texto en `Estado:Registros/` (`seguridad`, `sistema`,
+  `programas`; solo lo escribe `sesiones`, rota a 64 KB), orden `Registro`; lo concedido en
+  `Home:Prefs/Permisos/concedidos` (y `Estado:Prefs/Permisos/` para lo del sistema), orden `Permiso` (dar y quitar
+  con `guardian`); preguntas en llano con "Detalles"; el kernel cuenta los topes de cada grupo; `archivos`
+  `HUECO_SUYO`; órdenes 80 a 83 de `sesiones`. Tanda completa y `arranque-virt-shell`: todo bien a la primera. Sin
+  ver en pantalla las preguntas nuevas. Fallo apuntado: volver a una instantánea pierde lo registrado después.
+  Queda: modo de desarrollo, tanda de administrador, el registro en Ajustes.
+- **Unida `ajustes-texto` (2026-11-16)**: ajustes como texto `clave = valor` (`idioma::texto`, respeta comentarios);
+  avisos de cambio en `archivos` (órdenes 80 a 82: `VIGILAR`, `NO_VIGILAR`, `AVISOS`); `ENV:Sys/locale` en texto
+  manda y el IFF del Amiga se genera; orden `Ajuste` (leer, poner, `GUARDAR`, `LISTA`; la zona pide `guardian`); el
+  centro aplica idioma y tema en marcha; Apariencia con Guardar, Usar y Cancelar, guardado por `sesiones`
+  (`GUARDAR_ENV`, 90; `archivos` `RAM_GUARDAR`, 120; solo el centro, solo su sesión, lo negado al registro común);
+  la apariencia en un solo sitio (`Escritorio/apariencia`). Tanda completa y `arranque-virt-shell`: todo bien a la
+  primera. Sin ver los botones en pantalla. Por decidir: el tema de la pantalla de entrada como ajuste de la máquina.
+- **Unida `commodities` (2026-11-16)**: protocolo `dashos_commodities_v1` en el compositor, solo para quien tiene
+  permiso (`atajos`, `fondo`, `commodities`, en la tabla común con su frase); atajos con Ctrl+Alt (y F1 a F12 solas,
+  interruptor `wayland::atajos::FUNCION_SOLAS`, pendiente del sí del usuario); teclas reservadas que nunca se dan;
+  aviso de inactividad, pantalla apagada, Bloq Mayús tragado; ClickToFront y AutoPoint como ajustes del compositor;
+  Blanker, NoCapsLock, FKey y Exchange (orden y ventana) en `SYS:Tools/Commodities`. Conflicto en el guion del Shell
+  resuelto con las dos partes. Tanda completa y `arranque-virt-shell`: todo bien a la primera. Sin ver en pantalla
+  Blanker, FKey ni la ventana de Exchange. Queda: `commodities.library` en la caja Amiga (diseñada; toca `caja.c`),
+  `WBStartup`, la categoría de Ajustes.
+- **Unida `admin-desarrollo` (2026-11-16)**: tanda de administrador (orden `Administrar`, `sesiones` orden 120;
+  `guardian` enseña la lista en llano y pide la contraseña una vez; se para en la primera que falla; hoy: comprobar el
+  disco, cerrar un proceso, leer el registro de todos), modo de desarrollo como permiso `desarrollo` por aplicación
+  (abre `Home:C`, `Libs`, `Fonts`, `Classes`; borde magenta con "DESARROLLO" pintado por el compositor), orden `Abrir`
+  (programa de `SYS:Programas` encerrado con su identidad). Arreglado: el ayudante de un programa encerrado nacía con
+  `Home:` entero. Fuera de su zona: `archivos` suelta el disco sujeto y repite si una escritura no cabe (A15), y la
+  prueba del panel impostor de `cambio` reintenta. Tanda completa 12 de 12 y `arranque-virt-shell`: bien a la primera.
+  Sin ver en pantalla la ventana de la tanda ni la marca. Por decidir: parar en la primera que falla, plazos y topes
+  de la ventana (2 min, un intento, 16 acciones, 4 KB), modo de desarrollo sin contraseña de administrador, el
+  magenta, los nombres, el doble clic sin encierro, sin `RAM:`/`T:` en lo encerrado.
+- **Unida `menus` (2026-11-16)**: de serie, una fila de menús dentro de cada ventana; con `Ajuste menus barra` (o
+  Ajustes > Escritorio) los del programa activo van a la barra de arriba, al momento y sin reiniciar programas.
+  Protocolo `dashos_menus_v1` (el kit da siempre su menú en texto; la barra solo ve el de la ventana con el teclado y
+  lo elegido solo vuelve a ese programa), componente de menús en el kit nativo y en kit-c, la barra con clic y botón
+  derecho, `ENV:Escritorio/menus` (clave `sitio`: `dentro`/`barra`) solo lo pone el centro; menús del Shell. Prueba
+  nueva `make arranque-virt-menus` (13 capturas en `~/recuperar/geosian-7d/menus-capturas/`). Unida sin conflictos
+  sobre admin-desarrollo; tanda completa 12 de 12, `arranque-virt-shell` y `arranque-virt-menus`: bien a la primera.
+  Avisada la sesión de Dash de lo que falta en su runtime (casillas, opciones, submenús). Por decidir: aspecto, atajos
+  con Ctrl, botón derecho al pulsar, "Escritorio" en Ajustes, nombres del ajuste, ventanas que crecen, letra del Shell,
+  el reloj tras los títulos. Queda: el sitio por persona, el clic que cierra el menú y además llega a la ventana.

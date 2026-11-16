@@ -157,12 +157,22 @@ name = "dashos-caja-vmm"
 version = "0.0.1"
 
 [[package]]
+name = "dashos-idioma"
+version = "0.0.1"
+
+[[package]]
 name = "dashos-kit"
 version = "0.0.1"
 dependencies = [
+ "dashos-idioma",
+ "dashos-wayland",
  "libm",
  "ttf-parser",
 ]
+
+[[package]]
+name = "dashos-shell"
+version = "0.0.1"
 
 [[package]]
 name = "dashos-sonido"
@@ -177,6 +187,7 @@ dependencies = [
  "dashos-audiodevice",
  "dashos-caja-vmm",
  "dashos-kit",
+ "dashos-shell",
  "dashos-sonido",
  "dashos-wayland",
  "linked_list_allocator",

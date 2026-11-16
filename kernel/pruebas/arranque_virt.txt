@@ -48,7 +48,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [archivos] comprobado al arrancar: 1 problemas; reparado, quedan 0
 # A7: la memoria de la caché de páginas, creada al arrancar (24 MB).
 ~│   [archivos] caché de páginas: 48 trozos de 512 KB creados
-~│   [ficheros] raíz (7 entradas, fin bien): C/ DeCarla/ Estado/ Imagenes/ LEEME.txt Prefs/ Programas/
+~│   [ficheros] raíz (21 entradas, fin bien): C/ Classes/ DeCarla/ Devs/ Estado/ Fonts/ Imagenes/ L/ LEEME.txt Libs/ Locale/ Prefs/ Programas/ Rexx/ S/ Storage/ System/ Tools/ Utilities/ WBStartup/ Work/
 ~│   [ficheros] LEEME.txt (19 bytes): "DashOS lee RedoxFS"
 # A3 (docs/REVISION_LOOP.md): buscar, leer y cerrar en un viaje.
 ~│   [ficheros] A3 leer por nombre: bien
@@ -61,6 +61,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [ficheros] hola.txt: bien; rechazos al escribir: bien
 ~│   [ficheros] A7 páginas prestadas: bien
 ~│   [ficheros] FS6 mayúsculas: bien; FS7 comentario: bien, en la lista: bien; bits: bien
+~│   [ficheros] fecha de modificación: bien
 ~│   [ficheros] A14 fechas: bien
 ~│   [ficheros] A14 lectura anticipada: bien
 ~│   [ficheros] A14 descarte: bien
@@ -103,6 +104,34 @@ DashOS en marcha con 4 núcleos.
 # El desplegable de Ajustes: un clic lo abre (el menú, dentro de la ventana) y otro, en la segunda opción, la elige.
 ~│   [ajustes] menú abierto; la segunda opción en (
 ~│   [ajustes] el desplegable dice: Destello
+# Las ventanas de Dash en DashOS (kit-c): un programa de Dash con mui_* (`kit-c/pruebas/ventana.dash`, compilado con
+# `./dash --dashos` al hacer la imagen; sin Dash no está y estas líneas faltan) abre su ventana con el kit (Material 3),
+# y el guion pulsa su botón "Añadir": añade una línea a la lista y cambia el texto. Su título y su primera línea, del
+# catálogo en castellano de su cajón (Estado/Servicios/dash-ventana/Locale/Catalogs/español/), por el servicio de
+# archivos.
+~│ [dash-ventana] idioma del catálogo: español
+~│ [dash-ventana] abierta
+~│   [dash-ui] ventana "Dash en DashOS" en pantalla (
+~│ [dash-ventana] pulsado: Pulsado 1 veces; líneas: 2
+# La pregunta de mui_request, un diálogo de Material 3: el guion pulsa "Guardar".
+~│   [dash-ui] ventana "Guardar" en pantalla (
+~│ [dash-ventana] guardar: 1
+# Los ficheros de Dash (file_*, dir_*) por el servicio de archivos, en su cajón: escribe la lista, hace un cajón, la
+# mueve ahí, lo lista, la lee (por líneas y entera) y lo borra todo.
+~│ [dash-ventana] lista.txt: escrito true, 25 bytes
+~│ [dash-ventana] Listas: creado true, movido true; 1 entrada: lista.txt, 25 bytes
+~│ [dash-ventana] leída: primera línea true, entera true
+~│ [dash-ventana] fecha: puesta true, leída true
+~│ [dash-ventana] borrado: true true; queda: false
+# El selector de ficheros de DashOS (file_open_dialog, dialog_file_at): el guion elige C/Privado/nota.txt para leer y
+# la carpeta C para guardar; el programa lee lo elegido y guarda, lee y borra en la carpeta.
+~│   [selector] ventana de abrir en pantalla, para dash-ventana
+~│   [selector] el usuario elige C/Privado/nota.txt con doble clic: se cede solo para leer: 0
+~│ [dash-ventana] elegido: Elegido:, 18 bytes: privado de prueba
+~│   [selector] ventana de elegir carpeta en pantalla, para dash-ventana
+~│   [selector] el usuario elige la carpeta C: se cede para leer y escribir: 0 (hueco 3)
+~│ [dash-ventana] guardada en Carpeta:dash-lista.txt: true, leída igual true, borrada true
+~│ [dash-ventana] fin
 # W8: el cursor entra en una ventana; el clic le da el teclado y le llega la "a".
 ~│   [ventana] ratón dentro
 ~│   [ventana] tecla 30 recibida
@@ -140,6 +169,10 @@ DashOS en marcha con 4 núcleos.
 ~│   [hostil] compositor: cambiar de espacio de trabajo sin ser la barra da error: sí
 # S27, oleada 2: ni dar el estado de la red y del volumen como el panel, ni saber quién está delante.
 ~│   [hostil] compositor: dar el estado de la red y del volumen sin ser el panel da error: sí
+# S10, los menús de los programas (docs/bitacoras/menus.md): ser la barra o poner el sitio sin serlo, un menú mal
+# formado, uno de más de 16 KB y elegir sin objeto de barra son errores; uno que vale casi del tope (en muchos trozos
+# del canal) pasa.
+~│   [hostil] compositor: menús: ser la barra sin serlo da error: sí; poner su sitio sin ser el centro, también: sí; un menú mal formado, también: sí; uno de más de 16 KB, también: sí; elegir sin objeto de barra, también: sí; uno que vale casi del tope, no: sí
 ~│   [hostil] sesiones: quién está delante, sin ser el panel ni la barra: -2 y nada
 # Apagar y reiniciar (decisión del usuario del 2026-11-13): solo `sesiones` tiene el permiso del kernel (llamada 51),
 # que le manda `inicio`, y solo el panel se lo puede pedir.
@@ -168,12 +201,18 @@ DashOS en marcha con 4 núcleos.
 ~│   [hostil] centro: los mosaicos del panel sin ser el panel: -1 y nada
 # U2: sesiones, primera parte. Un programa del usuario 1001 no mata a uno del 1000, y sí a uno suyo.
 ~│   [sesiones] en marcha, con el servicio de archivos
+# S6, S36: el registro común, con su cliente propio de archivos (cajón suyo, 0700).
+~│   [sesiones] registro común en Estado:Registros/: seguridad, sistema y programas
+~│   [sesiones] permisos concedidos (sistema): 0 leídos de su Prefs/Permisos
 # U3: entrar abre el volumen cifrado del usuario y salir lo cierra; solo puede pedirlo `guardian` (aquí, `entrada`).
 ~│   [entrada] Carla: contraseña mala -12, buena 0, volver con mala -12 y con buena 0, salir 0: bien
 ~│   [sesiones] hostil pide entrar como Carla: -12
 # U4: la llave de un servicio solo con permiso; marcada, sin poder regalarla y revocable.
 ~│   [sesiones] pide pide eco: el usuario dice sí (0)
 ~│   [pide] U4: bien
+# S6, S36 (S3): `pide`, con su tope de 16 MB, pide memoria hasta que no le cabe; `sesiones` lo apunta en el registro.
+~│   [pide] tope de memoria: le caben 
+~│   [sesiones] pide topa con su tope de memoria (16 MB): 1 vez
 ~│   [pide] llave de plazo: pedirla 0, entrar en la clase true, dejarla 0, después entra false: bien
 # U4: la pregunta, en una capa encima de todo; lo pulsado en el primer segundo no cuenta.
 ~│   [guardian] ¿pide puede usar eco? El usuario dice sí
@@ -182,8 +221,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [guardian] preguntas de pide, una por servicio y usuario: bien
 ~│   [guardian] retirar a pide el permiso de plazo 0, otra vez -1: bien
 # S10c, C1: el centro de control abre Permisos (lo pide `guardian`, como un clic); el usuario quita el de eco de pide.
-# La apariencia guardada está en basura: se queda la de serie.
-~│   [centro] apariencia guardada: no se entiende; se queda la de serie
+# Ajustes en texto: la apariencia en uso (antes de entrar nadie, la de serie: no hay ENV:).
+~│   [centro] apariencia en uso: claro, color Paleta del fondo (sin calcular)
 ~│   [centro] Permisos en pantalla: 1 concedidos
 ~│   [centro] quita a pide el permiso de eco con el botón: 0; quedan 0
 ~│   [centro] Permisos, lo que se ve: Ningún programa tiene permisos concedidos
@@ -204,6 +243,9 @@ DashOS en marcha con 4 núcleos.
 ~│   [panel] abierto; mosaico a
 ~│   [centro] modo claro (lo pide el panel), guardado: 0
 ~│   [centro] modo oscuro (lo pide el panel), guardado: 0
+# Ajustes en texto: el modo del panel va a ENV:Escritorio/apariencia y, por `sesiones`, a ENVARC: de Ana (el centro no
+# tiene su Home:).
+~│   [sesiones] centro guarda ENV:Escritorio/apariencia en ENVARC: de Ana: 
 ~│   [sonido] volumen general: 90 % (lo pide panel)
 ~│   [sonido] volumen general: 100 % (lo pide panel)
 # C2, el modo de edición del panel: quitar Bloquear y Hecho (lo guarda el centro, que lo relee; el panel ya no lo
@@ -238,61 +280,66 @@ DashOS en marcha con 4 núcleos.
 ~│   [barra] pide el espacio 1
 ~│   [panel] OSD abierto: volumen
 ~│   [panel] OSD cerrado: 7 pulsaciones; volumen
-# S10: el Workbench de Ana. Sus raíces: el disco solo para leer (Sistema) y `C` (Home, provisional). No lista el cajón
-# de `sesiones` ni el de Carla, no abre sus ficheros, no crea por Sistema ni sube por encima de Home; y los nombres con
+# S10: el Workbench de Ana. Sus raíces: el disco solo para leer (SYS:) y `C` (Home, provisional). No lista el cajón
+# de `sesiones` ni el de Carla, no abre sus ficheros, no crea por SYS: ni sube por encima de Home; y los nombres con
 # '|' o ':' no salen.
-~│   [workbench] raíces: Sistema solo para leer 0, Home para leer y escribir 0
-~│   [workbench] lo ajeno: listar el cajón de sesiones -12, abrir su registro -12; listar DeCarla -12, abrir su fichero -12; crear por Sistema -12; ".." desde Home no se abre: bien
-~│   [workbench] nombres raros: 1 sin enseñar en Home, 1 en Sistema/Imagenes; "..", "a/b", "x:y" no se buscan: bien
+~│   [workbench] raíces: SYS: solo para leer 0, Home: 0, Work: 0; RAM: la pone sesiones al entrar
+~│   [workbench] lo ajeno: listar el cajón de sesiones -12, abrir su registro -12; listar DeCarla -12, abrir su fichero -12; crear por SYS: -12; ".." desde Home: no se abre: bien
+~│   [workbench] nombres raros: 1 sin enseñar en Home:, 1 en SYS:Imagenes; "..", "a/b", "x:y" no se buscan: bien
 # Sus iconos, en una capa de abajo (una columna a la derecha, bajo la barra); el de Home, con la sesión de Ana abierta.
 ~│   [compositor] capa de workbench en (696, 40)
-~│   [workbench] en pantalla: 104x560, icono de Sistema en (
+~│   [workbench] en pantalla: 104x560, icono de SYS en (
 ~│   [workbench] icono de Home en (
-# El explorador de archivos (como Nautilus): de Ana, con sus raíces (Sistema para leer, Home y el cajón de la caja
-# Amiga). Lo de Carla no se lista ni se copia, no sube con "..", no crea por Sistema, ni él ni el servicio aceptan "." y
+~│   [workbench] icono de RAM en (
+~│   [workbench] icono de Work en (
+~│   [workbench] volúmenes de su tabla de nombres: SYS: Home: RAM: Work:
+# El explorador de archivos (como Nautilus): de Ana, con sus raíces (SYS: para leer, Home y el cajón de la caja
+# Amiga). Lo de Carla no se lista ni se copia, no sube con "..", no crea por SYS:, ni él ni el servicio aceptan "." y
 # ".." como nombres, y nada se mete dentro de sí mismo. Crea su papelera en Home.
-~│   [explorador] raíces: Sistema solo para leer 0, Home 0, Amiga 0; ventana del servicio de 256 KB
-~│   [explorador] lo ajeno: listar DeCarla Some(-12), abrir su carta -12, copiarla no; ".." desde Home no; crear por Sistema -12; renombrar a ".." -1 (servicio -1), crear ".." -1; Privado dentro de sí no (servicio
+~│   [explorador] raíces: SYS: solo para leer 0, Home: 0, Work: 0, Amiga 0; RAM: la pone sesiones al entrar; ventana del servicio de 256 KB
+~│   [explorador] lo ajeno: listar DeCarla Some(-12), abrir su carta -12, copiarla no; ".." desde Home: no; crear por SYS: -12; renombrar a ".." -1 (servicio -1), crear ".." -1; Privado dentro de sí no (servicio
 ~): bien
-~│   [explorador] papelera en Home/.Papelera: lista
+~│   [explorador] papelera en Home:.Papelera: lista
+~│   [explorador] nombres: C:grande.txt = SYS:C/grande.txt; LIBS: = SYS:Libs; ENVARC:Sys = SYS:Prefs/Env-Archive/Sys; T: = no existe en ninguna de sus capas;
+~Amiga: = sin ese nombre; SYS:DeCarla = SYS:DeCarla; listar SYS:DeCarla Some(-12): bien
 ~│   [explorador] listo: espera a que el Workbench le pida abrir algo
-# Con el ratón y el teclado (el guion, al final): el doble clic en el icono de Sistema del Workbench lo abre; DeCarla
-# no se lista; Programas y hola (lo lanza `sesiones`, como Ana); sus Propiedades (por Sistema no se cambian).
-~│   [workbench] pide al explorador que abra Sistema: 0
-~│   [explorador] el Workbench pide abrir Sistema
-~│   [explorador] ventana 1 en Sistema: 
-~│   [explorador] no abre Sistema/DeCarla: -12
-~│   [explorador] ventana 1 en Sistema/Programas: 
+# Con el ratón y el teclado (el guion, al final): el doble clic en el icono de SYS: del Workbench lo abre; DeCarla
+# no se lista; Programas y hola (lo lanza `sesiones`, como Ana); sus Propiedades (por SYS: no se cambian).
+~│   [workbench] pide al explorador que abra SYS: (0)
+~│   [explorador] el Workbench pide abrir SYS:
+~│   [explorador] ventana 1 en SYS:, 
+~│   [explorador] no abre SYS:DeCarla: -12
+~│   [explorador] ventana 1 en SYS:Programas, 
 ~│   [sesiones] explorador lanza Programas/hola: 0 (proceso 
 ~│   [explorador] lanza Programas/hola: 0 (proceso 
-~│   [explorador] Propiedades de Sistema/Programas/hola (ventana 1): Programa · 
+~│   [explorador] Propiedades de SYS:Programas/hola (ventana 1): Programa · 
 ~, dueño 1000 (tú), grupo 1000, modo 755, bits 0x0, comentario ""; se puede cambiar: no
 # La carpeta personal, Privado como lista ordenada por tamaño, y las Propiedades de nota.txt: comentario nuevo y el bit
 # de archivado (el disco lo comprueba).
-~│   [explorador] ventana 1 en Home/Privado: 1 elemento (0 nombres raros sin enseñar): nota.txt
+~│   [explorador] ventana 1 en Home:Privado, 1 elemento (0 nombres raros sin enseñar): nota.txt
 ~│   [explorador] ventana 1 como lista: nota.txt 18 bytes Texto
 ~│   [explorador] ventana 1: por Tamano, de menos a más: nota.txt
-~│   [explorador] Propiedades de Home/Privado/nota.txt (ventana 1): Texto · 18 bytes, dueño 1000 (tú), grupo 1000, modo 600, bits 0x0, comentario ""; se puede cambiar: sí
-~│   [explorador] guarda Home/Privado/nota.txt: comentario "nota de Ana": 0, protección bits 0x1 modo 600: 0
+~│   [explorador] Propiedades de Home:Privado/nota.txt (ventana 1): Texto · 18 bytes, dueño 1000 (tú), grupo 1000, modo 600, bits 0x0, comentario ""; se puede cambiar: sí
+~│   [explorador] guarda Home:Privado/nota.txt: comentario "nota de Ana": 0, protección bits 0x1 modo 600: 0
 # Escribir busca en la carpeta y en las de dentro.
-~│   [explorador] búsqueda de "nota" acabada: 1 resultados: Home/Privado/nota.txt
+~│   [explorador] búsqueda de "nota" acabada: 1 resultados: Home:Privado/nota.txt
 # Carpeta nueva (Ctrl+Mayús+N) y un nombre que no vale; copiar dos ficheros (Ctrl+flechas, Ctrl+espacio, Ctrl+C) y
 # pegarlos en ella; cambiar el nombre (F2) dejando la extensión; a la papelera (Supr) y restaurar desde ella.
-~│   [explorador] crea la carpeta Home/Viaje: 0
+~│   [explorador] crea la carpeta Home:Viaje: 0
 ~│   [explorador] ventana 1: el nombre ".." no vale: "." y ".." no valen como nombre
 ~│   [explorador] copia 2 elementos: datos.bin, grande.txt
 ~│   [explorador] acabado: Copiar 2 elementos a Viaje: 2 de 2 elementos, 928290 bytes
-~│   [explorador] cambia el nombre de Home/Viaje/grande.txt a "texto grande.txt": 0
+~│   [explorador] cambia el nombre de Home:Viaje/grande.txt a "texto grande.txt": 0
 ~│   [explorador] acabado: Mover "texto grande.txt" a la papelera: 1 de 1 elementos
-~│   [explorador] ventana 1 en Papelera: 1 elemento (0 nombres raros sin enseñar): texto grande.txt
+~│   [explorador] ventana 1 en Papelera, 1 elemento (0 nombres raros sin enseñar): texto grande.txt
 ~│   [explorador] acabado: Restaurar "texto grande.txt": 1 de 1 elementos
 # Las miniaturas de los PNG de Fondos, una pestaña (Ctrl+T, Ctrl+W), otra ventana (Ctrl+N) con un camino escrito que
 # no vale (sube con "..") y otro que sí; se mueve por su barra y se arrastra datos.bin de ella a la primera (Privado).
-~│   [explorador] miniatura de Home/Fondos/
+~│   [explorador] miniatura de Home:Fondos/
 ~│   [explorador] ventana 1: pestaña nueva (2 pestañas)
 ~│   [explorador] ventana 2: camino escrito "Home/../DeCarla": no vale
-~│   [explorador] ventana 2: camino escrito "Home/Viaje": va a Home/Viaje
-~│   [explorador] suelta en la ventana 1: mueve a Home/Privado
+~│   [explorador] ventana 2: camino escrito "Home:Viaje": va a Home:Viaje
+~│   [explorador] suelta en la ventana 1: mueve a Home:Privado
 ~│   [explorador] acabado: Mover "datos.bin" a Privado: 1 de 1 elementos
 ~│   [explorador] sin ventanas abiertas
 # El botón del panel rápido lo abre, como Super+A (el compositor solo se lo acepta a la barra).
@@ -334,9 +381,9 @@ DashOS en marcha con 4 núcleos.
 # Apariencia (C3): modo oscuro, y la ventana se repinta con el esquema oscuro.
 ~│   [centro] Apariencia: Modo claro · elegido
 # S26: la de serie es la paleta del fondo; aquí, sin fondo aún (el guardado es el enorme), sin calcular.
-~│   [centro] Apariencia: oscuro, color Paleta del fondo (sin calcular); guardada: 0 (13 bytes); releída: sí
+~│   [centro] Apariencia: oscuro, color Paleta del fondo (sin calcular); en uso (sin sesión: no se guarda)
 # Con el ratón: doble clic en "Color fijo azul" (dos clics en la misma fila, en menos de 500 ms).
-~│   [centro] Apariencia: oscuro, color Azul; guardada: 0 (12 bytes); releída: sí
+~│   [centro] Apariencia: oscuro, color Azul; en uso (sin sesión: no se guarda)
 # Y el tema llega a los demás programas por el compositor (dashos_tema_v1): Ajustes se repinta.
 ~│   [ajustes] tema del sistema: oscuro, color 0061a4
 # C3: el fondo de escritorio (`fondo`, una capa de fondo). En el disco, Prefs/fondo dice enorme.png (una cabecera de
@@ -349,7 +396,7 @@ DashOS en marcha con 4 núcleos.
 # "Paleta del fondo": el centro calcula una vez los esquemas de la semilla, los guarda con la apariencia y los da al
 # compositor, que los reparte: Ajustes, que estaba abierta, los usa sin calcular.
 ~│   [centro] colores del fondo: semilla 3d6f88, esquemas claro y oscuro en 
-~│   [centro] Apariencia: oscuro, color Del fondo; guardada: 0 (202 bytes); releída: sí
+~│   [centro] Apariencia: oscuro, color Del fondo; en uso (sin sesión: no se guarda)
 ~│   [ajustes] tema del sistema: oscuro, color 3d6f88, esquema del centro (
 # Hostil: una imagen rota (su CRC no cuadra) no tumba a nadie: se quedan el fondo y el tema de antes.
 ~│   [fondo] rota.png: un trozo está roto (su CRC no cuadra); se queda ondas.png
@@ -387,13 +434,33 @@ DashOS en marcha con 4 núcleos.
 ~│   [guardian] se bloquea la sesión de Carla
 ~│   [guardian] pantalla de bloqueo en pantalla
 ~│   [guardian] desbloqueado con la contraseña buena tras 1 mala: bien
+# `RAM:` en memoria (docs/bitacoras/asignaciones.md): al entrar, `sesiones` crea el grupo de la sesión y, cobrado a él,
+# su `RAM:`: un DashFS que el servicio de archivos monta sobre un objeto de memoria disperso, con `T:` y con `ENV:`
+# copiado de `ENVARC:`.
+~│   [sesiones] RAM: de Ana: en memoria, hasta 
 ~│   [guardian] entra Ana tras 1 intento malo: bien
+# Su prueba (`Programas/ram`, como Ana): `ENV:` trae lo de `ENVARC:` y cambiarlo no toca `ENVARC:`; llena `RAM:` hasta
+# el tope con datos que no se comprimen y da "lleno" sin tumbar nada (lo de antes se lee, el disco sigue); la memoria
+# libre de la máquina baja lo escrito y, al borrar, vuelve.
+~│   [ram] Ana: RAM: con T y Env true; ENV:Sys/idioma trae lo de ENVARC: true; cambiado en ENV: (0), ENVARC: sigue igual true: bien
+~(lleno, -11); escribir en otro -11; lo de antes se lee true y el disco también (0): bien
+~│   [ram] Ana: memoria libre de la máquina: 
+~│   [ram] Ana: ENV: de ENVARC:, RAM: llena sin tumbar nada y la memoria que vuelve al borrar: bien
+# Avisos de cambio del servicio de archivos (`VIGILAR`, docs/bitacoras/ajustes-texto.md): Ana vigila `ENV:Sys` y
+# `ENV:Sys/teclado`; 200 escrituras seguidas son un timbre por vigilancia y una cuenta de 200; crear y borrar en el
+# cajón cuentan para él; lo vigilado que se borra avisa (BORRADO) y acaba. Lo hostil: lo que no puede leer, una asa mala,
+# sin puerta, una puerta cerrada (se quita sola), 63 con la puerta llena (llegan todos), miles (64 como mucho).
+~│   [ram] Ana: avisos de ENV:Sys y ENV:Sys/teclado: 200 escrituras seguidas, 2 timbres y cuentan [200, 200]; pedidos, uno más suena otra vez true; crear y borrar en el cajón [2]; borrar lo vigilado [1, 2] y acaba -2: bien
+~│   [ram] Ana: avisos hostiles: SYS:DeCarla -12, asa mala -5, sin puerta -1; la puerta cerrada se quita -2; 63 con la puerta llena, llegan 63 timbres y 63 avisos de 2; 5000 pedidas: 1 sí, 4999 sin sitio, 0 otro; el servicio sigue 0: bien
 # U6: el cambio rápido de usuario (docs/diseño/U6-cambio-rapido.md). Con Ana dentro, `guardian` lanza `cambio` como
 # ella y bloquea su sesión; en la pantalla, Esc, y entra Carla con Ana detrás. El `cambio` de Carla no ve ni mata los
 # procesos de Ana, no es Ana ante `sesiones` y no llega a su volumen ni a su fichero. El de Ana sigue en marcha detrás,
 # sin preguntar ni bloquear. Vuelve Ana (Esc en el bloqueo de Carla) y su fichero tiene todo.
 # U6, paso 2: el `cambio` de Ana abre una ventana (la captura el guion: `tools/captura_cambio.py`), suena por el
 # servicio de sonido y pide el permiso de plazo, que Ana le concede (en la prueba contesta `guardian`).
+# Idiomas (paso 4): Ana, sin locale.prefs, en castellano y a la española, sin catálogo.
+~│   [cambio] Ana: idioma español (España), de serie: "Hola, soy la prueba del cambio de usuario", "2 ventanas de Ana", el kit dice "sí"; martes, 3 de noviembre de 2026; 03/11/2026 18:05; 1.234.567; -1.234,56 €
+~│   [cambio] Ana: sus textos en su idioma: bien
 ~│   [cambio] Ana: ventana en pantalla: true
 ~│   [cambio] Ana: suena por el servicio de sonido: true (0)
 ~│   [cambio] Ana: pide plazo 0 (se pregunta a Ana), lo deja 0
@@ -405,11 +472,28 @@ DashOS en marcha con 4 núcleos.
 ~│   [sesiones] cambio pide eco desde una sesión de detrás: no se pregunta
 ~│   [cambio] Ana, detrás: escribe true, pedir eco -2, bloquear -2: bien
 ~0 muertos, 0 dicen que existen: bien
+# Idiomas (paso 4): Carla tiene su locale.prefs en inglés y del Reino Unido: los textos del programa y del kit salen de
+# sus catálogos, y las fechas, los números y el dinero, a la inglesa. Los catálogos malos no valen. La hora va en la
+# zona del sistema (SYS:Prefs/zona, Europe/Madrid, la de la barra), no en la UTC de su locale.prefs: 18:05.
+~│   [cambio] Carla: idioma english (great_britain), de ENV:Sys/locale.prefs: "Hello, I am the user switching test", "2 windows of Carla", el kit dice "yes"; Tuesday 3 November 2026; 03/11/2026 18:05; 1,234,567; -£1,234.56
+~│   [cambio] Carla: catálogos malos (están: true): cortado false, de otro programa false, de otra versión false, fuera del cajón false; el idioma ha cambiado false: bien
+~│   [cambio] Carla: sus textos en su idioma: bien
 ~│   [cambio] Carla, como Ana: entrar -12, volver -12, salir -12, lanzar -2: bien
 ~│   [cambio] Carla, lo de Ana: abrir su volumen -12, verlo -12, cerrarlo -12; su fichero, por 0 caminos: bien
 # El permiso que Ana concedió a `cambio` no vale para el de Carla: se le pregunta a ella (y dice que no).
 ~│   [cambio] Carla: pide plazo (concedido a cambio como Ana) -2: bien
 ~│   [cambio] Carla delante (1), con Ana detrás: nada de Ana a su alcance: bien
+# `RAM:` en memoria, hostil: Carla, con la sesión de Ana abierta, tiene otra `RAM:`: el secreto que Ana dejó en la suya
+# no está ni se llega a él por ninguna raíz ni pidiendo el volumen, y las órdenes de `sesiones` no son para un programa.
+~│   [ram] Carla: su RAM: tiene 2 entradas (T y Env); el secreto de Ana: -2 en la suya, 0 caminos llegan a él; pedir el volumen [-12, -12, -12]; órdenes de sesiones [-1, -1, -1, -1]: bien
+# Ana se fue con 64 vigilancias puestas: el servicio las soltó al acabar ella.
+~ en el servicio con la de Carla: bien
+# Ajustes en texto, hostil: Carla no escribe la zona (de la máquina) ni la capa de fábrica de `ENVARC:`.
+~│   [ram] Carla: guardar ENV: en ENVARC: por sesiones [-2, -2]; la orden de archivos con su llave -1
+~│   [sesiones] ram pide guardar ENV:"Sys/locale" en ENVARC:: -2
+~│   [sesiones] ram pide guardar ENV:"../../Prefs/Red/hora" en ENVARC:: -2
+~│   [ram] Carla: escribir la zona de la máquina -12 y en ENVARC: de fábrica -12: bien
+~(ENV: sigue como al entrar: true): bien
 ~│   [guardian] cambio de usuario: entra Ana (0 intentos malos); Carla sigue detrás
 ~│   [sesiones] delante, la sesión de Ana; detrás, 1
 # Detrás, a la ventana de Ana no le llegó nada del teclado ni del ratón (el guion tecleaba y pulsaba en la sesión de
@@ -420,8 +504,262 @@ DashOS en marcha con 4 núcleos.
 ~│   [compositor] sesiones de detrás: [1001]
 ~│   [cambio] Ana vuelve delante: su fichero sigue, con lo escrito detrás: bien
 ~│   [guardian] U6: el permiso de plazo de cambio, preguntado como Ana 1 y como Carla 1: bien
+# `RAM:` en memoria: Carla sale (su `RAM:` se destruye y su memoria vuelve) y entra otra vez: lo que dejó no está, y
+# `ENV:` trae ahora su capa de `ENVARC:` (la que guardó en `Home:`) encima de la de fábrica.
+~│   [sesiones] RAM: de Carla: destruida al salir (0): ocupaba 
+~│   [ram] Carla, tras salir y entrar: RAM: nueva (2 entradas, T:huella -2, ENV:Sys/teclado otra vez de fábrica true); ENV: con su capa encima true; cambiar ENV: no toca ENVARC: ni Home: true; limpia true: bien
+~│   [guardian] RAM: en memoria: la de Ana true, la de Carla true; Carla sale 0 y entra 0, la nueva true; vuelve Ana 0: bien
 ~│   [guardian] cambio rápido: Ana, Carla y otra vez Ana: bien
 ~│   [guardian] U6: retirar a cambio el permiso de plazo: 0; a pide el de eco: 
+# El Shell nativo (docs/bitacoras/shell-nativa.md): guardian lo lanza como Ana (`SYS:System/Shell`, con argumentos por su
+# canal de arranque) y le hace ejecutar `S:Prueba-Shell`; lo que sale por su consola va al registro. Abre su ventana.
+~│   [shell] ventana en pantalla: 80x25 letras
+~│   [shell] Prueba del Shell nativo
+# Cd (el cajón actual es del Shell: la orden se lo pide por la puerta), MakeDir, redirecciones (> y >>), Type NUMBER.
+~│   [shell] Home:PruebaShell
+~│   [shell]     1 hola desde el Shell
+~│   [shell]     2 segunda línea
+# Copy, Rename, Filenote, Protect (letras del Amiga sobre los permisos de Unix), List con un patrón, Dir en dos columnas.
+~│   [shell] otra.txt  ---rw-d  0644
+~│   [shell] hex.txt
+# El resumen de List, con el singular ("1 fichero", no "1 ficheros"; visto en pantalla, 2026-11-16).
+~│   [shell] 1 fichero - 0 cajones -
+# Date, en la zona del sistema (la del disco de pruebas, Europe/Madrid: UTC+1 o UTC+2 según la época), como la barra.
+~ (Europe/Madrid, UTC+
+~│   [shell]      [1;34msub[0m (dir)
+~│   [shell]   nota.txt                               otra.txt
+# Assign: poner, añadir una capa (por ella se ve SYS:S), ver; y lo que `sesiones` no deja: tapar un volumen.
+~│   [sesiones] Shell asigna "Prueba=Home:PruebaShell" (0): 0
+~│   [sesiones] Shell asigna "Prueba=SYS:S" (1): 0
+~│   [shell] Prueba: Home:PruebaShell,SYS:S
+~│   [shell] Shell-Startup
+~│   [shell] Assign: SYS: es un volumen (o PROGDIR): no se puede tapar
+~│   [shell] Assign: Bucle:: no existe
+# Which: una orden de base está en SYS:C/Ordenes (C: por capas); una interna; una que no está, código 5.
+~│   [shell] SYS:C/Ordenes
+~│   [shell] INTERNA
+~│   [shell] Which no lo encuentra: 5
+# Variables locales y de entorno (ENV:), If/Else/EndIf, Skip BACK y Lab.
+~│   [shell] Hola, Ana
+~│   [shell] Variable de entorno
+~│   [shell] nota.txt existe
+~│   [shell] vuelta 1
+~│   [shell] vuelta 2
+# Una tubería (Echo | Ask: con "s", código 5) y la entrada desde un fichero.
+~│   [shell] ¿Sigo? Ask dijo sí
+~│   [shell] ¿Y ahora? Ask dijo no: 0
+# Un guion con .KEY, por su nombre (bit de guion) y con Execute; sin su argumento obligatorio no corre.
+~│   [shell] Saludos a Carla (3)
+~│   [shell] Saludos a Ana (1)
+~│   [shell] saluda: falta el argumento quien
+~│   [shell] sin argumento: 20
+# El Shell potente. Colores por tipo en una consola (arriba: el cajón, en azul; el registro se queda con las letras del
+# escape) y sin ellos con NOCOLOR.
+~│   [shell]      sub (dir)
+# Completar (lo que daría Tab): una orden, una ruta, una palabra de la plantilla, un volumen, varias cosas (con las
+# asignaciones), un fichero de otro cajón.
+~│   [shell] Dir
+~│   [shell] nota.txt
+~│   [shell] ALL
+~│   [shell] SYS:
+~│   [shell] S:  saluda  sub/  SYS:
+# Resaltar: orden que existe (o), ruta (r), palabra de la plantilla (k), redirección y tubería (+), orden que no existe
+# (x), cadena (c) y cadena sin cerrar (a).
+~│   [shell] ooo.rrrrr.kkk.+rrrrrrrr.+.xxxx.cccccccccccccc
+~│   [shell] oooo.aaaaaaaaaaa
+# Teclear (las teclas, como desde el teclado): la sugerencia del historial y aceptarla entera o por palabras; Tab con
+# una posibilidad y con varias (el menú, y elegir con Tab); buscar hacia atrás (Ctrl-R); flecha arriba por prefijo.
+~│   [shell] «Ech» [o uno del historial]
+~│   [shell] «Echo uno del historial»
+~│   [shell] «Echo» [ uno del historial]
+~│   [shell] «Type nota.txt »
+~│   [shell] «Dir S» menú: S: saluda sub/ SYS:
+~│   [shell] «Dir saluda» menú: S: saluda sub/ SYS: (elegido saluda)
+~│   [shell] «Echo uno del historial» (buscar: hist)
+# El historial, y guardado en ENVARC:Shell/Historial.
+~│   [shell]     1  Echo uno del historial
+# Paneles y pestañas (con un historial dañado, una imagen en vez de texto, que lee cada panel nuevo). Y los ajustes del
+# indicador, con una línea que no se entiende.
+~│   [shell] 2 paneles en 1 pestañas
+~│   [shell] 3 paneles en 2 pestañas
+~│   [shell] ENVARC:Shell/Indicador: línea 2: no se entiende "color cajon fucsia"
+~│   [shell] 4 paneles en 2 pestañas
+# Complementos: los alias del de serie (SYS:S/Shell-Complementos/alias), cargado al abrirse el Shell.
+~│   [shell] ll               List
+# Y en otro Shell: el que falla se dice y se salta; el alias del primero y la plantilla del tercero valen.
+~│   [shell] El complemento S:Shell-Complementos/20-roto ha fallado (código 10): se salta lo que le quedaba
+~│   [shell] hola desde un alias
+~│   [shell] GRITANDO
+# Pintar una salida larga, sin copiarla al registro: 25.000 líneas sin colores y 16.384 con colores, fondos y
+# subrayado (lo que tarda cambia; los bytes, no).
+~ 313890 bytes a la consola en 
+~ 1228800 bytes a la consola en 
+# Tuberías de verdad: 313 KB por un tubo de 64 KB, numerados (463.890 bytes); y si quien lee acaba, quien escribe también.
+~ 463890 bytes a la consola en 
+~│   [shell] ¿La primera? tubería cortada: 0
+# Sustitución de órdenes.
+~│   [shell] Dir está en SYS:C/Ordenes y estoy en Home:PruebaShell
+~│   [shell] comilla invertida sin cerrar
+# Lo hostil: comillas sin cerrar, una orden que no existe, una línea de 3.000 letras.
+~│   [shell] comillas sin cerrar
+~│   [shell] NoExiste: orden desconocida
+~│   [shell] línea demasiado larga
+~│   [shell] tras la línea larga: 20
+# SYS: es de solo lectura: ni redirigir, ni copiar, ni crear, ni borrar (con un patrón y con ALL).
+~│   [shell] No se puede escribir en SYS:prohibido: está protegido
+~│   [shell] Copy: SYS:S/nota.txt: está protegido
+~│   [shell] MakeDir: SYS:S/Nuevo: está protegido
+~│   [shell] Delete: SYS:S/Shell-Startup: está protegido
+~│   [shell] Delete: SYS:Prefs: está protegido
+~│   [shell] Delete en SYS: 10
+# Lo de otra persona: ni leerlo ni lanzarlo (el programa lo lee el Shell con sus permisos, no `sesiones`). Y lo que
+# no es un programa no se lanza.
+~│   [shell] Type: SYS:DeCarla/carta.txt: está protegido
+~│   [shell] SYS:DeCarla/carta.txt: no tiene permiso de ejecutar
+~│   [shell] SYS:LEEME.txt: no tiene permiso de ejecutar
+~│   [shell] falso: no se puede lanzar: no es un programa de DashOS
+~│   [shell] patrón por todo SYS: 0
+# Un guion con un bucle sin fin, de fondo (en otro Shell sin ventana), y Break; y una orden que espera, rota igual.
+~│   [shell] ***Break
+~│   [shell] [1] Shell (Execute) acabó con el código 20
+~│   [shell] [1] Wait acabó con el código 20
+~│   [shell] No hay trabajos en marcha
+# Ajustes en texto (docs/bitacoras/ajustes-texto.md): la orden Ajuste. El idioma va al texto de ENV:Sys/locale (y su
+# IFF, Sys/locale.prefs, se genera de él); el centro de control lo vigila y cambia de idioma en marcha. Lo hostil: un
+# país que no hay, un idioma que no vale, un tema que no existe, la zona (de la máquina: pide guardian y se niega), un
+# nombre que no hay, un fichero que no es texto y uno enorme (no se tocan). Un ajuste cualquiera (fichero.clave) con
+# GUARDAR. Y el tema: con la orden, a mano con Echo y otra vez con la orden; el centro lo aplica en marcha y lo reparte
+# el compositor: Ajustes (un programa del kit) y la barra lo cambian sin reiniciar.
+~│   [shell] Ajustes (Ajuste <nombre> <valor> lo pone en ENV:; con GUARDAR, también en ENVARC:):
+~│   [shell]   zona     Europe/Madrid        la zona horaria (de la máquina) (SYS:Prefs/zona)
+~│   [shell] idioma: english, español (en RAM:Env/Sys/locale)
+~│   [centro] idioma en marcha: english (España), de ENV:Sys/locale
+~│   [shell] idioma: english, español (ENV:Sys/locale idiomas)
+~│   [shell] idiomas = english, español
+~│   [shell] Ajuste: pais: atlantida: no hay LOCALE:Countries/atlantida.country (List LOCALE:Countries enseña los que hay). No se ha cambiado nada
+~│   [shell] Ajuste: idioma: "../x" no vale como idioma (o son más de 10). No se ha cambiado nada
+~│   [shell] Ajuste: tema: "morado" no vale: claro, oscuro. No se ha cambiado nada
+~│   [shell] Ajuste: zona es un ajuste de la máquina (SYS:Prefs/zona): cambiarlo pide la confirmación de guardian, y esta orden aún no sabe pedirla. No se ha cambiado nada
+~│   [shell] zona: Europe/Madrid (SYS:Prefs/zona)
+~│   [shell] Ajuste: nada: no hay un ajuste con ese nombre (Ajuste LISTA los enseña; o fichero.clave)
+~│   [shell] Ajuste: ENV:roto: no es texto; se usa lo de serie
+~│   [shell] Ajuste: ENV:roto no es texto: no se toca (arréglalo a mano o bórralo). No se ha cambiado nada
+~│   [shell] Ajuste: ENV:enorme es demasiado grande: no se toca (arréglalo a mano o bórralo). No se ha cambiado nada
+~│   [shell] Escritorio/barra.segundos: sí (en RAM:Env/Escritorio/barra y Home:Prefs/Env-Archive/Escritorio/barra)
+~│   [shell] Escritorio/barra.segundos: sí (ENV:Escritorio/barra segundos)
+# La apariencia que Ana tenía guardada a mano y mal (modo morado): al entrar, el centro la lee de ENV: y deja el tema.
+~│   [centro] ENV:Escritorio/apariencia: modo "morado" no es claro ni oscuro; se queda el tema que hay
+~│   [shell] tema: oscuro (en RAM:Env/Escritorio/apariencia)
+~│   [centro] tema en marcha: oscuro, color Del fondo, de ENV:Escritorio/apariencia; en el compositor: sí
+~│   [centro] tema en marcha: claro, color Del fondo, de ENV:Escritorio/apariencia; en el compositor: sí
+~│   [ajustes] tema del sistema: claro, color c44e68
+~│   [barra] tema del sistema: claro, color c44e68
+~│   [centro] tema en marcha: oscuro, color Del fondo, de ENV:Escritorio/apariencia; en el compositor: sí
+~│   [ajustes] tema del sistema: oscuro, color c44e68
+~│   [barra] tema del sistema: oscuro, color c44e68
+~│   [shell] idioma: español (en RAM:Env/Sys/locale)
+~│   [centro] idioma en marcha: español (España), de ENV:Sys/locale
+# S10, los menús de los programas (docs/bitacoras/menus.md): Ajuste menus, que el centro aplica en marcha y el
+# compositor dice a todos. Lo hostil: un sitio que no existe; y cien cambios seguidos a mano, del que queda el último.
+~│   [shell] Ajuste: menus: "arriba" no vale: dentro, barra. No se ha cambiado nada
+~│   [shell] menus: barra (en RAM:Env/Escritorio/menus)
+~│   [centro] menús en marcha: en la barra, de ENV:Escritorio/menus; en el compositor: sí
+~│   [barra] menús: en la barra
+~│   [shell] menus: barra (ENV:Escritorio/menus sitio)
+~│   [centro] menús en marcha: dentro de las ventanas, de ENV:Escritorio/menus; en el compositor: sí
+~│   [barra] menús: dentro de las ventanas
+~│   [shell] menus: dentro (ENV:Escritorio/menus sitio)
+# S6, S36: el registro común. Lo que apunta un guion sale con el programa que lo lanza (el Shell), y la hora y el
+# usuario que pone `sesiones`. Lo de antes de rotar (programas.1, de "ayer") se sigue leyendo; lo del hostil, que es de
+# Carla, Ana no lo ve.
+~ Shell (Ana) programa: hola desde el guion del Shell: una prueba
+~ prueba (sistema) programa: la última de ayer
+~│   [shell] Nada en el registro con eso.
+# Lo hostil: escapes y saltos de línea no llegan a la línea; la ráfaga se corta (y se dice cuántas se perdieron); los
+# ficheros no se tocan a mano; una clase que no existe.
+~ Shell (Ana) programa: ?[2J?[31mrojo
+~│   [shell] Registro: va demasiado deprisa: 
+~│   [shell] deprisa: 5
+~ Shell (Ana) registro: 
+~│   [shell] No se puede escribir en SYS:Estado/Registros/seguridad: está protegido
+~│   [shell] Delete: SYS:Estado/Registros/seguridad: está protegido
+~│   [shell] Type: SYS:Estado/Registros/seguridad: está protegido
+~│   [shell] Registro: no hay líneas de la clase "inventada"
+# Leer el de todos es una acción de administrador (en la prueba, guardian da la contraseña de Ana).
+~│   [guardian] Shell pide registro: contesta como Ana
+~ hostil (Carla) permiso: no se da "eco"
+# Ajustes en texto: lo negado a `ram` en GUARDAR_ENV, en el registro común (seguridad, clase "ajustes").
+~ ram (Carla) ajustes: no guarda ENV:Sys/locale en ENVARC: (estado -2): solo lo pide el centro de control
+~ ram (Carla) ajustes: no guarda ENV:../../Prefs/Red/hora en ENVARC: (estado -2): solo lo pide el centro de control
+# En vivo: lo que llega mientras mira.
+~ Shell (Ana) programa: una línea en vivo
+# S6b, S36: los permisos, en Home:Prefs/Permisos/concedidos. Ver lo propio es libre; dar y quitar lo confirma el usuario
+# en la ventana del sistema (el guion de QEMU: a pide, sí, y la primera vez la D de los detalles; a otro, no).
+~│   [shell] Ningún programa tuyo tiene permisos concedidos.
+~│   [guardian] pregunta en pantalla: cambiar permiso: Shell quiere dar a pide eco
+~│   [guardian] detalles de la pregunta: a la vista
+~│   [sesiones] Shell da a pide el permiso eco: el usuario dice sí (0)
+~│   [shell] Hecho: pide puede usar el servicio de prueba "eco" (eco).
+~│   [shell] pide: usar el servicio de prueba "eco" (eco)
+~│   [shell] pide eco
+~│   [sesiones] Shell da a hostil el permiso eco: el usuario dice no (-2)
+~│   [shell] dar a hostil: 10
+~│   [shell] Permiso: no hay un permiso "inventado"
+# Lo hostil: el fichero no se escribe ni se borra a mano; con otro cajón en su sitio, ni se lee ni se escribe ahí.
+~│   [shell] No se puede escribir en Home:Prefs/Permisos/concedidos: está protegido
+~│   [shell] Delete: Home:Prefs/Permisos/concedidos: está protegido
+~│   [sesiones] permisos concedidos (Ana): no se escriben (Cajon)
+~│   [sesiones] Shell quita a pide el permiso plazo: el usuario dice sí (0)
+~│   [sesiones] Shell quita a pide el permiso eco: el usuario dice sí (0)
+~│   [sesiones] permisos concedidos (Ana): 0 escritos en su Prefs/Permisos
+# S36, decisión 1 (rama admin-desarrollo): la tanda de acciones de administrador. Lo que no es de administrador no se
+# enseña ni se hace; una buena sale entera en la ventana de `guardian`, con una contraseña (la teclea el guion), y se
+# hace en orden (comprobar sigue cuando contesta el comprobador).
+~│   [shell] Administrar: no se pide nada: la línea 1 no es una acción de administrador
+~│   [guardian] tanda en pantalla: Shell pide 2 (administrador propuesto: Ana): 1. Comprobar el disco | 2. Leer el registro de todos los usuarios
+~│   [sesiones] tanda de Shell: 1 de 2, se espera al comprobador
+~│   [shell] 1. Comprobar el disco: hecho, sin problemas
+~│   [shell] 2. Leer el registro de todos los usuarios: hecho
+~│   [shell] Hechas las 2.
+# Lo hostil (`Programas/espera` lanzado desde el Shell): ni preguntar ni hacer con una que no es de administrador, listas
+# enormes o un proceso que no existe; otra a la vez, OCUPADO; la lista cambiada tras mandarla no cuenta; lo colado
+# detrás pide su confirmación; se para en la que falla; con la contraseña mala, nada.
+~│   [tanda] con una que no es de administrador, -1: bien
+~│   [tanda] listas enormes (17 acciones, 5000 bytes, 1 MB de memoria, sin memoria): no se preguntan: bien
+~│   [tanda] un proceso que no existe, -1: bien
+~│   [tanda] otra mientras espera la primera, -3: bien
+~│   [tanda] se hace la tanda enseñada, no la cambiada (0 2; vivos: false true true): bien
+~│   [tanda] colar otra detrás pide su confirmación y no se hace (-2; vivo: true): bien
+~│   [sesiones] tanda de Shell: falla la 2 de 3 (-1): Cerrar "Shell", de Ana (proceso
+~│   [tanda] se para en la que falla (-1 1 2; vivo: false): bien
+~│   [sesiones] tanda de Shell: no es la contraseña de un administrador; no se hace nada
+~│   [tanda] con la contraseña mala no se hace (-2; vivo: true): bien
+~│   [tanda] prueba hostil acabada: bien
+# S6b, S36: `Abrir` abre encerrado, como con doble clic. Sin modo de desarrollo, la aplicación no carga de Home:Libs; con
+# él (`Permiso DAR espera desarrollo`, confirmado en `guardian`), sí, y el compositor marca sus ventanas; quitado, otra
+# vez no. Lo hostil: no sale de su encierro (ni por su ayudante), no se pone el modo a sí misma.
+~│   [sesiones] Shell abre espera encerrado, en su cajón Home:Datos/espera; modo de desarrollo: no
+~│   [encerrada] vuelta 1, modo de desarrollo: no; LIBS:prueba.library: no la encuentra (-2): bien
+~│   [encerrada] encierro: llega a 0 nombres de fuera y a 0 raíces a mano; su cajón Datos:: bien
+~│   [encerrada] ponerse en modo de desarrollo: -2; escribir lo concedido: no: bien
+~│   [encerrada] lanza un ayudante con su PROGDIR: en Home: (
+~│   [encerrada] su ayudante, que pidió su PROGDIR: en Home:, llega a 0 raíces de fuera: bien
+~│   [guardian] pregunta en pantalla: cambiar permiso: Shell quiere dar a espera desarrollo
+~│   [sesiones] Shell da a espera el permiso desarrollo: el usuario dice sí (0)
+~│   [shell] espera: cargar bibliotecas, órdenes y tipos de letra de tu Home: (modo de desarrollo) (desarrollo)
+~│   [sesiones] Shell abre espera encerrado, en su cajón Home:Datos/espera; modo de desarrollo: sí
+~│   [compositor] espera va en modo de desarrollo: sus ventanas llevan la marca
+~│   [encerrada] vuelta 2, modo de desarrollo: sí; LIBS:prueba.library: carga "biblioteca de prueba de Ana" (de la capa 0, HomeLibs:): bien
+~│   [shell] Abrir: SYS:System/Shell: solo se abren encerrados los programas instalados (SYS:Programas); uno suelto, aún no
+~│   [shell] Abrir: Programas:../System/Shell: solo se abren encerrados los programas instalados (SYS:Programas); uno suelto, aún no
+~│   [shell] Abrir: noexiste: 
+~│   [sesiones] Shell quita a espera el permiso desarrollo: el usuario dice sí (0)
+~│   [encerrada] vuelta 3, modo de desarrollo: no; LIBS:prueba.library: no la encuentra (-2): bien
+~│   [sesiones] Shell asigna "Prueba" (3): 0
+~│   [shell] Home:PruebaShell borrado
+~│   [shell] Fin de la prueba del Shell
+~│   [shell] acaba con el código 0
+~│   [guardian] Shell nativo: lanza System/Shell como Ana: 0, acaba: true
 ~│   [guardian] S28: retirar a caja-amiga el permiso ejec:actualiza: 0
 # Hostil: un programa del disco llamado como el panel rápido no tiene sus poderes (son por el nombre que da `inicio`).
 ~│   [cambio] lanzado del disco como panel: 
@@ -439,6 +777,49 @@ DashOS en marcha con 4 núcleos.
 ~│   [comprobador] pedido con los datos: 0 (0 problemas
 ~│   [sesiones] pide mata a eco (usuario 1), con permiso de administrador
 ~│   [pide] raíces: PROGDIR:pide 0, Programas:hola 0, SYS:LEEME.txt 0; crear por SYS: -12, cerrarla -5: bien
+# La tabla de llaves (`dashos::llaves`): `inicio` y `sesiones` dicen a cada programa qué es cada llave que le dan, y el
+# programa las busca por su nombre. `pide`, lanzado por `inicio`, solo tiene "sesiones"; desde el disco, las de
+# `sesiones`. Sin el selector de ficheros: no lo lanza la persona del selector (lo lanza `entrada`, del sistema, y
+# como Carla).
+~│   [pide] tabla de llaves: selector 0, sesiones 1, archivos 0
+~│   [pide] tabla de llaves: selector 0, sesiones 1, archivos 2
+# `sesiones` da el selector a los programas de la persona del selector (Ana): el `cambio` de Ana lo tiene y el selector
+# lo conoce por su nombre; el de Carla no lo tiene.
+~│   [sesiones] dará el selector de ficheros a lo que lance
+~│   [cambio] Ana: tabla de llaves (4): sesiones, archivos y ventanas en su sitio; selector de ficheros: lo tiene y la conoce como "cambio": bien
+~│   [cambio] Carla: tabla de llaves (3): sesiones, archivos y ventanas en su sitio; selector de ficheros: no lo tiene: bien
+# "Guardar como" desde un programa del disco (`Programas/guarda`, lanzado desde la barra como Ana, lo último de la
+# prueba: el guion espera a que haya salido todo lo demás). Nace con el selector y lo encuentra por su nombre.
+~│   [sesiones] barra lanza Programas/guarda: 0
+~│   [guarda] tabla de llaves: sesiones 1, archivos 2, ventanas 3, selector 4
+# Lo hostil, sin ventana: C entero como raíz (solo para la prueba del hostil de `inicio`), una petición mal formada, y
+# crear en C por su cuenta.
+~│   [selector] guarda pide C entero como raíz: no (eso no lo elige el usuario)
+~│   [guarda] sin ventana: el selector lo conoce como "guarda" (0), una petición mal formada -1, C entero como raíz 0, crear en C por su cuenta -12: bien
+# Un camino en vez de un nombre, dos peticiones a la vez y cancelar con la ventana en pantalla; y nombres con ':', ".."
+# y larguísimos.
+~│   [selector] guarda propone un nombre que no vale (Letra('/'), 40 bytes): el campo empezará vacío
+~│   [selector] guarda pide con otra petición suya esperando: ocupado
+~│   [selector] guarda ya no quiere (canceló o se fue): se cierra su ventana
+~│   [selector] guarda propone un nombre que no vale (Letra(':'), 12 bytes)
+~│   [selector] guarda propone un nombre que no vale (Puntos, 2 bytes)
+~│   [selector] guarda propone un nombre que no vale (Largo, 200 bytes)
+~│   [guarda] dos a la vez: la segunda -101; cancelar a medias: -100 (asa 0); con nombres que no valen, retiradas 4 de 4: bien
+# El guion pulsa "Guardar" con el nombre propuesto: el fichero nace en C y llega su asa y su nombre, sin camino.
+~│   [selector] ventana de guardar en pantalla, para guarda: C (
+~│   [selector] el usuario guarda C/informe.txt (nuevo): se cede para leer y escribir: 0
+~│   [guarda] guardar: 0, "informe.txt" (solo el nombre), nuevo; lo escribe y lo lee por la asa, y con ella no llega a más: bien
+# Otra vez: el guion borra el nombre e Intro (vacío no vale), lo teclea e Intro: ya existe, y pulsa "Sustituir".
+~│   [selector] el nombre del campo no vale (Vacio, 0 bytes): no se guarda
+~│   [selector] "informe.txt" ya existe en C: se pregunta si sustituir
+~│   [selector] el usuario guarda C/informe.txt (sustituye): se cede para leer y escribir: 0
+~│   [guarda] guardar otra vez: 0, "informe.txt", ya existía y el usuario dijo sustituir; queda del tamaño de lo nuevo: bien
+# "Abrir" con el patrón "informe*": solo se ve ese fichero (Fin e Intro). Llega solo para leer: aunque es del mismo
+# usuario, con esa asa no lo cambia.
+~│   [selector] ventana de abrir en pantalla, para guarda: C (
+~│   [selector] el usuario elige C/informe.txt con Intro: se cede solo para leer: 0
+~│   [guarda] abrir: 0, "informe.txt"; lo lee 0; escribirlo -12, recortarlo -12, ponerle fecha -12 (datos 0, mide 17): bien
+~│   [guarda] acabado: bien
 ~│   [pide] U2, tabla de nombres con PROGDIR: bien
 ~│   [pide] Home: crea 0 y borra 0 en el volumen de Carla: bien
 ~│   [entrada] lanzar como Carla (entró) 0, como Ana (no entró) -2, salir después 0: bien
@@ -462,6 +843,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [selector] ventana de elegir carpeta en pantalla
 ~│   [selector] el usuario elige la carpeta C/Privado: se cede para leer y escribir: 0 (hueco 3)
 ~│   [hostil] selector: bien
+~│   [hostil] asignaciones: bien
+~│   [cambio] Ana: asignaciones por nombre: bien
 ~│   [hostil] disco NVMe sin tramo: abrir -6, leer el sector 0 -1: bien
 # U6: el registro de seguridad apunta lo que se niega; solo lo lee `guardian`.
 # U2: lanzar un programa del disco (solo `guardian`; el hostil no puede).
@@ -491,7 +874,8 @@ DashOS en marcha con 4 núcleos.
 # `tools/red_basura.py`), el servicio con smoltcp y su dirección por DHCP.
 ~virtio-red: en el PCIe 0:
 ~│   [virtio-red] MAC 52:54:00:12:34:56; colas de 128 y 64; avisos 
-~│   [red] DHCP: 10.0.2.15/24, puerta 10.0.2.2, DNS 10.0.2.3
+# Sin puerta ni DNS: QEMU va con `restrict=on` (nada sale fuera) y entonces su DHCP no los da.
+~│   [red] DHCP: 10.0.2.15/24
 # Lo que no le toca a un programa con permiso (decir que es el controlador, tocar conexiones ajenas, mal formados), se
 # rechaza.
 ~│   [red-prueba] hacerse pasar por el controlador o tocar lo ajeno: 
@@ -506,6 +890,47 @@ DashOS en marcha con 4 núcleos.
 ~│   [red-prueba] puerto cerrado: rechazada: bien
 # El PC manda basura (cortas, largas, enormes, IPv4 y ARP rotas): el controlador y el servicio siguen.
 ~│   [red-prueba] basura del PC tirada; eco después: bien
+# S13, segunda parte (docs/bitacoras/red.md). Sin Internet: contra el vecino del PC (`tools/red_vecino.py`, otro aparato
+# en el concentrador, 10.0.2.53: un servidor de nombres de mentira, la hora por SNTP y un eco por UDP) y quien entra
+# desde fuera por un puerto reenviado (`tools/red_entra.py`).
+# Lo que se configura, en Prefs/Red del disco: hosts (tres nombres y una línea que no vale) y el servidor de hora, que
+# el servicio resuelve con hosts. IPv6: la dirección del prefijo que anuncia QEMU, por SLAAC.
+~│   [red] Prefs/Red: 3 nombres en hosts; servidor de hora hora.prueba
+~│   [red] servidor de hora: 10.0.2.53
+~│   [red] IPv6 por SLAAC: fec0::5054:ff:fe12:3456/64
+# UDP: el eco vuelve igual y lo que manda otra dirección sin pedirlo no llega; con 200 datagramas de golpe sin leer,
+# llegan los que caben y los demás se pierden y se cuentan; una cabecera imposible rompe solo ese zócalo. Sin el
+# permiso de escuchar no se elige puerto ni se espera a que entren.
+~│   [red-prueba] UDP, eco con el vecino: bien
+~│   [red-prueba] UDP, 200 datagramas de golpe sin leer: bien
+~│   [red-prueba] UDP, una cabecera imposible: bien
+~escuchar sin el permiso: bien (UDP
+# Nombres: la caché respeta lo que vale la respuesta (3 s), los alias, hosts y localhost. Hostil: respuestas con otro
+# identificador, desde otra dirección o puerto, a otra pregunta, con un nombre comprimido en bucle y cortadas (sale la
+# buena y las falsas se cuentan); truncada, inexistente, veinte direcciones, nombres malos y uno de 240 bytes; un
+# servidor que no contesta (tres intentos).
+~│   [red-prueba] nombres: bien
+~│   [red-prueba] hosts: bien
+~│   [red-prueba] nombres, respuestas falsas (otro identificador, otro origen, otra pregunta, bucle, cortada): bien
+~│   [red-prueba] nombres, raros: bien
+~│   [red-prueba] nombres, un servidor mudo: bien
+# Escuchar, con el permiso aparte y el cortafuegos cerrado de serie: lo que intenta entrar antes de que nadie escuche
+# se tira sin contestar; con el permiso, entra, llega su línea y vuelve su eco. Por UDP, lo mismo.
+~│   [red-prueba] escuchar por TCP: bien
+~│   [red-prueba] escuchar por UDP: bien
+~│   [red-prueba] IPv6: bien
+~│   [red-prueba] la hora por SNTP: bien
+# El glotón, sin los permisos de escuchar ni del reloj, lo intenta; y pregunta 2000 nombres de golpe: 8 en curso.
+~│   [red-gloton] escuchar sin el permiso: bien
+~│   [red-gloton] poner la hora sin el permiso del reloj, con 64 llaves: bien
+~│   [red-gloton] 2000 preguntas de nombres de golpe: bien
+# La hora por la red: `hora`, el único con el permiso del reloj, la toma del vecino (tras tres respuestas que no
+# valen) y pone el reloj. La barra la enseña en la zona de Prefs/zona (Europe/Madrid).
+~│   [hora] una hora que no es creíble o una llave que no es el permiso no ponen el reloj: bien
+~│   [hora] reloj puesto por SNTP de 10.0.2.53
+~│   [hora] respuestas que no valían, tiradas: 
+~│   [barra] hora: 
+~(Europe/Madrid, UTC+
 # Sin la llave del canal "red" no hay red.
 ~│   [sin-red] sin la llave: 1024 llaves probadas, llegan 0; por un canal propio sí: bien
 # H4, primer paso de la caja Amiga (`caja/`, docs/bitacoras/caja-amiga.md): el JIT de Emu68 en un proceso big-endian.
@@ -597,8 +1022,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] malware: residente: 0 conseguidos de lo que no se debe
 ~│   [caja-amiga] malware residente.exe: 0 conseguidos (vector -1), 0 negativas de la guardia (0 preguntas: sin preguntas), 3 avisos del Enforcer; deshecho: 0 entradas de tablas, 2 grupos de ExecBase, 2 vectores del 68k: bien
 ~│   [caja-amiga] malware: guion: abrir S:Startup-Sequence para escribir: no (IoErr 218)
-~│   [caja-amiga] malware: guion: crear SYS:S/Startup-Sequence: no (IoErr 205)
-~│   [caja-amiga] malware: guion: poner su SYS:L/Disk-Validator: no (IoErr 205)
+~│   [caja-amiga] malware: guion: crear SYS:S/Startup-Sequence: no (IoErr 214)
+~│   [caja-amiga] malware: guion: poner su SYS:L/Disk-Validator: no (IoErr 214)
 ~│   [caja-amiga] malware: guion: anadir una linea a Caja:S/Startup-Sequence: no (IoErr 223)
 ~│   [caja-amiga] malware: guion: escribir al principio de Caja:S/Startup-Sequence: no (IoErr 223)
 ~│   [caja-amiga] malware: guion: sustituir Caja:S/Startup-Sequence (MODE_NEWFILE): no (IoErr 223)
@@ -608,7 +1033,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] malware: guion: borrar Caja:S/Startup-Sequence: no (IoErr 222)
 ~│   [caja-amiga] malware: guion: renombrar Caja:S/inocente a Caja:S/User-Startup: no (IoErr 223)
 ~│   [caja-amiga] malware: guion: 0 conseguidos de lo que no se debe
-~│   [caja-amiga] malware guion.exe: 0 conseguidos (vector -1), 8 negativas de la guardia (1 preguntas: el usuario dice no), 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
+~│   [caja-amiga] malware guion.exe: 0 conseguidos (vector -1), 10 negativas de la guardia (1 preguntas: el usuario dice no), 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
 ~│   [caja-amiga] malware: troyano: borrar SYS:LEEME.txt: no (IoErr 214)
 ~│   [caja-amiga] malware: troyano: borrar SYS:Imagenes/disquete.adf: no (IoErr 214)
 ~│   [caja-amiga] malware: troyano: borrar SYS:Programas/hola: no (IoErr 214)
@@ -710,6 +1135,18 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] memoria baja: 1 manejadores del 68k (1 llamadas); la memoria del 68k pasa de
 ~│   [sesiones] caja-amiga suelta memoria con el aviso: bien
 ~│   [caja-amiga] memh.exe acabó con 0,
+# InternalLoadSeg con un flujo propio, leído por la función 68k del programa (como AddDataTypes), y lo hostil.
+~│   [caja-amiga] ils: un flujo propio leido por su funcion: carga
+~│   [caja-amiga] ils: -1, de mas, basura, sin funcion y vacio dan 0: bien
+~│   [caja-amiga] ils.exe acabó con 0,
+# cybergraphics.library y Picasso96API.library nativas: píxeles, LockBitMap, RenderInfo y lo hostil (cgx.c).
+~│   [caja-amiga] cgx: un mapa de 32 bits de cybergraphics (ARGB32): bien
+~│   [caja-amiga] cgx: pixeles, LockBitMap y Picasso96 (RenderInfo, p96LockBitMap): bien
+~│   [caja-amiga] cgx: formatos (RGB16 de dos bytes, RGB24 de ancho impar con relleno): bien
+~│   [caja-amiga] ventana Amiga en su pantalla (200x100 en 20, 30): cgx
+~│   [caja-amiga] cgx: modos RTG (Workbench de la caja, pantalla propia de 16 bits, con su ventana dentro): bien
+~│   [caja-amiga] cgx: fuera, negativo, enorme, formato raro y planar: bien
+~│   [caja-amiga] cgx.exe acabó con 0,
 ~│   [caja-amiga] gadtools: atributos (nivel 60, ciclo 2, casilla 1), entero 42, ItemAddress y UserData del menu 2: bien
 ~│   [caja-amiga] gadtools: ventana abierta y dibujada (12 gadgets); espera clics
 ~│   [caja-amiga] gadtools.exe acabó con
@@ -752,7 +1189,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] procesos: medida: 
 ~│   [caja-amiga] dash: Error: división por cero (excepción 5)
 ~│   [caja-amiga] Dash test_trap_divzero acabó con 20 (vector -1)
-~│   [caja-amiga] ventana Amiga en pantalla (320x200, con la barra de DashOS): GadTools Test
+# Su ventana va dentro de la pantalla que abre (clonando el Workbench): una subsuperficie de ella.
+~│   [caja-amiga] ventana Amiga en su pantalla (320x200 en 50, 50): GadTools Test
 ~│   [caja-amiga] dash: ventana 1
 ~│   [caja-amiga] dash: nombre: Amiga, sonido: 1
 ~│   [caja-amiga] dash: fin
@@ -777,3 +1215,20 @@ DashOS en marcha con 4 núcleos.
 ~│   [fondo] panel: gasta 
 ~│   [hostil] monitor: solo lo suyo con nombre, lo ajeno sumado, sin cerrar lo ajeno y sin dejarse pedir muy deprisa: bien
 ~│   [barra] CPU y memoria: 
+# S10, Commodities (docs/bitacoras/commodities.md): sin permiso el compositor no anuncia el protocolo y enlazarlo corta;
+# con los permisos (de `sesiones`, por PERMISOS), los atajos: reservados y "escribir" negados, el mismo ocupado por la
+# primera, 32 de cien; Exchange las ve; Ctrl+Alt+K (lo pulsa el guion, tras guarda) le llega; desactivada, se entera.
+~│   [commodity-prueba] sin permiso: no se anuncia: sí; enlazarlo igual da error: sí
+~│   [commodity-prueba] permisos atajos, fondo y commodities: [0, 0, 0]
+~│   [commodity-prueba] Ctrl+Alt+K para Prueba; la misma para Otra: ocupada por Prueba: sí; reservados negados: 3 de 3; sin Ctrl y Alt: 1 de 1
+~│   [commodity-prueba] cien atajos más: 68 negados por demasiados
+~│   [commodity-prueba] Exchange ve 2 commodities con 32 atajos puestos; listo: sí
+~│   [commodity-prueba] Ctrl+Alt+K llegó a su commodity: sí
+~│   [commodity-prueba] Exchange la desactiva y se entera: sí; acaba con sus atajos puestos
+~│   [compositor] commodities: commodity Prueba se va con 32 atajos
+# S10, Commodities: Exchange como orden en la prueba del Shell, como Ana (no tiene ninguna en marcha).
+~│   [shell] No hay commodities en marcha.
+~│   [shell] ClickToFront: clic. AutoPoint: no.
+~│   [shell] Exchange: no hay ninguna commodity en marcha que se llame NoExiste
+# FKey LISTA, sin Home:Prefs/FKey: su tecla de serie.
+~│   [shell] Ctrl+Alt+S  SYS:System/Shell

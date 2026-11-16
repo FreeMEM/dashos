@@ -1,0 +1,13 @@
+# El Shell nativo en pantalla (`make arranque-virt-shell`, tools/guion_shell.py): la imagen de usar, con la pantalla
+# de entrada de verdad. Entra Ana, abre el Shell desde el lanzador de la barra y teclea en él con el teclado de QEMU.
+DashOS en marcha con 4 núcleos
+~[guardian] modo de uso: pantalla de entrada
+~[guardian] entra Ana
+~[barra] busca "shell": Shell
+~[shell] ventana en pantalla: 
+# El título de la ventana: el cajón y la última orden tecleada (lo enseñan su barra y la de la pantalla).
+~[barra] título: Home: · List
+# Una asignación tecleada, que dice `sesiones`: llegaron las teclas, con ":" y mayúsculas.
+~[sesiones] Shell asigna "CapturasHechas=RAM:" (0): 0
+# Cerrada con el botón de la barra que le pone el compositor, con un trabajo de fondo (`Run Wait 100`) en marcha.
+~[shell] ventana cerrada desde su barra; trabajos matados: 1

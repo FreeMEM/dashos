@@ -340,3 +340,28 @@ fn capas_de_s4b() {
     assert!(leer(&mut dos, &mut caja, "DEVS:").is_none());
     assert!(dos.avisos().is_empty(), "{:?}", dos.avisos());
 }
+
+/// `asignar_creando`: el `T:` y el `ENV:` de la caja, en su cajón de escribir; el cajón se crea si falta, y si ya está
+/// no se toca. En un volumen de solo lectura, o con un nombre malo, falla sin asignar.
+#[test]
+fn asignar_creando_el_cajon() {
+    let mut fs = MemFs::nuevo();
+    let caja_v = fs.nuevo_volumen(false, 1 << 20);
+    let sys = fs.nuevo_volumen(true, 1 << 20);
+    fs.poner(caja_v, "Env/ya", b"x");
+    let mut caja = CajaPrueba::nueva();
+    let p = caja.reservar(process::TAMANO);
+    caja.mem.escribir8(p + process::LN_TYPE, process::NT_PROCESS);
+    caja.tarea = p;
+    let mut dos = Dos::nuevo(fs);
+    dos.montar(&mut caja, "Caja", caja_v, false).unwrap();
+    dos.montar(&mut caja, "SYS", sys, true).unwrap();
+    assert_eq!(dos.asignar_creando(&mut caja, "T", "Caja:T"), Ok(()));
+    assert_eq!(dos.asignar_creando(&mut caja, "ENV", "Caja:Env"), Ok(()));
+    assert!(dos.fs.existe(caja_v, "T"));
+    assert!(dos.fs.existe(caja_v, "Env/ya"));
+    assert!(dos.asignar_creando(&mut caja, "X", "SYS:Nuevo").is_err());
+    assert!(!dos.fs.existe(sys, "Nuevo"));
+    assert!(dos.asignar_creando(&mut caja, "Y:Z", "Caja:Otro").is_err());
+    assert!(!dos.fs.existe(caja_v, "Otro"), "un nombre malo no crea el cajón");
+}

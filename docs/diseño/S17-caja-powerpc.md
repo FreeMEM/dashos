@@ -70,6 +70,9 @@ Consecuencias:
   siempre existen también para PPC normal, porque el propio A1222 emula la FPU clásica por software.
 - **La FPU tiene trampas conocidas.** `fmadd` es fusionada en los dos lados, bien. Pero los NaN por defecto, los
   bits de `FPSCR` y las estimaciones (`fres`, `frsqrte`) difieren. Dolphin tuvo que igualarlas para los juegos.
+- **Lo que no puede correr se dice.** Cuando un programa PPC pide algo que la caja no tiene (AltiVec, la SPE, la API
+  de OS4), el usuario ve un aviso en llano ("Este programa es para AmigaOS 4 y DashOS aún no lo ejecuta"). En
+  "Detalles" y en el registro (`Estado:Registros/`, S6) queda la instrucción o la biblioteca que faltó.
 
 ### Cómo llama cada sistema a sus bibliotecas
 
@@ -242,6 +245,9 @@ hardware PPC (MMU, interrupciones, PCI) y esperan una placa concreta. La forma p
 - **Velocidad**: QEMU traduce el PPC entero, con la MMU, en un núcleo de la Pi 4. No se midió. Un dato de referencia:
   Dolphin, con un JIT muy afinado, mueve juegos de GameCube (un 750 a 486 MHz) en una Pi 5. La Pi 4 es bastante más
   lenta.
+- **Sin saber de máquinas.** La aplicación reconoce el disco de instalación y elige sola la máquina de QEMU, el
+  cargador y la NVRAM. Los ajustes de cada máquina van en un fichero de texto junto a su disco, en un cajón con
+  nombre en `Home:` (dentro de `Home:Amiga`, S4b), que se lee y se edita a mano. El formato, por diseñar al hacerlo.
 - **Licencia**: QEMU es GPL, pero como programa aparte no toca la licencia de DashOS. DashOS no lleva ningún OS4 ni
   MorphOS; los pone el usuario, como la ROM de Kickstart.
 

@@ -78,7 +78,24 @@ pub fn clase_de(e: &Entrada) -> Clase {
     }
 }
 
+/// El tipo, para la ventana (en el idioma del usuario).
 pub fn tipo_texto(e: &Entrada) -> String {
+    let ext = e.extension().map(|x| x.to_uppercase()).unwrap_or_default();
+    String::from(match clase_de(e) {
+        Clase::Carpeta => crate::tr(60, "Carpeta"),
+        Clase::Programa => crate::tr(100, "Programa"),
+        Clase::Imagen if ext.is_empty() => crate::tr(101, "Imagen"),
+        Clase::Imagen => return crate::trf(102, "Imagen {}", &[&ext]),
+        Clase::Texto => crate::tr(103, "Texto"),
+        Clase::Disco => crate::tr(104, "Imagen de disco"),
+        Clase::Icono => crate::tr(105, "Icono de Amiga"),
+        Clase::Datos => crate::tr(106, "Datos"),
+        Clase::Fichero => crate::tr(107, "Fichero"),
+    })
+}
+
+/// El tipo, para la consola: siempre en castellano.
+pub fn tipo_fijo(e: &Entrada) -> String {
     let ext = e.extension().map(|x| x.to_uppercase()).unwrap_or_default();
     String::from(match clase_de(e) {
         Clase::Carpeta => "Carpeta",
@@ -373,16 +390,20 @@ impl Lugar {
 /// Lo más hondo que se baja (al abrir, copiar o buscar): más, y se para.
 pub const MAX_HONDO: usize = 32;
 
+/// Por qué no vale un camino escrito: (en castellano, para la consola; en el idioma del usuario, para la ventana).
+pub type Porque = (&'static str, &'static str);
+
 /// El camino que se escribe en la barra (Ctrl+L): "Home/Privado", "Home:Privado/x", "Sistema" o, sin raíz, relativo
 /// a `actual` ("Privado/x"). Cada parte tiene que ser un nombre válido: sin "..", sin ".", sin control. Las raíces
-/// son `(nombre, número)` y no distinguen mayúsculas. Una barra al final no cuenta.
-pub fn interpretar_camino(texto: &str, raices: &[(&str, u32)], actual: &Lugar) -> Result<Lugar, &'static str> {
+/// son `(nombre, número)` y no distinguen mayúsculas. Una barra al final no cuenta. El porqué de un error va dos veces:
+/// en castellano (para la consola) y en el idioma del usuario (para la ventana).
+pub fn interpretar_camino(texto: &str, raices: &[(&str, u32)], actual: &Lugar) -> Result<Lugar, Porque> {
     let t = texto.trim();
     if t.is_empty() {
-        return Err("Escribe un camino");
+        return Err(("Escribe un camino", crate::tr(108, "Escribe un camino")));
     }
     if t.chars().any(char::is_control) {
-        return Err("El camino tiene letras que no valen");
+        return Err(("El camino tiene letras que no valen", crate::tr(109, "El camino tiene letras que no valen")));
     }
     // "Raíz:resto" o "Raíz/resto" o "Raíz".
     let (primera, resto) = match t.split_once(':') {
@@ -395,7 +416,7 @@ pub fn interpretar_camino(texto: &str, raices: &[(&str, u32)], actual: &Lugar) -
     let raiz = primera.and_then(|r| raices.iter().find(|(n, _)| plano(n) == plano(r.trim())).map(|x| x.1));
     let (mut lugar, partes) = match raiz {
         Some(r) => (Lugar::raiz(r), resto),
-        None if t.contains(':') => return Err("No hay ningún lugar con ese nombre"),
+        None if t.contains(':') => return Err(("No hay ningún lugar con ese nombre", crate::tr(110, "No hay ningún lugar con ese nombre"))),
         None => (actual.clone(), t),
     };
     for (k, p) in partes.split('/').enumerate() {
@@ -404,11 +425,15 @@ pub fn interpretar_camino(texto: &str, raices: &[(&str, u32)], actual: &Lugar) -
             continue;
         }
         if !nombre_valido(p) {
-            return Err(if p == ".." { "No se puede subir con \"..\": usa Atrás o Arriba" } else { "Una parte del camino no vale" });
+            return Err(if p == ".." {
+                ("No se puede subir con \"..\": usa Atrás o Arriba", crate::tr(111, "No se puede subir con \"..\": usa Atrás o Arriba"))
+            } else {
+                ("Una parte del camino no vale", crate::tr(112, "Una parte del camino no vale"))
+            });
         }
         lugar.nombres.push(String::from(p));
         if lugar.nombres.len() > MAX_HONDO {
-            return Err("El camino es demasiado largo");
+            return Err(("El camino es demasiado largo", crate::tr(113, "El camino es demasiado largo")));
         }
     }
     Ok(lugar)
@@ -505,7 +530,19 @@ impl Ficha {
 // ---------------------------------------------------------------------------------------------------------------
 // Textos.
 
+/// Un tamaño, para la ventana (en el idioma del usuario).
 pub fn tamano(b: u64) -> String {
+    match b {
+        1 => String::from(crate::tr(114, "1 byte")),
+        0..1000 => crate::trf(115, "{} bytes", &[&b]),
+        1000..1_000_000 => crate::trf(116, "{},{} kB", &[&(b / 1000), &(b % 1000 / 100)]),
+        1_000_000..1_000_000_000 => crate::trf(117, "{},{} MB", &[&(b / 1_000_000), &(b % 1_000_000 / 100_000)]),
+        _ => crate::trf(118, "{},{} GB", &[&(b / 1_000_000_000), &(b % 1_000_000_000 / 100_000_000)]),
+    }
+}
+
+/// Un tamaño, para la consola: siempre en castellano.
+pub fn tamano_fijo(b: u64) -> String {
     match b {
         1 => String::from("1 byte"),
         0..1000 => alloc::format!("{} bytes", b),
@@ -528,7 +565,23 @@ pub fn dia_civil(z: i64) -> (i64, i64, i64) {
     (yoe + era * 400 + (m <= 2) as i64, m, d)
 }
 
-const MESES: [&str; 12] = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+/// El nombre corto de un mes (de 1 a 12).
+fn mes(m: i64) -> &'static str {
+    match m {
+        1 => crate::tr(119, "ene"),
+        2 => crate::tr(120, "feb"),
+        3 => crate::tr(121, "mar"),
+        4 => crate::tr(122, "abr"),
+        5 => crate::tr(123, "may"),
+        6 => crate::tr(124, "jun"),
+        7 => crate::tr(125, "jul"),
+        8 => crate::tr(126, "ago"),
+        9 => crate::tr(127, "sep"),
+        10 => crate::tr(128, "oct"),
+        11 => crate::tr(129, "nov"),
+        _ => crate::tr(130, "dic"),
+    }
+}
 
 /// La fecha corta, como Nautilus: "10:04" si es de hoy, "12 nov" si es de este año, "12 nov 2025" si no (UTC: aún
 /// no hay zona horaria). Sin fecha, una raya.
@@ -543,9 +596,9 @@ pub fn fecha(seg: u64, ahora: u64) -> String {
     }
     let (ya, _, _) = dia_civil((ahora / 86_400) as i64);
     if ahora != 0 && y == ya {
-        alloc::format!("{} {}", d, MESES[(m - 1) as usize])
+        alloc::format!("{} {}", d, mes(m))
     } else {
-        alloc::format!("{} {} {}", d, MESES[(m - 1) as usize], y)
+        alloc::format!("{} {} {}", d, mes(m), y)
     }
 }
 
@@ -553,10 +606,10 @@ pub fn fecha(seg: u64, ahora: u64) -> String {
 pub fn texto_seleccion(nombres: &[&str], bytes: u64, carpetas: usize) -> String {
     match nombres.len() {
         0 => String::new(),
-        1 if carpetas == 1 => alloc::format!("\"{}\" elegida", nombres[0]),
-        1 => alloc::format!("\"{}\" elegido ({})", nombres[0], tamano(bytes)),
-        n if carpetas == n => alloc::format!("{} carpetas elegidas", n),
-        n if carpetas == 0 => alloc::format!("{} elementos elegidos ({})", n, tamano(bytes)),
-        n => alloc::format!("{} elementos elegidos ({} sin contar las carpetas)", n, tamano(bytes)),
+        1 if carpetas == 1 => crate::trf(131, "\"{}\" elegida", &[&nombres[0]]),
+        1 => crate::trf(132, "\"{}\" elegido ({})", &[&nombres[0], &tamano(bytes)]),
+        n if carpetas == n => crate::trf(133, "{} carpetas elegidas", &[&n]),
+        n if carpetas == 0 => crate::trf(134, "{} elementos elegidos ({})", &[&n, &tamano(bytes)]),
+        n => crate::trf(135, "{} elementos elegidos ({} sin contar las carpetas)", &[&n, &tamano(bytes)]),
     }
 }

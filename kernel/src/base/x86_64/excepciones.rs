@@ -338,7 +338,7 @@ impl Marco {
         (self.rax, [self.rdi, self.rsi, self.rdx, self.r10, self.r8])
     }
 
-    /// El resultado de una llamada: rax (x0 en ARM) y, si hace falta, rdx (x1) y r8 (x2).
+    /// El resultado de una llamada: rax (x0 en ARM) y, si hace falta, rdx (x1), r8 (x2) y r10 (x3).
     pub fn poner_x0(&mut self, v: u64) {
         self.rax = v;
     }
@@ -349,6 +349,11 @@ impl Marco {
 
     pub fn poner_x2(&mut self, v: u64) {
         self.r8 = v;
+    }
+
+    /// El cuarto resultado (x3 en ARM), en r10: lo usa `grupo_uso` (S3, las veces que topó).
+    pub fn poner_x3(&mut self, v: u64) {
+        self.r10 = v;
     }
 }
 

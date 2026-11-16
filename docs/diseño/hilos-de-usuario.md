@@ -1,7 +1,12 @@
 # Hilos de usuario
 
-Encargo: varios hilos por proceso. Lo piden LKL (S12b: los hilos del kernel de Linux son hilos del proceso "linux")
-y muchos programas (Dash, el puente, la caja Amiga con varias tareas en un proceso). Hoy cada proceso nace con un
+Encargo: varios hilos por proceso. Lo pedían LKL (S12b: los hilos del kernel de Linux son hilos del proceso "linux")
+y muchos programas (Dash, el puente, la caja Amiga con varias tareas en un proceso).
+
+> **2026-11-16.** LKL se retira (decidido por el usuario, S36): los controladores de Linux van en máquinas virtuales
+> (S35). Los hilos siguen haciendo falta, pero ya no por LKL: los piden los programas. Donde este documento nombra
+> LKL o `arch/lkl`, léase como el motivo que hubo, no como algo por hacer.
+ Hoy cada proceso nace con un
 hilo y no hay llamada para crear más. Bitácora: `docs/bitacoras/hilos.md`.
 
 ## Lo que ya hay
@@ -56,6 +61,9 @@ trabajo, como a cualquier hilo justo.
   el fin del proceso es "salió con este código", no "lo mataron".
 - Un fallo en cualquier hilo (fallo de página, instrucción ilegal...) termina el proceso entero, con fin "fallo".
   Seguir con un hilo menos dejaría el programa a medias, quizá con un cerrojo tomado para siempre.
+- El motivo del fin no se queda en el kernel. Cada fin que no sea normal (un fallo, o lo mataron) lo apunta quien
+  recoge al proceso en `Estado:Registros/` (S6): programa, hilo, clase de fallo, dirección y hora. El escritorio lo
+  dice en llano ("X se cerró por un error"), con ese detalle a un clic. Sin hacer.
 - Matar el proceso (13, o su grupo) mata a todos sus hilos. Cada uno muere en su siguiente vuelta a EL0, o al
   despertar si estaba dormido o esperando (C39, ya hecho).
 
@@ -109,7 +117,8 @@ Además, un tope de forma: 256 hilos vivos o sin unir por proceso (`E_LIMITE`), 
 (32.768), que fallan con error.
 
 El tiempo de CPU se reparte por hilo: un proceso con cuatro hilos que calculan recibe cuatro partes. No hay reparto
-por proceso ni por grupo (ver preguntas).
+por proceso ni por grupo (ver preguntas). Para que se vea quién se lleva la máquina, la orden `Status` (S2) y el
+Monitor del sistema enseñan los hilos de cada proceso y lo que gasta cada uno.
 
 ## Las llaves
 
@@ -160,7 +169,8 @@ después, en la biblioteca, cuando haga falta.
    `principal`, y `salir` queda para acabar un hilo. Hoy no se ha cambiado la macro.
 2. Que un fallo en un hilo mate el proceso entero (hecho así).
 3. Reparto de CPU por hilo, no por proceso ni por grupo. Un programa con 64 hilos que calculan se lleva 64 partes.
-   ¿Hace falta reparto por grupo (como los cgroups de Linux) antes de LKL?
+   ¿Hace falta reparto por grupo (como los cgroups de Linux) antes de abrir los hilos a programas de terceros? (La
+   pregunta decía "antes de LKL"; LKL se retiró el 2026-11-16.)
 4. Los números 40 a 44, y el tope de 256 hilos por proceso.
 5. Sin "soltar" (detach): un hilo al que nadie se une sigue cobrado hasta que acaba el proceso. ¿Se añade?
 6. La espera usa la dirección física como clave (vale entre procesos que comparten memoria). ¿Se quiere así, o solo

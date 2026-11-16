@@ -34,7 +34,9 @@ mantiene eso y cambia cinco cosas:
 5. **Los módulos de terceros son procesos aparte** que dan datos y una descripción de lo que enseñan, no píxeles. S10
    los quería "en Dash, con capacidades justas"; aquí se dice cómo.
 
-La política de ventanas (mosaico desplazable, flotantes, pantallas a lo Amiga) sigue en el compositor, como en S10.
+La política de ventanas (mosaico desplazable, flotantes, espacios de trabajo que se arrastran como las pantallas del
+Amiga) sigue en el compositor, como en S10. Los nombres, desde el 2026-11-16 (S36): "monitor" es el aparato,
+"espacio de trabajo" lo de todos los días y "pantalla" solo la pantalla propia de un programa de Amiga.
 
 ## Lo que se comprobó
 
@@ -130,8 +132,8 @@ Proceso del sistema, con la clase de plazo del planificador (S2), en `SYS:`, fir
 - **La pantalla y la presentación**: compone, sincronía vertical, planos del HVS, la GPU (S9).
 - **La entrada**: teclado, ratón, panel táctil, gestos. Decide qué cliente recibe cada evento.
 - **El foco del teclado.** Un escritorio no puede robarlo; solo pedirlo para sus propias superficies.
-- **La política de ventanas**: disposiciones, mosaico y flotantes, pantallas, monitores, vista general, animaciones
-  de las ventanas (S10). Ver la sección 5.
+- **La política de ventanas**: disposiciones, mosaico y flotantes, espacios de trabajo, monitores, vista general,
+  animaciones de las ventanas (S10). Ver la sección 5.
 - **Los bordes de las ventanas** (S4: Amiga por dentro, DashOS por fuera).
 - **El bloqueo**: tapa la pantalla, guarda la entrada y dibuja el campo de la contraseña. Ver la sección 3.
 - **Los atajos reservados**: el de rescate y los del sistema (sección 6). Nunca llegan a un escritorio ni a una
@@ -147,10 +149,11 @@ Proceso del sistema, con la clase de plazo del planificador (S2), en `SYS:`, fir
 Procesos del sistema sin interfaz. Guardan el estado y lo comparten con quien tenga permiso:
 
 - **Avisos**: reciben las notificaciones (nativas, de la caja Amiga por su puente, de la caja Linux por la norma de
-  freedesktop) y guardan el historial.
+  freedesktop) y guardan el historial. El historial se lee como texto y con la orden `Avisos` (S10).
 - **Bandeja**: los iconos de estado de los programas y sus menús.
 - **Música**: qué suena y sus controles, como MPRIS en Linux.
-- **Apariencia**: el tema activo, los colores sacados del fondo, el fondo de cada pantalla (sección 7).
+- **Apariencia**: el tema activo, los colores sacados del fondo, el fondo de cada monitor y espacio de trabajo (sección
+  7).
 - **Los que ya existen o van a existir**: red (S13), sonido, energía y batería, Bluetooth, monitores (S9).
 - **Workbench** como servicio: AppIcons, AppWindows y AppMenus. Ver la sección 5.
 
@@ -158,9 +161,9 @@ Procesos del sistema sin interfaz. Guardan el estado y lo comparten con quien te
 
 Uno o varios procesos del usuario, con los poderes que el usuario le dio:
 
-- Barra (con los menús del programa activo al botón derecho, S10), dock, lanzador, centro de control, centro de
-  avisos, avisos en pantalla de volumen y brillo, menú de apagado, calendario, fondo de pantalla, módulos en el
-  escritorio, la cara del bloqueo.
+- Barra (con los menús del programa activo a la vista y al botón derecho, S10), dock, lanzador, centro de control,
+  centro de avisos, avisos en pantalla de volumen y brillo, menú de apagado, calendario, fondo de pantalla, módulos
+  en el escritorio, la cara del bloqueo.
 - Todo lo que dibuja va en superficies propias. No toca las ventanas de nadie ni ve lo que tienen dentro.
 
 ## 3. Los poderes de un escritorio
@@ -172,9 +175,9 @@ conexión. Cada uno se da y se quita por separado, en el panel de poderes de `Pr
 | Poder | Qué deja hacer | Protocolo | Riesgo si se abusa |
 |---|---|---|---|
 | Capas | Superficies de fondo, abajo, arriba y encima de todo, con zona reservada (la barra) | `wlr-layer-shell` | Tapar la pantalla para engañar |
-| Ver ventanas | Lista de ventanas: título, programa, pantalla, estado | `ext-foreign-toplevel-list` y la extensión propia | Saber qué usa el usuario |
-| Mandar ventanas | Activar, cerrar, minimizar, mover de pantalla | Extensión propia | Molestar, no espiar |
-| Pantallas | Ver y cambiar de pantalla virtual y de disposición | `ext-workspace` | Poco |
+| Ver ventanas | Lista de ventanas: título, programa, espacio de trabajo, estado | `ext-foreign-toplevel-list` y la extensión propia | Saber qué usa el usuario |
+| Mandar ventanas | Activar, cerrar, minimizar, mover de espacio de trabajo | Extensión propia | Molestar, no espiar |
+| Espacios de trabajo | Ver y cambiar de espacio de trabajo y de disposición | `ext-workspace` | Poco |
 | Menús del programa | Recibir el árbol de menús del programa activo y activar una opción | Extensión propia | Activar opciones de otro programa |
 | Atajos | Registrar combinaciones de teclas concretas y recibir solo esas | Extensión propia | Poco: el compositor decide |
 | Espejos | Pedir una miniatura en vivo de una ventana, sin recibir sus píxeles | Extensión propia | Ninguno sobre el contenido |
@@ -197,6 +200,9 @@ tienen herramientas concretas: la de capturas, la de accesibilidad, el historial
   cada canal lleva la identidad de quien lo abrió (S6). Es lo mismo que ya hace el buzón con sus etiquetas.
 - **Los poderes los guarda el sistema**, en un registro que solo cambia `Prefs` tras una confirmación que dibuja el
   compositor. Nunca salen de un fichero que el usuario o un programa puedan escribir (la lección de KWin).
+- **Los poderes se leen.** Que no se escriban a mano no quiere decir que no se vean: el usuario lee los de sus
+  programas con la orden `Permiso` (S6b), que los lista junto a los permisos, y en el panel de poderes. Darlos o
+  quitarlos desde el Shell pide la misma confirmación del compositor que desde `Prefs`.
 - **Un cliente sin el poder no ve el protocolo.** El compositor no le anuncia ese global. Si lo pide igual, error
   de protocolo y se corta la conexión.
 - **Los protocolos nuevos nacen ocultos** para todos menos para el escritorio oficial de pruebas, hasta que se
@@ -222,13 +228,16 @@ falta: el escritorio no necesita la contraseña para nada.
 
 Para guiones y para escritorios que prefieran no hablar Wayland para todo:
 
-- **Un canal de órdenes del compositor**, como el IPC de niri: peticiones (ventanas, pantallas, monitores, cambiar
-  de disposición, mover una ventana) y un flujo de eventos que da el estado entero al conectar y después los cambios.
+- **Un canal de órdenes del compositor**, como el IPC de niri: peticiones (ventanas, espacios de trabajo, monitores,
+  cambiar de disposición, mover una ventana) y un flujo de eventos que da el estado entero al conectar y después los
+  cambios.
 - **Cambios atómicos**: cada lote de eventos lleva un número de estado y deja el estado coherente. Nunca una ventana
-  en una pantalla que ya no existe.
+  en un espacio de trabajo que ya no existe.
 - **Formato que solo añade**: los campos no se renombran ni se quitan; una versión nueva solo suma.
 - **El mismo canal es el puerto ARexx del compositor** (S10 ya pedía el puerto del escritorio). ARexx necesita
-  permiso para hablar con otro programa (S6), así que un guion sin ese permiso no mueve ventanas.
+  permiso para hablar con otro programa (S6), así que un guion sin ese permiso no mueve ventanas. El permiso se
+  concede como a un programa: la primera vez sale la pregunta de permisos (`arexx:<puerto>`, S6b). Si se niega, el
+  guion recibe un error que lo dice en llano ("Este guion no tiene permiso para mover ventanas") y cómo darlo.
 - **El canal pide los mismos poderes** que el protocolo de Wayland. No es una puerta trasera: niri avisa de que su
   socket deja lanzar clientes con todos los poderes, y aquí no puede pasar.
 
@@ -295,9 +304,9 @@ fase E9.
 ### Las opciones
 
 **A. En el compositor**, con las disposiciones de S10 (flotante, mosaico desplazable, maestro y pila, rejilla,
-monóculo, pestañas). El escritorio elige la disposición de cada pantalla y da órdenes.
+monóculo, pestañas). El escritorio elige la disposición de cada espacio de trabajo y da órdenes.
 
-- Gana: las animaciones, el arrastre de pantallas a lo Amiga y la respuesta al teclado van dentro del plazo del
+- Gana: las animaciones, el arrastre hacia abajo a lo Amiga y la respuesta al teclado van dentro del plazo del
   compositor (S2). Es lo que hace niri. Más sencillo.
 - Cuesta: quien quiera otra forma de colocar ventanas tiene que pedirla al proyecto.
 
@@ -313,7 +322,7 @@ monóculo, pestañas). El escritorio elige la disposición de cada pantalla y da
 ### Recomendación: A ahora, preparado para C
 
 - **El compositor trae las disposiciones de S10**, con la forma natural de mezclar mosaico y flotantes que pidió el
-  usuario. Cada pantalla elige la suya.
+  usuario. Cada espacio de trabajo elige la suya.
 - **Por dentro, el compositor separa "decidir dónde va cada ventana" de "dibujar"**, con cambios atómicos, como
   river. Así, si un día hace falta, ese trozo puede salir a otro proceso con un poder "gestionar ventanas", sin
   rehacer el compositor.
@@ -325,7 +334,7 @@ Encaja con S4, sección 3:
 
 - **Cada ventana de Intuition es una ventana del compositor**, con su programa marcado como de la caja Amiga. El
   escritorio la ve en su lista y en el dock como cualquier otra.
-- **Cada pantalla propia (`OpenScreen`) es una pantalla de la lista de S10.** Arrastrar pantallas hacia abajo lo hace
+- **Cada pantalla propia (`OpenScreen`) es un espacio de trabajo más de la lista de S10.** Arrastrar hacia abajo lo hace
   el compositor, porque tiene que ir a 60 cuadros.
 - **La pantalla de Workbench es el escritorio** (S4). Un programa 68k que abre una ventana de fondo (`BACKDROP`) en
   ella va detrás de las demás ventanas, encima del fondo del escritorio.
@@ -373,6 +382,9 @@ Lección de `workbench.library`: los sustitutos tenían que parchear sus vectore
 - **Si cae tres veces en un minuto**, el compositor lanza el **escritorio mínimo**: está en `SYS:`, firmado, escrito
   en Rust, sin módulos ni complementos. Trae una barra simple con reloj, una lista de ventanas, un lanzador y un botón
   para volver a elegir escritorio.
+- **Se dice lo que pasó.** El escritorio mínimo sale con un aviso en llano: "Tu escritorio falló y se cambió por el
+  básico. Volver a probar". El motivo queda a un clic, y cada caída deja una línea en `Estado:Registros/` (S6), que
+  se lee con la orden `Registro`.
 - **El compositor también vigila el bucle de cada escritorio**, con el mismo "¿sigues ahí?" que usa con las ventanas
   (S2). Un escritorio que no contesta cuenta como caído.
 - **El atajo de rescate** es del compositor y no llega a nadie más. Abre un menú que dibuja el propio compositor:
@@ -407,7 +419,7 @@ Cuando llegue el vídeo del usuario, cada idea se coloca en una de tres cajas:
 
 | Si la idea trata de... | Va en | Ejemplos |
 |---|---|---|
-| Cómo se mueven, colocan o animan las ventanas y las pantallas | Compositor | Gestos, arrastre de pantallas, vista general, disposición |
+| Cómo se mueven, colocan o animan las ventanas y los espacios de trabajo | Compositor | Gestos, arrastre hacia abajo, vista general, disposición |
 | Lo que se ve encima: barra, dock, paneles, avisos, fondo | Escritorio oficial | Aspecto de la barra, lanzador, centro de control |
 | Datos que comparten todos | Un servicio | Historial de avisos, colores, música |
 
@@ -434,7 +446,7 @@ miró un fotograma cada 4 segundos; puede haber detalles entre medias que no se 
 | Selector de tema: claro u oscuro y paletas sacadas del fondo ("monochrome", "tinted"...) | Servicio de apariencia | Colores calculados del fondo, para todos los escritorios y programas |
 | Selector de fondo a pantalla completa: la imagen grande, una tira de miniaturas con su paleta al lado y el resto desenfocado | Escritorio y servicio de apariencia | Desenfoque de lo que hay detrás de una capa: efecto del compositor |
 | Una ventana que se abre con un zoom mientras el fondo se desenfoca | Compositor | Animaciones de ventanas y desenfoque, configurables |
-| Menú de apagado: bloquear, cerrar sesión, suspender, reiniciar, apagar, con confirmación | Escritorio pide; sesión decide | Poder de pedir el apagado; la confirmación de lo que no se deshace la pone el sistema |
+| Menú de apagado: bloquear, cerrar sesión, suspender, reiniciar, apagar, con confirmación | Escritorio pide; sesión decide | Poder de pedir el apagado; la confirmación de lo que no se deshace la pone el sistema. Por "deshacer antes que preguntar" (S0): bloquear y suspender no preguntan; apagar y reiniciar llevan una cuenta atrás corta que se cancela; se pregunta solo si hay algo sin guardar |
 
 Lo que añade al compositor (fase E3 o E4): desenfoque detrás de las capas que lo pidan, esquinas redondeadas del
 área de ventanas, animaciones de abrir y cerrar con zoom, y el tono de color del modo noche. Lo que añade a los
@@ -452,7 +464,7 @@ tiene una prueba que se puede repetir sin manos: QEMU con su monitor (QMP) manda
 | E1 | Compositor que habla Wayland sobre canales: `xdg-shell` y memoria compartida | Dos clientes de prueba en Rust, cada uno con su ventana; captura por QMP comparada con la esperada | H3 |
 | E2 | Poderes por conexión y capas | Una barra de prueba reserva su franja y las ventanas se apartan. Un cliente sin el poder no ve el protocolo; si lo pide igual, se le corta | H3 |
 | E3 | Lista de ventanas, órdenes y canal de órdenes con estado y cambios atómicos | Un guion abre tres ventanas, el dock de prueba las ve y activa la segunda; se comprueba el foco | H3-H5 |
-| E3b | Disposiciones en el compositor y mosaico y flotantes sin modos (S10): mosaico con desplazamiento, flotante, maestro y pila, rejilla y monóculo por pantalla; arrastrar saca del mosaico y devuelve con guía; encajar en los bordes; los diálogos nacen flotando; recordar por aplicación; teclas para todo. Por dentro, "decidir dónde va" separado de "dibujar" (sección 5). Añadida por el usuario el 2026-11-10, para usar el escritorio a diario cuanto antes | Un guion abre cinco ventanas y un diálogo: cuatro en la tira y el diálogo flotando; arrastra una fuera (flota donde se suelta) y la devuelve (encaja en la columna marcada); con la tecla, lo mismo. Capturas por QMP comparadas con las esperadas | H3-H5 |
+| E3b | Disposiciones en el compositor y mosaico y flotantes sin modos (S10): mosaico con desplazamiento, flotante, maestro y pila, rejilla y monóculo por espacio de trabajo; arrastrar saca del mosaico y devuelve con guía; encajar en los bordes; los diálogos nacen flotando; recordar por aplicación; teclas para todo. Por dentro, "decidir dónde va" separado de "dibujar" (sección 5). Añadida por el usuario el 2026-11-10, para usar el escritorio a diario cuanto antes | Un guion abre cinco ventanas y un diálogo: cuatro en la tira y el diálogo flotando; arrastra una fuera (flota donde se suelta) y la devuelve (encaja en la columna marcada); con la tecla, lo mismo. Capturas por QMP comparadas con las esperadas | H3-H5 |
 | E4 | Bloqueo con campo propio | Bloquear, matar el escritorio, mandar la contraseña por QMP: se desbloquea. El registro demuestra que el escritorio no recibió ninguna tecla | H5 |
 | E5 | Vigilancia, escritorio mínimo y atajo de rescate | Matar el escritorio tres veces: sale el mínimo y las ventanas siguen. Una capa que tapa todo se quita con el atajo | H5 |
 | E6 | Servicios de avisos y apariencia; cambio de escritorio en caliente | Un aviso mandado antes del cambio aparece en el historial del segundo escritorio de prueba | H5-H7 |
@@ -507,16 +519,16 @@ Decidido por el usuario el 2026-11-08: todas como se recomienda ("vale a todo").
 - Con S0: principio 1 (el compositor no se traba; el escritorio puede caer sin que se note en las ventanas) y
   principio 4 (un protocolo para todos los escritorios). La meta de memoria pide escritorios ligeros.
 - Con S2: el compositor tiene la clase de plazo; el escritorio y sus módulos, la clase justa.
-- Con S4: ventanas y pantallas de la caja Amiga como ventanas y pantallas del compositor; `workbench.library` de la
-  caja habla con el servicio Workbench.
+- Con S4: ventanas y pantallas de la caja Amiga como ventanas y espacios de trabajo del compositor; `workbench.library`
+  de la caja habla con el servicio Workbench.
 - Con S6: poderes por aplicación y panel para quitarlos; la marca del canal; ventanas del sistema dibujadas por el
   compositor.
 - Con S7: la caja Linux solo reenvía ventanas normales.
 - Con S8: un escritorio y un tema son paquetes; Hangar los puede ofrecer.
 - Con S9: el compositor habla Wayland sobre canales; los planos del HVS y la GPU son suyos.
-- Con S10: lo amplía. Cambian el bloqueo (campo del compositor), Workbench (programa aparte), los módulos
-  (procesos) y el estado (en servicios). Se mantienen las pantallas, la mezcla de mosaico y flotantes, Prefs y el
-  aspecto Material 3.
+- Con S10: lo amplía. Cambian el bloqueo (campo del compositor), Workbench (programa aparte), los módulos (procesos) y
+  el estado (en servicios). Se mantienen los espacios de trabajo (antes "pantallas"), la mezcla de mosaico y flotantes,
+  Prefs y el aspecto Material 3.
 - Con S11: el kit de escritorios va sobre el motor de interfaz con el modelo de MUI.
 - Con S14: el gestor de servicios vigila el escritorio.
 - Con S16: el compositor es un proceso, fuera del kernel.

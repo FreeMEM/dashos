@@ -49,6 +49,11 @@ fn usar(eco: u32) -> Result<bool, i64> {
 }
 
 fn principal() -> u64 {
+    // Su tabla de llaves. Lanzado por `inicio`, solo "sesiones"; desde el disco, las de `sesiones`, y sin el selector
+    // de ficheros: aquí no lo lanza la persona del selector (lo lanzan `entrada`, del sistema, y como Carla).
+    let t = dashos::llaves::Tabla::leer();
+    let n = |nombre: &str| t.buscar(nombre).unwrap_or(0);
+    println!("  [pide] tabla de llaves: selector {}, sesiones {}, archivos {}, ventanas {} (de {})", n("selector"), n("sesiones"), n("archivos"), n("ventanas"), t.cuantas());
     dashos::dormir_us(1_500_000);
     let (estado, eco) = pedir(SERVICIO, "eco");
     let contesta = eco != 0 && usar(eco) == Ok(true);
@@ -85,6 +90,24 @@ fn principal() -> u64 {
     println!("  [pide] llave de plazo: pedirla {}, entrar en la clase {}, dejarla {}, después entra {}: {}", e_plazo, entra, dejar_plazo, despues,
         if plazo_bien { "bien" } else { "MAL" });
     let (nombres, progdir) = nombres();
+    // S6, S36 (S3: topar con el cupo deja rastro): lanzado por `inicio` (con un tope de 16 MB), pide memoria de 1 MB en
+    // 1 MB hasta que no le cabe; lo suelta todo. `sesiones` lo ve en su ronda y lo apunta en el registro común.
+    if !progdir {
+        let mut tomadas = [0u32; 32];
+        let mut n = 0;
+        while n < tomadas.len() {
+            let m = dashos::memoria_crear(1 << 20);
+            if (m as i32) <= 0 {
+                break;
+            }
+            tomadas[n] = m;
+            n += 1;
+        }
+        for &m in &tomadas[..n] {
+            dashos::cerrar(m);
+        }
+        println!("  [pide] tope de memoria: le caben {} MB y el siguiente no: {}", n, if n > 0 && n < tomadas.len() { "bien" } else { "MAL" });
+    }
     if nombres {
         println!("  [pide] U2, tabla de nombres {}: bien", if progdir { "con PROGDIR" } else { "sin PROGDIR (no salió del disco)" });
     }

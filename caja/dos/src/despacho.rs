@@ -133,6 +133,17 @@ impl<F: SistemaArchivos> Dos<F> {
             CURRENT_DIR => d0(self.current_dir(c, d[1])?),
             IO_ERR => d0(self.io_err(c)),
             LOAD_SEG => d0(self.load_seg(c, d[1])?),
+            // InternalLoadSeg(fh, table, funcarray, stack)(d0/a0/a1/a2): con un fichero de dos, se lee desde donde
+            // esté hasta el final y se carga como LoadSeg (las funciones de `funcarray` no se llaman: las de dos hacen
+            // lo mismo). Con otra cosa (un flujo propio leído por funciones 68k), aún no: aviso y 0.
+            INTERNAL_LOAD_SEG => {
+                let fh = d[0];
+                d0(self.internal_load_seg(c, fh)?)
+            }
+            INTERNAL_UN_LOAD_SEG => {
+                self.unload_seg(c, d[1])?;
+                d0(DOSTRUE)
+            }
             UN_LOAD_SEG => {
                 self.unload_seg(c, d[1])?;
                 d0(DOSTRUE)
@@ -427,6 +438,42 @@ impl<F: SistemaArchivos> Dos<F> {
     fn load_seg<C: Caja>(&mut self, c: &mut C, nombre: u32) -> R<u32> {
         let n = Self::cadena(c, nombre)?;
         let datos = self.leer_entero(c, &n, 64 << 20)?;
+        let seg = c.cargar_segmentos(&datos).map_err(E::Io)?;
+        if seg == 0 {
+            return Err(E::Io(ERROR_BAD_HUNK));
+        }
+        self.segmentos.insert(seg, c.tarea_actual());
+        Ok(seg)
+    }
+
+    /// InternalLoadSeg con un fichero de dos: lo que queda de él, cargado como LoadSeg.
+    fn internal_load_seg<C: Caja>(&mut self, c: &mut C, fh: u32) -> R<u32> {
+        let Ok(d) = self.fichero(fh) else {
+            return Err(Fallo::NoImplementada { n: INTERNAL_LOAD_SEG }.into());
+        };
+        // De la consola o de NIL: no hay ejecutable que leer (la consola esperaría al teclado).
+        if !matches!(self.ficheros[&d].flujo, Flujo::Disco { .. }) {
+            return Err(E::Io(ERROR_OBJECT_WRONG_TYPE));
+        }
+        const TROZO: u32 = 64 << 10;
+        const MAX: usize = 64 << 20;
+        let buf = Self::reservar(c, TROZO)?;
+        let r = (|| -> R<Vec<u8>> {
+            let mut v = Vec::new();
+            loop {
+                let n = self.read(c, fh, buf, TROZO)?;
+                if n == 0 || n as i32 == -1 {
+                    break;
+                }
+                v.extend_from_slice(&Self::bytes(c, buf, n)?);
+                if v.len() > MAX {
+                    return Err(E::Io(ERROR_OBJECT_TOO_LARGE));
+                }
+            }
+            Ok(v)
+        })();
+        c.liberar(buf, TROZO);
+        let datos = r?;
         let seg = c.cargar_segmentos(&datos).map_err(E::Io)?;
         if seg == 0 {
             return Err(E::Io(ERROR_BAD_HUNK));

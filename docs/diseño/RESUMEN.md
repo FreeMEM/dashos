@@ -81,8 +81,8 @@ escritorio, como ChromeOS y WSL2; y la capa de llamadas de Linux solo más adela
   (decidido). La pantalla de bloqueo es del compositor.
 - **Personalización completa** (decidido): colores del fondo, fondos de vídeo, barra editable, temas como paquetes
   y módulos de terceros en Dash; Prefs con Usar, Guardar y Cancelar, como en el Amiga.
-- Escritorios virtuales como "pantallas" del Amiga; mosaico a lo niri y mango; Workbench;
-  barra con los menús al botón derecho; lanzador; Commodities; ARexx.
+- Escritorios virtuales como "pantallas" del Amiga (desde el 2026-11-16 se llaman espacios de trabajo, S36); mosaico a
+  lo niri y mango; Workbench; barra con los menús al botón derecho; lanzador; Commodities; ARexx.
 - **Aspecto de Material Design** (decidido), con colores del fondo de pantalla, y un tema "Amiga clásico".
 
 ## Programar (S11)
@@ -156,6 +156,8 @@ Del 2026-11-10, aceptados por el usuario.
 - **S12b**: los controladores de Linux con LKL (Linux como biblioteca) en la zona GPL, empezando por el Wi-Fi de la
   Pi; antes, hilos en los procesos. Red: SACK si hace falta y `amissl.library` nativa antes.
 - Orden: revisión y Wayland con el puente; después el sonido de estudio; después hilos, LKL y Wi-Fi.
+- **2026-11-16**: LKL se retira. Los controladores de Linux van en máquinas virtuales (S35); de S12b sigue lo de red,
+  y los hilos hacen falta igual.
 - **Caja Linux de serie** (2026-11-10): Arch Linux ARM con pacman, Flatpak con Flathub para el escritorio, Docker y
   Podman con pacman, y la terminal como la del usuario (zsh, Oh My Zsh con `agnosterzak`, autosugerencias, colores,
   `lsd`, `fastfetch`, Terminator). Hangar como escaparate único de los tres mundos (S7, S8).
@@ -166,8 +168,8 @@ Del 2026-11-10, aceptados por el usuario.
   despertar; cada fase de dormirse tiene plazo y lo que no contesta se para; la imagen de hibernación va cifrada con
   la contraseña y, si no cuadra, se arranca normal sin perder el disco.
 - **El escritorio**: fase E3b de S10b, mosaico y flotantes sin modos, detrás de E3 (2026-11-10).
-- **Las pantallas del Amiga** (S23, 2026-11-10): cada pantalla del Amiga es una pantalla de DashOS (escritorio
-  virtual), con su mapa de bits de fondo y sus ventanas como ventanas del compositor. Workbench, pantallas públicas,
+- **Las pantallas del Amiga** (S23, 2026-11-10): cada pantalla del Amiga es un espacio de trabajo más de DashOS
+  (antes "pantalla de DashOS"), con su mapa de bits de fondo y sus ventanas como ventanas del compositor. Workbench, pantallas públicas,
   propias (base de modos con PAL, HAM, AGA y RTG, escalado con su proporción) y clonadas; arrastrar dejando dos a la
   vez; menús en la barra; ficha de compatibilidad por programa.
 

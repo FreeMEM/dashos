@@ -5,7 +5,7 @@
 
 use crate::iconos::{icono, Fichero};
 use crate::logica::{fecha, tamano, tipo_texto, Entrada, Orden};
-use crate::{migas, sitios, App, Dialogo, Foco, Icono, Linea, Ventana, Zona};
+use crate::{migas, sitios, tr, trf, App, Dialogo, Foco, Icono, Linea, Ventana, Zona};
 use alloc::string::String;
 use alloc::vec::Vec;
 use kit::lienzo::{Color, Lienzo, Rect};
@@ -238,7 +238,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
         let fondo = t.contenedor_bajo();
         l.rellenar(Rect::new(0, 0, lat, h), fondo);
         v.zonas.push((Rect::new(0, 0, lat, CABECERA), Zona::Barra));
-        med.dibujar(l, 22, CABECERA / 2 + 6, "Archivos", 16, t.sobre_superficie);
+        med.dibujar(l, 22, CABECERA / 2 + 6, tr(4, "Archivos"), 16, t.sobre_superficie);
         let mut y = CABECERA + 6;
         let lugar = v.p().lugar.clone();
         let busca = v.p().busca.is_some();
@@ -282,7 +282,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
         if app.disco.0 > 0 {
             let (total, libre) = app.disco;
             let y = h - 52;
-            reg.dibujar(l, 22, y, &alloc::format!("{} libres de {}", tamano(libre), tamano(total)), 12, t.sobre_variante_superficie);
+            reg.dibujar(l, 22, y, &trf(160, "{} libres de {}", &[&tamano(libre), &tamano(total)]), 12, t.sobre_variante_superficie);
             let barra = Rect::new(22, y + 10, lat - 44, 4);
             l.redondeado(barra, 2, t.variante_contorno);
             let usado = ((total - libre.min(total)) as i64 * barra.w as i64 / total.max(1) as i64) as i32;
@@ -340,9 +340,9 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
             l.borde(camino, 10, 2, t.primario);
             let (dentro, vacio) = if v.foco == Foco::Buscar {
                 simbolo(l, Simbolo::Buscar, camino.x + 20, cy, t.sobre_variante_superficie);
-                (Rect::new(camino.x + 38, camino.y, camino.w - 50, camino.h), alloc::format!("Buscar en {}", migas(&v.p().lugar).last().map_or(String::new(), |m| m.0.clone())))
+                (Rect::new(camino.x + 38, camino.y, camino.w - 50, camino.h), trf(161, "Buscar en {}", &[&migas(&v.p().lugar).last().map_or(String::new(), |m| m.0.clone())]))
             } else {
-                (Rect::new(camino.x + 14, camino.y, camino.w - 28, camino.h), String::from("Escribe un camino, como Home/Privado"))
+                (Rect::new(camino.x + 14, camino.y, camino.w - 28, camino.h), String::from(tr(162, "Escribe un camino, como Home/Privado")))
             };
             let ln = v.linea.clone();
             linea(l, reg, dentro, &ln, &t, 14, true, &vacio);
@@ -504,12 +504,12 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
             zonas.push((r, Zona::Columna(o)));
         };
         let enc = v.encima;
-        cabeza(l, med, area.x + 8, x_tam - area.x - 8, "Nombre", Orden::Nombre, false, &mut v.zonas, enc);
-        cabeza(l, med, x_tam, col_tam, "Tamaño", Orden::Tamano, true, &mut v.zonas, enc);
+        cabeza(l, med, area.x + 8, x_tam - area.x - 8, tr(163, "Nombre"), Orden::Nombre, false, &mut v.zonas, enc);
+        cabeza(l, med, x_tam, col_tam, tr(164, "Tamaño"), Orden::Tamano, true, &mut v.zonas, enc);
         if col_tipo > 0 {
-            cabeza(l, med, x_tipo, col_tipo, "Tipo", Orden::Tipo, false, &mut v.zonas, enc);
+            cabeza(l, med, x_tipo, col_tipo, tr(165, "Tipo"), Orden::Tipo, false, &mut v.zonas, enc);
         }
-        cabeza(l, med, x_fecha, col_fecha, "Modificado", Orden::Fecha, false, &mut v.zonas, enc);
+        cabeza(l, med, x_fecha, col_fecha, tr(166, "Modificado"), Orden::Fecha, false, &mut v.zonas, enc);
         l.rellenar(Rect::new(area.x + 8, area.y + CAB_LISTA - 1, area.w - 16, 1), t.variante_contorno);
     }
     l.recortar(dentro);
@@ -519,11 +519,11 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
         let (titulo, sub) = if let Some(e) = &p.error {
             (e.clone(), String::new())
         } else if let Some(b) = &p.busca {
-            if b.acabada { (String::from("No hay resultados"), String::from("Prueba con otras palabras")) } else { (String::from("Buscando…"), String::new()) }
+            if b.acabada { (String::from(tr(167, "No hay resultados")), String::from(tr(168, "Prueba con otras palabras"))) } else { (String::from(tr(169, "Buscando…")), String::new()) }
         } else if p.en_papelera() {
-            (String::from("La papelera está vacía"), String::new())
+            (String::from(tr(170, "La papelera está vacía")), String::new())
         } else {
-            (String::from("La carpeta está vacía"), String::new())
+            (String::from(tr(171, "La carpeta está vacía")), String::new())
         };
         let cx = dentro.x + dentro.w / 2;
         let cyy = dentro.y + dentro.h / 2;
@@ -571,7 +571,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
             let mut nombre_x = x_tam - (r.x + 50) - 12;
             let nombre = if busca {
                 // En la búsqueda: el nombre y, en gris, dónde está.
-                let donde = crate::texto_lugar(&cosa.donde);
+                let donde = crate::lugar_visible(&cosa.donde);
                 let n = que_quepa(reg, &e.nombre, 14, nombre_x);
                 let nw = reg.medir(&n, 14).ancho;
                 nombre_x -= nw + 12;
@@ -645,11 +645,11 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
         let titulo = que_quepa(med, &m.titulo, 14, r.w - 80);
         med.dibujar(l, r.x + 18, r.y + 26, &titulo, 14, t.sobre_superficie);
         let sub = if m.t.preparando() {
-            String::from("Preparando…")
+            String::from(tr(172, "Preparando…"))
         } else if m.t.tarea == crate::Tarea::Copiar {
-            alloc::format!("{} de {}", tamano(m.t.bytes), tamano(m.t.bytes_total))
+            trf(173, "{} de {}", &[&tamano(m.t.bytes), &tamano(m.t.bytes_total)])
         } else {
-            alloc::format!("{} de {}", m.t.hechos, m.t.elementos.len())
+            trf(173, "{} de {}", &[&m.t.hechos, &m.t.elementos.len()])
         };
         reg.dibujar(l, r.x + 18, r.y + 46, &sub, 12, t.sobre_variante_superficie);
         let barra = Rect::new(r.x + 18, r.y + 58, r.w - 82, 4);
@@ -694,7 +694,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
         let accion = av.deshacer.is_some();
         let texto = que_quepa(reg, &av.texto, 14, (area.w - 160).max(120));
         let tw = reg.medir(&texto, 14).ancho;
-        let aw = if accion { med.medir("Deshacer", 14).ancho + 32 } else { 0 };
+        let aw = if accion { med.medir(tr(174, "Deshacer"), 14).ancho + 32 } else { 0 };
         let r = Rect::new(area.x + (area.w - tw - aw - 40) / 2, h - 16 - 48 - if app.trabajos.is_empty() { 0 } else { 84 }, tw + aw + 40, 48);
         l.sombra(r, 24, 3, 0, 10, 70);
         l.redondeado(r, 24, t.sobre_superficie);
@@ -704,18 +704,18 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
             if v.encima == Zona::Deshacer {
                 l.redondeado(b, 18, con_opacidad(t.superficie, 40));
             }
-            med.dibujar(l, b.x + 16, r.y + 30, "Deshacer", 14, t.contenedor_primario);
+            med.dibujar(l, b.x + 16, r.y + 30, tr(174, "Deshacer"), 14, t.contenedor_primario);
             v.zonas.push((b, Zona::Deshacer));
         }
     }
     // En la papelera, el botón de vaciar arriba a la derecha del contenido.
     if v.p().en_papelera() && n > 0 && v.dialogo.is_none() {
-        let tw = med.medir("Vaciar la papelera", 13).ancho;
+        let tw = med.medir(tr(85, "Vaciar la papelera"), 13).ancho;
         let b = Rect::new(w - 16 - tw - 32, y0 + if p_lista { CAB_LISTA + 6 } else { 8 }, tw + 32, 34);
         let b = if p_lista { Rect::new(b.x, h - 16 - 34 - if v.p().sel.cuantos() > 0 { 42 } else { 0 }, b.w, b.h) } else { b };
         l.sombra(b, 17, 2, 0, 6, 40);
         l.redondeado(b, 17, if v.encima == Zona::Vaciar { mezcla(t.error, 0xffff_ffff, 30) } else { t.error });
-        med.dibujar(l, b.x + 16, b.y + 22, "Vaciar la papelera", 13, 0xffff_ffff);
+        med.dibujar(l, b.x + 16, b.y + 22, tr(85, "Vaciar la papelera"), 13, 0xffff_ffff);
         v.zonas.push((b, Zona::Vaciar));
     }
 
@@ -728,7 +728,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
         let r = Rect::new(x, y, ancho, alto);
         l.sombra(r, 14, 4, 0, 12, 70);
         l.redondeado(r, 14, t.contenedor());
-        for (i, (texto, _, activa)) in m.opciones.iter().enumerate() {
+        for (i, (texto, _, activa, _)) in m.opciones.iter().enumerate() {
             let o = Rect::new(x + 6, y + 6 + i as i32 * 40, ancho - 12, 40);
             if *activa && v.encima == Zona::Opcion(i) {
                 l.redondeado(o, 10, con_opacidad(t.sobre_superficie, 22));
@@ -786,9 +786,9 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
             _ => {
                 let ancho = 420.min(w - 32);
                 let (titulo, texto, botones, filas): (String, String, [&str; 2], Vec<String>) = match d {
-                    Dialogo::Nombre { titulo, boton, .. } => (String::from(*titulo), String::new(), ["Cancelar", boton], Vec::new()),
-                    Dialogo::Confirmar { titulo, texto, boton, .. } => (titulo.clone(), texto.clone(), ["Cancelar", boton], Vec::new()),
-                    Dialogo::AbrirCon { fichero, programas, .. } => (String::from("Abrir con"), alloc::format!("Elige un programa para {}", fichero), ["Cancelar", "Abrir"], programas.clone()),
+                    Dialogo::Nombre { titulo, boton, .. } => (String::from(*titulo), String::new(), [tr(65, "Cancelar"), boton], Vec::new()),
+                    Dialogo::Confirmar { titulo, texto, boton, .. } => (titulo.clone(), texto.clone(), [tr(65, "Cancelar"), boton], Vec::new()),
+                    Dialogo::AbrirCon { fichero, programas, .. } => (String::from(tr(175, "Abrir con")), trf(176, "Elige un programa para {}", &[fichero]), [tr(65, "Cancelar"), tr(76, "Abrir")], programas.clone()),
                     Dialogo::Propiedades { .. } => unreachable!(),
                 };
                 let campo = matches!(d, Dialogo::Nombre { .. });
@@ -813,7 +813,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
                     let c = Rect::new(r.x + 24, y, r.w - 48, 52);
                     let color_borde = if error.is_some() { t.error } else { t.primario };
                     l.borde(c, 6, 2, color_borde);
-                    let etiqueta = "Nombre";
+                    let etiqueta = tr(163, "Nombre");
                     let ew = reg.medir(etiqueta, 12).ancho;
                     l.rellenar(Rect::new(c.x + 10, c.y - 2, ew + 8, 4), t.contenedor_alto());
                     reg.dibujar(l, c.x + 14, c.y + 4, etiqueta, 12, color_borde);
@@ -840,7 +840,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
                         v.zonas.push((f, Zona::FilaDialogo(i)));
                     }
                     if programas.is_empty() {
-                        reg.dibujar(l, r.x + 24, y + 20, "No hay programas en Sistema/Programas", 14, t.sobre_variante_superficie);
+                        reg.dibujar(l, r.x + 24, y + 20, tr(177, "No hay programas en SYS:Programas"), 14, t.sobre_variante_superficie);
                     }
                     y += alto_filas;
                 }

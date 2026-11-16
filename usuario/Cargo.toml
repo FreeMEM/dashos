@@ -20,6 +20,9 @@ red = ["monton", "dep:smoltcp"]
 caja = ["monton", "dep:caja-vmm"]
 # RelevoJIT (intérprete y JIT del 68k para x86-64, MPL-2.0) en un proceso de x86-64 (X7a): el crate `relevo` sin std.
 relevo = ["monton", "dep:relevo"]
+# El protocolo del Shell nativo (docs/bitacoras/shell-nativa.md), para quien lo lanza con argumentos (`guardian`).
+# El Shell y sus órdenes están en `ordenes/`.
+ordenes = ["dep:shell"]
 
 [dependencies]
 linked_list_allocator = { version = "0.10.6", default-features = false, optional = true }
@@ -35,7 +38,8 @@ caja-vmm = { package = "dashos-caja-vmm", path = "../caja-linux/vmm", optional =
 # RelevoJIT local sin subirlo: `make -C kernel prueba-x86 RELEVO_DIR=<ruta>` (un `[patch]` por `--config`; ver
 # kernel/Makefile).
 relevo = { git = "https://github.com/FreeMEM/RelevoJIT", rev = "ac26a328c3a910667999140b442a2566db3d8683", default-features = false, optional = true }
-smoltcp = { version = "0.14.0", default-features = false, optional = true, features = ["alloc", "medium-ethernet", "proto-ipv4", "proto-dhcpv4", "socket-tcp", "socket-tcp-reno", "socket-dhcpv4"] }
+shell = { package = "dashos-shell", path = "../shell", optional = true }
+smoltcp = { version = "0.14.0", default-features = false, optional = true, features = ["alloc", "medium-ethernet", "proto-ipv4", "proto-dhcpv4", "proto-ipv6", "proto-ipv6-slaac", "socket-tcp", "socket-tcp-reno", "socket-udp", "socket-dhcpv4", "iface-max-addr-count-4", "iface-max-route-count-4"] }
 
 [lib]
 name = "dashos"
@@ -191,7 +195,7 @@ path = "src/bin/sesiones.rs"
 [[bin]]
 name = "guardian"
 path = "src/bin/guardian.rs"
-required-features = ["ventanas"]
+required-features = ["ventanas", "ordenes"]
 
 [[bin]]
 name = "panel"
@@ -245,6 +249,8 @@ test = false
 name = "espera"
 path = "src/bin/espera.rs"
 test = false
+# S6b, S36: con las pruebas del encierro y de la tanda (`src/prueba_encierro.rs`), que usan el montón.
+required-features = ["monton"]
 
 [[bin]]
 name = "pide"
@@ -280,6 +286,13 @@ name = "cambio"
 path = "src/bin/cambio.rs"
 test = false
 required-features = ["ventanas", "sonido"]
+
+# `RAM:` en memoria: la prueba (en el disco; la lanza `guardian` como Ana y como Carla).
+[[bin]]
+name = "ram"
+path = "src/bin/ram.rs"
+test = false
+required-features = ["monton"]
 
 [[bin]]
 name = "ventana-a"
@@ -323,6 +336,12 @@ test = false
 [[bin]]
 name = "sin-red"
 path = "src/bin/sin_red.rs"
+test = false
+
+# S13: la hora por la red (SNTP): el único con el permiso del reloj.
+[[bin]]
+name = "hora"
+path = "src/bin/hora.rs"
 test = false
 
 # La caja Linux (H9): el servicio de las máquinas virtuales y un programa sin su permiso.
@@ -467,3 +486,29 @@ test = false
 name = "disco-sata"
 path = "src/bin/disco_sata.rs"
 test = false
+
+# La prueba del selector de ficheros desde un programa del disco ("Guardar como"), con su tabla de llaves.
+[[bin]]
+name = "guarda"
+path = "src/bin/guarda.rs"
+test = false
+
+# S10, Commodities (docs/bitacoras/commodities.md): su prueba de virt y las clásicas de SYS:Tools/Commodities sin
+# ventana (Blanker y NoCapsLock; FKey y Exchange están en `ordenes/`).
+[[bin]]
+name = "commodity-prueba"
+path = "src/bin/commodity_prueba.rs"
+test = false
+required-features = ["ventanas"]
+
+[[bin]]
+name = "blanker"
+path = "src/bin/blanker.rs"
+test = false
+required-features = ["ventanas"]
+
+[[bin]]
+name = "nocapslock"
+path = "src/bin/nocapslock.rs"
+test = false
+required-features = ["ventanas"]

@@ -1061,7 +1061,7 @@ pub mod ext_idle_notification_v1 {
 
 pub static DASHOS_TEMA_V1: Interface = Interface {
     name: "dashos_tema_v1",
-    version: 6,
+    version: 7,
     requests: &[
         Message { name: "destroy", since: 1, destructor: true, args: &[] },
         Message { name: "poner", since: 1, destructor: false, args: &[Arg { name: "color", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "oscuro", kind: Kind::Uint, nullable: false, interface: None }] },
@@ -1072,6 +1072,7 @@ pub static DASHOS_TEMA_V1: Interface = Interface {
         Message { name: "espacio", since: 4, destructor: false, args: &[Arg { name: "numero", kind: Kind::Uint, nullable: false, interface: None }] },
         Message { name: "estado", since: 5, destructor: false, args: &[Arg { name: "red", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "nivel", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "silencio", kind: Kind::Uint, nullable: false, interface: None }] },
         Message { name: "marca", since: 6, destructor: false, args: &[Arg { name: "superficie", kind: Kind::Object, nullable: false, interface: Some("wl_surface") }, Arg { name: "derecha", kind: Kind::Int, nullable: false, interface: None }, Arg { name: "alto", kind: Kind::Int, nullable: false, interface: None }] },
+        Message { name: "apilar", since: 7, destructor: false, args: &[Arg { name: "superficie", kind: Kind::Object, nullable: false, interface: Some("wl_surface") }, Arg { name: "fondo", kind: Kind::Uint, nullable: false, interface: None }] },
     ],
     events: &[
         Message { name: "tema", since: 1, destructor: false, args: &[Arg { name: "color", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "oscuro", kind: Kind::Uint, nullable: false, interface: None }] },
@@ -1098,6 +1099,7 @@ pub mod dashos_tema_v1 {
         pub const ESPACIO: u16 = 6;
         pub const ESTADO: u16 = 7;
         pub const MARCA: u16 = 8;
+        pub const APILAR: u16 = 9;
     }
     pub mod ev {
         pub const TEMA: u16 = 0;
@@ -1256,6 +1258,187 @@ pub mod zwp_primary_selection_source_v1 {
     }
 }
 
+pub static DASHOS_COMMODITIES_V1: Interface = Interface {
+    name: "dashos_commodities_v1",
+    version: 1,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "registrar", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::NewId, nullable: false, interface: Some("dashos_commodity_v1") }, Arg { name: "nombre", kind: Kind::Str, nullable: false, interface: None }, Arg { name: "titulo", kind: Kind::Str, nullable: false, interface: None }, Arg { name: "descripcion", kind: Kind::Str, nullable: false, interface: None }] },
+        Message { name: "vigilar", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::NewId, nullable: false, interface: Some("dashos_exchange_v1") }] },
+    ],
+    events: &[
+
+    ],
+};
+
+/// Los números de las peticiones y eventos de `dashos_commodities_v1`.
+pub mod dashos_commodities_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const REGISTRAR: u16 = 1;
+        pub const VIGILAR: u16 = 2;
+    }
+    pub mod ev {
+    }
+}
+
+pub static DASHOS_COMMODITY_V1: Interface = Interface {
+    name: "dashos_commodity_v1",
+    version: 1,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "atajo", since: 1, destructor: false, args: &[Arg { name: "numero", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "combinacion", kind: Kind::Str, nullable: false, interface: None }] },
+        Message { name: "quitar_atajo", since: 1, destructor: false, args: &[Arg { name: "numero", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "inactividad", since: 1, destructor: false, args: &[Arg { name: "segundos", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "oscurecer", since: 1, destructor: false, args: &[] },
+        Message { name: "comportamiento", since: 1, destructor: false, args: &[Arg { name: "cual", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "activo", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+    events: &[
+        Message { name: "pulsado", since: 1, destructor: false, args: &[Arg { name: "numero", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "atajo_negado", since: 1, destructor: false, args: &[Arg { name: "numero", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "motivo", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "quien", kind: Kind::Str, nullable: false, interface: None }] },
+        Message { name: "activo", since: 1, destructor: false, args: &[Arg { name: "si", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "ensenar", since: 1, destructor: false, args: &[] },
+        Message { name: "quitar", since: 1, destructor: false, args: &[] },
+        Message { name: "inactivo", since: 1, destructor: false, args: &[Arg { name: "si", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "retirado", since: 1, destructor: false, args: &[Arg { name: "permiso", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `dashos_commodity_v1`.
+pub mod dashos_commodity_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const ATAJO: u16 = 1;
+        pub const QUITAR_ATAJO: u16 = 2;
+        pub const INACTIVIDAD: u16 = 3;
+        pub const OSCURECER: u16 = 4;
+        pub const COMPORTAMIENTO: u16 = 5;
+    }
+    pub mod ev {
+        pub const PULSADO: u16 = 0;
+        pub const ATAJO_NEGADO: u16 = 1;
+        pub const ACTIVO: u16 = 2;
+        pub const ENSENAR: u16 = 3;
+        pub const QUITAR: u16 = 4;
+        pub const INACTIVO: u16 = 5;
+        pub const RETIRADO: u16 = 6;
+    }
+}
+
+pub static DASHOS_EXCHANGE_V1: Interface = Interface {
+    name: "dashos_exchange_v1",
+    version: 1,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "activar", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "si", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "ensenar", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "quitar", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "ajuste", since: 1, destructor: false, args: &[Arg { name: "cual", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "valor", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+    events: &[
+        Message { name: "commodity", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "nombre", kind: Kind::Str, nullable: false, interface: None }, Arg { name: "titulo", kind: Kind::Str, nullable: false, interface: None }, Arg { name: "descripcion", kind: Kind::Str, nullable: false, interface: None }, Arg { name: "programa", kind: Kind::Str, nullable: false, interface: None }, Arg { name: "activa", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "atajo", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "numero", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "combinacion", kind: Kind::Str, nullable: false, interface: None }, Arg { name: "estado", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "fuera", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "ajuste", since: 1, destructor: false, args: &[Arg { name: "cual", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "valor", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "listo", since: 1, destructor: false, args: &[] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `dashos_exchange_v1`.
+pub mod dashos_exchange_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const ACTIVAR: u16 = 1;
+        pub const ENSENAR: u16 = 2;
+        pub const QUITAR: u16 = 3;
+        pub const AJUSTE: u16 = 4;
+    }
+    pub mod ev {
+        pub const COMMODITY: u16 = 0;
+        pub const ATAJO: u16 = 1;
+        pub const FUERA: u16 = 2;
+        pub const AJUSTE: u16 = 3;
+        pub const LISTO: u16 = 4;
+    }
+}
+
+pub static DASHOS_MENUS_V1: Interface = Interface {
+    name: "dashos_menus_v1",
+    version: 1,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "menu", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::NewId, nullable: false, interface: Some("dashos_menu_v1") }, Arg { name: "superficie", kind: Kind::Object, nullable: false, interface: Some("wl_surface") }] },
+        Message { name: "poner_sitio", since: 1, destructor: false, args: &[Arg { name: "sitio", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "barra", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::NewId, nullable: false, interface: Some("dashos_menus_barra_v1") }] },
+    ],
+    events: &[
+        Message { name: "sitio", since: 1, destructor: false, args: &[Arg { name: "sitio", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `dashos_menus_v1`.
+pub mod dashos_menus_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const MENU: u16 = 1;
+        pub const PONER_SITIO: u16 = 2;
+        pub const BARRA: u16 = 3;
+    }
+    pub mod ev {
+        pub const SITIO: u16 = 0;
+    }
+}
+
+pub static DASHOS_MENU_V1: Interface = Interface {
+    name: "dashos_menu_v1",
+    version: 1,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "poner", since: 1, destructor: false, args: &[Arg { name: "datos", kind: Kind::Array, nullable: false, interface: None }] },
+        Message { name: "abrir", since: 1, destructor: false, args: &[] },
+    ],
+    events: &[
+        Message { name: "elegido", since: 1, destructor: false, args: &[Arg { name: "numero", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `dashos_menu_v1`.
+pub mod dashos_menu_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const PONER: u16 = 1;
+        pub const ABRIR: u16 = 2;
+    }
+    pub mod ev {
+        pub const ELEGIDO: u16 = 0;
+    }
+}
+
+pub static DASHOS_MENUS_BARRA_V1: Interface = Interface {
+    name: "dashos_menus_barra_v1",
+    version: 1,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "elegir", since: 1, destructor: false, args: &[Arg { name: "generacion", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "numero", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+    events: &[
+        Message { name: "menu", since: 1, destructor: false, args: &[Arg { name: "generacion", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "datos", kind: Kind::Array, nullable: false, interface: None }] },
+        Message { name: "abrir", since: 1, destructor: false, args: &[] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `dashos_menus_barra_v1`.
+pub mod dashos_menus_barra_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const ELEGIR: u16 = 1;
+    }
+    pub mod ev {
+        pub const MENU: u16 = 0;
+        pub const ABRIR: u16 = 1;
+    }
+}
+
 /// Todas las interfaces, para buscarlas por nombre.
 pub static INTERFACES: &[&Interface] = &[
     &WL_DISPLAY,
@@ -1301,4 +1484,10 @@ pub static INTERFACES: &[&Interface] = &[
     &ZWP_PRIMARY_SELECTION_DEVICE_V1,
     &ZWP_PRIMARY_SELECTION_OFFER_V1,
     &ZWP_PRIMARY_SELECTION_SOURCE_V1,
+    &DASHOS_COMMODITIES_V1,
+    &DASHOS_COMMODITY_V1,
+    &DASHOS_EXCHANGE_V1,
+    &DASHOS_MENUS_V1,
+    &DASHOS_MENU_V1,
+    &DASHOS_MENUS_BARRA_V1,
 ];

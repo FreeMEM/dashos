@@ -28,8 +28,11 @@ extern crate alloc;
 
 #[path = "../sonido_cliente.rs"]
 mod sonido_cliente;
+#[path = "../idiomas.rs"]
+mod idiomas;
 
 use alloc::vec::Vec;
+use dashos::asignaciones::{self as asig, Cambio};
 use dashos::println;
 use dashos::protocolo::archivos as a;
 use dashos::protocolo::sesiones as s;
@@ -42,6 +45,20 @@ use wayland::{leer_args, Escritor};
 
 dashos::programa!(principal);
 dashos::monton!();
+
+/// Idiomas (paso 4): el nombre de su catálogo y su versión (`tools/catalogo.py` lo lee de aquí), y el catálogo en uso.
+const CATALOGO: (&str, u32) = ("cambio", 1);
+static TEXTOS: idiomas::Puesto = idiomas::Puesto::nuevo();
+
+/// Un texto, en el idioma del usuario (el castellano si no hay catálogo).
+fn tr(numero: u32, de_siempre: &'static str) -> &'static str {
+    TEXTOS.texto(numero, de_siempre)
+}
+
+/// Un texto con huecos y sus valores.
+fn trf(numero: u32, de_siempre: &'static str, valores: &[&dyn core::fmt::Display]) -> alloc::string::String {
+    TEXTOS.con(numero, de_siempre, valores)
+}
 
 const SESIONES: u32 = 1;
 const ARCHIVOS: u32 = 2;
@@ -157,6 +174,105 @@ impl Archivos {
         unsafe { core::slice::from_raw_parts_mut(VA_VENTANA as *mut u8, 4096) }
     }
 
+    /// Una orden, con la respuesta entera (para las asignaciones, que listan).
+    fn orden_toda(&self, orden: u32, asa: u32, x: u64, y: u64, nombre: &[u8]) -> asig::Resp {
+        let mut p = [0u8; 256];
+        let largo = nombre.len().min(224);
+        p[0..4].copy_from_slice(&orden.to_le_bytes());
+        p[4..8].copy_from_slice(&asa.to_le_bytes());
+        p[8..16].copy_from_slice(&x.to_le_bytes());
+        p[16..24].copy_from_slice(&y.to_le_bytes());
+        p[24..28].copy_from_slice(&(largo as u32).to_le_bytes());
+        p[32..32 + largo].copy_from_slice(&nombre[..largo]);
+        let mut r = [0u8; 32];
+        if dashos::canal_escribir(ARCHIVOS, &p[..32 + largo], &[]) != 0 || dashos::canal_leer_plazo(self.lectura, &mut r, &mut [], 3_000_000).0 != 32 {
+            return asig::Resp { e: i32::MIN, ..Default::default() };
+        }
+        let u = |i: usize| u64::from_le_bytes(r[i..i + 8].try_into().unwrap());
+        asig::Resp { e: i32::from_le_bytes(r[0..4].try_into().unwrap()), asa: u32::from_le_bytes(r[4..8].try_into().unwrap()), a: u(8), b: u(16), c: u(24) }
+    }
+}
+
+/// El servicio de archivos para `dashos::asignaciones`.
+struct PorNombres<'a>(&'a Archivos);
+
+impl asig::Fs for PorNombres<'_> {
+    fn pedir(&mut self, orden: u32, asa: u32, x: u64, y: u64, nombre: &[u8]) -> asig::Resp {
+        self.0.orden_toda(orden, asa, x, y, nombre)
+    }
+
+    fn ventana(&self) -> &[u8] {
+        unsafe { core::slice::from_raw_parts(VA_VENTANA as *const u8, a::VENTANA) }
+    }
+}
+
+/// Paso 2 de las asignaciones: lanzada por `guardian` como Ana, su tabla de nombres trae sus volúmenes (`SYS:`, `Home:`,
+/// `RAM:`, `Work:`), su `PROGDIR:` y las asignaciones de la sesión. `C:` es `Home:C` y `SYS:C`: lo de `SYS:C` se lee por
+/// ahí; crear no va a `SYS:` (solo leer), sino a `Home:C` en cuanto existe; listar une las dos. `T:` es `RAM:T`. Y lo que
+/// asigna lo ve al pedir la tabla otra vez; lo que tapa un volumen, pone una raíz o hace un bucle, no.
+fn nombres_ana(arch: &Archivos) -> bool {
+    let Some(t) = asig::pedir_tabla(SESIONES) else {
+        println!("  [cambio] Ana: sin tabla de nombres: MAL");
+        return false;
+    };
+    let mut vols = alloc::string::String::new();
+    for v in t.volumenes() {
+        vols.push_str(core::str::from_utf8(v.nombre).unwrap_or("?"));
+        vols.push_str(": ");
+    }
+    let mut fs = PorNombres(arch);
+    let cerrar = |fs: &mut PorNombres, r: Result<(asig::Resp, usize), i32>| -> Result<usize, i32> {
+        r.map(|(x, capa)| {
+            fs.0.orden(a::CERRAR, x.asa, 0, 0, b"");
+            capa
+        })
+    };
+    let leer_sys = asig::mirar(&mut fs, &t, b"C:grande.txt").map(|r| r.1);
+    let en_sys = asig::crear(&mut fs, &t, b"C:nuevo", a::FICHERO);
+    let en_sys = cerrar(&mut fs, en_sys);
+    let home_c = asig::crear(&mut fs, &t, b"Home:C", a::CAJON);
+    let home_c = cerrar(&mut fs, home_c);
+    let nuevo = asig::crear(&mut fs, &t, b"C:nuevo", a::FICHERO);
+    let nuevo = cerrar(&mut fs, nuevo);
+    let (mut de_home, mut de_sys, mut repetidos) = (0, 0, 0);
+    let listado = asig::listar(&mut fs, &t, b"C:", |capa, e| {
+        match (capa, e.nombre) {
+            (0, b"nuevo") => de_home += 1,
+            (1, b"grande.txt") => de_sys += 1,
+            (_, b"nuevo") | (_, b"grande.txt") => repetidos += 1,
+            _ => {}
+        }
+        true
+    });
+    let temporal = asig::crear(&mut fs, &t, b"T:cambio.tmp", a::FICHERO);
+    let temporal = cerrar(&mut fs, temporal);
+    // Y se borra, por su raíz de `RAM:` (el volumen en memoria de su sesión).
+    let t_ = fs.0.orden(a::BUSCAR, s::RAIZ_RAM as u32, 0, 0, b"T");
+    let borrado = t_.0 == a::BIEN && fs.0.orden(a::BORRAR, t_.1, 0, 0, b"cambio.tmp").0 == a::BIEN;
+    fs.0.orden(a::CERRAR, t_.1, 0, 0, b"");
+    let asignar = asig::asignar_en_sesiones(SESIONES, Cambio::Poner, b"Trabajo=Home:C");
+    let tapar = asig::asignar_en_sesiones(SESIONES, Cambio::Poner, b"SYS=Home:");
+    let raiz = asig::asignar_en_sesiones(SESIONES, Cambio::Poner, b"Casa=@2");
+    let uno = asig::asignar_en_sesiones(SESIONES, Cambio::Poner, b"Uno=Dos:");
+    let bucle = asig::asignar_en_sesiones(SESIONES, Cambio::Poner, b"Dos=Uno:");
+    let t2 = asig::pedir_tabla(SESIONES);
+    let trabajo = t2.as_ref().map(|t2| asig::mirar(&mut fs, t2, b"trabajo:nuevo").map(|r| r.1));
+    let sin_malas = t2.as_ref().is_some_and(|t2| t2.buscar(b"Casa").is_none() && t2.buscar(b"Dos").is_none() && t2.buscar(b"SYS").is_some_and(|l| l.volumen));
+    let bien = vols == "SYS: Home: RAM: Work: " && t.buscar(b"PROGDIR").is_some() && leer_sys == Ok(1)
+        && matches!(en_sys, Err(a::PROTEGIDO) | Err(a::SOLO_LECTURA)) && matches!(home_c, Ok(0) | Err(a::YA_EXISTE))
+        && matches!(nuevo, Ok(0) | Err(a::YA_EXISTE)) && listado.is_ok() && de_home == 1 && de_sys == 1 && repetidos == 0
+        && temporal == Ok(0) && borrado && asignar == 0 && tapar == a::PROTEGIDO && raiz == a::MAL_FORMADO && uno == 0
+        && bucle == asig::BUCLE && trabajo == Some(Ok(0)) && sin_malas;
+    println!(
+        "  [cambio] Ana: asignaciones: {}C: lee de SYS: {:?}, crea en SYS: {:?}, Home:C {:?}, crea en C: {:?}, lista {:?} ({} de Home, {} de SYS, {} de más), T: {:?} {}; asigna {} {} {} {} {}, Trabajo: {:?}",
+        vols, leer_sys, en_sys, home_c, nuevo, listado, de_home, de_sys, repetidos, temporal, borrado, asignar, tapar, raiz, uno, bucle, trabajo
+    );
+    println!("  [cambio] Ana: asignaciones por nombre: {}", if bien { "bien" } else { "MAL" });
+    bien
+}
+
+impl Archivos {
+
     fn escribir(&self, asa: u32, desde: u64, datos: &[u8]) -> i32 {
         self.ventana()[..datos.len()].copy_from_slice(datos);
         self.orden(a::ESCRIBIR, asa, desde, datos.len() as u64, b"").0
@@ -225,11 +341,14 @@ impl Ventana {
     fn mandar(&mut self, e: &Escritor) {
         let Ok(trozos) = canal::trocear(e) else { return };
         for t in trozos {
-            for _ in 0..200 {
+            // Con la cola del compositor llena, se reintenta hasta unos 2 s recogiendo lo suyo mientras (como
+            // `ventana_cliente`): con 200 µs, con el compositor atareado (la caja Amiga abriendo ventanas) se perdía el
+            // mensaje (rama admin-desarrollo: la prueba del Shell, más larga, hace que coincidan).
+            for _ in 0..2000 {
                 if dashos::canal_escribir(VENTANAS, &t.bytes, &t.llaves) == 0 {
                     break;
                 }
-                self.recoger(1);
+                self.recoger(1_000);
             }
         }
     }
@@ -251,8 +370,18 @@ impl Ventana {
     /// Se conecta al compositor por la llave 3.
     fn conectar() -> Option<Ventana> {
         let (mio, suyo) = dashos::canal_crear();
-        if dashos::canal_escribir(VENTANAS, &[TROZO_CONECTAR], &[suyo]) != 0 {
+        // Con la cola llena, hasta 5 s (como `ventana_cliente`).
+        let mut e = dashos::canal_escribir(VENTANAS, &[TROZO_CONECTAR], &[suyo]);
+        for _ in 0..5_000 {
+            if e == 0 || e == dashos::E_CERRADO {
+                break;
+            }
+            dashos::dormir_us(1_000);
+            e = dashos::canal_escribir(VENTANAS, &[TROZO_CONECTAR], &[suyo]);
+        }
+        if e != 0 {
             dashos::cerrar(mio);
+            dashos::cerrar(suyo);
             return None;
         }
         Some(Ventana { respuesta: mio, juntador: Juntador::new(), cuenta: Cuenta::default(), aviso: 0, siguiente: PRIMER_AVISO, pedido_us: 0, en_pantalla: false })
@@ -515,14 +644,93 @@ fn principal() -> u64 {
         return 1;
     };
     let bien = match &vol[..vol.iter().position(|&c| c == 0).unwrap_or(16)] {
-        b"Ana" => testigo(&arch, raiz),
-        b"Carla" => espia(&arch, raiz),
+        b"Ana" => llaves_y_selector("Ana", true) & en_su_idioma(&arch, "Ana", false) & nombres_ana(&arch) & testigo(&arch, raiz),
+        b"Carla" => llaves_y_selector("Carla", false) & en_su_idioma(&arch, "Carla", true) & espia(&arch, raiz),
         _ => {
             println!("  [cambio] Home: de nadie conocido: MAL");
             false
         }
     };
     if bien { 0 } else { 1 }
+}
+
+/// La tabla de llaves (`dashos::llaves`) y el selector de ficheros: `sesiones` dice qué es cada llave, y da la del
+/// selector solo a los programas de la persona del selector (Ana, en la prueba). El de Ana lo usa sin ventana
+/// (`CONSULTA`: quién dirá el selector que es); el de Carla no lo tiene.
+fn llaves_y_selector(persona: &str, con_selector: bool) -> bool {
+    use dashos::protocolo::selector as sel;
+    let t = dashos::llaves::Tabla::leer();
+    let tres = t.buscar("sesiones") == Some(SESIONES) && t.buscar("archivos") == Some(ARCHIVOS) && t.buscar("ventanas") == Some(VENTANAS);
+    let selector = t.buscar("selector");
+    let consulta = selector.map(|llave| {
+        let mut b = [0u8; 16];
+        let n = sel::escribir_peticion(&mut b, sel::CONSULTA, "", "").unwrap_or(0);
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 64];
+        let leidos = if dashos::canal_escribir(llave, &b[..n], &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 5_000_000).0 } else { -1 };
+        dashos::cerrar(lectura);
+        usize::try_from(leidos).ok().and_then(|l| sel::leer_respuesta(&r[..l])).is_some_and(|x| x.estado == sel::BIEN && x.nombre == "cambio")
+    });
+    let bien = tres && consulta == con_selector.then_some(true);
+    println!("  [cambio] {}: tabla de llaves ({}): sesiones, archivos y ventanas {}; selector de ficheros: {}: {}", persona, t.cuantas(),
+        if tres { "en su sitio" } else { "NO" },
+        match consulta { Some(true) => "lo tiene y la conoce como \"cambio\"", Some(false) => "lo tiene, pero no contesta bien", None => "no lo tiene" },
+        if bien { "bien" } else { "MAL" });
+    bien
+}
+
+/// Idiomas (paso 4 de `docs/REVISION_LOOP.md`): el programa dice lo suyo en el idioma de quien lo lanza. Ana no tiene
+/// `locale.prefs`: castellano y España, sin catálogo. Carla lo tiene en su `ENV:` en inglés y del Reino Unido: los
+/// textos del programa y los del kit salen de sus catálogos de `LOCALE:Catalogs/english`, los días y los meses de
+/// `LOCALE:Languages/english.language`, y las fechas, los números y el dinero, a la inglesa. La hora, de las dos en la
+/// zona del sistema (`SYS:Prefs/zona`, Europe/Madrid en el disco de pruebas, como la barra): la de Carla en su
+/// `locale.prefs` (UTC) solo valdría sin zona. Lo hostil, con Carla: un
+/// catálogo cortado, uno que es de otro programa, uno de otra versión y un nombre que quiere salir del cajón no valen
+/// (y los textos siguen saliendo).
+fn en_su_idioma(arch: &Archivos, quien: &str, ingles: bool) -> bool {
+    use idiomas::Lector;
+    let Some(t) = asig::pedir_tabla(SESIONES) else {
+        println!("  [cambio] {}: idioma: sin tabla de nombres: MAL", quien);
+        return false;
+    };
+    let mut fs = PorNombres(arch);
+    let i = idiomas::arrancar(&mut fs, &t, &TEXTOS, CATALOGO);
+    // 2026-11-03 17:05:09 UTC, martes.
+    let momento = 1_793_725_509;
+    let saludo = tr(1, "Hola, soy la prueba del cambio de usuario");
+    let cuenta = trf(2, "{} ventanas de {}", &[&2, &quien]);
+    let del_kit = kit::objetos::Valor::Bool(true).texto();
+    let fecha = i.local.fecha_larga(momento);
+    let (corta, numero, dinero) = (i.local.fecha_hora_corta(momento), i.local.numero(1_234_567), i.local.moneda(-123_456));
+    println!(
+        "  [cambio] {}: idioma {} ({}), de {}: \"{}\", \"{}\", el kit dice \"{}\"; {}; {}; {}; {}",
+        quien, i.local.idioma(), i.local.pais_nombre, i.origen.unwrap_or("serie"), saludo, cuenta, del_kit, fecha, corta, numero, dinero
+    );
+    let quiere = if ingles {
+        ["english", "Hello, I am the user switching test", "2 windows of Carla", "yes", "Tuesday 3 November 2026", "03/11/2026 18:05", "1,234,567", "-£1,234.56"]
+    } else {
+        ["español", "Hola, soy la prueba del cambio de usuario", "2 ventanas de Ana", "sí", "martes, 3 de noviembre de 2026", "03/11/2026 18:05", "1.234.567", "-1.234,56 €"]
+    };
+    let mut bien = [i.local.idioma(), saludo, &cuenta, &del_kit, &fecha, &corta, &numero, &dinero] == quiere;
+    if ingles {
+        let mut lector = idiomas::PorAsignaciones { fs: &mut fs, tabla: &t };
+        // Están en el disco (`tools/disco_archivos.py`): rota.catalog, medio catálogo; ajena.catalog, el del kit con otro
+        // nombre de fichero.
+        let rota = i.catalogo(&mut lector, "rota", 1, idiomas::IDIOMA_DE_SERIE).is_some();
+        let ajena = i.catalogo(&mut lector, "ajena", 1, idiomas::IDIOMA_DE_SERIE).is_some();
+        let otra_version = i.catalogo(&mut lector, "kit", 99, idiomas::IDIOMA_DE_SERIE).is_some();
+        let fuera = i.catalogo(&mut lector, "../../../Prefs/fuente", 0, idiomas::IDIOMA_DE_SERIE).is_some();
+        let estan = lector.firma("LOCALE:Catalogs/english/rota.catalog").is_some() && lector.firma("LOCALE:Catalogs/english/ajena.catalog").is_some();
+        let cambiado = i.ha_cambiado(&mut lector);
+        let hostil = estan && !rota && !ajena && !otra_version && !fuera && !cambiado;
+        println!(
+            "  [cambio] Carla: catálogos malos (están: {}): cortado {}, de otro programa {}, de otra versión {}, fuera del cajón {}; el idioma ha cambiado {}: {}",
+            estan, rota, ajena, otra_version, fuera, cambiado, if hostil { "bien" } else { "MAL" }
+        );
+        bien &= hostil;
+    }
+    println!("  [cambio] {}: sus textos en su idioma: {}", quien, if bien { "bien" } else { "MAL" });
+    bien
 }
 
 /// Ana: su programa sigue detrás y lo encuentra todo al volver.

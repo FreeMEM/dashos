@@ -65,6 +65,9 @@ pub enum Objeto {
     /// Permiso para escuchar el aviso de memoria baja (S3): con escribir, la llamada 53. Solo lo da el kernel, a
     /// `inicio`, que se lo manda a `sesiones` y a nadie más.
     PermisoMemoria,
+    /// Permiso para poner la hora del calendario (S13): con escribir, la llamada 39 con `x0` = 1. Solo lo da el kernel,
+    /// y `inicio` lo da a `hora` (el servicio que la toma de la red) y a nadie más.
+    PermisoReloj,
     /// Un grupo de procesos con su cupo (C42): con escribir se crean procesos en él y se mata; con leer se mira el uso.
     Grupo(Arc<crate::cupo::Cupo>),
     /// Permiso para crear máquinas virtuales (caja Linux, H9): con escribir, la llamada 45. Solo lo da el kernel, a
@@ -777,6 +780,36 @@ pub struct Proceso {
     pub _cargo: crate::cupo::Cargo,
     /// Sus hilos y cómo acabó (C39). Lo comparte con las llaves de proceso que lo nombran.
     pub control: Arc<Control>,
+    /// Qué es cada llave con que nació, si quien lo lanzó lo dijo (llamada 12 con `CON_NOMBRES`): `NOMBRE_LLAVE` bytes
+    /// por llave, en su orden (la primera es la de la llave 1). El kernel no los mira: los devuelve la llamada 56.
+    pub nombres: NombresLlaves,
+}
+
+/// Lo que mide el nombre de una llave de nacimiento (relleno con ceros).
+pub const NOMBRE_LLAVE: usize = 16;
+
+/// Los nombres de las llaves con que nace un proceso: cuántos y sus bytes.
+#[derive(Clone, Copy)]
+pub struct NombresLlaves {
+    pub cuantos: u8,
+    pub bytes: [u8; NOMBRE_LLAVE * MAX_LLAVES],
+}
+
+impl NombresLlaves {
+    pub const NINGUNO: Self = Self { cuantos: 0, bytes: [0; NOMBRE_LLAVE * MAX_LLAVES] };
+
+    /// De `bytes` (un múltiplo de `NOMBRE_LLAVE`, como mucho `MAX_LLAVES` nombres); lo que sobre no se guarda.
+    pub fn de(bytes: &[u8]) -> Self {
+        let mut n = Self::NINGUNO;
+        let largo = (bytes.len() / NOMBRE_LLAVE).min(MAX_LLAVES) * NOMBRE_LLAVE;
+        n.bytes[..largo].copy_from_slice(&bytes[..largo]);
+        n.cuantos = (largo / NOMBRE_LLAVE) as u8;
+        n
+    }
+
+    pub fn datos(&self) -> &[u8] {
+        &self.bytes[..self.cuantos as usize * NOMBRE_LLAVE]
+    }
 }
 
 /// El proceso del hilo actual, si lo hay.

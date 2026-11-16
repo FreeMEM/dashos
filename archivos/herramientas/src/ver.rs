@@ -18,6 +18,14 @@ use syscall::error::{EIO, EROFS, Error, Result};
 mod particiones;
 #[cfg(test)]
 mod particiones_pruebas;
+/// El disco de memoria del `RAM:` de una sesión, el mismo que usa el servicio de archivos: aquí solo se prueba.
+#[cfg(test)]
+extern crate alloc;
+#[cfg(test)]
+#[path = "../../../usuario/src/disco_ram.rs"]
+mod disco_ram;
+#[cfg(test)]
+mod disco_ram_pruebas;
 
 struct Trozo {
     f: File,

@@ -46,9 +46,12 @@ mod panel_mosaicos;
 #[path = "../monitor.rs"]
 #[allow(dead_code)]
 mod monitor;
+#[path = "../idiomas.rs"]
+mod idiomas;
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU32, Ordering};
 use dashos::println;
 use dashos::protocolo::sesiones as s;
 use dashos::servicio::{cerrar_llaves, recibir, Recibido, MAX_DATOS, MAX_LLAVES};
@@ -67,6 +70,20 @@ use wayland::Escritor;
 
 dashos::programa!(principal);
 dashos::monton!();
+
+/// Idiomas (paso 4): el nombre de su catálogo y su versión (`tools/catalogo.py` lo lee de aquí), y el catálogo en uso.
+const CATALOGO: (&str, u32) = ("centro", 1);
+static TEXTOS: idiomas::Puesto = idiomas::Puesto::nuevo();
+
+/// Un texto, en el idioma del usuario (el castellano si no hay catálogo).
+fn tr(numero: u32, de_siempre: &'static str) -> &'static str {
+    TEXTOS.texto(numero, de_siempre)
+}
+
+/// Un texto con huecos y sus valores.
+fn trf(numero: u32, de_siempre: &'static str, valores: &[&dyn core::fmt::Display]) -> String {
+    TEXTOS.con(numero, de_siempre, valores)
+}
 
 const ARCHIVOS: u32 = 2;
 const SESIONES: u32 = 3;
@@ -90,9 +107,24 @@ const CATEGORIAS: &[(&str, &str)] = &[
     ("pantallas", "Pantallas"),
     ("apariencia", "Apariencia"),
     ("monitor", "Monitor del sistema"),
-    ("escritorio", "Panel del escritorio"),
+    ("escritorio", "Escritorio"),
     ("acerca", "Acerca de"),
 ];
+/// El nombre que se ve de la categoría `k` de `CATEGORIAS`, en el idioma del usuario (el de la tabla es el de la
+/// consola, siempre en castellano).
+fn nombre_categoria(k: usize) -> &'static str {
+    match k {
+        0 => tr(1, "Permisos"),
+        1 => tr(2, "Seguridad"),
+        2 => tr(3, "Discos"),
+        3 => tr(4, "Pantallas"),
+        4 => tr(5, "Apariencia"),
+        5 => tr(6, "Monitor del sistema"),
+        6 => tr(7, "Escritorio"),
+        7 => tr(8, "Acerca de"),
+        _ => "",
+    }
+}
 const MONITOR_SIS: usize = 5;
 const PANEL_FONDO: usize = 6;
 const FICHERO_MONITOR: &str = "monitor";
@@ -132,8 +164,14 @@ fn nombre_escala(e: Escala) -> String {
         Escala::Fija(f) => alloc::format!("{}x", f),
     }
 }
+/// Lo mismo, como se ve en la ventana: en el idioma del usuario.
+fn escala_visible(e: Escala) -> String {
+    match e {
+        Escala::Auto => String::from(tr(9, "automático")),
+        Escala::Fija(f) => alloc::format!("{}x", f),
+    }
+}
 const PERMISOS: usize = 0;
-const NADA_CONCEDIDO: &str = "Ningún programa tiene permisos concedidos";
 const SEGURIDAD: usize = 1;
 /// Teclas de Linux que mira el centro antes que el kit.
 const TECLA_ESC: u32 = 1;
@@ -218,19 +256,20 @@ fn registro() -> Vec<String> {
             let e = &r[8 + k * s::ENTRADA_REGISTRO..8 + (k + 1) * s::ENTRADA_REGISTRO];
             let (tipo, estado) = (u32::from_le_bytes(e[0..4].try_into().unwrap()), i32::from_le_bytes(e[4..8].try_into().unwrap()));
             let accion = match tipo {
-                s::R_MATAR => "matar",
-                s::R_SERVICIO => "servicio",
-                s::R_ENTRAR => "entrar",
-                s::R_FALLO => "fallo",
-                s::R_LANZAR => "lanzar",
-                s::R_ADMIN => "administrar",
-                s::R_APAGAR => "apagar",
+                s::R_MATAR => tr(10, "matar"),
+                s::R_SERVICIO => tr(11, "servicio"),
+                s::R_ENTRAR => tr(12, "entrar"),
+                s::R_FALLO => tr(13, "fallo"),
+                s::R_LANZAR => tr(14, "lanzar"),
+                s::R_ADMIN => tr(15, "administrar"),
+                s::R_APAGAR => tr(16, "apagar"),
+                s::R_AJUSTE => tr(100, "guardar un ajuste"),
                 _ => "?",
             };
             let como = match estado {
-                0 => String::from("hecho"),
-                s::PROTEGIDO => String::from("negado"),
-                e => alloc::format!("error {}", e),
+                0 => String::from(tr(17, "hecho")),
+                s::PROTEGIDO => String::from(tr(18, "negado")),
+                e => trf(19, "error {}", &[&e]),
             };
             lineas.push(alloc::format!("{} · {} {} · {}", texto(&e[8..24]), accion, texto(&e[24..40]), como).replace('|', "¦"));
         }
@@ -274,33 +313,31 @@ fn discos() -> Vec<String> {
         let (e, _, tam, libre, _) = ses.pedir(a::INFO, 0, 0, 0, "");
         if e == a::BIEN {
             let ocupado = tam.saturating_sub(libre);
-            l.push(alloc::format!("Disco del sistema: {}", megas(tam)));
-            l.push(alloc::format!("Ocupado: {} ({} %)", megas(ocupado), ocupado * 100 / tam.max(1)));
-            l.push(alloc::format!("Libre: {}", megas(libre)));
+            l.push(trf(20, "Disco del sistema: {}", &[&megas(tam)]));
+            l.push(trf(21, "Ocupado: {} ({} %)", &[&megas(ocupado), &(ocupado * 100 / tam.max(1))]));
+            l.push(trf(22, "Libre: {}", &[&megas(libre)]));
         }
     }
     if l.is_empty() {
-        l.push(String::from("El servicio de archivos no contesta"));
+        l.push(String::from(tr(23, "El servicio de archivos no contesta")));
     }
     // La acción (con Intro o doble clic): la hace `archivos` si `guardian` da por buena una contraseña de administrador.
-    l.push(String::from(COMPROBAR));
+    // Es siempre la última fila: por su sitio se sabe que es ella (el texto cambia con el idioma).
+    l.push(String::from(tr(24, "Comprobar el disco (pide administrador)")));
     l
 }
-
-/// La última fila de Discos.
-const COMPROBAR: &str = "Comprobar el disco (pide administrador)";
 
 /// Lo que se dice tras "Comprobar el disco", en llano (A15: lo hace el comprobador aparte, con los datos).
 fn resultado_comprobar(estado: i32, problemas: u64) -> String {
     use dashos::protocolo::archivos::{EN_USO, LLENO, PROTEGIDO};
     match estado {
-        0 if problemas == 0 => "Comprobado, datos incluidos: sin problemas".into(),
-        0 if problemas == 1 => "Comprobado: 1 problema".into(),
-        0 => alloc::format!("Comprobado: {} problemas", problemas),
-        EN_USO => "El disco está ocupado: inténtalo otra vez".into(),
-        LLENO => "Interrumpido: queda poco sitio en el disco".into(),
-        PROTEGIDO => "No se comprobó: hace falta un administrador".into(),
-        e => alloc::format!("No se comprobó ({})", e),
+        0 if problemas == 0 => tr(25, "Comprobado, datos incluidos: sin problemas").into(),
+        0 if problemas == 1 => tr(26, "Comprobado: 1 problema").into(),
+        0 => trf(27, "Comprobado: {} problemas", &[&problemas]),
+        EN_USO => tr(28, "El disco está ocupado: inténtalo otra vez").into(),
+        LLENO => tr(29, "Interrumpido: queda poco sitio en el disco").into(),
+        PROTEGIDO => tr(30, "No se comprobó: hace falta un administrador").into(),
+        e => trf(31, "No se comprobó ({})", &[&e]),
     }
 }
 
@@ -340,7 +377,6 @@ fn comprobar_disco() -> (i32, u64) {
 const VA_ARCHIVOS: usize = 0x50_0000_0000;
 /// Dónde se guarda la apariencia, desde su raíz (`C`, lo del usuario): un cajón 0700 y un fichero 0600.
 const PREFS: &str = "Prefs";
-const FICHERO_APARIENCIA: &str = "apariencia";
 /// C2: los mosaicos del panel rápido (cuáles y en qué orden), al lado.
 const FICHERO_PANEL: &str = "panel";
 /// C3: el fondo de escritorio que se ve (su nombre en `Fondos/`), al lado.
@@ -379,14 +415,19 @@ impl Sesion {
 
     /// Una orden: (estado, asa, a, b, c) de la respuesta.
     fn pedir(&self, orden: u32, asa: u32, x: u64, y: u64, nombre: &str) -> (i32, u32, u64, u64, u64) {
-        let mut p = [0u8; 128];
-        let n = nombre.len().min(96);
+        self.pedir_bytes(orden, asa, x, y, &nombre.as_bytes()[..nombre.len().min(96)])
+    }
+
+    /// Lo mismo, con el nombre en bytes y de hasta 224 (los caminos de los ficheros de idioma).
+    fn pedir_bytes(&self, orden: u32, asa: u32, x: u64, y: u64, nombre: &[u8]) -> (i32, u32, u64, u64, u64) {
+        let mut p = [0u8; 256];
+        let n = nombre.len().min(224);
         p[0..4].copy_from_slice(&orden.to_le_bytes());
         p[4..8].copy_from_slice(&asa.to_le_bytes());
         p[8..16].copy_from_slice(&x.to_le_bytes());
         p[16..24].copy_from_slice(&y.to_le_bytes());
         p[24..28].copy_from_slice(&(n as u32).to_le_bytes());
-        p[32..32 + n].copy_from_slice(&nombre.as_bytes()[..n]);
+        p[32..32 + n].copy_from_slice(&nombre[..n]);
         let mut r = [0u8; 32];
         if dashos::canal_escribir(ARCHIVOS, &p[..32 + n], &[]) != 0 || dashos::canal_leer_plazo(self.lectura, &mut r, &mut [], 2_000_000).0 != 32 {
             return (-1, 0, 0, 0, 0);
@@ -405,6 +446,38 @@ impl Drop for Sesion {
         dashos::memoria_quitar(VA_ARCHIVOS);
         dashos::cerrar(self.lectura);
     }
+}
+
+/// La sesión con `archivos`, para `dashos::asignaciones` (leer los ficheros de idioma por la tabla de nombres).
+struct PorSesion<'a>(&'a Sesion);
+
+impl dashos::asignaciones::Fs for PorSesion<'_> {
+    fn pedir(&mut self, orden: u32, asa: u32, x: u64, y: u64, nombre: &[u8]) -> dashos::asignaciones::Resp {
+        let (e, asa, a, b, c) = self.0.pedir_bytes(orden, asa, x, y, nombre);
+        dashos::asignaciones::Resp { e, asa, a, b, c }
+    }
+
+    fn ventana(&self) -> &[u8] {
+        self.0.ventana()
+    }
+}
+
+/// Idiomas (paso 4): lee el idioma del usuario (`locale.prefs`) y pone el catálogo del kit y el del centro. Sin tabla
+/// de nombres o sin servicio de archivos no se hace nada: todo sigue en castellano.
+///
+/// `antes` es lo que se leyó la vez anterior: el centro vive toda la sesión, así que antes de abrir su ventana mira si
+/// el `locale.prefs` cambió (`ha_cambiado`: el servicio de archivos no avisa de los cambios), y solo entonces lo lee
+/// todo otra vez. Así un cambio de idioma se ve al reabrir Ajustes.
+fn poner_idioma(antes: Option<idiomas::Idiomas>) -> Option<idiomas::Idiomas> {
+    let Some(tabla) = dashos::asignaciones::pedir_tabla(SESIONES) else { return antes };
+    let Some(ses) = Sesion::abrir() else { return antes };
+    let mut fs = PorSesion(&ses);
+    if let Some(i) = antes {
+        if !i.ha_cambiado(&mut idiomas::PorAsignaciones { fs: &mut fs, tabla: &tabla }) {
+            return Some(i);
+        }
+    }
+    Some(idiomas::arrancar(&mut fs, &tabla, &TEXTOS, CATALOGO))
 }
 
 /// Lee `Prefs/<fichero>` (como mucho `max` bytes). `Err` con el porqué si no hay, no se lee o es más largo.
@@ -529,58 +602,293 @@ fn hex6(t: &str) -> Option<u32> {
     (t.len() == 6).then(|| u32::from_str_radix(t, 16).ok()).flatten().map(|c| 0xff00_0000 | c)
 }
 
-/// La apariencia guardada. `Err` con el porqué si no hay o no se entiende (y entonces, la de serie).
-/// El fichero es una línea: "claro" u "oscuro", un espacio y el color ("oscuro violeta"). El del fondo (C3) lleva
-/// detrás su semilla y sus veinte colores, en hexadecimal ("claro fondo 3d6f88 006688 ffffff ..."); sin los veinte,
-/// se calculan. Sin semilla ("claro fondo", S26), la paleta del fondo aún sin calcular.
-fn leer_apariencia() -> Result<Apariencia, &'static str> {
-    let bytes = leer_prefs(FICHERO_APARIENCIA, 256)?;
-    let texto = core::str::from_utf8(&bytes).map_err(|_| "no se entiende")?;
-    let mut partes = texto.trim_end_matches('\n').split(' ');
-    let oscuro = match partes.next() {
-        Some("claro") => false,
-        Some("oscuro") => true,
-        _ => return Err("no se entiende"),
-    };
-    if partes.clone().next() == Some("fondo") {
-        partes.next();
-        if partes.clone().next().is_none() {
-            return Ok(Apariencia { oscuro, color: DEL_FONDO, fondo: None });
-        }
-        let semilla = partes.next().and_then(hex6).ok_or("no se entiende")?;
-        let resto: Vec<u32> = partes.map(hex6).collect::<Option<_>>().ok_or("no se entiende")?;
-        let esquemas = match resto.len() {
-            kit::tema::ESQUEMAS => resto.try_into().unwrap(),
-            0 => {
-                println!("  [centro] los colores del fondo no estaban guardados: se calculan");
-                kit::tema::esquemas(semilla)
-            }
-            _ => return Err("no se entiende"),
+/// Ajustes en texto (`docs/bitacoras/ajustes-texto.md`): la apariencia es `Escritorio/apariencia` de `ENV:` (en uso)
+/// y de `ENVARC:` (guardada), en el formato de `kit::idioma::texto`: `modo` (claro u oscuro), `acento` (un color de
+/// `COLORES`, o `fondo`) y, con la paleta del fondo, `semilla` y `esquemas` (los colores calculados, para no
+/// calcularlos otra vez; se pueden borrar). La misma que escribe la orden `Ajuste`. Antes de entrar nadie no hay `ENV:`:
+/// vale la de fábrica (`SYS:Prefs/Env-Archive`, por `ENVARC:`) y lo que se elija queda en uso sin guardarse.
+const FICHERO_TEMA: &str = "Escritorio/apariencia";
+const CABECERA_TEMA: &str = "El tema (Ajustes > Apariencia; la orden `Ajuste tema` y `Ajuste acento`). Este fichero manda.\nmodo: claro u oscuro. acento: violeta, azul, verde, naranja o fondo (la paleta del fondo de escritorio).\nsemilla y esquemas: los colores del fondo, calculados por el centro de control; se pueden borrar.";
+
+/// El fichero de ajustes `fichero` de `ENV:` o, si no está, de `ENVARC:`. `Err` con el porqué ("no hay" si en ninguno).
+fn leer_ajuste(fichero: &str) -> Result<Vec<u8>, String> {
+    use dashos::protocolo::archivos as a;
+    let ses = Sesion::abrir().ok_or_else(|| String::from("sin servicio de archivos"))?;
+    let Some(tabla) = dashos::asignaciones::pedir_tabla(SESIONES) else {
+        // Sin tabla de nombres (al arrancar, `sesiones` aún no contesta): la de fábrica, por la raíz 1 (el disco).
+        let (e, _, leidos, _, total) = ses.pedir_bytes(a::LEER_NOMBRE, 1, 0, kit::idioma::texto::MAX_FICHERO as u64, alloc::format!("Prefs/Env-Archive/{}", fichero).as_bytes());
+        return match e {
+            a::BIEN if leidos == total => Ok(ses.ventana()[..leidos as usize].to_vec()),
+            a::BIEN => Err("demasiado grande".into()),
+            a::NO_EXISTE => Err("no hay".into()),
+            e => Err(alloc::format!("la de fábrica no se deja leer ({})", e)),
         };
-        return Ok(Apariencia { oscuro, color: DEL_FONDO, fondo: Some(DelFondo { semilla, esquemas }) });
+    };
+    let mut fs = PorSesion(&ses);
+    let mut l = idiomas::PorAsignaciones { fs: &mut fs, tabla: &tabla };
+    for asignacion in ["ENV", "ENVARC"] {
+        let camino = alloc::format!("{}:{}", asignacion, fichero);
+        match idiomas::Lector::leer(&mut l, &camino, kit::idioma::texto::MAX_FICHERO) {
+            Ok((b, _)) => return Ok(b),
+            Err(idiomas::Falta::NoExiste) => {}
+            Err(idiomas::Falta::Otra(e)) => return Err(alloc::format!("{} no se deja leer ({})", camino, e)),
+        }
     }
-    let color = partes.next().and_then(|c| COLORES.iter().position(|x| x.0.to_lowercase() == c)).ok_or("no se entiende")?;
-    if partes.next().is_some() {
-        return Err("no se entiende");
-    }
-    Ok(Apariencia { oscuro, color, fondo: None })
+    Err("no hay".into())
 }
 
-/// Guarda la apariencia en `Prefs/apariencia`. El estado y los bytes.
-fn guardar_apariencia(ap: &Apariencia) -> (i32, usize) {
-    let mut texto = match (ap.color, ap.fondo) {
-        (DEL_FONDO, Some(f)) => {
-            let mut t = alloc::format!("{} fondo {:06x}", ap.modo(), f.semilla & 0xff_ffff);
-            for c in f.esquemas {
-                t.push_str(&alloc::format!(" {:06x}", c & 0xff_ffff));
-            }
-            t
-        }
-        (DEL_FONDO, None) => alloc::format!("{} fondo", ap.modo()),
-        _ => alloc::format!("{} {}", ap.modo(), COLORES[ap.color.min(COLORES.len() - 1)].0.to_lowercase()),
+/// La apariencia de su texto. `Err` con el porqué.
+fn apariencia_de_texto(bytes: &[u8]) -> Result<Apariencia, String> {
+    let x = kit::idioma::texto::Ajustes::leer(bytes).map_err(|_| String::from("no es texto"))?;
+    let (modo, acento) = (x.valor("modo"), x.valor("acento"));
+    if modo.is_none() && acento.is_none() {
+        // Vacío o solo comentarios (también a medio escribir: el aviso siguiente trae lo demás): como si no estuviera.
+        return Err("no hay".into());
+    }
+    let oscuro = match modo.unwrap_or("claro") {
+        "claro" => false,
+        "oscuro" => true,
+        otro => return Err(alloc::format!("modo {:?} no es claro ni oscuro", otro)),
     };
-    texto.push('\n');
-    guardar_prefs(FICHERO_APARIENCIA, texto.as_bytes())
+    let acento = acento.unwrap_or("fondo");
+    if acento != "fondo" {
+        let color = COLORES.iter().position(|c| c.0.eq_ignore_ascii_case(acento)).ok_or_else(|| alloc::format!("acento {:?} no es ninguno", acento))?;
+        return Ok(Apariencia { oscuro, color, fondo: None });
+    }
+    // La paleta del fondo, con lo calculado si está entero (si no, se calcula al usarla).
+    let fondo = x.valor("semilla").and_then(hex6).map(|semilla| {
+        let resto: Option<Vec<u32>> = x.valor("esquemas").unwrap_or("").split_whitespace().map(hex6).collect();
+        let esquemas = match resto.and_then(|v| <[u32; kit::tema::ESQUEMAS]>::try_from(v).ok()) {
+            Some(e) => e,
+            None => kit::tema::esquemas(semilla),
+        };
+        DelFondo { semilla, esquemas }
+    });
+    Ok(Apariencia { oscuro, color: DEL_FONDO, fondo })
+}
+
+/// La apariencia en uso (`ENV:`) o, sin ella, la guardada o la de fábrica. `Err` con el porqué ("no hay").
+fn leer_apariencia() -> Result<Apariencia, String> {
+    apariencia_de_texto(&leer_ajuste(FICHERO_TEMA)?)
+}
+
+/// El texto de la apariencia, sobre el que había (`antes`, si es texto: sus comentarios y lo demás se quedan).
+fn texto_de_apariencia(ap: &Apariencia, antes: Option<&[u8]>) -> Vec<u8> {
+    use kit::idioma::texto::Ajustes;
+    let mut x = antes.and_then(|b| Ajustes::leer(b).ok()).unwrap_or_else(|| {
+        let mut x = Ajustes::nuevo();
+        x.comentar(CABECERA_TEMA);
+        x
+    });
+    let _ = x.poner("modo", ap.modo());
+    match (ap.color, ap.fondo) {
+        (DEL_FONDO, f) => {
+            let _ = x.poner("acento", "fondo");
+            match f {
+                Some(f) => {
+                    let _ = x.poner("semilla", &alloc::format!("{:06x}", f.semilla & 0xff_ffff));
+                    let colores: Vec<String> = f.esquemas.iter().map(|c| alloc::format!("{:06x}", c & 0xff_ffff)).collect();
+                    let _ = x.poner("esquemas", &colores.join(" "));
+                }
+                None => {
+                    x.quitar("semilla");
+                    x.quitar("esquemas");
+                }
+            }
+        }
+        (k, _) => {
+            let _ = x.poner("acento", &COLORES[k.min(COLORES.len() - 1)].0.to_lowercase());
+            x.quitar("semilla");
+            x.quitar("esquemas");
+        }
+    }
+    x.texto().into_bytes()
+}
+
+/// Escribe `bytes` en `ENV:<fichero>` (lo crea, con su cajón, si no está). Los bytes, o el porqué ("sin sesión" si no
+/// hay `ENV:`: antes de entrar nadie).
+fn escribir_env(fichero: &str, bytes: &[u8]) -> Result<usize, String> {
+    use dashos::asignaciones as asig;
+    use dashos::protocolo::archivos as a;
+    let tabla = asig::pedir_tabla(SESIONES).ok_or_else(|| String::from("sin tabla de nombres"))?;
+    let ses = Sesion::abrir().ok_or_else(|| String::from("sin servicio de archivos"))?;
+    if bytes.len() > ses.ventana().len() {
+        return Err("demasiado grande".into());
+    }
+    let mut fs = PorSesion(&ses);
+    let camino = alloc::format!("ENV:{}", fichero);
+    // Sin `ENV:` (antes de entrar nadie, o tras salir) no hay dónde.
+    if asig::mirar(&mut fs, &tabla, b"ENV:").is_err() {
+        return Err("sin sesión".into());
+    }
+    let malo = |e: i32| alloc::format!("{} ({})", camino, e);
+    // Los cajones de delante.
+    if let Some((cajones, _)) = fichero.rsplit_once('/') {
+        let mut c = String::from("ENV:");
+        for (k, parte) in cajones.split('/').enumerate() {
+            if k > 0 {
+                c.push('/');
+            }
+            c.push_str(parte);
+            match asig::abrir(&mut fs, &tabla, c.as_bytes()) {
+                Ok((r, _)) => {
+                    ses.pedir(a::CERRAR, r.asa, 0, 0, "");
+                }
+                Err(a::NO_EXISTE) => {
+                    let (r, _) = asig::crear(&mut fs, &tabla, c.as_bytes(), a::CAJON).map_err(malo)?;
+                    ses.pedir(a::CERRAR, r.asa, 0, 0, "");
+                }
+                Err(e) => return Err(malo(e)),
+            }
+        }
+    }
+    let asa = match asig::abrir(&mut fs, &tabla, camino.as_bytes()) {
+        Ok((r, _)) => {
+            let (e, ..) = ses.pedir(a::TAMANO, r.asa, 0, 0, "");
+            if e != a::BIEN {
+                ses.pedir(a::CERRAR, r.asa, 0, 0, "");
+                return Err(malo(e));
+            }
+            r.asa
+        }
+        Err(a::NO_EXISTE) => asig::crear(&mut fs, &tabla, camino.as_bytes(), a::FICHERO).map_err(malo)?.0.asa,
+        Err(e) => return Err(malo(e)),
+    };
+    ses.ventana()[..bytes.len()].copy_from_slice(bytes);
+    let (e, _, escritos, _, _) = ses.pedir(a::ESCRIBIR, asa, 0, bytes.len() as u64, "");
+    ses.pedir(a::CERRAR, asa, 0, 0, "");
+    if e != a::BIEN || escritos as usize != bytes.len() {
+        return Err(malo(if e != a::BIEN { e } else { a::LLENO }));
+    }
+    Ok(bytes.len())
+}
+
+/// S10, "Dónde van los menús de un programa" (`docs/bitacoras/menus.md`): el ajuste de todo el sistema es
+/// `Escritorio/menus` de `ENV:` (en uso) y `ENVARC:` (guardado), clave `sitio`: `dentro` (de serie, una fila en cada
+/// ventana) o `barra` (los del programa activo en la barra de arriba, como en el Amiga). El centro lo aplica en marcha:
+/// se lo dice al compositor, que lo reparte a todos los programas y a la barra. La misma clave que escribe la orden
+/// `Ajuste menus`.
+const FICHERO_MENUS: &str = "Escritorio/menus";
+const CABECERA_MENUS: &str = "Dónde van los menús de los programas (Ajustes > Escritorio; la orden `Ajuste menus`). Este fichero manda.\nsitio: dentro (una fila en cada ventana) o barra (los del programa activo en la barra de arriba, como en el Amiga).";
+const SITIO_DENTRO: u32 = 0;
+const SITIO_BARRA: u32 = 1;
+/// El sitio de los menús que tiene el compositor ahora (lo último que se le puso).
+static MENUS_EN_USO: AtomicU32 = AtomicU32::new(SITIO_DENTRO);
+
+/// El sitio de los menús de `ENV:` (o el guardado, o el de fábrica). `Err` con el porqué ("no hay" si no está).
+fn leer_sitio_menus() -> Result<u32, String> {
+    let bytes = leer_ajuste(FICHERO_MENUS)?;
+    let x = kit::idioma::texto::Ajustes::leer(&bytes).map_err(|_| String::from("no es texto"))?;
+    match x.valor("sitio") {
+        None => Err("no hay".into()),
+        Some(v) if v.eq_ignore_ascii_case("dentro") => Ok(SITIO_DENTRO),
+        Some(v) if v.eq_ignore_ascii_case("barra") => Ok(SITIO_BARRA),
+        Some(v) => Err(alloc::format!("sitio {:?} no es dentro ni barra", v)),
+    }
+}
+
+/// Dice al compositor dónde van los menús, con una conexión de un momento. 0 si lo hizo; -1 si no.
+fn poner_menus_en_compositor(sitio: u32) -> i32 {
+    const MENUS_OBJ: u32 = 45;
+    const SYNC: u32 = 44;
+    let mut conexion = None;
+    for _ in 0..20 {
+        if let Some(mut c) = Cliente::conectar() {
+            if let Some(g) = c.globales() {
+                conexion = Some((c, g));
+                break;
+            }
+            adios_al_compositor();
+        }
+        dashos::dormir_us(50_000);
+    }
+    let Some((mut c, globales)) = conexion else { return -1 };
+    let Some(gm) = globales.iter().find(|g| g.1 == "dashos_menus_v1").map(|g| g.0) else {
+        adios_al_compositor();
+        return -1;
+    };
+    let mut e = Escritor::new();
+    e.empezar(REGISTRO, wl_registry::req::BIND).uint(gm).texto(Some("dashos_menus_v1")).uint(1).uint(MENUS_OBJ).fin();
+    e.empezar(MENUS_OBJ, wayland::tablas::dashos_menus_v1::req::PONER_SITIO).uint(sitio).fin();
+    e.empezar(1, wl_display::req::SYNC).uint(SYNC).fin();
+    c.mandar(&e);
+    while let Some((o, orden, _)) = c.evento() {
+        if o == SYNC && orden == wayland::tablas::wl_callback::ev::DONE {
+            adios_al_compositor();
+            MENUS_EN_USO.store(sitio, Ordering::Relaxed);
+            return 0;
+        }
+    }
+    adios_al_compositor();
+    -1
+}
+
+/// Ajustes > Escritorio: el otro sitio para los menús, en `ENV:` (sobre lo que había), guardado en `ENVARC:` y puesto
+/// en el compositor. Lo que pasó, para la consola.
+fn cambiar_sitio_menus() -> String {
+    use kit::idioma::texto::Ajustes;
+    let nuevo = if MENUS_EN_USO.load(Ordering::Relaxed) == SITIO_BARRA { SITIO_DENTRO } else { SITIO_BARRA };
+    let antes = leer_ajuste(FICHERO_MENUS).ok();
+    let mut x = antes.as_deref().and_then(|b| Ajustes::leer(b).ok()).unwrap_or_else(|| {
+        let mut x = Ajustes::nuevo();
+        x.comentar(CABECERA_MENUS);
+        x
+    });
+    let _ = x.poner("sitio", if nuevo == SITIO_BARRA { "barra" } else { "dentro" });
+    let usado = escribir_env(FICHERO_MENUS, x.texto().as_bytes());
+    let guardado = if usado.is_ok() { guardar_en_envarc(FICHERO_MENUS) } else { -1 };
+    let puesto = poner_menus_en_compositor(nuevo);
+    alloc::format!(
+        "en ENV: {}; guardado: {}; en el compositor: {}",
+        match usado {
+            Ok(n) => alloc::format!("{} bytes", n),
+            Err(e) => e,
+        },
+        guardado,
+        if puesto == 0 { "sí" } else { "no" }
+    )
+}
+
+/// Los menús de `ENV:`, si son otros que los que tiene el compositor (lo llaman el arranque y los avisos de cambio).
+/// Sin ajuste (o tras salir de la sesión), los de serie: dentro.
+fn aplicar_sitio_menus(de_donde: &str) {
+    let sitio = match leer_sitio_menus() {
+        Ok(s) => s,
+        Err(porque) if porque == "no hay" => SITIO_DENTRO,
+        Err(porque) => {
+            println!("  [centro] {}: {}; los menús se quedan donde están", FICHERO_MENUS, porque);
+            return;
+        }
+    };
+    if sitio != MENUS_EN_USO.load(Ordering::Relaxed) {
+        let puesto = poner_menus_en_compositor(sitio);
+        println!("  [centro] menús en marcha: {}, de {}; en el compositor: {}", if sitio == SITIO_BARRA { "en la barra" } else { "dentro de las ventanas" }, de_donde, if puesto == 0 { "sí" } else { "no" });
+    }
+}
+
+/// Usar: la apariencia en `ENV:` (sobre lo que había allí). Los bytes, o el porqué.
+fn usar_apariencia(ap: &Apariencia) -> Result<usize, String> {
+    let antes = leer_ajuste(FICHERO_TEMA).ok();
+    escribir_env(FICHERO_TEMA, &texto_de_apariencia(ap, antes.as_deref()))
+}
+
+/// Guardar: que `sesiones` copie `ENV:<fichero>` al `ENVARC:` del usuario (el centro no tiene su `Home:`). El estado.
+fn guardar_en_envarc(fichero: &str) -> i32 {
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut m = [0u8; 8 + 128];
+    let n = fichero.len().min(128);
+    m[0..4].copy_from_slice(&s::GUARDAR_ENV.to_le_bytes());
+    m[4..8].copy_from_slice(&(n as u32).to_le_bytes());
+    m[8..8 + n].copy_from_slice(&fichero.as_bytes()[..n]);
+    let mut r = [0u8; 4];
+    let leido = if dashos::canal_escribir(SESIONES, &m[..8 + n], &[suyo]) == 0 {
+        dashos::canal_leer_plazo(lectura, &mut r, &mut [], 5_000_000).0
+    } else {
+        dashos::cerrar(suyo);
+        -1
+    };
+    dashos::cerrar(lectura);
+    if leido == 4 { i32::from_le_bytes(r) } else { -1 }
 }
 
 /// C3: una petición al fondo de escritorio (por la llave 4), con una llave para la respuesta: (estado, semilla, ancho,
@@ -690,22 +998,23 @@ fn leer_panel() -> Result<Orden, &'static str> {
 /// Las filas de Apariencia: los dos modos, los colores y el del fondo, con una marca en lo elegido; y los fondos de
 /// `Fondos/`, con una marca en el que se ve (C3). También los nombres de los fondos, en el orden de las filas.
 fn apariencia(ap: &Apariencia, cajas: &Ajuste) -> (Vec<String>, Vec<String>) {
-    let marca = |si: bool| if si { " · elegido" } else { "" };
-    let mut l = alloc::vec![alloc::format!("Modo claro{}", marca(!ap.oscuro)), alloc::format!("Modo oscuro{}", marca(ap.oscuro))];
-    l.extend(COLORES.iter().enumerate().map(|(k, c)| alloc::format!("Color fijo {}{}", c.0.to_lowercase(), marca(k == ap.color))));
-    l.push(alloc::format!("Paleta del fondo{}", marca(ap.color == DEL_FONDO)));
+    let marca = |si: bool| if si { alloc::format!(" · {}", tr(32, "elegido")) } else { String::new() };
+    let mut l = alloc::vec![alloc::format!("{}{}", tr(33, "Modo claro"), marca(!ap.oscuro)), alloc::format!("{}{}", tr(34, "Modo oscuro"), marca(ap.oscuro))];
+    l.extend((0..COLORES.len()).map(|k| alloc::format!("{}{}", trf(35, "Color fijo {}", &[&kit::tema::nombre_acento(k).to_lowercase()]), marca(k == ap.color))));
+    l.push(alloc::format!("{}{}", tr(36, "Paleta del fondo"), marca(ap.color == DEL_FONDO)));
     // S26: los programas de las cajas (Amiga, Linux), con el tema de DashOS o con el suyo. Las excepciones por caja y
     // por programa van en `Prefs/cajas`; aquí se dice si las hay.
     let excepciones = cajas.cajas.len() + cajas.programas.len();
-    let mas = if excepciones > 0 { alloc::format!(" ({} excepciones)", excepciones) } else { String::new() };
-    l.push(alloc::format!("Programas de las cajas: como DashOS{}{}", marca(cajas.general == Aspecto::Dashos), if cajas.general == Aspecto::Dashos { mas.as_str() } else { "" }));
-    l.push(alloc::format!("Programas de las cajas: originales{}{}", marca(cajas.general == Aspecto::Original), if cajas.general == Aspecto::Original { mas.as_str() } else { "" }));
-    l.push(alloc::format!("Ampliar ventanas Amiga: {}", nombre_escala(cajas.escala_de_caja(Caja::Amiga))));
-    l.push(alloc::format!("Memoria de la caja Amiga: {} MB", cajas.memoria_de_caja(Caja::Amiga)));
+    let mas = if excepciones > 0 { alloc::format!(" {}", trf(37, "({} excepciones)", &[&excepciones])) } else { String::new() };
+    l.push(alloc::format!("{}{}{}", tr(38, "Programas de las cajas: como DashOS"), marca(cajas.general == Aspecto::Dashos), if cajas.general == Aspecto::Dashos { mas.as_str() } else { "" }));
+    l.push(alloc::format!("{}{}{}", tr(39, "Programas de las cajas: originales"), marca(cajas.general == Aspecto::Original), if cajas.general == Aspecto::Original { mas.as_str() } else { "" }));
+    l.push(trf(40, "Ampliar ventanas Amiga: {}", &[&escala_visible(cajas.escala_de_caja(Caja::Amiga))]));
+    l.push(trf(41, "Memoria de la caja Amiga: {} MB", &[&cajas.memoria_de_caja(Caja::Amiga)]));
     let lista = fondos();
     let (estado, _, _, _, _, visto) = al_fondo("semilla");
     for f in &lista {
-        l.push(alloc::format!("Fondo: {}{}", f, if estado == 0 && *f == visto { " · en pantalla" } else { "" }));
+        let en_pantalla = if estado == 0 && *f == visto { alloc::format!(" · {}", tr(42, "en pantalla")) } else { String::new() };
+        l.push(alloc::format!("{}{}", trf(43, "Fondo: {}", &[f]), en_pantalla));
     }
     (l, lista)
 }
@@ -730,26 +1039,26 @@ struct Pantalla {
 fn pantallas(ps: &[Pantalla]) -> Vec<String> {
     let mut ps: Vec<&Pantalla> = ps.iter().filter(|p| p.ancho > 0).collect();
     if ps.is_empty() {
-        return alloc::vec![String::from("El compositor no ha dicho nada de la pantalla")];
+        return alloc::vec![String::from(tr(44, "El compositor no ha dicho nada de la pantalla"))];
     }
     ps.sort_by_key(|p| (p.x, p.y));
     let hz = |mhz: i32| alloc::format!("{},{:03} Hz", mhz / 1000, mhz % 1000);
     let mut l: Vec<String> = if ps.len() == 1 {
-        alloc::vec![alloc::format!("Pantalla {}: {} × {}", ps[0].nombre, ps[0].ancho, ps[0].alto)]
+        alloc::vec![trf(45, "Pantalla {}: {} × {}", &[&ps[0].nombre, &ps[0].ancho, &ps[0].alto])]
     } else {
         let n = ps.len();
-        let sitio = |k: usize| if k == 0 { "a la izquierda" } else if k + 1 == n { "a la derecha" } else { "en medio" };
-        ps.iter().enumerate().map(|(k, p)| alloc::format!("Pantalla {}: {} × {}, {}", p.nombre, p.ancho, p.alto, sitio(k))).collect()
+        let sitio = |k: usize| if k == 0 { tr(46, "a la izquierda") } else if k + 1 == n { tr(47, "a la derecha") } else { tr(48, "en medio") };
+        ps.iter().enumerate().map(|(k, p)| trf(49, "Pantalla {}: {} × {}, {}", &[&p.nombre, &p.ancho, &p.alto, &sitio(k)])).collect()
     };
     if ps.iter().all(|p| p.mhz == ps[0].mhz) {
-        l.push(alloc::format!("Frecuencia: {}", hz(ps[0].mhz)));
+        l.push(trf(50, "Frecuencia: {}", &[&hz(ps[0].mhz)]));
     } else {
-        l.push(alloc::format!("Frecuencias: {}", ps.iter().map(|p| hz(p.mhz)).collect::<Vec<_>>().join(", ")));
+        l.push(trf(51, "Frecuencias: {}", &[&ps.iter().map(|p| hz(p.mhz)).collect::<Vec<_>>().join(", ")]));
     }
     if ps.iter().all(|p| p.escala == ps[0].escala) {
-        l.push(alloc::format!("Escala: {}", ps[0].escala.max(1)));
+        l.push(trf(52, "Escala: {}", &[&ps[0].escala.max(1)]));
     } else {
-        l.push(alloc::format!("Escalas: {}", ps.iter().map(|p| alloc::format!("{}", p.escala.max(1))).collect::<Vec<_>>().join(", ")));
+        l.push(trf(53, "Escalas: {}", &[&ps.iter().map(|p| alloc::format!("{}", p.escala.max(1))).collect::<Vec<_>>().join(", ")]));
     }
     l
 }
@@ -757,17 +1066,17 @@ fn pantallas(ps: &[Pantalla]) -> Vec<String> {
 /// Lo de "Acerca de": una línea por dato.
 fn acerca() -> Vec<String> {
     let mut l = Vec::new();
-    l.push(alloc::format!("DashOS, versión {}", env!("CARGO_PKG_VERSION")));
+    l.push(trf(54, "DashOS, versión {}", &[&env!("CARGO_PKG_VERSION")]));
     let s = dashos::ahora_us() / 1_000_000;
-    l.push(alloc::format!("Encendido hace {} min {} s", s / 60, s % 60));
+    l.push(trf(55, "Encendido hace {} min {} s", &[&(s / 60), &(s % 60)]));
     let ns = dashos::hora_ns();
-    l.push(if ns > 0 { alloc::format!("Fecha y hora: {}", fecha(ns)) } else { String::from("Fecha y hora: no se sabe") });
+    l.push(if ns > 0 { trf(56, "Fecha y hora: {}", &[&fecha(ns)]) } else { String::from(tr(57, "Fecha y hora: no se sabe")) });
     // Cuántos procesos: la cabecera de la primera página de `PROCESOS` (cuántos van y cuántos hay).
     let mut p = [0u8; 12];
     p[0..4].copy_from_slice(&s::PROCESOS.to_le_bytes());
     let mut r = [0u8; MAX_DATOS];
     if a_sesiones(&p, &mut r) >= 8 {
-        l.push(alloc::format!("Procesos en marcha: {}", u32::from_le_bytes(r[4..8].try_into().unwrap())));
+        l.push(trf(58, "Procesos en marcha: {}", &[&u32::from_le_bytes(r[4..8].try_into().unwrap())]));
     }
     // La memoria: páginas de 4 KB en total y libres, y lo que ocupa el núcleo (los contadores 5, 6 y 7 de la llamada
     // 29, que no dicen nada de otros procesos).
@@ -778,8 +1087,8 @@ fn acerca() -> Vec<String> {
     if total > 0 && libres <= total {
         let mb = |paginas: u64| paginas * 4096 * 10 / (1 << 20);
         let d = |x: u64| alloc::format!("{},{}", x / 10, x % 10);
-        l.push(alloc::format!("Memoria en uso: {} MB de {} MB (el núcleo, {} MB, y su montón, {} MB; al arrancar ya había {} MB reservados)",
-            d(mb(total - libres)), mb(total) / 10, d(nucleo * 10 / (1 << 20)), d(mb(monton)), d(mb(arranque))));
+        l.push(trf(59, "Memoria en uso: {} MB de {} MB (el núcleo, {} MB, y su montón, {} MB; al arrancar ya había {} MB reservados)",
+            &[&d(mb(total - libres)), &(mb(total) / 10), &d(nucleo * 10 / (1 << 20)), &d(mb(monton)), &d(mb(arranque))]));
     }
     // Lo que tiene cobrado el grupo de cada proceso que se ve (`MEMORIA`, por páginas): los tres que más, en la ventana;
     // la lista entera, en la consola.
@@ -805,7 +1114,7 @@ fn acerca() -> Vec<String> {
     let mb = |b: u64| { let d = b * 10 / (1 << 20); alloc::format!("{},{} MB", d / 10, d % 10) };
     if !gasto.is_empty() {
         let tres: Vec<String> = gasto.iter().take(3).map(|(n, b)| alloc::format!("{} {}", n, mb(*b))).collect();
-        l.push(alloc::format!("Lo que más gasta: {}", tres.join(", ")));
+        l.push(trf(60, "Lo que más gasta: {}", &[&tres.join(", ")]));
         let todo: Vec<String> = gasto.iter().map(|(n, b)| alloc::format!("{} {}", n, mb(*b))).collect();
         let suma: u64 = gasto.iter().map(|g| g.1).sum();
         println!("  [centro] memoria por proceso ({} procesos, {} en total): {}", gasto.len(), mb(suma), todo.join("; "));
@@ -824,12 +1133,23 @@ struct VistaMonitor {
 
 const ORDENES: [&str; 4] = ["CPU", "memoria", "nombre", "usuario"];
 
+/// El orden `k` de `ORDENES`, como se ve en la cabecera: en el idioma del usuario.
+fn nombre_orden(k: usize) -> &'static str {
+    match k {
+        0 => tr(61, "CPU"),
+        1 => tr(62, "memoria"),
+        2 => tr(63, "nombre"),
+        3 => tr(64, "usuario"),
+        _ => "",
+    }
+}
+
 /// El nombre de un usuario, provisional como las cuentas de `sesiones` (luego, `Estado:Cuentas/usuarios`).
 fn usuario(uid: u32) -> String {
     match uid {
         1000 => String::from("Ana"),
         1001 => String::from("Carla"),
-        u if u < s::PRIMERA_PERSONA => String::from("sistema"),
+        u if u < s::PRIMERA_PERSONA => String::from(tr(65, "sistema")),
         u => alloc::format!("{}", u),
     }
 }
@@ -888,9 +1208,9 @@ fn ordenar(v: &mut VistaMonitor) {
 /// Las filas del monitor: la cabecera (Intro cambia el orden) y una por proceso, en columnas separadas por tabuladores.
 fn lineas_monitor(v: &VistaMonitor) -> Vec<String> {
     // Cabe en la ventana de siempre (560 de ancho): el usuario y el grupo van con el nombre; CPU y memoria, en columnas.
-    let mut l = alloc::vec![alloc::format!("Por {}\tCPU\tMemoria", ORDENES[v.orden])];
+    let mut l = alloc::vec![trf(66, "Por {}\tCPU\tMemoria", &[&nombre_orden(v.orden)])];
     if v.sin_datos {
-        l.push(String::from("sesiones no contesta"));
+        l.push(String::from(tr(67, "sesiones no contesta")));
     }
     for x in &v.filas {
         let nombre = match x.e.pastilla() {
@@ -903,7 +1223,7 @@ fn lineas_monitor(v: &VistaMonitor) -> Vec<String> {
             monitor::M_SISTEMA | monitor::M_OTROS => String::new(),
             _ => {
                 let u = if x.e.gid == x.e.uid { usuario(x.e.uid) } else { alloc::format!("{}/{}", usuario(x.e.uid), x.e.gid) };
-                if x.e.escritorio { alloc::format!(" ({}, escritorio)", u) } else { alloc::format!(" ({})", u) }
+                if x.e.escritorio { alloc::format!(" {}", trf(68, "({}, escritorio)", &[&u])) } else { alloc::format!(" ({})", u) }
             }
         };
         l.push(alloc::format!("{}{}\t{}\t{}", nombre.replace(['|', '\t'], " "), quien, monitor::por_ciento(x.cpu), monitor::bytes(x.e.memoria)));
@@ -923,20 +1243,47 @@ fn leer_ajustes_monitor() -> monitor::Ajustes {
 }
 
 fn si_no(b: bool) -> &'static str {
-    if b { "sí" } else { "no" }
+    if b { tr(69, "sí") } else { tr(70, "no") }
 }
 
-/// Las filas del panel del escritorio: enseñarlo, la esquina, el intervalo, las gráficas y un bloque por fila.
+/// La esquina `k` de `monitor::ESQUINAS`, como se ve: en el idioma del usuario.
+fn nombre_esquina(k: usize) -> &'static str {
+    match k {
+        0 => tr(71, "arriba a la izquierda"),
+        1 => tr(72, "arriba a la derecha"),
+        2 => tr(73, "abajo a la izquierda"),
+        3 => tr(74, "abajo a la derecha"),
+        _ => "",
+    }
+}
+
+/// El bloque `k` de `monitor::BLOQUES`, como se ve: en el idioma del usuario.
+fn nombre_bloque(k: usize) -> &'static str {
+    match k {
+        0 => tr(75, "Hora y fecha"),
+        1 => tr(76, "CPU por núcleo"),
+        2 => tr(77, "Memoria"),
+        3 => tr(78, "Los que más gastan"),
+        4 => tr(3, "Discos"),
+        5 => tr(79, "Red"),
+        _ => "",
+    }
+}
+
+/// Las filas de Escritorio: (S10) dónde van los menús de los programas; y las del panel del fondo: enseñarlo, la
+/// esquina, el intervalo, las gráficas y un bloque por fila.
 fn lineas_panel(aj: &monitor::Ajustes) -> Vec<String> {
-    let esquina = monitor::ESQUINAS.iter().find(|e| e.0 == aj.esquina).map_or("", |e| e.2);
+    let esquina = monitor::ESQUINAS.iter().position(|e| e.0 == aj.esquina).map_or("", nombre_esquina);
+    let sitio = if MENUS_EN_USO.load(Ordering::Relaxed) == SITIO_BARRA { tr(103, "en la barra de arriba") } else { tr(102, "en la ventana") };
     let mut l = alloc::vec![
-        alloc::format!("Enseñar el panel en el fondo: {}", si_no(aj.mostrar)),
-        alloc::format!("Esquina: {}", esquina),
-        alloc::format!("Cada cuánto se mide: {} s", aj.intervalo),
-        alloc::format!("Gráficas: {}", si_no(aj.graficas)),
+        trf(101, "Menús de los programas: {}", &[&sitio]),
+        trf(80, "Enseñar el panel en el fondo: {}", &[&si_no(aj.mostrar)]),
+        trf(81, "Esquina: {}", &[&esquina]),
+        trf(82, "Cada cuánto se mide: {} s", &[&aj.intervalo]),
+        trf(83, "Gráficas: {}", &[&si_no(aj.graficas)]),
     ];
-    for (k, b) in monitor::BLOQUES.iter().enumerate() {
-        l.push(alloc::format!("{}: {}", b.1, si_no(aj.bloques & (1 << k) != 0)));
+    for k in 0..monitor::BLOQUES.len() {
+        l.push(alloc::format!("{}: {}", nombre_bloque(k), si_no(aj.bloques & (1 << k) != 0)));
     }
     l
 }
@@ -961,29 +1308,34 @@ fn cambiar_panel(aj: &mut monitor::Ajustes, k: usize) -> Option<String> {
     let (guardado, bytes) = guardar_prefs(FICHERO_MONITOR, texto.as_bytes());
     let releido = leer_ajustes_monitor() == *aj;
     let fondo = al_fondo("monitor").0;
-    Some(alloc::format!("guardado: {} ({} bytes); releído: {}; el fondo: {}", guardado, bytes, si_no(releido), fondo))
+    Some(alloc::format!("guardado: {} ({} bytes); releído: {}; el fondo: {}", guardado, bytes, if releido { "sí" } else { "no" }, fondo))
 }
 
 /// Las filas de la lista: "programa · servicio". Sin '|', que separa las filas (un nombre así no lo da `inicio`).
 /// Sin nada concedido, una fila que lo dice (Quitar no hace nada en ella: no hay qué).
 fn filas(lista: &[(String, String)]) -> String {
     if lista.is_empty() {
-        return String::from(NADA_CONCEDIDO);
+        return String::from(tr(84, "Ningún programa tiene permisos concedidos"));
     }
     let f: Vec<String> = lista.iter().map(|(p, s)| alloc::format!("{} · {}", p, s).replace('|', "¦")).collect();
     f.join("|")
 }
 
 /// La ventana, abierta en la categoría `categoria`, hasta que el usuario la cierra.
-fn ventana(categoria: usize) {
-    ventana_dentro(categoria);
+fn ventana(categoria: usize, uso: &mut Apariencia) {
+    // S27: cerrar es Guardar. Lo que se cambió en Apariencia y no se guardó ni se dejó en uso (Usar), al cerrar se guarda.
+    let mut pendiente = false;
+    ventana_dentro(categoria, uso, &mut pendiente);
+    if pendiente {
+        println!("  [centro] al cerrar, la apariencia se guarda en ENVARC:: {}", guardar_en_envarc(FICHERO_TEMA));
+    }
     adios_al_compositor();
     dashos::memoria_quitar(VA);
     dashos::memoria_quitar(VA_2);
     println!("  [centro] cerrado");
 }
 
-fn ventana_dentro(categoria: usize) -> Option<()> {
+fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) -> Option<()> {
     let mut c = Cliente::conectar()?;
     let globales = c.globales()?;
     let global = |n: &str| globales.iter().find(|g| g.1 == n).map(|g| g.0);
@@ -1001,7 +1353,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     let mut pantalla: Vec<Pantalla> = Vec::new();
     let mut lista = concedidos();
     let mut arbol = Arbol::new();
-    let nombres: Vec<&str> = CATEGORIAS.iter().map(|c| c.1).collect();
+    let nombres: Vec<&str> = (0..CATEGORIAS.len()).map(nombre_categoria).collect();
     let lado = arbol.crear(Lista, &[
         (atr::OPCIONES, Valor::Texto(nombres.join("|"))),
         (atr::FILAS, Valor::Int(CATEGORIAS.len() as i64)),
@@ -1014,19 +1366,24 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     let titulo = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new())), (atr::ESTILO, Valor::Int(1))]);
     let explica = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new())), (atr::ESTILO, Valor::Int(2))]);
     let permisos = arbol.crear(Lista, &[(atr::OPCIONES, Valor::Texto(String::new())), (atr::FILAS, Valor::Int(4)), (atr::VALOR, Valor::Int(-1))]);
-    let quitar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Quitar".into())), (atr::ESTILO, Valor::Int(1))]);
-    let cerrar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cerrar".into())), (atr::ESTILO, Valor::Int(2))]);
+    let quitar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto(tr(85, "Quitar").into())), (atr::ESTILO, Valor::Int(1))]);
+    let cerrar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto(tr(86, "Cerrar").into())), (atr::ESTILO, Valor::Int(2))]);
+    // Ajustes en texto: Usar y Cancelar (Guardar es el botón de Quitar en Apariencia), como en las Prefs del Amiga.
+    let usar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto(tr(97, "Usar").into())), (atr::ESTILO, Valor::Int(2))]);
+    let cancelar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto(tr(98, "Cancelar").into())), (atr::ESTILO, Valor::Int(2))]);
     let marca = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);
     arbol.notificar(quitar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("quitar".into())));
     arbol.notificar(permisos, atr::DOBLE, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("elegir".into())));
     arbol.notificar(cerrar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("cerrar".into())));
+    arbol.notificar(usar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("usar".into())));
+    arbol.notificar(cancelar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("cancelar".into())));
     // Un hueco delante: los botones, al final de la fila (Material 3).
     let hueco = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);
     let derecha = Hijo::Columna(alloc::vec![
         Hijo::Obj(titulo),
         Hijo::Obj(explica),
         Hijo::Obj(permisos),
-        Hijo::Fila(alloc::vec![Hijo::Obj(hueco), Hijo::Obj(quitar), Hijo::Obj(cerrar)]),
+        Hijo::Fila(alloc::vec![Hijo::Obj(hueco), Hijo::Obj(cancelar), Hijo::Obj(usar), Hijo::Obj(quitar), Hijo::Obj(cerrar)]),
     ]);
     let raiz = Hijo::Fila(alloc::vec![Hijo::Obj(lado), derecha]);
     let mut i = Interfaz::new(arbol, raiz, Tema::CLARO);
@@ -1036,17 +1393,10 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     i.foco = Some(permisos);
     // Lo de la derecha según la categoría.
     let mut cat = categoria;
-    // La apariencia guardada; si no hay o no se entiende, la de serie (claro, con la paleta del fondo).
-    let mut ap = match leer_apariencia() {
-        Ok(g) => {
-            println!("  [centro] apariencia guardada: {}, color {}", g.modo(), g.nombre());
-            g
-        }
-        Err(porque) => {
-            println!("  [centro] apariencia guardada: {}; se queda la de serie", porque);
-            Apariencia::DE_SERIE
-        }
-    };
+    // La apariencia en uso (la de `ENV:`, o la elegida antes de entrar nadie) y la de al abrir, para Cancelar.
+    let mut ap = *uso;
+    let al_abrir = *uso;
+    println!("  [centro] apariencia en uso: {}, color {}", ap.modo(), ap.nombre());
     // S26: el aspecto de los programas de las cajas; si no hay o no se entiende, el de serie (todo como DashOS).
     let mut cajas = match leer_cajas() {
         Ok(a) => a,
@@ -1071,29 +1421,36 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     let mut aj_panel = leer_ajustes_monitor();
     let poner = |i: &mut Interfaz, cat: usize, lista: &[(String, String)], reg: &[String]| {
         let (explicacion, contenido) = if cat == PERMISOS {
-            ("Lo que cada programa puede usar. Quitarlo lo revoca ya.", filas(lista))
+            (tr(87, "Lo que cada programa puede usar. Quitarlo lo revoca ya."), filas(lista))
         } else if cat == SEGURIDAD {
-            ("Lo que se ha negado y los fallos, lo último primero.", reg.join("|"))
+            (tr(88, "Lo que se ha negado y los fallos, lo último primero."), reg.join("|"))
         } else if cat == DISCOS {
-            ("Cuánto ocupa lo guardado.", reg.join("|"))
+            (tr(89, "Cuánto ocupa lo guardado."), reg.join("|"))
         } else if cat == APARIENCIA {
-            ("Modo, color y fondo. Intro o doble clic para elegir.", reg.join("|"))
+            (tr(90, "Modo, color y fondo. Intro o doble clic para elegir."), reg.join("|"))
         } else if cat == PANTALLAS {
-            ("Lo que dice el compositor de cada pantalla.", reg.join("|"))
+            (tr(91, "Lo que dice el compositor de cada pantalla."), reg.join("|"))
         } else if cat == MONITOR_SIS {
-            ("Lo tuyo con detalle; lo demás, sumado.", reg.join("|"))
+            (tr(92, "Lo tuyo con detalle; lo demás, sumado."), reg.join("|"))
         } else if cat == PANEL_FONDO {
-            ("El monitor del fondo. Intro cambia una fila.", reg.join("|"))
+            (tr(93, "Los menús y el monitor del fondo. Intro cambia una fila."), reg.join("|"))
         } else {
-            ("El sistema.", reg.join("|"))
+            (tr(94, "El sistema."), reg.join("|"))
         };
-        i.arbol.poner(titulo, atr::TEXTO, Valor::Texto(CATEGORIAS[cat].1.into()));
+        i.arbol.poner(titulo, atr::TEXTO, Valor::Texto(nombre_categoria(cat).into()));
         i.arbol.poner(explica, atr::TEXTO, Valor::Texto(explicacion.into()));
         i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(contenido));
         i.arbol.poner(permisos, atr::VALOR, Valor::Int(-1));
         i.arbol.poner(permisos, atr::PRIMERA, Valor::Int(0));
-        i.arbol.poner(quitar, atr::DESACTIVADO, Valor::Bool(cat != PERMISOS && cat != MONITOR_SIS));
-        i.arbol.poner(quitar, atr::TEXTO, Valor::Texto(if cat == MONITOR_SIS { "Cerrar proceso" } else { "Quitar" }.into()));
+        i.arbol.poner(quitar, atr::DESACTIVADO, Valor::Bool(cat != PERMISOS && cat != MONITOR_SIS && cat != APARIENCIA));
+        let texto_quitar = match cat {
+            MONITOR_SIS => tr(95, "Cerrar proceso"),
+            APARIENCIA => tr(99, "Guardar"),
+            _ => tr(85, "Quitar"),
+        };
+        i.arbol.poner(quitar, atr::TEXTO, Valor::Texto(texto_quitar.into()));
+        i.arbol.poner(usar, atr::DESACTIVADO, Valor::Bool(cat != APARIENCIA));
+        i.arbol.poner(cancelar, atr::DESACTIVADO, Valor::Bool(cat != APARIENCIA));
     };
     if cat == SEGURIDAD {
         lineas_registro = registro();
@@ -1151,7 +1508,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
         e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
         e.empezar(XDG, xdg_wm_base::req::GET_XDG_SURFACE).uint(XDG_SUPERFICIE).uint(SUPERFICIE).fin();
         e.empezar(XDG_SUPERFICIE, xdg_surface::req::GET_TOPLEVEL).uint(VENTANA).fin();
-        e.empezar(VENTANA, xdg_toplevel::req::SET_TITLE).texto(Some("Centro de control")).fin();
+        e.empezar(VENTANA, xdg_toplevel::req::SET_TITLE).texto(Some(tr(96, "Centro de control"))).fin();
         e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
         c.mandar(&e);
         let presentar = |c: &mut Cliente, i: &mut Interfaz, px: &mut [u32], (w, h): (i32, i32), adjuntar: Option<u32>| {
@@ -1362,12 +1719,21 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                         cambio = true;
                     }
                 }
+                Some("elegir") if cat == PANEL_FONDO && i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int) == 0 => {
+                    // S10: dónde van los menús: el otro sitio, en `ENV:` (se ve ya) y guardado.
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                    let r = cambiar_sitio_menus();
+                    lineas_registro = lineas_panel(&aj_panel);
+                    println!("  [centro] Escritorio: {}; {}", lineas_registro[0], r);
+                    i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                    cambio = true;
+                }
                 Some("elegir") if cat == PANEL_FONDO => {
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
                     let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
-                    if let Some(r) = usize::try_from(v).ok().and_then(|k| cambiar_panel(&mut aj_panel, k)) {
+                    if let Some(r) = usize::try_from(v - 1).ok().and_then(|k| cambiar_panel(&mut aj_panel, k)) {
                         lineas_registro = lineas_panel(&aj_panel);
-                        println!("  [centro] Panel del escritorio: {}; {}", lineas_registro[v as usize], r);
+                        println!("  [centro] Escritorio: {}; {}", lineas_registro[v as usize], r);
                         i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
                         cambio = true;
                     }
@@ -1514,17 +1880,60 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                             ap.mandar(&mut e, version_tema);
                             c.mandar(&e);
                         }
-                        let (guardado, bytes) = guardar_apariencia(&ap);
-                        // Y se relee, como al abrir la próxima vez.
-                        let releida = leer_apariencia().map(|g| g.guardable()) == Ok(ap.guardable());
-                        println!("  [centro] Apariencia: {}, color {}; guardada: {} ({} bytes); releída: {}", ap.modo(), ap.nombre(), guardado, bytes, if releida { "sí" } else { "no" });
+                        // Se ve ya y va a `ENV:` (en uso); Guardar, Usar o cerrar deciden si se guarda.
+                        *uso = ap;
+                        match usar_apariencia(&ap) {
+                            Ok(bytes) => {
+                                *pendiente = true;
+                                let releida = leer_apariencia().map(|g| g.guardable()) == Ok(ap.guardable());
+                                println!("  [centro] Apariencia: {}, color {}; en ENV: ({} bytes); releída: {}", ap.modo(), ap.nombre(), bytes, if releida { "sí" } else { "no" });
+                            }
+                            Err(porque) => println!("  [centro] Apariencia: {}, color {}; en uso ({}: no se guarda)", ap.modo(), ap.nombre(), porque),
+                        }
                         cambio = true;
                     }
+                }
+                // Ajustes en texto: Guardar (`ENV:` a `ENVARC:`, por `sesiones`), Usar (se queda en `ENV:`, sin guardar) y
+                // Cancelar (vuelve a como estaba al abrir).
+                Some("quitar") if cat == APARIENCIA => {
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                    let usado = usar_apariencia(&ap);
+                    let e = if usado.is_ok() { guardar_en_envarc(FICHERO_TEMA) } else { -1 };
+                    if e == 0 {
+                        *pendiente = false;
+                    }
+                    println!("  [centro] Apariencia: Guardar: {}{}", e, usado.err().map_or(String::new(), |p| alloc::format!(" ({})", p)));
+                }
+                Some("usar") if cat == APARIENCIA => {
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                    *pendiente = false;
+                    println!("  [centro] Apariencia: Usar: en ENV:, sin guardar");
+                }
+                Some("cancelar") if cat == APARIENCIA => {
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                    ap = al_abrir;
+                    *uso = ap;
+                    *pendiente = false;
+                    i.ctx.tema = ap.tema();
+                    (lineas_registro, lista_fondos) = apariencia(&ap, &cajas);
+                    i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                    if gt.is_some() {
+                        let mut e = Escritor::new();
+                        ap.mandar(&mut e, version_tema);
+                        c.mandar(&e);
+                    }
+                    let usado = usar_apariencia(&ap);
+                    println!("  [centro] Apariencia: Cancelar: vuelve a {}, color {} ({})", ap.modo(), ap.nombre(), usado.map_or_else(|p| p, |b| alloc::format!("{} bytes en ENV:", b)));
+                    cambio = true;
+                }
+                Some("usar") | Some("cancelar") => {
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
                 }
                 Some("elegir") if cat == DISCOS => {
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
                     let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
-                    if usize::try_from(v).ok().and_then(|v| lineas_registro.get(v)).is_some_and(|l| l == COMPROBAR) {
+                    // La acción es la última fila de Discos (lo que diga depende del idioma: se mira el sitio).
+                    if usize::try_from(v).is_ok_and(|v| v + 1 == lineas_registro.len()) {
                         let (estado, problemas) = comprobar_disco();
                         println!("  [centro] Comprobar el disco: {}, {} problemas", estado, problemas);
                         let linea = resultado_comprobar(estado, problemas);
@@ -1628,12 +2037,20 @@ fn panel_guardar(linea: &[u8]) -> i32 {
 /// C2: el modo pedido por el panel, aunque la ventana esté cerrada: con el color guardado, se pone en el compositor
 /// (una conexión de un momento) y, si se pudo, se guarda; si no, el disco no cambia (no dice algo que no se ve). El
 /// estado: 0, o -1 si no se pudo poner.
-fn aplicar_modo(oscuro: bool) -> i32 {
-    let ap = Apariencia { oscuro, ..leer_apariencia().unwrap_or(Apariencia::DE_SERIE) };
+fn aplicar_modo(oscuro: bool, uso: &mut Apariencia) -> i32 {
+    let ap = Apariencia { oscuro, ..*uso };
     if poner_en_compositor(&ap, None) != 0 {
         return -1;
     }
-    let (guardado, _) = guardar_apariencia(&ap);
+    *uso = ap;
+    // En `ENV:` y guardado en `ENVARC:` (el panel no tiene Usar). Sin sesión, solo en uso.
+    let guardado = match usar_apariencia(&ap) {
+        Ok(_) => guardar_en_envarc(FICHERO_TEMA),
+        Err(porque) => {
+            println!("  [centro] modo (lo pide el panel): {}", porque);
+            -2
+        }
+    };
     println!("  [centro] modo {} (lo pide el panel), guardado: {}", if oscuro { "oscuro" } else { "claro" }, guardado);
     0
 }
@@ -1696,13 +2113,165 @@ fn adios_al_compositor() {
     }
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Ajustes en texto (`docs/bitacoras/ajustes-texto.md`): el centro vigila `ENV:` con los avisos de cambio del servicio
+// de archivos (`VIGILAR`) y aplica lo que cambie sin reiniciar nada: el idioma (`ENV:Sys/locale`, o su IFF) y el tema
+// (`ENV:Escritorio/apariencia`, que reparte el compositor a todos, la barra incluida). Lo cambie quien lo cambie: la
+// orden `Ajuste`, un editor, otro programa.
+
+/// La marca con que llega lo que el centro se manda a sí mismo por "yo:centro" (la que le pone `inicio`).
+const MARCA_PROPIA: u64 = u64::MAX;
+/// Cada cuánto se intenta vigilar `ENV:` mientras no se puede (antes de entrar nadie, o tras salir).
+const CADA_VIGILAR_US: u64 = 2_000_000;
+/// Lo que se vigila: `ENV:` (para ver aparecer los cajones) y los cajones de los ajustes que aplica.
+const VIGILA: [&str; 3] = ["ENV:", "ENV:Sys", "ENV:Escritorio"];
+/// El tema en texto: `modo` (claro u oscuro) y `acento` (un color de `ACENTOS`, o `fondo`).
+const TEMA_TEXTO: &str = "ENV:Escritorio/apariencia";
+
+/// Las vigilancias de `ENV:`: su número en el servicio (0, sin poner) y el temporizador de reintentar.
+struct Vigila {
+    ids: [u32; 3],
+    temporizador: u32,
+    /// Lo último que se dijo de un tema de `ENV:` que no se entiende: no se repite en cada aviso.
+    dicho: Option<String>,
+}
+
+/// La llave "yo:centro" (para escribirse a sí mismo), o 0.
+fn yo() -> u32 {
+    dashos::llaves::Tabla::leer().buscar("yo:centro").unwrap_or(0)
+}
+
+impl Vigila {
+    fn nueva() -> Vigila {
+        Vigila { ids: [0; 3], temporizador: 0, dicho: None }
+    }
+
+    /// Pone las vigilancias que falten (las que se pueden: sin `ENV:` no hay ninguna). Si falta alguna, el temporizador
+    /// para reintentar; si están todas, sin él.
+    fn armar(&mut self) {
+        let yo = yo();
+        if let (Some(tabla), Some(ses), true) = (dashos::asignaciones::pedir_tabla(SESIONES), Sesion::abrir(), yo != 0) {
+            for (k, camino) in VIGILA.iter().enumerate() {
+                if self.ids[k] != 0 {
+                    continue;
+                }
+                let Ok((r, _)) = dashos::asignaciones::abrir(&mut PorSesion(&ses), &tabla, camino.as_bytes()) else { continue };
+                let puerta = dashos::llave_duplicar(yo, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, 0);
+                if puerta > 0 {
+                    let (e, id, _, _) = dashos::vigilar::vigilar(ARCHIVOS, ses.lectura, r.asa, puerta as u32, 2_000_000);
+                    if e == dashos::protocolo::archivos::BIEN {
+                        self.ids[k] = id;
+                        println!("  [centro] vigila {} (avisos de cambio)", camino);
+                    }
+                }
+                ses.pedir(dashos::protocolo::archivos::CERRAR, r.asa, 0, 0, "");
+            }
+        }
+        // Sin `ENV:` no hay que vigilar dentro; con él, el cajón que falte se vigila al aparecer (lo dice el de `ENV:`).
+        let falta_env = self.ids[0] == 0;
+        if falta_env && self.temporizador == 0 && yo != 0 {
+            let copia = dashos::llave_duplicar(yo, dashos::ESCRIBIR, 0);
+            if copia > 0 {
+                let t = dashos::temporizador_crear(copia as u32, CADA_VIGILAR_US, CADA_VIGILAR_US);
+                dashos::cerrar(copia as u32);
+                self.temporizador = if t > 0 { t as u32 } else { 0 };
+            }
+        } else if !falta_env && self.temporizador != 0 {
+            dashos::cerrar(self.temporizador);
+            self.temporizador = 0;
+        }
+    }
+
+    /// Pide los avisos (los pone a cero: el siguiente cambio vuelve a sonar) y suelta las vigilancias que acabaron
+    /// (`ENV:` se fue con la sesión, o se borró un cajón). Si hubo alguno.
+    fn avisos(&mut self) -> bool {
+        use dashos::protocolo::archivos as a;
+        let Some(ses) = Sesion::abrir() else { return false };
+        let (e, _, n, _, _) = ses.pedir(a::AVISOS, 0, 0, 0, "");
+        if e != a::BIEN {
+            return false;
+        }
+        for i in 0..n as usize {
+            if let Some((id, marcas, _)) = a::leer_aviso(ses.ventana(), i)
+                && marcas & (a::AVISO_BORRADO | a::AVISO_FUERA) != 0
+            {
+                for x in self.ids.iter_mut().filter(|x| **x == id) {
+                    *x = 0;
+                }
+            }
+        }
+        n > 0
+    }
+}
+
+/// Algo cambió en `ENV:` (o es hora de reintentar vigilarlo): pide los avisos, vuelve a vigilar lo que falte, y aplica el
+/// idioma y el tema si son otros.
+fn al_cambiar_env(v: &mut Vigila, idioma: &mut Option<idiomas::Idiomas>, uso: &mut Apariencia) {
+    let hubo = v.avisos();
+    let antes = v.ids;
+    v.armar();
+    // Recién armado (acaba de entrar alguien) o con avisos: se mira todo.
+    if !hubo && antes == v.ids {
+        return;
+    }
+    // El idioma: se carga otra vez sin mirar firmas (el aviso ya dice que cambió).
+    if let (Some(tabla), Some(ses)) = (dashos::asignaciones::pedir_tabla(SESIONES), Sesion::abrir()) {
+        let nuevo = idiomas::arrancar(&mut PorSesion(&ses), &tabla, &TEXTOS, CATALOGO);
+        let de = |i: &idiomas::Idiomas| (i.local.idiomas.clone(), i.local.pais_nombre.clone());
+        if idioma.as_ref().map(de) != Some(de(&nuevo)) {
+            println!("  [centro] idioma en marcha: {} ({}), de {}", nuevo.local.idioma(), nuevo.local.pais_nombre, nuevo.origen.unwrap_or("lo de serie"));
+        }
+        *idioma = Some(nuevo);
+    }
+    // S10: dónde van los menús.
+    aplicar_sitio_menus("ENV:Escritorio/menus");
+    // El tema: el de `ENV:`, si es otro que el que está en uso.
+    match leer_apariencia() {
+        Ok(mut ap) => {
+            v.dicho = None;
+            // La paleta del fondo sin sus colores calculados: los del que está en uso, si es la misma paleta; si no,
+            // se calculan.
+            if ap.color == DEL_FONDO && ap.fondo.is_none() {
+                if uso.color == DEL_FONDO && uso.fondo.is_some() {
+                    ap.fondo = uso.fondo;
+                } else {
+                    let _ = colores_del_fondo(&mut ap, None);
+                }
+            }
+            if ap.guardable() != uso.guardable() {
+                let puesto = poner_en_compositor(&ap, None);
+                println!("  [centro] tema en marcha: {}, color {}, de {}; en el compositor: {}", ap.modo(), ap.nombre(), TEMA_TEXTO, if puesto == 0 { "sí" } else { "no" });
+                if puesto == 0 {
+                    *uso = ap;
+                }
+            }
+        }
+        Err(porque) if porque == "no hay" => v.dicho = None,
+        Err(porque) => {
+            if v.dicho.as_deref() != Some(porque.as_str()) {
+                println!("  [centro] {}: {}; se queda el tema que hay", TEMA_TEXTO, porque);
+                v.dicho = Some(porque);
+            }
+        }
+    }
+}
+
 /// S26: el centro es también el servicio del tema. Al arrancar, pone en el compositor lo guardado (si no hay nada, lo
 /// de serie: claro, con la paleta del fondo, y los programas de las cajas como DashOS), y el compositor lo reparte a
 /// quien escucha (los programas de DashOS y las cajas). Con la paleta del fondo, pide su color al fondo de escritorio y
 /// calcula los esquemas si no estaban guardados para ese color (una vez; si estaban, ni eso). Sin fondo, el violeta de
 /// referencia.
-fn aplicar_al_arrancar() {
-    let mut ap = leer_apariencia().unwrap_or(Apariencia::DE_SERIE);
+fn aplicar_al_arrancar() -> Apariencia {
+    // Antes de entrar nadie: la de fábrica (por `ENVARC:`, su capa de `SYS:`), o la de serie.
+    let mut ap = match leer_apariencia() {
+        Ok(ap) => ap,
+        Err(porque) => {
+            if porque != "no hay" {
+                println!("  [centro] al arrancar, {}: {}; la de serie", FICHERO_TEMA, porque);
+            }
+            Apariencia::DE_SERIE
+        }
+    };
     let cajas = leer_cajas().unwrap_or(Ajuste::DE_SERIE);
     let antes = ap.guardable();
     if ap.color == DEL_FONDO {
@@ -1730,8 +2299,11 @@ fn aplicar_al_arrancar() {
         }
         dashos::dormir_us(300_000);
     }
-    // Lo calculado se guarda (así, al arrancar otra vez o al abrir Ajustes, no se calcula ni se pierde).
-    let guardado = if ap.guardable() != antes { Some(guardar_apariencia(&ap).0) } else { None };
+    // S10: los menús, si la de fábrica dice otra cosa que lo de serie.
+    aplicar_sitio_menus("ENVARC:Escritorio/menus");
+    // Lo calculado no se guarda: antes de entrar nadie no hay `ENV:` (se queda en uso).
+    let guardado: Option<i32> = None;
+    let _ = antes;
     println!(
         "  [centro] al arrancar: tema {}, color {} ({:06x}), programas de las cajas {}; en el compositor: {}{}",
         ap.modo(),
@@ -1741,6 +2313,7 @@ fn aplicar_al_arrancar() {
         if puesto == 0 { "sí" } else { "no" },
         guardado.map_or(String::new(), |g| alloc::format!("; guardado: {}", g))
     );
+    ap
 }
 
 fn principal() -> u64 {
@@ -1750,13 +2323,26 @@ fn principal() -> u64 {
     let mut malos = 0u64;
     // El directorio de `inicio` (sin marca): la marca y el nombre de cada cliente del canal.
     let mut nombres: alloc::collections::BTreeMap<u64, alloc::string::String> = alloc::collections::BTreeMap::new();
-    aplicar_al_arrancar();
+    // La apariencia en uso: la ponen el arranque, la ventana, el panel y los cambios de `ENV:`.
+    let mut uso = aplicar_al_arrancar();
+    // Idiomas (paso 4): antes de abrir ninguna ventana. Va tras poner el tema, que no enseña textos: así el tema no
+    // espera a `sesiones` (la tabla de nombres) ni a los ficheros de idioma.
+    let mut idioma = poner_idioma(None);
+    // Ajustes en texto: vigilar `ENV:` (sin sesión aún, se reintenta con un temporizador).
+    let mut vigila = Vigila::nueva();
+    vigila.armar();
     loop {
         let (n, k, marca) = match recibir(CANAL, &mut buf, &mut ll) {
             Recibido::Mensaje { n, k, marca } => (n, k, marca),
             Recibido::Cerrado => return 0,
             Recibido::Nada => continue,
         };
+        // Lo suyo: un timbre del servicio de archivos o el temporizador de reintentar.
+        if marca == MARCA_PROPIA {
+            cerrar_llaves(&ll[..k]);
+            al_cambiar_env(&mut vigila, &mut idioma, &mut uso);
+            continue;
+        }
         // Sin marca: las entradas del directorio de `inicio` (8 bytes de marca y 16 de nombre), para saber quién es quién.
         if marca == 0 && n == 24 && nombres.len() < 64 {
             let de = u64::from_le_bytes(buf[..8].try_into().unwrap());
@@ -1792,7 +2378,7 @@ fn principal() -> u64 {
                 continue;
             }
             if let Some(oscuro) = modo {
-                let estado = aplicar_modo(oscuro);
+                let estado = aplicar_modo(oscuro, &mut uso);
                 if k >= 1 {
                     dashos::canal_escribir(ll[0], &estado.to_le_bytes(), &[]);
                 }
@@ -1803,7 +2389,8 @@ fn principal() -> u64 {
             match categoria {
                 Some(cat) => {
                     println!("  [centro] abre {}", CATEGORIAS[cat].1);
-                    ventana(cat);
+                    idioma = poner_idioma(idioma);
+                    ventana(cat, &mut uso);
                 }
                 None => {
                     // Los tres primeros se dicen; los demás (una inundación) solo se cuentan.

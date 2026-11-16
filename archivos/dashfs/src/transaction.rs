@@ -111,6 +111,17 @@ pub struct Transaction<'a, D: Disk> {
     /// `fresh` and the disk forgets them only when this transaction commits: if it fails, the committed state still
     /// uses them, and their data must still reach the disk.
     forget_on_commit: Vec<(u64, u64)>,
+    /// DashOS (encoger): la transacción que cambia el tamaño. Lo que suelta en este bloque o más allá no se apunta
+    /// en el registro de asignación: queda fuera del sistema de archivos (`resize.rs`).
+    pub(crate) cut: Option<u64>,
+    /// DashOS (la cuota de los volúmenes): cuántos bloques ha ganado (o perdido) el volumen en que está la
+    /// transacción desde que entró en él o desde que se apuntó por última vez (`note_volume`).
+    pub(crate) grown: i64,
+    /// Lo que se reserva y se suelta ahora es del disco, no de un volumen: el registro de asignación y la lista de
+    /// volúmenes.
+    pub(crate) global: bool,
+    /// La cuota no se aplica: la reparación, que no debe fallar por ella.
+    pub(crate) unlimited: bool,
 }
 
 /// How many checked blocks `FileSystem::verified` remembers (16 bytes each).
@@ -138,6 +149,10 @@ impl<'a, D: Disk> Transaction<'a, D> {
             quarantine: Vec::new(),
             fresh: Vec::new(),
             forget_on_commit: Vec::new(),
+            cut: None,
+            grown: 0,
+            global: false,
+            unlimited: false,
         }
     }
 
@@ -181,10 +196,32 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 if self.fs.deferred {
                     self.fresh.push((addr.index(), addr.level().blocks::<u64>()));
                 }
+                self.count(addr.level().blocks::<i64>());
                 ctx.allocate(addr);
                 Ok(addr)
             }
             None => Err(Error::new(ENOSPC)),
+        }
+    }
+
+    /// Reserva un bloque como `old` (su nivel, su compresión y su época) para llevar allí lo que hay en `old`
+    /// (encoger, `resize.rs`). La época es la del bloque viejo: las instantáneas lo siguen viendo igual.
+    pub(crate) fn reallocate(&mut self, old: BlockAddr) -> Result<BlockAddr> {
+        let addr = self.fs.allocator.allocate_snug(old.meta()).ok_or(Error::new(ENOSPC))?;
+        self.undo.push((true, addr));
+        let addr = addr.with_epoch(old.epoch());
+        self.allocator_log.push_back(AllocEntry::allocate(addr));
+        if self.fs.deferred {
+            self.fresh.push((addr.index(), addr.level().blocks::<u64>()));
+        }
+        self.count(addr.level().blocks::<i64>());
+        Ok(addr)
+    }
+
+    /// Apunta bloques ganados o perdidos por el volumen en que está la transacción (el principal no lleva cuenta).
+    fn count(&mut self, blocks: i64) {
+        if self.main.is_some() && !self.global {
+            self.grown += blocks;
         }
     }
 
@@ -233,6 +270,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
     /// Deallocate a block that no snapshot can see: the allocation log, the release list, the dead lists and the
     /// list of snapshots, which are not part of the tree of nodes.
     pub(crate) unsafe fn deallocate_unshared(&mut self, addr: BlockAddr) {
+        self.count(-addr.level().blocks::<i64>());
         // Remove from write_cache if it is there, since it no longer needs to be written
         //TODO: for larger blocks do we need to check for sub-blocks in here?
         self.write_cache.remove(&addr);
@@ -295,13 +333,23 @@ impl<'a, D: Disk> Transaction<'a, D> {
     /// periodically be fully rebuilt using the state of `self.allocator`.
     /// This rebuild can be forced by setting `force_squash` to `true`.
     fn sync_allocator(&mut self, force_squash: bool) -> Result<bool> {
+        // El registro de asignación es del disco: no cuenta para ningún volumen.
+        let was = core::mem::replace(&mut self.global, true);
+        let done = self.sync_allocator_inner(force_squash);
+        self.global = was;
+        done
+    }
+
+    fn sync_allocator_inner(&mut self, force_squash: bool) -> Result<bool> {
         let mut prev_ptr = BlockPtr::default();
         // Not while blocks wait in quarantine: the rebuilt log would keep them in use (`deferred`).
         let should_gc = self.header.generation() % ALLOC_GC_THRESHOLD == 0
             && self.header.generation() >= ALLOC_GC_THRESHOLD
             && self.allocator.as_ref().unwrap_or(&self.fs.allocator).free() > 0
             && self.fs.quarantine.is_empty()
-            && self.fs.held.as_ref().is_none_or(|h| h.is_empty());
+            && self.fs.held.as_ref().is_none_or(|h| h.is_empty())
+            // Encogiendo, al asignador le falta lo libre del tramo que se quita: rehacer el registro lo perdería.
+            && self.fs.allocator.limit().is_none();
         if force_squash || should_gc {
             // Clear and rebuild alloc log
             self.allocator_log.clear();
@@ -380,7 +428,15 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 }
                 self.alloc_deallocate(addr);
             }
-            self.allocator_log.push_back(AllocEntry::deallocate(addr));
+            match self.cut {
+                // Fuera del nuevo tamaño: no existe para el registro. De lo que cruza el corte, la parte de antes.
+                Some(cut) if addr.index() >= cut => {}
+                Some(cut) if addr.index() + addr.level().blocks::<u64>() > cut => {
+                    self.allocator_log
+                        .push_back(AllocEntry::new(addr.index(), (cut - addr.index()) as i64));
+                }
+                _ => self.allocator_log.push_back(AllocEntry::deallocate(addr)),
+            }
         }
 
         for new_block in new_blocks {
@@ -407,7 +463,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         // The dead list first: writing it allocates and frees blocks.
         self.write_dead()?;
         // Then the list of volumes, which allocates and frees too.
-        self.note_volume();
+        self.note_volume()?;
         self.write_volume_changes()?;
 
         // Make sure alloc is synced

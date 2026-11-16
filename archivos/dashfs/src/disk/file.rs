@@ -76,6 +76,11 @@ impl Disk for DiskFile {
         self.file.seek(SeekFrom::End(0)).or_eio()
     }
 
+    /// Un fichero normal crece al escribir más allá de su final; un dispositivo, no.
+    fn size_is_limit(&self) -> bool {
+        !self.file.metadata().is_ok_and(|m| m.is_file())
+    }
+
     fn flush(&mut self) -> Result<()> {
         self.file.sync_data().or_eio()
     }

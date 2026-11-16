@@ -28,6 +28,12 @@ pub mod portapapeles;
 // S29: la marca de las ventanas de las cajas, en su fichero.
 #[path = "marca.rs"]
 pub mod marca;
+// S10: Commodities y Exchange (atajos, inactividad, oscurecer, comportamientos), en su fichero.
+#[path = "commodities.rs"]
+pub mod commodities;
+// S10: los menús de los programas, en la ventana o en la barra (`docs/bitacoras/menus.md`), en su fichero.
+#[path = "menus_escena.rs"]
+pub mod menus;
 
 /// Errores de `zwp_linux_buffer_params_v1` (de `linux-dmabuf-v1.xml`, G6).
 pub const DMABUF_USADO: u32 = 0;
@@ -649,6 +655,8 @@ pub struct Escena<M: Memorias> {
     /// La ventana que se arrastra con Super y el botón izquierdo, dónde se cogió (respecto a su esquina) y en qué
     /// salida estaba.
     arrastre: Option<((Cliente, u32), i32, i32, usize)>,
+    /// Dónde acabó la última ventana arrastrada (su esquina), para que la prueba no tenga que suponerlo.
+    ultimo_arrastre: Option<(i32, i32)>,
     /// H9: las dos selecciones del portapapeles (la de siempre y la primaria) y lo que hay que mandar a las fuentes
     /// (quien atiende lo escribe con `portapapeles::escribir_aviso`).
     selecciones: [Option<alloc::rc::Rc<portapapeles::Seleccion>>; 2],
@@ -671,10 +679,18 @@ pub struct Escena<M: Memorias> {
     marcas_antes: Vec<Rect>,
     pestana_linux: marca::Pestana,
     pestana_amiga: marca::Pestana,
+    /// S6b, S36: la de una aplicación en modo de desarrollo.
+    pestana_desarrollo: marca::Pestana,
+    /// S6b, S36: los clientes de una aplicación en modo de desarrollo (lo dice `sesiones`, `AVISO_DESARROLLO`).
+    pub de_desarrollo: Vec<Cliente>,
     /// S29: si pegar (`receive`) pide una tecla o un clic reciente en el programa (`portapapeles::PEGAR_MS`); el
     /// compositor del PC, sin teclado ni ratón, lo quita. Y a quién se le negó, para que quien atiende lo diga.
     pub pegar_con_entrada: bool,
     pub pegados_negados: Vec<Cliente>,
+    /// S10: las commodities, sus atajos y los ajustes ClickToFront y AutoPoint (`commodities`).
+    pub cx: commodities::Estado,
+    /// S10: los menús de los programas y dónde van (`menus`).
+    pub mn: menus::Estado,
 }
 
 /// U6: cada cuánto reciben sus avisos de `frame` las ventanas de una sesión de detrás (no se pintan, pero así no se
@@ -690,6 +706,14 @@ pub const AVISO_DETRAS: u32 = 0x5536_0002;
 pub const LARGO_AVISO_PERSONA: usize = 32;
 pub const LARGO_AVISO_DETRAS: usize = 40;
 pub const MAX_DETRAS: usize = 8;
+/// S10: los permisos de commodities de un cliente (`commodities::PODER_*`): orden, permisos (u32), marca (u64), dar (1)
+/// o quitar (0) (u32) y 4 de relleno: 24 bytes. Número alto, aparte de los de U6.
+pub const AVISO_PODER: u32 = 0x5536_0010;
+pub const LARGO_AVISO_PODER: usize = 24;
+/// S6b, S36: las ventanas de un cliente van en modo de desarrollo (su marca, que el programa no puede quitar): orden, 0
+/// (u32) y marca (u64): 16 bytes.
+pub const AVISO_DESARROLLO: u32 = 0x5536_0020;
+pub const LARGO_AVISO_DESARROLLO: usize = 16;
 /// El primer usuario de una persona (los de debajo son del sistema).
 pub const PRIMERA_PERSONA: u32 = 1000;
 
@@ -699,6 +723,10 @@ pub const PRIMERA_PERSONA: u32 = 1000;
 pub enum AvisoSesiones {
     Persona { marca: Cliente, uid: u32, nombre: [u8; 16] },
     Detras(Vec<u32>),
+    /// S10: los permisos de commodities de un cliente, antes y después.
+    Poder { marca: Cliente, antes: u32, despues: u32 },
+    /// S6b, S36: un cliente en modo de desarrollo.
+    Desarrollo { marca: Cliente },
 }
 
 /// Un aviso de inactividad pedido (U3).
@@ -856,6 +884,7 @@ impl<M: Memorias> Escena<M> {
             areas: Vec::new(),
             movidas: Vec::new(),
             arrastre: None,
+            ultimo_arrastre: None,
             selecciones: [None, None],
             avisos_portapapeles: Vec::new(),
             pintor: None,
@@ -868,8 +897,12 @@ impl<M: Memorias> Escena<M> {
             pestana_linux: marca::Pestana::de_pixeles(marca::TEXTO_LINUX, marca::COLOR_LINUX, marca::TINTA),
             de_caja_amiga: Vec::new(),
             pestana_amiga: marca::Pestana::de_pixeles(marca::TEXTO_AMIGA, marca::COLOR_AMIGA, marca::TINTA_AMIGA),
+            pestana_desarrollo: marca::Pestana::de_pixeles(marca::TEXTO_DESARROLLO, marca::COLOR_DESARROLLO, marca::TINTA_DESARROLLO),
+            de_desarrollo: Vec::new(),
             pegar_con_entrada: true,
             pegados_negados: Vec::new(),
+            cx: Default::default(),
+            mn: Default::default(),
         }
     }
 
@@ -882,6 +915,22 @@ impl<M: Memorias> Escena<M> {
         }
         if vale(&amiga) {
             self.pestana_amiga = amiga;
+        }
+    }
+
+    /// La pestaña de cada clase de marca (0 Linux, 1 Amiga, 2 modo de desarrollo).
+    fn pestana_de(&self, clase: u8) -> &marca::Pestana {
+        match clase {
+            1 => &self.pestana_amiga,
+            2 => &self.pestana_desarrollo,
+            _ => &self.pestana_linux,
+        }
+    }
+
+    /// S6b, S36: la pestaña del modo de desarrollo, pintada con el kit (como `poner_pestanas`).
+    pub fn poner_pestana_desarrollo(&mut self, p: marca::Pestana) {
+        if p.w > 0 && p.h > 0 && p.w <= 400 && p.h <= 100 && p.px.len() == (p.w * p.h * 4) as usize {
+            self.pestana_desarrollo = p;
         }
     }
 
@@ -1128,12 +1177,33 @@ impl<M: Memorias> Escena<M> {
                 } else {
                     self.personas.remove(&cliente);
                 }
+                // S10: "que se olvide" (uid 0, el programa acabó): sus permisos de commodities también. S6b, S36: y su
+                // modo de desarrollo.
+                if uid == 0 {
+                    self.cx.poderes.remove(&cliente);
+                    self.de_desarrollo.retain(|&c| c != cliente);
+                }
                 AvisoSesiones::Persona { marca: cliente, uid, nombre: m[16..32].try_into().unwrap() }
             }
             (AVISO_DETRAS, LARGO_AVISO_DETRAS) => {
                 let n = (palabra(4) as usize).min(MAX_DETRAS);
                 self.detras = (0..n).map(|i| palabra(8 + 4 * i)).filter(|&u| u >= PRIMERA_PERSONA).collect();
                 AvisoSesiones::Detras(self.detras.clone())
+            }
+            // S10: no cambia quién se ve: vuelve sin recomponer.
+            (AVISO_DESARROLLO, LARGO_AVISO_DESARROLLO) => {
+                let cliente = u64::from_le_bytes(m[8..16].try_into().unwrap());
+                if !self.de_desarrollo.contains(&cliente) {
+                    self.de_desarrollo.push(cliente);
+                }
+                self.danos.push(Rect { x: 0, y: 0, w: i32::MAX / 2, h: i32::MAX / 2 });
+                return Some(AvisoSesiones::Desarrollo { marca: cliente });
+            }
+            (AVISO_PODER, LARGO_AVISO_PODER) => {
+                let cliente = u64::from_le_bytes(m[8..16].try_into().unwrap());
+                let antes = self.cx.poderes_de(cliente);
+                let despues = self.poner_poderes(cliente, palabra(4), palabra(16) != 0);
+                return Some(AvisoSesiones::Poder { marca: cliente, antes, despues });
             }
             _ => return None,
         };
@@ -1220,6 +1290,7 @@ impl<M: Memorias> Escena<M> {
 
     /// Hubo entrada (U3): los avisos de inactividad vuelven a contar desde ahora, y a los que ya avisaron, `resumed`.
     fn actividad(&mut self) {
+        self.commodities_actividad();
         let ahora = self.reloj_ms;
         for i in &mut self.inactividad {
             i.desde_ms = ahora;
@@ -1281,9 +1352,20 @@ impl<M: Memorias> Escena<M> {
         // una ventana del sistema en la barra).
         let de_caja = self.ventana_con_titulo().is_some_and(|v| self.de_caja.contains(&v.0));
         let de_amiga = self.ventana_con_titulo().is_some_and(|v| self.de_caja_amiga.contains(&v.0));
+        // S6b, S36: y el de una aplicación en modo de desarrollo, con "Desarrollo · ".
+        let de_desarrollo = self.ventana_con_titulo().is_some_and(|v| self.de_desarrollo.contains(&v.0));
         let t_caja;
-        let t = if de_caja || de_amiga {
-            t_caja = marca::titulo_con(if de_amiga { marca::PREFIJO_AMIGA } else { marca::PREFIJO_LINUX }, self.titulo_activo());
+        let t = if de_caja || de_amiga || de_desarrollo {
+            t_caja = marca::titulo_con(
+                if de_amiga {
+                    marca::PREFIJO_AMIGA
+                } else if de_desarrollo {
+                    marca::PREFIJO_DESARROLLO
+                } else {
+                    marca::PREFIJO_LINUX
+                },
+                self.titulo_activo(),
+            );
             t_caja.as_str()
         } else {
             self.titulo_activo()
@@ -1307,7 +1389,8 @@ impl<M: Memorias> Escena<M> {
     /// milisegundos faltan para el siguiente, si queda alguno por vencer.
     pub fn revisar_inactividad(&mut self) -> Option<u32> {
         let ahora = self.reloj_ms;
-        let mut falta: Option<u32> = None;
+        // S10: también los plazos de las commodities (Blanker).
+        let mut falta: Option<u32> = self.commodities_inactividad();
         for i in &mut self.inactividad {
             if i.avisado {
                 continue;
@@ -1338,6 +1421,10 @@ impl<M: Memorias> Escena<M> {
         }
         self.inactividad.retain(|i| i.cliente != cliente);
         self.avisos_inactividad.retain(|a| a.0 != cliente);
+        // S10: sus commodities (sus atajos quedan libres) y sus Exchange.
+        self.commodities_adios(cliente);
+        // S10: sus menús, y si era la barra, los menús vuelven a las ventanas.
+        self.menus_adios(cliente);
         self.del_sistema.retain(|&c| c != cliente);
         self.temas.retain(|t| t.0 != cliente);
         self.avisos_tema.retain(|t| t.0 != cliente);
@@ -1348,6 +1435,7 @@ impl<M: Memorias> Escena<M> {
         self.barras.retain(|&c| c != cliente);
         self.de_caja.retain(|&c| c != cliente);
         self.de_caja_amiga.retain(|&c| c != cliente);
+        self.de_desarrollo.retain(|&c| c != cliente);
         self.pegados_negados.retain(|&c| c != cliente);
         self.avisos_lanzador.retain(|t| t.0 != cliente);
         self.avisos_titulo.retain(|t| t.0 != cliente);
@@ -1738,7 +1826,8 @@ impl<M: Memorias> Escena<M> {
         // capas de fondo (C3: el fondo de escritorio, que puede ir en franjas), tampoco: no están encima de nada.
         let mut sombras: Vec<(usize, Rect, i32)> = Vec::new();
         // S29: las marcas de las ventanas de las cajas: antes de qué capa van, lo que ocupa la ventana y su pestaña.
-        let mut marcas: Vec<(usize, Rect, Rect, bool, bool)> = Vec::new();
+        // La clase de la marca: 0 la caja Linux, 1 la caja Amiga, 2 el modo de desarrollo (S6b, S36).
+        let mut marcas: Vec<(usize, Rect, Rect, u8, bool)> = Vec::new();
         // S29: las capas de esas ventanas (de la primera a antes de la última) y a qué se recortan.
         let mut recortes: Vec<(usize, usize, Rect)> = Vec::new();
         for (c, id) in self.raices() {
@@ -1768,12 +1857,14 @@ impl<M: Memorias> Escena<M> {
             // S29: la marca de una ventana de la caja, encima de todo lo suyo (antes de la capa de la ventana siguiente);
             // lo suyo, recortado a lo que rodea la marca.
             let amiga = self.de_caja_amiga.contains(&c);
-            if (self.de_caja.contains(&c) || amiga)
+            let desarrollo = self.de_desarrollo.contains(&c);
+            let clase = if amiga { 1 } else if desarrollo { 2 } else { 0 };
+            if (self.de_caja.contains(&c) || amiga || desarrollo)
                 && self.bloqueo.is_none()
                 && let Some(caja) = marca::caja_de(cli, id)
             {
                 let area = self.area_de(self.salida_de(caja));
-                let p = if amiga { &self.pestana_amiga } else { &self.pestana_linux };
+                let p = self.pestana_de(clase);
                 // Con la barra de DashOS la marca va dentro de la barra (la pinta `decoracion`): sin pestaña. Sin barra,
                 // la pestaña va por dentro de la ventana, nunca fuera (sin solapas: lo pidió el usuario el 2026-11-13).
                 let mut sin_arriba = false;
@@ -1786,7 +1877,7 @@ impl<M: Memorias> Escena<M> {
                     sin_arriba = amiga && hueco.is_some_and(|(_, alto)| alto > 0);
                     marca::sitio_pestana(caja, area, (p.w, p.h), amiga, hueco)
                 };
-                marcas.push((capas.len(), caja, sitio, amiga, sin_arriba));
+                marcas.push((capas.len(), caja, sitio, clase, sin_arriba));
                 recortes.push((desde, capas.len(), caja));
             }
         }
@@ -1867,7 +1958,13 @@ impl<M: Memorias> Escena<M> {
         // S29: una fila del color de la caja, tan ancha como la marca más ancha (las tiras del borde la repiten).
         let ancho_marcas = marcas.iter().map(|m| m.1.w.max(0) as usize).max().unwrap_or(0);
         let fila_marca: Vec<u8> = marca::COLOR_LINUX.to_le_bytes().repeat(ancho_marcas);
-        let fila_amiga: Vec<u8> = if marcas.iter().any(|m| m.3) { marca::COLOR_AMIGA.to_le_bytes().repeat(ancho_marcas) } else { Vec::new() };
+        let fila_amiga: Vec<u8> = if marcas.iter().any(|m| m.3 == 1) { marca::COLOR_AMIGA.to_le_bytes().repeat(ancho_marcas) } else { Vec::new() };
+        let fila_desarrollo: Vec<u8> = if marcas.iter().any(|m| m.3 == 2) { marca::COLOR_DESARROLLO.to_le_bytes().repeat(ancho_marcas) } else { Vec::new() };
+        let fila_de = |clase: u8| match clase {
+            1 => &fila_amiga,
+            2 => &fila_desarrollo,
+            _ => &fila_marca,
+        };
         let mut con_bufer: Vec<(Rect, i32, i32, &[u8], crate::shm::Bufer, Option<(Rect, i32)>)> = Vec::new();
         let mut esquinas: Vec<Option<Rect>> = Vec::new();
         let mut s_i = 0;
@@ -1876,7 +1973,7 @@ impl<M: Memorias> Escena<M> {
         for (k, &(c, id, x, y)) in capas.iter().enumerate() {
             // S29: la marca de la ventana de antes, si acabó en la capa anterior.
             while m_i < marcas.len() && marcas[m_i].0 == k {
-                let (fila, pestana) = if marcas[m_i].3 { (&fila_amiga, &self.pestana_amiga) } else { (&fila_marca, &self.pestana_linux) };
+                let (fila, pestana) = (fila_de(marcas[m_i].3), self.pestana_de(marcas[m_i].3));
                 con_bufer.extend(marca::capas(marcas[m_i].1, marcas[m_i].2, fila, &pestana.px, marcas[m_i].4));
                 m_i += 1;
             }
@@ -1925,7 +2022,7 @@ impl<M: Memorias> Escena<M> {
         }
         // S29: la marca de la última ventana.
         for m in &marcas[m_i..] {
-            let (fila, pestana) = if m.3 { (&fila_amiga, &self.pestana_amiga) } else { (&fila_marca, &self.pestana_linux) };
+            let (fila, pestana) = (fila_de(m.3), self.pestana_de(m.3));
             con_bufer.extend(marca::capas(m.1, m.2, fila, &pestana.px, m.4));
         }
         esquinas.resize(con_bufer.len(), None);
@@ -2023,8 +2120,18 @@ impl<M: Memorias> Escena<M> {
                 }
             }
         }
+        // S10: con la pantalla apagada (Blanker), negro encima de todo y sin cursor. Lo de debajo se compone igual: así
+        // los avisos de frame siguen saliendo y al despertar no hay nada atrasado.
+        if self.cx.oscuro {
+            for d in &danos {
+                for fila in d.y..d.y + d.h {
+                    let i = fila as usize * linea + d.x as usize;
+                    pantalla[i..i + d.w as usize].fill(0xFF00_0000);
+                }
+            }
+        }
         // El cursor, encima de todo.
-        for d in danos.iter().filter(|_| self.con_cursor) {
+        for d in danos.iter().filter(|_| self.con_cursor && !self.cx.oscuro) {
             let r = cursor_rect(self.cursor).cruce(*d);
             for fila in r.y..r.y + r.h {
                 for col in r.x..r.x + r.w {
@@ -2145,6 +2252,14 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
         if let Some(r) = self.emergentes(con, interfaz.name, objeto, orden, args) {
             return r;
         }
+        // S10: las commodities y Exchange.
+        if let Some(r) = self.commodities(con, interfaz.name, objeto, orden, args) {
+            return r;
+        }
+        // S10: los menús de los programas.
+        if let Some(r) = self.menus(interfaz.name, objeto, orden, args) {
+            return r;
+        }
         let escena = &mut *self.escena;
         // H9: lo que hay para una ventana nueva (en la salida del cursor), para `configure_bounds`.
         let limites = escena.area_de(escena.salida_en(escena.cursor.0, escena.cursor.1).unwrap_or(0));
@@ -2225,6 +2340,19 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 let yo = escena.clientes.get_mut(&self.cliente).unwrap();
                 if let Some(s) = yo.superficies.get_mut(&sup) {
                     s.hueco_marca = Some((args[1].int(), args[2].int()));
+                }
+            }
+            // La caja Amiga: una ventana suya delante o detrás de las demás, sin tocar el teclado (`ScreenToFront`,
+            // `ScreenToBack`: cada pantalla propia es una ventana con las suyas dentro). Solo la caja Amiga y de una ventana
+            // suya de primer nivel; si no, nada.
+            "dashos_tema_v1" if orden == dashos_tema_v1::req::APILAR => {
+                let ventana = (self.cliente, args[0].uint());
+                if escena.de_caja_amiga.contains(&self.cliente) && escena.orden.contains(&ventana) {
+                    if args[1].uint() == 0 {
+                        escena.subir(ventana);
+                    } else {
+                        escena.bajar(ventana);
+                    }
                 }
             }
             // S27: ver otro espacio de trabajo, como Super y el número; solo la barra.
@@ -2852,6 +2980,9 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
     }
 
     fn enlazado(&mut self, con: &mut Conexion, global: &crate::servidor::Global, id: u32) {
+        if core::ptr::eq(global.interfaz, &tablas::DASHOS_MENUS_V1) {
+            self.menus_enlazado(con, id);
+        }
         if core::ptr::eq(global.interfaz, &tablas::DASHOS_TEMA_V1) {
             // El tema de ahora, en el acto; y se apunta para los cambios (con tope: de más, nada se apunta y se dice).
             avisar_tema(con, id, self.escena.tema, self.escena.esquema.as_ref());
@@ -2912,6 +3043,8 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
         self.portapapeles_destruido(objeto);
         self.decoracion_destruida(objeto);
         self.emergente_destruido(objeto);
+        // S10: un menú, o la superficie de un menú.
+        self.escena.menus_destruido(self.cliente, objeto);
         let escena = &mut *self.escena;
         let yo = escena.clientes.get_mut(&self.cliente).unwrap();
         // Un `wl_output` soltado (release).
@@ -3197,6 +3330,22 @@ impl<M: Memorias> Escena<M> {
         self.subir_emergentes(ventana);
     }
 
+    /// Dónde acabó la última ventana arrastrada (su esquina, en la pantalla), una vez.
+    pub fn tomar_ultimo_arrastre(&mut self) -> Option<(i32, i32)> {
+        self.ultimo_arrastre.take()
+    }
+
+    /// Baja una ventana detrás de todas, sin tocar el teclado.
+    pub fn bajar(&mut self, ventana: (Cliente, u32)) {
+        if self.orden.first() != Some(&ventana) && self.orden.contains(&ventana) {
+            self.orden.retain(|o| *o != ventana);
+            self.orden.insert(0, ventana);
+            if let Some(r) = decoracion::ventana_de(&self.clientes[&ventana.0], ventana.1) {
+                self.danos.push(r);
+            }
+        }
+    }
+
     /// H9: si se está arrastrando una ventana (para medir los cuadros mientras tanto).
     pub fn arrastrando(&self) -> bool {
         self.arrastre.is_some() || self.redimension.is_some()
@@ -3242,6 +3391,8 @@ impl<M: Memorias> Escena<M> {
     /// Un evento del ratón de arranque: movimiento relativo y botones (bit 0 izquierdo, 1 derecho, 2 central).
     pub fn raton(&mut self, dx: i32, dy: i32, botones: u8) -> Vec<(Cliente, Entrada)> {
         let mut out = Vec::new();
+        // S10: el botón que despierta la pantalla apagada no llega a nadie.
+        let botones = self.commodities_botones(botones);
         self.actividad();
         let antes = self.cursor;
         if !self.con_cursor {
@@ -3263,6 +3414,7 @@ impl<M: Memorias> Escena<M> {
             if botones & 1 == 0 {
                 self.arrastre = None;
                 if let Some(r) = self.clientes.get(&c).and_then(|cli| rect_de(cli, sup)) {
+                    self.ultimo_arrastre = Some((r.x, r.y));
                     let i = self.salida_de(r);
                     if i != desde {
                         self.movidas.push((c, i, r.x, r.y));
@@ -3364,6 +3516,10 @@ impl<M: Memorias> Escena<M> {
                 out.push((c, Entrada::Entra { superficie: s, x, y }));
             }
             self.puntero = ahora;
+            // S10, AutoPoint: sin botones, la ventana bajo el ratón se lleva el teclado (si está puesto).
+            if botones == 0 && self.botones == 0 && let Some(v) = ahora {
+                self.autopoint(v, &mut out);
+            }
         } else if let (Some(((c, _), x, y)), true) = (bajo, self.cursor != antes) {
             out.push((c, Entrada::Mueve { x, y }));
         }
@@ -3380,6 +3536,11 @@ impl<M: Memorias> Escena<M> {
             if pulsado {
                 self.cerrar_emergentes(ahora, &mut out);
             }
+            // S10: con los menús en la barra, el botón derecho sobre una ventana con menú los abre allí, como en el
+            // Amiga; ni él ni su soltar llegan a la ventana, y no la sube.
+            if self.menus_boton(ahora, bit, pulsado) {
+                continue;
+            }
             // Pulsar sobre una ventana la sube y le da el teclado.
             if pulsado
                 && let Some(v) = ahora {
@@ -3390,7 +3551,8 @@ impl<M: Memorias> Escena<M> {
                     match cli.superficies.get(&r).and_then(|s| s.capa).and_then(|id| cli.capas.get(&id)) {
                         Some(c) if c.actual.teclado != 0 => self.dar_teclado((v.0, r), &mut out),
                         Some(_) => {}
-                        None => self.activar((v.0, r), &mut out),
+                        // S10, ClickToFront: con "doble clic", el clic solo da el teclado.
+                        None => self.pulsar_ventana((v.0, r), bit == 0, &mut out),
                     }
                 }
             if let Some((c, _)) = self.puntero {
@@ -3408,6 +3570,12 @@ impl<M: Memorias> Escena<M> {
         if hid == 0 || self.arrastre.is_some() {
             return out;
         }
+        // S10: con la pantalla apagada, la rueda la despierta y no llega a nadie.
+        if self.cx.oscuro {
+            self.despertar();
+            self.actividad();
+            return out;
+        }
         self.actividad();
         if let Some((c, _)) = self.puntero {
             // En Wayland el eje vertical crece hacia abajo; en HID, la rueda hacia delante (arriba) es positiva.
@@ -3423,6 +3591,11 @@ impl<M: Memorias> Escena<M> {
         self.actividad();
         if pulsada {
             self.ultima_tecla_ms = Some(self.reloj_ms);
+        }
+        // S10: los atajos de las commodities, Bloq Mayús (NoCapsLock) y la tecla que despierta la pantalla: no llegan a
+        // la ventana.
+        if self.commodities_tecla(uso, codigo, pulsada) {
+            return out;
         }
         let mascara = match uso {
             0xE1 | 0xE5 => 1,

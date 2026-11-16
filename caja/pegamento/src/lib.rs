@@ -399,6 +399,7 @@ pub unsafe extern "C" fn caja_rust_arrancar(
     di(&format!("mathieeesingbas.library nativa (Rust): ${:x}", mates_base));
     let (capas, teclas) = gr.capas_bases();
     di(&format!("layers.library y keymap.library nativas (Rust): ${:x} y ${:x}", capas, teclas));
+    di(&format!("cybergraphics.library y Picasso96API.library nativas (Rust): ${:x} y ${:x}", gr.cgx_base(), gr.p96_base()));
     di(&format!(
         "{}; compositor: {}, Workbench de {}x{}",
         vol,
@@ -460,6 +461,16 @@ pub unsafe extern "C" fn caja_rust_arrancar(
             }
         }
         di(&format!("ramlib: lo que no es nativo se carga de disco; {}", if hechas.is_empty() { String::from("sin cajones") } else { hechas.join(", ") }));
+        // `T:` y `ENV:`, que los programas dan por hechos (en un Amiga, en `RAM:`): en el cajón de la caja, que es lo que
+        // tiene para escribir. Sin `T:`, Tachyon no puede dejar ahí las imágenes que decodifica (el logo de su página).
+        let mut temporales = Vec::new();
+        for (nombre, ruta) in [("T", "Caja:T"), ("ENV", "Caja:Env")] {
+            match c.dos.asignar_creando(&mut cd, nombre, ruta) {
+                Ok(()) => temporales.push(alloc::format!("{}: {}", nombre, ruta)),
+                Err(e) => temporales.push(alloc::format!("{}: no ({})", nombre, e)),
+            }
+        }
+        di(&format!("temporales: {}", temporales.join(", ")));
         // El AmigaOS del usuario, si lo dio (`SYS:C/Prefs/amigaos`): detrás de lo nativo y de la caja.
         di(&ramlib::montar_amigaos(&mut c.dos, &mut cd));
     }
@@ -1150,6 +1161,10 @@ fn recoger_avisos(c: &mut Caja) {
                 "layers.library"
             } else if caja_intuition::KEYMAP.contains(&a.funcion) {
                 "keymap.library"
+            } else if caja_intuition::cgx::FUNCIONES.contains(&a.funcion) {
+                "cybergraphics.library"
+            } else if caja_intuition::p96::FUNCIONES.contains(&a.funcion) {
+                "Picasso96API.library"
             } else {
                 "gadtools.library"
             };
@@ -1190,6 +1205,8 @@ fn recoger_avisos(c: &mut Caja) {
             c.negados_dichos += 1;
             di(&format!("guardia: {} \"{}\" ({}): negado", n.orden, n.nombre, n.motivo));
         }
+        // S6, S36: y al registro común, en llano.
+        preguntador::apuntar(&format!("niega {} \"{}\"", n.orden, n.nombre), n.motivo);
     }
     // Código cambiado (CacheClearU, SetFunction, MakeFunctions...): el JIT olvida lo traducido, menos lo que se está
     // ejecutando (caja.c).
@@ -1339,6 +1356,79 @@ fn dormir(tics: u32, a7: u32) -> bool {
             return true;
         }
         dashos::dormir_us((hasta - ahora).min(10_000));
+    }
+}
+
+/// `InternalLoadSeg(fh, table, funcarray, stack)(d0/a0/a1/a2)` con un flujo que no es de dos: llama a
+/// `funcarray[0]` (la de leer, como `Read`: D1 = fh, D2 = búfer, D3 = largo, A6 = DOSBase) hasta que da 0 o -1, y
+/// carga lo leído como LoadSeg. `allocfunc` y `freefunc` no se llaman: los segmentos los reserva exec, y los suelta
+/// UnLoadSeg o InternalUnLoadSeg. Devuelve la lista de segmentos (BPTR) o 0.
+fn internal_load_seg_68k(r: &Registros) -> u32 {
+    const TROZO: u32 = 64 << 10;
+    const MAX: usize = 16 << 20;
+    let Some(c) = caja() else { return 0 };
+    let leer = c.ex.mem.leer32(r.a[1]).unwrap_or(0);
+    let (dos_base, fh) = (c.dos_base, r.d[0]);
+    if r.a[1] == 0 || leer == 0 || leer & 1 != 0 {
+        di("InternalLoadSeg: sin función de leer: 0");
+        return 0;
+    }
+    let buf = c.ex.alloc_mem(TROZO, memf::PUBLIC).unwrap_or(0);
+    if buf == 0 {
+        return 0;
+    }
+    let mut datos = Vec::new();
+    let mut bien = true;
+    for _ in 0..(MAX as u32 / TROZO + 2) {
+        let mut regs = Registros::default();
+        regs.d[1] = fh;
+        regs.d[2] = buf;
+        regs.d[3] = TROZO;
+        regs.a[6] = dos_base;
+        regs.a[7] = r.a[7];
+        // (Sin referencias de `caja()` a partir de aquí: ver `ejecutar_68k`.)
+        let hecho = ejecutar_68k(leer, &regs, false);
+        let Some(c) = caja() else { return 0 };
+        let n = match hecho {
+            Ok(rr) => rr.d[0] as i32,
+            Err(_) => {
+                bien = false;
+                break;
+            }
+        };
+        if n <= 0 || n as u32 > TROZO {
+            bien = n == 0;
+            break;
+        }
+        match c.ex.mem.leer(buf, n as u32) {
+            Ok(b) => datos.extend_from_slice(b),
+            Err(_) => {
+                bien = false;
+                break;
+            }
+        }
+        if datos.len() > MAX {
+            bien = false;
+            break;
+        }
+    }
+    let Some(c) = caja() else { return 0 };
+    let _ = c.ex.free_mem(buf, TROZO);
+    if !bien || datos.is_empty() {
+        di(&format!("InternalLoadSeg: el flujo no se pudo leer entero ({} bytes): 0", datos.len()));
+        return 0;
+    }
+    let t = c.ex.tarea_actual();
+    let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
+    match caja_dos::Caja::cargar_segmentos(&mut cd, &datos) {
+        Ok(seg) if seg != 0 => {
+            c.dos.apuntar_segmentos(seg, t);
+            seg
+        }
+        _ => {
+            di(&format!("InternalLoadSeg: {} bytes que no cargan como ejecutable: 0", datos.len()));
+            0
+        }
     }
 }
 
@@ -1496,6 +1586,17 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
             return C_SEGUIR;
         }
         multitarea::quitar_tarea(c, v, false);
+        recoger_avisos(c);
+        return C_SEGUIR;
+    }
+    if n == N_DOS + caja_dos::lvo::INTERNAL_LOAD_SEG
+        && c.ex.ajena(n).map(|(l, _)| l) == Some(c.dos_base)
+        && !c.dos.es_fichero(r.d[0])
+    {
+        // InternalLoadSeg con un flujo propio (AddDataTypes con el código de un descriptor): se lee llamando a la
+        // función de leer 68k que da el programa. Con un fichero de dos, lo hace dos (más abajo).
+        r.d[0] = internal_load_seg_68k(r);
+        let Some(c) = caja() else { return C_RECHAZADA };
         recoger_avisos(c);
         return C_SEGUIR;
     }

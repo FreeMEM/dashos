@@ -15,7 +15,7 @@ use caja_exec::{Accion, Exec, Memoria, Registros};
 use crate::acceso::Acceso;
 use crate::estructuras::{tag, wa, wflg};
 use crate::gadtools::{Gt, kind};
-use crate::lienzo::Rect;
+use crate::lienzo::{Pinta, Rect};
 use crate::tema::Vista;
 use crate::{CajaGrafica, Compositor, Fallo, fuente};
 
@@ -215,10 +215,11 @@ impl<C: Compositor> CajaGrafica<C> {
             };
             vistas.push((g, *r));
         }
-        let plumas = self.plumas(ex);
+        let plumas = self.plumas(ex, w);
         let tema = self.tema_de(w);
         let glifos = &self.intui.glifos;
-        let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return };
+        let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) else { return };
+        let l = &mut l;
         for (g, r) in &vistas {
             let vista = Vista {
                 s: g,

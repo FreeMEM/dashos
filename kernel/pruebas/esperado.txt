@@ -101,7 +101,7 @@ Proceso: excepción de clase 0x20 en 0xffffff8000080000
 C32: registros de EL0 bien
 # S3: los cupos son topes; la memoria llena de verdad falla limpio y avisa por el canal del oyente (llamada 53).
 memoria: quedan
-  topes: cadena true, sin cobro a medias true, devuelto true, cien hermanos de 1 TB true; memoria llena a
+  topes: cadena true, sin cobro a medias true, contado true, devuelto true, cien hermanos de 1 TB true; memoria llena a
 S3: cupos como topes y aviso de memoria baja bien
 # C51: hola (C19 y C30), padre (C39) y grupos (C42) los lanza también el lanzador, y cada grupo tiene que quedar a cero.
   subgrupos uno dentro de otro: 7 niveles como mucho
@@ -113,6 +113,7 @@ S3: cupos como topes y aviso de memoria baja bien
   hola desde Rust en EL0 (DashOS, big-endian)
   memoria propia proyectada (0); primer byte de 0x11223344: 0x11
   [lanzador] hola-be: clase 0, código 5
+  [padre] tabla de llaves: el hijo encuentra las suyas por su nombre; sin nombres, vacía; nombres que no se leen, nada
   [padre] proyecciones quitadas, y revocar quita las hechas con la copia revocable
   [padre] hijos que salen, giran, se bloquean y fallan: creados, matados y esperados
   [padre] lados cerrados al morir, sin ciclos, y lados perdidos en mensajes cerrados
@@ -134,6 +135,7 @@ S3: cupos como topes y aviso de memoria baja bien
   [grupos] topes: el propio no se sube, uno por debajo de lo usado no quita nada y no deja cobrar, y el aviso de memoria pide su permiso
   [grupos] topes: un nieto con tope de 64 MB bajo uno de 2 MB se para en
   [grupos] tiempo de CPU: el hijo que gira gastó
+  [grupos] memoria dispersa: vacía no cobra más que su lista, cada página se cobra al ponerla y vuelve al soltarla, el tope de su grupo la para en
   [lanzador] grupos: clase 0, código 42
   [lanzador] 7 pruebas lanzadas desde un proceso, cada una en su grupo, que queda a cero
   [lanzador] avisos de fin por canal (K7): 7 de 7

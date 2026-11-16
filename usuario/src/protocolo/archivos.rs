@@ -73,6 +73,58 @@ pub const SOLTAR: u32 = 33;
 /// S10: el dueño (a) y el grupo (b) de lo que tiene la asa, y el usuario de quien pregunta (c). Para la Información
 /// del Workbench: decir de quién es y si se puede cambiar (comentar y proteger, solo el dueño).
 pub const DUENO: u32 = 34;
+/// La fecha de modificación de lo que tiene la asa: a, los segundos desde 1970; b, los nanosegundos (menos de mil
+/// millones). Solo el dueño, como comentar y proteger. Es lo que piden `SetFileDate` de la caja y `file_set_date` de Dash.
+pub const FECHAR: u32 = 35;
+/// S32: crecer el sistema de archivos en uso hasta a bytes (0: todo el disco; si no es múltiplo de 4096, el múltiplo
+/// de antes). Solo con el derecho de administrar. Contesta en a con el tamaño que queda. `MAL_FORMADO` si a es menos
+/// que ahora o más que el disco. Encoger no se hace en uso: es de la herramienta de discos, sin montar.
+pub const CRECER: u32 = 40;
+/// S32: el tope de un volumen (su nombre en el mensaje; el principal no tiene). Con b = 1 lo pone a a bytes (0: sin
+/// tope; se guarda en bloques de 4096). Contesta en a con lo que usa y en b con su tope, en bytes (a = 0: aún sin
+/// contar). Cuenta lo del volumen y lo que solo ven sus instantáneas. Pasado el tope, lo que lo haría crecer da
+/// `LLENO` en ese volumen y en ningún otro; borrar y escribir encima siguen valiendo. Solo con el derecho de administrar.
+pub const CUOTA: u32 = 41;
+/// Avisos de cambio (ajustes en texto, `docs/bitacoras/ajustes-texto.md`; como `StartNotify` del Amiga): vigilar lo que
+/// tiene la asa, un fichero o un cajón. El mensaje lleva una llave: la puerta (un extremo de escritura, normalmente una
+/// copia marcada del canal donde espera el cliente) por la que el servicio toca el timbre: `LARGO_TIMBRE` bytes, con
+/// `TIMBRE_VIGILAR`, el número de la vigilancia (u32) y cuántos cambios lleva (u64). Un timbre por vigilancia hasta que
+/// el cliente pide sus cambios con `AVISOS`: una ráfaga de cambios es un timbre y una cuenta. Hace falta poder leer lo
+/// vigilado (R; un cajón, poder listarlo). Contesta en `asa` el número de la vigilancia, en a cuántas tiene el cliente
+/// y en b cuántas hay en el servicio. `SIN_SITIO` con `MAX_VIGILANCIAS`; `MAL_FORMADO` sin llave.
+///
+/// Cuenta como cambio de un fichero escribir, recortar, comentar, proteger, fechar, renombrar (`MOVIDO`) o borrar
+/// (`BORRADO`, y acaba); de un cajón, crear, borrar o renombrar dentro, y cambiar un fichero de dentro abierto desde
+/// él. Un volumen quitado, cerrado o vuelto a una instantánea acaba sus vigilancias con `FUERA`. Si quien vigila se va,
+/// o su puerta se cierra, se quitan solas. Lo vigilado no se tiene abierto: se puede cerrar la asa.
+pub const VIGILAR: u32 = 80;
+/// Dejar de vigilar: el número de la vigilancia, en el campo de la asa. `NO_EXISTE` si no es suya.
+pub const NO_VIGILAR: u32 = 81;
+/// Lo que cambió desde la última vez: en la ventana, una entrada de `ENTRADA_AVISO` bytes por vigilancia con cambios
+/// (número u32, marcas u32: `CAMBIO`, `BORRADO`, `FUERA`, `MOVIDO`; cuántos cambios u64), y se ponen a cero: el
+/// siguiente cambio vuelve a tocar el timbre. En a, cuántas entradas; b es 1 si no cupieron todas. Quien quiere ver lo
+/// último pide los avisos y después lee: así un cambio que llegue en medio vuelve a tocar el timbre.
+pub const AVISOS: u32 = 82;
+pub const MAX_VIGILANCIAS: usize = 64;
+pub const TIMBRE_VIGILAR: u32 = u32::from_le_bytes(*b"VIGI");
+pub const LARGO_TIMBRE: usize = 16;
+pub const ENTRADA_AVISO: usize = 16;
+pub const AVISO_CAMBIO: u32 = 1;
+pub const AVISO_BORRADO: u32 = 2;
+pub const AVISO_FUERA: u32 = 4;
+pub const AVISO_MOVIDO: u32 = 8;
+
+/// Un timbre de vigilancia: (número de la vigilancia, cambios que llevaba). `None` si no lo es.
+pub fn leer_timbre(b: &[u8]) -> Option<(u32, u64)> {
+    (b.len() >= LARGO_TIMBRE && u32::from_le_bytes(b[0..4].try_into().unwrap()) == TIMBRE_VIGILAR)
+        .then(|| (u32::from_le_bytes(b[4..8].try_into().unwrap()), u64::from_le_bytes(b[8..16].try_into().unwrap())))
+}
+
+/// La entrada `i` de la respuesta de `AVISOS` en la ventana: (número, marcas, cambios).
+pub fn leer_aviso(ventana: &[u8], i: usize) -> Option<(u32, u32, u64)> {
+    let b = ventana.get(i * ENTRADA_AVISO..(i + 1) * ENTRADA_AVISO)?;
+    Some((u32::from_le_bytes(b[0..4].try_into().unwrap()), u32::from_le_bytes(b[4..8].try_into().unwrap()), u64::from_le_bytes(b[8..16].try_into().unwrap())))
+}
 pub const TROZO_PRESTADO: usize = 512 * 1024;
 pub const POR_PRESTAMO: usize = 4;
 pub const MAX_PRESTADOS: usize = 8;
@@ -84,6 +136,76 @@ pub const ALTA: u32 = 100;
 /// Sin marca, como el alta (de `sesiones`): el programa de la marca de los bytes 8 a 15 acabó. Se suelta su sesión,
 /// con sus asas y sus raíces, y su alta.
 pub const BAJA: u32 = 101;
+/// `RAM:` en memoria (docs/bitacoras/asignaciones.md): sin marca, como el alta (de `sesiones`), con una llave para la
+/// respuesta (32 bytes, como las demás: estado, asa, a, b y c). Cada sesión de usuario tiene un volumen en memoria: un
+/// DashFS sobre un "disco" de páginas que se piden al escribir y se devuelven al descartar.
+///
+/// Crear el de la sesión `sesion` (u32 en los bytes 4 a 7: el usuario; uid y gid de su raíz, 0700, en 8 a 11 y 12 a
+/// 15). Dos llaves: un objeto de memoria disperso (`dashos::memoria_dispersa`) que no tiene nadie más, cobrado al grupo
+/// de la sesión, y la de la respuesta. Lo que mide el objeto es el tope del volumen. Contesta en `a` lo que mide el
+/// volumen y en `b` lo que ocupa recién hecho, en bytes. `YA_EXISTE`, `SIN_SITIO` (ocho a la vez), `MAL_FORMADO`.
+pub const RAM_CREAR: u32 = 102;
+/// Quitar el volumen en memoria de la sesión de los bytes 4 a 7, con todo lo que tenga: las asas y las raíces que
+/// llevan a él dejan de valer para todos (`ASA_MALA`) y su memoria vuelve al sistema. Contesta en `a` los bytes que
+/// ocupaba. `NO_EXISTE` si no lo había.
+pub const RAM_QUITAR: u32 = 103;
+/// Dar al cliente de la marca de los bytes 8 a 15 la raíz del volumen en memoria de la sesión (bytes 4 a 7) en el hueco
+/// del byte 16 (1 a 15), con el tope del byte 17 (4, o 4 | 2): para los programas del escritorio, que nacen antes de
+/// que entre nadie. Vale también para su alta, si aún no ha abierto sesión. La llave de la respuesta es opcional.
+pub const RAM_RAIZ: u32 = 104;
+/// Copiar al volumen en memoria de la sesión (bytes 4 a 7) un árbol del disco: lo que hay en el cajón `origen` del
+/// volumen `vol` (vacío, el principal) va al cajón `destino`, que se crea con los que falten. Lo copiado es del usuario
+/// de los bytes 8 a 11 y 12 a 15 (uid y gid); lo que ya esté en el destino con el mismo nombre se pisa: así se montan
+/// capas (`ENV:` es `ENVARC:` de fábrica y, encima, el del usuario). Bytes 16, 17 y 18: lo que miden `vol`, `origen` y
+/// `destino`, que van seguidos desde el byte 32; con el byte 19 a 1 no se copia nada: solo se crea `destino`. El
+/// origen se lee sin mirar permisos (lo pide quien reparte las llaves); si no existe, no se copia nada y va bien.
+/// Contesta en `a` cuántos ficheros copió y en `b` sus bytes. `LLENO` si no cabe (lo copiado hasta ahí se queda).
+pub const RAM_COPIAR: u32 = 105;
+/// Ajustes en texto (`docs/bitacoras/ajustes-texto.md`): guardar un fichero de ajustes de `ENV:` en `ENVARC:`, como el
+/// "Save" del Amiga. Sin marca, como las demás de `RAM:`: solo lo pide `sesiones`, en nombre de un programa del
+/// escritorio que no tiene el `Home:` del usuario. Copia `Env/<fichero>` del volumen en memoria de la sesión (bytes 4 a
+/// 7) a `Prefs/Env-Archive/<fichero>` del volumen `vol` (el del usuario), con los cajones que falten (0700), suyo (uid y
+/// gid en los bytes 8 a 15) y 0600. Bytes 16 y 17: lo que miden `vol` y `fichero`, que van seguidos desde el byte 32.
+/// `fichero` tiene que valer (`ajuste_valido`): no sale del cajón. Un fichero de más de `MAX_AJUSTE`, o que no es un
+/// fichero, no se copia. Contesta en `a` los bytes copiados. `NO_EXISTE` si no está en `ENV:`, `MAL_FORMADO` si el
+/// nombre no vale o es demasiado grande. Número alto, para no chocar con otras ramas.
+pub const RAM_GUARDAR: u32 = 120;
+/// Lo más que mide un fichero de ajustes que se guarda así (el tope del formato de texto).
+pub const MAX_AJUSTE: u64 = 64 * 1024;
+
+/// Si `nombre` vale como fichero de ajustes dentro de `ENV:`/`ENVARC:` (`Escritorio/apariencia`): de una a cuatro partes
+/// separadas por `/`, cada una UTF-8 de 1 a 64 bytes, sin `.` ni `..`, sin `:`, `\\` ni bytes de control; hasta 128
+/// bytes en total. Así no sale del cajón de los ajustes.
+pub fn ajuste_valido(nombre: &[u8]) -> bool {
+    let Ok(t) = core::str::from_utf8(nombre) else { return false };
+    !t.is_empty()
+        && t.len() <= 128
+        && t.split('/').count() <= 4
+        && t.split('/').all(|p| !p.is_empty() && p.len() <= 64 && p != "." && p != ".." && !p.chars().any(|c| c == ':' || c == '\\' || c.is_control()))
+}
+
+#[cfg(test)]
+mod pruebas {
+    use super::ajuste_valido;
+
+    /// Hostil: lo que sale del cajón, vacío, largo, con volumen o con bytes de control no vale.
+    #[test]
+    fn nombres_de_ajustes() {
+        for bien in ["Escritorio/apariencia", "Sys/locale", "Sys/locale.prefs", "a", "año/ñ", "a/b/c/d"] {
+            assert!(ajuste_valido(bien.as_bytes()), "{bien}");
+        }
+        for mal in ["", "/", "/a", "a/", "a//b", "..", "../Prefs", "Sys/../../x", "Sys/./x", ".", "SYS:x", "a\\b", "a\nb", "a/b/c/d/e"] {
+            assert!(!ajuste_valido(mal.as_bytes()), "{mal}");
+        }
+        assert!(!ajuste_valido(&[b'a'; 65]));
+        assert!(!ajuste_valido(b"\xff\xfe"));
+        assert!(!ajuste_valido("a/".repeat(70).trim_end_matches('/').as_bytes()));
+    }
+}
+
+/// En el alta, el primer byte del volumen de una raíz que es el volumen en memoria de una sesión; detrás, la sesión
+/// (u32). No es UTF-8: no se confunde con el nombre de ningún volumen del disco.
+pub const VOLUMEN_RAM: u8 = 0xff;
 pub const D_ADMINISTRAR: u32 = 1;
 /// Derecho de repartir: ceder asas (U1).
 pub const D_REPARTIR: u32 = 2;
@@ -92,6 +214,11 @@ pub const D_REPARTIR: u32 = 2;
 /// la raíz de su volumen y queda fuera de sus raíces, así que el cliente no la ve ni la vacía. Si no existe, se crea
 /// (un cajón suyo, 0700). Los cajones se borran como siempre (vacíos, nada que guardar).
 pub const HUECO_PAPELERA: u8 = 0x80;
+/// S6, S36 (registro y permisos de `sesiones`): en el alta, con este bit en el hueco de una raíz (1 a 15), el último
+/// cajón de su camino se crea si falta, del cliente y 0755 (los de antes tienen que existir); y si ya está y no es
+/// del cliente, esa raíz no se da. Así un servicio tiene su cajón dentro de otro que no es suyo (`Home:Prefs/Permisos`
+/// de una persona) sin que nadie se lo cambie de sitio y ponga otro con lo que quiera.
+pub const HUECO_SUYO: u8 = 0x40;
 
 // Estados de las respuestas.
 pub const BIEN: i32 = 0;

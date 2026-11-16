@@ -74,6 +74,11 @@ pub struct NuevaVentana {
     /// intuition, a 1x: (desde la derecha, dónde empiezan los gadgets de profundidad; el alto de la barra). `None`: sin
     /// barra de intuition.
     pub hueco_marca: Option<(i32, i32)>,
+    /// La superficie de la pantalla propia en la que se abre (`None`: el escritorio, la pantalla de Workbench). Va dentro
+    /// de ella, como una hija (una `wl_subsurface`): `x` e `y` son de la pantalla, se mueve con ella y va delante de
+    /// ella; `al_frente`, `al_fondo` y `cambiar_profundidad` la ordenan entre sus hermanas; `arrastrar` y
+    /// `redimensionar` los hace el compositor dentro de la pantalla.
+    pub padre: Option<Superficie>,
 }
 
 /// Los colores del tema de DashOS (Material 3) para pintar los controles de un programa Amiga "como DashOS" (S26):
@@ -139,7 +144,10 @@ pub trait Compositor {
     /// `Evento::Tamano` (o no, si no la deja).
     fn pedir_tamano(&mut self, _s: Superficie, _ancho: u32, _alto: u32) {}
     fn limites(&mut self, _s: Superficie, _minimo: (u32, u32), _maximo: (u32, u32)) {}
+    /// Al frente: una ventana de primer nivel (con sus hijas) delante de todas; una hija, delante de sus hermanas.
     fn al_frente(&mut self, _s: Superficie) {}
+    /// Al fondo: una ventana de primer nivel (con sus hijas) detrás de todas; una hija, detrás de sus hermanas (y delante
+    /// de su madre).
     fn al_fondo(&mut self, _s: Superficie) {}
     /// El gadget de profundidad: al fondo si está delante, al frente si no.
     fn cambiar_profundidad(&mut self, _s: Superficie) {}
@@ -209,6 +217,9 @@ pub struct CompositorDePrueba {
     pub pitidos: u32,
     /// Si es `false`, `crear_ventana` falla.
     pub acepta: bool,
+    /// Cómo se apilan las de primer nivel (de atrás adelante) y las hijas de cada una.
+    pub orden: Vec<Superficie>,
+    pub hijas: BTreeMap<Superficie, Vec<Superficie>>,
     /// S26: el tema de DashOS (`None`: todos con el aspecto original) y los programas que van con el original.
     pub tema: Option<Tokens>,
     pub originales: Vec<String>,
@@ -227,6 +238,8 @@ impl CompositorDePrueba {
             registro: Vec::new(),
             pitidos: 0,
             acepta: true,
+            orden: Vec::new(),
+            hijas: BTreeMap::new(),
             tema: None,
             originales: Vec::new(),
             version_tema: 0,
@@ -243,6 +256,34 @@ impl CompositorDePrueba {
     }
     fn apuntar(&mut self, que: &str, s: Superficie) {
         self.registro.push(alloc::format!("{que} {s}"));
+    }
+    /// Todas, de atrás adelante: cada una de primer nivel seguida de sus hijas.
+    pub fn apilado(&self) -> Vec<Superficie> {
+        let mut v = Vec::new();
+        for &s in &self.orden {
+            v.push(s);
+            v.extend(self.hijas.get(&s).into_iter().flatten().copied());
+        }
+        v
+    }
+    /// La lista en la que está `s` (la de primer nivel o la de sus hermanas).
+    fn pila_de(&mut self, s: Superficie) -> Option<&mut Vec<Superficie>> {
+        match self.ventanas.get(&s).and_then(|v| v.pedida.padre) {
+            Some(p) => self.hijas.get_mut(&p),
+            None => Some(&mut self.orden),
+        }
+    }
+    fn apilar(&mut self, s: Superficie, frente: bool) {
+        if let Some(pila) = self.pila_de(s)
+            && let Some(i) = pila.iter().position(|&x| x == s)
+        {
+            pila.remove(i);
+            if frente {
+                pila.push(s);
+            } else {
+                pila.insert(0, s);
+            }
+        }
     }
 }
 
@@ -271,12 +312,19 @@ impl Compositor for CompositorDePrueba {
                 textos: Vec::new(),
             },
         );
+        match v.padre {
+            Some(p) => self.hijas.entry(p).or_default().push(s),
+            None => self.orden.push(s),
+        }
         self.apuntar("crear", s);
         Some(s)
     }
     fn cerrar_ventana(&mut self, s: Superficie) {
         if let Some(v) = self.ventanas.get_mut(&s) {
             v.cerrada = true;
+        }
+        if let Some(pila) = self.pila_de(s) {
+            pila.retain(|&x| x != s);
         }
         self.apuntar("cerrar", s);
     }
@@ -320,12 +368,16 @@ impl Compositor for CompositorDePrueba {
         self.apuntar("limites", s);
     }
     fn al_frente(&mut self, s: Superficie) {
+        self.apilar(s, true);
         self.apuntar("frente", s);
     }
     fn al_fondo(&mut self, s: Superficie) {
+        self.apilar(s, false);
         self.apuntar("fondo", s);
     }
     fn cambiar_profundidad(&mut self, s: Superficie) {
+        let delante = self.pila_de(s).is_some_and(|p| p.last() == Some(&s));
+        self.apilar(s, !delante);
         self.apuntar("profundidad", s);
     }
     fn activar(&mut self, s: Superficie) {
