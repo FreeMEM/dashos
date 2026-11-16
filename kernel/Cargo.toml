@@ -53,6 +53,10 @@ medir_fs = []
 # Con `virt`: la caja Linux (H9) arranca un kernel de Linux de verdad (`make arranque-virt-linux`): su Image, que no va
 # en git, entra en el paquete de arranque desde target/linux/Image y llega a `caja-linux` como datos.
 linux = []
+# La imagen del vídeo de la demo (`make demo`, docs/bitacoras/demo.md): la de usar (`uso`), con la caja Linux de verdad
+# (`linux`) y la caja Amiga, que en `uso` no va. La caja Amiga de la demo es la de las capturas (CAJA_INTERACTIVA=1, en
+# caja/build-demo): sus programas esperan a que alguien los mire.
+demo = ["uso", "linux"]
 
 # El build.rs comprime los programas del paquete de arranque (LZ4, formato de bloque); el kernel no depende de nada.
 [build-dependencies]

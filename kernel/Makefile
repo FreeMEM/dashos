@@ -11,6 +11,7 @@
 # make arranque-virt-arch  lo mismo con Arch Linux ARM desde la partición de la caja en el NVMe (fuera de git)
 # make arranque-virt-wayland  lo mismo, con programas gráficos de Linux en ventanas de DashOS (el puente de Wayland)
 # make arranque-virt-gpu  lo mismo, con programas de GL de Linux por Wayland y por la virtio-gpu de la caja (S25)
+# make demo    el vídeo de la demo: el escritorio, la caja Amiga y la caja Linux, grabados (tools/demo.py)
 # make pi5     la imagen para la Raspberry Pi 5 (target/kernel_2712.img), con el diagnóstico en pantalla
 # make tarjeta-pi5  esa imagen en una tarjeta para grabar (~/.cache/dashos-pi5/dashos-pi5.img, tools/preparar_pi5.py)
 # make arranque-virt-diag  el diagnóstico de la Pi 5 en QEMU virt (pantalla del firmware de UEFI): sus líneas y una captura
@@ -385,6 +386,37 @@ arranque-virt-2: virt $(DISCO_NVME)
 	R=$$?; $(RED_DESPUES); exit $$R
 	python3 ../tools/captura_multimonitor.py target/multi
 	grep "en 10 s" target/salida_virt_2.txt | tail -5
+
+# El vídeo de la demo (docs/bitacoras/demo.md): la imagen de usar (`uso`) con la caja Linux de Arch y sus programas
+# grandes (el disco de `arranque-virt-wayland`) y la caja Amiga de las capturas (CAJA_INTERACTIVA=1, en caja/build-demo),
+# con el AmigaOS del usuario (DEMO_AMIGAOS) y sus programas 68k (DEMO_PROGRAMAS: fichero:fichero..., con el nombre que
+# llevarán en el disco delante de un "=" si se quiere otro). Nada de eso va en git. `tools/demo.py` arranca QEMU (8 GB,
+# tableta USB, a DEMO_PANTALLA), entra, recorre el escritorio con el teclado y el ratón (monitor de QEMU y QMP),
+# esperando cada cosa en la salida serie, y graba la pantalla (`screendump` a ritmo fijo): fotogramas y marcas de
+# tiempo en DEMO_DIR/grabacion. El vídeo se monta después con `tools/demo_montar.py`. DEMO_GUION=no: solo arranca y
+# deja los sockets, para manejarla a mano (`tools/demo.py orden`).
+DEMO_AMIGAOS ?= $(HOME)/.cache/dash-emu/sys32mui
+DEMO_PROGRAMAS ?= Tachyon=$(HOME)/Projects/tachyon/build/dashweb:$(HOME)/Projects/tachyon/iconos:Calculator=$(HOME)/recuperar/tachyon-scratch/sys39x/Workbench/Tools/Calculator:Forja=$(HOME)/Projects/forja/build/Forja
+DEMO_PANTALLA ?= 1280x720
+DEMO_DIR ?= $(HOME)/recuperar/geosian-7d/demo
+DEMO_GUION ?= si
+VIRT_DEMO := target/kernel8-virt-demo.img
+demo: usuario catalogos FORCE
+	@test -f "$(APPS_IMAGE)" || { echo "Falta el kernel de Arch (APPS_IMAGE=$(APPS_IMAGE)): DASHOS_CAJA_APPS=1 tools/caja_linux_invitado.py preparar-arch"; exit 1; }
+	@test -f "$(APPS_DISCO)" || { echo "Falta el disco de Arch (APPS_DISCO=$(APPS_DISCO)): DASHOS_CAJA_APPS=1 tools/caja_linux_invitado.py preparar-arch"; exit 1; }
+	$(MAKE) -C ../caja B=build-demo CAJA_INTERACTIVA=1
+	cd ../archivos/dashfs && cargo build --release --bin dashfs-ar --bin dashfs-volume
+	cd ../archivos/herramientas && cargo build --release
+	rm -rf target/demo && mkdir -p target/demo/programas target/linux
+	python3 ../tools/demo.py programas "$(DEMO_PROGRAMAS)" target/demo/programas > target/demo/programas.txt
+	DASHOS_AMIGAOS="$(DEMO_AMIGAOS)" DASHOS_PROGRAMAS_AMIGA="$$(cat target/demo/programas.txt)" python3 ../tools/disco_archivos.py target/demo/nvme.img $(DASHFS_AR)
+	cp "$(APPS_IMAGE)" target/linux/Image
+	: > target/linux/initrd
+	python3 ../tools/demo.py disco target/demo/nvme.img "$(APPS_DISCO)" target/demo/disco-arch.img
+	cargo build $(CARGO_PERFIL) --features virt,uso,linux,demo
+	$(OBJCOPY) -O binary $(ELF) $(VIRT_DEMO)
+	cd ../uefi && DASHOS_PANTALLA=$(DEMO_PANTALLA) DASHOS_NUCLEO=$(abspath $(VIRT_DEMO)) cargo build --release
+	python3 ../tools/demo.py grabar --efi ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi --disco target/demo/disco-arch.img --pantalla $(DEMO_PANTALLA) --dir $(DEMO_DIR) --guion $(DEMO_GUION)
 
 # Los cortes del sonido con los cuatro núcleos ocupados (S19, A6): la imagen de virt con cuatro programas de carga,
 # sin disco ni USB. Mide; el WAV se comprueba, pero un fallo de la comprobación no para la orden.
