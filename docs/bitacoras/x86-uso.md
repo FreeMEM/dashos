@@ -53,7 +53,7 @@ como antes de esta rama. `arranque-virt` falló una vez en "[dash-ventana] pulsa
 - **La hora**: en x86 no se leía el reloj de la placa y la barra decía "--:--". Ahora el kernel lee el RTC del CMOS al
   arrancar (`base/x86_64/rtc.rs`, como el PL031 en ARM): "Hora: del reloj de la placa".
 
-Cómo se arranca: `make -C kernel x86-uso` (`PANTALLA=1280x720`, `ACCEL=tcg` para no usar KVM).
+Cómo se arranca: `make -C kernel x86-uso` (`PANTALLA=1280x720`, `SIN_KVM=1` para no usar KVM).
 
 ## Lo comprobado (capturas en `~/recuperar/geosian-7d/x86-uso-capturas/`, fuera de git)
 

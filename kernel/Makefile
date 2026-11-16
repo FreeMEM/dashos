@@ -682,7 +682,7 @@ prueba-x86: usuario-x86 FORCE
 	$(ACCEL_QEMU) $(MAQUINA_IOMMU) GUARDAR=$(abspath target/salida_x86_pruebas.txt) ARQ=x86_64 QEMU_EXTRA="$(EDU_X11) $(if $(IOMMU),$(IOMMU_QEMU) -device nvme$(coma)serial=prueba)" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_x86.txt 150
 
 # La imagen de usar en x86-64 (`make x86-uso`): el escritorio de `virt-uso` (`kernel/src/inicio_x86_uso.rs`) en QEMU q35
-# con OVMF, en una ventana, con KVM si hay /dev/kvm (ACCEL=tcg lo quita), una tableta USB y el teclado, el disco de
+# con OVMF, en una ventana, con KVM si hay /dev/kvm (SIN_KVM=1 lo quita), una tableta USB y el teclado, el disco de
 # serie (compilado para x86: DASHOS_ARQ=x86_64), la red de usuario de QEMU y el sonido. Lo arranca
 # `tools/qemu_x86_a_mano.sh` (PANTALLA=ANCHOxALTO, SONIDO_X86=hda|virtio, VENTANA=gtk|sdl|none). No es una prueba: nada
 # la comprueba. Sin la caja Linux ni la caja Amiga (aún no van en x86).
@@ -692,7 +692,7 @@ DISCO_PROGRAMAS_X86 := hola pide cambio ram avisa guarda espera blanker nocapslo
 FUNCIONES_X86_USO := archivos,ventanas,sonido,red,imagenes,ordenes
 NUCLEO_X86_USO := target/kernel-x86-uso.elf
 DISCO_X86 := target/nvme-x86.img
-ACCEL_USO := $(if $(filter tcg,$(ACCEL)),,$(if $(ACCEL),$(ACCEL),$(if $(wildcard /dev/kvm),kvm)))
+ACCEL_USO := $(if $(SIN_KVM),,$(if $(wildcard /dev/kvm),kvm))
 usuario-x86-uso: FORCE
 	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86_USO) $(addprefix --bin ,$(SERVICIOS_X86_USO) $(DISCO_PROGRAMAS_X86))
 	cd ../ordenes && cargo build --release --target x86_64-unknown-none
