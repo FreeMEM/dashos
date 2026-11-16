@@ -42,6 +42,10 @@ pub mod cortafuegos;
 pub mod dns;
 pub mod sntp;
 pub mod zona;
+/// S6, S36: el registro común en `Estado:Registros/` (el formato de la línea, quién ve qué, el ritmo) y los permisos
+/// concedidos en texto con su frase en llano (sin dependencias: se prueban en el PC).
+pub mod registro;
+pub mod permisos_texto;
 mod copiar;
 
 /// Llamada al sistema en crudo: número y cinco argumentos; devuelve x0 y x1. Para pruebas y para la biblioteca.
