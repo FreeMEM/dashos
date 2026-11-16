@@ -94,9 +94,8 @@ Dos líneas a la vez (decisión 4 de S30):
   EPT, AMD-V con NPT); X11 pasar un aparato PCIe a una máquina virtual; X12 el dominio de gráficos; X13 canal y
   memoria compartida sin copia; X14 Mesa en DashOS (Venus y contexto nativo); X15 el compositor sobre el dominio;
   X16 CUDA en la caja por reenvío de la interfaz de Nvidia, y el dominio de cómputo; X17 vídeo por hardware. Detrás de X5b.
-  - [~] X10 **Hipervisor de x86**: AMD-V con NPT hecho y probado (TCG y KVM en shiva); VT-x con EPT escrito y sin
-    probar (en pegaso, `freemem` no puede abrir `/dev/kvm`). Lo que queda abierto:
-    - Probar VT-x en pegaso (ver la bitácora: hace falta acceso a `/dev/kvm`).
+  - [x] X10 **Hipervisor de x86**: AMD-V con NPT (TCG y KVM en shiva) y VT-x con EPT (KVM anidado en pegaso, probado
+    por el coordinador el 2026-11-16), hechos y probados. Lo que queda abierto:
     - El globo (llamada 55) en x86: da `E_NO_HAY`. Hará falta que las vCPU de otros núcleos salgan y tomen un ASID o
       VPID nuevo antes de devolver las páginas (el contador `generacion` del espacio ya está).
     - Sin APIC virtual por hardware (AVIC, APICv) ni interrupciones entregadas sin salir (posted interrupts): el APIC
@@ -109,6 +108,37 @@ Dos líneas a la vez (decisión 4 de S30):
       emulación del GIC, el PSCI y el arranque de Linux para arm64). Hará falta su parte de x86 (APIC, IOAPIC, PIC,
       el protocolo de arranque de Linux de x86).
     - Arrancar un Linux en una VM de x86: después (no era parte de X10).
+  - [x] X11 **Pasar un aparato PCIe a una máquina virtual** (`kernel/src/pasar.rs`, llamada 60 `maquina_aparato`):
+    asignar (FLR si lo admite; su dominio de la IOMMU con la memoria del invitado, dirección de DMA = física del
+    invitado; su MSI la programa el kernel y llega al monitor como interrupción de aparato), proyectar sus BAR (sin las
+    páginas de MSI-X), su configuración filtrada, y al parar la máquina o morir el monitor, callado, con el dominio vacío
+    y libre. Sin IOMMU se niega. Remapeo de interrupciones con AMD-Vi (una tabla de una entrada por aparato). Probado en
+    QEMU con TCG (AMD-V) y AMD-Vi, VT-d y sin IOMMU. Lo que queda abierto:
+    - **VT-d sin remapeo de interrupciones**: un aparato pasado puede mandar al anfitrión cualquier MSI (cualquier
+      vector de cualquier núcleo). En VT-d el remapeo es de toda la unidad (GCMD.IRE): hay que remapear todas las MSI del
+      sistema (las de los servicios, con IRTE que comprueben el número del aparato, SVT/SID) y las del IOAPIC, o dejar
+      pasar el formato compatible (CFI), que no protege nada. La llamada lo dice (bandera 1 a 0) y el kernel lo avisa
+      en la consola. Hace falta antes de pasar aparatos en Intel con invitados que no sean de confianza.
+    - Solo la entrada 0 de la MSI-X (y un mensaje de MSI): un aparato con varias colas (una gráfica, un NVMe) tendrá una
+      sola interrupción. Hará falta una por vector, con su entrada en la tabla de remapeo.
+    - Las páginas de la tabla y la PBA de MSI-X no se proyectan: si comparten página con otros registros del aparato,
+      el monitor tendría que reenviarlos (no hay operación para eso aún). Tampoco se pasan las BAR de E/S ni las de menos
+      de 4 KB, ni la ROM; y una BAR se proyecta una vez (si el invitado la mueve, no se sigue).
+    - La configuración se escribe con una lista blanca corta (mando, estado, línea de caché, latencia, línea de
+      interrupción, Device Control de PCI Express). Lo propio del fabricante o las demás capacidades (energía, PCIe Link
+      Control) dan `E_DERECHOS`: puede que algún controlador las necesite (las gráficas, en X12).
+    - FLR escrito y sin probar (el `edu` de QEMU no lo tiene; está detrás de la capacidad de PCI Express). Sin otros
+      reinicios (el del bus secundario, el de energía D3).
+    - Un aparato con RMRR o IVMD (memoria del firmware 1:1 en su dominio, como la gráfica integrada de Intel): al
+      asignarlo, esa proyección se pierde (el dominio se vacía). Para X12 habrá que decidir qué hacer con ella.
+    - `inicio_x86.rs` no crea objetos de aparato ni lanza un monitor de máquinas: solo las pruebas. Faltan los
+      aparatos detrás de puentes de PCIe a PCI y los grupos sin ACS (lo mismo que en X5b): uno de esos no se debería
+      pasar solo.
+    - Sin interrupciones entregadas sin salir (posted interrupts, AVIC/APICv con la IOMMU): cada MSI pasa por el monitor.
+    - En QEMU, el DMA de un aparato a 0xFEE0_0000 llega a la AMD-Vi sin número de aparato y la toma como del IOAPIC
+      (sin remapeo): una "MSI falsa" por DMA sí llega en QEMU. En una AMD-Vi de verdad todo lo que sube lleva el número
+      del aparato. La prueba del remapeo cambia en su lugar el dato de la MSI del aparato.
+    - Con KVM y AMD-Vi, QEMU pide `kernel-irqchip=split` para `intremap=on` (el Makefile lo pone); sin probar con KVM.
 - [ ] X7 **Caja Amiga en x86** con el intérprete de RelevoJIT (necesita R3 y la caja Amiga en `main`).
 - [ ] X8 **La caja con el JIT** de RelevoJIT (necesita R6).
 - [ ] X9 **Un PC de verdad**, arrancando desde USB (necesita la máquina; decisión 5 de S30).
@@ -632,3 +662,65 @@ No comprobado: compilar `usuario/` desde GitHub (la rama `x7a` no está subida: 
 local con `url.insteadOf` y `CARGO_NET_GIT_FETCH_WITH_CLI`, y Cargo lo guarda en `~/.cargo/git`); `prueba-x86` con
 `IOMMU=intel` (no se pidió); el banco de Linux bajo `qemu-x86_64` (la glibc de shiva usa instrucciones que el TCG no
 tiene), así que la columna de TCG no tiene contraparte en Linux; una máquina de verdad.
+
+
+### 2026-11-16 — X10: VT-x probado en pegaso
+
+Lo probó el coordinador: en pegaso (i5-8500, KVM anidado, `-cpu host`), con la imagen de X10 (`~/dashos-pruebas-x10`),
+`prueba-x86` dio BIEN: "Hipervisor: VT-x con EPT, invitado sin restricciones y VPID" y "X10: máquinas virtuales bien";
+C28 también bien allí. X10 queda hecha.
+
+
+### 2026-11-16 — X11: pasar un aparato PCIe a una máquina virtual
+
+Hecho (sala limpia: la especificación de PCI Express 6.0, la de la IOMMU de AMD n.º 48882 rev. 3.10 (2.2.2.1, la
+entrada de la tabla de aparatos; 2.2.5, el remapeo de interrupciones; 2.4.5, INVALIDATE_INTERRUPT_TABLE), el AMD64 APM
+vol. 2 y el Intel SDM 3C para NPT y EPT; el código de QEMU solo para entender qué emula su AMD-Vi y el `edu`):
+
+- `kernel/src/pasar.rs`: el objeto "aparato del PCIe" (`Objeto::AparatoPci`, solo x86). Al crearlo, el kernel apunta
+  el aparato como suyo (`reclamar`; `inicio_x86.rs` reclama los de los servicios: un aparato está en un lado o en el
+  otro), mide sus BAR, mira dónde están la tabla y la PBA de MSI-X, le reserva una MSI del anfitrión y lo calla.
+- Llamada 60 `maquina_aparato` (vCPU, aparato, operación): 0 asignar, 1 proyectar una BAR, 2 información de una BAR, 3 y
+  4 leer y escribir la configuración (filtrada). Detalle en `docs/referencia/kernel.md`. Sin IOMMU, `E_NO_HAY`.
+- Asignar: FLR si lo admite (100 ms durmiendo y las BAR repuestas); su dominio de la IOMMU vaciado y con toda la memoria
+  del invitado (dirección de DMA = física del invitado; `base::iommu::Dominio::proyectar_pagina`, `invalidar` y
+  `vaciar`); lo que se añada a la máquina después entra también (con la lista de aparatos tomada, para que no se cuele a
+  medias). Su MSI la programa el kernel; la llave de su interrupción va al monitor, que la entrega a la vCPU por el
+  bloque de interrupciones de X10.
+- Remapeo de interrupciones con AMD-Vi: una tabla de una entrada por aparato pasado (IV = 1, IntCtl = 10b, IntTabLen 0,
+  sin pases de NMI, INIT, ExtInt ni LINT); el aparato manda su MSI con el dato 0. Al soltarlo, IntCtl = 00b (todo se
+  aborta). Los aparatos de los servicios siguen con IV = 0. Con VT-d no hay remapeo (ver la tarea): la llamada lo dice
+  con su bandera y el kernel lo escribe en la consola.
+- BAR en el invitado: `hiper::Espacio::proyectar_registros`, sin caché (NPT con PCD y PWT; EPT de tipo UC) y sin
+  ejecutar, sin las páginas de MSI-X (salen al monitor). El espacio apunta esos tramos: nada se pone encima.
+- Soltar: `Comun::parar` espera (100 ms como mucho) a que las vCPU salgan del invitado y suelta sus aparatos; el `Drop`
+  de la máquina, igual (el monitor murió). Callado (sin memoria, E/S ni bus master; MSI y MSI-X apagadas), dominio
+  vacío, interrupciones abortadas. Libre para otra máquina; su objeto de interrupción se reutiliza.
+- `pci.rs`: accesos de 1, 2 y 4 bytes a la configuración, `callar`, `pedir_flr`, `tipo_cabecera`; `mmio::Ventana`, de 1 y
+  2 bytes.
+- Biblioteca: `maquina_aparato`, `maquina_aparato_bar`, `_info`, `_leer`, `_escribir`, y `E_DERECHOS`.
+- Prueba: `usuario/src/bin/maquina_pci.rs` hace de monitor (emula para el invitado la configuración por 0xCF8 y 0xCFC,
+  con su BAR 0 y su MSI) y su invitado mínimo usa el `edu` de QEMU: lee su configuración, pone su BAR y su MSI, lee la
+  identificación y el registro de vida por la BAR sin salir, copia por DMA 64 bytes por el aparato dentro de su memoria,
+  recibe la interrupción del aparato (vector 0x50) y le manda copiar a 0x0800_0000, fuera de su memoria. El monitor
+  comprueba además lo que filtra el kernel (BAR y MSI no se escriben, las BAR se leen 0), que no se asigna dos veces, y
+  que al parar la máquina el aparato se asigna a otra. El kernel (`prueba_pasar`, en `pruebas_procesos_x86.rs`)
+  comprueba que el DMA de fuera falló en la IOMMU y no tocó esa física del anfitrión, que muerto el monitor el aparato
+  está callado, libre y su DMA no alcanza lo que era del invitado, y con AMD-Vi el remapeo: su MSI llega y, con el
+  dato de su MSI cambiado a mano al vector del anfitrión (como un mensaje sin remapeo), no llega. `make -C kernel
+  prueba-x86` añade `-device edu,dma_mask=0xffffffff` siempre; con `IOMMU=amd`, `intremap=on` (y con KVM,
+  `kernel-irqchip=split`).
+
+Una cosa de QEMU: el DMA de un aparato (`pci_dma_write`) llega a su AMD-Vi sin número de aparato, y la tabla de
+remapeo que mira es la del IOAPIC (IV = 0): una "MSI falsa" que el invitado le haga escribir por DMA a 0xFEE0_0000 sí
+llega en QEMU. Las MSI de verdad sí llevan el número. Por eso la prueba del remapeo cambia el dato de la MSI.
+
+Comprobado: `make -C kernel prueba-x86` BIEN sin IOMMU (la llamada se niega), con `IOMMU=amd` (con remapeo) y con
+`IOMMU=intel` (sin remapeo), con TCG (AMD-V). En pegaso (VT-x con EPT, KVM anidado, `-cpu host`, QEMU 10.2.1) con
+`intel-iommu`, en `~/dashos-pruebas-x11`: BIEN entero, también X11 y C28.
+`make -C kernel arranque-x86 IOMMU=amd` BIEN (salida, disco, captura y sonido; sin fallos de DMA). ARM: `make -C kernel
+prueba` BIEN; `make -C kernel arranque-virt` BIEN a la segunda (la primera se quedó en la búsqueda del explorador, con
+la tecla "a" repetida, y faltó "no abre Sistema/DeCarla": el paso de la interfaz que a veces falla por tiempo).
+
+No comprobado: FLR (el `edu` no lo tiene); una MSI-X; un aparato de verdad en una máquina de verdad; el remapeo en una
+AMD-Vi de verdad (shiva); con KVM y AMD-Vi (`kernel-irqchip=split`). Lo que queda está en la tarea X11.
