@@ -970,9 +970,14 @@ RED_X86=e1000e` BIEN; `make -C kernel prueba-x86` BIEN. ARM: `make -C kernel pru
 intérprete. `cargo clippy` de `rtl-red` sin avisos. `tools/vfio_red.sh` en shiva: la RTL8125 (03:00.0, r8169, enp3s0)
 sola en el grupo 26, la ruta por defecto por wlan0; se niega si OTRO es wlan0.
 
-**Sin probar en hardware: todo `rtl-red`.** Ni la versión, ni la salida de OOB, ni el firmware aplicado, ni el PHY, el
-ePHY, los anillos, la MSI-X, el enlace o la parada. Tampoco la prueba con VFIO (`RED_X86=vfio` solo se ha visto en
-seco con `make -n`). Sin hacer: el paso 17 de §8 (latencia de L0s y L1; ASPM va apagado), el bucle de la MAC o del PHY
+**Probado en hardware (2026-11-16, shiva):** la RTL8125B de verdad pasada a QEMU con VFIO (KVM, AMD-V), con un cable
+a la I226-V de shiva (Linux, `tools/vfio_red_preparar.sh`; se deshace con `tools/vfio_red_devolver.sh`). `make -C kernel
+arranque-x86 RED_X86=vfio PCI_RED=0000:03:00.0 ACCEL=kvm MAC_RED=38:05:25:34:d8:db` BIEN a la primera, y con
+`IOMMU=intel` también (rtl-red en su dominio, sin fallos de DMA). Se vio: XID 0x641, firmware aplicado (798 acciones),
+PHY 001cc840, MSI-X, enlace a 100 Mb/s (el cable solo tiene dos pares), DHCP de dnsmasq, eco de 4 MB igual, 9,98 MB/s
+(lo que da el enlace), ida y vuelta mediana 245 µs. Aviso en el arranque: "las FIFO no se vacían al salir de OOB; se
+sigue" (sin efecto visible; pregunta 1). Sin probar: 1 y 2,5 Gb/s (falta un cable de cuatro pares) y la parada.
+Sin hacer: el paso 17 de §8 (latencia de L0s y L1; ASPM va apagado), el bucle de la MAC o del PHY
 (§14), la multidifusión exacta, el parche de las tramas PTP cortas (§7.2; la pila no hace PTP) y el estado del enlace
 hacia `red-estado` (solo en el registro).
 

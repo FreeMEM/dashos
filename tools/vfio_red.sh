@@ -109,7 +109,7 @@ EOF
 [ "$FIREWALLD" = active ] && echo "sudo firewall-cmd --zone=trusted --add-interface=$OTRO"
 cat <<EOF
 # DHCP (se queda en marcha; Ctrl-C para pararlo): siempre 10.0.2.15, puerta 10.0.2.2, DNS 10.0.2.3, sin DNS propio.
-sudo dnsmasq --no-daemon --conf-file=/dev/null --port=0 --interface=$OTRO --bind-interfaces --except-interface=lo --dhcp-authoritative --dhcp-range=10.0.2.15,10.0.2.15,255.255.255.0,1h --dhcp-option=3,10.0.2.2 --dhcp-option=6,10.0.2.3 --dhcp-leasefile=/dev/null --log-dhcp
+sudo dnsmasq --no-daemon --conf-file=/dev/null --port=0 --interface=$OTRO --bind-interfaces --except-interface=lo --dhcp-authoritative --dhcp-range=10.0.2.15,10.0.2.15,255.255.255.0,1h --dhcp-option=3,10.0.2.2 --dhcp-option=6,10.0.2.3 --leasefile-ro --log-dhcp
 # El eco en 10.0.2.100:7 (se queda en marcha; Ctrl-C para pararlo): un tools/red_eco.py por conexión.
 sudo systemd-socket-activate --accept --inetd -l 10.0.2.100:7 python3 -I $RAIZ/tools/red_eco.py
 
