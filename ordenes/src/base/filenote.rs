@@ -3,7 +3,7 @@
 use crate::Orden;
 
 pub fn principal(o: &mut Orden) -> u64 {
-    let args = o.repartir("FILE/A,COMMENT");
+    let args = o.repartir(shell::ordenes::FILENOTE);
     let fichero = args.texto("FILE").unwrap_or("");
     let comentario = args.texto("COMMENT").unwrap_or("");
     if comentario.len() > 224 {

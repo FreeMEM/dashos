@@ -105,7 +105,7 @@ fn copiar(o: &mut Orden, de: &str, cajon: bool, hacia: &str, todo: bool, callado
 }
 
 pub fn principal(o: &mut Orden) -> u64 {
-    let args = o.repartir("FROM/M,TO/A,ALL/S,QUIET/S");
+    let args = o.repartir(shell::ordenes::COPY);
     let hacia = match o.s.ruta(args.texto("TO").unwrap_or("")) {
         Ok(r) => r,
         Err(e) => {

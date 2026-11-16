@@ -3,7 +3,7 @@
 use crate::Orden;
 
 pub fn principal(o: &mut Orden) -> u64 {
-    let args = o.repartir("TIME/N,SEC=SECS/S,MIN=MINS/S");
+    let args = o.repartir(shell::ordenes::WAIT);
     let n = args.numero("TIME").unwrap_or(1).clamp(0, 86_400) as u64;
     let hasta = dashos::ahora_us() + n * if args.si("MIN") { 60_000_000 } else { 1_000_000 };
     while dashos::ahora_us() < hasta {

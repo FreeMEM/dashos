@@ -1,5 +1,5 @@
 //! `List`: lo que hay en un cajón, con tamaño, protección, fecha y comentario. `List [cajón|patrón...] [FILES] [DIRS]
-//! [QUICK] [NOHEAD]`.
+//! [QUICK] [NOHEAD] [COLOR] [NOCOLOR]`. En una consola, el nombre lleva color por tipo, como en `Dir`.
 
 use alloc::string::String;
 use crate::{di, Datos, Orden};
@@ -9,6 +9,7 @@ struct Opciones {
     cajones: bool,
     rapido: bool,
     sin_cabecera: bool,
+    color: bool,
 }
 
 #[derive(Default)]
@@ -28,12 +29,22 @@ fn entrada(o: &mut Orden, op: &Opciones, c: &mut Cuenta, nombre: &str, d: &Datos
         c.ficheros += 1;
         c.bytes += d.tamano;
     }
+    // El nombre con su color (cajón, programa o guion) y, detrás, el relleno hasta su columna, sin contar el color.
+    let color = match (op.color, d.cajon(), d.bits & 4 != 0, d.modo & 0o111 != 0) {
+        (false, ..) => "",
+        (_, true, ..) => "\x1b[1;34m",
+        (_, _, true, _) => "\x1b[33m",
+        (_, _, _, true) => "\x1b[32m",
+        _ => "",
+    };
+    let fin = if color.is_empty() { "" } else { "\x1b[0m" };
     if op.rapido {
-        di!(o, "{}\n", nombre);
+        di!(o, "{}{}{}\n", color, nombre, fin);
         return;
     }
     let tam = if d.cajon() { String::from("Dir") } else { alloc::format!("{}", d.tamano) };
-    di!(o, "{:<24} {:>9} {} {}\n", nombre, tam, d.proteccion(), shell::fecha::texto(d.fecha));
+    let relleno = 24usize.saturating_sub(nombre.chars().count());
+    di!(o, "{}{}{}{:relleno$} {:>9} {} {}\n", color, nombre, fin, "", tam, d.proteccion(), shell::fecha::texto(d.fecha));
     if !comentario.is_empty() {
         di!(o, ": {}\n", comentario);
     }
@@ -46,8 +57,8 @@ fn pie(o: &mut Orden, op: &Opciones, c: &Cuenta) {
 }
 
 pub fn principal(o: &mut Orden) -> u64 {
-    let args = o.repartir("DIR/M,FILES/S,DIRS/S,QUICK/S,NOHEAD/S");
-    let op = Opciones { ficheros: !args.si("DIRS") || args.si("FILES"), cajones: !args.si("FILES") || args.si("DIRS"), rapido: args.si("QUICK"), sin_cabecera: args.si("NOHEAD") };
+    let args = o.repartir(shell::ordenes::LIST);
+    let op = Opciones { ficheros: !args.si("DIRS") || args.si("FILES"), cajones: !args.si("FILES") || args.si("DIRS"), rapido: args.si("QUICK"), sin_cabecera: args.si("NOHEAD"), color: (o.a_consola || args.si("COLOR")) && !args.si("NOCOLOR") };
     let mut dirs: alloc::vec::Vec<String> = args.varios("DIR").to_vec();
     if dirs.is_empty() {
         dirs.push(String::new());

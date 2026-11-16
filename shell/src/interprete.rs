@@ -7,6 +7,10 @@
 //! Como en AmigaDOS, sin pila de `If`: un `If` falso busca hacia delante su `Else` o su `EndIf`; un `Else` que se
 //! alcanza ejecutando salta a su `EndIf`. Por eso `Skip` puede saltar a cualquier sitio sin dejar nada a medias.
 //!
+//! Sustitución de órdenes, como en AmigaDOS: lo que va entre comillas invertidas (`` `Which Dir` ``) se ejecuta antes y
+//! en su lugar queda lo que escribió, en una línea. Quien conduce lo ejecuta (`Paso::Capturar`) y lo devuelve con
+//! `capturada`. Lo que sale de una sustitución no se vuelve a mirar (no hay bucles), y hay un tope por línea.
+//!
 //! Los guiones con `.KEY plantilla` reciben argumentos: `<nombre>` se cambia por su valor, `<nombre$defecto>` por el
 //! valor o por el defecto; `.BRA` y `.KET` cambian los corchetes y `.DEF nombre valor` da un defecto.
 
@@ -20,6 +24,8 @@ use alloc::vec::Vec;
 pub const MAX_NIVELES: usize = 16;
 /// Líneas de un guion, como mucho.
 pub const MAX_LINEAS: usize = 20_000;
+/// Sustituciones de órdenes en una línea, como mucho.
+pub const MAX_SUSTITUCIONES: usize = 8;
 
 /// Lo que el intérprete necesita de fuera.
 pub trait Mundo {
@@ -39,6 +45,8 @@ pub enum Paso {
     Nada,
     /// Hay que ejecutar esto (una orden, o varias en tubería) y avisar con `acabada`, o con `guion` si era un guion.
     Ejecutar(Vec<Orden>),
+    /// Hay que ejecutar esto guardando lo que escriba, y devolverlo con `capturada` (una sustitución de órdenes).
+    Capturar(Vec<Orden>),
     /// No queda nada por hacer: toca pedir una línea.
     Pedir,
     /// `EndShell`: el Shell acaba, con este código.
@@ -74,6 +82,10 @@ pub struct Interprete {
     esperando: bool,
     /// El nombre de lo último que se mandó ejecutar (para decir qué falló).
     ultima: String,
+    /// Una línea a medias de sustituir: lo ya hecho, lo que falta por mirar, si era tecleada y cuántas sustituciones
+    /// lleva. Mientras se ejecuta la orden de dentro, en `sustituyendo`; con su resultado ya puesto, en `reanudar`.
+    sustituyendo: Option<(String, String, bool, usize)>,
+    reanudar: Option<(String, String, bool, usize)>,
 }
 
 impl Default for Interprete {
@@ -97,12 +109,12 @@ fn es(palabra: &str, orden: &str) -> bool {
 
 impl Interprete {
     pub fn nuevo() -> Self {
-        Interprete { marcos: Vec::new(), locales: Vec::new(), alias: Vec::new(), rc: 0, resultado2: 0, falla_en: RC_ERROR, esperando: false, ultima: String::new() }
+        Interprete { marcos: Vec::new(), locales: Vec::new(), alias: Vec::new(), rc: 0, resultado2: 0, falla_en: RC_ERROR, esperando: false, ultima: String::new(), sustituyendo: None, reanudar: None }
     }
 
     /// Si hay algo a medias (un guion, o una línea tecleada sin acabar).
     pub fn ocupado(&self) -> bool {
-        !self.marcos.is_empty() || self.esperando
+        !self.marcos.is_empty() || self.esperando || self.reanudar.is_some()
     }
 
     /// Si se está dentro de un guion (no solo de una línea tecleada).
@@ -178,6 +190,25 @@ impl Interprete {
         }
         self.marcos.clear();
         self.esperando = false;
+        self.sustituyendo = None;
+        self.reanudar = None;
+    }
+
+    /// Lo que escribió la orden de una sustitución (`Paso::Capturar`): queda puesto en su línea, que sigue con el
+    /// `paso` siguiente. Los saltos de línea de dentro son espacios; el del final, nada.
+    pub fn capturada(&mut self, m: &mut dyn Mundo, texto: &str, rc: i32) {
+        self.esperando = false;
+        self.rc = rc;
+        let Some((mut hecho, despues, tecleada, cuantas)) = self.sustituyendo.take() else { return };
+        let limpio: String = texto.trim_end_matches(['\n', '\r']).chars().map(|c| if c == '\n' || c == '\r' || c == '\t' { ' ' } else { c }).filter(|c| (*c as u32) >= 0x20).collect();
+        if hecho.len() + limpio.len() + despues.len() > MAX_LINEA {
+            m.decir("línea demasiado larga");
+            self.ultima.clear();
+            self.fallo(m, RC_FALLO, 0);
+            return;
+        }
+        hecho.push_str(&limpio);
+        self.reanudar = Some((hecho, despues, tecleada, cuantas));
     }
 
     /// Ctrl-C: se para lo que hubiera a medias. Dice si había algo.
@@ -219,6 +250,10 @@ impl Interprete {
         if self.esperando {
             return Paso::Nada;
         }
+        // Una línea a la que le acaban de poner el resultado de una sustitución: sigue por donde iba.
+        if let Some((hecho, resto, tecleada, cuantas)) = self.reanudar.take() {
+            return self.sustituir_y_hacer(m, hecho, &resto, tecleada, cuantas);
+        }
         let Some(marco) = self.marcos.last_mut() else { return Paso::Pedir };
         if marco.pc >= marco.lineas.len() {
             let acabado = self.marcos.pop().unwrap();
@@ -251,7 +286,51 @@ impl Interprete {
             self.fallo(m, RC_FALLO, 0);
             return Paso::Nada;
         };
-        let mut ordenes = match linea::partir(&puesta) {
+        self.sustituir_y_hacer(m, String::new(), &puesta, tecleada, 0)
+    }
+
+    /// Busca en `resto` la siguiente sustitución de órdenes: si la hay, la manda ejecutar (y la línea queda a medias);
+    /// si no, hace la línea entera (`hecho` y `resto`).
+    fn sustituir_y_hacer(&mut self, m: &mut dyn Mundo, mut hecho: String, resto: &str, tecleada: bool, cuantas: usize) -> Paso {
+        let Some(i) = resto.find('`') else {
+            hecho.push_str(resto);
+            return self.hacer(m, &hecho, tecleada);
+        };
+        let mal = |yo: &mut Self, m: &mut dyn Mundo, que: &str| {
+            m.decir(que);
+            yo.ultima.clear();
+            yo.fallo(m, RC_FALLO, 0);
+            Paso::Nada
+        };
+        let Some(j) = resto[i + 1..].find('`') else { return mal(self, m, "comilla invertida sin cerrar") };
+        if cuantas >= MAX_SUSTITUCIONES {
+            return mal(self, m, "demasiadas sustituciones de órdenes en una línea");
+        }
+        let dentro = &resto[i + 1..i + 1 + j];
+        let despues = &resto[i + 2 + j..];
+        hecho.push_str(&resto[..i]);
+        match linea::partir(dentro) {
+            // Vacía: no queda nada en su sitio.
+            Ok(o) if o.is_empty() => self.sustituir_y_hacer(m, hecho, despues, tecleada, cuantas + 1),
+            Ok(o) => {
+                self.ultima = o.last().map(|x| x.nombre.clone()).unwrap_or_default();
+                self.sustituyendo = Some((hecho, String::from(despues), tecleada, cuantas + 1));
+                self.esperando = true;
+                Paso::Capturar(o)
+            }
+            Err(e) => mal(self, m, &format!("{}", e)),
+        }
+    }
+
+    /// Hace una línea ya entera: la parte en órdenes y hace la de control o manda ejecutar las demás.
+    fn hacer(&mut self, m: &mut dyn Mundo, puesta: &str, tecleada: bool) -> Paso {
+        if puesta.len() > MAX_LINEA {
+            m.decir("línea demasiado larga");
+            self.ultima.clear();
+            self.fallo(m, RC_FALLO, 0);
+            return Paso::Nada;
+        }
+        let mut ordenes = match linea::partir(puesta) {
             Ok(o) => o,
             Err(e) => {
                 m.decir(&format!("{}", e));
@@ -592,12 +671,28 @@ mod pruebas {
         }
     }
 
+    /// Lo que "escribe" una orden capturada en las pruebas: `Which x` dice `SYS:C/x`; `Lineas` dos líneas; `Mucho`,
+    /// 3.000 letras; `Tilde`, otra comilla invertida.
+    fn salida_de(o: &Orden) -> String {
+        match o.nombre.as_str() {
+            "Which" => format!("SYS:C/{}\n", o.args),
+            "Lineas" => String::from("uno\ndos\n"),
+            "Mucho" => "z".repeat(3000),
+            "Tilde" => String::from("`Which no`"),
+            _ => String::new(),
+        }
+    }
+
     /// Conduce el intérprete hasta que pide una línea: las órdenes "se ejecutan" apuntándolas; `Falla n` devuelve n,
     /// `Set a b` pone una variable local. Como mucho `tope` pasos (para los bucles sin fin).
     fn conducir(i: &mut Interprete, m: &mut Falso, tope: usize) -> (Paso, usize) {
         for n in 0..tope {
             match i.paso(m) {
                 Paso::Nada => {}
+                Paso::Capturar(ordenes) => {
+                    let texto = salida_de(&ordenes[0]);
+                    i.capturada(m, &texto, 0);
+                }
                 Paso::Ejecutar(ordenes) => {
                     let o = &ordenes[0];
                     m.hechas.push(format!("{} {}", o.nombre, o.args).trim().to_string());
@@ -744,6 +839,44 @@ mod pruebas {
         conducir(&mut i, &mut m, 100);
         i.linea("EndShell");
         assert_eq!(conducir(&mut i, &mut m, 100).0, Paso::Fin(5));
+    }
+
+    #[test]
+    fn sustitucion_de_ordenes() {
+        let mut m = Falso::default();
+        let mut i = Interprete::nuevo();
+        i.linea("Echo está en `Which Dir` y en `Which Copy`.");
+        assert_eq!(conducir(&mut i, &mut m, 100).0, Paso::Pedir);
+        // Varias líneas quedan en una; vacía, nada; y en un guion, con variables dentro.
+        i.linea("Echo [`Lineas`] [``] [`Nada`]");
+        conducir(&mut i, &mut m, 100);
+        m.guiones.push(("g".into(), "Set o Type\nEcho `Which $o` fin".into()));
+        i.linea("Execute g");
+        conducir(&mut i, &mut m, 100);
+        assert_eq!(m.hechas, ["Echo está en SYS:C/Dir y en SYS:C/Copy.", "Echo [uno dos] [] []", "Set o Type", "Echo SYS:C/Type fin"]);
+        // Lo que sale de una sustitución no se vuelve a sustituir.
+        m.hechas.clear();
+        i.linea("Echo `Tilde`");
+        conducir(&mut i, &mut m, 100);
+        assert_eq!(m.hechas, ["Echo `Which no`"]);
+        // Hostiles: sin cerrar, demasiadas, una que hace la línea enorme, una con comillas sin cerrar dentro.
+        m.hechas.clear();
+        m.dicho.clear();
+        for mala in ["Echo `Which Dir", &format!("Echo {}", "`Which x` ".repeat(MAX_SUSTITUCIONES + 1)), "Echo `Mucho`", "Echo `Which \"x`"] {
+            i.linea(mala);
+            assert_eq!(conducir(&mut i, &mut m, 100).0, Paso::Pedir, "{mala}");
+            assert_eq!(i.rc, 20, "{mala}");
+            assert!(!i.ocupado());
+        }
+        assert!(m.hechas.is_empty());
+        assert_eq!(m.dicho, ["comilla invertida sin cerrar", "demasiadas sustituciones de órdenes en una línea", "línea demasiado larga", "comillas sin cerrar"]);
+        // Ctrl-C mientras se espera a la orden de dentro: la línea se deja.
+        i.linea("Echo `Which Dir` no");
+        assert!(matches!(i.paso(&mut m), Paso::Capturar(_)));
+        assert!(i.romper(&mut m));
+        i.capturada(&mut m, "tarde", 0);
+        assert_eq!(conducir(&mut i, &mut m, 100).0, Paso::Pedir);
+        assert!(m.hechas.is_empty());
     }
 
     #[test]

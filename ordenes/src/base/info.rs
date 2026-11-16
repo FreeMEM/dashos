@@ -4,7 +4,7 @@ use alloc::string::String;
 use crate::{di, Orden};
 
 pub fn principal(o: &mut Orden) -> u64 {
-    let _ = o.repartir("");
+    let _ = o.repartir(shell::ordenes::INFO);
     let tabla = o.s.tabla.clone();
     di!(o, "{:<12} {:>10} {:>10} {:>10} {:>5}\n", "Volumen", "Tamaño", "Usado", "Libre", "Lleno");
     for l in tabla.volumenes() {

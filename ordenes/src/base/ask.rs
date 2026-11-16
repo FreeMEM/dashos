@@ -4,7 +4,7 @@
 use crate::{di, Orden};
 
 pub fn principal(o: &mut Orden) -> u64 {
-    let args = o.repartir("PROMPT/A");
+    let args = o.repartir(shell::ordenes::ASK);
     di!(o, "{} ", args.texto("PROMPT").unwrap_or(""));
     let r = o.leer_linea().unwrap_or_default();
     let si = matches!(r.trim().to_lowercase().as_str(), "s" | "si" | "sí" | "y" | "yes");

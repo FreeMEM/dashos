@@ -48,7 +48,7 @@ fn borrar(o: &mut Orden, ruta: &str, cajon: bool, todo: bool, callado: bool, niv
 }
 
 pub fn principal(o: &mut Orden) -> u64 {
-    let args = o.repartir("FILE/M/A,ALL/S,QUIET/S,FORCE/S");
+    let args = o.repartir(shell::ordenes::DELETE);
     let mut c = Cuenta { borrados: 0, fallos: 0 };
     for f in args.varios("FILE") {
         match o.s.expandir(f) {

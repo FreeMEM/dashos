@@ -24,6 +24,8 @@ pub const POR_DATOS: usize = 248;
 pub const SERVIDO: u32 = 1;
 /// En las marcas: la entrada no es el teclado (viene de un fichero o de una tubería), o no hay.
 pub const ENTRADA_NO_INTERACTIVA: u32 = 2;
+/// En las marcas: la salida no es una consola (va a un fichero o a otra orden): sin colores ni columnas.
+pub const SALIDA_NO_CONSOLA: u32 = 4;
 /// Lo más que caben el cajón actual y los argumentos juntos: los trozos que entran en la cola de un canal (16
 /// mensajes) con `ARRANQUE` delante.
 pub const MAX_ARRANQUE: usize = 14 * POR_DATOS;
@@ -36,8 +38,9 @@ pub const ESCRIBIR: u32 = 1;
 pub const SALIDA: u32 = 1;
 pub const ERRORES: u32 = 2;
 pub const POR_ESCRITURA: usize = 244;
-/// Leer una línea de la entrada (hasta `POR_LECTURA` bytes, con su salto de línea si cabe). Contesta estado (los bytes
-/// que van; 0 es el final de la entrada), señales y los bytes.
+/// Leer de la entrada: hasta `POR_LECTURA` bytes. Del teclado llega una línea cada vez (con su salto de línea); de un
+/// fichero o de un tubo, las líneas enteras que quepan (o un trozo, si una línea no cabe). Contesta estado (los bytes
+/// que van; 0 es el final de la entrada), señales y los bytes. La orden parte las líneas ella.
 pub const LEER: u32 = 2;
 pub const POR_LECTURA: usize = 240;
 /// Nada: solo para saber las señales (una orden que tarda sin escribir).
@@ -49,6 +52,10 @@ pub const CD: u32 = 4;
 pub const ASIGNAR: u32 = 5;
 /// Acabar: el código de retorno (i32) y el segundo resultado (i32, el estado del último error). Sin respuesta.
 pub const SALIR: u32 = 6;
+
+/// El estado de `ESCRIBIR` cuando ya nadie lee lo que se escribe (la orden siguiente de la tubería acabó): la orden
+/// acaba sin más, con el código 0.
+pub const SIN_LECTOR: i32 = -100;
 
 /// En las señales de una respuesta: se pulsó Ctrl-C (o `Break`). La orden tiene que acabar.
 pub const ROTO: u32 = 1;

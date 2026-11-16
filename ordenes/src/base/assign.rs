@@ -35,7 +35,7 @@ fn listar(o: &mut Orden) {
 }
 
 pub fn principal(o: &mut Orden) -> u64 {
-    let args = o.repartir("NAME,TARGET/M,LIST/S,ADD/S,PREPEND/S,REMOVE/S");
+    let args = o.repartir(shell::ordenes::ASSIGN);
     let Some(nombre) = args.texto("NAME") else {
         listar(o);
         return o.fin(shell::RC_BIEN);

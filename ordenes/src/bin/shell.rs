@@ -29,16 +29,19 @@ use dashos::asignaciones::{self as asig, Cambio};
 use dashos::println;
 use dashos::protocolo::archivos as a;
 use dashos::protocolo::sesiones as ps;
-use kit::lienzo::{Lienzo, Rect};
+use kit::lienzo::{Lienzo, Rect as RectLienzo};
 use kit::teclado::{Tecla, Teclado};
 use kit::tema::Tema;
 use kit::texto::Fuente;
 use ordenes::{self as orden, Cli, Sistema, SESIONES};
+use shell::completar::{self, Completado};
 use shell::consola::{self, Consola, Punto};
+use shell::paneles::{Disposicion, Hacia, Rect as RectPanel};
+use shell::resaltar::{self, Clase};
 use shell::interprete::{Interprete, Mundo, Paso};
 use shell::linea::Orden as OrdenLinea;
 use shell::protocolo as p;
-use shell::{plantilla, ruta, RC_AVISO, RC_BIEN, RC_ERROR, RC_FALLO};
+use shell::{indicador, perfil, plantilla, ruta, RC_AVISO, RC_BIEN, RC_ERROR, RC_FALLO};
 use wayland::canal::{self, Juntador, TROZO_CONECTAR, TROZO_DATOS};
 use wayland::tablas::{
     dashos_tema_v1, wl_buffer, wl_callback, wl_compositor, wl_display, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool,
@@ -58,8 +61,12 @@ const VA_PIXELES: [usize; 2] = [0x50_0000_0000, 0x54_0000_0000];
 const MAX_PROGRAMA: usize = 4 << 20;
 /// Los programas que se guardan ya leídos (un guion que llama cien veces a `Echo` no lo lee cien veces).
 const MAX_GUARDADOS: usize = 8;
-/// Lo más que se guarda de la salida de una orden para la siguiente de una tubería, y de un fichero de entrada.
-const MAX_TUBO: usize = 1 << 20;
+/// Lo más que se lee de un fichero de entrada (`<fichero`).
+const MAX_ENTRADA: usize = 1 << 20;
+/// Lo que cabe en un tubo entre dos órdenes: lleno, quien escribe espera a que la otra lea. Y lo más que se guarda de
+/// una sustitución de órdenes.
+const MAX_TUBO: usize = 64 * 1024;
+const MAX_CAPTURA: usize = 64 * 1024;
 /// Lo que se espera a una orden rota con Ctrl-C antes de matarla.
 const PLAZO_ROTO_US: u64 = 2_000_000;
 /// Los trabajos a la vez.
@@ -84,11 +91,16 @@ const BUFERES: [u32; 2] = [21, 23];
 const TEMA: u32 = 43;
 const AVISO: u32 = 100;
 
-/// La letra (Roboto Mono, la de ancho fijo del kit) y el borde, en píxeles.
-const LETRA: u32 = 13;
+/// El borde de cada panel, en píxeles, y las columnas de un Shell sin ventana que no sabe las de su consola.
 const BORDE: i32 = 8;
 const COLUMNAS: usize = 80;
-const FILAS: usize = 25;
+/// Lo más que mide el título de una pestaña, en letras.
+const ANCHO_PESTANA: usize = 28;
+/// Los ficheros del Shell en `ENVARC:` (la capa del usuario es `Home:Prefs/Env-Archive/Shell`) y sus complementos.
+const HISTORIAL: &str = "ENVARC:Shell/Historial";
+const INDICADOR: &str = "ENVARC:Shell/Indicador";
+const PERFIL: &str = "ENVARC:Shell/Perfil";
+const COMPLEMENTOS: &str = "S:Shell-Complementos";
 /// Los 16 colores de una terminal, para fondo oscuro y para fondo claro.
 const PALETA_OSCURA: [u32; 16] = [
     0xff1d1b20, 0xffd0605e, 0xff7fb36d, 0xffd9b85c, 0xff6f9bd6, 0xffb48ad9, 0xff5fb8b8, 0xffcac4cf, 0xff6b6670, 0xfff2898a, 0xffa6d68f, 0xfff0d58a,
@@ -189,15 +201,21 @@ impl Buzon {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// La ventana.
+// La ventana: el búfer, el tema, la letra y la entrada. Lo que se ve dentro (las consolas de los paneles) lo da el
+// Shell al pintar.
 
 struct Ventana {
-    consola: Consola,
     fuente: Fuente,
-    /// La celda: ancho, alto y línea base.
+    /// El tamaño de la letra (del perfil) y la celda: ancho, alto y línea base.
+    letra: u32,
     celda: (i32, i32, i32),
     tema: Tema,
     tema_visto: (u32, bool),
+    colores: perfil::Colores,
+    /// Cuánto se ve lo de detrás (del perfil, de 0 a 90): el fondo de la ventana lleva esa transparencia.
+    translucidez: u32,
+    /// El tamaño con que se abre, en letras (del perfil).
+    de_serie: (usize, usize),
     /// El búfer en uso (0 o 1), su memoria y su tamaño en píxeles.
     cual: usize,
     mem: u32,
@@ -209,32 +227,48 @@ struct Ventana {
     siguiente_aviso: u32,
     esperando_desde: u64,
     sucia: bool,
-    /// Lo que se pintó en cada fila la última vez (para no repintar lo que no cambia).
-    pintadas: Vec<u64>,
+    /// Lo que se pintó en cada fila de cada panel la última vez (para no repintar lo que no cambia), y en la barra de
+    /// pestañas.
+    pintadas: Vec<(u32, RectPanel, Vec<u64>)>,
+    barra_pintada: u64,
+    /// Hay que borrar la ventana entera (cambió el tamaño, el tema o el reparto de paneles).
+    entera: bool,
     teclado: Teclado,
     control: u8,
     mayusculas: u8,
+    alt: bool,
     raton: (i32, i32),
-    arrastre: Option<Punto>,
     pp: portapapeles_cliente::Portapapeles,
     con_portapapeles: bool,
     serie: u32,
 }
 
-/// Lo que pide una tecla al Shell.
-enum Accion {
+/// Lo que llega de la ventana para el Shell.
+enum Entrada {
     Nada,
-    Linea(String),
-    Romper,
-    FinDeEntrada,
+    /// Una tecla pulsada: lo que da el mapa de teclado (si da algo) y su código.
+    Tecla { t: Option<Tecla>, codigo: u32 },
+    Mueve,
+    Boton { boton: u32, pulsado: bool, serie: u32 },
+    Rueda(i32),
+    /// Cambió el tamaño (o es la primera vez): hay que recolocar los paneles.
+    Medida,
     Cerrar,
+}
+
+/// Lo que se pinta de un panel.
+struct Vista<'a> {
+    id: u32,
+    rect: RectPanel,
+    consola: &'a Consola,
+    activo: bool,
 }
 
 /// El color de pantalla de un color de celda: el de serie, uno de la paleta (los 16 del tema, el cubo de 6×6×6 y los
 /// 24 grises de xterm), uno directo, o el gris de la sugerencia.
 fn color_de(c: consola::Color, de_serie: u32, fondo: u32, paleta: &[u32; 16]) -> u32 {
     match c >> 24 {
-        1 => match (c & 0xff) as u32 {
+        1 => match c & 0xff {
             n @ 0..=15 => paleta[n as usize],
             n @ 16..=231 => {
                 let nivel = |v: u32| if v == 0 { 0 } else { 55 + 40 * v };
@@ -259,7 +293,7 @@ fn techo(x: f32) -> i32 {
 
 impl Ventana {
     /// Conecta con el compositor y pide la ventana. `None` si no hay compositor.
-    fn abrir(b: &mut Buzon, suyo: u32) -> Option<Ventana> {
+    fn abrir(b: &mut Buzon, suyo: u32, perfil_: &perfil::Perfil) -> Option<Ventana> {
         let mut intentos = 0;
         loop {
             let e = dashos::canal_escribir(VENTANAS, &[TROZO_CONECTAR], &[suyo]);
@@ -303,8 +337,9 @@ impl Ventana {
             return None;
         };
         let mut fuente = Fuente::mono();
-        let cw = techo(fuente.avance('M', LETRA)).max(1);
-        let ch = LETRA as i32 + 3;
+        let letra = perfil_.letra;
+        let cw = techo(fuente.avance('M', letra)).max(1);
+        let ch = letra as i32 + 3;
         let base = (ch * 3 + 3) / 4;
         let mut e = Escritor::new();
         e.empezar(REGISTRO, wl_registry::req::BIND).uint(gc).texto(Some("wl_compositor")).uint(6).uint(COMPOSITOR).fin();
@@ -326,12 +361,19 @@ impl Ventana {
         e.empezar(VENTANA, xdg_toplevel::req::SET_MIN_SIZE).int(20 * cw + 2 * BORDE).int(4 * ch + 2 * BORDE).fin();
         e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
         b.mandar(&e);
+        let tema = match perfil_.colores {
+            perfil::Colores::Claro => Tema::CLARO,
+            _ => Tema::OSCURO,
+        };
         Some(Ventana {
-            consola: Consola::nueva(COLUMNAS, FILAS),
             fuente,
+            letra,
             celda: (cw, ch, base),
-            tema: Tema::OSCURO,
+            tema,
             tema_visto: (0xff67_50a4, true),
+            colores: perfil_.colores,
+            translucidez: perfil_.translucidez,
+            de_serie: (perfil_.columnas, perfil_.filas),
             cual: 0,
             mem: 0,
             medida: (0, 0),
@@ -342,18 +384,20 @@ impl Ventana {
             esperando_desde: 0,
             sucia: true,
             pintadas: Vec::new(),
+            barra_pintada: 0,
+            entera: true,
             teclado: Teclado::new(),
             control: 0,
             mayusculas: 0,
+            alt: false,
             raton: (0, 0),
-            arrastre: None,
             pp,
             con_portapapeles,
             serie: 0,
         })
     }
 
-    /// Un tamaño nuevo: memoria y búfer nuevos (en el otro sitio), y la consola se parte a su ancho.
+    /// Un tamaño nuevo: memoria y búfer nuevos (en el otro sitio).
     fn medir(&mut self, b: &mut Buzon, w: i32, h: i32) -> bool {
         let (cw, ch, _) = self.celda;
         let (w, h) = (w.clamp(20 * cw + 2 * BORDE, 3840), h.clamp(4 * ch + 2 * BORDE, 2160));
@@ -377,7 +421,7 @@ impl Ventana {
             e.empezar(POOLES[self.cual], wl_shm_pool::req::DESTROY).fin();
         }
         e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(POOLES[otra]).llave(copia as u32).int(tam as i32).fin();
-        e.empezar(POOLES[otra], wl_shm_pool::req::CREATE_BUFFER).uint(BUFERES[otra]).int(0).int(w).int(h).int(w * 4).uint(wayland::shm::XRGB8888).fin();
+        e.empezar(POOLES[otra], wl_shm_pool::req::CREATE_BUFFER).uint(BUFERES[otra]).int(0).int(w).int(h).int(w * 4).uint(if self.translucidez > 0 { wayland::shm::ARGB8888 } else { wayland::shm::XRGB8888 }).fin();
         b.mandar(&e);
         if self.mem != 0 {
             dashos::memoria_quitar(VA_PIXELES[self.cual]);
@@ -386,8 +430,7 @@ impl Ventana {
         self.mem = m;
         self.cual = otra;
         self.medida = (w, h);
-        self.consola.medir(((w - 2 * BORDE) / cw).max(1) as usize, ((h - 2 * BORDE) / ch).max(1) as usize);
-        self.pintadas.clear();
+        self.entera = true;
         self.sucia = true;
         true
     }
@@ -397,15 +440,33 @@ impl Ventana {
         ((c >> 16) & 0xff) + ((c >> 8) & 0xff) + (c & 0xff) < 384
     }
 
-    /// Pinta las filas que hayan cambiado y las presenta. Como mucho una vez por cuadro.
-    fn pintar(&mut self, b: &mut Buzon) {
+    /// Lo que mide la barra de pestañas (solo está si hay más de una).
+    fn alto_barra(&self, pestanas: usize) -> i32 {
+        if pestanas > 1 { self.celda.1 + 8 } else { 0 }
+    }
+
+    /// Cuántas letras caben en un panel de ese rectángulo.
+    fn letras_en(&self, r: RectPanel) -> (usize, usize) {
+        let (cw, ch, _) = self.celda;
+        ((((r.w - 2 * BORDE) / cw).max(1)) as usize, (((r.h - 2 * BORDE) / ch).max(1)) as usize)
+    }
+
+    /// La letra del panel de `r` que cae bajo el ratón: columna y fila.
+    fn letra_bajo_el_raton(&self, r: RectPanel) -> (usize, usize) {
+        let (cw, ch, _) = self.celda;
+        ((((self.raton.0 - r.x - BORDE).max(0)) / cw) as usize, (((self.raton.1 - r.y - BORDE).max(0)) / ch) as usize)
+    }
+
+    /// Pinta las filas que hayan cambiado de cada panel (y la barra de pestañas) y las presenta. Como mucho una vez por
+    /// cuadro. Dice si pintó algo.
+    fn pintar(&mut self, b: &mut Buzon, vistas: &[Vista], pestanas: &[(String, bool)]) -> bool {
         if !self.configurada || self.mem == 0 || !self.sucia {
-            return;
+            return false;
         }
         // Si el aviso de frame no llega (la sesión está detrás), no se pinta: no hay quien lo vea. Pasado un rato se
         // pinta igual, por si se perdió.
         if self.esperando != 0 && dashos::ahora_us().saturating_sub(self.esperando_desde) < 1_000_000 {
-            return;
+            return false;
         }
         self.sucia = false;
         let (w, h) = self.medida;
@@ -413,75 +474,131 @@ impl Ventana {
         // SAFETY: la memoria del búfer en uso, proyectada en `medir` con ese tamaño; solo la toca este hilo.
         let px = unsafe { core::slice::from_raw_parts_mut(VA_PIXELES[self.cual] as *mut u32, (w * h) as usize) };
         let mut l = Lienzo::new(px, w, h, w as usize);
-        let (fondo, letra) = (self.tema.superficie, self.tema.sobre_superficie);
+        // El fondo, con la transparencia del perfil (el lienzo guarda el color ya multiplicado por su opacidad).
+        let opacidad = 255 - 255 * self.translucidez.min(90) / 100;
+        let (fondo, letra) = ((self.tema.superficie & 0x00ff_ffff) | opacidad << 24, self.tema.sobre_superficie);
         let paleta = if self.oscuro() { &PALETA_OSCURA } else { &PALETA_CLARA };
-        let vista = self.consola.vista();
-        let filas = self.consola.filas();
-        if self.pintadas.len() != filas + 1 {
-            self.pintadas = alloc::vec![u64::MAX; filas + 1];
-            l.borrar(Rect::new(0, 0, w, h), fondo);
-        }
         let mut cambio = false;
-        for y in 0..filas {
-            let fila = vista.get(y);
-            // Lo que se ve en la fila, resumido en un número.
+        if self.entera {
+            // Todo: el color de las rayas entre paneles; cada panel borra luego lo suyo.
+            self.entera = false;
+            self.pintadas.clear();
+            self.barra_pintada = 0;
+            l.borrar(RectLienzo::new(0, 0, w, h), self.tema.variante_contorno);
+            cambio = true;
+        }
+        // La barra de pestañas.
+        if pestanas.len() > 1 {
             let mut suma = 0xcbf2_9ce4_8422_2325u64 ^ fondo as u64;
-            let mut mezclar = |v: u64| suma = (suma ^ v).wrapping_mul(0x100_0000_01b3);
-            if let Some(f) = fila {
-                mezclar(f.cursor.map_or(u64::MAX, |c| c as u64));
-                for (x, c) in f.celdas.iter().enumerate() {
-                    mezclar(c.c as u64 | (c.estilo as u64) << 32 | (self.consola.seleccionada(f.linea, f.desde + x) as u64) << 40);
-                    mezclar(c.letra as u64 | (c.fondo as u64) << 32);
+            for (t, activa) in pestanas {
+                for c in t.chars() {
+                    suma = (suma ^ c as u64).wrapping_mul(0x100_0000_01b3);
+                }
+                suma = (suma ^ *activa as u64 ^ 0xff).wrapping_mul(0x100_0000_01b3);
+            }
+            if suma != self.barra_pintada {
+                self.barra_pintada = suma;
+                cambio = true;
+                let alto = self.alto_barra(pestanas.len());
+                l.borrar(RectLienzo::new(0, 0, w, alto), self.tema.variante_superficie);
+                let mut x = 4;
+                for (k, (t, activa)) in pestanas.iter().enumerate() {
+                    let texto: String = format!(" {} {} ", k + 1, t).chars().take(ANCHO_PESTANA).collect();
+                    let ancho = texto.chars().count() as i32 * cw;
+                    if x + ancho > w {
+                        break;
+                    }
+                    let (detras, color) = if *activa { (self.tema.primario, self.tema.sobre_primario) } else { (self.tema.variante_superficie, self.tema.sobre_variante_superficie) };
+                    l.borrar(RectLienzo::new(x, 2, ancho, alto - 4), detras);
+                    self.fuente.dibujar(&mut l, x, 2 + base, &texto, self.letra, color);
+                    x += ancho + 4;
                 }
             }
-            if self.pintadas[y] == suma {
+        }
+        self.pintadas.retain(|p| vistas.iter().any(|v| v.id == p.0));
+        for v in vistas {
+            let r = v.rect;
+            if r.w <= 0 || r.h <= 0 {
                 continue;
             }
-            self.pintadas[y] = suma;
-            cambio = true;
-            let py = BORDE + y as i32 * ch;
-            l.borrar(Rect::new(0, py, w, ch), fondo);
-            let Some(f) = fila else { continue };
-            for x in 0..self.consola.columnas() {
-                let c = f.celdas.get(x);
-                let px_ = BORDE + x as i32 * cw;
-                // Los colores de la celda: los suyos, o los del tema; en negrita, los ocho primeros pasan a los vivos.
-                let (mut color, mut detras, estilo) = match c {
-                    Some(c) => {
-                        let viva = |k: consola::Color| if c.estilo & consola::NEGRITA != 0 && (consola::paleta(0)..consola::paleta(8)).contains(&k) { k + 8 } else { k };
-                        (color_de(viva(c.letra), letra, fondo, paleta), color_de(c.fondo, fondo, fondo, paleta), c.estilo)
+            let filas = v.consola.filas();
+            let k = match self.pintadas.iter().position(|p| p.0 == v.id) {
+                Some(k) => k,
+                None => {
+                    self.pintadas.push((v.id, RectPanel::default(), Vec::new()));
+                    self.pintadas.len() - 1
+                }
+            };
+            if self.pintadas[k].1 != r || self.pintadas[k].2.len() != filas {
+                self.pintadas[k] = (v.id, r, alloc::vec![u64::MAX; filas]);
+                l.borrar(RectLienzo::new(r.x, r.y, r.w, r.h), fondo);
+                cambio = true;
+            }
+            // El panel con el teclado lleva una raya a la izquierda (si hay más de uno).
+            let marca = if v.activo && vistas.len() > 1 { self.tema.primario } else { fondo };
+            let vista = v.consola.vista();
+            for y in 0..filas {
+                let fila = vista.get(y);
+                // Lo que se ve en la fila, resumido en un número.
+                let mut suma = 0xcbf2_9ce4_8422_2325u64 ^ fondo as u64 ^ (marca as u64) << 32;
+                let mut mezclar = |x: u64| suma = (suma ^ x).wrapping_mul(0x100_0000_01b3);
+                if let Some(f) = fila {
+                    mezclar(if v.activo { f.cursor.map_or(u64::MAX, |c| c as u64) } else { u64::MAX - 1 });
+                    for (x, c) in f.celdas.iter().enumerate() {
+                        mezclar(c.c as u64 | (c.estilo as u64) << 32 | (v.consola.seleccionada(f.linea, f.desde + x) as u64) << 40);
+                        mezclar(c.letra as u64 | (c.fondo as u64) << 32);
                     }
-                    None => (letra, fondo, 0),
-                };
-                if estilo & consola::INVERSO != 0 {
-                    core::mem::swap(&mut color, &mut detras);
                 }
-                if estilo & consola::TENUE != 0 {
-                    color = kit::tema::mezcla(color, detras, 110);
+                if self.pintadas[k].2[y] == suma {
+                    continue;
                 }
-                if f.cursor == Some(x) {
-                    detras = self.tema.primario;
-                    color = self.tema.sobre_primario;
-                } else if c.is_some() && self.consola.seleccionada(f.linea, f.desde + x) {
-                    detras = self.tema.contenedor_primario;
-                    color = self.tema.sobre_contenedor_primario;
-                }
-                if detras != fondo {
-                    l.borrar(Rect::new(px_, py, cw, ch), detras);
-                }
-                if let Some(c) = c.filter(|c| c.c != ' ') {
-                    // Lo que la fuente no tiene sale como "?": así la caché de letras no crece sin fin.
-                    let letra_ = if self.fuente.tiene(c.c) { c.c } else { '?' };
-                    let mut buf = [0u8; 4];
-                    self.fuente.dibujar(&mut l, px_, py + base, letra_.encode_utf8(&mut buf), LETRA, color);
-                }
-                if estilo & consola::SUBRAYADO != 0 && c.is_some() {
-                    l.borrar(Rect::new(px_, py + base + 2, cw, 1), color);
+                self.pintadas[k].2[y] = suma;
+                cambio = true;
+                let py = r.y + BORDE + y as i32 * ch;
+                l.borrar(RectLienzo::new(r.x, py, r.w, ch), fondo);
+                l.borrar(RectLienzo::new(r.x, py, 2, ch), marca);
+                let Some(f) = fila else { continue };
+                for x in 0..v.consola.columnas() {
+                    let c = f.celdas.get(x);
+                    let px_ = r.x + BORDE + x as i32 * cw;
+                    // Los colores de la celda: los suyos, o los del tema; en negrita, los ocho primeros pasan a los vivos.
+                    let (mut color, mut detras, estilo) = match c {
+                        Some(c) => {
+                            let viva = |k: consola::Color| if c.estilo & consola::NEGRITA != 0 && (consola::paleta(0)..consola::paleta(8)).contains(&k) { k + 8 } else { k };
+                            (color_de(viva(c.letra), letra, fondo, paleta), color_de(c.fondo, fondo, fondo, paleta), c.estilo)
+                        }
+                        None => (letra, fondo, 0),
+                    };
+                    if estilo & consola::INVERSO != 0 {
+                        core::mem::swap(&mut color, &mut detras);
+                    }
+                    if estilo & consola::TENUE != 0 {
+                        color = kit::tema::mezcla(color, detras, 110);
+                    }
+                    if v.activo && f.cursor == Some(x) {
+                        detras = self.tema.primario;
+                        color = self.tema.sobre_primario;
+                    } else if c.is_some() && v.consola.seleccionada(f.linea, f.desde + x) {
+                        detras = self.tema.contenedor_primario;
+                        color = self.tema.sobre_contenedor_primario;
+                    }
+                    if detras != fondo {
+                        l.borrar(RectLienzo::new(px_, py, cw, ch), detras);
+                    }
+                    if let Some(c) = c.filter(|c| c.c != ' ') {
+                        // Lo que la fuente no tiene sale como "?": así la caché de letras no crece sin fin.
+                        let letra_ = if self.fuente.tiene(c.c) { c.c } else { '?' };
+                        let mut buf = [0u8; 4];
+                        self.fuente.dibujar(&mut l, px_, py + base, letra_.encode_utf8(&mut buf), self.letra, color);
+                    }
+                    if estilo & consola::SUBRAYADO != 0 && c.is_some() {
+                        l.borrar(RectLienzo::new(px_, py + base + 2, cw, 1), color);
+                    }
                 }
             }
         }
         if !cambio {
-            return;
+            return false;
         }
         let mut e = Escritor::new();
         e.empezar(SUPERFICIE, wl_surface::req::ATTACH).uint(BUFERES[self.cual]).int(0).int(0).fin();
@@ -492,17 +609,11 @@ impl Ventana {
         self.esperando_desde = dashos::ahora_us();
         self.siguiente_aviso = if self.siguiente_aviso >= 0x00ff_ffff { AVISO } else { self.siguiente_aviso + 1 };
         b.mandar(&e);
+        true
     }
 
-    fn punto_del_raton(&self) -> Option<Punto> {
-        let (cw, ch, _) = self.celda;
-        let col = ((self.raton.0 - BORDE).max(0) / cw) as usize;
-        let fila = ((self.raton.1 - BORDE).max(0) / ch) as usize;
-        self.consola.punto(col.min(self.consola.columnas() - 1), fila)
-    }
-
-    /// Un evento del compositor. Lo que pida al Shell, en la acción.
-    fn evento(&mut self, b: &mut Buzon, o: u32, orden: u16, cuerpo: &[u8], registro: bool) -> Accion {
+    /// Un evento del compositor. Lo que sea para el Shell, en la entrada.
+    fn evento(&mut self, b: &mut Buzon, o: u32, orden: u16, cuerpo: &[u8]) -> Entrada {
         let palabra = |i: usize| cuerpo.get(4 * i..4 * i + 4).map_or(0, |x| u32::from_le_bytes(x.try_into().unwrap()));
         match (o, orden) {
             (XDG, xdg_wm_base::ev::PING) => {
@@ -511,7 +622,7 @@ impl Ventana {
                 b.mandar(&e);
             }
             (VENTANA, xdg_toplevel::ev::CONFIGURE) => self.pedida = (palabra(0) as i32, palabra(1) as i32),
-            (VENTANA, xdg_toplevel::ev::CLOSE) => return Accion::Cerrar,
+            (VENTANA, xdg_toplevel::ev::CLOSE) => return Entrada::Cerrar,
             (XDG_SUPERFICIE, xdg_surface::ev::CONFIGURE) => {
                 let mut e = Escritor::new();
                 e.empezar(XDG_SUPERFICIE, xdg_surface::req::ACK_CONFIGURE).uint(palabra(0)).fin();
@@ -522,23 +633,12 @@ impl Ventana {
                 } else if self.configurada {
                     self.medida
                 } else {
-                    (COLUMNAS as i32 * cw + 2 * BORDE, FILAS as i32 * ch + 2 * BORDE)
+                    (self.de_serie.0 as i32 * cw + 2 * BORDE, self.de_serie.1 as i32 * ch + 2 * BORDE)
                 };
-                let primera = !self.configurada;
                 if self.medir(b, w, h) {
                     self.configurada = true;
                     self.esperando = 0;
-                    if primera || registro {
-                        println!(
-                            "  [shell] ventana {}: {}x{} letras, {}x{} px{}",
-                            if primera { "en pantalla" } else { "con otro tamaño" },
-                            self.consola.columnas(),
-                            self.consola.filas(),
-                            self.medida.0,
-                            self.medida.1,
-                            if primera && self.con_portapapeles { ", con portapapeles" } else { "" }
-                        );
-                    }
+                    return Entrada::Medida;
                 }
             }
             (aviso, wl_callback::ev::DONE) if aviso == self.esperando => self.esperando = 0,
@@ -547,10 +647,11 @@ impl Ventana {
             }
             (TEMA, dashos_tema_v1::ev::TEMA) => {
                 let visto = (palabra(0) | 0xff00_0000, palabra(1) != 0);
-                if visto != self.tema_visto || self.pintadas.is_empty() {
+                // Con colores propios en el perfil, el tema del sistema no cambia los de la ventana.
+                if visto != self.tema_visto && self.colores == perfil::Colores::Sistema {
                     self.tema_visto = visto;
                     self.tema = Tema::del_sistema(visto.0, visto.1);
-                    self.pintadas.clear();
+                    self.entera = true;
                     self.sucia = true;
                 }
             }
@@ -562,58 +663,34 @@ impl Ventana {
             (TECLADO, wl_keyboard::ev::LEAVE) => {
                 self.control = 0;
                 self.mayusculas = 0;
+                self.alt = false;
             }
             (TECLADO, wl_keyboard::ev::KEY) => {
                 self.serie = palabra(0);
-                return self.tecla(b, palabra(2), palabra(3) == 1);
+                let (codigo, pulsada) = (palabra(2), palabra(3) == 1);
+                match codigo {
+                    29 | 97 => self.control = if pulsada { self.control.saturating_add(1) } else { self.control.saturating_sub(1) },
+                    42 | 54 => self.mayusculas = if pulsada { self.mayusculas.saturating_add(1) } else { self.mayusculas.saturating_sub(1) },
+                    56 => self.alt = pulsada,
+                    _ => {}
+                }
+                let t = self.teclado.tecla(codigo, pulsada);
+                if pulsada && !matches!(codigo, 29 | 97 | 42 | 54 | 56 | 100) {
+                    self.sucia = true;
+                    return Entrada::Tecla { t, codigo };
+                }
             }
             (PUNTERO, wl_pointer::ev::ENTER) => self.raton = ((palabra(2) as i32) >> 8, (palabra(3) as i32) >> 8),
             (PUNTERO, wl_pointer::ev::MOTION) => {
                 self.raton = ((palabra(1) as i32) >> 8, (palabra(2) as i32) >> 8);
-                if let (Some(desde), Some(aqui)) = (self.arrastre, self.punto_del_raton()) {
-                    self.consola.seleccionar(desde, aqui);
-                    self.sucia = true;
-                }
+                return Entrada::Mueve;
             }
-            (PUNTERO, wl_pointer::ev::BUTTON) => {
-                let (serie, boton, pulsado) = (palabra(0), palabra(2), palabra(3) == 1);
-                match (boton, pulsado) {
-                    (272, true) => {
-                        self.consola.quitar_seleccion();
-                        self.arrastre = self.punto_del_raton();
-                        self.sucia = true;
-                    }
-                    (272, false) => {
-                        if self.arrastre.take().is_some() {
-                            let texto = self.consola.texto_seleccionado();
-                            if texto.is_empty() {
-                                self.consola.quitar_seleccion();
-                            } else {
-                                // Al soltar, lo seleccionado es la selección primaria.
-                                let mut e = Escritor::new();
-                                self.pp.copiar(&mut e, true, texto, serie);
-                                b.mandar(&e);
-                            }
-                            self.sucia = true;
-                        }
-                    }
-                    (274, true) => {
-                        let mut e = Escritor::new();
-                        if self.pp.pegar(&mut e, true) {
-                            b.mandar(&e);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            // La rueda (eje vertical): tres filas por paso.
-            (PUNTERO, wl_pointer::ev::AXIS) if palabra(1) == 0 => {
-                self.consola.desplazar(-3 * kit::controles::pasos_rueda(palabra(2)) as isize);
-                self.sucia = true;
-            }
+            (PUNTERO, wl_pointer::ev::BUTTON) => return Entrada::Boton { boton: palabra(2), pulsado: palabra(3) == 1, serie: palabra(0) },
+            // La rueda (eje vertical).
+            (PUNTERO, wl_pointer::ev::AXIS) if palabra(1) == 0 => return Entrada::Rueda(kit::controles::pasos_rueda(palabra(2))),
             (1, wl_display::ev::ERROR) => {
                 println!("  [shell] error de protocolo en el objeto {}: {}", palabra(0), palabra(1));
-                return Accion::Cerrar;
+                return Entrada::Cerrar;
             }
             (o, orden) => {
                 let mut e = Escritor::new();
@@ -622,76 +699,7 @@ impl Ventana {
                 }
             }
         }
-        Accion::Nada
-    }
-
-    fn tecla(&mut self, b: &mut Buzon, codigo: u32, pulsada: bool) -> Accion {
-        match codigo {
-            29 | 97 => {
-                self.control = if pulsada { self.control.saturating_add(1) } else { self.control.saturating_sub(1) };
-                return Accion::Nada;
-            }
-            42 | 54 => self.mayusculas = if pulsada { self.mayusculas.saturating_add(1) } else { self.mayusculas.saturating_sub(1) },
-            _ => {}
-        }
-        // Ctrl+Mayús+C copia lo seleccionado y Ctrl+Mayús+V pega (Ctrl-C a secas es romper, como en el Amiga).
-        if self.control > 0 && self.mayusculas > 0 && (codigo == 46 || codigo == 47) {
-            if pulsada {
-                let mut e = Escritor::new();
-                if codigo == 46 {
-                    let texto = self.consola.texto_seleccionado();
-                    self.pp.copiar(&mut e, false, texto, self.serie);
-                    b.mandar(&e);
-                } else if self.pp.pegar(&mut e, false) {
-                    b.mandar(&e);
-                }
-            }
-            return Accion::Nada;
-        }
-        // RePág y AvPág: lo escrito, hacia atrás y hacia delante.
-        if pulsada && (codigo == 104 || codigo == 109) {
-            let paso = self.consola.filas().saturating_sub(1).max(1) as isize;
-            self.consola.desplazar(if codigo == 104 { paso } else { -paso });
-            self.sucia = true;
-            return Accion::Nada;
-        }
-        let Some(t) = self.teclado.tecla(codigo, pulsada) else { return Accion::Nada };
-        self.sucia = true;
-        let ed = &mut self.consola.editor;
-        if self.control > 0 {
-            if let Tecla::Letra(c) = t {
-                match c.to_ascii_lowercase() {
-                    'c' => return Accion::Romper,
-                    'd' | '\\' => return Accion::FinDeEntrada,
-                    'a' => ed.inicio(),
-                    'e' => ed.fin(),
-                    'k' => ed.borrar_hasta_el_fin(),
-                    'u' | 'x' => ed.borrar(),
-                    'w' => ed.borrar_palabra(),
-                    'l' => self.consola.limpiar(),
-                    _ => {}
-                }
-                self.consola.al_final();
-                return Accion::Nada;
-            }
-        }
-        self.consola.al_final();
-        self.consola.quitar_seleccion();
-        let ed = &mut self.consola.editor;
-        match t {
-            Tecla::Letra(c) => ed.insertar(c),
-            Tecla::Retroceso => ed.retroceso(),
-            Tecla::Suprimir => ed.suprimir(),
-            Tecla::Izquierda => ed.izquierda(),
-            Tecla::Derecha => ed.derecha(),
-            Tecla::Inicio => ed.inicio(),
-            Tecla::Fin => ed.fin(),
-            Tecla::Arriba | Tecla::AltArriba => ed.arriba(),
-            Tecla::Abajo | Tecla::AltAbajo => ed.abajo(),
-            Tecla::Intro => return Accion::Linea(self.consola.intro()),
-            Tecla::Tabulador | Tecla::TabuladorAtras | Tecla::Escape => {}
-        }
-        Accion::Nada
+        Entrada::Nada
     }
 }
 
@@ -702,15 +710,21 @@ impl Ventana {
 enum Destino {
     Consola,
     Fichero { asa: u32, pos: u64 },
-    /// A la orden siguiente de la tubería.
-    Tubo,
+    /// Al tubo de ese número de la tubería: lo lee la orden siguiente.
+    Tubo(usize),
+    /// A la memoria: es una sustitución de órdenes.
+    Captura,
+    /// A ningún sitio (`>NIL:`, como en el Amiga).
+    Nada,
 }
 
 /// De dónde lee una orden.
 enum Fuente_ {
     Teclado,
-    /// Un fichero o la salida de la orden anterior, ya leídos: los bytes y por dónde va.
+    /// Un fichero ya leído: los bytes y por dónde va.
     Datos(Vec<u8>, usize),
+    /// Del tubo de ese número: lo que escribe la orden anterior.
+    Tubo(usize),
     Nada,
 }
 
@@ -725,23 +739,37 @@ struct Trabajo {
     primer_plano: bool,
     /// Su número de trabajo (`Status`, `Break`), si es de fondo.
     numero: usize,
+    /// Su sitio en la tubería en marcha (0, la primera orden), si es de ella.
+    etapa: Option<usize>,
     salida: Destino,
     entrada: Fuente_,
-    /// Si espera una línea del teclado.
+    /// Si espera una línea (del teclado, o del tubo).
     leyendo: bool,
     /// Lo que queda de una línea tecleada que no cupo en una respuesta.
     resto: Vec<u8>,
+    /// Lo que escribió y aún no cabe en su tubo: no se le contesta hasta que quepa (así espera a quien lee).
+    por_escribir: Option<Vec<u8>>,
     /// Cuándo se le dijo "roto".
     roto: Option<u64>,
 }
 
-/// Una tubería en marcha: sus órdenes, por cuál va, lo que escribió la anterior y el código de la última.
+/// Un tubo entre dos órdenes de una tubería: lo escrito y no leído, y si alguno de los dos lados ya no está.
+#[derive(Default)]
+struct Tubo {
+    datos: VecDeque<u8>,
+    sin_escritor: bool,
+    sin_lector: bool,
+}
+
+/// Una tubería en marcha (o una orden sola, que es una tubería de una): sus tubos, las órdenes que le quedan vivas,
+/// el código de la última y si lo que escribe se guarda (una sustitución de órdenes).
 struct Tuberia {
-    ordenes: Vec<OrdenLinea>,
-    i: usize,
-    tubo: Vec<u8>,
+    tubos: Vec<Tubo>,
+    etapas: usize,
+    vivas: usize,
     rc: i32,
     r2: i32,
+    captura: Option<Vec<u8>>,
 }
 
 /// Un programa ya leído del disco.
@@ -759,33 +787,115 @@ enum Hallada {
     Guion { ruta: String },
 }
 
-struct Shell {
-    s: Sistema,
+/// El menú de completar: los candidatos, cuál está elegido y dónde acaba en la línea lo que se ha puesto.
+struct Menu {
+    c: Completado,
+    elegido: Option<usize>,
+    hasta: usize,
+}
+
+/// Un panel de la ventana: una sesión entera, con su consola, su intérprete, su cajón actual y sus trabajos.
+struct Panel {
+    id: u32,
+    consola: Consola,
     int: Interprete,
-    buzon: Buzon,
-    ventana: Option<Ventana>,
-    /// El Shell que nos lanzó, si nuestra consola es la suya.
-    padre: Option<Cli>,
-    registro: bool,
-    /// La línea a medias que va al registro.
-    para_registro: String,
+    /// El cajón actual de este panel (el de `Sistema` es el del panel en que se trabaja).
+    actual: String,
     trabajos: Vec<Trabajo>,
-    siguiente_id: u64,
     tuberia: Option<Tuberia>,
     /// Los cajones de `Path`, además del actual y de `C:`.
     camino: Vec<String>,
-    guardados: Vec<Guardado>,
     /// Las líneas tecleadas que esperan.
     tecleadas: VecDeque<String>,
+    /// Los complementos que quedan por cargar, y el que se está cargando.
+    complementos: VecDeque<String>,
+    cargando: Option<String>,
     /// La línea de `ORDEN`, hasta que le toca.
     orden_pendiente: Option<String>,
     /// Con `ORDEN`: se acaba al terminarla.
     de_una_orden: bool,
     indicador_puesto: bool,
+    /// El indicador puesto con `Prompt` (si no, el de los ajustes).
+    indicador_propio: Option<String>,
+    /// Las plantillas que dan los complementos (`Completa`), para completar y resaltar.
+    plantillas: Vec<(String, String)>,
     salir: Option<i32>,
+    menu: Option<Menu>,
+    /// La versión de lo tecleado que ya está resaltada, y si quedó algo por mirar.
+    resaltada: u64,
+    por_mirar: bool,
+    /// Dónde empezó a arrastrarse el ratón.
+    arrastre: Option<Punto>,
+    rect: RectPanel,
+}
+
+impl Panel {
+    fn nuevo(id: u32, actual: &str, columnas: usize, filas: usize) -> Panel {
+        Panel {
+            id,
+            consola: Consola::nueva(columnas, filas),
+            int: Interprete::nuevo(),
+            actual: String::from(actual),
+            trabajos: Vec::new(),
+            tuberia: None,
+            camino: Vec::new(),
+            tecleadas: VecDeque::new(),
+            complementos: VecDeque::new(),
+            cargando: None,
+            orden_pendiente: None,
+            de_una_orden: false,
+            indicador_puesto: false,
+            indicador_propio: None,
+            plantillas: Vec::new(),
+            salir: None,
+            menu: None,
+            resaltada: u64::MAX,
+            por_mirar: false,
+            arrastre: None,
+            rect: RectPanel::default(),
+        }
+    }
+}
+
+struct Shell {
+    s: Sistema,
+    buzon: Buzon,
+    ventana: Option<Ventana>,
+    /// El Shell que nos lanzó, si nuestra consola es la suya.
+    padre: Option<Cli>,
+    registro: bool,
+    registro_callado: bool,
+    /// La línea a medias que va al registro.
+    para_registro: String,
+    /// El panel en que se trabaja (el número `en` de `paneles`, donde queda un hueco mientras tanto) y los demás.
+    p: Panel,
+    paneles: Vec<Panel>,
+    en: usize,
+    disp: Disposicion,
+    siguiente_panel: u32,
+    siguiente_id: u64,
+    guardados: Vec<Guardado>,
+    /// Los ajustes del indicador (`ENVARC:Shell/Indicador`).
+    indicador: indicador::Ajustes,
+    /// Lo mirado en el disco para resaltar: qué, si existe y cuándo se miró.
+    vistos: Vec<(String, bool, u64)>,
+    /// Cuántas cosas nuevas se pueden mirar aún en esta pasada del resaltado.
+    cupo_de_miradas: usize,
+    /// Cómo arranca un panel nuevo: sin guion de arranque, o con otro.
+    sin_arranque: bool,
+    desde: Option<String>,
+    /// El código con que acaba el Shell entero.
+    fin: Option<i32>,
     vigilado_us: u64,
     pulso_us: u64,
     columnas: usize,
+    /// Lo que se va midiendo (`Medidas`): desde cuándo, los bytes escritos en la consola y lo que costó ponerlos, y
+    /// los cuadros pintados y lo que costó pintarlos (µs).
+    medido_desde: u64,
+    medido_bytes: u64,
+    medido_escribir: u64,
+    medido_cuadros: u64,
+    medido_pintar: u64,
 }
 
 /// El intérprete necesita el mundo mientras el Shell lo tiene prestado: esto le da lo justo.
@@ -816,6 +926,12 @@ impl Mundo for MundoShell<'_> {
     }
 }
 
+/// Un argumento que es todo él una cadena entre comillas, sin ellas (para pasar a una orden interna una línea con
+/// redirecciones, tuberías o comillas sin que el Shell las atienda); si no, tal cual.
+fn entre_comillas(texto: &str) -> String {
+    shell::plantilla::trozos(texto).ok().filter(|t| t.len() == 1 && t[0].comillas).map(|t| t[0].texto.clone()).unwrap_or_else(|| String::from(texto))
+}
+
 fn nombre_de_variable(n: &str) -> bool {
     !n.is_empty() && n.len() <= 30 && n.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-')
 }
@@ -828,7 +944,7 @@ impl Shell {
         if texto.is_empty() {
             return;
         }
-        if self.registro {
+        if self.registro && !self.registro_callado {
             for c in texto.chars() {
                 if c == '\n' {
                     println!("  [shell] {}", self.para_registro);
@@ -839,7 +955,10 @@ impl Shell {
             }
         }
         if let Some(v) = &mut self.ventana {
-            v.consola.escribir(texto);
+            let t0 = dashos::ahora_us();
+            self.p.consola.escribir(texto);
+            self.medido_escribir += dashos::ahora_us() - t0;
+            self.medido_bytes += texto.len() as u64;
             v.sucia = true;
         } else if let Some(c) = &mut self.padre {
             let mut resto = texto;
@@ -851,9 +970,10 @@ impl Shell {
                 let mut m = [0u8; 4 + p::POR_ESCRITURA];
                 m[0..4].copy_from_slice(&p::SALIDA.to_le_bytes());
                 m[4..4 + n].copy_from_slice(&resto.as_bytes()[..n]);
-                if c.pedir(p::ESCRIBIR, &m[..4 + n], 60_000_000).is_none() {
+                // Sin plazo: si va a un tubo lleno, se espera a que la otra orden lea.
+                if c.pedir(p::ESCRIBIR, &m[..4 + n], 0).is_none() {
                     // Quien nos lanzó ya no está.
-                    self.salir = Some(RC_FALLO);
+                    self.p.salir = Some(RC_FALLO);
                     return;
                 }
                 resto = &resto[n..];
@@ -865,7 +985,7 @@ impl Shell {
 
     /// Una línea entera, empezando en una línea nueva si la de ahora está a medias.
     fn di_linea(&mut self, texto: &str) {
-        if self.ventana.as_ref().is_some_and(|v| !v.consola.al_principio()) {
+        if self.ventana.is_some() && !self.p.consola.al_principio() {
             self.di("\n");
         }
         self.di(texto);
@@ -882,9 +1002,9 @@ impl Shell {
 
     /// Hace algo con el intérprete, dándole el Shell como su mundo.
     fn con_interprete<R>(&mut self, f: impl FnOnce(&mut Interprete, &mut MundoShell) -> R) -> R {
-        let mut int = core::mem::take(&mut self.int);
+        let mut int = core::mem::take(&mut self.p.int);
         let r = f(&mut int, &mut MundoShell { shell: self });
-        self.int = int;
+        self.p.int = int;
         r
     }
 
@@ -897,7 +1017,7 @@ impl Shell {
             sitios.push(String::from(nombre));
         } else {
             sitios.push(String::from(nombre));
-            sitios.extend(self.camino.iter().map(|c| ruta::unir(c, nombre)));
+            sitios.extend(self.p.camino.iter().map(|c| ruta::unir(c, nombre)));
             sitios.push(format!("C:{}", nombre));
             // Las órdenes de base van juntas en `C:Ordenes`, que hace la que se le diga: un programa suelto con ese
             // nombre en el camino va antes.
@@ -992,7 +1112,7 @@ impl Shell {
 
     /// Lanza el programa de `ruta` con `args`, como un ayudante con la ficha del Shell. El trabajo queda apuntado.
     fn lanzar(&mut self, ruta_: &str, nombre: &str, args: &str, primer_plano: bool, entrada: Fuente_, salida: Destino, servido: bool) -> Result<u64, i32> {
-        if self.trabajos.len() >= MAX_TRABAJOS {
+        if self.p.trabajos.len() >= MAX_TRABAJOS {
             return Err(a::SIN_SITIO);
         }
         if self.s.actual.len() + nombre.len() + args.len() > p::MAX_ARRANQUE {
@@ -1016,7 +1136,9 @@ impl Shell {
         }
         let mut m = [0u8; 256];
         let interactiva = primer_plano && matches!(entrada, Fuente_::Teclado);
-        let marcas = if servido { p::SERVIDO } else { 0 } | if interactiva { 0 } else { p::ENTRADA_NO_INTERACTIVA };
+        // Con colores solo si lo que escribe llega a una consola de verdad (la de la ventana).
+        let a_consola = matches!(salida, Destino::Consola) && self.ventana.is_some();
+        let marcas = if servido { p::SERVIDO } else { 0 } | if interactiva { 0 } else { p::ENTRADA_NO_INTERACTIVA } | if a_consola { 0 } else { p::SALIDA_NO_CONSOLA };
         m[0..4].copy_from_slice(&p::ARRANQUE.to_le_bytes());
         m[4..8].copy_from_slice(&marcas.to_le_bytes());
         m[8..12].copy_from_slice(&(self.s.actual.len() as u32).to_le_bytes());
@@ -1071,8 +1193,8 @@ impl Shell {
             return Err(estado);
         }
         let pid = u64::from_le_bytes(r[4..12].try_into().unwrap());
-        let numero = if primer_plano { 0 } else { (1..).find(|n| !self.trabajos.iter().any(|t| t.numero == *n)).unwrap_or(1) };
-        self.trabajos.push(Trabajo { id, pid, nombre: String::from(nombre), canal: nuestro, primer_plano, numero, salida, entrada, leyendo: false, resto: Vec::new(), roto: None });
+        let numero = if primer_plano { 0 } else { (1..).find(|n| !self.p.trabajos.iter().any(|t| t.numero == *n)).unwrap_or(1) };
+        self.p.trabajos.push(Trabajo { id, pid, nombre: String::from(nombre), canal: nuestro, primer_plano, numero, etapa: None, salida, entrada, leyendo: false, resto: Vec::new(), por_escribir: None, roto: None });
         Ok(pid)
     }
 
@@ -1090,12 +1212,22 @@ impl Shell {
                 }
                 Err(e) => e,
             },
-            Destino::Tubo => {
-                let Some(t) = &mut self.tuberia else { return 0 };
-                if t.tubo.len() + datos.len() > MAX_TUBO {
+            Destino::Tubo(k) => {
+                // Lo de una orden interna (lo de un programa pasa por `escribir_en_tubo`, que lo hace esperar).
+                let Some(t) = self.p.tuberia.as_mut().and_then(|t| t.tubos.get_mut(*k)) else { return 0 };
+                if t.sin_lector {
+                    return p::SIN_LECTOR;
+                }
+                t.datos.extend(datos.iter().copied());
+                0
+            }
+            Destino::Nada => 0,
+            Destino::Captura => {
+                let Some(c) = self.p.tuberia.as_mut().and_then(|t| t.captura.as_mut()) else { return 0 };
+                if c.len() + datos.len() > MAX_CAPTURA {
                     return a::LLENO;
                 }
-                t.tubo.extend_from_slice(datos);
+                c.extend_from_slice(datos);
                 0
             }
         }
@@ -1110,7 +1242,9 @@ impl Shell {
     /// Abre la entrada y la salida de una orden según sus redirecciones. Si no se puede, lo dice.
     fn abrir_redirecciones(&mut self, o: &OrdenLinea, entrada_de_serie: Fuente_, salida_de_serie: Destino) -> Result<(Fuente_, Destino), i32> {
         let entrada = match &o.entrada {
-            Some(f) => match self.s.leer_entero(f, MAX_TUBO) {
+            // `NIL:` no es un fichero: de ahí no se lee nada, y lo que se escribe se pierde.
+            Some(f) if f.eq_ignore_ascii_case("NIL:") => Fuente_::Nada,
+            Some(f) => match self.s.leer_entero(f, MAX_ENTRADA) {
                 Ok(d) => Fuente_::Datos(d, 0),
                 Err(e) => {
                     self.di_linea(&format!("No se puede leer de {}: {}", f, orden::texto_error(e)));
@@ -1121,6 +1255,10 @@ impl Shell {
             None => entrada_de_serie,
         };
         let salida = match &o.salida {
+            Some(f) if f.eq_ignore_ascii_case("NIL:") => {
+                self.cerrar_destino(salida_de_serie);
+                Destino::Nada
+            }
             Some(f) => match self.s.abrir_para_escribir(f, o.anadir) {
                 Ok((asa, pos)) => {
                     self.cerrar_destino(salida_de_serie);
@@ -1137,36 +1275,109 @@ impl Shell {
         Ok((entrada, salida))
     }
 
-    /// Sigue con la tubería en marcha: lanza la orden que toca, o acaba y avisa al intérprete.
-    fn seguir_tuberia(&mut self) {
-        loop {
-            let Some(t) = &mut self.tuberia else { return };
-            if t.i >= t.ordenes.len() {
-                let (rc, r2) = (t.rc, t.r2);
-                self.tuberia = None;
-                self.con_interprete(|i, m| i.acabada(m, rc, r2));
-                return;
-            }
-            let o = t.ordenes[t.i].clone();
-            let (primera, ultima, sola) = (t.i == 0, t.i + 1 == t.ordenes.len(), t.ordenes.len() == 1);
-            let entrada = if primera { Fuente_::Teclado } else { Fuente_::Datos(core::mem::take(&mut t.tubo), 0) };
-            let salida = if ultima { Destino::Consola } else { Destino::Tubo };
-            let (rc, r2) = match self.una_orden(&o, entrada, salida, sola) {
-                // Lanzada: se sigue cuando acabe. O era un guion, y el intérprete ya está en él.
-                None => return,
-                Some(x) => x,
+    /// Empieza una tubería: lanza todas sus órdenes a la vez, unidas por sus tubos. Con `captura`, lo que escriba la
+    /// última se guarda (una sustitución de órdenes).
+    fn empezar_tuberia(&mut self, ordenes: Vec<OrdenLinea>, captura: bool) {
+        let n = ordenes.len();
+        self.p.tuberia = Some(Tuberia { tubos: (1..n).map(|_| Tubo::default()).collect(), etapas: n, vivas: 0, rc: 0, r2: 0, captura: captura.then(Vec::new) });
+        for (i, o) in ordenes.iter().enumerate() {
+            let entrada = if i == 0 { Fuente_::Teclado } else { Fuente_::Tubo(i - 1) };
+            let salida = if i + 1 < n {
+                Destino::Tubo(i)
+            } else if captura {
+                Destino::Captura
+            } else {
+                Destino::Consola
             };
-            if let Some(t) = &mut self.tuberia {
-                t.rc = rc;
-                t.r2 = r2;
-                t.i += 1;
+            match self.una_orden(o, entrada, salida, n == 1 && !captura, i) {
+                // Lanzada: sigue viva. O era un guion, y el intérprete ya está en él (y no hay tubería).
+                None => {
+                    let Some(t) = &mut self.p.tuberia else { return };
+                    t.vivas += 1;
+                }
+                // Ya hecha (interna, o no se pudo lanzar): sus dos lados de los tubos se cierran.
+                Some((rc, r2)) => self.etapa_acabada(i, rc, r2),
+            }
+        }
+        self.mover_tubos();
+        self.acabar_tuberia_si_toca();
+    }
+
+    /// La orden número `i` de la tubería acabó: quien la leía ve el final, y quien le escribía, que ya no hay nadie.
+    fn etapa_acabada(&mut self, i: usize, rc: i32, r2: i32) {
+        let Some(t) = &mut self.p.tuberia else { return };
+        if let Some(tubo) = t.tubos.get_mut(i) {
+            tubo.sin_escritor = true;
+        }
+        if i > 0 && let Some(tubo) = t.tubos.get_mut(i - 1) {
+            tubo.sin_lector = true;
+            tubo.datos.clear();
+        }
+        // El código de la tubería es el de su última orden.
+        if i + 1 == t.etapas {
+            t.rc = rc;
+            t.r2 = r2;
+        }
+    }
+
+    /// Si ya no queda ninguna orden viva de la tubería, se acaba: el intérprete sigue con su código (o con lo
+    /// capturado).
+    fn acabar_tuberia_si_toca(&mut self) {
+        if self.p.tuberia.as_ref().is_some_and(|t| t.vivas == 0) {
+            let t = self.p.tuberia.take().unwrap();
+            match t.captura {
+                Some(c) => {
+                    let texto = String::from_utf8_lossy(&c).into_owned();
+                    self.con_interprete(|i, m| i.capturada(m, &texto, t.rc));
+                }
+                None => self.con_interprete(|i, m| i.acabada(m, t.rc, t.r2)),
             }
         }
     }
 
-    /// Hace una orden en primer plano. `Some` con su código si ya está hecha (era interna, o no se pudo lanzar); `None`
-    /// si quedó en marcha (o era un guion).
-    fn una_orden(&mut self, o: &OrdenLinea, entrada: Fuente_, salida: Destino, sola: bool) -> Option<(i32, i32)> {
+    /// Mueve lo que haya en los tubos: lo que espera a caber entra si hay sitio, y quien espera una línea la recibe si
+    /// la hay (o el final, si ya nadie escribe). Hasta que no se mueva nada más.
+    fn mover_tubos(&mut self) {
+        loop {
+            let mut movido = false;
+            for k in 0..self.p.trabajos.len() {
+                // Quien escribe y no cabía.
+                if let (Some(datos), Destino::Tubo(n)) = (&self.p.trabajos[k].por_escribir, &self.p.trabajos[k].salida) {
+                    let n = *n;
+                    let roto = self.p.trabajos[k].roto.is_some();
+                    let estado = match self.p.tuberia.as_mut().and_then(|t| t.tubos.get_mut(n)) {
+                        None => Some(p::SIN_LECTOR),
+                        Some(t) if t.sin_lector || roto => Some(p::SIN_LECTOR),
+                        Some(t) if t.datos.len() + datos.len() <= MAX_TUBO => {
+                            t.datos.extend(datos.iter().copied());
+                            Some(0)
+                        }
+                        Some(_) => None,
+                    };
+                    if let Some(e) = estado {
+                        self.p.trabajos[k].por_escribir = None;
+                        self.contestar(k, e, &[]);
+                        movido = true;
+                    }
+                }
+                // Quien lee del tubo y no había nada.
+                if self.p.trabajos[k].leyendo && matches!(self.p.trabajos[k].entrada, Fuente_::Tubo(_)) {
+                    if let Some(d) = self.entrada_de(k) {
+                        self.p.trabajos[k].leyendo = false;
+                        self.contestar(k, d.len() as i32, &d);
+                        movido = true;
+                    }
+                }
+            }
+            if !movido {
+                return;
+            }
+        }
+    }
+
+    /// Hace una orden en primer plano, la número `etapa` de su tubería. `Some` con su código si ya está hecha (era
+    /// interna, o no se pudo lanzar); `None` si quedó en marcha (o era un guion).
+    fn una_orden(&mut self, o: &OrdenLinea, entrada: Fuente_, salida: Destino, sola: bool, etapa: usize) -> Option<(i32, i32)> {
         let (entrada, mut salida) = match self.abrir_redirecciones(o, entrada, salida) {
             Ok(x) => x,
             Err(e) => return Some((RC_FALLO, e)),
@@ -1175,7 +1386,7 @@ impl Shell {
         if let Some(rc) = self.interna(o, &mut texto) {
             let e = self.a_destino(&mut salida, texto.as_bytes());
             self.cerrar_destino(salida);
-            return Some(if e != 0 { (RC_FALLO, e) } else { (rc, 0) });
+            return Some(if e != 0 && e != p::SIN_LECTOR { (RC_FALLO, e) } else { (rc, 0) });
         }
         match self.buscar(&o.nombre) {
             Ok(Hallada::Guion { ruta }) if sola => {
@@ -1184,7 +1395,7 @@ impl Shell {
                 match leido {
                     Ok(d) => {
                         let texto = String::from_utf8_lossy(&d).into_owned();
-                        self.tuberia = None;
+                        self.p.tuberia = None;
                         self.con_interprete(|i, m| i.guion(m, &ruta, &texto, &o.args));
                         None
                     }
@@ -1196,14 +1407,19 @@ impl Shell {
             }
             Ok(Hallada::Guion { .. }) => {
                 self.cerrar_destino(salida);
-                self.di_linea(&format!("{}: un guion no va en una tubería", o.nombre));
+                self.di_linea(&format!("{}: un guion no va en una tubería ni en una sustitución (con Execute, sí)", o.nombre));
                 Some((RC_FALLO, 0))
             }
             Ok(Hallada::Programa { ruta }) => {
                 // Si no se lanza, la salida (un fichero abierto) se cierra dentro: aquí ya no se tiene.
                 let asa = if let Destino::Fichero { asa, .. } = &salida { Some(*asa) } else { None };
                 match self.lanzar(&ruta, &o.nombre, &o.args, true, entrada, salida, true) {
-                    Ok(_) => None,
+                    Ok(_) => {
+                        if let Some(t) = self.p.trabajos.last_mut() {
+                            t.etapa = Some(etapa);
+                        }
+                        None
+                    }
                     Err(e) => {
                         if let Some(asa) = asa {
                             self.s.cerrar(asa);
@@ -1236,19 +1452,9 @@ impl Shell {
     /// Las órdenes que tocan el estado del Shell. `None` si `o` no es una. Lo que escriben, en `sal`.
     fn interna(&mut self, o: &OrdenLinea, sal: &mut String) -> Option<i32> {
         let n = o.nombre.to_ascii_lowercase();
-        let internas = ["set", "unset", "get", "setenv", "getenv", "unsetenv", "alias", "unalias", "path", "which", "run", "status", "break", "why", "cls", "newshell"];
-        if !internas.contains(&n.as_str()) {
-            return None;
-        }
-        let plantilla_ = match n.as_str() {
-            "set" | "setenv" | "alias" => "NAME,STRING/F",
-            "unset" | "unsetenv" | "unalias" | "get" | "getenv" => "NAME/A",
-            "path" => "PATH/M,ADD/S,SHOW/S,RESET/S",
-            "which" => "FILE/A",
-            "run" => "COMMAND/F",
-            "break" => "PROCESS/N",
-            _ => "",
-        };
+        // La plantilla de cada una, de la tabla de todas (`shell::ordenes`). `NewShell` pasa sus argumentos tal cual.
+        let plantilla_ = shell::ordenes::interna(&n)?;
+        let plantilla_ = if n == "newshell" { "ARGS/F" } else { plantilla_ };
         let args = match plantilla::leer(plantilla_, &o.args) {
             Ok(x) => x,
             Err(plantilla::Error::Ayuda) => {
@@ -1264,7 +1470,7 @@ impl Shell {
         let valor = args.texto("STRING").unwrap_or("");
         Some(match n.as_str() {
             "set" if nombre.is_empty() => {
-                for (k, v) in &self.int.locales {
+                for (k, v) in &self.p.int.locales {
                     sal.push_str(&format!("{:<16} {}\n", k, v));
                 }
                 RC_BIEN
@@ -1275,18 +1481,18 @@ impl Shell {
                     Some((k, v)) if valor.is_empty() => (k, v),
                     _ => (nombre, valor),
                 };
-                if !nombre_de_variable(nombre) || self.int.locales.len() >= 256 || valor.len() > 1024 {
+                if !nombre_de_variable(nombre) || self.p.int.locales.len() >= 256 || valor.len() > 1024 {
                     self.di_linea("Set: ese nombre o ese valor no valen");
                     return Some(RC_ERROR);
                 }
-                self.int.poner_local(nombre, valor);
+                self.p.int.poner_local(nombre, valor);
                 RC_BIEN
             }
             "unset" => {
-                self.int.locales.retain(|(k, _)| !k.eq_ignore_ascii_case(nombre));
+                self.p.int.locales.retain(|(k, _)| !k.eq_ignore_ascii_case(nombre));
                 RC_BIEN
             }
-            "get" => match self.int.locales.iter().find(|(k, _)| k.eq_ignore_ascii_case(nombre)) {
+            "get" => match self.p.int.locales.iter().find(|(k, _)| k.eq_ignore_ascii_case(nombre)) {
                 Some((_, v)) => {
                     sal.push_str(&format!("{}\n", v));
                     RC_BIEN
@@ -1294,20 +1500,20 @@ impl Shell {
                 None => RC_AVISO,
             },
             "alias" if nombre.is_empty() => {
-                for (k, v) in &self.int.alias {
+                for (k, v) in &self.p.int.alias {
                     sal.push_str(&format!("{:<16} {}\n", k, v));
                 }
                 RC_BIEN
             }
             "alias" => {
-                self.int.alias.retain(|(k, _)| !k.eq_ignore_ascii_case(nombre));
-                if !valor.is_empty() && self.int.alias.len() < 64 {
-                    self.int.alias.push((String::from(nombre), String::from(valor)));
+                self.p.int.alias.retain(|(k, _)| !k.eq_ignore_ascii_case(nombre));
+                if !valor.is_empty() && self.p.int.alias.len() < 64 {
+                    self.p.int.alias.push((String::from(nombre), String::from(valor)));
                 }
                 RC_BIEN
             }
             "unalias" => {
-                self.int.alias.retain(|(k, _)| !k.eq_ignore_ascii_case(nombre));
+                self.p.int.alias.retain(|(k, _)| !k.eq_ignore_ascii_case(nombre));
                 RC_BIEN
             }
             "setenv" if nombre.is_empty() => match self.s.listar("ENV:") {
@@ -1358,17 +1564,17 @@ impl Shell {
             "path" => {
                 let mut rc = RC_BIEN;
                 if args.si("RESET") {
-                    self.camino.clear();
+                    self.p.camino.clear();
                 }
                 let nuevos = args.varios("PATH");
                 if !nuevos.is_empty() && !args.si("ADD") {
-                    self.camino.clear();
+                    self.p.camino.clear();
                 }
                 for c in nuevos {
                     match self.s.ruta(c).and_then(|r| self.s.mirar(&r).map(|d| (r, d))) {
                         Ok((r, d)) if d.cajon() => {
-                            if !self.camino.iter().any(|x| x.eq_ignore_ascii_case(&r)) && self.camino.len() < 32 {
-                                self.camino.push(r);
+                            if !self.p.camino.iter().any(|x| x.eq_ignore_ascii_case(&r)) && self.p.camino.len() < 32 {
+                                self.p.camino.push(r);
                             }
                         }
                         Ok(_) => {
@@ -1383,7 +1589,7 @@ impl Shell {
                 }
                 if nuevos.is_empty() || args.si("SHOW") {
                     sal.push_str("El cajón actual\n");
-                    for c in &self.camino {
+                    for c in &self.p.camino {
                         sal.push_str(&format!("{}\n", c));
                     }
                     sal.push_str("C:\n");
@@ -1392,7 +1598,7 @@ impl Shell {
             }
             "which" => {
                 let f = args.texto("FILE").unwrap_or("");
-                if internas.contains(&f.to_ascii_lowercase().as_str()) || ["if", "else", "endif", "skip", "lab", "endskip", "quit", "failat", "execute", "endshell", "endcli"].contains(&f.to_ascii_lowercase().as_str()) {
+                if shell::ordenes::es_interna(f) {
                     sal.push_str("INTERNA\n");
                     RC_BIEN
                 } else {
@@ -1409,11 +1615,11 @@ impl Shell {
             }
             "run" => self.run(args.texto("COMMAND").unwrap_or(""), sal),
             "status" => {
-                for t in &self.trabajos {
+                for t in &self.p.trabajos {
                     let que = if t.primer_plano { String::from("primer plano") } else { format!("[{}] de fondo", t.numero) };
                     sal.push_str(&format!("Proceso {:>6}: {} ({}{})\n", t.pid, t.nombre, que, if t.roto.is_some() { ", roto" } else { "" }));
                 }
-                if self.trabajos.is_empty() {
+                if self.p.trabajos.is_empty() {
                     sal.push_str("No hay trabajos en marcha\n");
                 }
                 RC_BIEN
@@ -1422,7 +1628,7 @@ impl Shell {
                 let cual = args.numero("PROCESS");
                 let ahora = dashos::ahora_us();
                 let mut alguno = false;
-                for t in self.trabajos.iter_mut().filter(|t| !t.primer_plano && cual.is_none_or(|c| c == t.numero as i64 || c == t.pid as i64)) {
+                for t in self.p.trabajos.iter_mut().filter(|t| !t.primer_plano && cual.is_none_or(|c| c == t.numero as i64 || c == t.pid as i64)) {
                     t.roto.get_or_insert(ahora);
                     alguno = true;
                 }
@@ -1434,7 +1640,7 @@ impl Shell {
                 }
             }
             "why" => {
-                let (rc, r2) = (self.int.rc, self.int.resultado2);
+                let (rc, r2) = (self.p.int.rc, self.p.int.resultado2);
                 if rc == 0 {
                     sal.push_str("La última orden acabó bien\n");
                 } else if r2 != 0 {
@@ -1446,16 +1652,187 @@ impl Shell {
             }
             "cls" => {
                 if let Some(v) = &mut self.ventana {
-                    v.consola.limpiar();
+                    self.p.consola.limpiar();
                     v.sucia = true;
                 }
                 RC_BIEN
+            }
+            "completa" => {
+                // Lo que dan los complementos: la plantilla de una orden, para completar y resaltar.
+                let (orden_, plantilla_nueva) = (args.texto("ORDEN").unwrap_or(""), args.texto("PLANTILLA").unwrap_or(""));
+                if orden_.is_empty() {
+                    for (k, v) in &self.p.plantillas {
+                        sal.push_str(&format!("{:<16} {}\n", k, v));
+                    }
+                    RC_BIEN
+                } else if orden_.len() > 30 || plantilla_nueva.len() > 200 || matches!(plantilla::leer(plantilla_nueva, ""), Err(plantilla::Error::Plantilla)) {
+                    self.di_linea(&format!("Completa: la plantilla de {} no vale", orden_));
+                    RC_ERROR
+                } else {
+                    self.p.plantillas.retain(|x| !x.0.eq_ignore_ascii_case(orden_));
+                    if self.p.plantillas.len() < 128 {
+                        self.p.plantillas.push((String::from(orden_), String::from(plantilla_nueva)));
+                    }
+                    RC_BIEN
+                }
+            }
+            "medidas" if args.si("CALLA") || args.si("HABLA") => {
+                // Con `REGISTRO`, deja de copiar la consola al registro del sistema (para una salida muy larga, que lo
+                // llenaría) o vuelve a copiarla.
+                self.registro_callado = args.si("CALLA");
+                RC_BIEN
+            }
+            "medidas" => {
+                // Lo que ha costado la consola desde la última vez que se preguntó, y se empieza a medir otra vez.
+                let ahora = dashos::ahora_us();
+                sal.push_str(&format!(
+                    "Medidas: en {} ms, {} bytes a la consola en {} ms; {} cuadros pintados en {} ms\n",
+                    (ahora - self.medido_desde) / 1000,
+                    self.medido_bytes,
+                    self.medido_escribir / 1000,
+                    self.medido_cuadros,
+                    self.medido_pintar / 1000
+                ));
+                (self.medido_desde, self.medido_bytes, self.medido_escribir, self.medido_cuadros, self.medido_pintar) = (ahora, 0, 0, 0, 0);
+                RC_BIEN
+            }
+            "teclea" => {
+                // Teclea en este panel, como desde el teclado: letras, y entre ángulos las teclas con nombre (<TAB>,
+                // <INTRO>, <ESC>, <ARRIBA>, <ABAJO>, <IZQUIERDA>, <DERECHA>, <INICIO>, <FIN>, <BORRA>, <CTRL-R>...).
+                // Después dice cómo queda la línea: lo tecleado, la sugerencia entre corchetes y el menú.
+                let texto = args.texto("TEXTO").unwrap_or("");
+                let texto = shell::plantilla::trozos(texto).ok().filter(|t| t.len() == 1).map(|t| t[0].texto.clone()).unwrap_or_else(|| String::from(texto));
+                let mut resto = texto.as_str();
+                while let Some(c) = resto.chars().next() {
+                    let nombre = resto.strip_prefix('<').and_then(|r| r.find('>').map(|f| &r[..f]));
+                    let tecla = nombre.and_then(|n| match n.to_ascii_uppercase().as_str() {
+                        "TAB" => Some((Tecla::Tabulador, false)),
+                        "INTRO" => Some((Tecla::Intro, false)),
+                        "ESC" => Some((Tecla::Escape, false)),
+                        "ARRIBA" => Some((Tecla::Arriba, false)),
+                        "ABAJO" => Some((Tecla::Abajo, false)),
+                        "IZQUIERDA" => Some((Tecla::Izquierda, false)),
+                        "DERECHA" => Some((Tecla::Derecha, false)),
+                        "INICIO" => Some((Tecla::Inicio, false)),
+                        "FIN" => Some((Tecla::Fin, false)),
+                        "BORRA" => Some((Tecla::Retroceso, false)),
+                        "CTRL-DERECHA" => Some((Tecla::Derecha, true)),
+                        x if x.len() == 6 && x.starts_with("CTRL-") => Some((Tecla::Letra(x.as_bytes()[5].to_ascii_lowercase() as char), true)),
+                        _ => None,
+                    });
+                    match (tecla, nombre) {
+                        (Some((t, control)), Some(n)) => {
+                            self.tecla_con(Some(t), 0, control, false, false);
+                            resto = &resto[n.len() + 2..];
+                        }
+                        _ => {
+                            self.tecla_con(Some(Tecla::Letra(c)), 0, false, false, false);
+                            resto = &resto[c.len_utf8()..];
+                        }
+                    }
+                    // La sugerencia y el resaltado, al día tras cada tecla (como entre dos teclas de verdad).
+                    self.p.resaltada = u64::MAX;
+                    self.cupo_de_miradas = 64;
+                    self.resaltar();
+                }
+                let ed = &self.p.consola.editor;
+                sal.push_str(&format!("«{}»", ed.texto()));
+                if !ed.sugerencia.is_empty() {
+                    sal.push_str(&format!(" [{}]", ed.sugerencia));
+                }
+                if let Some(b) = ed.buscando() {
+                    sal.push_str(&format!(" (buscar: {})", b));
+                }
+                if let Some(m) = &self.p.menu {
+                    let muestras: Vec<&str> = m.c.candidatos.iter().map(|x| x.muestra.as_str()).collect();
+                    sal.push_str(&format!(" menú: {}", muestras.join(" ")));
+                    if let Some(k) = m.elegido {
+                        sal.push_str(&format!(" (elegido {})", m.c.candidatos[k].muestra));
+                    }
+                }
+                sal.push('\n');
+                RC_BIEN
+            }
+            "completar" => {
+                // Lo que daría Tab al final de esa línea (para verlo desde un guion).
+                let linea_ = entre_comillas(args.texto("LINEA").unwrap_or(""));
+                let c = completar::completar(&linea_, linea_.len(), &mut FuenteShell { shell: self });
+                let muestras: Vec<&str> = c.candidatos.iter().map(|x| x.muestra.as_str()).collect();
+                sal.push_str(&format!("{}{}\n", muestras.join("  "), if c.mas { "  ..." } else { "" }));
+                if c.candidatos.is_empty() { RC_AVISO } else { RC_BIEN }
+            }
+            "resaltar" => {
+                // La clase de cada letra de esa línea: o una orden que existe, x una que no, c una cadena, a una sin
+                // cerrar, r una ruta que existe, + un operador, v una variable, k una palabra de la plantilla.
+                let linea_ = entre_comillas(args.texto("LINEA").unwrap_or(""));
+                self.cupo_de_miradas = 64;
+                let clases = resaltar::resaltar(&linea_, &mut MiraShell { shell: self });
+                let letras: String = clases
+                    .iter()
+                    .map(|c| match c {
+                        Clase::Normal => '.',
+                        Clase::Orden => 'o',
+                        Clase::OrdenMala => 'x',
+                        Clase::Cadena => 'c',
+                        Clase::CadenaAbierta => 'a',
+                        Clase::Ruta => 'r',
+                        Clase::Operador => '+',
+                        Clase::Variable => 'v',
+                        Clase::Clave => 'k',
+                        Clase::Comentario => ';',
+                    })
+                    .collect();
+                sal.push_str(&format!("{}\n", letras));
+                RC_BIEN
+            }
+            "historial" => {
+                if args.si("BORRAR") {
+                    self.p.consola.editor.historial.borrar();
+                    if self.ventana.is_some() {
+                        let _ = self.escribir_fichero(HISTORIAL, b"", false);
+                    }
+                } else {
+                    for (i, l) in self.p.consola.editor.historial.lineas().iter().enumerate() {
+                        sal.push_str(&format!("{:>5}  {}\n", i + 1, l));
+                    }
+                }
+                RC_BIEN
+            }
+            "prompt" => {
+                // Sin nada, el de los ajustes; con texto, ese (con %S, %N y %R, como en AmigaDOS).
+                let texto = args.texto("PROMPT").unwrap_or("");
+                let texto = shell::plantilla::trozos(texto).ok().filter(|t| t.len() == 1).map(|t| t[0].texto.clone()).unwrap_or_else(|| String::from(texto));
+                self.p.indicador_propio = (!texto.is_empty()).then_some(texto);
+                RC_BIEN
+            }
+            "panel" => {
+                // Lo mismo que las teclas: partir el panel, abrir una pestaña, cerrar este, pasar al siguiente.
+                if self.ventana.is_none() {
+                    self.di_linea("Panel: este Shell no tiene ventana");
+                    RC_AVISO
+                } else if args.si("CERRAR") {
+                    self.p.salir = Some(self.p.int.rc);
+                    RC_BIEN
+                } else if args.si("SIGUIENTE") {
+                    let ids = self.disp.paneles_de(self.disp.pestana());
+                    let k = ids.iter().position(|&x| x == self.disp.activo()).map_or(0, |k| (k + 1) % ids.len().max(1));
+                    if let Some(&id) = ids.get(k) {
+                        self.disp.activar(id);
+                    }
+                    RC_BIEN
+                } else if self.abrir_panel(args.si("VERTICAL"), args.si("PESTANA")) {
+                    sal.push_str(&format!("{} paneles en {} pestañas\n", self.disp.todos().len(), self.disp.pestanas()));
+                    RC_BIEN
+                } else {
+                    self.di_linea("Panel: no cabe otro panel");
+                    RC_AVISO
+                }
             }
             "newshell" => match self.buscar("SYS:System/Shell") {
                 Ok(Hallada::Programa { ruta }) => match self.lanzar(&ruta, "Shell", &o.args, false, Fuente_::Nada, Destino::Consola, false) {
                     Ok(_) => {
                         // No se le atiende: no es un trabajo de este Shell.
-                        if let Some(t) = self.trabajos.pop() {
+                        if let Some(t) = self.p.trabajos.pop() {
                             dashos::cerrar(t.canal);
                         }
                         RC_BIEN
@@ -1533,7 +1910,7 @@ impl Shell {
         };
         match r {
             Ok(pid) => {
-                let numero = self.trabajos.last().map_or(0, |t| t.numero);
+                let numero = self.p.trabajos.last().map_or(0, |t| t.numero);
                 sal.push_str(&format!("[{}] {} (proceso {})\n", numero, ordenes[0].nombre, pid));
                 RC_BIEN
             }
@@ -1545,19 +1922,13 @@ impl Shell {
     }
 
     fn interna_o_control(&self, nombre: &str) -> Option<()> {
-        let n = nombre.to_ascii_lowercase();
-        [
-            "set", "unset", "get", "setenv", "getenv", "unsetenv", "alias", "unalias", "path", "which", "run", "status", "break", "why", "cls", "newshell", "if",
-            "else", "endif", "skip", "lab", "endskip", "quit", "failat", "execute", "endshell", "endcli",
-        ]
-        .contains(&n.as_str())
-        .then_some(())
+        shell::ordenes::es_interna(nombre).then_some(())
     }
 
     // --- Lo que piden los trabajos ---
 
     fn contestar(&self, k: usize, estado: i32, datos: &[u8]) {
-        let t = &self.trabajos[k];
+        let t = &self.p.trabajos[k];
         let mut r = [0u8; 256];
         let l = datos.len().min(248);
         r[0..4].copy_from_slice(&estado.to_le_bytes());
@@ -1568,7 +1939,7 @@ impl Shell {
 
     /// Una línea (o un trozo) de la entrada del trabajo `k`, si hay: `None` si tiene que esperar al teclado.
     fn entrada_de(&mut self, k: usize) -> Option<Vec<u8>> {
-        let t = &mut self.trabajos[k];
+        let t = &mut self.p.trabajos[k];
         if !t.resto.is_empty() {
             let n = t.resto.len().min(p::POR_LECTURA);
             return Some(t.resto.drain(..n).collect());
@@ -1576,10 +1947,27 @@ impl Shell {
         match &mut t.entrada {
             Fuente_::Nada => Some(Vec::new()),
             Fuente_::Datos(d, pos) => {
+                // Las líneas enteras que quepan en una respuesta (o un trozo, si una no cabe).
                 let resto = &d[*pos..];
-                let n = resto.iter().position(|&c| c == b'\n').map_or(resto.len(), |i| i + 1).min(p::POR_LECTURA);
+                let tope = resto.len().min(p::POR_LECTURA);
+                let n = resto[..tope].iter().rposition(|&c| c == b'\n').map_or(tope, |i| i + 1);
                 *pos += n;
                 Some(Vec::from(&resto[..n]))
+            }
+            Fuente_::Tubo(n) => {
+                // Una línea entera si la hay (o lo que quepa en una respuesta); con el escritor fuera, lo que quede y
+                // luego el final. Si no hay línea aún, se espera.
+                let n = *n;
+                let tubo = self.p.tuberia.as_mut().and_then(|x| x.tubos.get_mut(n))?;
+                // Las líneas enteras que quepan en una respuesta.
+                let linea = (0..tubo.datos.len().min(p::POR_LECTURA)).rev().find(|&i| tubo.datos[i] == b'\n').map(|i| i + 1);
+                let cuanto = match linea {
+                    Some(c) => c,
+                    None if tubo.datos.len() >= p::POR_LECTURA => p::POR_LECTURA,
+                    None if tubo.sin_escritor => tubo.datos.len(),
+                    None => return None,
+                };
+                Some(tubo.datos.drain(..cuanto).collect())
             }
             Fuente_::Teclado if !t.primer_plano => Some(Vec::new()),
             Fuente_::Teclado => {
@@ -1587,9 +1975,9 @@ impl Shell {
                 if self.ventana.is_none() {
                     return Some(Vec::new());
                 }
-                let mut l = self.tecleadas.pop_front()?.into_bytes();
+                let mut l = self.p.tecleadas.pop_front()?.into_bytes();
                 l.push(b'\n');
-                let t = &mut self.trabajos[k];
+                let t = &mut self.p.trabajos[k];
                 t.resto = l;
                 let n = t.resto.len().min(p::POR_LECTURA);
                 Some(t.resto.drain(..n).collect())
@@ -1598,32 +1986,42 @@ impl Shell {
     }
 
     fn peticion(&mut self, marca: u64, m: &[u8]) {
-        let Some(k) = self.trabajos.iter().position(|t| t.id == marca) else { return };
+        let Some(k) = self.p.trabajos.iter().position(|t| t.id == marca) else { return };
         if m.len() < 4 {
             return;
         }
         let cuerpo = &m[4..];
         match u32::from_le_bytes(m[0..4].try_into().unwrap()) {
+            p::ESCRIBIR if cuerpo.len() >= 4 && matches!(self.p.trabajos[k].salida, Destino::Tubo(_)) && u32::from_le_bytes(cuerpo[0..4].try_into().unwrap()) != p::ERRORES => {
+                // A un tubo: si no cabe, no se le contesta hasta que quien lee haga sitio.
+                self.p.trabajos[k].por_escribir = Some(Vec::from(&cuerpo[4..]));
+                self.mover_tubos();
+            }
             p::ESCRIBIR if cuerpo.len() >= 4 => {
-                let mut destino = core::mem::replace(&mut self.trabajos[k].salida, Destino::Consola);
+                let mut destino = core::mem::replace(&mut self.p.trabajos[k].salida, Destino::Consola);
                 // Los errores van siempre a la consola, aunque la salida esté redirigida.
                 let estado = if u32::from_le_bytes(cuerpo[0..4].try_into().unwrap()) == p::ERRORES {
                     self.a_destino(&mut Destino::Consola, &cuerpo[4..])
                 } else {
                     self.a_destino(&mut destino, &cuerpo[4..])
                 };
-                self.trabajos[k].salida = destino;
+                self.p.trabajos[k].salida = destino;
                 self.contestar(k, estado, &[]);
             }
             p::LEER => match self.entrada_de(k) {
-                Some(d) => self.contestar(k, d.len() as i32, &d),
-                None => self.trabajos[k].leyendo = true,
+                Some(d) => {
+                    self.contestar(k, d.len() as i32, &d);
+                    // Con el sitio que deja, quizá entra lo que otra esperaba a escribir.
+                    self.mover_tubos();
+                }
+                None => self.p.trabajos[k].leyendo = true,
             },
             p::PULSO => self.contestar(k, 0, &[]),
             p::CD => {
                 let estado = match core::str::from_utf8(cuerpo).ok().map(|c| (c, self.s.mirar(c))) {
                     Some((c, Ok(d))) if d.cajon() && c.contains(':') => {
                         self.s.actual = String::from(c);
+                        self.p.actual = self.s.actual.clone();
                         0
                     }
                     Some((_, Ok(_))) => a::NO_ES_CAJON,
@@ -1653,7 +2051,7 @@ impl Shell {
 
     /// El trabajo `k` acabó: se suelta lo suyo y se sigue con lo que esperaba por él.
     fn acabar(&mut self, k: usize, rc: i32, r2: i32) {
-        let t = self.trabajos.remove(k);
+        let t = self.p.trabajos.remove(k);
         dashos::cerrar(t.canal);
         self.cerrar_destino(t.salida);
         if !t.primer_plano {
@@ -1662,13 +2060,14 @@ impl Shell {
             }
             return;
         }
-        if let Some(tu) = &mut self.tuberia {
-            tu.rc = rc;
-            tu.r2 = r2;
-            tu.i += 1;
-            self.seguir_tuberia();
-        } else {
-            self.con_interprete(|i, m| i.acabada(m, rc, r2));
+        match (t.etapa, &mut self.p.tuberia) {
+            (Some(etapa), Some(tu)) => {
+                tu.vivas = tu.vivas.saturating_sub(1);
+                self.etapa_acabada(etapa, rc, r2);
+                self.mover_tubos();
+                self.acabar_tuberia_si_toca();
+            }
+            _ => self.con_interprete(|i, m| i.acabada(m, rc, r2)),
         }
     }
 
@@ -1676,8 +2075,8 @@ impl Shell {
     fn vigilar(&mut self) {
         let ahora = dashos::ahora_us();
         let mut k = 0;
-        while k < self.trabajos.len() {
-            let t = &self.trabajos[k];
+        while k < self.p.trabajos.len() {
+            let t = &self.p.trabajos[k];
             let mut b = [0u8; 256];
             let mut ll = [0u32; 8];
             let (n, kk, _) = dashos::canal_leer_plazo(t.canal, &mut b, &mut ll, 1);
@@ -1708,19 +2107,17 @@ impl Shell {
     fn romper(&mut self) {
         let ahora = dashos::ahora_us();
         let mut alguno = false;
-        for k in 0..self.trabajos.len() {
-            if self.trabajos[k].primer_plano {
-                self.trabajos[k].roto.get_or_insert(ahora);
+        for k in 0..self.p.trabajos.len() {
+            if self.p.trabajos[k].primer_plano {
+                self.p.trabajos[k].roto.get_or_insert(ahora);
                 alguno = true;
-                if core::mem::take(&mut self.trabajos[k].leyendo) {
+                if core::mem::take(&mut self.p.trabajos[k].leyendo) {
                     self.contestar(k, 0, &[]);
                 }
             }
         }
-        // Lo que quedara de la tubería y del guion, fuera.
-        if let Some(t) = &mut self.tuberia {
-            t.ordenes.truncate(t.i + 1);
-        }
+        // Las que esperaban a escribir en un tubo dejan de esperar (se les contesta, con "roto").
+        self.mover_tubos();
         let habia = self.con_interprete(|i, m| i.romper(m));
         if alguno && !habia {
             // Una orden sin intérprete por medio (no pasa hoy): que se diga igual.
@@ -1729,7 +2126,7 @@ impl Shell {
         if !alguno && !habia {
             // Nada en marcha: la línea que se estaba tecleando se deja.
             if let Some(v) = &mut self.ventana {
-                v.consola.editor.borrar();
+                self.p.consola.editor.borrar();
                 v.sucia = true;
             }
         }
@@ -1737,25 +2134,647 @@ impl Shell {
 
     /// Final de la entrada (Ctrl-D): a la orden que lee; sin ninguna y sin nada tecleado, el Shell acaba.
     fn fin_de_entrada(&mut self) {
-        if let Some(k) = self.trabajos.iter().position(|t| t.primer_plano && t.leyendo) {
-            self.trabajos[k].leyendo = false;
+        if let Some(k) = self.p.trabajos.iter().position(|t| t.primer_plano && t.leyendo) {
+            self.p.trabajos[k].leyendo = false;
             self.contestar(k, 0, &[]);
-        } else if !self.int.ocupado() && self.trabajos.iter().all(|t| !t.primer_plano) && self.ventana.as_ref().is_some_and(|v| v.consola.editor.vacio()) {
-            self.salir = Some(self.int.rc);
+        } else if !self.p.int.ocupado() && self.p.trabajos.iter().all(|t| !t.primer_plano) && self.ventana.is_some() && self.p.consola.editor.vacio() {
+            self.p.salir = Some(self.p.int.rc);
         }
     }
 
     /// Una línea tecleada: a la orden que la espera, o a la cola.
     fn linea_tecleada(&mut self, l: String) {
-        if self.tecleadas.len() < 256 {
-            self.tecleadas.push_back(l);
+        if self.p.tecleadas.len() < 256 {
+            self.p.tecleadas.push_back(l);
         }
-        self.indicador_puesto = false;
-        if let Some(k) = self.trabajos.iter().position(|t| t.primer_plano && t.leyendo)
+        self.p.indicador_puesto = false;
+        if let Some(k) = self.p.trabajos.iter().position(|t| t.primer_plano && t.leyendo)
             && let Some(d) = self.entrada_de(k)
         {
-            self.trabajos[k].leyendo = false;
+            self.p.trabajos[k].leyendo = false;
             self.contestar(k, d.len() as i32, &d);
+        }
+    }
+
+    // --- Los paneles ---
+
+    /// Pasa a trabajar en el panel número `k`: sus cosas quedan en `self.p`, y su cajón actual es el de los ficheros.
+    fn entrar(&mut self, k: usize) {
+        if k != self.en && k < self.paneles.len() {
+            self.p.actual = self.s.actual.clone();
+            let en = self.en;
+            core::mem::swap(&mut self.p, &mut self.paneles[en]);
+            core::mem::swap(&mut self.p, &mut self.paneles[k]);
+            self.en = k;
+            self.s.actual = self.p.actual.clone();
+        }
+    }
+
+    fn panel(&self, k: usize) -> &Panel {
+        if k == self.en { &self.p } else { &self.paneles[k] }
+    }
+
+    fn numero_de(&self, id: u32) -> Option<usize> {
+        (0..self.paneles.len()).find(|&k| self.panel(k).id == id)
+    }
+
+    /// El panel del trabajo de la marca `marca`.
+    fn panel_del_trabajo(&self, marca: u64) -> Option<usize> {
+        (0..self.paneles.len()).find(|&k| self.panel(k).trabajos.iter().any(|t| t.id == marca))
+    }
+
+    /// El área de los paneles en la ventana (bajo la barra de pestañas).
+    fn area(&self) -> RectPanel {
+        match &self.ventana {
+            Some(v) => {
+                let barra = v.alto_barra(self.disp.pestanas());
+                RectPanel { x: 0, y: barra, w: v.medida.0, h: v.medida.1 - barra }
+            }
+            None => RectPanel::default(),
+        }
+    }
+
+    /// Reparte la ventana entre los paneles de la pestaña que se ve, y cada consola se parte a su ancho.
+    fn colocar(&mut self) {
+        let Some(v) = &mut self.ventana else { return };
+        v.entera = true;
+        v.sucia = true;
+        let barra = v.alto_barra(self.disp.pestanas());
+        let area = RectPanel { x: 0, y: barra, w: v.medida.0, h: v.medida.1 - barra };
+        for (id, r) in self.disp.rects(area, 1) {
+            let (columnas, filas) = self.ventana.as_ref().unwrap().letras_en(r);
+            let Some(k) = self.numero_de(id) else { continue };
+            let p = if k == self.en { &mut self.p } else { &mut self.paneles[k] };
+            p.rect = r;
+            p.consola.medir(columnas, filas);
+        }
+    }
+
+    /// Un panel nuevo, con su historial, su guion de arranque y sus complementos por cargar. No se coloca aún.
+    fn panel_nuevo(&mut self, actual: &str) -> Panel {
+        let id = self.siguiente_panel;
+        self.siguiente_panel += 1;
+        let (columnas, filas) = self.ventana.as_ref().map_or((self.columnas, 25), |v| v.de_serie);
+        let mut p = Panel::nuevo(id, actual, columnas, filas);
+        if self.ventana.is_some() {
+            // El historial guardado; si ha crecido mucho, se deja en lo que se recuerda.
+            if let Ok(d) = self.s.leer_entero(HISTORIAL, 1 << 20) {
+                p.consola.editor.historial.cargar(&d);
+                if d.len() > 256 * 1024 {
+                    let texto = p.consola.editor.historial.texto();
+                    let _ = self.escribir_fichero(HISTORIAL, texto.as_bytes(), false);
+                }
+            }
+        }
+        if !self.sin_arranque {
+            // Los complementos: los guiones de `S:Shell-Complementos`, por orden alfabético (el del usuario tapa al del
+            // sistema que se llame igual, por las capas de `S:`).
+            if let Ok(entradas) = self.s.listar(COMPLEMENTOS) {
+                p.complementos = entradas.into_iter().filter(|e| !e.datos.cajon()).take(64).map(|e| format!("{}/{}", COMPLEMENTOS, e.nombre)).collect();
+            }
+            // El guion de arranque: el de `FROM`, o `S:Shell-Startup` (el del usuario tapa al del sistema).
+            let guion = self.desde.clone().unwrap_or_else(|| String::from("S:Shell-Startup"));
+            match self.s.leer_entero(&guion, ordenes::MAX_ENTERO) {
+                Ok(d) => {
+                    let texto = String::from_utf8_lossy(&d).into_owned();
+                    let mut mudo = Mudo;
+                    p.int.guion(&mut mudo, &guion, &texto, "");
+                }
+                Err(a::NO_EXISTE) if guion == "S:Shell-Startup" => {}
+                Err(e) => p.consola.escribir(&format!("Shell: {}: {}\n", guion, ordenes::texto_error(e))),
+            }
+        }
+        p
+    }
+
+    /// Parte el panel activo (o abre una pestaña) con un panel nuevo, que se queda el teclado. Falso si no cabe.
+    fn abrir_panel(&mut self, vertical: bool, pestana: bool) -> bool {
+        if self.ventana.is_none() || self.paneles.len() >= 32 {
+            return false;
+        }
+        let actual = self.s.actual.clone();
+        let nuevo = self.panel_nuevo(&actual);
+        let id = nuevo.id;
+        let cabe = if pestana { self.disp.pestana_nueva(id) } else { self.disp.partir(vertical, id) };
+        if !cabe {
+            return false;
+        }
+        // Los ajustes del indicador se leen otra vez: lo que se haya cambiado en su fichero vale desde aquí.
+        self.leer_indicador();
+        self.paneles.push(nuevo);
+        self.colocar();
+        // Si los paneles quedan demasiado pequeños, se deshace.
+        let k = self.paneles.len() - 1;
+        let r = self.paneles[k].rect;
+        let pequeno = self.ventana.as_ref().is_some_and(|v| r.w < 12 * v.celda.0 + 2 * BORDE || r.h < 3 * v.celda.1 + 2 * BORDE);
+        if pequeno {
+            self.disp.cerrar(id);
+            self.paneles.pop();
+            self.colocar();
+            return false;
+        }
+        true
+    }
+
+    /// Quita el panel número `k` (que ya acabó): sus trabajos se matan. Falso si era el último de la ventana.
+    fn quitar_panel(&mut self, k: usize) -> bool {
+        self.entrar(k);
+        for t in core::mem::take(&mut self.p.trabajos) {
+            matar(t.pid);
+            dashos::cerrar(t.canal);
+            self.cerrar_destino(t.salida);
+        }
+        let id = self.p.id;
+        if !self.disp.cerrar(id) || self.paneles.len() <= 1 {
+            return false;
+        }
+        // Se trabaja en otro, y este sale de la lista.
+        let otro = if k == 0 { 1 } else { 0 };
+        self.entrar(otro);
+        self.paneles.remove(k);
+        if self.en > k {
+            self.en -= 1;
+        }
+        self.colocar();
+        true
+    }
+
+    /// El número del panel que tiene el teclado.
+    fn activo(&self) -> usize {
+        self.numero_de(self.disp.activo()).unwrap_or(self.en)
+    }
+
+    // --- Los ficheros de ajustes y el historial ---
+
+    /// Escribe `datos` en `fichero` (entero, o al final). Si falta su cajón de `ENVARC:`, lo crea en la capa del usuario.
+    fn escribir_fichero(&mut self, fichero: &str, datos: &[u8], anadir: bool) -> Result<(), i32> {
+        let abierto = match self.s.abrir_para_escribir(fichero, anadir) {
+            Err(a::NO_EXISTE) | Err(a::NO_ES_CAJON) | Err(a::PROTEGIDO) | Err(a::SOLO_LECTURA) => {
+                // La capa del usuario de `ENVARC:` y el cajón del Shell, si faltan.
+                for cajon in ["Home:Prefs", "Home:Prefs/Env-Archive", "ENVARC:Shell"] {
+                    if let Ok(asa) = self.s.crear(cajon, a::CAJON) {
+                        self.s.cerrar(asa);
+                    }
+                }
+                self.s.abrir_para_escribir(fichero, anadir)
+            }
+            x => x,
+        };
+        let (asa, pos) = abierto?;
+        let r = self.s.escribir(asa, pos, datos);
+        self.s.cerrar(asa);
+        r
+    }
+
+    /// Lee los ajustes del indicador (`ENVARC:Shell/Indicador`); lo que no se entienda se dice en el panel.
+    fn leer_indicador(&mut self) {
+        let mut avisos = Vec::new();
+        if let Ok(d) = self.s.leer_entero(INDICADOR, indicador::MAX_FICHERO) {
+            self.indicador = indicador::Ajustes::leer(&d, &mut avisos);
+        }
+        for aviso in avisos {
+            self.di_linea(&format!("{}: {}", INDICADOR, aviso));
+        }
+    }
+
+    /// Pone el indicador en el panel en que se trabaja.
+    fn poner_indicador(&mut self) {
+        if self.ventana.is_some() && !self.p.consola.al_principio() {
+            self.di("\n");
+        }
+        let hora = match dashos::hora_ns() {
+            0 => None,
+            ns => {
+                let (_, _, _, h, m, _) = shell::fecha::partes(ns / 1_000_000_000);
+                Some((h, m))
+            }
+        };
+        let celdas = match &self.p.indicador_propio {
+            // El de `Prompt`, con las letras de AmigaDOS: %S el cajón, %N el número del Shell, %R el último código.
+            Some(texto) => {
+                let t = texto.replace("%S", &self.s.actual).replace("%s", &self.s.actual).replace("%N", "1").replace("%n", "1").replace("%R", &format!("{}", self.p.int.rc)).replace("%r", &format!("{}", self.p.int.rc));
+                t.chars().filter(|c| (*c as u32) >= 0x20).take(200).map(consola::Celda::normal).collect()
+            }
+            None => {
+                let fondo = self.p.trabajos.iter().filter(|t| !t.primer_plano).count();
+                self.indicador.pintar(&indicador::Datos { usuario: "", cajon: &self.s.actual, codigo: self.p.int.rc, trabajos: fondo, hora, git: None })
+            }
+        };
+        // El indicador no va al registro: solo a la ventana.
+        self.p.consola.escribir_celdas(&celdas);
+        if let Some(v) = &mut self.ventana {
+            v.sucia = true;
+        }
+    }
+
+    // --- Completar, sugerir y resaltar ---
+
+    /// Tab: completa lo que hay antes del cursor. Con una posibilidad, la pone; con varias, lo común y el menú.
+    fn completar(&mut self) {
+        let linea = self.p.consola.editor.texto();
+        let cursor = self.p.consola.editor.cursor_en_bytes();
+        let c = completar::completar(&linea, cursor, &mut FuenteShell { shell: self });
+        match c.candidatos.len() {
+            0 => {}
+            1 => {
+                let uno = &c.candidatos[0];
+                let texto = format!("{}{}", uno.texto, if uno.entero { " " } else { "" });
+                self.p.consola.editor.reemplazar(c.desde, c.hasta, &texto);
+            }
+            _ => {
+                let comun = c.comun();
+                let mut hasta = c.hasta;
+                if comun.len() > c.hasta - c.desde {
+                    self.p.consola.editor.reemplazar(c.desde, c.hasta, &comun);
+                    hasta = c.desde + comun.len();
+                }
+                self.p.menu = Some(Menu { c, elegido: None, hasta });
+                self.pintar_menu();
+            }
+        }
+    }
+
+    /// Mueve lo elegido en el menú (`paso` 1 o -1) y lo pone en la línea.
+    fn mover_menu(&mut self, paso: isize) {
+        let Some(m) = &mut self.p.menu else { return };
+        let n = m.c.candidatos.len() as isize;
+        let k = match m.elegido {
+            None if paso > 0 => 0,
+            None => n - 1,
+            Some(k) => (k as isize + paso).rem_euclid(n),
+        } as usize;
+        m.elegido = Some(k);
+        let texto = m.c.candidatos[k].texto.clone();
+        let (desde, hasta) = (m.c.desde, m.hasta);
+        m.hasta = desde + texto.len();
+        self.p.consola.editor.reemplazar(desde, hasta, &texto);
+        self.pintar_menu();
+    }
+
+    /// Cierra el menú. Con `elegir`, lo elegido se queda (con su espacio detrás si ya está entero).
+    fn cerrar_menu(&mut self, elegir: bool) {
+        if let Some(m) = self.p.menu.take() {
+            if let (true, Some(k)) = (elegir, m.elegido) {
+                if m.c.candidatos[k].entero {
+                    self.p.consola.editor.reemplazar(m.hasta, m.hasta, " ");
+                }
+            }
+            self.p.consola.pie.clear();
+        }
+    }
+
+    /// Las filas del menú, debajo de la línea: los candidatos en columnas, el elegido resaltado.
+    fn pintar_menu(&mut self) {
+        let Some(m) = &self.p.menu else { return };
+        let columnas = self.p.consola.columnas();
+        let ancho = (m.c.candidatos.iter().map(|c| c.muestra.chars().count()).max().unwrap_or(1) + 2).min(columnas).max(1);
+        let por_fila = (columnas / ancho).max(1);
+        let filas = (self.p.consola.filas() / 2).clamp(1, 8);
+        // La página en la que está el elegido.
+        let por_pagina = por_fila * filas;
+        let pagina = m.elegido.unwrap_or(0) / por_pagina;
+        let mut pie: Vec<Vec<consola::Celda>> = Vec::new();
+        for (i, c) in m.c.candidatos.iter().enumerate().skip(pagina * por_pagina).take(por_pagina) {
+            if (i - pagina * por_pagina) % por_fila == 0 {
+                pie.push(Vec::new());
+            }
+            let elegido = m.elegido == Some(i);
+            let (letra, estilo) = match (elegido, c.cajon) {
+                (true, _) => (consola::NORMAL, consola::INVERSO),
+                (false, true) => (consola::paleta(4), consola::NEGRITA),
+                (false, false) => (consola::NORMAL, 0),
+            };
+            let fila = pie.last_mut().unwrap();
+            let mut n = 0;
+            for l in c.muestra.chars().take(ancho.saturating_sub(1)) {
+                fila.push(consola::Celda::con(l, letra, consola::NORMAL, estilo));
+                n += 1;
+            }
+            while n < ancho {
+                fila.push(consola::Celda::normal(' '));
+                n += 1;
+            }
+        }
+        let total = m.c.candidatos.len();
+        if total > por_pagina || m.c.mas {
+            let texto = format!("({} de {}{})", (pagina * por_pagina + por_pagina).min(total), total, if m.c.mas { " o más" } else { "" });
+            pie.push(texto.chars().map(|l| consola::Celda::con(l, consola::TENUE_GRIS, consola::NORMAL, 0)).collect());
+        }
+        self.p.consola.pie = pie;
+    }
+
+    /// Pone al día la sugerencia y el resaltado de lo que se teclea en el panel en que se trabaja.
+    fn resaltar(&mut self) {
+        let ed = &self.p.consola.editor;
+        if ed.version == self.p.resaltada && !self.p.por_mirar {
+            return;
+        }
+        self.p.resaltada = ed.version;
+        let texto = ed.texto();
+        // La sugerencia: del historial, si se está al final de la línea y no se busca ni hay menú.
+        let sugerencia = if ed.al_final() && ed.buscando().is_none() && self.p.menu.is_none() { ed.historial.sugerencia(&texto).map(String::from) } else { None };
+        self.cupo_de_miradas = 8;
+        let clases = resaltar::resaltar(&texto, &mut MiraShell { shell: self });
+        self.p.por_mirar = self.cupo_de_miradas == 0;
+        let ed = &mut self.p.consola.editor;
+        ed.resaltado = clases
+            .iter()
+            .map(|c| match c {
+                Clase::Normal => (consola::NORMAL, 0),
+                Clase::Orden => (consola::paleta(2), consola::NEGRITA),
+                Clase::OrdenMala => (consola::paleta(1), consola::NEGRITA),
+                Clase::Cadena => (consola::paleta(3), 0),
+                Clase::CadenaAbierta => (consola::paleta(1), 0),
+                Clase::Ruta => (consola::NORMAL, consola::SUBRAYADO),
+                Clase::Operador => (consola::paleta(5), consola::NEGRITA),
+                Clase::Variable => (consola::paleta(6), 0),
+                Clase::Clave => (consola::paleta(4), 0),
+                Clase::Comentario => (consola::TENUE_GRIS, 0),
+            })
+            .collect();
+        ed.sugerencia = sugerencia.unwrap_or_default();
+        if let Some(v) = &mut self.ventana {
+            v.sucia = true;
+        }
+    }
+
+    /// Si existe algo (una orden por su nombre, o una ruta), recordando lo mirado un rato. `None` si ya no se puede
+    /// mirar más en esta pasada.
+    fn visto(&mut self, clave: String, mirar: impl FnOnce(&mut Shell) -> bool) -> Option<bool> {
+        let ahora = dashos::ahora_us();
+        if let Some(v) = self.vistos.iter().find(|v| v.0 == clave && ahora.saturating_sub(v.2) < 2_000_000) {
+            return Some(v.1);
+        }
+        if self.cupo_de_miradas == 0 {
+            return None;
+        }
+        self.cupo_de_miradas -= 1;
+        let existe = mirar(self);
+        self.vistos.retain(|v| v.0 != clave);
+        if self.vistos.len() >= 64 {
+            self.vistos.remove(0);
+        }
+        self.vistos.push((clave, existe, ahora));
+        Some(existe)
+    }
+
+    /// Todas las órdenes que se pueden lanzar por su nombre: las de serie, los alias y los programas del camino.
+    fn todas_las_ordenes(&mut self) -> Vec<String> {
+        let mut v: Vec<String> = shell::ordenes::BASE.iter().chain(shell::ordenes::INTERNAS).chain(shell::ordenes::CONTROL).map(|x| String::from(x.0)).collect();
+        v.extend(self.p.int.alias.iter().map(|x| x.0.clone()));
+        let mut cajones = alloc::vec![String::new()];
+        cajones.extend(self.p.camino.iter().cloned());
+        cajones.push(String::from("C:"));
+        for c in cajones {
+            if let Ok(entradas) = self.s.listar(&c) {
+                // `Ordenes` es el programa de las de base: no se lanza por ese nombre.
+                v.extend(entradas.into_iter().filter(|e| !e.datos.cajon() && (e.datos.modo & 0o111 != 0 || e.datos.bits & 4 != 0) && !(c == "C:" && e.nombre == "Ordenes")).take(500).map(|e| e.nombre));
+            }
+        }
+        v
+    }
+
+    // --- Las teclas y el ratón ---
+
+    /// Una tecla en el panel que tiene el teclado, con las de Control, Mayúsculas y Alt como estén.
+    fn tecla(&mut self, t: Option<Tecla>, codigo: u32) {
+        let (control, mayus, alt) = self.ventana.as_ref().map_or((false, false, false), |v| (v.control > 0, v.mayusculas > 0, v.alt));
+        self.tecla_con(t, codigo, control, mayus, alt);
+    }
+
+    /// Una tecla en el panel en que se trabaja.
+    fn tecla_con(&mut self, t: Option<Tecla>, codigo: u32, control: bool, mayus: bool, alt: bool) {
+        // Lo de la ventana, con las teclas de Terminator: partir, pestaña nueva, cerrar, copiar y pegar.
+        if control && mayus {
+            match codigo {
+                // O: partir en horizontal; E: en vertical; T: pestaña; W: cerrar el panel.
+                24 => {
+                    self.abrir_panel(false, false);
+                }
+                18 => {
+                    self.abrir_panel(true, false);
+                }
+                20 => {
+                    self.abrir_panel(false, true);
+                }
+                17 => self.p.salir = Some(self.p.int.rc),
+                46 => {
+                    let texto = self.p.consola.texto_seleccionado();
+                    if let Some(v) = &mut self.ventana {
+                        let mut e = Escritor::new();
+                        v.pp.copiar(&mut e, false, texto, v.serie);
+                        self.buzon.mandar(&e);
+                    }
+                }
+                47 => {
+                    if let Some(v) = &mut self.ventana {
+                        let mut e = Escritor::new();
+                        if v.pp.pegar(&mut e, false) {
+                            self.buzon.mandar(&e);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+        // Alt+flechas: el teclado pasa al panel de ese lado.
+        if alt {
+            let hacia = match (codigo, t) {
+                (105, _) => Some(Hacia::Izquierda),
+                (106, _) => Some(Hacia::Derecha),
+                (103, _) | (_, Some(Tecla::AltArriba)) => Some(Hacia::Arriba),
+                (108, _) | (_, Some(Tecla::AltAbajo)) => Some(Hacia::Abajo),
+                _ => None,
+            };
+            if let Some(h) = hacia {
+                let area = self.area();
+                self.disp.mover(h, area);
+                if let Some(v) = &mut self.ventana {
+                    v.sucia = true;
+                }
+                return;
+            }
+        }
+        // RePág y AvPág: lo escrito, hacia atrás y hacia delante. Con Control, la pestaña de al lado.
+        if codigo == 104 || codigo == 109 {
+            if control {
+                self.disp.cambiar_pestana(if codigo == 109 { 1 } else { -1 });
+                self.colocar();
+            } else {
+                let paso = self.p.consola.filas().saturating_sub(1).max(1) as isize;
+                self.p.consola.desplazar(if codigo == 104 { paso } else { -paso });
+            }
+            return;
+        }
+        let Some(t) = t else { return };
+        self.p.consola.al_final();
+        // Con el menú de completar abierto.
+        if self.p.menu.is_some() {
+            match t {
+                Tecla::Tabulador | Tecla::Abajo | Tecla::Derecha => return self.mover_menu(1),
+                Tecla::TabuladorAtras | Tecla::Arriba | Tecla::Izquierda => return self.mover_menu(-1),
+                Tecla::Intro => return self.cerrar_menu(true),
+                Tecla::Escape => return self.cerrar_menu(false),
+                _ => self.cerrar_menu(true),
+            }
+        }
+        // Buscando hacia atrás (Ctrl-R).
+        if self.p.consola.editor.buscando().is_some() {
+            let ed = &mut self.p.consola.editor;
+            match t {
+                Tecla::Letra(c) if control && c.eq_ignore_ascii_case(&'r') => return ed.buscar(),
+                Tecla::Letra(c) if control && (c.eq_ignore_ascii_case(&'c') || c.eq_ignore_ascii_case(&'g')) => return ed.buscar_fin(true),
+                Tecla::Letra(c) if !control => return ed.buscar_letra(Some(c)),
+                Tecla::Retroceso => return ed.buscar_letra(None),
+                Tecla::Escape => return ed.buscar_fin(true),
+                Tecla::Intro => {}
+                _ => ed.buscar_fin(false),
+            }
+        }
+        if control {
+            if let Tecla::Letra(c) = t {
+                let ed = &mut self.p.consola.editor;
+                match c.to_ascii_lowercase() {
+                    'c' => return self.romper(),
+                    'd' | '\\' => return self.fin_de_entrada(),
+                    'r' => ed.buscar(),
+                    'a' => ed.inicio(),
+                    'e' => ed.fin(),
+                    'k' => ed.borrar_hasta_el_fin(),
+                    'u' | 'x' => ed.borrar(),
+                    'w' => ed.borrar_palabra(),
+                    'l' => self.p.consola.limpiar(),
+                    _ => {}
+                }
+                return;
+            }
+            // Ctrl+derecha: una palabra de la sugerencia.
+            if t == Tecla::Derecha {
+                self.p.consola.editor.aceptar_sugerencia(true);
+                return;
+            }
+        }
+        self.p.consola.quitar_seleccion();
+        let ed = &mut self.p.consola.editor;
+        match t {
+            Tecla::Letra(c) => ed.insertar(c),
+            Tecla::Retroceso => ed.retroceso(),
+            Tecla::Suprimir => ed.suprimir(),
+            Tecla::Izquierda => ed.izquierda(),
+            Tecla::Derecha => ed.derecha(),
+            Tecla::Inicio => ed.inicio(),
+            Tecla::Fin => ed.fin(),
+            Tecla::Arriba | Tecla::AltArriba => ed.arriba(),
+            Tecla::Abajo | Tecla::AltAbajo => ed.abajo(),
+            Tecla::Intro => {
+                let l = self.p.consola.intro();
+                if let Some(g) = self.p.consola.editor.tomar_por_guardar() {
+                    let _ = self.escribir_fichero(HISTORIAL, format!("{}\n", g).as_bytes(), true);
+                }
+                self.linea_tecleada(l);
+            }
+            Tecla::Tabulador => self.completar(),
+            Tecla::TabuladorAtras | Tecla::Escape => {}
+        }
+    }
+
+    /// El panel (su número) que hay bajo el ratón, si hay.
+    fn panel_bajo_el_raton(&self) -> Option<usize> {
+        let (x, y) = self.ventana.as_ref()?.raton;
+        let area = self.area();
+        let (id, _) = self.disp.rects(area, 1).into_iter().find(|(_, r)| r.contiene(x, y))?;
+        self.numero_de(id)
+    }
+
+    fn punto_del_raton(&self) -> Option<Punto> {
+        let (col, fila) = self.ventana.as_ref()?.letra_bajo_el_raton(self.p.rect);
+        self.p.consola.punto(col.min(self.p.consola.columnas() - 1), fila)
+    }
+
+    fn raton(&mut self, e: Entrada) {
+        match e {
+            Entrada::Mueve => {
+                if let (Some(desde), Some(aqui)) = (self.p.arrastre, self.punto_del_raton()) {
+                    self.p.consola.seleccionar(desde, aqui);
+                    if let Some(v) = &mut self.ventana {
+                        v.sucia = true;
+                    }
+                }
+            }
+            Entrada::Boton { boton: 272, pulsado: true, .. } => {
+                // En la barra de pestañas: la pestaña de ese sitio.
+                let (x, y) = self.ventana.as_ref().map_or((0, 0), |v| v.raton);
+                if y < self.area().y {
+                    let cw = self.ventana.as_ref().map_or(8, |v| v.celda.0);
+                    let mut desde = 4;
+                    for k in 0..self.disp.pestanas() {
+                        let ancho = format!(" {} {} ", k + 1, self.titulo_de_pestana(k)).chars().take(ANCHO_PESTANA).count() as i32 * cw;
+                        if x >= desde && x < desde + ancho {
+                            self.disp.ir_a_pestana(k);
+                            self.colocar();
+                            break;
+                        }
+                        desde += ancho + 4;
+                    }
+                    return;
+                }
+                if let Some(k) = self.panel_bajo_el_raton() {
+                    let id = self.panel(k).id;
+                    self.disp.activar(id);
+                    self.entrar(k);
+                    self.p.consola.quitar_seleccion();
+                    self.p.arrastre = self.punto_del_raton();
+                }
+                if let Some(v) = &mut self.ventana {
+                    v.sucia = true;
+                }
+            }
+            Entrada::Boton { boton: 272, pulsado: false, serie } => {
+                if self.p.arrastre.take().is_some() {
+                    let texto = self.p.consola.texto_seleccionado();
+                    if texto.is_empty() {
+                        self.p.consola.quitar_seleccion();
+                    } else if let Some(v) = &mut self.ventana {
+                        // Al soltar, lo seleccionado es la selección primaria.
+                        let mut e = Escritor::new();
+                        v.pp.copiar(&mut e, true, texto, serie);
+                        self.buzon.mandar(&e);
+                    }
+                    if let Some(v) = &mut self.ventana {
+                        v.sucia = true;
+                    }
+                }
+            }
+            Entrada::Boton { boton: 274, pulsado: true, .. } => {
+                if let Some(v) = &mut self.ventana {
+                    let mut e = Escritor::new();
+                    if v.pp.pegar(&mut e, true) {
+                        self.buzon.mandar(&e);
+                    }
+                }
+            }
+            Entrada::Rueda(pasos) => {
+                if let Some(k) = self.panel_bajo_el_raton() {
+                    self.entrar(k);
+                }
+                self.p.consola.desplazar(-3 * pasos as isize);
+                if let Some(v) = &mut self.ventana {
+                    v.sucia = true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Lo que se lee en la pestaña `k`: el cajón actual de su panel con el teclado.
+    fn titulo_de_pestana(&self, k: usize) -> String {
+        let ids = self.disp.paneles_de(k);
+        let id = if k == self.disp.pestana() { self.disp.activo() } else { ids.first().copied().unwrap_or(0) };
+        match self.numero_de(id) {
+            Some(n) if n == self.en => self.s.actual.clone(),
+            Some(n) => self.paneles[n].actual.clone(),
+            None => String::new(),
         }
     }
 
@@ -1763,46 +2782,53 @@ impl Shell {
 
     /// Si hay algo en primer plano por lo que esperar.
     fn esperando_a_una_orden(&self) -> bool {
-        self.trabajos.iter().any(|t| t.primer_plano)
+        self.p.trabajos.iter().any(|t| t.primer_plano)
     }
 
-    /// Avanza el intérprete mientras pueda, sin pasar de unos milisegundos (la ventana tiene que seguir viva).
+    /// Avanza el intérprete del panel en que se trabaja mientras pueda, sin pasar de unos milisegundos (la ventana
+    /// tiene que seguir viva).
     fn avanzar(&mut self) {
         let hasta = dashos::ahora_us() + 4_000;
         for _ in 0..200 {
-            if self.salir.is_some() || self.esperando_a_una_orden() || self.tuberia.is_some() {
+            if self.p.salir.is_some() || self.esperando_a_una_orden() || self.p.tuberia.is_some() {
                 return;
             }
             match self.con_interprete(|i, m| i.paso(m)) {
                 Paso::Nada => {}
-                Paso::Ejecutar(ordenes) => {
-                    self.tuberia = Some(Tuberia { ordenes, i: 0, tubo: Vec::new(), rc: 0, r2: 0 });
-                    self.seguir_tuberia();
-                }
+                Paso::Ejecutar(ordenes) => self.empezar_tuberia(ordenes, false),
+                Paso::Capturar(ordenes) => self.empezar_tuberia(ordenes, true),
                 Paso::Fin(rc) => {
-                    self.salir = Some(rc);
+                    self.p.salir = Some(rc);
                     return;
                 }
                 Paso::Pedir => {
-                    if let Some(l) = self.orden_pendiente.take() {
+                    // Un complemento que acabó mal se dice, y se sigue con los demás.
+                    if let Some(c) = self.p.cargando.take() {
+                        if self.p.int.rc >= shell::RC_ERROR {
+                            self.di_linea(&format!("El complemento {} ha fallado (código {}): se salta lo que le quedaba", c, self.p.int.rc));
+                            self.p.int.rc = 0;
+                        }
+                    }
+                    if let Some(c) = self.p.complementos.pop_front() {
+                        match self.s.leer_entero(&c, ordenes::MAX_ENTERO) {
+                            Ok(d) => {
+                                let texto = String::from_utf8_lossy(&d).into_owned();
+                                self.p.cargando = Some(c.clone());
+                                self.con_interprete(|i, m| i.guion(m, &c, &texto, ""));
+                            }
+                            Err(e) => self.di_linea(&format!("El complemento {} no se puede leer: {}", c, ordenes::texto_error(e))),
+                        }
+                    } else if let Some(l) = self.p.orden_pendiente.take() {
                         self.con_interprete(|i, _| i.linea(&l));
-                    } else if self.de_una_orden || self.ventana.is_none() {
-                        self.salir = Some(self.int.rc);
+                    } else if self.p.de_una_orden || self.ventana.is_none() {
+                        self.p.salir = Some(self.p.int.rc);
                         return;
-                    } else if let Some(l) = self.tecleadas.pop_front() {
+                    } else if let Some(l) = self.p.tecleadas.pop_front() {
                         self.con_interprete(|i, _| i.linea(&l));
                     } else {
-                        if !self.indicador_puesto {
-                            self.indicador_puesto = true;
-                            let indicador = format!("1.{}> ", self.s.actual);
-                            if self.ventana.as_ref().is_some_and(|v| !v.consola.al_principio()) {
-                                self.di("\n");
-                            }
-                            // El indicador no va al registro: solo a la ventana.
-                            if let Some(v) = &mut self.ventana {
-                                v.consola.escribir(&indicador);
-                                v.sucia = true;
-                            }
+                        if !self.p.indicador_puesto {
+                            self.p.indicador_puesto = true;
+                            self.poner_indicador();
                         }
                         return;
                     }
@@ -1816,15 +2842,32 @@ impl Shell {
 
     fn bucle(&mut self) -> i32 {
         loop {
-            self.avanzar();
-            if let Some(rc) = self.salir {
+            // Cada panel avanza lo suyo; el que acaba se quita (el último, con la ventana).
+            let mut k = 0;
+            while k < self.paneles.len() {
+                self.entrar(k);
+                self.avanzar();
+                if let Some(rc) = self.p.salir {
+                    // Un Shell de una orden (`ORDEN`) acaba entero con ella, tenga los paneles que tenga.
+                    if self.p.de_una_orden || !self.quitar_panel(k) {
+                        return rc;
+                    }
+                    continue;
+                }
+                k += 1;
+            }
+            if let Some(rc) = self.fin {
                 return rc;
             }
-            // Cuánto esperar: nada si el intérprete tiene más que hacer; poco con trabajos (hay que vigilarlos).
-            let con_prisa = self.int.ocupado() && !self.esperando_a_una_orden() && self.tuberia.is_none();
+            // Cuánto esperar: nada si algún intérprete tiene más que hacer; poco con trabajos (hay que vigilarlos).
+            let con_prisa = (0..self.paneles.len()).any(|k| {
+                let p = self.panel(k);
+                p.int.ocupado() && !p.trabajos.iter().any(|t| t.primer_plano) && p.tuberia.is_none()
+            });
+            let con_trabajos = (0..self.paneles.len()).any(|k| !self.panel(k).trabajos.is_empty() || self.panel(k).por_mirar);
             let plazo = if con_prisa {
                 1
-            } else if !self.trabajos.is_empty() || self.ventana.as_ref().is_some_and(|v| v.pp.ocupado() || (v.sucia && v.esperando != 0)) {
+            } else if con_trabajos || self.ventana.as_ref().is_some_and(|v| v.pp.ocupado() || (v.sucia && v.esperando != 0)) {
                 20_000
             } else {
                 500_000
@@ -1836,42 +2879,67 @@ impl Shell {
                 }
                 llego = true;
             }
-            // Lo de la ventana.
+            // Lo de la ventana: al panel que tiene el teclado.
             while let Some((o, orden_, cuerpo)) = self.buzon.evento() {
                 let Some(v) = &mut self.ventana else { continue };
-                match v.evento(&mut self.buzon, o, orden_, &cuerpo, self.registro) {
-                    Accion::Nada => {}
-                    Accion::Linea(l) => self.linea_tecleada(l),
-                    Accion::Romper => self.romper(),
-                    Accion::FinDeEntrada => self.fin_de_entrada(),
-                    Accion::Cerrar => return self.int.rc,
+                let entrada = v.evento(&mut self.buzon, o, orden_, &cuerpo);
+                let activo = self.activo();
+                self.entrar(activo);
+                match entrada {
+                    Entrada::Nada => {}
+                    Entrada::Tecla { t, codigo } => self.tecla(t, codigo),
+                    Entrada::Medida => {
+                        let primera = self.p.rect.w == 0;
+                        self.colocar();
+                        if let (Some(v), true) = (&self.ventana, primera || self.registro) {
+                            println!(
+                                "  [shell] ventana {}: {}x{} letras, {}x{} px{}",
+                                if primera { "en pantalla" } else { "con otro tamaño" },
+                                self.p.consola.columnas(),
+                                self.p.consola.filas(),
+                                v.medida.0,
+                                v.medida.1,
+                                if primera && v.con_portapapeles { ", con portapapeles" } else { "" }
+                            );
+                        }
+                    }
+                    Entrada::Cerrar => return self.p.int.rc,
+                    e => self.raton(e),
                 }
             }
             if self.ventana.is_some() && self.buzon.cerrado {
                 println!("  [shell] el compositor cerró la conexión");
                 return RC_FALLO;
             }
-            // Lo pegado, como si se tecleara.
+            // Lo pegado, como si se tecleara en el panel con el teclado.
             let pegado = self.ventana.as_mut().and_then(|v| v.pp.mover());
             if let Some(datos) = pegado {
+                let activo = self.activo();
+                self.entrar(activo);
                 let texto = String::from_utf8_lossy(&datos).into_owned();
-                let lineas = self.ventana.as_mut().map(|v| {
-                    v.sucia = true;
-                    v.consola.al_final();
-                    v.consola.pegar(&texto)
-                });
-                for l in lineas.unwrap_or_default() {
+                self.cerrar_menu(false);
+                self.p.consola.al_final();
+                for l in self.p.consola.pegar(&texto) {
                     self.linea_tecleada(l);
                 }
+                if let Some(v) = &mut self.ventana {
+                    v.sucia = true;
+                }
             }
-            // Lo de los trabajos.
+            // Lo de los trabajos, cada uno en su panel.
             while let Some((marca, m)) = self.buzon.peticiones.pop_front() {
-                self.peticion(marca, &m);
+                if let Some(k) = self.panel_del_trabajo(marca) {
+                    self.entrar(k);
+                    self.peticion(marca, &m);
+                }
             }
             let ahora = dashos::ahora_us();
-            if !llego && !self.trabajos.is_empty() && ahora.saturating_sub(self.vigilado_us) > 100_000 {
+            if !llego && con_trabajos && ahora.saturating_sub(self.vigilado_us) > 100_000 {
                 self.vigilado_us = ahora;
-                self.vigilar();
+                for k in 0..self.paneles.len() {
+                    self.entrar(k);
+                    self.vigilar();
+                }
             }
             // Sin ventana: de vez en cuando se pregunta a quien nos lanzó si nos han roto.
             if self.padre.is_some() && ahora.saturating_sub(self.pulso_us) > 100_000 {
@@ -1883,17 +2951,115 @@ impl Shell {
                 if c.roto {
                     self.romper();
                     // Lo que quede en marcha se mata al salir; el código, el de roto.
-                    for t in &self.trabajos {
+                    for t in &self.p.trabajos {
                         matar(t.pid);
                     }
                     return p::RC_ROTO;
                 }
             }
-            if let Some(v) = &mut self.ventana {
-                self.columnas = v.consola.columnas();
-                v.pintar(&mut self.buzon);
+            if self.ventana.is_some() {
+                // El resaltado y la sugerencia del panel con el teclado, y a pintar.
+                let activo = self.activo();
+                self.entrar(activo);
+                self.resaltar();
+                self.columnas = self.p.consola.columnas();
+                let pestanas: Vec<(String, bool)> = (0..self.disp.pestanas()).map(|k| (self.titulo_de_pestana(k), k == self.disp.pestana())).collect();
+                let area = self.area();
+                let activo_id = self.disp.activo();
+                let rects = self.disp.rects(area, 1);
+                let vistas: Vec<Vista> = rects
+                    .iter()
+                    .filter_map(|&(id, rect)| {
+                        let k = (0..self.paneles.len()).find(|&k| if k == self.en { self.p.id == id } else { self.paneles[k].id == id })?;
+                        let consola = if k == self.en { &self.p.consola } else { &self.paneles[k].consola };
+                        Some(Vista { id, rect, consola, activo: id == activo_id })
+                    })
+                    .collect();
+                if let Some(v) = &mut self.ventana {
+                    let t0 = dashos::ahora_us();
+                    if v.pintar(&mut self.buzon, &vistas, &pestanas) {
+                        self.medido_cuadros += 1;
+                        self.medido_pintar += dashos::ahora_us() - t0;
+                    }
+                }
             }
         }
+    }
+}
+
+/// Para completar: de dónde salen las órdenes, los nombres y lo que hay en un cajón.
+struct FuenteShell<'a> {
+    shell: &'a mut Shell,
+}
+
+impl completar::Fuente for FuenteShell<'_> {
+    fn ordenes(&mut self) -> Vec<String> {
+        self.shell.todas_las_ordenes()
+    }
+
+    fn nombres(&mut self) -> Vec<String> {
+        self.shell.s.tabla.lineas().map(|l| String::from_utf8_lossy(l.nombre).into_owned()).collect()
+    }
+
+    fn listar(&mut self, cajon: &str) -> Vec<(String, bool)> {
+        self.shell.s.listar(cajon).map(|v| v.into_iter().take(2000).map(|e| (e.nombre, e.datos.cajon())).collect()).unwrap_or_default()
+    }
+
+    fn plantilla(&mut self, orden_: &str) -> Option<String> {
+        self.shell.p.plantillas.iter().find(|x| x.0.eq_ignore_ascii_case(orden_)).map(|x| x.1.clone())
+    }
+}
+
+/// Para resaltar: si una orden o una ruta existen (con memoria y con tope de miradas al disco).
+struct MiraShell<'a> {
+    shell: &'a mut Shell,
+}
+
+impl resaltar::Mira for MiraShell<'_> {
+    fn orden(&mut self, nombre: &str) -> Option<bool> {
+        let sh = &mut *self.shell;
+        if shell::ordenes::es_interna(nombre) || ordenes::base::es_de_base(nombre) || sh.p.int.alias.iter().any(|x| x.0.eq_ignore_ascii_case(nombre)) {
+            return Some(true);
+        }
+        if nombre.len() > 255 {
+            return Some(false);
+        }
+        let clave = format!("o:{}:{}", sh.s.actual, nombre);
+        let nombre = String::from(nombre);
+        sh.visto(clave, |sh| sh.buscar(&nombre).is_ok())
+    }
+
+    fn ruta(&mut self, ruta_: &str) -> Option<bool> {
+        let sh = &mut *self.shell;
+        if ruta_.is_empty() || ruta_.len() > 255 || shell::patron::es_patron(ruta_) {
+            return Some(false);
+        }
+        let clave = format!("r:{}:{}", sh.s.actual, ruta_);
+        let ruta_ = String::from(ruta_);
+        sh.visto(clave, |sh| sh.s.mirar(&ruta_).is_ok())
+    }
+
+    fn plantilla(&mut self, orden_: &str) -> Option<String> {
+        self.shell.p.plantillas.iter().find(|x| x.0.eq_ignore_ascii_case(orden_)).map(|x| x.1.clone())
+    }
+}
+
+/// Un mundo que no dice nada: para meter el guion de arranque en un intérprete recién hecho.
+struct Mudo;
+
+impl Mundo for Mudo {
+    fn decir(&mut self, _: &str) {}
+
+    fn leer_guion(&mut self, _: &str) -> Result<String, i32> {
+        Err(a::NO_EXISTE)
+    }
+
+    fn existe(&mut self, _: &str) -> bool {
+        false
+    }
+
+    fn env(&mut self, _: &str) -> Option<String> {
+        None
     }
 }
 
@@ -1910,7 +3076,7 @@ fn matar(pid: u64) -> i32 {
 }
 
 fn principal() -> u64 {
-    let arr = orden::arranque();
+    let arr = ordenes::arranque();
     let Some(mut s) = Sistema::nuevo() else {
         println!("  [shell] sin el servicio de archivos");
         return RC_FALLO as u64;
@@ -1926,72 +3092,86 @@ fn principal() -> u64 {
             columnas = x.columnas;
         }
     }
+    // El perfil de la ventana (`ENVARC:Shell/Perfil`): lo que no se entienda se dirá en el primer panel.
+    let mut avisos = Vec::new();
+    let perfil_ = match s.leer_entero(PERFIL, 4096) {
+        Ok(d) => perfil::Perfil::leer(&d, &mut avisos),
+        Err(_) => perfil::Perfil::default(),
+    };
     let (mut buzon, suyo) = Buzon::nuevo();
     let ventana = if padre.is_some() {
         dashos::cerrar(suyo);
         None
     } else {
-        Ventana::abrir(&mut buzon, suyo)
+        Ventana::abrir(&mut buzon, suyo, &perfil_)
     };
+    let actual = s.actual.clone();
     let mut sh = Shell {
         s,
-        int: Interprete::nuevo(),
         buzon,
         ventana,
         padre,
         registro: false,
+        registro_callado: false,
         para_registro: String::new(),
-        trabajos: Vec::new(),
+        p: Panel::nuevo(0, &actual, columnas, 25),
+        paneles: Vec::new(),
+        en: 0,
+        disp: Disposicion::nueva(1),
+        siguiente_panel: 1,
         siguiente_id: 1,
-        tuberia: None,
-        camino: Vec::new(),
         guardados: Vec::new(),
-        tecleadas: VecDeque::new(),
-        orden_pendiente: None,
-        de_una_orden: false,
-        indicador_puesto: false,
-        salir: None,
+        indicador: indicador::Ajustes::default(),
+        vistos: Vec::new(),
+        cupo_de_miradas: 0,
+        sin_arranque: false,
+        desde: None,
+        fin: None,
         vigilado_us: 0,
         pulso_us: dashos::ahora_us(),
         columnas,
+        medido_desde: dashos::ahora_us(),
+        medido_bytes: 0,
+        medido_escribir: 0,
+        medido_cuadros: 0,
+        medido_pintar: 0,
     };
-    let (mut desde, mut sin_arranque) = (None, false);
+    let (mut orden_pendiente, mut mal) = (None, None);
     match plantilla::leer("FROM/K,REGISTRO/S,SINARRANQUE/S,ORDEN/K/F", &args) {
         Ok(x) => {
             sh.registro = x.si("REGISTRO");
-            sin_arranque = x.si("SINARRANQUE");
-            desde = x.texto("FROM").map(String::from);
-            if let Some(o) = x.texto("ORDEN") {
-                sh.orden_pendiente = Some(String::from(o));
-                sh.de_una_orden = true;
-            }
+            sh.sin_arranque = x.si("SINARRANQUE");
+            sh.desde = x.texto("FROM").map(String::from);
+            orden_pendiente = x.texto("ORDEN").map(String::from);
         }
-        Err(e) => sh.di_linea(&format!("Shell: {}", e)),
+        Err(e) => mal = Some(format!("Shell: {}", e)),
     }
     if sh.ventana.is_none() && sh.padre.is_none() {
         println!("  [shell] sin ventana: no hay compositor");
-        if !sh.de_una_orden {
+        if orden_pendiente.is_none() {
             return RC_FALLO as u64;
         }
     }
-    // El guion de arranque: el de `FROM`, o `S:Shell-Startup` (el del usuario tapa al del sistema, por capas).
-    if !sin_arranque {
-        let guion = desde.unwrap_or_else(|| String::from("S:Shell-Startup"));
-        match sh.s.leer_entero(&guion, orden::MAX_ENTERO) {
-            Ok(d) => {
-                let texto = String::from_utf8_lossy(&d).into_owned();
-                sh.con_interprete(|i, m| i.guion(m, &guion, &texto, ""));
-            }
-            Err(a::NO_EXISTE) if guion == "S:Shell-Startup" => {}
-            Err(e) => sh.di_linea(&format!("Shell: {}: {}", guion, orden::texto_error(e))),
-        }
+    // El primer panel (el 1), con su arranque; va en `p` y su hueco, en la lista.
+    let primero = sh.panel_nuevo(&actual);
+    sh.paneles.push(core::mem::replace(&mut sh.p, primero));
+    sh.p.de_una_orden = orden_pendiente.is_some();
+    sh.p.orden_pendiente = orden_pendiente;
+    if sh.ventana.is_some() {
+        sh.leer_indicador();
+    }
+    for aviso in avisos {
+        sh.di_linea(&format!("{}: {}", PERFIL, aviso));
+    }
+    if let Some(m) = mal {
+        sh.di_linea(&m);
     }
     let rc = sh.bucle();
     if sh.registro {
         println!("  [shell] acaba con el código {}", rc);
     }
     if let Some(c) = &sh.padre {
-        c.salir(rc, sh.int.resultado2);
+        c.salir(rc, sh.p.int.resultado2);
     }
     rc as u64
 }

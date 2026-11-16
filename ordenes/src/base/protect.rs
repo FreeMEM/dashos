@@ -7,7 +7,7 @@
 use crate::{di, Orden};
 
 pub fn principal(o: &mut Orden) -> u64 {
-    let args = o.repartir("FILE/A,FLAGS,ADD/S,SUB/S");
+    let args = o.repartir(shell::ordenes::PROTECT);
     let fichero = args.texto("FILE").unwrap_or("");
     let d = match o.s.mirar(fichero) {
         Ok(d) => d,

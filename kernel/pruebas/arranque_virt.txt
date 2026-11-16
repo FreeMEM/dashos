@@ -467,7 +467,7 @@ DashOS en marcha con 4 núcleos.
 # Copy, Rename, Filenote, Protect (letras del Amiga sobre los permisos de Unix), List con un patrón, Dir en dos columnas.
 ~│   [shell] otra.txt  ---rw-d  0644
 ~│   [shell] hex.txt
-~│   [shell]      sub (dir)
+~│   [shell]      [1;34msub[0m (dir)
 ~│   [shell]   nota.txt                               otra.txt
 # Assign: poner, añadir una capa (por ella se ve SYS:S), ver; y lo que `sesiones` no deja: tapar un volumen.
 ~│   [sesiones] Shell asigna "Prueba=Home:PruebaShell" (0): 0
@@ -494,6 +494,51 @@ DashOS en marcha con 4 núcleos.
 ~│   [shell] Saludos a Ana (1)
 ~│   [shell] saluda: falta el argumento quien
 ~│   [shell] sin argumento: 20
+# El Shell potente. Colores por tipo en una consola (arriba: el cajón, en azul; el registro se queda con las letras del
+# escape) y sin ellos con NOCOLOR.
+~│   [shell]      sub (dir)
+# Completar (lo que daría Tab): una orden, una ruta, una palabra de la plantilla, un volumen, varias cosas (con las
+# asignaciones), un fichero de otro cajón.
+~│   [shell] Dir
+~│   [shell] nota.txt
+~│   [shell] ALL
+~│   [shell] SYS:
+~│   [shell] S:  saluda  sub/  SYS:
+# Resaltar: orden que existe (o), ruta (r), palabra de la plantilla (k), redirección y tubería (+), orden que no existe
+# (x), cadena (c) y cadena sin cerrar (a).
+~│   [shell] ooo.rrrrr.kkk.+rrrrrrrr.+.xxxx.cccccccccccccc
+~│   [shell] oooo.aaaaaaaaaaa
+# Teclear (las teclas, como desde el teclado): la sugerencia del historial y aceptarla entera o por palabras; Tab con
+# una posibilidad y con varias (el menú, y elegir con Tab); buscar hacia atrás (Ctrl-R); flecha arriba por prefijo.
+~│   [shell] «Ech» [o uno del historial]
+~│   [shell] «Echo uno del historial»
+~│   [shell] «Echo» [ uno del historial]
+~│   [shell] «Type nota.txt »
+~│   [shell] «Dir S» menú: S: saluda sub/ SYS:
+~│   [shell] «Dir saluda» menú: S: saluda sub/ SYS: (elegido saluda)
+~│   [shell] «Echo uno del historial» (buscar: hist)
+# El historial, y guardado en ENVARC:Shell/Historial.
+~│   [shell]     1  Echo uno del historial
+# Paneles y pestañas (con un historial dañado, una imagen en vez de texto, que lee cada panel nuevo). Y los ajustes del
+# indicador, con una línea que no se entiende.
+~│   [shell] 2 paneles en 1 pestañas
+~│   [shell] 3 paneles en 2 pestañas
+~│   [shell] ENVARC:Shell/Indicador: línea 2: no se entiende "color cajon fucsia"
+~│   [shell] 4 paneles en 2 pestañas
+# Complementos, en otro Shell: el que falla se dice y se salta; el alias del primero y la plantilla del tercero valen.
+~│   [shell] El complemento S:Shell-Complementos/20-roto ha fallado (código 10): se salta lo que le quedaba
+~│   [shell] hola desde un alias
+~│   [shell] GRITANDO
+# Pintar una salida larga, sin copiarla al registro: 25.000 líneas sin colores y 16.384 con colores, fondos y
+# subrayado (lo que tarda cambia; los bytes, no).
+~ 313890 bytes a la consola en 
+~ 1228800 bytes a la consola en 
+# Tuberías de verdad: 313 KB por un tubo de 64 KB, numerados (463.890 bytes); y si quien lee acaba, quien escribe también.
+~ 463890 bytes a la consola en 
+~│   [shell] ¿La primera? tubería cortada: 0
+# Sustitución de órdenes.
+~│   [shell] Dir está en SYS:C/Ordenes y estoy en Home:PruebaShell
+~│   [shell] comilla invertida sin cerrar
 # Lo hostil: comillas sin cerrar, una orden que no existe, una línea de 3.000 letras.
 ~│   [shell] comillas sin cerrar
 ~│   [shell] NoExiste: orden desconocida

@@ -5,7 +5,7 @@ use crate::{di, Orden};
 use shell::protocolo as p;
 
 pub fn principal(o: &mut Orden) -> u64 {
-    let a = o.repartir("DIR");
+    let a = o.repartir(shell::ordenes::CD);
     let Some(dir) = a.texto("DIR") else {
         let actual = o.s.actual.clone();
         di!(o, "{}\n", actual);

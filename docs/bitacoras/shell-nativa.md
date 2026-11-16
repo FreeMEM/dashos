@@ -60,7 +60,7 @@ que los reparte con su plantilla, como en AmigaDOS.
 | Dónde se hace | Órdenes |
 |---|---|
 | En el intérprete (control) | `If`/`Else`/`EndIf`, `Skip`/`Lab`/`EndSkip`, `FailAt`, `Quit`, `Execute`, `EndShell`/`EndCLI` |
-| En el Shell (tocan su estado) | `Set`, `Unset`, `Get`, `SetEnv`, `GetEnv`, `UnsetEnv`, `Alias`, `Unalias`, `Path`, `Which`, `Run`, `Status`, `Break`, `Why`, `Cls` |
+| En el Shell (tocan su estado) | `Set`, `Unset`, `Get`, `SetEnv`, `GetEnv`, `UnsetEnv`, `Alias`, `Unalias`, `Path`, `Which`, `Run`, `Status`, `Break`, `Why`, `Cls`, `NewShell`, y las del Shell potente (`Panel`, `Prompt`, `Historial`, `Completa`, `Completar`, `Resaltar`, `Teclea`, `Medidas`) |
 | Programas de `SYS:C` | `Assign`, `Cd`, `Dir`, `List`, `Copy`, `Delete`, `Rename`, `MakeDir`, `Type`, `Echo`, `Info`, `Date`, `Version`, `Protect`, `Filenote`, `Wait`, `Ask` |
 
 `Path`, `Which` y `Run` son internas también en AmigaOS. `Status` y `Break` allí son programas porque los procesos son
@@ -73,7 +73,8 @@ Una orden se busca: con ruta (`SYS:C/Dir`, `sub/orden`), solo ahí; sin ruta, en
 `Path` y en `C:` (que es `Home:C` y `SYS:C`, por capas). Un fichero con cabecera ELF y permiso de ejecutar se lanza; uno
 con el bit de guion del Amiga se ejecuta como guion.
 
-Tuberías: una tras otra, no a la vez. La salida de la primera se guarda (hasta 1 MB) y es la entrada de la segunda.
+Tuberías: las órdenes corren a la vez, unidas por tubos de 64 KB (ver "7. Tuberías de verdad"). En el primer paso
+iban una tras otra.
 
 ### El arranque de una orden
 
@@ -125,6 +126,23 @@ Así `guardian` lanza el Shell de la prueba con argumentos.
 4. **`..` y `.` se entienden** en las rutas, además de la `/` del Amiga.
 5. **Ctrl-C es romper**, no copiar (copiar es Ctrl+Mayús+C, como en la terminal de la caja Linux).
 
+Del Shell potente:
+
+6. **Las teclas de los paneles son las de Terminator**: Ctrl+Mayús+O parte en horizontal, Ctrl+Mayús+E en vertical,
+   Ctrl+Mayús+T pestaña nueva, Ctrl+Mayús+W cierra el panel, Alt+flechas cambia de panel, Ctrl+RePág y Ctrl+AvPág
+   de pestaña.
+7. **Cerrar un panel mata sus trabajos sin preguntar** (S0: deshacer antes que preguntar; aquí no hay cómo deshacer).
+8. **El indicador de serie es el de segmentos** con el cajón, los trabajos de fondo y el código si la orden falló. El
+   clásico del Amiga (`1.Home:> `) es el tema `amiga`.
+9. **Los colores del resaltado**: la orden en verde si existe y en rojo si no, las cadenas en amarillo, las rutas que
+   existen subrayadas, las redirecciones en magenta, las variables en cian, las palabras de la plantilla en azul.
+10. **El historial guarda 2.000 líneas** y no guarda lo que empieza por espacio.
+11. **`Dir` y `List` salen con colores en una consola** sin pedirlo (`NOCOLOR` los quita).
+12. **Un programa no cambia el título de la ventana** ni lee el portapapeles con escapes: se ignoran.
+13. **Las asignaciones las comparten los paneles de una ventana**; cada panel tiene su cajón actual y sus variables.
+14. **Los ajustes del Shell están en `ENVARC:Shell/`** (`Historial`, `Indicador`, `Perfil`) y los complementos en
+    `S:Shell-Complementos/`.
+
 ## Bitácora
 
 ### Paso 1: el Shell de base
@@ -167,6 +185,76 @@ Lo que salió por el camino:
 Medido: la prueba del Shell entera (70 órdenes lanzadas, con 4 segundos de `Wait`) tarda menos de 20 segundos en
 QEMU: entre su primera línea y la última, el registro solo trae una de las marcas que el compositor escribe cada 10 s.
 No he medido lo que cuesta lanzar una orden suelta.
+
+### Paso 2: el Shell potente (los ocho puntos del encargo del 2026-11-15)
+
+El diseño, en "El Shell potente", más abajo. Qué quedó hecho de cada punto:
+
+| Punto | Hecho | Sin hacer |
+|---|---|---|
+| 1. Completar con Tab | Órdenes (internas, alias, de base, programas del cajón actual, de `Path` y de `C:`), rutas con volúmenes y asignaciones, palabras de la plantilla (las de serie y las de los complementos), tras redirecciones; menú con varias, que se recorre con Tab y las flechas | Completar variables (`$nom`) |
+| 2. Historial | Guardado en `ENVARC:Shell/Historial` (2.000 líneas), Ctrl-R, flecha arriba por prefijo, lo que empieza por espacio no se guarda, orden `Historial` | Compartirlo al momento entre paneles abiertos (cada uno lo lee al abrirse) |
+| 3. Sugerencia y resaltado | Sugerencia en gris del historial (derecha o Fin la aceptan; Ctrl+derecha, una palabra); orden que existe o no, cadenas, rutas que existen, redirecciones, variables, palabras de la plantilla, comentario | — |
+| 4. Indicador | Segmentos (`cajon`, `codigo`, `trabajos`, `hora`, `usuario`, `git`), tres temas, colores por segmento, fichero `ENVARC:Shell/Indicador`, `Prompt` | `usuario` no dice nada: un programa no tiene cómo saber el nombre de su usuario. `git`, el hueco |
+| 5. Pestañas, paneles y perfiles | Partir en horizontal y vertical, pestañas, cambiar con Alt+flechas y Ctrl+RePág/AvPág, cerrar, ratón; perfil (`ENVARC:Shell/Perfil`): letra, colores, tamaño inicial, translucidez | Arrastrar la raya entre paneles (siempre a medias). La translucidez está escrita y no la he visto en pantalla |
+| 6. Colores | SGR entero (negrita, tenue, subrayado, inverso, 16 y 256 colores, color directo, en letra y fondo); `Dir` y `List` con colores por tipo en una consola | Terminal completo (pantalla alternativa): estudiado y diseñado, no hecho (más abajo, "Estudio") |
+| 7. Tuberías | De verdad (a la vez, con tubos de 64 KB y sin tope), sustitución de órdenes, `NIL:` | Un guion dentro de una tubería |
+| 8. Complementos | `S:Shell-Complementos/` (alias, variables, `Completa`); el que falla se dice y se salta | Funciones; segmentos del indicador desde un complemento |
+
+Cómo quedó el programa: la ventana tiene pestañas y paneles (`shell::paneles`), y cada panel es una sesión entera
+(su consola, su intérprete, su cajón actual, sus variables y sus trabajos). Las asignaciones son del programa (las
+lleva `sesiones` por proceso), así que las comparten todos los paneles de una ventana.
+
+Pruebas en el PC: 68 (`cd shell && cargo test`). Las hostiles nuevas: completar con 500 entradas (se dan 200 y se
+dice que hay más), líneas de 100.000 letras, comillas a medias; un historial con bytes que no son texto, líneas
+enormes y escapes; un fichero de indicador y uno de perfil rotos o enormes; escapes mal formados o a mala idea (el
+título de la ventana, el portapapeles, mover el cursor, cadenas que no se cierran, colores a medias, escapes
+partidos); sustituciones sin cerrar, de más y que hacen la línea enorme.
+
+Prueba en QEMU (`S:Prueba-Shell`, ahora 190 líneas): `Completar`, `Resaltar` y `Teclea` contra el disco de verdad
+(la sugerencia, Tab con menú, Ctrl-R, flecha arriba por prefijo); el historial en `ENVARC:`; un historial dañado (una
+imagen) que lee un panel nuevo; `Panel`; el fichero del indicador con una línea mala; tres complementos (uno falla)
+cargados por otro Shell; una tubería de 313 KB por un tubo de 64 KB; cortar una tubería; sustitución de órdenes.
+
+Lo que salió por el camino:
+
+- **El disco de pruebas, otra vez.** Lo que se escribe en `Home:` (el volumen de Ana) ocupa sitio del mismo disco de
+  7 MB, y borrarlo no lo devuelve a tiempo: con 1,5 MB de ficheros de prueba, la copia del explorador (de otra prueba)
+  se quedó sin sitio. La prueba del Shell ya no escribe más de 100 KB a la vez.
+- **El registro del sistema.** Copiar 25.000 líneas de la consola al registro lo llenaba y se perdían líneas de otros.
+  `Medidas CALLA` y `Medidas HABLA` paran y reanudan la copia.
+- Leer de un tubo línea a línea era lento (25.000 viajes): ahora el Shell manda las líneas enteras que caben en una
+  respuesta y la orden las reparte.
+
+### Lo medido
+
+En QEMU (`Medidas`, una pasada; el PC estaba con más pruebas a la vez):
+
+| Qué | Bytes | Tarda | En la consola | Cuadros pintados |
+|---|---|---|---|---|
+| `Type` de 25.000 líneas sin colores | 313.890 | 290 ms | 79 ms | 0 |
+| `Type` de 16.384 líneas con colores, fondos y subrayado | 1.228.800 | 718 ms | 185 ms | 50, en 22 ms |
+
+"En la consola" es lo que cuesta meter el texto en las líneas (`Consola::escribir`); el resto es el viaje de cada
+trozo entre la orden y el Shell. Pintar un cuadro cuesta menos de medio milisegundo (solo se repintan las filas que
+cambian). En la primera fila no se pintó ningún cuadro en 290 ms: el aviso de cuadro del compositor no llegó en ese
+rato. No sé por qué; en la segunda llegaron a su ritmo.
+
+En el PC (banco aparte, lo mejor de 20 vueltas), la consola de antes de los colores (celdas de 8 bytes, 16 colores)
+frente a la de ahora (16 bytes, fondo, estilos, 256 colores):
+
+| Qué | Antes | Ahora |
+|---|---|---|
+| Escribir 25.000 líneas sin colores | 1,9 ms | 2,1 ms |
+| Escribir 16.384 líneas con colores | 3,8 ms | 4,9 ms |
+| Sacar 1.000 veces lo que se ve (sin colores) | 0,62 ms | 0,80 ms |
+| Sacar 1.000 veces lo que se ve (con colores) | 0,73 ms | 0,99 ms |
+
+Los colores cuestan entre un 10 % y un 35 % más en la consola. Frente al viaje de cada trozo, no se nota.
+
+Tubería de 313 KB (`Type grande.txt | Type NUMBER`, 463.890 bytes a la consola): 7,4 s leyendo del tubo línea a
+línea; 4,1 s con varias líneas por viaje. Sigue siendo lento (el mismo fichero sin tubería tarda 0,3 s): no he
+separado cuánto es del tubo y cuánto de la orden que numera, que trabaja línea a línea.
 
 ## El Shell potente (encargo del 2026-11-15)
 
@@ -257,15 +345,70 @@ Lo que se puede probar en el PC va al crate `shell/`; el programa solo lo conect
 
 ### 7. Tuberías de verdad y sustitución de órdenes
 
-- Las órdenes de una tubería corren a la vez. Lo que escribe una va a un depósito de 64 KB; cuando se llena, a la que
-  escribe no se le contesta hasta que la otra lee (así espera sin gastar, y no hay tope de tamaño).
-- Sustitución: `` `orden` `` en una línea se cambia por lo que escribe esa orden (sin el salto final), como en
-  AmigaDOS. Con tope (64 KB) y sin anidar.
+- Las órdenes de una tubería corren a la vez. Lo que escribe una va a un tubo de 64 KB; cuando se llena, a la que
+  escribe no se le contesta hasta que la otra lee (así espera sin gastar, y no hay tope de tamaño). Si la que lee
+  acaba antes, la que escribe acaba también, con el código 0. El código de la tubería es el de su última orden.
+- Una orden interna puede ir en una tubería (lo que escribe va al tubo); un guion, no (con `Execute`, tampoco hoy).
+- Sustitución: `` `orden` `` en una línea se cambia por lo que escribe esa orden (sin el salto final, y con los de
+  dentro como espacios), como en AmigaDOS. Con tope (64 KB, 8 por línea); lo que sale no se vuelve a sustituir.
+- `NIL:` vale en las redirecciones, como en el Amiga: `>NIL:` tira lo escrito y `<NIL:` no da nada.
 - Los comodines ya los expanden las órdenes, como en el Amiga (`Copy #?.txt`), no el Shell.
 
 ### 8. Complementos
 
 - Guiones del propio Shell en `S:Shell-Complementos/` (por capas: los del usuario en `Home:S`, los del sistema en
   `SYS:S`). Se cargan al abrir, por orden alfabético, tras `S:Shell-Startup`.
-- Un complemento define alias, variables, plantillas de completado (`Completa`) y segmentos del indicador. Uno que
-  falla se dice y se salta; los demás siguen.
+- Un complemento define alias, variables y plantillas de completado (`Completa orden plantilla`). Uno que falla se
+  dice y se salta (lo que le quedaba); los demás siguen.
+- Lo que no hay: funciones. Un complemento que quiera una orden nueva pone un guion con el bit de guion en un cajón
+  y lo añade a `Path`, o un alias. Tampoco define segmentos del indicador.
+
+### Todo desde el Shell (S0)
+
+Lo que se hace con las teclas o el ratón en la ventana tiene su orden, para usarlo desde un guion y para probarlo:
+
+| Orden | Qué hace |
+|---|---|
+| `Panel [VERTICAL] [PESTANA] [CERRAR] [SIGUIENTE]` | Parte el panel, abre una pestaña, cierra este panel, pasa el teclado al siguiente |
+| `Completar línea` | Dice lo que daría Tab al final de esa línea |
+| `Resaltar línea` | Dice la clase de cada letra de esa línea |
+| `Teclea texto` | Teclea en este panel (letras y `<TAB>`, `<INTRO>`, `<CTRL-R>`...) y dice cómo queda la línea |
+| `Historial [BORRAR]` | Enseña el historial, o lo borra (también el del disco) |
+| `Prompt [texto]` | Cambia el indicador de este panel (`%S` el cajón, `%N` el número, `%R` el código) |
+| `Completa [orden plantilla]` | Da la plantilla de una orden para completar y resaltar; sin nada, las enseña |
+| `Medidas` | Lo que ha costado escribir en la consola y pintarla desde la última vez |
+
+### Estudio: el terminal completo
+
+Lo que haría falta para programas a pantalla completa (un editor, un visor con páginas, `top`).
+
+**Lo que es.** Un programa así no escribe líneas una tras otra: pide una pantalla suya (la "alternativa"), pone el
+cursor donde quiere (`CSI fila;columna H`), borra trozos, y lee el teclado tecla a tecla (sin que nadie edite la línea
+ni haga eco). Al acabar, vuelve la pantalla de antes. Es lo que hacen `vi`, `less` y compañía con las secuencias de
+un VT100 o de xterm.
+
+**Lo que ya hay.** `usuario/src/terminal.rs` es justo eso: una rejilla de celdas que entiende mover el cursor, borrar,
+insertar y quitar líneas, los colores y la pregunta por la posición del cursor. La usa la terminal de la caja Linux y
+tiene sus pruebas hostiles. No hay que escribir otra.
+
+**Lo que falta**, en orden:
+
+1. **El modo crudo en el protocolo de las órdenes.** Hoy una orden lee líneas (`LEER`); hace falta `LEER_TECLA` (cada
+   tecla según se pulsa, con las flechas como secuencias de escape) y `MODO` (pedir y soltar la pantalla alternativa,
+   quitar el eco). El Shell, mientras una orden tiene el modo crudo, no edita la línea ni mira Tab ni Ctrl-R: le
+   pasa las teclas. Ctrl-C deja de ser "romper" y pasa como tecla; hace falta otra salida de emergencia (cerrar el
+   panel la tiene: mata sus trabajos).
+2. **El panel con dos consolas.** La de líneas (la de ahora) y, mientras dure el modo, una `Terminal` del tamaño del
+   panel. Pintarla es lo mismo (filas de celdas). Al cambiar el panel de tamaño, la orden tiene que saberlo: un aviso
+   en las señales de la respuesta siguiente ("ha cambiado el tamaño") y `CONSOLA` para preguntar cuánto mide.
+3. **`terminal.rs` al crate `shell/`**, con celdas de las de ahora (fondo, 256 colores, color directo, estilos), que
+   hoy no tiene: solo 16 colores, negrita e inverso.
+4. **Una biblioteca para las órdenes** que quieran pantalla completa (poner el cursor, borrar, leer una tecla), para
+   que no escriban escapes a mano. Y un programa que lo use: el primero sería `More`, luego un editor.
+5. **Seguridad**: las mismas reglas de ahora. Ni el título, ni el portapapeles, ni contestar a preguntas que no sean
+   la posición del cursor y el tamaño. Una orden rota en modo crudo no deja el panel inservible: al morir se vuelve
+   a la consola de líneas.
+
+**Por qué no está hecho.** Cabe bien en la consola (es añadir una segunda vista al panel, no cambiar la que hay), pero
+sin un programa que lo use no se puede probar de verdad, y el primero (un editor o `More`) es otro encargo. Hacer solo
+la mitad del Shell sería un apaño: queda diseñado y apuntado.

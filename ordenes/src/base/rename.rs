@@ -3,7 +3,7 @@
 use crate::Orden;
 
 pub fn principal(o: &mut Orden) -> u64 {
-    let args = o.repartir("FROM/A,TO=AS/A");
+    let args = o.repartir(shell::ordenes::RENAME);
     let (de, hacia) = (args.texto("FROM").unwrap_or(""), args.texto("TO").unwrap_or(""));
     match o.s.renombrar(de, hacia) {
         Ok(()) => o.fin(shell::RC_BIEN),

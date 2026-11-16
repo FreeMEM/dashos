@@ -60,7 +60,7 @@ impl Salida {
 }
 
 pub fn principal(o: &mut Orden) -> u64 {
-    let args = o.repartir("FROM/M,NUMBER/S,HEX/S");
+    let args = o.repartir(shell::ordenes::TYPE);
     let mut s = Salida { numerar: args.si("NUMBER"), hex: args.si("HEX"), linea: 0, al_principio: true, desde: 0, resto: Vec::new() };
     let mut rc = shell::RC_BIEN;
     if args.varios("FROM").is_empty() {

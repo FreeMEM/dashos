@@ -568,9 +568,13 @@ pub struct Orden {
     pub cli: Option<Cli>,
     /// Si la entrada es el teclado.
     pub interactiva: bool,
+    /// Si lo que escribe va a una consola (y no a un fichero ni a otra orden): entonces puede llevar colores.
+    pub a_consola: bool,
     /// El ancho de la consola, en letras.
     pub columnas: usize,
     bufer: String,
+    /// Lo leído de la entrada y aún sin repartir en líneas.
+    leido: Vec<u8>,
     vaciado_us: u64,
     /// El estado del último error (el segundo resultado, `$Result2`).
     pub resultado2: i32,
@@ -606,7 +610,7 @@ impl Orden {
             }
             dashos::salir(shell::RC_FALLO as u64)
         };
-        let (mut args, mut cli, mut interactiva, mut columnas, mut llamada) = (String::new(), None, false, 80, String::new());
+        let (mut args, mut cli, mut interactiva, mut columnas, mut llamada, mut a_consola) = (String::new(), None, false, 80, String::new(), false);
         if let Some(x) = arr {
             if !x.actual.is_empty() {
                 s.actual = x.actual;
@@ -615,11 +619,12 @@ impl Orden {
             llamada = x.llamada;
             cli = x.puerta.map(Cli::nuevo);
             interactiva = cli.is_some() && x.marcas & p::ENTRADA_NO_INTERACTIVA == 0;
+            a_consola = cli.is_some() && x.marcas & p::SALIDA_NO_CONSOLA == 0;
             if x.columnas > 0 {
                 columnas = x.columnas;
             }
         }
-        Orden { nombre, llamada, s, args, cli, interactiva, columnas, bufer: String::new(), vaciado_us: dashos::ahora_us(), resultado2: 0 }
+        Orden { nombre, llamada, s, args, cli, interactiva, a_consola, columnas, bufer: String::new(), leido: Vec::new(), vaciado_us: dashos::ahora_us(), resultado2: 0 }
     }
 
     /// Si se pulsó Ctrl-C, la orden acaba aquí mismo (el Shell dice `***Break`).
@@ -647,9 +652,15 @@ impl Orden {
             let mut m = [0u8; 4 + p::POR_ESCRITURA];
             m[0..4].copy_from_slice(&donde.to_le_bytes());
             m[4..4 + n].copy_from_slice(&resto.as_bytes()[..n]);
-            if c.pedir(p::ESCRIBIR, &m[..4 + n], PLAZO_US * 3).is_none() {
+            match c.pedir(p::ESCRIBIR, &m[..4 + n], 0) {
                 // El Shell ya no está: no queda a quién escribir.
-                dashos::salir(shell::RC_FALLO as u64);
+                None => dashos::salir(shell::RC_FALLO as u64),
+                // Quien leía lo que se escribe (la orden siguiente de la tubería) acabó: no hay más que hacer.
+                Some((p::SIN_LECTOR, _)) if !c.roto => {
+                    c.salir(shell::RC_BIEN, 0);
+                    dashos::salir(shell::RC_BIEN as u64)
+                }
+                Some(_) => {}
             }
             resto = &resto[n..];
         }
@@ -682,21 +693,24 @@ impl Orden {
     /// Lee una línea de la entrada (sin su salto de línea). `None` al final.
     pub fn leer_linea(&mut self) -> Option<String> {
         self.vaciar();
-        let mut linea = Vec::new();
         loop {
+            // Una línea entera de lo ya leído (el Shell manda varias de una vez cuando no vienen del teclado).
+            if let Some(i) = self.leido.iter().position(|&c| c == b'\n') {
+                let linea: Vec<u8> = self.leido.drain(..=i).take(i).collect();
+                return Some(String::from_utf8_lossy(&linea).into_owned());
+            }
+            if self.leido.len() > MAX_ENTERO {
+                let linea = core::mem::take(&mut self.leido);
+                return Some(String::from_utf8_lossy(&linea).into_owned());
+            }
             let (n, datos) = self.cli.as_mut()?.pedir(p::LEER, &[], 0)?;
             self.mirar_roto();
             if n <= 0 {
+                // El final: lo que quedara sin salto de línea es la última.
+                let linea = core::mem::take(&mut self.leido);
                 return (!linea.is_empty()).then(|| String::from_utf8_lossy(&linea).into_owned());
             }
-            linea.extend_from_slice(&datos);
-            if linea.last() == Some(&b'\n') {
-                linea.pop();
-                return Some(String::from_utf8_lossy(&linea).into_owned());
-            }
-            if linea.len() > MAX_ENTERO {
-                return Some(String::from_utf8_lossy(&linea).into_owned());
-            }
+            self.leido.extend_from_slice(&datos);
         }
     }
 

@@ -4,7 +4,7 @@ use dashos::protocolo::archivos as a;
 use crate::Orden;
 
 pub fn principal(o: &mut Orden) -> u64 {
-    let args = o.repartir("NAME/M/A");
+    let args = o.repartir(shell::ordenes::MAKEDIR);
     let mut rc = shell::RC_BIEN;
     for n in args.varios("NAME") {
         match o.s.crear(n, a::CAJON) {
