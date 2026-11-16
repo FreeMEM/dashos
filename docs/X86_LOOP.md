@@ -885,9 +885,9 @@ ni QEMU. El manual del 82574 no se pudo descargar (sin conexión con las copias 
 - `make -C kernel arranque-x86 RED_X86=e1000e` (nuevo; por omisión `virtio`): la 82574L de QEMU en el mismo
   concentrador. Los esperados de cada tarjeta, en `pruebas/arranque_x86_red_{virtio,e1000e}.txt`. La línea de la IOMMU
   de la red sale del Makefile, como la del sonido.
-- `red-prueba`: el eco después de la basura del PC, en una línea aparte. La 82574L tira ella misma lo corto (menos de
-  14 bytes) y lo largo (más de 1518 con `LPE` a 0): no llega al controlador y sus contadores se quedan a 0; con
-  virtio-net se sigue pidiendo que el controlador los cuente (la línea de siempre, en el esperado de virtio y en ARM).
+- La 82574L tira ella misma lo corto (menos de 14 bytes) y lo largo (más de 1518 con `LPE` a 0): no llega al
+  controlador. En la primera vuelta `red-prueba` sacaba el eco tras la basura en una línea aparte; desde la segunda
+  (abajo) el controlador suma los contadores de la tarjeta y la prueba vuelve a ser la de siempre.
 
 Comprobado (QEMU 11.1.3, q35, TCG): `make -C kernel arranque-x86 RED_X86=e1000e` BIEN sin IOMMU, con `IOMMU=intel` y
 con `IOMMU=amd`: la 82574L con su MSI-X (remapeada en VT-d), la MAC de `RAL0`, el enlace arriba a 1000 Mb/s, DHCP, el
@@ -897,7 +897,31 @@ BIEN. `make -C kernel arranque-x86` (virtio-net) BIEN sin IOMMU y con `IOMMU=amd
 ARM: `make -C kernel prueba` BIEN; `make -C kernel arranque-virt` BIEN a la segunda (la primera, todos los esperados
 bien, también la red, pero la captura del compositor con las ventanas fuera de sitio).
 
-Sin hacer: la parada ordenada (§12; los controladores no paran hoy), la multidifusión exacta (§11), el estado del
-enlace hacia `red-estado` (solo en el registro), el reinicio de la 82574 si su PHY se cuelga, la prueba del bucle en
-el PHY (§15) y las demás generaciones del I219 (`pch_spt`, `pch_tgp` y siguientes).
+Segunda vuelta (el mismo día), con las respuestas del analista (`docs/spec/hw/i219.md`, §18, commit `c45b2030`):
+
+- `PBA` se escribe antes del reinicio global (el reinicio lo conserva). `DRV_LOAD` otra vez tras cada reinicio.
+- `FORCE_SMBUS`: sin ME, se quita cada vez que el PHY responde, también si solo respondió forzándolo; con ME se deja
+  como lo ponga el ME. Si sigue a 1 tras el reinicio global, se avisa y se sigue: no es fallo.
+- Las entradas 1 a 11 de direcciones del I219 (`SHRA`, del ME), sin tocar; en el 82574, las 14 restantes a 0 (antes
+  15, una de más).
+- 82574: su propia configuración del PHY (registro 16, MDI/MDI-X automático y polaridad; los registros 29 y 30 en el
+  PHY de QEMU; reinicio suave para confirmar) en vez de los registros del I219; `TXDCTL` con `WTHRESH`, `GRAN` y
+  `COUNT_DESC`, sin `PTHRESH` (el `PTHRESH` = 31 queda solo en el I219); `TXDCTL1` igual que `TXDCTL` en los dos.
+- Sin reescribir `IMS` tras cada interrupción MSI-X (con `EIAC` = 0 no hace falta).
+- Contadores de la tarjeta (§11.1: `RUC`, `ROC`, `RJC`, `MPC`): se borran tras el reinicio y cada segundo se suman a
+  las cuentas de cortas, largas y sin sitio del servicio. Con ellos, la basura del PC vuelve a contarse con la
+  82574L (21 cortas y 20 largas) y `red-prueba` vuelve a su línea de siempre.
+- **Parada ordenada** (§12): recibir (no en el 82574) y enviar apagados, interrupciones fuera, vaciado de los
+  anillos en el I219, reinicio global sin la parte del PHY, PHY apagado si el ME no lo usa, `DRV_LOAD` quitado
+  después del reinicio y sin maestro de bus en el PCI; si el aparato lee todo a unos, solo esto último. Se hace
+  cuando el servicio de red se va (su canal, cerrado). **Sin probar**: ninguna prueba cierra el servicio.
+- Cuelgue del PHY del 82574, dos veces seguidas: parada (pasos 1 a 5) y arranque entero en marcha, con la misma DMA
+  y el mismo canal; lo que estaba en vuelo para enviar se pierde. **Sin probar**: QEMU no cuelga el PHY.
+
+Comprobado en la segunda vuelta: `make -C kernel arranque-x86 RED_X86=e1000e` BIEN sin IOMMU, con `IOMMU=intel` y con
+`IOMMU=amd`; `make -C kernel arranque-x86` (virtio-net) BIEN; `make -C kernel prueba-x86` BIEN. `red-prueba` queda
+como antes de esta tarea, así que ARM no cambia.
+
+Sin hacer: la multidifusión exacta (§11), el estado del enlace hacia `red-estado` (solo en el registro), la prueba
+del bucle en el PHY (§15) y las demás generaciones del I219 (`pch_spt`, `pch_tgp` y siguientes).
 

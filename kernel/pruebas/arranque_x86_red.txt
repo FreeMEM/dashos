@@ -11,4 +11,4 @@
 ~conexiones abiertas): bien
 ~│   [red-gloton] cerradas las 8; otra vez abre: bien
 ~│   [red-prueba] puerto cerrado: rechazada: bien
-~│   [red-prueba] eco después de la basura del PC: bien
+~│   [red-prueba] basura del PC tirada; eco después: bien

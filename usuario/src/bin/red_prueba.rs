@@ -7,7 +7,7 @@
 //!   tiempo de ida y vuelta;
 //! - un puerto cerrado del PC da `RECHAZADA`;
 //! - tras la basura que manda el PC (`tools/red_basura.py`: tramas cortas, largas y rotas), el controlador y el
-//!   servicio siguen (y, con virtio-net, el controlador ha tirado lo corto y lo largo).
+//!   servicio siguen.
 
 #![no_std]
 #![no_main]
@@ -275,9 +275,6 @@ fn principal() -> u64 {
         "  [red-prueba] tramas: {} recibidas, {} enviadas; tiradas: {} cortas, {} largas, {} sin sitio",
         e[p::E_RECIBIDAS], e[p::E_ENVIADAS], e[p::E_CORTAS], e[p::E_LARGAS], e[p::E_SIN_SITIO]
     );
-    // X5c: el eco después de la basura, aparte: una tarjeta de verdad (la 82574L de `intel-red`) tira ella misma lo
-    // corto y lo largo, sin que llegue al controlador; sus contadores se quedan a cero y solo vale el eco.
-    println!("  [red-prueba] eco después de la basura del PC: {}", if sigue { "bien" } else { "MAL" });
     let bien = sigue && e[p::E_CORTAS] > 0 && e[p::E_LARGAS] > 0;
     println!("  [red-prueba] basura del PC tirada; eco después: {}", if bien { "bien" } else { "MAL" });
     0

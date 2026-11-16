@@ -1,6 +1,6 @@
 # X5c: la 82574L de QEMU (RED_X86=e1000e) con el controlador de Intel (`intel-red`, docs/spec/hw/i219.md, 14): la MAC
 # de RAL0/RAH0, la MSI-X con sus causas en la entrada 0 (IVAR) y el enlace arriba tras la negociación. La basura
-# corta y larga del PC la tira la tarjeta misma: no llega al controlador ni se cuenta (solo vale el eco después).
+# corta y larga del PC la tira la tarjeta misma; el controlador la cuenta con sus contadores (RUC, ROC y RJC).
 ~intel-red: en el PCIe 0:
 ~│   [intel-red] 82574L (8086:10d3); MAC 52:54:00:12:34:56; colas de 128 y 64; avisos por su interrupción (MSI-X)
 ~│   [intel-red] enlace arriba: 1000 Mb/s, dúplex

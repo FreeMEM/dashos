@@ -587,8 +587,9 @@ programa. Las mismas llaves que virtio-red (registros de la BAR 0) y el mismo tr
 `TARJETA` y `TRAMAS` de "virtio-red" o de "intel-red" (la primera tarjeta que se presenta). Descriptores clásicos, una
 cola de recibir de 128 búferes de 2 KB y una de enviar de 64; la MAC de `RAL0`/`RAH0`; MSI-X en el 82574 (sus causas
 en la entrada 0) y MSI en el I219; toda la multidifusión (filtra el servicio); sin control de flujo ni EEE. Tira lo
-corto, lo largo, lo partido en varios búferes y lo que llega con error. Dice en el registro cuándo sube o baja el
-enlace y a qué velocidad. Lo propio del I219 (ME, ULP, SMBus, NVM, erratas) está sin probar en hardware.
+corto, lo largo, lo partido en varios búferes y lo que llega con error, y suma a esas cuentas lo que tira la tarjeta
+misma (sus contadores). Dice en el registro cuándo sube o baja el enlace y a qué velocidad. Si el servicio se va,
+para la tarjeta en orden y termina. Lo propio del I219 (ME, ULP, SMBus, NVM, erratas) está sin probar en hardware.
 
 **El puerto de la caja Linux (H9).** `PUERTO` y `TRAMAS_PUERTO` (`protocolo::red`), solo de "caja-linux": un puente de
 tramas para la tarjeta de su invitado (ver la caja Linux, abajo). Si la caja se va (su canal cerrado), el puerto se

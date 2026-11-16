@@ -12,7 +12,9 @@
 //! `TRAMAS` cuando mueve algo. Una cola de recibir de 128 búferes de 2 KB y una de enviar de 64, con descriptores
 //! clásicos (§7). Sin sumas de comprobación por el aparato, sin TSO, sin VLAN, sin control de flujo, sin EEE, toda la
 //! multidifusión (`MPE`; filtra el servicio). Copia cada trama entre la DMA y las ranuras: el servicio nunca ve los
-//! descriptores. Tira y cuenta lo corto, lo largo, lo que no cabe y lo que llega con error o partido.
+//! descriptores. Tira y cuenta lo corto, lo largo, lo que no cabe y lo que llega con error o partido; y suma a esas
+//! cuentas lo que tira la tarjeta misma (sus contadores, §11.1). Si el servicio se va, la parada ordenada (§12); si
+//! el PHY del 82574 se cuelga, parada y arranque en marcha con la misma DMA (§14.3).
 //!
 //! Lo propio del I219 (el ME, el semáforo, el reposo ULP, el modo SMBus, el ciclo LANPHYPC, la NVM en la flash, la
 //! configuración del PHY desde ella, el vaciado de los anillos y los ajustes al subir el enlace) está escrito según la
@@ -88,6 +90,11 @@ const RFCTL: usize = 0x5008;
 const MTA: usize = 0x5200;
 const RAL0: usize = 0x5400;
 const RAH0: usize = 0x5404;
+// Contadores de lo que tira la tarjeta (§11.1): se borran al leerlos.
+const MPC: usize = 0x4010;
+const RUC: usize = 0x40A4;
+const ROC: usize = 0x40AC;
+const RJC: usize = 0x40B0;
 
 // Solo del I219 (§3.2).
 const STRAP: usize = 0x000C;
@@ -165,6 +172,8 @@ const GBCR: (u16, u32) = (0, 9);
 const I82577_PHY_CTRL_2: (u16, u32) = (0, 18);
 const I82577_CFG: (u16, u32) = (0, 22);
 const EMI_DIR: (u16, u32) = (0, 16);
+/// Del 82574: el control específico de su PHY (§14.3).
+const PHY_ESPECIFICO: (u16, u32) = (0, 16);
 const EMI_DATO: (u16, u32) = (0, 17);
 const HV_OEM_BITS: (u16, u32) = (768, 25);
 const HV_SMB_ADDR: (u16, u32) = (768, 26);
@@ -566,12 +575,6 @@ impl Tarjeta {
             return false;
         }
         let mut bien = self.phy_responde();
-        if bien && !self.con_me {
-            if let Some(v) = self.phy(CV_SMB_CTRL, None, false) {
-                self.phy(CV_SMB_CTRL, Some(v & !1), false);
-            }
-            quitar(CTRL_EXT, EXT_FORCE_SMBUS);
-        }
         if !bien {
             activar(CTRL_EXT, EXT_FORCE_SMBUS);
             dormir_ms(50);
@@ -592,10 +595,15 @@ impl Tarjeta {
                 }
             }
         }
-        self.soltar();
-        if reg32(CTRL_EXT) & EXT_FORCE_SMBUS != 0 {
-            println!("  [intel-red] el enlace con el PHY sigue forzado a SMBus");
+        // Sin ME, cada vez que el PHY responde (también si solo respondió forzando SMBus) se vuelve al modo PCIe. Con
+        // ME no se quita nada: el ME decide el modo y puede dejar `FORCE_SMBUS` a 1 (§6.2, paso 3).
+        if bien && !self.con_me {
+            if let Some(v) = self.phy(CV_SMB_CTRL, None, false) {
+                self.phy(CV_SMB_CTRL, Some(v & !1), false);
+            }
+            quitar(CTRL_EXT, EXT_FORCE_SMBUS);
         }
+        self.soltar();
         if bien && !self.mirar_bloqueo() {
             self.reiniciar_phy();
             self.mirar_bloqueo();
@@ -702,8 +710,11 @@ impl Tarjeta {
         }
     }
 
-    /// Reinicio global de la MAC (y del PHY si se puede): §6.3 en el I219, §14.3 en el 82574.
-    fn reiniciar(&mut self) {
+    /// Reinicio global de la MAC (y del PHY si se puede): §6.3 en el I219, §14.3 en el 82574. `tras_phy`: hacer lo de
+    /// después de reiniciar el PHY (§6.4); en la parada final, no (§12, paso 6).
+    fn reiniciar(&mut self, tras_phy: bool) {
+        // El reparto del búfer interno se escribe antes: el reinicio lo conserva (§6.5, punto 8; §14.3).
+        poner_reg32(PBA, if self.i219() { 26 } else { 32 });
         if self.i219() {
             self.vaciar_anillos(false);
             Self::sin_maestro();
@@ -725,12 +736,19 @@ impl Tarjeta {
             // Ni una lectura de registros en 20 ms.
             dormir_ms(20);
             poner_reg32(STRAP, cfg16(0) as u32);
-            if con_phy {
+            if con_phy && tras_phy {
                 self.tras_reiniciar_phy();
             }
             poner_reg32(IMC, u32::MAX);
             reg32(ICR);
             activar(KABGTXD, 0x0005_0000);
+            if reg32(CTRL_EXT) & EXT_FORCE_SMBUS != 0 {
+                // Con el ME activo no es un fallo nuestro (§6.3, notas del paso 12).
+                println!(
+                    "  [intel-red] el enlace con el PHY sigue forzado a SMBus tras el reinicio ({}); se sigue",
+                    if self.con_me { "lo deja el ME" } else { "sin ME" }
+                );
+            }
         } else {
             Self::sin_maestro();
             poner_reg32(IMC, u32::MAX);
@@ -750,7 +768,7 @@ impl Tarjeta {
             poner_reg32(IMC, u32::MAX);
             reg32(ICR);
         }
-        // El reinicio borra CTRL_EXT: decir otra vez al ME que hay controlador (§6.1, paso 2).
+        // El reinicio borra CTRL_EXT: decir otra vez al firmware que hay controlador (§6.3, paso 12).
         activar(CTRL_EXT, EXT_DRV_LOAD);
     }
 
@@ -771,6 +789,8 @@ impl Tarjeta {
             poner_reg32(RFCTL, (reg32(RFCTL) | (1 << 6) | (1 << 7)) & !(1 << 15));
             activar(PBECCSTS, 1 << 16);
             activar(CTRL, CTRL_MEHE);
+            // Umbrales de envío (§6.5, punto 6): WTHRESH 1, GRAN 1, PTHRESH 31.
+            poner_reg32(TXDCTL, (reg32(TXDCTL) & !(0x003F_0000 | 0x3F)) | 0x0101_001F);
         } else {
             activar(TXDCTL, 1 << 22);
             activar(TXDCTL1, 1 << 22);
@@ -784,13 +804,12 @@ impl Tarjeta {
             if let Some(c) = capacidad(0x10) {
                 poner_cfg16(c + 0x10, cfg16(c + 0x10) & !3);
             }
+            // WTHRESH 1, GRAN 1 y COUNT_DESC, sin tocar PTHRESH (§14.3).
+            poner_reg32(TXDCTL, (reg32(TXDCTL) & !0x003F_0000) | 0x0141_0000);
         }
-        // Umbrales de envío: WTHRESH 1, GRAN 1, PTHRESH 31, en las dos colas.
-        let t = (reg32(TXDCTL) & !(0x003F_0000 | 0x3F)) | 0x0101_001F;
-        poner_reg32(TXDCTL, t);
-        poner_reg32(TXDCTL1, t);
+        // Las dos colas, iguales.
+        poner_reg32(TXDCTL1, reg32(TXDCTL));
         activar(CTRL_EXT, EXT_RO_DIS);
-        poner_reg32(PBA, if self.i219() { 26 } else { 32 });
     }
 
     /// La negociación del enlace (§6.6).
@@ -802,11 +821,37 @@ impl Tarjeta {
         if self.i219() {
             self.phy_cambiar(I82577_CFG, |v| v | (1 << 15) | (1 << 11) | (1 << 10));
             self.phy_cambiar(I82577_PHY_CTRL_2, |v| (v & !(3 << 9)) | (2 << 9));
+        } else {
+            self.phy_82574();
         }
         self.phy_e(ANAR, 0x01E1);
         self.phy_cambiar(GBCR, |v| v | (1 << 9));
         self.phy_cambiar(BMCR, |v| v | (1 << 12) | (1 << 9));
         self.soltar();
+    }
+
+    /// La configuración propia del PHY del 82574 (§14.3, "Configuración del PHY"), con el semáforo cogido.
+    fn phy_82574(&self) {
+        let de_qemu = self.phy_l(PHYID1) == Some(0x0141) && self.phy_l(PHYID2) == Some(0x0CB1);
+        let confirmar = || {
+            self.phy_cambiar(BMCR, |v| v | (1 << 15));
+            girar_us(1);
+        };
+        let Some(v) = self.phy_l(PHY_ESPECIFICO) else { return };
+        // MDI/MDI-X automático; corrección de polaridad automática encendida.
+        let mut v = ((v & !(3 << 5)) | (3 << 5)) & !(1 << 1);
+        if de_qemu {
+            v &= !(1 << 11);
+            self.phy_e(PHY_ESPECIFICO, v);
+            confirmar();
+        }
+        v |= 1 << 11;
+        self.phy_e(PHY_ESPECIFICO, v);
+        if de_qemu {
+            self.phy_e((0, 29), 0x0003);
+            self.phy_e((0, 30), 0x0000);
+        }
+        confirmar();
     }
 
     /// Al subir el enlace en el I219 (§10, pasos 1 a 3 y 5); el 4 va en cada comprobación.
@@ -834,6 +879,123 @@ impl Tarjeta {
         }
         self.phy_cambiar(I82579_LPI_CTRL, |v| v & !((1 << 13) | (1 << 14)));
         self.soltar();
+    }
+}
+
+impl Tarjeta {
+    /// La parada ordenada (§12). Con `final_`, también el reinicio global, el PHY apagado (si el ME no lo usa), el
+    /// mando devuelto al firmware y el maestro de bus quitado: después solo queda soltar la DMA. Sin él (para volver
+    /// a arrancar en marcha, §14.3), solo los pasos 1 a 5: la DMA y el canal siguen.
+    fn parar(&mut self, msix: bool, final_: bool) {
+        // Un aparato colgado lee todo a unos: no hay nada más que hacer sin un reinicio PCI (§12, paso 10).
+        if reg32(STATUS) != u32::MAX {
+            // En el 82574, la recepción no se apaga nunca (§14.3).
+            if self.i219() {
+                quitar(RCTL, RCTL_EN);
+            }
+            quitar(TCTL, TCTL_EN);
+            vaciar();
+            dormir_ms(10);
+            poner_reg32(IMC, u32::MAX);
+            if msix {
+                poner_reg32(EIAC, 0);
+            }
+            vaciar();
+            poner_reg32(ICR, reg32(ICR));
+            if self.i219() {
+                self.vaciar_anillos(false);
+            }
+            if !final_ {
+                return;
+            }
+            self.reiniciar(false);
+            // El PHY, apagado, salvo si el ME lo usa (§12, paso 7).
+            if (!self.i219() || (!self.con_me && !self.bloqueado)) && self.coger() {
+                self.phy_cambiar(BMCR, |v| v | (1 << 11));
+                self.soltar();
+                dormir_ms(1);
+            }
+            // El mando, al firmware, después del reinicio (§12, paso 8).
+            quitar(CTRL_EXT, EXT_DRV_LOAD);
+        } else if !final_ {
+            return;
+        }
+        // Sin maestro de bus en el PCI (§12, paso 9).
+        poner_cfg16(4, cfg16(4) & !(1 << 2));
+    }
+}
+
+/// Lo que tiró la tarjeta desde la última vez (§11.1): (cortas, largas, sin sitio). Leerlos los borra.
+fn contadores() -> (u32, u32, u32) {
+    (reg32(RUC), reg32(ROC).wrapping_add(reg32(RJC)), reg32(MPC))
+}
+
+/// Todo lo de después del reinicio global (§6.5 a §6.8; §14.3 y §14.4 en el 82574): bits obligatorios, la MAC, las
+/// tablas de direcciones, el enlace, los anillos (los descriptores, rehechos) y la configuración de las
+/// interrupciones. Devuelve la máscara de interrupciones, que se pone después en `IMS`.
+fn programar(t: &Tarjeta, mac: &[u8; 6], msix: bool) -> u32 {
+    let bus = t.bus;
+    t.bits_obligatorios();
+    contadores();
+    // La MAC (§9), válida.
+    poner_reg32(RAL0, u32::from_le_bytes([mac[0], mac[1], mac[2], mac[3]]));
+    vaciar();
+    poner_reg32(RAH0, mac[4] as u32 | (mac[5] as u32) << 8 | 1 << 31);
+    vaciar();
+    // La multidifusión, entera por MPE: la tabla a cero (§11). En el I219, las entradas 1 a 11 son las compartidas con
+    // el ME (`SHRA`) y no se tocan (§6.5, punto 10); en el 82574, las otras 14 a cero.
+    for i in 0..if t.i219() { 32 } else { 128 } {
+        poner_reg32(MTA + 4 * i, 0);
+    }
+    if !t.i219() {
+        for i in 1..=14 {
+            poner_reg32(RAL0 + 8 * i, 0);
+            poner_reg32(RAH0 + 8 * i, 0);
+        }
+    }
+    t.enlace();
+    // Enviar (§6.7).
+    for i in 0..N_TX {
+        poner64(M_TX + 16 * i, 0);
+        poner64(M_TX + 16 * i + 8, 0);
+    }
+    poner_reg32(TDBAL, (bus + M_TX as u64) as u32);
+    poner_reg32(TDBAH, ((bus + M_TX as u64) >> 32) as u32);
+    poner_reg32(TDLEN, (N_TX * 16) as u32);
+    poner_reg32(TDH, 0);
+    poner_reg32(TDT, 0);
+    poner_reg32(TIDV, 0);
+    poner_reg32(TADV, 0);
+    poner_reg32(TIPG, 0x0060_2008);
+    poner_reg32(TCTL, (reg32(TCTL) & !TCTL_CT) | TCTL_EN | TCTL_PSP | TCTL_RTLC | TCTL_MULR | (15 << 4) | (63 << 12));
+    // Recibir.
+    quitar(RCTL, RCTL_EN);
+    for i in 0..N_RX {
+        poner64(M_RX + 16 * i, bus + (M_RX_BUF + i * BUFER) as u64);
+        poner64(M_RX + 16 * i + 8, 0);
+    }
+    poner_reg32(RDBAL, (bus + M_RX as u64) as u32);
+    poner_reg32(RDBAH, ((bus + M_RX as u64) >> 32) as u32);
+    poner_reg32(RDLEN, (N_RX * 16) as u32);
+    poner_reg32(RDH, 0);
+    poner_reg32(RDT, 0);
+    poner_reg32(RXCSUM, 0);
+    poner_reg32(RDTR, 0);
+    poner_reg32(RADV, 0);
+    poner_reg32(ITR, 0);
+    dashos::barrera::total();
+    poner_reg32(RCTL, RCTL_EN | RCTL_BAM | RCTL_SECRC | RCTL_MPE);
+    poner_reg32(RDT, (N_RX - 1) as u32);
+    // Las interrupciones (§6.8; §14.4 con la MSI-X del 82574).
+    if msix && !t.i219() {
+        poner_reg32(IVAR, 0x8008_0808);
+        poner_reg32(CTRL_EXT, (reg32(CTRL_EXT) & !EXT_IAME) | EXT_PBA_CLR | EXT_EIAME);
+        poner_reg32(EIAC, 0);
+        poner_reg32(EITR0, 0);
+        activar(RFCTL, 1 << 12);
+        (1 << 20) | (1 << 22) | (1 << 24) | I_LSC | (1 << 6)
+    } else {
+        0x9D | if t.i219() { 1 << 22 } else { 0 }
     }
 }
 
@@ -922,71 +1084,17 @@ fn principal() -> u64 {
             println!("  [intel-red] se sigue sin el PHY: puede no haber enlace");
         }
     }
-    t.reiniciar();
+    t.reiniciar(true);
     // El aparato ya está reiniciado: la DMA de una vida anterior se puede soltar.
     dashos::dma_liberar(1);
-    t.bits_obligatorios();
-    // La MAC (§9): se lee y se vuelve a escribir, válida.
+    // La MAC (§9): la que dejó el reinicio en RAL0/RAH0 (o la EEPROM del 82574).
     let mut mac = leer_mac(&t);
     if mac == [0; 6] || mac[0] & 1 != 0 {
         println!("  [intel-red] sin dirección MAC; se usa una local");
         mac = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
     }
-    poner_reg32(RAL0, u32::from_le_bytes([mac[0], mac[1], mac[2], mac[3]]));
-    vaciar();
-    poner_reg32(RAH0, mac[4] as u32 | (mac[5] as u32) << 8 | 1 << 31);
-    vaciar();
-    // La multidifusión, entera por MPE: la tabla a cero (§11). En el I219, las direcciones 1 a 11 son las compartidas
-    // con el ME (`SHRA`) y no se tocan.
-    for i in 0..if t.i219() { 32 } else { 128 } {
-        poner_reg32(MTA + 4 * i, 0);
-    }
-    if !t.i219() {
-        for i in 1..16 {
-            poner_reg32(RAL0 + 8 * i, 0);
-            poner_reg32(RAH0 + 8 * i, 0);
-        }
-    }
-    t.enlace();
-    // Enviar (§6.7).
-    poner_reg32(TDBAL, (bus + M_TX as u64) as u32);
-    poner_reg32(TDBAH, ((bus + M_TX as u64) >> 32) as u32);
-    poner_reg32(TDLEN, (N_TX * 16) as u32);
-    poner_reg32(TDH, 0);
-    poner_reg32(TDT, 0);
-    poner_reg32(TIDV, 0);
-    poner_reg32(TADV, 0);
-    poner_reg32(TIPG, 0x0060_2008);
-    poner_reg32(TCTL, (reg32(TCTL) & !TCTL_CT) | TCTL_EN | TCTL_PSP | TCTL_RTLC | TCTL_MULR | (15 << 4) | (63 << 12));
-    // Recibir.
-    quitar(RCTL, RCTL_EN);
-    for i in 0..N_RX {
-        poner64(M_RX + 16 * i, bus + (M_RX_BUF + i * BUFER) as u64);
-    }
-    poner_reg32(RDBAL, (bus + M_RX as u64) as u32);
-    poner_reg32(RDBAH, ((bus + M_RX as u64) >> 32) as u32);
-    poner_reg32(RDLEN, (N_RX * 16) as u32);
-    poner_reg32(RDH, 0);
-    poner_reg32(RDT, 0);
-    poner_reg32(RXCSUM, 0);
-    poner_reg32(RDTR, 0);
-    poner_reg32(RADV, 0);
-    poner_reg32(ITR, 0);
-    dashos::barrera::total();
-    poner_reg32(RCTL, RCTL_EN | RCTL_BAM | RCTL_SECRC | RCTL_MPE);
-    poner_reg32(RDT, (N_RX - 1) as u32);
-    // Las interrupciones (§6.8; §14.4 con la MSI-X del 82574).
     let msix = capacidad(0x11).is_some_and(|c| cfg32(c) & (1 << 31) != 0);
-    let mascara = if msix && !t.i219() {
-        poner_reg32(IVAR, 0x8008_0808);
-        poner_reg32(CTRL_EXT, (reg32(CTRL_EXT) & !EXT_IAME) | EXT_PBA_CLR | EXT_EIAME);
-        poner_reg32(EIAC, 0);
-        poner_reg32(EITR0, 0);
-        activar(RFCTL, 1 << 12);
-        (1 << 20) | (1 << 22) | (1 << 24) | I_LSC | (1 << 6)
-    } else {
-        0x9D | if t.i219() { 1 << 22 } else { 0 }
-    };
+    let mascara = programar(&t, &mac, msix);
     // La memoria de las tramas, para el servicio.
     let mem = dashos::memoria_crear(TAM_TRAMAS);
     if (mem as i32) <= 0 || dashos::memoria_proyectar(mem, VA_TRAMAS, true) != 0 {
@@ -1039,6 +1147,7 @@ fn principal() -> u64 {
     let mut con_enlace = false;
     let mut proxima_mirada = 0u64;
     let mut cuelgues = 0u32;
+    let mut reiniciar_en_marcha = false;
     let mut rotas = 0u64;
     let mut buf = [0u8; 16];
     let mut ll = [0u32; 8];
@@ -1056,10 +1165,6 @@ fn principal() -> u64 {
         }
         if n >= 0 && marca == M_IRQ {
             if let Some(i) = irq {
-                if msix {
-                    // Por si el aparato quitó de la máscara la causa que avisó (EIAME).
-                    poner_reg32(IMS, mascara);
-                }
                 dashos::interrupcion_terminar(i);
             }
         }
@@ -1087,11 +1192,18 @@ fn principal() -> u64 {
                     println!("  [intel-red] enlace abajo");
                 }
             }
+            // Lo que tiró la tarjeta misma (§11.1), a los contadores del servicio.
+            let (cortas, largas, sin_sitio) = contadores();
+            for (i, n) in [(p::T_CORTAS, cortas), (p::T_LARGAS, largas), (p::T_SIN_SITIO, sin_sitio)] {
+                if n != 0 {
+                    poner_tramas(i, tramas(i).wrapping_add(n));
+                }
+            }
             if t.i219() {
                 poner_reg32(FEXTNVM4, (reg32(FEXTNVM4) & !7) | 7);
             } else {
-                // El cuelgue del PHY del 82574 (§14.3): dos veces seguidas, se avisa. (Reiniciar la tarjeta en
-                // marcha queda para otra vuelta.)
+                // El cuelgue del PHY del 82574 (§14.3): el 21 de la página 0 a 0xFFFF y, solo entonces, el 10 con su
+                // byte bajo a 0xFF; dos veces seguidas.
                 let colgado = t.coger() && {
                     let r = t.phy_l((0, 21)) == Some(0xFFFF) && t.phy_l((0, 10)).is_some_and(|v| v & 0xFF == 0xFF);
                     t.soltar();
@@ -1099,11 +1211,26 @@ fn principal() -> u64 {
                 };
                 cuelgues = if colgado { cuelgues + 1 } else { 0 };
                 if cuelgues == 2 {
-                    println!("  [intel-red] el PHY parece colgado (contadores de error al máximo)");
+                    cuelgues = 0;
+                    reiniciar_en_marcha = true;
                 }
             }
         }
         let mut movido = false;
+        if reiniciar_en_marcha {
+            // Parar y volver a arrancar entero, con la misma DMA y el mismo canal (§14.3): lo que estaba en vuelo
+            // para enviar se pierde.
+            reiniciar_en_marcha = false;
+            let perdidas = (tx_cola + N_TX - tx_limpio) % N_TX;
+            println!("  [intel-red] el PHY está colgado; se reinicia la tarjeta ({} tramas de enviar perdidas)", perdidas);
+            t.parar(msix, false);
+            t.reiniciar(true);
+            let m = programar(&t, &mac, msix);
+            reg32(ICR);
+            poner_reg32(IMS, m);
+            (rx_sig, tx_cola, tx_limpio, partida, con_enlace) = (0, 0, 0, false, false);
+            movido = true;
+        }
         // Lo recibido (§7.2): al anillo del servicio, si cabe y tiene buena medida.
         let mut ultimo = None;
         for _ in 0..N_RX {
@@ -1200,8 +1327,13 @@ fn principal() -> u64 {
             poner_reg32(TDT, tx_cola as u32);
         }
         if movido {
-            // Si la cola del servicio está llena, se pierde: el servicio mira las ranuras en cada vuelta.
-            dashos::canal_escribir(servicio, &p::TRAMAS.to_le_bytes(), &[]);
+            // Si la cola del servicio está llena, se pierde: el servicio mira las ranuras en cada vuelta. Si el
+            // servicio ya no está, la parada ordenada (§12) y fuera.
+            if dashos::canal_escribir(servicio, &p::TRAMAS.to_le_bytes(), &[]) == dashos::E_CERRADO {
+                println!("  [intel-red] el servicio de red se fue; se para la tarjeta");
+                t.parar(msix, true);
+                return 0;
+            }
         }
     }
 }
