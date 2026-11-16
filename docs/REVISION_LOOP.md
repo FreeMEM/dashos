@@ -2166,3 +2166,10 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   bien. Wayland ya había fallado una vez con carga y pasado sola. Pendiente: que ninguna prueba salga a Internet
   (`red` pregunta por `pool.ntp.org` en las variantes sin disco de prueba); la zona horaria de idiomas (UTC+1 fijo)
   debe tomar la de `red`; decisiones de idiomas, cuota y selector por confirmar con el usuario.
+- **Unida `shell-nativa` (2026-11-16)**: Shell nativo al estilo AmigaDOS (crate `shell`, `SYS:System/Shell`, 17
+  órdenes juntas en `SYS:C/Ordenes`, lanzar con la ficha propia por la orden 40 de `sesiones`) y el Shell potente que
+  pidió el usuario (Tab, historial en `ENVARC:Shell/Historial`, sugerencia y resaltado, indicador por segmentos,
+  pestañas y paneles con las teclas de Terminator, colores ANSI, tuberías a la vez, complementos en
+  `S:Shell-Complementos/`). Tanda completa sobre la rama: 12 de 12 a la primera. **Nadie lo ha visto en pantalla**:
+  las pruebas lo manejan por guion, sin captura. Diseñado y sin hacer: el terminal completo (pantalla alternativa).
+  Decisiones por confirmar con el usuario: en `docs/bitacoras/shell-nativa.md`.
