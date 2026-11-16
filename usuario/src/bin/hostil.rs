@@ -1249,7 +1249,7 @@ fn principal() -> u64 {
     let ce = centro(memoria);
     println!("  [hostil] centro: pedidos malos rechazados sin abrir nada, y sigue contestando tras la inundación: {}", if ce { "bien" } else { "MAL" });
     let m = monton_grande();
-    println!("  [hostil] montón: lo grande va aparte y vuelve al kernel al soltarlo: {}", if m { "bien" } else { "MAL" });
+    println!("  [hostil] montón: lo grande va aparte y vuelve al kernel al soltarlo, lo que no cabe da error y el colchón aguanta: {}", if m { "bien" } else { "MAL" });
     // Trasfondo: la prueba del monitor, la última. Al principio, sus páginas cargaban a `sesiones` justo cuando contesta
     // las preguntas de permisos de las demás pruebas, y el arranque se desacompasaba (Ajustes no llegaba a maximizarse).
     let mon = monitor_ajeno();
@@ -1351,10 +1351,58 @@ fn monton_grande() -> bool {
     drop(bloques);
     drop(pequeno);
     let despues = dashos::monton::uso().reservado;
-    let bien = aparte && enteros && en_monton && durante >= antes + (9 << 20) && despues == antes;
+    // Rama `archivos-memoria`: lo que no cabe (17 MB con el grupo de 16 de este programa, y 2 GB) da error a quien lo
+    // pide con `try_reserve`, cuenta como fallo y no deja el montón crecido (antes crecía a trozos de 4 MB hasta el tope
+    // y se los quedaba). Y después, lo pequeño sigue cabiendo.
+    let fallos = dashos::monton::uso().fallos;
+    let mut v: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+    let no_cabe = v.try_reserve_exact(17 << 20).is_err() && v.try_reserve_exact(2 << 30).is_err();
+    let sin_crecer = dashos::monton::uso().reservado == despues;
+    let contados = dashos::monton::uso().fallos >= fallos + 2;
+    let sigue = alloc::vec![7u8; 100_000].iter().all(|&x| x == 7);
+    let colchon = colchon();
+    let bien = aparte && enteros && en_monton && durante >= antes + (9 << 20) && despues == antes && no_cabe && sin_crecer && contados && sigue && colchon;
     if !bien {
-        println!("  [hostil] montón: aparte {} enteros {} pequeño en el montón {}; reservado {} → {} → {} KB", aparte, enteros, en_monton,
-            antes >> 10, durante >> 10, despues >> 10);
+        println!("  [hostil] montón: aparte {} enteros {} pequeño en el montón {}; reservado {} → {} → {} KB; no cabe {} sin crecer {} contados {} sigue {} colchón {}", aparte, enteros, en_monton,
+            antes >> 10, durante >> 10, despues >> 10, no_cabe, sin_crecer, contados, sigue, colchon);
+    }
+    bien
+}
+
+/// El colchón del montón (rama `archivos-memoria`): con el grupo lleno (objetos de memoria hasta que el kernel dice
+/// que no), lo pequeño que no puede fallar sigue cabiendo gracias al colchón, que queda gastado (`en_apuro`); soltando
+/// lo que llenaba el grupo, se repone.
+fn colchon() -> bool {
+    let puesto = dashos::monton::colchon(&MONTON, 512 << 10);
+    let mut cajas: alloc::vec::Vec<alloc::boxed::Box<[u8; 1024]>> = alloc::vec::Vec::with_capacity(8192);
+    let mut llaves = [0u32; 256];
+    let mut n = 0;
+    for tam in [1 << 20, 64 << 10, 4 << 10] {
+        while n < llaves.len() {
+            let k = dashos::memoria_crear(tam);
+            if (k as i32) <= 0 {
+                break;
+            }
+            llaves[n] = k;
+            n += 1;
+        }
+    }
+    let gastados = dashos::monton::uso().colchones;
+    // Hasta 8 MB de cajas de 1 KB: en algún momento el montón tiene que crecer, y el kernel ya no da.
+    while cajas.len() < cajas.capacity() && !dashos::monton::en_apuro() {
+        cajas.push(alloc::boxed::Box::new([cajas.len() as u8; 1024]));
+    }
+    let gastado = dashos::monton::en_apuro() && dashos::monton::uso().colchones == gastados + 1;
+    let enteras = cajas.iter().enumerate().all(|(i, c)| c.iter().all(|&b| b == i as u8));
+    for &k in &llaves[..n] {
+        dashos::cerrar(k);
+    }
+    drop(cajas);
+    let repuesto = dashos::monton::rearmar(&MONTON) && !dashos::monton::en_apuro();
+    let quitado = dashos::monton::colchon(&MONTON, 0);
+    let bien = puesto && n > 0 && gastado && enteras && repuesto && quitado;
+    if !bien {
+        println!("  [hostil] colchón: puesto {} objetos {} gastado {} enteras {} repuesto {} quitado {}", puesto, n, gastado, enteras, repuesto, quitado);
     }
     bien
 }
