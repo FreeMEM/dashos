@@ -311,6 +311,11 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // final, para no cambiar las marcas de los de antes.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     ("hora", programa!("hora"), &[("reloj", RELOJ)], &["red"]),
+    // S10, Commodities (`docs/bitacoras/commodities.md`): la prueba de punta a punta y hostil (sin permiso, reservados,
+    // cien atajos, dos con la misma, Exchange, el atajo de verdad que pulsa el guion). Llaves: 1 ventanas, 2 sesiones.
+    // Al final, para no cambiar las marcas de los de antes.
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux"), not(feature = "uso")))]
+    ("commodity-prueba", programa!("commodity-prueba"), &[], &["ventanas", "sesiones"]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", programa!("medir-fs"), &[], &["archivos"]),
     #[cfg(feature = "medir")]

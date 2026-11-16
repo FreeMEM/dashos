@@ -106,6 +106,10 @@ const PORTAPAPELES: Global = Global { nombre: 14, interfaz: &tablas::WL_DATA_DEV
 const PRIMARIA: Global = Global { nombre: 15, interfaz: &tablas::ZWP_PRIMARY_SELECTION_DEVICE_MANAGER_V1, version: 1 };
 /// La barra de DashOS para los programas que no se pintan la suya (H9, `xdg-decoration`).
 const DECORACIONES: Global = Global { nombre: 16, interfaz: &tablas::ZXDG_DECORATION_MANAGER_V1, version: 1 };
+/// S10: Commodities y Exchange. Solo lo ve quien tiene alguno de sus permisos (`atajos`, `fondo`, `commodities`), que
+/// dice `sesiones` (`escena::AVISO_PODER`); a los demás no se les anuncia, y pedirlo es "global que no existe". El 21,
+/// lejos de los de las salidas.
+const COMMODITIES: Global = Global { nombre: 21, interfaz: &tablas::DASHOS_COMMODITIES_V1, version: 1 };
 
 /// H9: quien pinta la barra de DashOS de las ventanas que la llevan, con el kit (Material 3): el contenedor de
 /// superficie (alto si tiene el teclado), las esquinas de arriba redondeadas, el título (title small: 14, medium) a 16
@@ -318,6 +322,18 @@ fn avisar_inactividad(escena: &mut Escena<Proyecciones>, clientes: &mut BTreeMap
     for (cl, objeto, ocioso) in core::mem::take(&mut escena.avisos_inactividad) {
         if let Some(cli) = clientes.get_mut(&cl) {
             escena::avisar_inactividad(&mut cli.con, objeto, ocioso);
+            if !mandar(cli) {
+                caidos.push(cl);
+            }
+        }
+    }
+    // S10: lo de las commodities (atajos pulsados, inactividad, Exchange) y lo que pasó, al registro.
+    for linea in core::mem::take(&mut escena.cx.registro) {
+        println!("  [compositor] commodities: {}", linea);
+    }
+    for (cl, aviso) in core::mem::take(&mut escena.cx.avisos) {
+        if let Some(cli) = clientes.get_mut(&cl) {
+            escena::commodities::escribir_aviso(&mut cli.con, &aviso);
             if !mandar(cli) {
                 caidos.push(cl);
             }
@@ -876,6 +892,12 @@ fn principal() -> u64 {
             Some(escena::AvisoSesiones::Persona { marca: m, uid, nombre }) => {
                 let fin = nombre.iter().position(|&b| b == 0).unwrap_or(16);
                 if *uid == 0 {
+                    // El programa acabó (lo dice `sesiones` con su baja): su conexión, y las de su marca, ya no sirven.
+                    // Se sueltan ahora (S10: sus atajos quedan libres en el acto), no cuando falle escribirle.
+                    let suyos: Vec<Cliente> = clientes.keys().copied().filter(|&c| marca_de(c) == *m).collect();
+                    for c in suyos {
+                        soltar_cliente(&mut clientes, &mut escena, nombre_de(&nombres, &lanzados, c), c);
+                    }
                     lanzados.remove(m);
                 } else if !nombres.contains_key(m) {
                     lanzados.insert(*m, String::from(core::str::from_utf8(&nombre[..fin]).unwrap_or("?")));
@@ -884,6 +906,22 @@ fn principal() -> u64 {
             Some(escena::AvisoSesiones::Detras(uids)) => {
                 let ocultos = clientes.keys().filter(|&&c| escena.oculto(c)).count();
                 println!("  [compositor] sesiones de detrás: {:?}; {} clientes sin pantalla ni entrada", uids, ocultos);
+            }
+            // S10: los permisos de commodities. Si ya estaba conectado, el global le llega (o se le va) en el acto.
+            Some(escena::AvisoSesiones::Poder { marca: m, antes, despues }) => {
+                println!("  [compositor] permisos de commodities de {}: {:#05b}", nombre_de(&nombres, &lanzados, *m), despues);
+                if let Some(cli) = clientes.get_mut(m)
+                    && (*antes == 0) != (*despues == 0)
+                {
+                    if *despues != 0 {
+                        cli.con.anunciar_global(&COMMODITIES);
+                    } else {
+                        cli.con.retirar_global(COMMODITIES.nombre);
+                    }
+                    if !mandar(cli) {
+                        caidos.push(*m);
+                    }
+                }
             }
             None => {}
         }
@@ -1017,6 +1055,8 @@ fn principal() -> u64 {
                 if nombres.get(&marca).is_some_and(|n| n == "caja-amiga") && !escena.de_caja_amiga.contains(&marca) {
                     escena.de_caja_amiga.push(marca);
                 }
+                // S10: su nombre, para Exchange.
+                escena.cx.programas.insert(marca, String::from(nombre_de(&nombres, &lanzados, marca)));
                 clientes.insert(marca, DeVentanas { con: Conexion::new(), respuesta: llaves[0], del_sistema, cola: Default::default(), sub: None });
             }
             Some(TROZO_DATOS) if clientes.contains_key(&marca) => {
@@ -1032,6 +1072,14 @@ fn principal() -> u64 {
                         &globales[1]
                     } else {
                         &globales[0]
+                    };
+                    // S10: con algún permiso de commodities, también su global.
+                    let con_cx: Vec<Global>;
+                    let globales = if escena.cx.poderes_de(marca) != 0 {
+                        con_cx = globales.iter().copied().chain([COMMODITIES]).collect();
+                        &con_cx[..]
+                    } else {
+                        globales
                     };
                     cli.con.atender(globales, &mut escena.de(marca));
                     soltar = !mandar(cli) || cli.con.roto.is_some();

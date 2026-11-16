@@ -44,6 +44,10 @@ pub const FRASES: &[(&str, &str)] = &[
     ("avisos", "enseñarte avisos"),
     ("maquinas", "arrancar máquinas virtuales (la caja Linux)"),
     ("eco", "usar el servicio de prueba \"eco\""),
+    // S10, Commodities (`docs/bitacoras/commodities.md`): poderes del compositor, sin llave.
+    ("atajos", "usar teclas rápidas en todo el sistema"),
+    ("fondo", "saber cuándo no usas el ordenador y apagar la pantalla"),
+    ("commodities", "ver y manejar tus utilidades de fondo"),
 ];
 
 /// Lo que puede cambiar un programa de la caja Amiga con cada permiso sin llave (S28), en plural.

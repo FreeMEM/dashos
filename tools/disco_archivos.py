@@ -351,6 +351,12 @@ PRUEBA_SHELL = "\n".join([
     "Ajuste idioma español",
     "Wait 1",
     "Delete ENVARC:Escritorio ALL QUIET",
+    "; S10, Commodities: Exchange como orden (el alias de serie, a SYS:Tools/Commodities/Exchange). Ana no tiene ninguna",
+    "; en marcha (la de la prueba es del sistema): la lista vacía, los ajustes, y una que no existe.",
+    "Exchange LISTA",
+    "Exchange QUITAR NoExiste",
+    "; FKey sin Home:Prefs/FKey: su tecla de serie, sin ponerla (LISTA no pide el permiso).",
+    "SYS:Tools/Commodities/FKey LISTA",
     "; S6, S36: el registro común (Estado:Registros/). Lo que apunta un guion lleva el programa que lo lanza (el Shell),",
     "; y la hora y el usuario los pone sesiones.",
     'Registro APUNTA "hola desde el guion del Shell" MOTIVO "una prueba"',
@@ -428,7 +434,7 @@ SYS_FICHEROS = [
     ("Prefs/Env-Archive/Sys/idioma", b"es\n"),
     ("Prefs/Env-Archive/Sys/teclado", b"es\n"),
     # Un complemento de serie del Shell: unos alias. Los de cada usuario van en su `Home:S/Shell-Complementos`.
-    ("S/Shell-Complementos/alias", "; Alias de serie del Shell. Los tuyos, en Home:S/Shell-Complementos.\nAlias ll List\nAlias la Dir ALL\nAlias md MakeDir\n".encode()),
+    ("S/Shell-Complementos/alias", "; Alias de serie del Shell. Los tuyos, en Home:S/Shell-Complementos.\nAlias ll List\nAlias la Dir ALL\nAlias md MakeDir\nAlias Exchange SYS:Tools/Commodities/Exchange\n".encode()),
     ("S/Prueba-Shell", PRUEBA_SHELL),
 ]
 
@@ -466,6 +472,19 @@ def prefs_carla():
     return catalogo.hacer_prefs("great_britain", ["english"], 0, gb)
 
 
+def commodities_ficheros():
+    """S10, Commodities (`docs/bitacoras/commodities.md`): las clásicas de `SYS:Tools/Commodities` (Blanker, FKey,
+    NoCapsLock) y Exchange, como programas (nombre en el disco y fichero). Se leen al construir: no hacen falta para
+    importar este fichero."""
+    usuario = os.path.dirname(HOLA)
+    return [
+        ("Tools/Commodities/Blanker", os.path.join(usuario, "blanker")),
+        ("Tools/Commodities/NoCapsLock", os.path.join(usuario, "nocapslock")),
+        ("Tools/Commodities/FKey", os.path.join(ORDENES_BIN, "fkey")),
+        ("Tools/Commodities/Exchange", os.path.join(ORDENES_BIN, "exchange")),
+    ]
+
+
 def sys_esperado():
     """Las líneas del árbol de `SYS:` en el listado de `ver` (los cajones con sus padres, y los ficheros)."""
     lineas = set()
@@ -473,6 +492,8 @@ def sys_esperado():
         partes = c.split("/")
         for i in range(1, len(partes) + 1):
             lineas.add("/".join(partes[:i]) + "/ cajón")
+    for n, f in commodities_ficheros():
+        lineas.add(f"{n} {os.path.getsize(f)}")
     for n, d in SYS_FICHEROS + locale_ficheros():
         lineas.add(f"{n} {len(d)}")
         partes = n.split("/")[:-1]
@@ -777,6 +798,10 @@ with tempfile.TemporaryDirectory() as t:
         os.makedirs(os.path.dirname(os.path.join(raiz, *nombre.split("/"))), exist_ok=True)
         with open(os.path.join(raiz, *nombre.split("/")), "wb") as f:
             f.write(datos)
+    for nombre, origen in commodities_ficheros():
+        with open(os.path.join(raiz, *nombre.split("/")), "wb") as f:
+            f.write(open(origen, "rb").read())
+        os.chmod(os.path.join(raiz, *nombre.split("/")), 0o755)
     # S28: el cajón de la caja Amiga (de Ana, como todo; solo suyo).
     caja = os.path.join(raiz, *CAJA.split("/"))
     for sub, nombre, datos in [("C", "saludo", open(SALUDO, "rb").read()), ("C", "saludo.info", CAJA_ICONO),

@@ -85,7 +85,9 @@ const GUARDAN_AJUSTES: &[&str] = &["centro"];
 /// U6: el sonido, con la llave sin marca que da `inicio` (`CANAL_SISTEMA`), no con un número fijo (`SIN_NUMERO`).
 /// S10: también `avisos` (las notificaciones), igual que el sonido.
 /// H9: también el permiso de máquinas virtuales ("maquinas").
-const REPARTE: &[(&str, u32)] = &[("eco", 5), ("plazo", PLAZO), ("sonido", SIN_NUMERO), ("avisos", SIN_NUMERO), ("maquinas", MAQUINAS)];
+/// S10 (Commodities): `atajos`, `fondo` y `commodities` no dan llave: son poderes del compositor (`PODERES_COMPOSITOR`),
+/// que se le dicen sin marca (`AVISO_PODER`). Al final, para no cambiar el número de los de antes en lo guardado.
+const REPARTE: &[(&str, u32)] = &[("eco", 5), ("plazo", PLAZO), ("sonido", SIN_NUMERO), ("avisos", SIN_NUMERO), ("maquinas", MAQUINAS), ("atajos", SIN_NUMERO), ("fondo", SIN_NUMERO), ("commodities", SIN_NUMERO)];
 const SIN_NUMERO: u32 = 0;
 /// U6: los servicios que siguen las sesiones (el compositor y el sonido), por el nombre que da `inicio` a quien los
 /// sirve: no reciben entradas de directorio de lo que se reparte (un nombre así podría ser el de uno con poderes), sino
@@ -99,13 +101,32 @@ const PERMISOS_KERNEL: &[&str] = &["plazo", "maquinas"];
 /// pregunta (hasta que se reinicie: lo quitado no se guarda aún en el disco).
 const SIN_PREGUNTAR: &[(&str, &str)] = &[("caja-linux", "maquinas")];
 /// Los permisos cuya concesión se apunta también en el registro de seguridad (no solo las negativas).
-const SE_APUNTA: &[&str] = &["maquinas"];
+/// S10: también los de commodities (`atajos`, `fondo`, `commodities`): ver lo que puede coger teclas o saber cuándo no se
+/// usa el ordenador tiene que quedar en el registro común aunque venga de serie.
+const SE_APUNTA: &[&str] = &["maquinas", "atajos", "fondo", "commodities"];
 /// Los permisos de cada programa (U4), provisionales hasta que salgan del paquete (S8). Lo que no esté aquí se le
 /// pregunta a `guardian`, si atiende preguntas, y lo que diga que sí se guarda (`CAMINO_PERMISOS`).
 /// U6: `cambio` (la prueba del cambio rápido de usuario) suena por el servicio de sonido.
 /// S10: `cambio` avisa desde la sesión de detrás, y `avisa` (`Programas/avisa`) es la prueba de un programa del disco que
 /// avisa.
-const PERMISOS: &[(&str, &str)] = &[("cambio", "sonido"), ("cambio", "avisos"), ("avisa", "avisos")];
+/// S10, Commodities (`docs/bitacoras/commodities.md`): las clásicas de `SYS:Tools/Commodities` y Exchange (la ventana y la
+/// orden de `SYS:C`), por el nombre de su fichero, como herramientas del sistema; y la prueba de `virt`.
+const PERMISOS: &[(&str, &str)] = &[
+    ("cambio", "sonido"),
+    ("cambio", "avisos"),
+    ("avisa", "avisos"),
+    ("FKey", "atajos"),
+    ("Blanker", "fondo"),
+    ("NoCapsLock", "fondo"),
+    ("Exchange", "commodities"),
+    // Lo que se lanza desde el Shell lleva su ficha (se llama "Shell"): la orden `Exchange` es eso. Mandar en las
+    // commodities de su persona es menos que matarlas, que el Shell ya puede (`MATAR`, lo suyo). Los permisos que dejan
+    // observar (`atajos`, `fondo`) no: se preguntan.
+    ("Shell", "commodities"),
+    ("commodity-prueba", "atajos"),
+    ("commodity-prueba", "fondo"),
+    ("commodity-prueba", "commodities"),
+];
 const CAMINO_PERMISOS: &[u8] = b"Estado/Servicios/sesiones/permisos";
 /// Permisos concedidos por el usuario, a la vez, y preguntas sin contestar.
 const MAX_CONCEDIDOS: usize = 32;
@@ -797,6 +818,15 @@ fn acabar_admin(registro: &mut Registro, a_quien: u32, programa: &[u8; 16], acci
 /// Da a `marca` una llave del servicio `s` (U4): una copia marcada con su número, que viaja una vez (S4) y llega sin
 /// el derecho de transferirla (regla 2), y revocable. Apunta su revocador y su entrada en el directorio del servicio.
 fn dar_servicio(dadas: &mut [Option<(u64, usize, u32)>], s: usize, marca: u64, programa: &[u8; 16], siguen: &Siguen) -> (i32, Option<u32>) {
+    // S10: un poder del compositor no es una llave: se le dice al compositor, antes de contestar al programa (por el
+    // mismo canal del compositor que usará el programa, así que le llega antes que nada suyo).
+    if let Some(bit) = poder_compositor(REPARTE[s].0) {
+        if siguen.compositor == 0 {
+            return (-1, None);
+        }
+        aviso_poder(siguen.compositor, marca, bit, true);
+        return (BIEN, None);
+    }
     let llave = siguen.llave(s);
     let d = if llave == 0 { -1 } else { dashos::llave_duplicar(llave, 7 | dashos::UNA_VEZ, marca) };
     let (r, revocador) = if d > 0 { dashos::llave_revocable(d as u32) } else { (-1, 0) };
@@ -971,6 +1001,7 @@ fn quitar_permiso(
     dadas: &mut [Option<(u64, usize, u32)>],
     fichas: &[Option<Ficha>],
     sin_preguntar_quitado: &mut [bool],
+    compositor: u32,
     prog: &[u8],
     serv: &[u8],
     de: impl Fn(u32) -> bool,
@@ -996,6 +1027,12 @@ fn quitar_permiso(
     if let Some(s) = s.filter(|&s| SIN_PREGUNTAR.iter().any(|&(p, sv)| sv == REPARTE[s].0 && p.as_bytes() == prog)) {
         if let Some(q) = sin_preguntar_quitado.get_mut(s) {
             *q = true;
+        }
+    }
+    // S10: un poder del compositor (commodities) se quita ya a cada copia del programa de esos usuarios.
+    if let Some(bit) = s.and_then(|s| poder_compositor(REPARTE[s].0)) {
+        for f in fichas.iter().flatten().filter(|f| nombre(&f.nombre).as_bytes() == prog && quitados.contains(&f.uid)) {
+            aviso_poder(compositor, f.marca, bit, false);
         }
     }
     // Las llaves que ya tengan dejan de servir: el permiso se retira ya, no al pedirlo otra vez.
@@ -1074,6 +1111,21 @@ fn aviso_persona(canal: u32, marca: u64, uid: u32, nombre_: &[u8; 16]) {
     m[4..8].copy_from_slice(&uid.to_le_bytes());
     m[8..16].copy_from_slice(&marca.to_le_bytes());
     m[16..32].copy_from_slice(nombre_);
+    avisar(canal, &m);
+}
+
+/// S10: el bit de un permiso que es un poder del compositor (`PODERES_COMPOSITOR`).
+fn poder_compositor(servicio: &str) -> Option<u32> {
+    PODERES_COMPOSITOR.iter().find(|p| p.0 == servicio).map(|p| p.1)
+}
+
+/// S10: da (`dar`) o quita a `marca` los permisos de commodities `bits` (`AVISO_PODER`).
+fn aviso_poder(canal: u32, marca: u64, bits: u32, dar: bool) {
+    let mut m = [0u8; LARGO_AVISO_PODER];
+    m[0..4].copy_from_slice(&AVISO_PODER.to_le_bytes());
+    m[4..8].copy_from_slice(&bits.to_le_bytes());
+    m[8..16].copy_from_slice(&marca.to_le_bytes());
+    m[16..20].copy_from_slice(&(dar as u32).to_le_bytes());
     avisar(canal, &m);
 }
 
@@ -1494,6 +1546,10 @@ fn principal() -> u64 {
                     for c in siguen.todos() {
                         aviso_persona(c, f.marca, 0, &f.nombre);
                     }
+                } else {
+                    // S10: al compositor, también la de un programa del sistema: así suelta su conexión ya (con sus
+                    // atajos y sus commodities), y no cuando intente escribirle.
+                    aviso_persona(siguen.compositor, f.marca, 0, &f.nombre);
                 }
                 // Y el selector, de lo que lanzó `sesiones` (si tenía algo pedido, su ventana se cierra).
                 if f.marca >= PRIMER_PID_PROPIO && selector != 0 {
@@ -2202,6 +2258,13 @@ fn principal() -> u64 {
                             registro.apuntar_por(R_SERVICIO, PROTEGIDO, &programa, pedido.as_bytes(), "no lo tiene concedido y no hay a quién preguntar");
                             PROTEGIDO
                         }
+                        // S10: dejar un poder del compositor: se le quita.
+                        (_, Some(s)) if poder_compositor(REPARTE[s].0).is_some() => {
+                            aviso_poder(siguen.compositor, marca, poder_compositor(REPARTE[s].0).unwrap_or(0), false);
+                            let uid = registro.uid;
+                            registro.linea(rg::SEGURIDAD, &programa, uid, "permiso", format_args!("deja \"{}\" ({})", pedido, pt::frase(pedido)), "lo dejó el programa");
+                            BIEN
+                        }
                         (_, Some(s)) => {
                             // Dejar: se revocan todas las suyas de ese servicio.
                             let mut alguna = false;
@@ -2394,7 +2457,7 @@ fn principal() -> u64 {
                             (true, true) if conceder(&mut concedidos, prog, serv, uid) => BIEN,
                             (true, true) => dashos::protocolo::archivos::SIN_SITIO,
                             (true, false) => {
-                                let q = quitar_permiso(&mut concedidos, &mut dadas, &fichas, &mut sin_preguntar_quitado, prog, serv, |u| u == uid);
+                                let q = quitar_permiso(&mut concedidos, &mut dadas, &fichas, &mut sin_preguntar_quitado, siguen.compositor, prog, serv, |u| u == uid);
                                 if q.contains(&uid) { BIEN } else { NO_EXISTE }
                             }
                         };
@@ -2517,7 +2580,7 @@ fn principal() -> u64 {
                         // U6: como en `CONCEDIDOS`, el centro solo lo de su usuario y lo del sistema.
                         let todo = yo.is_some_and(|f| es(&f, GUARDIANES));
                         let suyo = yo.map_or(0, |f| f.uid);
-                        let quitados = quitar_permiso(&mut concedidos, &mut dadas, &fichas, &mut sin_preguntar_quitado, prog, serv, |u| todo || u == suyo || u < PRIMERA_PERSONA);
+                        let quitados = quitar_permiso(&mut concedidos, &mut dadas, &fichas, &mut sin_preguntar_quitado, siguen.compositor, prog, serv, |u| todo || u == suyo || u < PRIMERA_PERSONA);
                         if quitados.iter().any(|&u| u != 0) {
                             // S6b, S36: a su sitio, el de cada persona y el del sistema; y al registro común.
                             let mut sistema = false;

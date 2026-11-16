@@ -147,7 +147,11 @@ gt_movida = 0
 req_dash = 0
 # El selector de ficheros desde un programa del disco (`Programas/guarda`): lo último de la prueba. Sus líneas esperadas
 # (las que llevan alguna de estas marcas) y las demás, que tienen que haber salido antes de empezar.
-MARCAS_GUARDA = ("[guarda]", "para guarda", "Programas/guarda", "[selector] guarda ", "el usuario guarda ", "informe.txt", "el nombre del campo")
+MARCAS_GUARDA = ("[guarda]", "para guarda", "Programas/guarda", "[selector] guarda ", "el usuario guarda ", "informe.txt", "el nombre del campo",
+                 # S10, Commodities: su atajo se pulsa tras guarda (abajo), así que guarda no las espera.
+                 "[commodity-prueba]", "commodity Prueba se va")
+# S10, Commodities: cuántas veces se pulsó Ctrl+Alt+K (una por cada "pulsa" de la prueba, hasta 6).
+commodity_pulsadas = 0
 guarda_paso = 0
 guarda_desde = 0
 guarda_mirado = 0
@@ -299,6 +303,12 @@ while time.time() - inicio < total:
                 guarda_paso, guarda_desde = guarda_paso + 1, time.time()
             time.sleep(0.25)
             continue
+        # S10, Commodities: acabado guarda (o sin él), cada vez que `commodity-prueba` pide su atajo, Ctrl+Alt+K. Si el
+        # atajo funciona no llega a ninguna ventana; si no, a la que tenga el teclado (y la prueba lo dirá).
+        if (guarda_paso >= 9 or not guarda_suyas) and commodity_pulsadas < 6 and texto.count("[commodity-prueba] pulsa Ctrl+Alt+K") > commodity_pulsadas:
+            commodity_pulsadas += 1
+            time.sleep(0.5)
+            mandar("sendkey ctrl-alt-k")
         # Los pasos de las capturas de la caja Amiga (GadTools, el ejemplo de Dash y el requester), al principio de la
         # vuelta: los pasos de más abajo esperan con "continue" y no se llegaría a ellos.
         libre_caja = texto.count("[guardian] pregunta en pantalla: ") <= texto.count("El usuario dice ")

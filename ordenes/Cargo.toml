@@ -133,3 +133,15 @@ test = false
 name = "orden-wait"
 path = "src/bin/sueltas/wait.rs"
 test = false
+
+# S10, Commodities (docs/bitacoras/commodities.md): FKey (SYS:Tools/Commodities) y Exchange (SYS:C y
+# SYS:Tools/Commodities). Comparten con `usuario/` el cliente de Wayland y el de las commodities.
+[[bin]]
+name = "fkey"
+path = "src/bin/fkey.rs"
+test = false
+
+[[bin]]
+name = "exchange"
+path = "src/bin/exchange.rs"
+test = false

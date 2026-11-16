@@ -228,6 +228,17 @@ pub const LARGO_AVISO_PERSONA: usize = 32;
 pub const AVISO_DETRAS: u32 = 0x5536_0002;
 pub const LARGO_AVISO_DETRAS: usize = 40;
 pub const MAX_DETRAS: usize = 8;
+/// S10, Commodities (`docs/bitacoras/commodities.md`): los permisos de commodities de un programa, al compositor.
+/// Orden, permisos (u32, los `PODER_*`), su marca (u64), dar (1) o quitar (0) (u32) y 4 de relleno: 24 bytes. Número
+/// alto, aparte de los de U6. Los mismos números en `wayland::escena` y `wayland::escena::commodities`.
+pub const AVISO_PODER: u32 = 0x5536_0010;
+pub const LARGO_AVISO_PODER: usize = 24;
+pub const PODER_ATAJOS: u32 = 1;
+pub const PODER_FONDO: u32 = 2;
+pub const PODER_COMMODITIES: u32 = 4;
+/// Los permisos que no dan una llave sino un poder del compositor (S10): su nombre y su bit. Su frase en llano está con
+/// las de los demás, en `permisos_texto::FRASES`.
+pub const PODERES_COMPOSITOR: &[(&str, u32)] = &[("atajos", PODER_ATAJOS), ("fondo", PODER_FONDO), ("commodities", PODER_COMMODITIES)];
 /// Las personas tienen el usuario 1000 o más (S6b); lo de debajo es del sistema. Un programa ve los procesos de su
 /// usuario y los del sistema, no los de otras personas (U6).
 pub const PRIMERA_PERSONA: u32 = 1000;

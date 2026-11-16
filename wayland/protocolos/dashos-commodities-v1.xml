@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="dashos_commodities_v1">
+  <copyright>
+    Protocolo propio de DashOS (S10, Commodities y Exchange; `docs/bitacoras/commodities.md`). Licencia MPL-2.0, como
+    el resto de DashOS.
+  </copyright>
+
+  <interface name="dashos_commodities_v1" version="1">
+    <description summary="commodities: lo concreto que un programa pide al compositor, sin ver toda la entrada">
+      El compositor solo anuncia este global a quien tiene alguno de los permisos `atajos`, `fondo` o `commodities`
+      (S6b), que le dice `sesiones`. Cada petición comprueba el suyo: sin él, error de protocolo.
+    </description>
+
+    <enum name="error">
+      <entry name="sin_permiso" value="0" summary="la petición necesita un permiso que el programa no tiene"/>
+      <entry name="demasiados" value="1" summary="demasiadas commodities o Exchange"/>
+      <entry name="no_vale" value="2" summary="un argumento que no vale (un texto demasiado largo, un número que no existe)"/>
+    </enum>
+
+    <request name="destroy" type="destructor"/>
+
+    <request name="registrar">
+      <description summary="darse de alta como commodity">
+        Con el permiso `atajos` o `fondo`. El nombre (como mucho 32 bytes) es el que se ve en Exchange y el que usa la
+        orden; el título y la descripción (64 y 128 bytes), lo que enseña Exchange. Como mucho 4 por programa.
+      </description>
+      <arg name="id" type="new_id" interface="dashos_commodity_v1"/>
+      <arg name="nombre" type="string"/>
+      <arg name="titulo" type="string"/>
+      <arg name="descripcion" type="string"/>
+    </request>
+
+    <request name="vigilar">
+      <description summary="ver y manejar las commodities (Exchange)">
+        Con el permiso `commodities`. Solo las de la misma persona. Como mucho 8 a la vez.
+      </description>
+      <arg name="id" type="new_id" interface="dashos_exchange_v1"/>
+    </request>
+  </interface>
+
+  <interface name="dashos_commodity_v1" version="1">
+    <description summary="una commodity">
+      Lo que pide y lo que recibe. Al destruirla, o al irse el programa, el compositor suelta sus atajos y apaga sus
+      comportamientos.
+    </description>
+
+    <enum name="motivo">
+      <entry name="no_vale" value="1" summary="mal escrita, o sin Ctrl y Alt a la vez (Ctrl o Alt solos son los atajos de los programas)"/>
+      <entry name="reservado" value="2" summary="es del sistema: Super, AltGr, Ctrl+Alt+Supr, Ctrl+Alt+Retroceso, el volumen"/>
+      <entry name="ocupado" value="3" summary="otra commodity de la misma persona ya la tiene"/>
+      <entry name="demasiados" value="4" summary="32 por programa o 256 en total"/>
+    </enum>
+
+    <enum name="comportamiento">
+      <entry name="sin_bloq_mayus" value="1" summary="NoCapsLock: Bloq Mayús no llega a nadie"/>
+    </enum>
+
+    <enum name="permiso">
+      <entry name="atajos" value="1"/>
+      <entry name="fondo" value="2"/>
+    </enum>
+
+    <request name="destroy" type="destructor"/>
+
+    <request name="atajo">
+      <description summary="pedir una combinación de teclas">
+        Con el permiso `atajos`. Una combinación como "Ctrl+Alt+F" o, como en el Amiga, "ctrl alt f" (como mucho 64
+        bytes). El número lo pone la commodity y vuelve en `pulsado`. Si no se le da, `atajo_negado`. Un número ya
+        usado cambia su combinación.
+      </description>
+      <arg name="numero" type="uint"/>
+      <arg name="combinacion" type="string"/>
+    </request>
+
+    <request name="quitar_atajo">
+      <arg name="numero" type="uint"/>
+    </request>
+
+    <request name="inactividad">
+      <description summary="avisar tras un rato sin tocar el teclado ni el ratón">
+        Con el permiso `fondo`. Segundos; de menos de 10, 10. 0 lo quita. Una por commodity: otra la sustituye.
+      </description>
+      <arg name="segundos" type="uint"/>
+    </request>
+
+    <request name="oscurecer">
+      <description summary="apagar la pantalla hasta la siguiente entrada">
+        Con el permiso `fondo`, y solo si ahora está inactiva (tras `inactivo` 1, sin entrada después); si no, no hace
+        nada. El compositor pinta la pantalla de negro; la tecla o el clic que la despierta no llega a nadie.
+      </description>
+    </request>
+
+    <request name="comportamiento">
+      <description summary="activar o quitar un comportamiento del compositor">
+        Con el permiso `fondo`. Dura mientras la commodity viva y esté activa.
+      </description>
+      <arg name="cual" type="uint" enum="comportamiento"/>
+      <arg name="activo" type="uint"/>
+    </request>
+
+    <event name="pulsado">
+      <description summary="se pulsó su combinación"/>
+      <arg name="numero" type="uint"/>
+    </event>
+
+    <event name="atajo_negado">
+      <description summary="no se le da la combinación">
+        Con el motivo y, si está ocupada, el nombre de la commodity que la tiene (si no, vacío).
+      </description>
+      <arg name="numero" type="uint"/>
+      <arg name="motivo" type="uint" enum="motivo"/>
+      <arg name="quien" type="string"/>
+    </event>
+
+    <event name="activo">
+      <description summary="Exchange la activó o la desactivó"/>
+      <arg name="si" type="uint"/>
+    </event>
+
+    <event name="ensenar">
+      <description summary="Exchange pide que enseñe su ventana"/>
+    </event>
+
+    <event name="quitar">
+      <description summary="Exchange pide que se vaya"/>
+    </event>
+
+    <event name="inactivo">
+      <description summary="1: se cumplió su plazo sin entrada; 0: vuelve a haber entrada"/>
+      <arg name="si" type="uint"/>
+    </event>
+
+    <event name="retirado">
+      <description summary="se le quitó un permiso: lo que dependía de él ya no está"/>
+      <arg name="permiso" type="uint" enum="permiso"/>
+    </event>
+  </interface>
+
+  <interface name="dashos_exchange_v1" version="1">
+    <description summary="Exchange: la lista de commodities y sus mandos">
+      Al crearse recibe cada commodity (con sus atajos), los ajustes y `listo`; después, los cambios.
+    </description>
+
+    <enum name="ajuste">
+      <entry name="clicktofront" value="1" summary="0: un clic sube la ventana (de serie); 1: el clic da el teclado y el doble clic la sube"/>
+      <entry name="autopoint" value="2" summary="0: no (de serie); 1: la ventana bajo el ratón se lleva el teclado"/>
+    </enum>
+
+    <request name="destroy" type="destructor"/>
+
+    <request name="activar">
+      <arg name="id" type="uint"/>
+      <arg name="si" type="uint"/>
+    </request>
+
+    <request name="ensenar">
+      <arg name="id" type="uint"/>
+    </request>
+
+    <request name="quitar">
+      <arg name="id" type="uint"/>
+    </request>
+
+    <request name="ajuste">
+      <arg name="cual" type="uint" enum="ajuste"/>
+      <arg name="valor" type="uint"/>
+    </request>
+
+    <event name="commodity">
+      <description summary="una commodity nueva, o que cambió">
+        El número (lo pone el compositor), su nombre, título y descripción, el programa (el nombre que le dio el
+        sistema) y si está activa.
+      </description>
+      <arg name="id" type="uint"/>
+      <arg name="nombre" type="string"/>
+      <arg name="titulo" type="string"/>
+      <arg name="descripcion" type="string"/>
+      <arg name="programa" type="string"/>
+      <arg name="activa" type="uint"/>
+    </event>
+
+    <event name="atajo">
+      <description summary="una combinación de una commodity y su estado">
+        Estado 0: es suya; si no, el motivo de `atajo_negado`. Tras `commodity`, todas las suyas; después, cada cambio.
+        Una combinación vacía con estado 0: la quitó.
+      </description>
+      <arg name="id" type="uint"/>
+      <arg name="numero" type="uint"/>
+      <arg name="combinacion" type="string"/>
+      <arg name="estado" type="uint"/>
+    </event>
+
+    <event name="fuera">
+      <description summary="la commodity se fue"/>
+      <arg name="id" type="uint"/>
+    </event>
+
+    <event name="ajuste">
+      <arg name="cual" type="uint" enum="ajuste"/>
+      <arg name="valor" type="uint"/>
+    </event>
+
+    <event name="listo">
+      <description summary="acabó la lista de al crearse"/>
+    </event>
+  </interface>
+</protocol>

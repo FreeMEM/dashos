@@ -28,6 +28,9 @@ pub mod portapapeles;
 // S29: la marca de las ventanas de las cajas, en su fichero.
 #[path = "marca.rs"]
 pub mod marca;
+// S10: Commodities y Exchange (atajos, inactividad, oscurecer, comportamientos), en su fichero.
+#[path = "commodities.rs"]
+pub mod commodities;
 
 /// Errores de `zwp_linux_buffer_params_v1` (de `linux-dmabuf-v1.xml`, G6).
 pub const DMABUF_USADO: u32 = 0;
@@ -677,6 +680,8 @@ pub struct Escena<M: Memorias> {
     /// compositor del PC, sin teclado ni ratón, lo quita. Y a quién se le negó, para que quien atiende lo diga.
     pub pegar_con_entrada: bool,
     pub pegados_negados: Vec<Cliente>,
+    /// S10: las commodities, sus atajos y los ajustes ClickToFront y AutoPoint (`commodities`).
+    pub cx: commodities::Estado,
 }
 
 /// U6: cada cuánto reciben sus avisos de `frame` las ventanas de una sesión de detrás (no se pintan, pero así no se
@@ -692,6 +697,10 @@ pub const AVISO_DETRAS: u32 = 0x5536_0002;
 pub const LARGO_AVISO_PERSONA: usize = 32;
 pub const LARGO_AVISO_DETRAS: usize = 40;
 pub const MAX_DETRAS: usize = 8;
+/// S10: los permisos de commodities de un cliente (`commodities::PODER_*`): orden, permisos (u32), marca (u64), dar (1)
+/// o quitar (0) (u32) y 4 de relleno: 24 bytes. Número alto, aparte de los de U6.
+pub const AVISO_PODER: u32 = 0x5536_0010;
+pub const LARGO_AVISO_PODER: usize = 24;
 /// El primer usuario de una persona (los de debajo son del sistema).
 pub const PRIMERA_PERSONA: u32 = 1000;
 
@@ -701,6 +710,8 @@ pub const PRIMERA_PERSONA: u32 = 1000;
 pub enum AvisoSesiones {
     Persona { marca: Cliente, uid: u32, nombre: [u8; 16] },
     Detras(Vec<u32>),
+    /// S10: los permisos de commodities de un cliente, antes y después.
+    Poder { marca: Cliente, antes: u32, despues: u32 },
 }
 
 /// Un aviso de inactividad pedido (U3).
@@ -873,6 +884,7 @@ impl<M: Memorias> Escena<M> {
             pestana_amiga: marca::Pestana::de_pixeles(marca::TEXTO_AMIGA, marca::COLOR_AMIGA, marca::TINTA_AMIGA),
             pegar_con_entrada: true,
             pegados_negados: Vec::new(),
+            cx: Default::default(),
         }
     }
 
@@ -1131,12 +1143,23 @@ impl<M: Memorias> Escena<M> {
                 } else {
                     self.personas.remove(&cliente);
                 }
+                // S10: "que se olvide" (uid 0, el programa acabó): sus permisos de commodities también.
+                if uid == 0 {
+                    self.cx.poderes.remove(&cliente);
+                }
                 AvisoSesiones::Persona { marca: cliente, uid, nombre: m[16..32].try_into().unwrap() }
             }
             (AVISO_DETRAS, LARGO_AVISO_DETRAS) => {
                 let n = (palabra(4) as usize).min(MAX_DETRAS);
                 self.detras = (0..n).map(|i| palabra(8 + 4 * i)).filter(|&u| u >= PRIMERA_PERSONA).collect();
                 AvisoSesiones::Detras(self.detras.clone())
+            }
+            // S10: no cambia quién se ve: vuelve sin recomponer.
+            (AVISO_PODER, LARGO_AVISO_PODER) => {
+                let cliente = u64::from_le_bytes(m[8..16].try_into().unwrap());
+                let antes = self.cx.poderes_de(cliente);
+                let despues = self.poner_poderes(cliente, palabra(4), palabra(16) != 0);
+                return Some(AvisoSesiones::Poder { marca: cliente, antes, despues });
             }
             _ => return None,
         };
@@ -1223,6 +1246,7 @@ impl<M: Memorias> Escena<M> {
 
     /// Hubo entrada (U3): los avisos de inactividad vuelven a contar desde ahora, y a los que ya avisaron, `resumed`.
     fn actividad(&mut self) {
+        self.commodities_actividad();
         let ahora = self.reloj_ms;
         for i in &mut self.inactividad {
             i.desde_ms = ahora;
@@ -1310,7 +1334,8 @@ impl<M: Memorias> Escena<M> {
     /// milisegundos faltan para el siguiente, si queda alguno por vencer.
     pub fn revisar_inactividad(&mut self) -> Option<u32> {
         let ahora = self.reloj_ms;
-        let mut falta: Option<u32> = None;
+        // S10: también los plazos de las commodities (Blanker).
+        let mut falta: Option<u32> = self.commodities_inactividad();
         for i in &mut self.inactividad {
             if i.avisado {
                 continue;
@@ -1341,6 +1366,8 @@ impl<M: Memorias> Escena<M> {
         }
         self.inactividad.retain(|i| i.cliente != cliente);
         self.avisos_inactividad.retain(|a| a.0 != cliente);
+        // S10: sus commodities (sus atajos quedan libres) y sus Exchange.
+        self.commodities_adios(cliente);
         self.del_sistema.retain(|&c| c != cliente);
         self.temas.retain(|t| t.0 != cliente);
         self.avisos_tema.retain(|t| t.0 != cliente);
@@ -2026,8 +2053,18 @@ impl<M: Memorias> Escena<M> {
                 }
             }
         }
+        // S10: con la pantalla apagada (Blanker), negro encima de todo y sin cursor. Lo de debajo se compone igual: así
+        // los avisos de frame siguen saliendo y al despertar no hay nada atrasado.
+        if self.cx.oscuro {
+            for d in &danos {
+                for fila in d.y..d.y + d.h {
+                    let i = fila as usize * linea + d.x as usize;
+                    pantalla[i..i + d.w as usize].fill(0xFF00_0000);
+                }
+            }
+        }
         // El cursor, encima de todo.
-        for d in danos.iter().filter(|_| self.con_cursor) {
+        for d in danos.iter().filter(|_| self.con_cursor && !self.cx.oscuro) {
             let r = cursor_rect(self.cursor).cruce(*d);
             for fila in r.y..r.y + r.h {
                 for col in r.x..r.x + r.w {
@@ -2146,6 +2183,10 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
             return r;
         }
         if let Some(r) = self.emergentes(con, interfaz.name, objeto, orden, args) {
+            return r;
+        }
+        // S10: las commodities y Exchange.
+        if let Some(r) = self.commodities(con, interfaz.name, objeto, orden, args) {
             return r;
         }
         let escena = &mut *self.escena;
@@ -3274,6 +3315,8 @@ impl<M: Memorias> Escena<M> {
     /// Un evento del ratón de arranque: movimiento relativo y botones (bit 0 izquierdo, 1 derecho, 2 central).
     pub fn raton(&mut self, dx: i32, dy: i32, botones: u8) -> Vec<(Cliente, Entrada)> {
         let mut out = Vec::new();
+        // S10: el botón que despierta la pantalla apagada no llega a nadie.
+        let botones = self.commodities_botones(botones);
         self.actividad();
         let antes = self.cursor;
         if !self.con_cursor {
@@ -3397,6 +3440,10 @@ impl<M: Memorias> Escena<M> {
                 out.push((c, Entrada::Entra { superficie: s, x, y }));
             }
             self.puntero = ahora;
+            // S10, AutoPoint: sin botones, la ventana bajo el ratón se lleva el teclado (si está puesto).
+            if botones == 0 && self.botones == 0 && let Some(v) = ahora {
+                self.autopoint(v, &mut out);
+            }
         } else if let (Some(((c, _), x, y)), true) = (bajo, self.cursor != antes) {
             out.push((c, Entrada::Mueve { x, y }));
         }
@@ -3423,7 +3470,8 @@ impl<M: Memorias> Escena<M> {
                     match cli.superficies.get(&r).and_then(|s| s.capa).and_then(|id| cli.capas.get(&id)) {
                         Some(c) if c.actual.teclado != 0 => self.dar_teclado((v.0, r), &mut out),
                         Some(_) => {}
-                        None => self.activar((v.0, r), &mut out),
+                        // S10, ClickToFront: con "doble clic", el clic solo da el teclado.
+                        None => self.pulsar_ventana((v.0, r), bit == 0, &mut out),
                     }
                 }
             if let Some((c, _)) = self.puntero {
@@ -3441,6 +3489,12 @@ impl<M: Memorias> Escena<M> {
         if hid == 0 || self.arrastre.is_some() {
             return out;
         }
+        // S10: con la pantalla apagada, la rueda la despierta y no llega a nadie.
+        if self.cx.oscuro {
+            self.despertar();
+            self.actividad();
+            return out;
+        }
         self.actividad();
         if let Some((c, _)) = self.puntero {
             // En Wayland el eje vertical crece hacia abajo; en HID, la rueda hacia delante (arriba) es positiva.
@@ -3456,6 +3510,11 @@ impl<M: Memorias> Escena<M> {
         self.actividad();
         if pulsada {
             self.ultima_tecla_ms = Some(self.reloj_ms);
+        }
+        // S10: los atajos de las commodities, Bloq Mayús (NoCapsLock) y la tecla que despierta la pantalla: no llegan a
+        // la ventana.
+        if self.commodities_tecla(uso, codigo, pulsada) {
+            return out;
         }
         let mascara = match uso {
             0xE1 | 0xE5 => 1,
