@@ -269,7 +269,7 @@ espacio cuesta) y B (cifrar fichero a fichero, como fscrypt: más complicado par
   (volúmenes que se crean y se borran, instantáneas en cada uno, dos volúmenes en una transacción, reabrir); al
   final, borrado todo, vuelve todo el espacio. Cortes de luz: 4 pasos más con volúmenes. Si el comprobador no
   recorre los otros volúmenes, las pruebas fallan (bloques perdidos).
-  Pendiente: el máximo por volumen se guarda pero no se aplica; reparar dentro de otros volúmenes (FS10d); el
+  El máximo por volumen se aplica desde S32 (2026-11-15, `docs/bitacoras/dashfs-tamano.md`). Pendiente: reparar dentro de otros volúmenes (FS10d); el
   montaje FUSE y el servicio de DashOS solo ven el principal (FS10e).
   QEMU: `arranque-virt` bien (con el disco leído en Linux). `prueba` (raspi4b) falló una vez en
   `[grupos] cupo agotado` (C43), con el emulador cargado por otras sesiones, y salió bien al repetirla: nada que

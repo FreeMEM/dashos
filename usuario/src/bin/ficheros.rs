@@ -648,7 +648,64 @@ fn principal() -> u64 {
     let hecho = c.pedir(HACER_VOLUMEN, 0, 0, 0, "Temporal");
     let t = c.pedir(VOLUMEN, 0, 0, 0, "Temporal");
     let g = c.pedir(CREAR, t.asa, ARCHIVO, 0, "x");
+    // S32, su tope: 80 KB. Pasarlo da LLENO en él y no en el principal; sin tope, cabe. Lo que se escribe no se
+    // comprime (si no, ocuparía un bloque).
+    let tope = {
+        let puesto = c.pedir(CUOTA, 0, 80 * 1024, 1, "Temporal");
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        for b in c.ventana_mut()[..32 * 1024].iter_mut() {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            *b = x as u8;
+        }
+        let cabe = c.pedir(ESCRIBIR, g.asa, 0, 32 * 1024, "");
+        let usado = c.pedir(CUOTA, 0, 0, 0, "Temporal");
+        let h = c.pedir(CREAR, t.asa, ARCHIVO, 0, "y");
+        let no_cabe = c.pedir(ESCRIBIR, h.asa, 0, 32 * 1024, "");
+        // En el principal sí.
+        let escrito = c.pedir(BUSCAR, 0, 0, 0, "Escrito");
+        let p = c.pedir(CREAR, escrito.asa, ARCHIVO, 0, "tope.bin");
+        let fuera = c.pedir(ESCRIBIR, p.asa, 0, 32 * 1024, "");
+        c.pedir(CERRAR, p.asa, 0, 0, "");
+        let borrado = c.pedir(BORRAR, escrito.asa, 0, 0, "tope.bin").estado == 0;
+        c.pedir(CERRAR, escrito.asa, 0, 0, "");
+        let quitado = c.pedir(CUOTA, 0, 0, 1, "Temporal");
+        let ahora = c.pedir(ESCRIBIR, h.asa, 0, 32 * 1024, "");
+        c.pedir(CERRAR, h.asa, 0, 0, "");
+        let bien = puesto.estado == 0
+            && puesto.b == 80 * 1024
+            && cabe.a == 32 * 1024
+            && usado.estado == 0
+            && usado.a >= 32 * 1024
+            && usado.a <= 80 * 1024
+            && no_cabe.estado == LLENO
+            && fuera.a == 32 * 1024
+            && borrado
+            && quitado.estado == 0
+            && quitado.b == 0
+            && ahora.a == 32 * 1024
+            && c.pedir(CUOTA, 0, 0, 0, "").estado == MAL_FORMADO
+            && c.pedir(CUOTA, 0, 0, 0, "No está").estado == NO_EXISTE;
+        if !bien {
+            println!("  [ficheros] S32 tope: puesto {} {}, cabe {} {}, usado {} {}, no cabe {} {}, fuera {} {}, quitado {} {}, ahora {} {}", puesto.estado, puesto.b, cabe.estado, cabe.a, usado.estado, usado.a, no_cabe.estado, no_cabe.a, fuera.estado, fuera.a, quitado.estado, quitado.b, ahora.estado, ahora.a);
+        }
+        bien
+    };
+    // S32, crecer en uso: a todo el disco (lo que ya mide, o más si la partición es mayor), y no a menos ni a más.
+    let crecido = {
+        let todo = c.pedir(CRECER, 0, 0, 0, "");
+        let menos = c.pedir(CRECER, 0, 4096 * 1024, 0, "");
+        let mas = c.pedir(CRECER, 0, 1 << 50, 0, "");
+        let bien = todo.estado == 0 && todo.a >= 4096 * 1024 && menos.estado == MAL_FORMADO && mas.estado == MAL_FORMADO;
+        if !bien {
+            println!("  [ficheros] S32 crecer: todo {} {}, menos {}, más {}", todo.estado, todo.a, menos.estado, mas.estado);
+        }
+        bien
+    };
     let quitado = hecho.estado == 0
+        && tope
+        && crecido
         && g.estado == 0
         && c.pedir(QUITAR_VOLUMEN, 0, 0, 0, "Temporal").estado == EN_USO
         && c.pedir(CERRAR, g.asa, 0, 0, "").estado == 0

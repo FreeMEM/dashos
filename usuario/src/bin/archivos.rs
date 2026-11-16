@@ -1341,7 +1341,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
     let ficha = c.ficha;
     // Las órdenes de volúmenes, instantáneas y comprobación, solo con el derecho de administrar (A13). Pedir la raíz
     // propia (VOLUMEN sin nombre) no lo necesita.
-    let de_administrar = matches!(p.orden, COMPROBAR | SUJETAR | SOLTAR | INSTANTANEAS | TOMAR | DESCARTAR | VOLVER | VOLUMENES | HACER_VOLUMEN | QUITAR_VOLUMEN | ABRIR_VOLUMEN | CERRAR_VOLUMEN | COMPROBAR_CLAVE)
+    let de_administrar = matches!(p.orden, COMPROBAR | SUJETAR | SOLTAR | INSTANTANEAS | TOMAR | DESCARTAR | VOLVER | VOLUMENES | HACER_VOLUMEN | QUITAR_VOLUMEN | ABRIR_VOLUMEN | CERRAR_VOLUMEN | COMPROBAR_CLAVE | CRECER | CUOTA)
         || (p.orden == VOLUMEN && !p.nombre.is_empty());
     if de_administrar && ficha.derechos & D_ADMINISTRAR == 0 {
         return mal(PROTEGIDO);
@@ -2015,6 +2015,28 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 Err(e) => mal(estado_de(e)),
             }
         }
+        // S32: crecer en uso. Una transacción: añade los bloques nuevos al asignador y pone el tamaño.
+        CRECER => {
+            let pedido = if p.a == 0 { fs.disk.size().map(|t| t.saturating_sub(fs.block * BLOCK_SIZE)).unwrap_or(0) } else { p.a };
+            match fs.grow(pedido) {
+                Ok(tamano) => Respuesta { estado: BIEN, a: tamano, ..Default::default() },
+                Err(e) => mal(estado_de(Error::new(e.errno()))),
+            }
+        }
+        // S32: el tope de un volumen, y lo que usa.
+        CUOTA => {
+            let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
+            match fs.tx(|tx| {
+                let id = tx.find_volume(nombre)?;
+                if p.b == 1 {
+                    tx.set_volume_quota(id, p.a / BLOCK_SIZE)?;
+                }
+                tx.volume_space(id)
+            }) {
+                Ok((usado, tope)) => Respuesta { estado: BIEN, a: usado * BLOCK_SIZE, b: tope * BLOCK_SIZE, ..Default::default() },
+                Err(e) => mal(estado_de(e)),
+            }
+        }
         QUITAR_VOLUMEN => {
             let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
             match fs.tx(|tx| {
@@ -2462,7 +2484,7 @@ fn tras_guardar(clientes: &mut [Option<Cliente>], solo_lectura: &mut bool) {
 }
 
 /// Las que cambian instantáneas o volúmenes: raras, y van al disco en seguida.
-const SIEMPRE_AL_DISCO: &[u32] = &[TOMAR, DESCARTAR, VOLVER, HACER_VOLUMEN, QUITAR_VOLUMEN, ABRIR_VOLUMEN, CERRAR_VOLUMEN];
+const SIEMPRE_AL_DISCO: &[u32] = &[TOMAR, DESCARTAR, VOLVER, HACER_VOLUMEN, QUITAR_VOLUMEN, ABRIR_VOLUMEN, CERRAR_VOLUMEN, CRECER, CUOTA];
 
 /// Pone o quita el temporizador del siguiente guardado según quede algo por guardar.
 fn al_disco(fs: &Fs, plazo: &mut Option<(u64, u32)>) {

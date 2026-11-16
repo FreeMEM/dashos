@@ -61,6 +61,21 @@ Una app del escritorio (y su versión de órdenes) que hace lo mismo que el inst
    paquetes), encoger con el disco casi lleno, encoger por debajo de lo usado, una partición más pequeña que lo que
    dice la cabecera.
 
+**Hecho (2026-11-15, rama `dashfs-tamano`, `docs/bitacoras/dashfs-tamano.md`)**: los cuatro puntos, en
+`archivos/dashfs/src/resize.rs` (`FileSystem::grow`, `shrink`, `shrink_min`, `min_size`), `volume.rs` (la cuota) y
+`dashfs-resize`. Lo que conviene saber al escribir el instalador:
+
+- Encoger es sin montar (un sistema de archivos en uso da "en uso"), y un volumen cifrado cerrado con algo en el tramo
+  que se quita no deja encoger: hay que pedir su contraseña (`dashfs-resize --abrir`), porque el cifrado y la firma de
+  cada bloque llevan su dirección.
+- El mínimo depende de cómo esté repartido lo libre: los registros de 128 KiB necesitan hueco seguido. `shrink_min`
+  prueba desde lo usado más una reserva hacia arriba hasta que cabe.
+- El orden al encoger una partición: primero el sistema de archivos, luego la partición. Al revés (una cabecera que
+  dice más de lo que tiene la partición) el servicio no monta; el comprobador lo dice y, si en lo que falta no había
+  nada, encoger hasta la partición lo arregla.
+- Crecer es al revés: primero la partición, luego la orden 40 del servicio `archivos` (o `dashfs-resize` sin montar).
+  Falta que el servicio de disco diga el tamaño nuevo de una partición que ha cambiado sin reiniciar.
+
 ## Controladores: qué va de serie y qué se baja (decidido el 2026-11-15)
 
 **De serie, sin red, en el USB de instalación y luego instalados:**

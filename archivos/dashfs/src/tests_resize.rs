@@ -722,3 +722,183 @@ fn header_larger_than_the_disk() {
     assert!(matches!(lost.shrink(top - 3 * MB), Err(ResizeError::Io(_))));
     assert_eq!(lost.header.size(), size);
 }
+
+/// La medida de S32 (no es una prueba: `cargo test --release --lib medida_de_tamano -- --ignored --nocapture`): una
+/// imagen de 1 GiB medio llena, en un fichero, encogida; y crecer en uso entre escrituras.
+#[test]
+#[ignore]
+fn medida_de_tamano() {
+    use crate::DiskFile;
+    use std::time::Instant;
+    let path = std::env::var("DASHFS_MEDIDA").unwrap_or_else(|_| "target/medida.img".into());
+    let gb = 1024 * MB;
+    let disk = DiskFile::create(&path, gb).unwrap();
+    let mut fs = FileSystem::create(disk, None, 0, 0).unwrap();
+    let tx_put = |fs: &mut FileSystem<DiskFile>, name: &str, data: &[u8]| {
+        fs.tx(|tx| {
+            let node = tx.create_node(TreePtr::root(), name, FILE, 0, 0)?.ptr();
+            tx.write_node(node, 0, data, 0, 0).map(|_| ())
+        })
+        .unwrap();
+    };
+    // 256 MiB de relleno que luego se quita, y encima 512 MiB: 400 en ficheros de 8 MiB y 112 en ficheros de 16 KiB.
+    let big = noise(8 * MB as usize, 1);
+    for i in 0..32 {
+        tx_put(&mut fs, &format!("relleno{i}"), &big);
+    }
+    for i in 0..50 {
+        tx_put(&mut fs, &format!("grande{i}"), &big);
+    }
+    let small = noise(16 * 1024, 2);
+    for i in 0..7168 {
+        tx_put(&mut fs, &format!("corto{i}"), &small);
+    }
+    for i in 0..32 {
+        fs.tx(|tx| tx.remove_node(TreePtr::root(), &format!("relleno{i}"), crate::Node::MODE_FILE).map(|_| ())).unwrap();
+    }
+    let used = fs.used_blocks() * BLOCK_SIZE;
+    println!("imagen de 1 GiB, {} MiB en uso", used / MB);
+
+    let t = Instant::now();
+    let done = fs.shrink(768 * MB).unwrap();
+    println!("encoger a 768 MiB: {:.2} s, {} MiB mudados, {} transacciones", t.elapsed().as_secs_f64(), done.moved * BLOCK_SIZE / MB, done.transactions);
+    let t = Instant::now();
+    let done = fs.shrink_min().unwrap();
+    println!(
+        "encoger al mínimo ({} MiB): {:.2} s, {} MiB mudados, {} transacciones",
+        fs.header.size() / MB,
+        t.elapsed().as_secs_f64(),
+        done.moved * BLOCK_SIZE / MB,
+        done.transactions
+    );
+    let t = Instant::now();
+    let report = fs.tx(|tx| check::check(tx, Options { data: true }, true)).unwrap();
+    assert!(report.is_clean(), "{:?}", report.problems);
+    println!("comprobar con datos: {:.2} s", t.elapsed().as_secs_f64());
+
+    // Crecer en uso: escrituras de 64 KiB con guardado aplazado, guardando cada 20; en medio, crecer al GiB entero.
+    fs.grow(640 * MB).unwrap();
+    fs.deferred = true;
+    let chunk = noise(64 * 1024, 3);
+    let mut worst = (0.0f64, 0.0f64);
+    let mut grow = 0.0;
+    for i in 0..400 {
+        if i == 200 {
+            let t = Instant::now();
+            fs.grow(gb - fs.block * BLOCK_SIZE).unwrap();
+            grow = t.elapsed().as_secs_f64();
+        }
+        let t = Instant::now();
+        tx_put(&mut fs, &format!("mientras{i}"), &chunk);
+        let took = t.elapsed().as_secs_f64();
+        if i < 200 {
+            worst.0 = worst.0.max(took);
+        } else {
+            worst.1 = worst.1.max(took);
+        }
+        if i % 20 == 19 {
+            fs.durable().unwrap();
+        }
+    }
+    fs.durable().unwrap();
+    println!(
+        "crecer en uso: {:.0} µs; la escritura más lenta, antes {:.0} µs y después {:.0} µs",
+        grow * 1e6,
+        worst.0 * 1e6,
+        worst.1 * 1e6
+    );
+    let report = fs.tx(|tx| check::check(tx, Options::default(), true)).unwrap();
+    assert!(report.is_clean(), "{:?}", report.problems);
+    drop(fs);
+    std::fs::remove_file(&path).unwrap();
+}
+
+/// Un disco que deja de escribir a partir de una escritura: las siguientes dan error.
+struct FailDisk {
+    mem: DiskMemory,
+    left: usize,
+}
+
+impl Disk for FailDisk {
+    unsafe fn read_at(&mut self, block: u64, buffer: &mut [u8]) -> syscall::error::Result<usize> {
+        unsafe { self.mem.read_at(block, buffer) }
+    }
+
+    unsafe fn write_at(&mut self, block: u64, buffer: &[u8]) -> syscall::error::Result<usize> {
+        if self.left == 0 {
+            return Err(syscall::error::Error::new(syscall::error::EIO));
+        }
+        self.left -= 1;
+        unsafe { self.mem.write_at(block, buffer) }
+    }
+
+    fn size(&mut self) -> syscall::error::Result<u64> {
+        self.mem.size()
+    }
+}
+
+/// Un fallo de escritura del disco en cada punto de encoger y de crecer: la operación da el error del disco, y lo que
+/// queda en él es válido, del tamaño de antes, con todo lo que tenía. Arreglado el disco, se puede repetir.
+#[test]
+fn write_error_while_resizing() {
+    let mut fs = new_fs(20);
+    let mut state = State::new();
+    put(&mut fs, 0, "relleno", &noise(6 * MB as usize, 99));
+    for i in 0..40 {
+        put(&mut fs, 0, &format!("f{i}"), &noise(if i % 3 == 0 { 40_000 } else { 900 * i }, i as u64));
+    }
+    remove(&mut fs, 0, "relleno");
+    snapshot(&mut fs, &mut state, 0, "una");
+    remove(&mut fs, 0, "f6");
+    let datos = fs.tx(|tx| tx.create_volume("Datos", 1, 0)).unwrap();
+    for i in 0..20 {
+        put(&mut fs, datos, &format!("d{i}"), &noise(5000 + 700 * i, 50 + i as u64));
+    }
+    note(&mut fs, &mut state, &[0, datos]);
+    let block = fs.block;
+    let full = fs.header.size();
+    let target = fs.min_size() + 40 * BLOCK_SIZE;
+    let mut image = fs.disk;
+
+    for grow in [false, true] {
+        let (old, new) = if grow { (target, full) } else { (full, target) };
+        let mut worked = false;
+        for fail_at in 0.. {
+            let disk = FailDisk { mem: copy(&mut image), left: fail_at };
+            let mut fs = FileSystem::open(disk, None, Some(block), false).unwrap();
+            let done = if grow { fs.grow(new).map(|_| ()) } else { fs.shrink_by(new, 24).map(|_| ()) };
+            let what = format!("fallo en la escritura {fail_at} de {}", if grow { "crecer" } else { "encoger" });
+            match done {
+                Ok(()) => {
+                    worked = true;
+                    assert_eq!(fs.header.size(), new, "{what}");
+                }
+                Err(err) => {
+                    assert!(matches!(err, ResizeError::Io(_)), "{what}: {err:?}");
+                    // En memoria sigue como estaba; y en el disco, también.
+                    assert_eq!(fs.header.size(), old, "{what}");
+                }
+            }
+            let mut after = Fs::open(fs.disk.mem, None, Some(block), false)
+                .unwrap_or_else(|e| panic!("{what}: no abre: {e}"));
+            assert_eq!(after.header.size(), if worked { new } else { old }, "{what}");
+            assert_clean(&mut after, &what);
+            verify(&mut after, &state, &what);
+            if worked {
+                assert!(fail_at >= 2, "{what}");
+                image = after.disk;
+                break;
+            }
+            // Arreglado el disco, de vez en cuando: se acaba lo empezado.
+            if fail_at % 9 == 4 {
+                if grow {
+                    after.grow(new).unwrap();
+                } else {
+                    after.shrink(new).unwrap();
+                }
+                assert_clean(&mut after, &format!("{what}, y repetir"));
+                verify(&mut after, &state, &format!("{what}, y repetir"));
+            }
+        }
+    }
+}
