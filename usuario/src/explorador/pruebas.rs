@@ -14,6 +14,19 @@ mod logica;
 #[path = "ops.rs"]
 #[allow(dead_code)]
 mod ops;
+/// Los textos con huecos, como en el programa (ese fichero del crate `idioma` no depende de nada).
+#[path = "../../../idioma/src/formato.rs"]
+#[allow(dead_code)]
+mod formato;
+
+/// Los idiomas, de mentira: aquí no hay catálogo, y cada texto sale como está en el código.
+pub fn tr(_: u32, t: &'static str) -> &'static str {
+    t
+}
+
+pub fn trf(_: u32, t: &'static str, v: &[&dyn core::fmt::Display]) -> String {
+    formato::poner(t, v)
+}
 
 use archivos as a;
 use logica::*;

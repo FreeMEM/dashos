@@ -1,0 +1,535 @@
+## version $VER: explorador.catalog 1.0 (15.11.2026)
+## language english
+## codeset 106
+;
+MSG_1
+Home
+; Carpeta personal
+MSG_2
+Trash
+; Papelera
+MSG_3
+Search \"{}\"
+; Buscar \"{}\"
+MSG_4
+Files
+; Archivos
+MSG_5
+You do not have permission to view this folder
+; No tienes permiso para ver esta carpeta
+MSG_6
+\"{}\" is running
+; \"{}\" está en marcha
+MSG_7
+\"{}\" could not be started ({})
+; \"{}\" no se pudo lanzar ({})
+MSG_8
+There is no program to open \"{}\" ({})
+; No hay ningún programa para abrir \"{}\" ({})
+MSG_9
+Move \"{}\" to Trash
+; Mover \"{}\" a la papelera
+MSG_10
+Move {} items to Trash
+; Mover {} elementos a la papelera
+MSG_11
+\"{}\" moved to Trash
+; \"{}\" se ha movido a la papelera
+MSG_12
+{} items moved to Trash
+; {} elementos movidos a la papelera
+MSG_13
+One item restored
+; Un elemento restaurado
+MSG_14
+{} items restored
+; {} elementos restaurados
+MSG_15
+One item permanently deleted
+; Un elemento borrado para siempre
+MSG_16
+{} items permanently deleted
+; {} elementos borrados para siempre
+MSG_17
+One item moved
+; Un elemento movido
+MSG_18
+{} items moved
+; {} elementos movidos
+MSG_19
+One item copied
+; Un elemento copiado
+MSG_20
+{} items copied
+; {} elementos copiados
+MSG_21
+Permanently delete \"{}\"?
+; ¿Borrar \"{}\" para siempre?
+MSG_22
+Permanently delete {} items?
+; ¿Borrar {} elementos para siempre?
+MSG_23
+There is no Trash here: this cannot be undone.
+; Aquí no hay papelera: no se podrá recuperar.
+MSG_24
+This cannot be undone.
+; No se podrá recuperar.
+MSG_25
+Delete
+; Borrar
+MSG_26
+Delete \"{}\"
+; Borrar \"{}\"
+MSG_27
+Delete {} items
+; Borrar {} elementos
+MSG_28
+Restore \"{}\"
+; Restaurar \"{}\"
+MSG_29
+Restore {} items
+; Restaurar {} elementos
+MSG_30
+Trash is already empty
+; La papelera ya está vacía
+MSG_31
+Empty Trash?
+; ¿Vaciar la papelera?
+MSG_32
+{} item will be permanently deleted.
+; Se borrará para siempre {} elemento.
+MSG_33
+{} items will be permanently deleted.
+; Se borrarán para siempre {} elementos.
+MSG_34
+Empty
+; Vaciar
+MSG_35
+\"{}\" ready to move
+; \"{}\" listo para mover
+MSG_36
+\"{}\" ready to copy
+; \"{}\" listo para copiar
+MSG_37
+{} items ready to move
+; {} elementos listos para mover
+MSG_38
+{} items ready to copy
+; {} elementos listos para copiar
+MSG_39
+Move \"{}\" to {}
+; Mover \"{}\" a {}
+MSG_40
+Move {} items to {}
+; Mover {} elementos a {}
+MSG_41
+Copy \"{}\" to {}
+; Copiar \"{}\" a {}
+MSG_42
+Copy {} items to {}
+; Copiar {} elementos a {}
+MSG_43
+\"{}\" is now called \"{}\"
+; \"{}\" ahora se llama \"{}\"
+MSG_44
+New Folder
+; Carpeta nueva
+MSG_45
+Create
+; Crear
+MSG_46
+Untitled Folder
+; Carpeta sin nombre
+MSG_47
+Rename
+; Cambiar el nombre
+MSG_48
+Rename
+; Cambiar
+MSG_49
+The name cannot contain \"/\" or \":\"
+; El nombre no puede llevar \"/\" ni \":\"
+MSG_50
+\".\" and \"..\" are not valid names
+; \".\" y \"..\" no valen como nombre
+MSG_51
+Enter a name
+; Escribe un nombre
+MSG_52
+That name is not valid
+; Ese nombre no vale
+MSG_53
+There is already a folder or file with that name
+; Ya hay una carpeta o un fichero con ese nombre
+MSG_54
+There is already another one with that name
+; Ya hay otro con ese nombre
+MSG_55
+Could not create \"{}\": {}
+; No se pudo crear \"{}\": {}
+MSG_56
+Could not rename: {}
+; No se pudo cambiar el nombre: {}
+MSG_57
+\"{}\" is running (it does not receive the file yet)
+; \"{}\" está en marcha (aún no recibe el fichero)
+MSG_58
+SYS: is read-only
+; Por SYS: solo se puede leer
+MSG_59
+Only its owner can change it
+; Solo lo puede cambiar su dueño
+MSG_60
+Folder
+; Carpeta
+MSG_61
+{} · modified: {}
+; {} · cambiado: {}
+MSG_62
+Owner: user {} (you) · group {} · in {}
+; Dueño: usuario {} (tú) · grupo {} · en {}
+MSG_63
+Owner: user {} · group {} · in {}
+; Dueño: usuario {} · grupo {} · en {}
+MSG_64
+Comment
+; Comentario
+MSG_65
+Cancel
+; Cancelar
+MSG_66
+Close
+; Cerrar
+MSG_67
+Save
+; Guardar
+MSG_68
+The comment is too long
+; El comentario es demasiado largo
+MSG_69
+Could not change the comment
+; No se pudo cambiar el comentario
+MSG_70
+Could not change the protection
+; No se pudo cambiar la protección
+MSG_71
+Hide Hidden Files
+; Esconder los ocultos
+MSG_72
+Show Hidden Files
+; Mostrar los ocultos
+MSG_73
+Restore
+; Restaurar
+MSG_74
+Delete Permanently
+; Borrar para siempre
+MSG_75
+Properties
+; Propiedades
+MSG_76
+Open
+; Abrir
+MSG_77
+Open in New Tab
+; Abrir en una pestaña nueva
+MSG_78
+Open With…
+; Abrir con…
+MSG_79
+Cut
+; Cortar
+MSG_80
+Copy
+; Copiar
+MSG_81
+Paste Into Folder
+; Pegar dentro
+MSG_82
+Rename…
+; Cambiar el nombre…
+MSG_83
+Move to Trash
+; Mover a la papelera
+MSG_84
+Delete Permanently…
+; Borrar para siempre…
+MSG_85
+Empty Trash
+; Vaciar la papelera
+MSG_86
+Select All
+; Elegir todo
+MSG_87
+New Folder…
+; Carpeta nueva…
+MSG_88
+Paste
+; Pegar
+MSG_89
+New Window
+; Ventana nueva
+MSG_90
+New Tab
+; Pestaña nueva
+MSG_91
+Icons
+; Iconos
+MSG_92
+List
+; Lista
+MSG_93
+Reload
+; Volver a leer
+MSG_94
+that path is not valid
+; ese camino no vale
+MSG_95
+that assign points to itself
+; esa asignación lleva a sí misma
+MSG_96
+that path is too long
+; ese camino es demasiado largo
+MSG_97
+permission denied
+; sin permiso
+MSG_98
+it does not exist in any of its layers
+; no existe en ninguna de sus capas
+MSG_99
+it leads somewhere out of reach
+; lleva a donde no llega
+MSG_100
+Program
+; Programa
+MSG_101
+Image
+; Imagen
+MSG_102
+{} image
+; Imagen {}
+MSG_103
+Text
+; Texto
+MSG_104
+Disk image
+; Imagen de disco
+MSG_105
+Amiga icon
+; Icono de Amiga
+MSG_106
+Data
+; Datos
+MSG_107
+File
+; Fichero
+MSG_108
+Enter a path
+; Escribe un camino
+MSG_109
+The path contains invalid characters
+; El camino tiene letras que no valen
+MSG_110
+There is no place with that name
+; No hay ningún lugar con ese nombre
+MSG_111
+You cannot go up with \"..\": use Back or Up
+; No se puede subir con \"..\": usa Atrás o Arriba
+MSG_112
+Part of the path is not valid
+; Una parte del camino no vale
+MSG_113
+The path is too long
+; El camino es demasiado largo
+MSG_114
+1 byte
+; 1 byte
+MSG_115
+{} bytes
+; {} bytes
+MSG_116
+{}.{} kB
+; {},{} kB
+MSG_117
+{}.{} MB
+; {},{} MB
+MSG_118
+{}.{} GB
+; {},{} GB
+MSG_119
+Jan
+; ene
+MSG_120
+Feb
+; feb
+MSG_121
+Mar
+; mar
+MSG_122
+Apr
+; abr
+MSG_123
+May
+; may
+MSG_124
+Jun
+; jun
+MSG_125
+Jul
+; jul
+MSG_126
+Aug
+; ago
+MSG_127
+Sep
+; sep
+MSG_128
+Oct
+; oct
+MSG_129
+Nov
+; nov
+MSG_130
+Dec
+; dic
+MSG_131
+\"{}\" selected
+; \"{}\" elegida
+MSG_132
+\"{}\" selected ({})
+; \"{}\" elegido ({})
+MSG_133
+{} folders selected
+; {} carpetas elegidas
+MSG_134
+{} items selected ({})
+; {} elementos elegidos ({})
+MSG_135
+{} items selected ({} not counting folders)
+; {} elementos elegidos ({} sin contar las carpetas)
+MSG_136
+it no longer exists
+; ya no existe
+MSG_137
+it is not a folder
+; no es una carpeta
+MSG_138
+it is a folder
+; es una carpeta
+MSG_139
+too many things are open
+; no caben más cosas abiertas
+MSG_140
+disk error
+; error del disco
+MSG_141
+the disk is read-only
+; el disco es de solo lectura
+MSG_142
+there is already one with that name
+; ya hay uno con ese nombre
+MSG_143
+the folder is not empty
+; la carpeta no está vacía
+MSG_144
+there is no space left on the disk
+; no queda sitio en el disco
+MSG_145
+permission denied
+; no tienes permiso
+MSG_146
+it is in use
+; está en uso
+MSG_147
+the name is not valid
+; el nombre no vale
+MSG_148
+the location is no longer valid
+; el lugar ya no vale
+MSG_149
+it could not be done
+; no se pudo
+MSG_150
+Cancelled
+; Cancelado
+MSG_151
+\"{}\": a folder cannot be put inside itself
+; \"{}\": no se puede meter una carpeta dentro de sí misma
+MSG_152
+The destination
+; El destino
+MSG_153
+There is no Trash
+; No hay papelera
+MSG_154
+Trash
+; La papelera
+MSG_155
+\"{}\": too deep, skipped
+; \"{}\": demasiado honda, no se sigue
+MSG_156
+copy
+; copia
+MSG_157
+\"{}\": its original location is unknown
+; \"{}\": no se sabe de dónde vino
+MSG_158
+\"{}\": the folder it came from: {}
+; \"{}\": la carpeta de donde vino {}
+MSG_159
+restored
+; restaurado
+MSG_160
+{} free of {}
+; {} libres de {}
+MSG_161
+Search in {}
+; Buscar en {}
+MSG_162
+Enter a path, such as Home/Privado
+; Escribe un camino, como Home/Privado
+MSG_163
+Name
+; Nombre
+MSG_164
+Size
+; Tamaño
+MSG_165
+Type
+; Tipo
+MSG_166
+Modified
+; Modificado
+MSG_167
+No results
+; No hay resultados
+MSG_168
+Try different words
+; Prueba con otras palabras
+MSG_169
+Searching…
+; Buscando…
+MSG_170
+Trash is empty
+; La papelera está vacía
+MSG_171
+Folder is empty
+; La carpeta está vacía
+MSG_172
+Preparing…
+; Preparando…
+MSG_173
+{} of {}
+; {} de {}
+MSG_174
+Undo
+; Deshacer
+MSG_175
+Open With
+; Abrir con
+MSG_176
+Choose a program for {}
+; Elige un programa para {}
+MSG_177
+There are no programs in SYS:Programas
+; No hay programas en SYS:Programas

@@ -187,8 +187,28 @@ pub fn renombrar(fs: &mut impl Fs, dir: u32, viejo: &str, destino: u32, nuevo: &
     fs.pedir(a::RENOMBRAR, dir, 0, destino as u64, &n).e
 }
 
-/// El texto de un error del servicio, para la persona.
+/// El texto de un error del servicio, para la persona (en su idioma).
 pub fn texto_error(e: i32) -> &'static str {
+    match e {
+        a::NO_EXISTE => crate::tr(136, "ya no existe"),
+        a::NO_ES_CAJON => crate::tr(137, "no es una carpeta"),
+        a::ES_CAJON => crate::tr(138, "es una carpeta"),
+        a::SIN_SITIO => crate::tr(139, "no caben más cosas abiertas"),
+        a::ERROR_DEL_DISCO => crate::tr(140, "error del disco"),
+        a::SOLO_LECTURA => crate::tr(141, "el disco es de solo lectura"),
+        a::YA_EXISTE => crate::tr(142, "ya hay uno con ese nombre"),
+        a::NO_VACIO => crate::tr(143, "la carpeta no está vacía"),
+        a::LLENO => crate::tr(144, "no queda sitio en el disco"),
+        a::PROTEGIDO => crate::tr(145, "no tienes permiso"),
+        a::EN_USO => crate::tr(146, "está en uso"),
+        a::MAL_FORMADO => crate::tr(147, "el nombre no vale"),
+        a::ASA_MALA => crate::tr(148, "el lugar ya no vale"),
+        _ => crate::tr(149, "no se pudo"),
+    }
+}
+
+/// El texto de un error del servicio, para la consola: siempre en castellano.
+pub fn texto_error_fijo(e: i32) -> &'static str {
     match e {
         a::NO_EXISTE => "ya no existe",
         a::NO_ES_CAJON => "no es una carpeta",
@@ -292,7 +312,10 @@ pub struct Trabajo {
     pub bytes: u64,
     pub bytes_total: u64,
     pub ficheros_total: usize,
+    /// Los errores, en castellano (para la consola) y, uno por cada uno de esos, en el idioma del usuario (para la
+    /// ventana).
     pub errores: Vec<String>,
+    pub errores_visibles: Vec<String>,
     /// Lo que quedó hecho: (dónde, con qué nombre). Para elegirlo en la vista y para deshacer.
     pub resultado: Vec<(Lugar, String)>,
     pub raros: usize,
@@ -327,6 +350,7 @@ impl Trabajo {
             bytes_total: 0,
             ficheros_total: 0,
             errores: Vec::new(),
+            errores_visibles: Vec::new(),
             resultado: Vec::new(),
             raros: 0,
             fase: Fase::Preparar,
@@ -362,10 +386,23 @@ impl Trabajo {
         matches!(self.fase, Fase::Preparar | Fase::Escanear)
     }
 
+    /// Apunta un error de algo que se llama igual en todos los idiomas (un nombre entre comillas).
     fn fallo(&mut self, que: &str, e: i32) {
+        self.fallo_de(que, que, e);
+    }
+
+    /// Apunta un error de `que` (en castellano) o `visible` (lo mismo, en el idioma del usuario).
+    fn fallo_de(&mut self, que: &str, visible: &str, e: i32) {
         if self.errores.len() < 50 {
-            self.errores.push(alloc::format!("{}: {}", que, texto_error(e)));
+            self.errores.push(alloc::format!("{}: {}", que, texto_error_fijo(e)));
+            self.errores_visibles.push(alloc::format!("{}: {}", visible, texto_error(e)));
         }
+    }
+
+    /// Apunta un error ya escrito: en castellano y en el idioma del usuario.
+    fn apuntar(&mut self, fijo: String, visible: String) {
+        self.errores.push(fijo);
+        self.errores_visibles.push(visible);
     }
 
     /// Para todo y suelta lo abierto; la copia de un fichero a medias se borra.
@@ -393,7 +430,7 @@ impl Trabajo {
         let mut hechas = 0;
         while hechas < presupuesto && self.fase != Fase::Fin {
             if self.cancelar {
-                self.errores.push(String::from("Cancelado"));
+                self.apuntar(String::from("Cancelado"), String::from(crate::tr(150, "Cancelado")));
                 self.terminar(fs);
                 break;
             }
@@ -419,14 +456,14 @@ impl Trabajo {
             // Una carpeta dentro de sí misma, ni copiar ni mover (el servicio tampoco deja moverla).
             if let Some(e) = self.elementos.iter().find(|e| e.cajon && d.dentro_de(&e.desde.hijo(&e.nombre))) {
                 let n = e.nombre.clone();
-                self.errores.push(alloc::format!("\"{}\": no se puede meter una carpeta dentro de sí misma", n));
+                self.apuntar(alloc::format!("\"{}\": no se puede meter una carpeta dentro de sí misma", n), crate::trf(151, "\"{}\": no se puede meter una carpeta dentro de sí misma", &[&n]));
                 self.terminar(fs);
                 return;
             }
             match abrir(fs, &d) {
                 Ok(asa) => self.llegada.base = asa,
                 Err(e) => {
-                    self.fallo("El destino", e);
+                    self.fallo_de("El destino", crate::tr(152, "El destino"), e);
                     self.terminar(fs);
                     return;
                 }
@@ -434,7 +471,7 @@ impl Trabajo {
             match listar(fs, self.llegada.base, 100_000) {
                 Ok((v, _)) => self.nombres_destino = v.into_iter().map(|e| e.nombre).collect(),
                 Err(e) => {
-                    self.fallo("El destino", e);
+                    self.fallo_de("El destino", crate::tr(152, "El destino"), e);
                     self.terminar(fs);
                     return;
                 }
@@ -442,7 +479,7 @@ impl Trabajo {
         }
         if matches!(self.tarea, Tarea::Papelera | Tarea::Restaurar) || self.tarea == Tarea::Borrar && self.desde_papelera() {
             let Some(p) = self.papelera.clone() else {
-                self.errores.push(String::from("No hay papelera"));
+                self.apuntar(String::from("No hay papelera"), String::from(crate::tr(153, "No hay papelera")));
                 self.terminar(fs);
                 return;
             };
@@ -463,7 +500,7 @@ impl Trabajo {
             match r {
                 Ok(p) => self.pap = Some(p),
                 Err(e) => {
-                    self.fallo("La papelera", e);
+                    self.fallo_de("La papelera", crate::tr(154, "La papelera"), e);
                     self.terminar(fs);
                     return;
                 }
@@ -472,7 +509,7 @@ impl Trabajo {
                 match listar(fs, self.pap.unwrap().0, 100_000) {
                     Ok((v, _)) => self.nombres_destino = v.into_iter().map(|e| e.nombre).collect(),
                     Err(e) => {
-                        self.fallo("La papelera", e);
+                        self.fallo_de("La papelera", crate::tr(154, "La papelera"), e);
                         self.terminar(fs);
                         return;
                     }
@@ -505,7 +542,7 @@ impl Trabajo {
             r.push(e.nombre.clone());
             if e.cajon {
                 if r.len() > MAX_HONDO {
-                    self.errores.push(alloc::format!("\"{}\": demasiado honda, no se sigue", e.nombre));
+                    self.apuntar(alloc::format!("\"{}\": demasiado honda, no se sigue", e.nombre), crate::trf(155, "\"{}\": demasiado honda, no se sigue", &[&e.nombre]));
                     return;
                 }
                 match abrir_cajon(fs, asa, &e.nombre).and_then(|x| listar(fs, x, 10_000).map(|l| (x, l)).inspect_err(|_| cerrar(fs, x))) {
@@ -638,7 +675,7 @@ impl Trabajo {
         // El nombre en el destino: el primero, uno libre; lo de dentro, el mismo.
         if p.ruta.len() == 1 {
             let nd = core::mem::take(&mut self.nombres_destino);
-            self.nuevo = nombre_libre(&el.nombre, p.cajon, |n| nd.iter().any(|x| crate::logica::plano(x) == crate::logica::plano(n)), "copia");
+            self.nuevo = nombre_libre(&el.nombre, p.cajon, |n| nd.iter().any(|x| crate::logica::plano(x) == crate::logica::plano(n)), crate::tr(156, "copia"));
             self.nombres_destino = nd;
             if self.nuevo.is_empty() {
                 self.fallo(&alloc::format!("\"{}\"", el.nombre), a::YA_EXISTE);
@@ -774,31 +811,31 @@ impl Trabajo {
         let (archivos, info) = self.pap.unwrap();
         let ficha = leer_pequeno(fs, info, &el.nombre).ok().and_then(|d| Ficha::leer(&d, &self.raices));
         let e = match ficha {
-            None => Err(alloc::format!("\"{}\": no se sabe de dónde vino", el.nombre)),
+            None => Err((alloc::format!("\"{}\": no se sabe de dónde vino", el.nombre), crate::trf(157, "\"{}\": no se sabe de dónde vino", &[&el.nombre]))),
             Some(f) => match abrir(fs, &f.origen) {
-                Err(e) => Err(alloc::format!("\"{}\": la carpeta de donde vino {}", f.nombre, texto_error(e))),
+                Err(e) => Err((alloc::format!("\"{}\": la carpeta de donde vino {}", f.nombre, texto_error_fijo(e)), crate::trf(158, "\"{}\": la carpeta de donde vino {}", &[&f.nombre, &texto_error(e)]))),
                 Ok(dir) => {
                     let r = match listar(fs, dir, 100_000) {
                         Ok((v, _)) => {
-                            let nuevo = nombre_libre(&f.nombre, el.cajon, |n| v.iter().any(|x| crate::logica::plano(&x.nombre) == crate::logica::plano(n)), "restaurado");
+                            let nuevo = nombre_libre(&f.nombre, el.cajon, |n| v.iter().any(|x| crate::logica::plano(&x.nombre) == crate::logica::plano(n)), crate::tr(159, "restaurado"));
                             match renombrar(fs, archivos, &el.nombre, dir, &nuevo) {
                                 a::BIEN => {
                                     fs.pedir(a::BORRAR, info, 0, 0, el.nombre.as_bytes());
                                     self.resultado.push((f.origen.clone(), nuevo));
                                     Ok(())
                                 }
-                                e => Err(alloc::format!("\"{}\": {}", f.nombre, texto_error(e))),
+                                e => Err((alloc::format!("\"{}\": {}", f.nombre, texto_error_fijo(e)), alloc::format!("\"{}\": {}", f.nombre, texto_error(e)))),
                             }
                         }
-                        Err(e) => Err(alloc::format!("\"{}\": {}", f.nombre, texto_error(e))),
+                        Err(e) => Err((alloc::format!("\"{}\": {}", f.nombre, texto_error_fijo(e)), alloc::format!("\"{}\": {}", f.nombre, texto_error(e)))),
                     };
                     cerrar(fs, dir);
                     r
                 }
             },
         };
-        if let Err(t) = e {
-            self.errores.push(t);
+        if let Err((fijo, visible)) = e {
+            self.apuntar(fijo, visible);
         }
         self.siguiente_elemento(fs);
     }

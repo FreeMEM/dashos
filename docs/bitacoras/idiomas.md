@@ -125,3 +125,99 @@ vigilar en `archivos`, que es lo que pide S4b ("los servicios vigilan `ENV:`").
 5. **`PROGDIR:Catalogs` antes que `LOCALE:Catalogs`**, como AmigaOS. Un programa puede traer sus catálogos en su cajón.
 6. **La hora de España de serie es UTC+1 todo el año** (`gmt` -60): no hay zonas horarias ni cambio de hora. El
    `locale.prefs` trae los minutos de diferencia, como en el Amiga.
+7. **Los nombres de fichero que crea el explorador se traducen**: "nota (copia).txt", "(restaurado)" y "Carpeta sin
+   nombre" salen en inglés como "nota (copy).txt" y "Untitled Folder", como en otros sistemas. La otra opción es
+   dejarlos fijos en castellano.
+8. **El centro tiene dos raíces más para leer** (`inicio`: el disco y el `RAM:` de Ana, solo lectura), porque nace de
+   `inicio` solo con `C`. Sin ellas no puede leer `LOCALE:` ni `ENV:`. Es un programa del escritorio, de confianza,
+   pero es más alcance del que tenía.
+
+## Bitácora
+
+### Paso 1: el crate, la herramienta, el kit y la prueba en QEMU
+
+- `idioma/`: lo del diseño. 27 pruebas de PC (23 del crate y 4 que leen lo que escribe `tools/catalogo.py`: el
+  `.country` de España sale byte a byte igual que el país de serie del código).
+- El formato se cotejó con ficheros de verdad de un AmigaOS del usuario (solo cabeceras y tamaños, sin copiar nada):
+  `locale.prefs` mide 894 bytes con un `LCLE` de 860; un `.country`, 538 con un `CTRY` de 504; un `.catalog` trae
+  `FVER`, `LANG`, `CSET` de 32 bytes y `STRS`. El país, los idiomas y la diferencia horaria están donde los lee el
+  crate. Los valores de España, Reino Unido y Estados Unidos (`locale/paises/*.pais`) son nuestros.
+- El kit: "sí"/"no", los errores de PNG y los nombres de los acentos (`kit::tema::nombre_acento`).
+- `cambio` (lo lanza `guardian` como Ana y como Carla) dice lo suyo en el idioma de cada una. En el disco de pruebas,
+  Carla tiene `Estado/RAM/Carla/Env/Sys/locale.prefs` (inglés, Reino Unido); Ana no tiene.
+
+Prueba en QEMU (`make arranque-virt`), las líneas tal cual:
+
+```
+[cambio] Ana: idioma español (España), de serie: "Hola, soy la prueba del cambio de usuario", "2 ventanas de Ana", el kit dice "sí"; martes, 3 de noviembre de 2026; 03/11/2026 18:05; 1.234.567; -1.234,56 €
+[cambio] Carla: idioma english (great_britain), de ENV:Sys/locale.prefs: "Hello, I am the user switching test", "2 windows of Carla", el kit dice "yes"; Tuesday 3 November 2026; 03/11/2026 17:05; 1,234,567; -£1,234.56
+[cambio] Carla: catálogos malos (están: true): cortado false, de otro programa false, de otra versión false, fuera del cajón false; el idioma ha cambiado false: bien
+```
+
+Lo hostil en QEMU: en el disco hay `rota.catalog` (medio catálogo) y `ajena.catalog` (el del kit con otro nombre); ni
+esos, ni el del kit pedido en la versión 99, ni un nombre que sube por el árbol (`../../../Prefs/fuente`) valen.
+
+`make prueba`, `arranque-virt`, `arranque-virt-2` y `arranque-virt-linux`: bien a la primera.
+
+### Paso 2: el centro, el explorador y el Workbench
+
+Cada programa lleva su `CATALOGO`, su `Puesto` y sus `tr`/`trf`, y llama a `idiomas::arrancar` antes de pintar nada.
+
+| Programa | Textos | Dónde arranca el idioma |
+|---|---|---|
+| kit (con la rejilla de permisos) | 25 | lo pone cada programa |
+| centro | 96 | tras aplicar el tema; y otra vez al abrir su ventana, si `locale.prefs` cambió |
+| explorador | 177 | al recibir su tabla de nombres, antes de la primera ventana |
+| Workbench | 35 | antes de construir su interfaz |
+| cambio (prueba) | 2 | al empezar |
+
+Todos traducidos al inglés (`locale/english/*.ct`).
+
+- **Lo de la consola sigue en castellano fijo.** Las líneas que comprueban las pruebas no pasan por catálogo. Donde
+  una línea de consola reutilizaba un texto que también se pinta, se separaron (el explorador lleva textos gemelos
+  "fijo" y "visible"). En el centro, algunas líneas de consola imprimen las mismas filas que se ven: con inglés
+  saldrían en inglés (sin `locale.prefs`, idénticas).
+- **`usuario/src/permisos_kit.rs`** (la rejilla de permisos, del Workbench y del explorador) va en el catálogo del kit.
+- **El centro** nace de `inicio` solo con su cajón `C`: ahora `inicio` le da además el disco (raíz 1) y el `RAM:` de
+  Ana (raíz 3), los dos solo para leer, y `sesiones` le pone `SYS:` y `RAM:` en su tabla (`LEEN_IDIOMA`). Cuando
+  `ENV:` pase a memoria, esa raíz 3 fija (`Estado/RAM/Ana` en `RAICES_DE_MAS`) hay que cambiarla con lo demás.
+- **Sin pasar a los formatos del país**: las fechas del explorador ("13 nov", "10:04") y del Workbench y el centro
+  (en UTC), y los tamaños ("7,0 MB": la coma la pone el catálogo, no el país). Usar `Local` cambiaría lo que se ve
+  hoy en castellano (otra forma de fecha, la hora de España en vez de UTC), y eso no se tocó.
+
+`make prueba` (con las 24 pruebas de PC del explorador y las 27 de `idioma`), `arranque-virt`, `arranque-virt-2` y
+`arranque-virt-linux`: bien a la primera, con los tres programas pasando por catálogo (en castellano, como Ana).
+Rendimiento: no se midió; cada programa hace al arrancar dos preguntas más al servicio de archivos (las dos, "no
+existe") y una a `sesiones` por su tabla.
+
+## Lo que queda
+
+- **Una orden de vigilar en `archivos`**, para que el idioma cambie al momento (S4b). Hoy: al abrir el programa (y
+  el centro, al reabrir su ventana).
+- **El editor de idioma** (la sección "Idioma y región" de Ajustes, y `SYS:Prefs/Idioma`): `Prefs::escribir` ya
+  escribe el `locale.prefs`, pero no hay ventana que lo use. Hoy el idioma se cambia poniendo el fichero
+  (`tools/catalogo.py prefs`).
+- **`ENV:` copiado de `ENVARC:` al entrar** (otro paso lo está pasando a memoria): entonces el `locale.prefs` de
+  Carla del disco de pruebas tiene que salir de su `ENVARC:` o sembrarse de otra forma; el lector ya mira
+  `ENVARC:Sys/locale.prefs` si no hay nada en `ENV:`.
+- **Los demás programas**: `guardian`, `barra`, `panel`, `fondo`, `selector`, `lanzador`, `avisos`, `ajustes` (la
+  prueba del kit) y kit-c siguen en castellano fijo. La fecha de la barra (`usuario/src/reloj.rs`) no usa el país.
+- **Fechas y tamaños según el país** en el explorador, el Workbench y el centro (arriba).
+- **Los `.info` y nombres de cajones según el idioma** ("Documentos"…, S4b): nada.
+- **`LANG` para los programas de Linux** desde `locale.prefs` (S4b): nada.
+- **En la caja Amiga**, `locale.library` dando estos catálogos en Latin-1 a los 68k: es otro paso. `tools/catalogo.py
+  catalog --latin1` ya los compila así.
+- **El editor de catálogos en Dash** (`SYS:Utilities`): es de la sesión de Dash.
+- Zonas horarias y cambio de hora.
+
+## Lo que no se ha comprobado
+
+- Ningún programa de verdad (centro, explorador, Workbench) **se ha visto en inglés en pantalla**: en las pruebas
+  corren como Ana, en castellano. En inglés solo se ha visto `cambio` (sus textos, los del kit y los formatos). Los
+  catálogos ingleses de los tres se compilan y se comprueban contra sus `.cd` (huecos, números), y nada más: puede
+  haber textos que no quepan en su sitio en inglés.
+- Las plantillas de fecha contra el `FormatDate` de un AmigaOS de verdad (no se pasó por el oráculo): `%e` rellena
+  con un espacio y `%q`/`%Q` van sin cero, según la documentación.
+- Un `locale.prefs` escrito por el editor de Locale de AmigaOS dentro de la caja, leído por lo nativo: el formato se
+  cotejó con ficheros de verdad, pero no se hizo la prueba de punta a punta.
+- El número de país (`cp_CountryCode`): ponemos las letras ISO ("ES"); no se sabe qué pone AmigaOS en cada uno.

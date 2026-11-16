@@ -70,6 +70,11 @@ const RAICES_DE_MAS: &[(&str, u8, u8, &str)] = &[
     // S28 (decisión del usuario del 2026-11-13): la papelera de la caja Amiga, junto a su cajón y fuera de su alcance:
     // lo que borra va ahí (`HUECO_PAPELERA`). Provisional, como su cajón.
     ("caja-amiga", dashos::protocolo::archivos::HUECO_PAPELERA, 6, "Estado/Servicios/caja-amiga.papelera"),
+    // Idiomas (paso 4): el centro de control lee su idioma y sus catálogos: el disco (su `SYS:`, donde está `LOCALE:`)
+    // y el `RAM:` de la sesión (donde está `ENV:`), los dos solo para leer. `sesiones` le pone esos dos volúmenes en
+    // su tabla de nombres (`LEEN_IDIOMA`). Provisional, como `FICHAS`: el `RAM:` de Ana va fijo.
+    ("centro", 1, 4, ""),
+    ("centro", 3, 4, "Estado/RAM/Ana"),
 ];
 /// Los servicios cuyas llaves reparte `sesiones` (U4): de ellos recibe una copia sin marca, para hacer copias marcadas
 /// con el número de cada programa al que se las da. Del resto (archivos), una con la suya, como cualquier cliente.

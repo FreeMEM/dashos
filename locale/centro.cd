@@ -1,0 +1,195 @@
+; Los textos de centro (versión 1), de usuario/src/bin/centro.rs
+; Hecho con tools/catalogo.py cd: no se edita a mano.
+;
+MSG_1 (1//)
+Permisos
+MSG_2 (2//)
+Seguridad
+MSG_3 (3//)
+Discos
+MSG_4 (4//)
+Pantallas
+MSG_5 (5//)
+Apariencia
+MSG_6 (6//)
+Monitor del sistema
+MSG_7 (7//)
+Panel del escritorio
+MSG_8 (8//)
+Acerca de
+MSG_9 (9//)
+automático
+MSG_10 (10//)
+matar
+MSG_11 (11//)
+servicio
+MSG_12 (12//)
+entrar
+MSG_13 (13//)
+fallo
+MSG_14 (14//)
+lanzar
+MSG_15 (15//)
+administrar
+MSG_16 (16//)
+apagar
+MSG_17 (17//)
+hecho
+MSG_18 (18//)
+negado
+MSG_19 (19//)
+error {}
+MSG_20 (20//)
+Disco del sistema: {}
+MSG_21 (21//)
+Ocupado: {} ({} %)
+MSG_22 (22//)
+Libre: {}
+MSG_23 (23//)
+El servicio de archivos no contesta
+MSG_24 (24//)
+Comprobar el disco (pide administrador)
+MSG_25 (25//)
+Comprobado, datos incluidos: sin problemas
+MSG_26 (26//)
+Comprobado: 1 problema
+MSG_27 (27//)
+Comprobado: {} problemas
+MSG_28 (28//)
+El disco está ocupado: inténtalo otra vez
+MSG_29 (29//)
+Interrumpido: queda poco sitio en el disco
+MSG_30 (30//)
+No se comprobó: hace falta un administrador
+MSG_31 (31//)
+No se comprobó ({})
+MSG_32 (32//)
+elegido
+MSG_33 (33//)
+Modo claro
+MSG_34 (34//)
+Modo oscuro
+MSG_35 (35//)
+Color fijo {}
+MSG_36 (36//)
+Paleta del fondo
+MSG_37 (37//)
+({} excepciones)
+MSG_38 (38//)
+Programas de las cajas: como DashOS
+MSG_39 (39//)
+Programas de las cajas: originales
+MSG_40 (40//)
+Ampliar ventanas Amiga: {}
+MSG_41 (41//)
+Memoria de la caja Amiga: {} MB
+MSG_42 (42//)
+en pantalla
+MSG_43 (43//)
+Fondo: {}
+MSG_44 (44//)
+El compositor no ha dicho nada de la pantalla
+MSG_45 (45//)
+Pantalla {}: {} × {}
+MSG_46 (46//)
+a la izquierda
+MSG_47 (47//)
+a la derecha
+MSG_48 (48//)
+en medio
+MSG_49 (49//)
+Pantalla {}: {} × {}, {}
+MSG_50 (50//)
+Frecuencia: {}
+MSG_51 (51//)
+Frecuencias: {}
+MSG_52 (52//)
+Escala: {}
+MSG_53 (53//)
+Escalas: {}
+MSG_54 (54//)
+DashOS, versión {}
+MSG_55 (55//)
+Encendido hace {} min {} s
+MSG_56 (56//)
+Fecha y hora: {}
+MSG_57 (57//)
+Fecha y hora: no se sabe
+MSG_58 (58//)
+Procesos en marcha: {}
+MSG_59 (59//)
+Memoria en uso: {} MB de {} MB (el núcleo, {} MB, y su montón, {} MB; al arrancar ya había {} MB reservados)
+MSG_60 (60//)
+Lo que más gasta: {}
+MSG_61 (61//)
+CPU
+MSG_62 (62//)
+memoria
+MSG_63 (63//)
+nombre
+MSG_64 (64//)
+usuario
+MSG_65 (65//)
+sistema
+MSG_66 (66//)
+Por {}\tCPU\tMemoria
+MSG_67 (67//)
+sesiones no contesta
+MSG_68 (68//)
+({}, escritorio)
+MSG_69 (69//)
+sí
+MSG_70 (70//)
+no
+MSG_71 (71//)
+arriba a la izquierda
+MSG_72 (72//)
+arriba a la derecha
+MSG_73 (73//)
+abajo a la izquierda
+MSG_74 (74//)
+abajo a la derecha
+MSG_75 (75//)
+Hora y fecha
+MSG_76 (76//)
+CPU por núcleo
+MSG_77 (77//)
+Memoria
+MSG_78 (78//)
+Los que más gastan
+MSG_79 (79//)
+Red
+MSG_80 (80//)
+Enseñar el panel en el fondo: {}
+MSG_81 (81//)
+Esquina: {}
+MSG_82 (82//)
+Cada cuánto se mide: {} s
+MSG_83 (83//)
+Gráficas: {}
+MSG_84 (84//)
+Ningún programa tiene permisos concedidos
+MSG_85 (85//)
+Quitar
+MSG_86 (86//)
+Cerrar
+MSG_87 (87//)
+Lo que cada programa puede usar. Quitarlo lo revoca ya.
+MSG_88 (88//)
+Lo que se ha negado y los fallos, lo último primero.
+MSG_89 (89//)
+Cuánto ocupa lo guardado.
+MSG_90 (90//)
+Modo, color y fondo. Intro o doble clic para elegir.
+MSG_91 (91//)
+Lo que dice el compositor de cada pantalla.
+MSG_92 (92//)
+Lo tuyo con detalle; lo demás, sumado.
+MSG_93 (93//)
+El monitor del fondo. Intro cambia una fila.
+MSG_94 (94//)
+El sistema.
+MSG_95 (95//)
+Cerrar proceso
+MSG_96 (96//)
+Centro de control

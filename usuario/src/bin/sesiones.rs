@@ -64,6 +64,9 @@ const ARCHIVOS_ALTAS: u32 = 8;
 /// Los programas del escritorio que se ceden a sí mismos esas mismas raíces (S6b): su tabla de nombres lleva también
 /// los volúmenes.
 const CEDEN_RAICES: &[&str] = &["workbench", "explorador"];
+/// Idiomas (paso 4): programas de `inicio` que nacen con el disco en la raíz 1 y el `RAM:` de la sesión en la 3, solo
+/// para leer (`RAICES_DE_MAS` de `inicio`): su tabla de nombres trae `SYS:` y `RAM:`, y por ellos leen `LOCALE:` y `ENV:`.
+const LEEN_IDIOMA: &[&str] = &["centro"];
 /// Lo que reparte, con la llave sin marca de cada uno: servicios (canales) y permisos del kernel, como el de la clase de
 /// plazo (U4). A un canal se le dice quién es el nuevo cliente (su entrada de directorio); a un permiso, no.
 /// U6: el sonido, con la llave sin marca que da `inicio` (`CANAL_SISTEMA`), no con un número fijo (`SIN_NUMERO`).
@@ -451,6 +454,10 @@ fn tabla_de(f: &Ficha, asignaciones: &Tabla) -> Tabla {
             let _ = propia.poner_volumen(b"RAM", RAIZ_RAM, b"");
             let _ = propia.poner_volumen(b"Work", RAIZ_WORK, b"");
         }
+    }
+    if es(f, LEEN_IDIOMA) {
+        let _ = propia.poner_volumen(b"SYS", RAIZ_SYS, b"");
+        let _ = propia.poner_volumen(b"RAM", RAIZ_RAM, b"");
     }
     if lanzado {
         let _ = propia.poner_progdir(RAIZ_PROGDIR);
