@@ -2138,3 +2138,11 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   `Permiso`, `Instantanea`, `Caja`; `Estado:Registros/`; modo de desarrollo). Sin aplicar, 17, con su motivo en S36.
   Pendiente del usuario: las cuatro recomendaciones de S36 y los nombres provisionales (`Estado:Prefs`, `Estado:Devs`,
   `Home:Instantáneas/`, el volumen `Linux:`). Generaciones de `Paq` decididas (S8).
+- **Las cuatro decisiones de S36, aceptadas por el usuario (2026-11-16)** y aplicadas a los diseños: contraseña de
+  administrador por tanda; modo de desarrollo por aplicación; la guardia del Amiga espera y siempre se puede deshacer;
+  controladores de Linux en máquinas virtuales (LKL retirado); monitor, espacio de trabajo y pantalla; ROM de AROS en
+  la imagen de `SYS:`, nunca en git. Solo diseño.
+- **Red (rama `red-dns`, por unir)**: el usuario acepta (2026-11-16) que la zona horaria sea del sistema por ahora
+  (por usuario, cuando estén unidas las ramas del escritorio) y `pool.ntp.org` de serie, con ajuste para cambiarlo o
+  apagarlo. Pendiente al unir: que ninguna prueba salga a Internet (en `arranque-virt-linux` el servicio de red
+  preguntó por `pool.ntp.org`).
