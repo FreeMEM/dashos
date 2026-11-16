@@ -1,0 +1,31 @@
+# S10, los menús de los programas (`make arranque-virt-menus`, tools/guion_menus.py; docs/bitacoras/menus.md): la imagen
+# de usar con la prueba de kit-c. Entra Ana; los menús del Shell (kit nativo) y de la ventana de Dash (kit-c), dentro de
+# sus ventanas; `Ajuste menus barra` los pasa a la barra (el centro lo aplica y el compositor lo dice a todos); allí se
+# abren con un clic y con el botón derecho, y se elige; y vuelven dentro con `Ajuste menus dentro`.
+DashOS en marcha con 4 núcleos
+~[guardian] modo de uso: pantalla de entrada
+~[guardian] entra Ana
+~[dash-ui] ventana "Dash en DashOS" en pantalla (
+~[shell] menús de la ventana: "Shell" en (
+~[centro] menús en marcha: en la barra, de ENV:Escritorio/menus; en el compositor: sí
+~[compositor] menús: los menús van en la barra
+~[barra] menús: en la barra
+~[shell] menús: en la barra
+~[dash-ui] menús: en la barra
+~[barra] menús en la barra: "Shell" en (
+~[barra] menú abierto: Shell; "Pestaña nueva" en (
+# Elegido en la barra: lo pasa el compositor al Shell, que parte su panel.
+~[barra] elige en el menú: Partir en vertical (2)
+~[compositor] menús: elegido en la barra: Partir en vertical (2)
+~[shell] menú: Partir en vertical
+# El botón derecho sobre la ventana: el compositor no se lo da a ella; la barra abre los menús.
+~[barra] abre los menús (botón derecho): sí
+# La ventana de Dash delante: sus menús, en la barra; "Acerca de..." llega al programa de Dash por el compositor.
+~[barra] menús en la barra: "Proyecto" en (
+~[barra] elige en el menú: Acerca de... (1)
+~[dash-ui] elegido en la barra: 1 (vale)
+~[dash-ventana] acerca de: 1
+~[centro] menús en marcha: dentro de las ventanas, de ENV:Escritorio/menus; en el compositor: sí
+~[shell] menús: dentro de la ventana
+~[dash-ui] menús: dentro de la ventana
+~[sesiones] Shell asigna "MenusHechos=RAM:" (0): 0

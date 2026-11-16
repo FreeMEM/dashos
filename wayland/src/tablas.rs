@@ -1362,6 +1362,83 @@ pub mod dashos_exchange_v1 {
     }
 }
 
+pub static DASHOS_MENUS_V1: Interface = Interface {
+    name: "dashos_menus_v1",
+    version: 1,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "menu", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::NewId, nullable: false, interface: Some("dashos_menu_v1") }, Arg { name: "superficie", kind: Kind::Object, nullable: false, interface: Some("wl_surface") }] },
+        Message { name: "poner_sitio", since: 1, destructor: false, args: &[Arg { name: "sitio", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "barra", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::NewId, nullable: false, interface: Some("dashos_menus_barra_v1") }] },
+    ],
+    events: &[
+        Message { name: "sitio", since: 1, destructor: false, args: &[Arg { name: "sitio", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `dashos_menus_v1`.
+pub mod dashos_menus_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const MENU: u16 = 1;
+        pub const PONER_SITIO: u16 = 2;
+        pub const BARRA: u16 = 3;
+    }
+    pub mod ev {
+        pub const SITIO: u16 = 0;
+    }
+}
+
+pub static DASHOS_MENU_V1: Interface = Interface {
+    name: "dashos_menu_v1",
+    version: 1,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "poner", since: 1, destructor: false, args: &[Arg { name: "datos", kind: Kind::Array, nullable: false, interface: None }] },
+        Message { name: "abrir", since: 1, destructor: false, args: &[] },
+    ],
+    events: &[
+        Message { name: "elegido", since: 1, destructor: false, args: &[Arg { name: "numero", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `dashos_menu_v1`.
+pub mod dashos_menu_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const PONER: u16 = 1;
+        pub const ABRIR: u16 = 2;
+    }
+    pub mod ev {
+        pub const ELEGIDO: u16 = 0;
+    }
+}
+
+pub static DASHOS_MENUS_BARRA_V1: Interface = Interface {
+    name: "dashos_menus_barra_v1",
+    version: 1,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "elegir", since: 1, destructor: false, args: &[Arg { name: "generacion", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "numero", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+    events: &[
+        Message { name: "menu", since: 1, destructor: false, args: &[Arg { name: "generacion", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "datos", kind: Kind::Array, nullable: false, interface: None }] },
+        Message { name: "abrir", since: 1, destructor: false, args: &[] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `dashos_menus_barra_v1`.
+pub mod dashos_menus_barra_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const ELEGIR: u16 = 1;
+    }
+    pub mod ev {
+        pub const MENU: u16 = 0;
+        pub const ABRIR: u16 = 1;
+    }
+}
+
 /// Todas las interfaces, para buscarlas por nombre.
 pub static INTERFACES: &[&Interface] = &[
     &WL_DISPLAY,
@@ -1410,4 +1487,7 @@ pub static INTERFACES: &[&Interface] = &[
     &DASHOS_COMMODITIES_V1,
     &DASHOS_COMMODITY_V1,
     &DASHOS_EXCHANGE_V1,
+    &DASHOS_MENUS_V1,
+    &DASHOS_MENU_V1,
+    &DASHOS_MENUS_BARRA_V1,
 ];

@@ -30,6 +30,7 @@ use dashos::println;
 use dashos::protocolo::archivos as a;
 use dashos::protocolo::sesiones as ps;
 use kit::lienzo::{Lienzo, Rect as RectLienzo};
+use kit::menus::{Datos, Menus, Resultado as MenuResultado, FILA as FILA_MENUS};
 use kit::teclado::{Tecla, Teclado};
 use kit::tema::Tema;
 use kit::texto::Fuente;
@@ -44,7 +45,7 @@ use shell::protocolo as p;
 use shell::{indicador, perfil, plantilla, ruta, RC_AVISO, RC_BIEN, RC_ERROR, RC_FALLO};
 use wayland::canal::{self, Juntador, TROZO_CONECTAR, TROZO_DATOS};
 use wayland::tablas::{
-    dashos_tema_v1, wl_buffer, wl_callback, wl_compositor, wl_display, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool,
+    dashos_menu_v1, dashos_menus_v1, dashos_tema_v1, wl_buffer, wl_callback, wl_compositor, wl_display, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool,
     wl_surface, xdg_surface, xdg_toplevel, xdg_wm_base, zxdg_decoration_manager_v1, zxdg_toplevel_decoration_v1,
 };
 use wayland::{leer_args, Escritor};
@@ -98,6 +99,28 @@ const DECORACION_DEL_COMPOSITOR: u32 = 2;
 const TITULO: &str = "Shell";
 /// Entre el cajón y la orden, en el título de una pestaña y de la ventana.
 const SEPARADOR_TITULO: &str = " · ";
+/// S10: los menús de la ventana (`docs/bitacoras/menus.md`): el global del compositor (dónde van) y el menú de la
+/// ventana. Los atajos los hace el Shell, como siempre; el menú solo los enseña.
+const MENUS_G: u32 = 46;
+const MENU_V: u32 = 47;
+const SITIO_BARRA: u32 = 1;
+const M_PESTANA: u32 = 1;
+const M_VERTICAL: u32 = 2;
+const M_HORIZONTAL: u32 = 3;
+const M_CERRAR: u32 = 4;
+const M_COPIAR: u32 = 10;
+const M_PEGAR: u32 = 11;
+const M_LIMPIAR: u32 = 12;
+const KEY_F10: u32 = 68;
+
+/// Los menús del Shell: "Shell" (pestañas y paneles) y "Editar". Copiar, solo con algo seleccionado.
+fn menus_del_shell(copiar: bool) -> Datos {
+    let t = format!(
+        "menus 1\nM\tShell\nE\t{M_PESTANA}\tPestaña nueva\tCtrl+Mayús+T\nE\t{M_VERTICAL}\tPartir en vertical\tCtrl+Mayús+E\nE\t{M_HORIZONTAL}\tPartir en horizontal\tCtrl+Mayús+O\n-\nE\t{M_CERRAR}\tCerrar el panel\tCtrl+Mayús+W\nM\tEditar\nE\t{M_COPIAR}\tCopiar\tCtrl+Mayús+C{}\nE\t{M_PEGAR}\tPegar\tCtrl+Mayús+V\n-\nE\t{M_LIMPIAR}\tBorrar la pantalla\tCtrl+L\n",
+        if copiar { "" } else { "\t-" }
+    );
+    Datos::leer(t.as_bytes()).unwrap_or_default()
+}
 const AVISO: u32 = 100;
 
 /// El borde de cada panel, en píxeles, y las columnas de un Shell sin ventana que no sabe las de su consola.
@@ -252,6 +275,16 @@ struct Ventana {
     serie: u32,
     /// El título que tiene la ventana (el de la pestaña con el teclado).
     titulo: String,
+    /// S10: los menús (con la letra de la consola), si van fuera (en la barra), si el compositor los conoce, lo último que
+    /// se le dio, y si hay que pintar la fila otra vez. El botón izquierdo, para arrastrar en ellos.
+    menus: Menus,
+    menus_fuera: bool,
+    con_menus: bool,
+    menus_dicho: Vec<u8>,
+    menus_sucios: bool,
+    regular: Fuente,
+    medium: Fuente,
+    izquierdo: bool,
 }
 
 /// Lo que llega de la ventana para el Shell.
@@ -265,6 +298,9 @@ enum Entrada {
     /// Cambió el tamaño (o es la primera vez): hay que recolocar los paneles.
     Medida,
     Cerrar,
+    /// S10: los menús cambian de sitio (hay que recolocar), o en la barra se eligió una entrada.
+    Sitio,
+    Menu(u32),
 }
 
 /// Lo que se pinta de un panel.
@@ -362,12 +398,25 @@ impl Ventana {
         if let Some(gt) = global("dashos_tema_v1") {
             e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(1).uint(TEMA).fin();
         }
+        // S10: dónde van los menús (si el compositor lo sabe; si no, dentro).
+        let global_menus = global("dashos_menus_v1");
+        if let Some(gm) = global_menus {
+            e.empezar(REGISTRO, wl_registry::req::BIND).uint(gm).texto(Some("dashos_menus_v1")).uint(1).uint(MENUS_G).fin();
+        }
         let mut pp = portapapeles_cliente::Portapapeles::default();
         let con_portapapeles = pp.enlazar(&mut e, &globales, REGISTRO, ASIENTO);
         e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
         e.empezar(XDG, xdg_wm_base::req::GET_XDG_SURFACE).uint(XDG_SUPERFICIE).uint(SUPERFICIE).fin();
         e.empezar(XDG_SUPERFICIE, xdg_surface::req::GET_TOPLEVEL).uint(VENTANA).fin();
         e.empezar(VENTANA, xdg_toplevel::req::SET_TITLE).texto(Some(TITULO)).fin();
+        // S10: el menú de la ventana, para el compositor (lo enseña en la barra si toca).
+        let menus = Menus::new(menus_del_shell(false));
+        let mut menus_dicho = Vec::new();
+        if global_menus.is_some() {
+            menus_dicho = menus.datos.escribir().unwrap_or_default();
+            e.empezar(MENUS_G, dashos_menus_v1::req::MENU).uint(MENU_V).uint(SUPERFICIE).fin();
+            e.empezar(MENU_V, dashos_menu_v1::req::PONER).array(&menus_dicho).fin();
+        }
         // La barra de la ventana (título, maximizar, cerrar, moverla y cambiarle el tamaño) la pone el compositor, la
         // de todo el sistema (`wayland/src/decoracion.rs`): el kit no tiene una cabecera que compartir y el Shell no
         // dibuja la suya. Se pide antes del primer búfer, como manda el protocolo.
@@ -414,7 +463,55 @@ impl Ventana {
             con_portapapeles,
             serie: 0,
             titulo: String::from(TITULO),
+            menus,
+            menus_fuera: false,
+            con_menus: global_menus.is_some(),
+            menus_dicho,
+            menus_sucios: true,
+            // Con la letra de la consola: las de Roboto ocupan 62 KB más en el disco, y el de pruebas va justo
+            // (A15, "sujetar sin soltar", se queda sin sitio).
+            regular: Fuente::mono(),
+            medium: Fuente::mono(),
+            izquierdo: false,
         })
+    }
+
+    /// S10: lo que ocupa la fila de menús arriba (nada con los menús en la barra).
+    fn alto_menus(&self) -> i32 {
+        if self.menus_fuera { 0 } else { FILA_MENUS }
+    }
+
+    /// S10: los títulos en la fila, y lo desplegado dentro de la ventana.
+    fn colocar_menus(&mut self) {
+        let (w, h) = self.medida;
+        self.menus.colocar(RectLienzo::new(8, 0, w - 16, FILA_MENUS), RectLienzo::new(0, 0, w, h), &mut self.regular, &mut self.medium);
+        self.menus_sucios = true;
+        self.sucia = true;
+    }
+
+    /// S10: el menú al compositor, si cambió.
+    fn mandar_menus(&mut self, b: &mut Buzon) {
+        if !self.con_menus {
+            return;
+        }
+        let datos = self.menus.datos.escribir().unwrap_or_default();
+        if datos != self.menus_dicho {
+            let mut e = Escritor::new();
+            e.empezar(MENU_V, dashos_menu_v1::req::PONER).array(&datos).fin();
+            b.mandar(&e);
+            self.menus_dicho = datos;
+        }
+    }
+
+    /// S10: dónde está cada título (para las pruebas: un clic ahí lo abre).
+    fn decir_menus(&self) {
+        if self.menus_fuera {
+            return;
+        }
+        let sitios: Vec<String> = (0..self.menus.datos.menus.len())
+            .filter_map(|k| self.menus.sitio_titulo(k).map(|r| format!("\"{}\" en ({}, {})", self.menus.datos.menus[k].titulo, r.x + r.w / 2, r.y + r.h / 2)))
+            .collect();
+        println!("  [shell] menús de la ventana: {}", sitios.join("; "));
     }
 
     /// Un tamaño nuevo: memoria y búfer nuevos (en el otro sitio).
@@ -504,7 +601,17 @@ impl Ventana {
             self.entera = false;
             self.pintadas.clear();
             self.barra_pintada = 0;
+            self.menus_sucios = true;
             l.borrar(RectLienzo::new(0, 0, w, h), self.tema.variante_contorno);
+            cambio = true;
+        }
+        // S10: la fila de menús, arriba (con su raya debajo).
+        let arriba = self.alto_menus();
+        if arriba > 0 && core::mem::take(&mut self.menus_sucios) {
+            l.borrar(RectLienzo::new(0, 0, w, arriba), (self.tema.superficie & 0x00ff_ffff) | opacidad << 24);
+            l.borrar(RectLienzo::new(0, arriba - 1, w, 1), self.tema.variante_contorno);
+            let t = self.tema;
+            self.menus.dibujar_fila(&mut l, &t, &mut self.medium, (0, 0));
             cambio = true;
         }
         // La barra de pestañas.
@@ -520,7 +627,7 @@ impl Ventana {
                 self.barra_pintada = suma;
                 cambio = true;
                 let alto = self.alto_barra(pestanas.len());
-                l.borrar(RectLienzo::new(0, 0, w, alto), self.tema.variante_superficie);
+                l.borrar(RectLienzo::new(0, arriba, w, alto), self.tema.variante_superficie);
                 let mut x = 4;
                 for (k, (t, activa)) in pestanas.iter().enumerate() {
                     let texto: String = format!(" {} {} ", k + 1, t).chars().take(ANCHO_PESTANA).collect();
@@ -529,8 +636,8 @@ impl Ventana {
                         break;
                     }
                     let (detras, color) = if *activa { (self.tema.primario, self.tema.sobre_primario) } else { (self.tema.variante_superficie, self.tema.sobre_variante_superficie) };
-                    l.borrar(RectLienzo::new(x, 2, ancho, alto - 4), detras);
-                    self.fuente.dibujar(&mut l, x, 2 + base, &texto, self.letra, color);
+                    l.borrar(RectLienzo::new(x, arriba + 2, ancho, alto - 4), detras);
+                    self.fuente.dibujar(&mut l, x, arriba + 2 + base, &texto, self.letra, color);
                     x += ancho + 4;
                 }
             }
@@ -622,6 +729,12 @@ impl Ventana {
                 }
             }
         }
+        // S10: lo desplegado, encima de todo (al cerrarse se pinta la ventana entera otra vez).
+        if self.menus.abierto() && !self.menus_fuera {
+            let t = self.tema;
+            self.menus.dibujar_abierto(&mut l, &t, &mut self.regular, &mut self.medium, (0, 0));
+            cambio = true;
+        }
         if !cambio {
             return false;
         }
@@ -658,7 +771,8 @@ impl Ventana {
                 } else if self.configurada {
                     self.medida
                 } else {
-                    (self.de_serie.0 as i32 * cw + 2 * BORDE, self.de_serie.1 as i32 * ch + 2 * BORDE)
+                    // S10: con la fila de menús, más alta: las letras de serie caben igual.
+                    (self.de_serie.0 as i32 * cw + 2 * BORDE, self.de_serie.1 as i32 * ch + 2 * BORDE + self.alto_menus())
                 };
                 if self.medir(b, w, h) {
                     self.configurada = true;
@@ -710,7 +824,37 @@ impl Ventana {
                 self.raton = ((palabra(1) as i32) >> 8, (palabra(2) as i32) >> 8);
                 return Entrada::Mueve;
             }
-            (PUNTERO, wl_pointer::ev::BUTTON) => return Entrada::Boton { boton: palabra(2), pulsado: palabra(3) == 1, serie: palabra(0) },
+            (PUNTERO, wl_pointer::ev::BUTTON) => {
+                if palabra(2) == 272 {
+                    self.izquierdo = palabra(3) == 1;
+                }
+                return Entrada::Boton { boton: palabra(2), pulsado: palabra(3) == 1, serie: palabra(0) };
+            }
+            // S10: dónde van los menús, y lo elegido en la barra.
+            (MENUS_G, dashos_menus_v1::ev::SITIO) => {
+                let fuera = palabra(0) == SITIO_BARRA;
+                if fuera != self.menus_fuera {
+                    self.menus_fuera = fuera;
+                    self.menus.fuera = fuera;
+                    self.menus.cerrar();
+                    self.entera = true;
+                    self.sucia = true;
+                    // Si el compositor no le ha dado un tamaño (maximizada, en mosaico), la ventana crece o mengua lo
+                    // de la fila: las letras no cambian.
+                    if self.configurada && self.pedida == (0, 0) {
+                        let (w, h) = self.medida;
+                        let h = if fuera { h - FILA_MENUS } else { h + FILA_MENUS };
+                        self.medir(b, w, h);
+                    }
+                    return Entrada::Sitio;
+                }
+            }
+            (MENU_V, dashos_menu_v1::ev::ELEGIDO) => {
+                let n = palabra(0);
+                if self.menus.elegir_fuera(n) {
+                    return Entrada::Menu(n);
+                }
+            }
             // La rueda (eje vertical).
             (PUNTERO, wl_pointer::ev::AXIS) if palabra(1) == 0 => return Entrada::Rueda(kit::controles::pasos_rueda(palabra(2))),
             (1, wl_display::ev::ERROR) => {
@@ -2218,7 +2362,7 @@ impl Shell {
     fn area(&self) -> RectPanel {
         match &self.ventana {
             Some(v) => {
-                let barra = v.alto_barra(self.disp.pestanas());
+                let barra = v.alto_menus() + v.alto_barra(self.disp.pestanas());
                 RectPanel { x: 0, y: barra, w: v.medida.0, h: v.medida.1 - barra }
             }
             None => RectPanel::default(),
@@ -2230,7 +2374,8 @@ impl Shell {
         let Some(v) = &mut self.ventana else { return };
         v.entera = true;
         v.sucia = true;
-        let barra = v.alto_barra(self.disp.pestanas());
+        v.colocar_menus();
+        let barra = v.alto_menus() + v.alto_barra(self.disp.pestanas());
         let area = RectPanel { x: 0, y: barra, w: v.medida.0, h: v.medida.1 - barra };
         for (id, r) in self.disp.rects(area, 1) {
             let (columnas, filas) = self.ventana.as_ref().unwrap().letras_en(r);
@@ -2581,6 +2726,15 @@ impl Shell {
 
     /// Una tecla en el panel en que se trabaja.
     fn tecla_con(&mut self, t: Option<Tecla>, codigo: u32, control: bool, mayus: bool, alt: bool) {
+        // S10: con un menú abierto, las teclas son suyas; F10 los abre (en la barra, se lo pide al compositor).
+        if let Some(v) = self.ventana.as_mut()
+            && (v.menus.abierto() || (codigo == KEY_F10 && !control && !alt))
+        {
+            let estaba = v.menus.abierto();
+            let r = v.menus.tecla(codigo, true);
+            self.tras_menus(r, estaba);
+            return;
+        }
         // Lo de la ventana, con las teclas de Terminator: partir, pestaña nueva, cerrar, copiar y pegar.
         if control && mayus {
             match codigo {
@@ -2730,6 +2884,22 @@ impl Shell {
     }
 
     fn raton(&mut self, e: Entrada) {
+        // S10: los menús de la fila, antes que los paneles.
+        if let Some(v) = self.ventana.as_mut().filter(|v| !v.menus_fuera) {
+            let (x, y) = v.raton;
+            let estaba = v.menus.abierto();
+            let r = match e {
+                Entrada::Mueve => v.menus.raton(x, y, v.izquierdo),
+                Entrada::Boton { boton: 272, pulsado, .. } => v.menus.raton(x, y, pulsado),
+                Entrada::Rueda(pasos) if estaba => v.menus.rueda(x, y, pasos),
+                _ if estaba => MenuResultado::Hecho,
+                _ => MenuResultado::Nada,
+            };
+            if r != MenuResultado::Nada {
+                self.tras_menus(r, estaba);
+                return;
+            }
+        }
         match e {
             Entrada::Mueve => {
                 if let (Some(desde), Some(aqui)) = (self.p.arrastre, self.punto_del_raton()) {
@@ -2801,6 +2971,65 @@ impl Shell {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// S10: lo que dejaron los menús: lo elegido se hace; F10 con los menús en la barra se pide al compositor; y lo
+    /// que cambió se pinta (al cerrarse, la ventana entera: lo desplegado tapaba los paneles).
+    fn tras_menus(&mut self, r: MenuResultado, estaba: bool) {
+        let Some(v) = self.ventana.as_mut() else { return };
+        if r == MenuResultado::AbrirFuera && v.con_menus {
+            let mut e = Escritor::new();
+            e.empezar(MENU_V, dashos_menu_v1::req::ABRIR).fin();
+            self.buzon.mandar(&e);
+            return;
+        }
+        if r != MenuResultado::Hecho {
+            v.menus_sucios = true;
+            v.sucia = true;
+            // Con algo desplegado (o que se acaba de cerrar), la ventana entera: lo desplegado tapa los paneles, que
+            // solo repintan sus filas cambiadas; si no, quedarían restos del menú de antes.
+            if estaba || v.menus.abierto() {
+                v.entera = true;
+            }
+        }
+        if let MenuResultado::Elegido(n) = r {
+            self.menu_elegido(n);
+        }
+    }
+
+    /// S10: una entrada de los menús (de la fila, o de la barra por el compositor): lo mismo que su atajo.
+    fn menu_elegido(&mut self, n: u32) {
+        let titulo = self.ventana.as_ref().and_then(|v| v.menus.datos.buscar(n)).map(|e| e.titulo.clone()).unwrap_or_default();
+        println!("  [shell] menú: {}", titulo);
+        match n {
+            M_PESTANA => self.tecla_con(None, 20, true, true, false),
+            M_VERTICAL => self.tecla_con(None, 18, true, true, false),
+            M_HORIZONTAL => self.tecla_con(None, 24, true, true, false),
+            M_CERRAR => self.tecla_con(None, 17, true, true, false),
+            M_COPIAR => self.tecla_con(None, 46, true, true, false),
+            M_PEGAR => self.tecla_con(None, 47, true, true, false),
+            M_LIMPIAR => {
+                self.p.consola.limpiar();
+                if let Some(v) = &mut self.ventana {
+                    v.sucia = true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// S10: Copiar, activa solo con algo seleccionado (en la fila y en la barra, al momento).
+    fn menus_al_dia(&mut self) {
+        let hay = self.p.consola.seleccion().is_some_and(|(a, b)| a != b);
+        let Some(v) = self.ventana.as_mut() else { return };
+        if v.menus.datos.buscar(M_COPIAR).is_some_and(|e| e.activa != hay) {
+            if let Some(e) = v.menus.datos.buscar_mut(M_COPIAR) {
+                e.activa = hay;
+            }
+            v.menus_sucios = true;
+            v.sucia = true;
+            v.mandar_menus(&mut self.buzon);
         }
     }
 
@@ -2947,8 +3176,20 @@ impl Shell {
                                 v.medida.1,
                                 if primera && v.con_portapapeles { ", con portapapeles" } else { "" }
                             );
+                            if primera {
+                                v.decir_menus();
+                            }
                         }
                     }
+                    // S10: los menús cambian de sitio: la fila sale o se va, y los paneles se recolocan.
+                    Entrada::Sitio => {
+                        self.colocar();
+                        if let Some(v) = &self.ventana {
+                            println!("  [shell] menús: {}", if v.menus_fuera { "en la barra" } else { "dentro de la ventana" });
+                            v.decir_menus();
+                        }
+                    }
+                    Entrada::Menu(n) => self.menu_elegido(n),
                     Entrada::Cerrar => {
                         // Cerrar la ventana (su botón en la barra) es cerrar todos sus paneles: sus trabajos se matan
                         // sin preguntar, como al cerrar un panel (decisión 7).
@@ -2971,6 +3212,8 @@ impl Shell {
                 println!("  [shell] el compositor cerró la conexión");
                 return RC_FALLO;
             }
+            // S10: los menús, al día con lo que hay (Copiar, con algo seleccionado).
+            self.menus_al_dia();
             // Lo pegado, como si se tecleara en el panel con el teclado.
             let pegado = self.ventana.as_mut().and_then(|v| v.pp.mover());
             if let Some(datos) = pegado {

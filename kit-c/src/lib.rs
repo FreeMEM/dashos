@@ -11,8 +11,11 @@
 //!   (`dash_ui_group_begin`/`end`) y los controles dentro, en orden. Una etiqueta (`dash_ui_label`) seguida de un campo,
 //!   un desplegable o una casilla en el mismo grupo pasa a ser la etiqueta de ese control (Material 3); si no, es un
 //!   texto.
-//! - Los menús de una ventana van en una fila arriba, cada uno un botón de texto que abre su menú (provisional: S10
-//!   quiere los menús en la barra de la pantalla, y aún no hay protocolo para eso).
+//! - Los menús de una ventana son los del kit (`kit::menus`, S10): una fila arriba dentro de la ventana o, si el
+//!   ajuste de todo el sistema lo dice (`ENV:Escritorio/menus`), en la barra de arriba de la pantalla. El compositor
+//!   dice dónde (`dashos_menus_v1`) y kit-c se lo da siempre, para que el cambio sea al momento; lo que se elige en la
+//!   barra vuelve por el compositor. Con separadores, atajos (la tecla de MUI, como Ctrl y esa tecla), casillas,
+//!   opciones y un nivel de submenú (`docs/bitacoras/menus.md`).
 //! - Los eventos son números: `dash_ui_on(objeto, clase, número)` y `dash_ui_wait_event` espera al siguiente. Cerrar la
 //!   primera ventana da -1 si no se dijo otro número.
 //! - El montón es el del programa (`malloc`/`free` del runtime de Dash); los textos van en UTF-8 y los que se devuelven
@@ -40,15 +43,15 @@ use core::cell::UnsafeCell;
 use core::ffi::{CStr, c_char};
 
 use dashos::println;
-use kit::controles::{Boton, Campo, Casilla, Ciclo, Contexto, Hijo, Interfaz, Lista, Texto};
-use kit::grupos::Medida;
+use kit::controles::{Boton, Campo, Casilla, Ciclo, Hijo, Interfaz, Lista, Texto};
 use kit::lienzo::{Lienzo, Rect};
 use kit::objetos::{Arbol, Atr, Clase, Cuando, Obj, Que, Valor, atr};
-use kit::tema::{Estado as EstadoControl, Tema};
+use kit::menus::{Cosa as CosaMenu, Datos, Entrada as EntradaMenu, Marca, Menu, Sub};
+use kit::tema::Tema;
 use ventana_cliente::{ASIENTO, COMPOSITOR, Cliente, Lamina, PUNTERO, REGISTRO, SHM, TECLADO, XDG};
 use wayland::Escritor;
 use wayland::tablas::{
-    dashos_tema_v1, wl_buffer, wl_compositor, wl_display, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm_pool,
+    dashos_menu_v1, dashos_menus_v1, dashos_tema_v1, wl_buffer, wl_compositor, wl_display, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm_pool,
     wl_surface, xdg_surface, xdg_toplevel, xdg_wm_base,
 };
 
@@ -133,54 +136,6 @@ impl Clase for Buzon {
     }
 }
 
-/// Las opciones de un menú: "número/1" (activa) o "número/0", separadas por comas, en el orden de `OPCIONES`.
-const ATR_IDS: Atr = 1000;
-
-/// El título de un menú de la ventana: un botón de texto que abre su menú (el del kit, el de los desplegables). Elegir
-/// una opción da su número; las desactivadas no hacen nada.
-struct TituloMenu;
-
-impl Clase for TituloMenu {
-    fn nombre(&self) -> &'static str {
-        "menú"
-    }
-
-    fn ajustar(&self, a: Atr, v: Valor, attrs: &BTreeMap<Atr, Valor>) -> Option<Valor> {
-        if a != atr::VALOR {
-            return Some(v);
-        }
-        let ids = attrs.get(&ATR_IDS).map(Valor::texto).unwrap_or_default();
-        if let Some(p) = ids.split(',').nth(v.int().max(0) as usize) {
-            let mut partes = p.split('/');
-            let id: i32 = partes.next().unwrap_or("0").parse().unwrap_or(0);
-            if partes.next() == Some("1") {
-                cola().push_back(id);
-            }
-        }
-        None
-    }
-
-    fn medida(&self, attrs: &BTreeMap<Atr, Valor>, ctx: &mut Contexto) -> Medida {
-        Boton.medida(attrs, ctx)
-    }
-
-    fn dibujar(&self, attrs: &BTreeMap<Atr, Valor>, l: &mut Lienzo, r: Rect, ctx: &mut Contexto, e: EstadoControl) {
-        Boton.dibujar(attrs, l, r, ctx, e)
-    }
-
-    fn pulsable(&self) -> bool {
-        true
-    }
-
-    fn clic(&self, attrs: &BTreeMap<Atr, Valor>) -> Vec<(Atr, Valor)> {
-        if attrs.get(&atr::OPCIONES).is_some_and(|o| !o.texto().is_empty()) {
-            vec![(atr::ABIERTO, Valor::Bool(true))]
-        } else {
-            Vec::new()
-        }
-    }
-}
-
 // ---- lo que es cada número ----
 
 #[derive(Clone, Copy, PartialEq)]
@@ -193,17 +148,21 @@ enum Cosa {
     /// Una etiqueta: su texto, y si pasó a ser la etiqueta de un control, cuál.
     Etiqueta(usize, Obj),
     Menu(usize, usize),
-    Opcion(usize, usize, usize),
+    /// Una opción de un menú: ventana, menú, su puesto y, si está en un submenú, su puesto dentro.
+    Opcion(usize, usize, usize, Option<usize>),
 }
 
-struct OpcionMenu {
-    titulo: String,
-    id: i32,
-    activa: bool,
+/// Una cosa de un menú de la ventana, como la da el programa.
+enum OpcionMenu {
+    /// `numero`: el del menú del kit (1, 2... por ventana, en el orden en que se crean); `id`, el evento del programa.
+    Entrada { titulo: String, tecla: String, id: i32, numero: u32, activa: bool, marca: Marca },
+    Separador,
+    Sub { titulo: String, activo: bool, opciones: Vec<OpcionMenu> },
 }
 
 struct MenuVentana {
-    obj: Obj,
+    titulo: String,
+    activo: bool,
     opciones: Vec<OpcionMenu>,
 }
 
@@ -246,6 +205,11 @@ struct Ventana {
     /// Hay que volver a colocar (algo cambió de texto) y dibujar.
     recolocar: bool,
     dicha: bool,
+    /// S10: el siguiente número de opción de menú; su `dashos_menu_v1` (si el compositor lo tiene) y lo último que
+    /// se le mandó.
+    siguiente_numero: u32,
+    menu_obj: Option<u32>,
+    menu_dicho: Vec<u8>,
 }
 
 /// Dónde se proyectan los píxeles de las ventanas: dos sitios de 256 MB por ventana desde 320 GB (lejos del montón de
@@ -258,13 +222,21 @@ const MAX_ALTO: i32 = 1200;
 const MIN_ANCHO: i32 = 280;
 /// El objeto del tema del sistema (`dashos_tema_v1`), como en Ajustes.
 const TEMA: u32 = 43;
+/// S10: el objeto de `dashos_menus_v1` (dónde van los menús).
+const MENUS: u32 = 44;
+/// Los sitios de los menús (`dashos_menus_v1.sitio`).
+const SITIO_BARRA: u32 = 1;
 
 struct Estado {
     cosas: Vec<Cosa>,
     ventanas: Vec<Ventana>,
     construyendo: Option<usize>,
-    /// El menú que se está llenando (ventana, menú).
+    /// El menú que se está llenando (ventana, menú) y, entre `dash_ui_menu_sub_begin` y `_end`, su submenú.
     menu: Option<(usize, usize)>,
+    sub: Option<usize>,
+    /// S10: si el compositor sabe de menús, y dónde van (0 dentro, 1 en la barra).
+    con_menus: bool,
+    sitio: u32,
     cliente: Option<Cliente>,
     llave: u32,
     siguiente_id: u32,
@@ -288,6 +260,9 @@ impl Estado {
             ventanas: Vec::new(),
             construyendo: None,
             menu: None,
+            sub: None,
+            con_menus: false,
+            sitio: 0,
             cliente: None,
             llave: 0,
             siguiente_id: 1000,
@@ -366,6 +341,11 @@ impl Estado {
         if let Some((gt, v)) = global("dashos_tema_v1") {
             e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(v.min(2)).uint(TEMA).fin();
         }
+        // S10: dónde van los menús. Sin él (un compositor de antes), dentro de la ventana.
+        if let Some((gm, _)) = global("dashos_menus_v1") {
+            e.empezar(REGISTRO, wl_registry::req::BIND).uint(gm).texto(Some("dashos_menus_v1")).uint(1).uint(MENUS).fin();
+            self.con_menus = true;
+        }
         c.mandar(&e);
         self.cliente = Some(c);
         true
@@ -413,7 +393,6 @@ impl Estado {
         match self.de(h)? {
             Cosa::Obj(w, o) => Some((w, o)),
             Cosa::Etiqueta(w, o) => Some((w, o)),
-            Cosa::Menu(w, m) => Some((w, self.ventanas[w].menus.get(m)?.obj)),
             _ => None,
         }
     }
@@ -422,17 +401,167 @@ impl Estado {
         self.arbol(w).and_then(|a| a.objeto(o)).map_or("", |x| x.clase.nombre())
     }
 
-    /// Las opciones de un menú, otra vez en su título.
-    fn rehacer_menu(&mut self, w: usize, m: usize) {
-        let Some(menu) = self.ventanas.get(w).and_then(|v| v.menus.get(m)) else { return };
-        let obj = menu.obj;
-        let titulos: Vec<String> = menu.opciones.iter().map(|o| o.titulo.replace('|', "¦")).collect();
-        let ids: Vec<String> = menu.opciones.iter().map(|o| format!("{}/{}", o.id, o.activa as u8)).collect();
-        if let Some(a) = self.arbol(w) {
-            a.poner(obj, atr::OPCIONES, Valor::Texto(titulos.join("|")));
-            a.poner(obj, ATR_IDS, Valor::Texto(ids.join(",")));
+    /// S10: los menús de la ventana `w` como los del kit: títulos y atajos limpios y recortados, y lo que pasa de los
+    /// topes de `wayland::menus`, fuera (y se dice una vez).
+    fn datos_menus(&self, w: usize) -> Datos {
+        use kit::menus::texto_limpio;
+        use wayland::menus::{MAX_ATAJO, MAX_COSAS, MAX_ENTRADAS, MAX_MENUS, MAX_SUB, MAX_TITULO};
+        let titulo = |t: &str| {
+            let t = texto_limpio(t, MAX_TITULO);
+            if t.trim().is_empty() { String::from("?") } else { t }
+        };
+        let mut entradas = 0usize;
+        let mut cortado = false;
+        let cosa = |o: &OpcionMenu, entradas: &mut usize, cortado: &mut bool| -> Option<CosaMenu> {
+            match o {
+                OpcionMenu::Entrada { titulo: t, tecla, numero, activa, marca, .. } => {
+                    if *entradas >= MAX_ENTRADAS {
+                        *cortado = true;
+                        return None;
+                    }
+                    *entradas += 1;
+                    // La tecla de MUI ("Q") es Ctrl y esa tecla.
+                    let atajo = match tecla.chars().find(|c| !c.is_control() && !c.is_whitespace()) {
+                        Some(c) => texto_limpio(&format!("Ctrl+{}", c.to_uppercase()), MAX_ATAJO),
+                        None => String::new(),
+                    };
+                    Some(CosaMenu::Entrada(EntradaMenu { numero: *numero, titulo: titulo(t), atajo, activa: *activa, marca: *marca }))
+                }
+                OpcionMenu::Separador => Some(CosaMenu::Separador),
+                OpcionMenu::Sub { .. } => None,
+            }
+        };
+        let mut menus = Vec::new();
+        for m in self.ventanas[w].menus.iter() {
+            if menus.len() >= MAX_MENUS {
+                cortado = true;
+                break;
+            }
+            let mut cosas = Vec::new();
+            for o in &m.opciones {
+                if cosas.len() >= MAX_COSAS {
+                    cortado = true;
+                    break;
+                }
+                if let OpcionMenu::Sub { titulo: t, activo, opciones } = o {
+                    let mut sub = Vec::new();
+                    for x in opciones {
+                        if sub.len() >= MAX_SUB {
+                            cortado = true;
+                            break;
+                        }
+                        sub.extend(cosa(x, &mut entradas, &mut cortado));
+                    }
+                    cosas.push(CosaMenu::Sub(Sub { titulo: titulo(t), activo: *activo, cosas: sub }));
+                } else {
+                    cosas.extend(cosa(o, &mut entradas, &mut cortado));
+                }
+            }
+            menus.push(Menu { titulo: titulo(&m.titulo), activo: m.activo, cosas });
+        }
+        let datos = Datos { menus };
+        if cortado {
+            println!("  [dash-ui] los menús de \"{}\" pasan de los topes: lo de más no se ve", self.ventanas[w].titulo);
+        }
+        match datos.escribir() {
+            Ok(_) => datos,
+            Err(f) => {
+                println!("  [dash-ui] los menús de \"{}\" no valen ({}): sin menús", self.ventanas[w].titulo, f.porque);
+                Datos::default()
+            }
+        }
+    }
+
+    /// Los menús de la ventana, otra vez en su interfaz y en el compositor.
+    fn rehacer_menu(&mut self, w: usize) {
+        if self.ventanas.get(w).is_none_or(|v| v.interfaz.is_none()) {
+            return;
+        }
+        let datos = self.datos_menus(w);
+        if let Some(i) = self.ventanas[w].interfaz.as_mut() {
+            i.poner_menus(datos);
         }
         self.ventanas[w].recolocar = true;
+        self.mandar_menu(w);
+    }
+
+    /// S10: los menús de la ventana `w` al compositor, si cambiaron desde lo último.
+    fn mandar_menu(&mut self, w: usize) {
+        let Some(mid) = self.ventanas.get(w).and_then(|v| v.menu_obj) else { return };
+        let datos = self.ventanas[w].interfaz.as_ref().and_then(|i| i.menus.as_ref()).and_then(|m| m.datos.escribir().ok()).unwrap_or_default();
+        if datos == self.ventanas[w].menu_dicho {
+            return;
+        }
+        let mut e = Escritor::new();
+        e.empezar(mid, dashos_menu_v1::req::PONER).array(&datos).fin();
+        self.ventanas[w].menu_dicho = datos;
+        self.mandar(&e);
+    }
+
+    /// S10: lo que dejó un evento en los menús de la interfaz de `w`: lo elegido, a la cola (con el número del
+    /// programa); las marcas que cambiaron, al modelo de kit-c y al compositor; F10 con los menús en la barra, al
+    /// compositor.
+    fn tras_menus(&mut self, w: usize) {
+        let Some(i) = self.ventanas.get_mut(w).and_then(|v| v.interfaz.as_mut()) else { return };
+        let mut elegidos = Vec::new();
+        while let Some(n) = i.elegido_menu() {
+            elegidos.push(n);
+        }
+        let abrir = core::mem::take(&mut i.abrir_fuera);
+        let cambiado = i.menus.as_mut().is_some_and(|m| core::mem::take(&mut m.cambiado));
+        if cambiado {
+            // Las marcas, de vuelta al modelo de kit-c (si no, rehacer los menús las perdería).
+            let marcas: Vec<(u32, Marca)> = i.menus.as_ref().map(|m| m.datos.entradas().map(|(e, _)| (e.numero, e.marca)).collect()).unwrap_or_default();
+            for m in self.ventanas[w].menus.iter_mut() {
+                for o in m.opciones.iter_mut() {
+                    let subs: &mut [OpcionMenu] = match o {
+                        OpcionMenu::Sub { opciones, .. } => opciones,
+                        _ => core::slice::from_mut(o),
+                    };
+                    for x in subs {
+                        if let OpcionMenu::Entrada { numero, marca, .. } = x
+                            && let Some((_, m)) = marcas.iter().find(|p| p.0 == *numero)
+                        {
+                            *marca = *m;
+                        }
+                    }
+                }
+            }
+            self.mandar_menu(w);
+        }
+        for n in elegidos {
+            if let Some(id) = self.id_de_numero(w, n) {
+                cola().push_back(id);
+            }
+        }
+        if abrir && let Some(mid) = self.ventanas[w].menu_obj {
+            let mut e = Escritor::new();
+            e.empezar(mid, dashos_menu_v1::req::ABRIR).fin();
+            self.mandar(&e);
+        }
+    }
+
+    /// El evento del programa de la opción `numero` de la ventana `w`.
+    fn id_de_numero(&self, w: usize, n: u32) -> Option<i32> {
+        fn buscar(os: &[OpcionMenu], n: u32) -> Option<i32> {
+            os.iter().find_map(|o| match o {
+                OpcionMenu::Entrada { numero, id, .. } if *numero == n => Some(*id),
+                OpcionMenu::Sub { opciones, .. } => buscar(opciones, n),
+                _ => None,
+            })
+        }
+        self.ventanas.get(w)?.menus.iter().find_map(|m| buscar(&m.opciones, n))
+    }
+
+    /// La opción de menú de una cosa `Opcion`.
+    fn opcion(&mut self, c: Cosa) -> Option<&mut OpcionMenu> {
+        let Cosa::Opcion(w, m, k, j) = c else { return None };
+        let o = self.ventanas.get_mut(w)?.menus.get_mut(m)?.opciones.get_mut(k)?;
+        match (j, o) {
+            (None, o) => Some(o),
+            (Some(j), OpcionMenu::Sub { opciones, .. }) => opciones.get_mut(j),
+            _ => None,
+        }
     }
 
     /// Las líneas de una lista, otra vez en ella; la elegida sigue dentro.
@@ -483,16 +612,30 @@ impl Estado {
         e.empezar(XDG, xdg_wm_base::req::GET_XDG_SURFACE).uint(xsup).uint(sup).fin();
         e.empezar(xsup, xdg_surface::req::GET_TOPLEVEL).uint(top).fin();
         e.empezar(top, xdg_toplevel::req::SET_TITLE).texto(Some(&v.titulo)).fin();
+        // S10: sus menús, al compositor (los enseña en la barra si toca).
+        let con_menus = self.con_menus && v.interfaz.as_ref().is_some_and(|i| i.menus.as_ref().is_some_and(|m| !m.datos.vacio()));
+        let mid = if con_menus { Some(self.siguiente_id + 1) } else { None };
+        if let Some(mid) = mid {
+            self.siguiente_id += 1;
+            e.empezar(MENUS, dashos_menus_v1::req::MENU).uint(mid).uint(sup).fin();
+        }
+        let v = &mut self.ventanas[w];
         e.empezar(sup, wl_surface::req::COMMIT).fin();
         v.sup = Some(Superficie { sup, xsup, top, bufer, lamina, alterna: false, medida, pedida: (0, 0), configurada: false });
         v.recolocar = false;
+        v.menu_obj = mid;
+        v.menu_dicho.clear();
         self.mandar(&e);
+        self.mandar_menu(w);
         true
     }
 
     fn cerrar(&mut self, w: usize) {
         let Some(s) = self.ventanas.get_mut(w).and_then(|v| v.sup.take()) else { return };
         let mut e = Escritor::new();
+        if let Some(mid) = self.ventanas[w].menu_obj.take() {
+            e.empezar(mid, dashos_menu_v1::req::DESTROY).fin();
+        }
         e.empezar(s.top, xdg_toplevel::req::DESTROY).fin();
         e.empezar(s.xsup, xdg_surface::req::DESTROY).fin();
         e.empezar(s.sup, wl_surface::req::DESTROY).fin();
@@ -557,9 +700,17 @@ impl Estado {
         }
         v.dicha = true;
         let mut botones = String::new();
+        // S10: los títulos de los menús, si van en la fila.
+        if let Some(m) = i.menus.as_ref().filter(|m| !m.fuera) {
+            for (k, menu) in m.datos.menus.iter().enumerate() {
+                if let Some(r) = m.sitio_titulo(k) {
+                    botones.push_str(&format!("; \"{}\" en ({}, {})", menu.titulo, r.x + r.w / 2, r.y + r.h / 2));
+                }
+            }
+        }
         for (o, r) in &i.sitios {
             let Some(x) = i.arbol.objeto(*o) else { continue };
-            if x.clase.nombre() == "botón" || x.clase.nombre() == "menú" {
+            if x.clase.nombre() == "botón" {
                 let t = x.attrs.get(&atr::TEXTO).map(Valor::texto).unwrap_or_default();
                 botones.push_str(&format!("; \"{}\" en ({}, {})", t, r.x + r.w / 2, r.y + r.h / 2));
             }
@@ -603,6 +754,21 @@ impl Estado {
                     }
                 }
             }
+            // S10: dónde van los menús; lo de todas las ventanas cambia en el acto.
+            (MENUS, dashos_menus_v1::ev::SITIO) => {
+                let sitio = palabra(0);
+                if sitio != self.sitio {
+                    self.sitio = sitio;
+                    println!("  [dash-ui] menús: {}", if sitio == SITIO_BARRA { "en la barra" } else { "dentro de la ventana" });
+                    for w in 0..self.ventanas.len() {
+                        if let Some(i) = self.ventanas[w].interfaz.as_mut() {
+                            i.menus_fuera(sitio == SITIO_BARRA);
+                            self.ventanas[w].recolocar = true;
+                        }
+                        self.ajustar_tamano(w);
+                    }
+                }
+            }
             (TECLADO, wl_keyboard::ev::KEYMAP) => {
                 if let Some(l) = self.cliente.as_mut().and_then(|c| c.juntador.tomar_llave()) {
                     dashos::cerrar(l);
@@ -617,6 +783,7 @@ impl Estado {
                             self.pintar(w, false);
                         }
                     }
+                    self.tras_menus(w);
                 }
             }
             (PUNTERO, wl_pointer::ev::ENTER) => {
@@ -646,6 +813,7 @@ impl Estado {
                             self.pintar(w, false);
                         }
                     }
+                    self.tras_menus(w);
                 }
             }
             (1, wl_display::ev::ERROR) => {
@@ -653,6 +821,17 @@ impl Estado {
                 return false;
             }
             _ => {
+                // S10: lo elegido en la barra, en el menú de una ventana.
+                if orden == dashos_menu_v1::ev::ELEGIDO
+                    && let Some(w) = self.ventanas.iter().position(|v| v.menu_obj == Some(o))
+                {
+                    let n = palabra(0);
+                    let ok = self.ventanas[w].interfaz.as_mut().is_some_and(|i| i.elegir_menu_fuera(n));
+                    println!("  [dash-ui] elegido en la barra: {} ({})", n, if ok { "vale" } else { "no se puede elegir" });
+                    self.tras_menus(w);
+                    self.pintar(w, false);
+                    return true;
+                }
                 if let Some(w) = self.ventana_de(o) {
                     self.de_ventana(w, o, orden, cuerpo);
                 }
@@ -672,6 +851,7 @@ impl Estado {
         if cambio {
             self.pintar(w, false);
         }
+        self.tras_menus(w);
     }
 
     /// Lo de la superficie y la ventana de `w`: configurar (el tamaño) y cerrar.
@@ -700,41 +880,71 @@ impl Estado {
                 self.decir(w);
                 return;
             }
-            // Un tamaño nuevo (0 × 0: el propio): otra memoria, otro pool y otro búfer; los viejos se sueltan.
-            let propio = {
-                let i = self.ventanas[w].interfaz.as_mut().unwrap();
-                let m = i.medida();
-                (m.min.0.clamp(MIN_ANCHO, MAX_ANCHO), m.min.1.clamp(64, MAX_ALTO))
-            };
+            // Un tamaño nuevo (0 × 0: el propio).
+            let propio = self.tamano_propio(w);
             let s = self.ventanas[w].sup.as_mut().unwrap();
             let nueva = if s.pedida.0 > 0 && s.pedida.1 > 0 { (s.pedida.0.min(MAX_ANCHO), s.pedida.1.min(MAX_ALTO)) } else { propio };
-            if nueva == s.medida {
-                self.mandar(&e);
-                return;
-            }
-            let (pool, bufer) = (self.siguiente_id + 1, self.siguiente_id + 2);
-            self.siguiente_id += 2;
-            let s = self.ventanas[w].sup.as_mut().unwrap();
-            let va = VA_VENTANAS + w * 2 * SITIO + if s.alterna { 0 } else { SITIO };
-            let Some(lamina) = Lamina::nueva(&mut e, (nueva.0 * nueva.1 * 4) as usize, va, pool) else {
-                self.mandar(&e);
-                return;
-            };
-            e.empezar(pool, wl_shm_pool::req::CREATE_BUFFER).uint(bufer).int(0).int(nueva.0).int(nueva.1).int(nueva.0 * 4).uint(wayland::shm::ARGB8888).fin();
-            e.empezar(s.bufer, wl_buffer::req::DESTROY).fin();
-            let vieja = core::mem::replace(&mut s.lamina, lamina);
-            vieja.soltar(&mut e);
-            s.bufer = bufer;
-            s.alterna = !s.alterna;
-            s.medida = nueva;
-            let maximizada = s.pedida.0 > 0;
+            self.cambiar_tamano(w, nueva, e);
+        }
+    }
+
+    /// Lo que mide la ventana `w` por sí misma (lo mínimo de su interfaz, dentro de los topes).
+    fn tamano_propio(&mut self, w: usize) -> (i32, i32) {
+        let i = self.ventanas[w].interfaz.as_mut().unwrap();
+        let m = i.medida();
+        (m.min.0.clamp(MIN_ANCHO, MAX_ANCHO), m.min.1.clamp(64, MAX_ALTO))
+    }
+
+    /// La ventana `w` a `nueva`: otra memoria, otro pool y otro búfer; los viejos se sueltan. Lo de `e` (un
+    /// `ack_configure`) va delante.
+    fn cambiar_tamano(&mut self, w: usize, nueva: (i32, i32), mut e: Escritor) {
+        let Some(s) = self.ventanas[w].sup.as_ref() else { return };
+        if nueva == s.medida {
             self.mandar(&e);
-            let v = &mut self.ventanas[w];
-            if let Some(i) = v.interfaz.as_mut() {
-                i.esquinas = if maximizada { 0 } else { kit::tema::RADIO_VENTANA };
-            }
-            v.recolocar = true;
-            self.pintar(w, true);
+            return;
+        }
+        let (pool, bufer) = (self.siguiente_id + 1, self.siguiente_id + 2);
+        self.siguiente_id += 2;
+        let s = self.ventanas[w].sup.as_mut().unwrap();
+        let va = VA_VENTANAS + w * 2 * SITIO + if s.alterna { 0 } else { SITIO };
+        let Some(lamina) = Lamina::nueva(&mut e, (nueva.0 * nueva.1 * 4) as usize, va, pool) else {
+            self.mandar(&e);
+            return;
+        };
+        e.empezar(pool, wl_shm_pool::req::CREATE_BUFFER).uint(bufer).int(0).int(nueva.0).int(nueva.1).int(nueva.0 * 4).uint(wayland::shm::ARGB8888).fin();
+        e.empezar(s.bufer, wl_buffer::req::DESTROY).fin();
+        let vieja = core::mem::replace(&mut s.lamina, lamina);
+        vieja.soltar(&mut e);
+        s.bufer = bufer;
+        s.alterna = !s.alterna;
+        s.medida = nueva;
+        let maximizada = s.pedida.0 > 0;
+        self.mandar(&e);
+        let v = &mut self.ventanas[w];
+        if let Some(i) = v.interfaz.as_mut() {
+            i.esquinas = if maximizada { 0 } else { kit::tema::RADIO_VENTANA };
+        }
+        v.recolocar = true;
+        self.pintar(w, true);
+    }
+
+    /// S10: con los menús dentro o fuera cambia lo que mide la ventana: si no la ha dimensionado el compositor
+    /// (maximizada), toma su tamaño propio; si no, se queda y lo de dentro se coloca otra vez.
+    fn ajustar_tamano(&mut self, w: usize) {
+        let Some(s) = self.ventanas[w].sup.as_ref() else { return };
+        if !s.configurada {
+            return;
+        }
+        if s.pedida.0 > 0 && s.pedida.1 > 0 {
+            self.pintar(w, false);
+            return;
+        }
+        let nueva = self.tamano_propio(w);
+        let antes = self.ventanas[w].sup.as_ref().unwrap().medida;
+        if nueva == antes {
+            self.pintar(w, false);
+        } else {
+            self.cambiar_tamano(w, nueva, Escritor::new());
         }
     }
 
@@ -858,6 +1068,7 @@ pub extern "C" fn dash_ui_app_end() {
     e.ventanas.clear();
     e.construyendo = None;
     e.menu = None;
+    e.sub = None;
     cola().clear();
 }
 
@@ -877,13 +1088,16 @@ pub unsafe extern "C" fn dash_ui_window_begin(titulo: *const c_char, _id: i32) -
         etiquetas: BTreeMap::new(),
         recolocar: false,
         dicha: false,
+        siguiente_numero: 1,
+        menu_obj: None,
+        menu_dicho: Vec::new(),
     });
     let w = e.ventanas.len() - 1;
     e.construyendo = Some(w);
     e.cosa(Cosa::Ventana(w))
 }
 
-/// Acaba la ventana: su interfaz, con la fila de menús arriba si tiene.
+/// Acaba la ventana: su interfaz, con sus menús (en la fila de arriba o en la barra, según el sitio).
 #[unsafe(no_mangle)]
 pub extern "C" fn dash_ui_window_end() {
     let e = est();
@@ -895,19 +1109,22 @@ pub extern "C" fn dash_ui_window_end() {
         let g = if m.horizontal { Hijo::Fila(m.hijos) } else { Hijo::Columna(m.hijos) };
         v.pila.last_mut().unwrap().hijos.push(g);
     }
-    let mut hijos = v.pila.pop().map(|m| m.hijos).unwrap_or_default();
-    let mut arbol = v.arbol.take().unwrap_or_default();
-    if !v.menus.is_empty() {
-        // A la izquierda, como una barra de menús: un hueco que crece detrás.
-        let mut fila: Vec<Hijo> = v.menus.iter().map(|m| Hijo::Obj(m.obj)).collect();
-        fila.push(Hijo::Obj(arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))])));
-        hijos.insert(0, Hijo::Fila(fila));
-    }
+    let hijos = v.pila.pop().map(|m| m.hijos).unwrap_or_default();
+    let arbol = v.arbol.take().unwrap_or_default();
     let mut i = Interfaz::new(arbol, Hijo::Columna(hijos), tema);
     // Material 3: como un diálogo, 24 de margen y esquinas redondas (el búfer es ARGB).
     i.margen = 24;
     i.esquinas = kit::tema::RADIO_VENTANA;
     v.interfaz = Some(i);
+    if !e.ventanas[w].menus.is_empty() {
+        let datos = e.datos_menus(w);
+        let fuera = e.sitio == SITIO_BARRA;
+        let i = e.ventanas[w].interfaz.as_mut().unwrap();
+        i.poner_menus(datos);
+        i.menus_fuera(fuera);
+    }
+    e.menu = None;
+    e.sub = None;
 }
 
 #[unsafe(no_mangle)]
@@ -1078,40 +1295,102 @@ pub extern "C" fn dash_ui_list_get(lista: i32, pos: i32) -> *const c_char {
     e.devolver(&t)
 }
 
-/// Un menú de la ventana que se construye: un botón de texto en la fila de arriba.
+/// Un menú de la ventana que se construye (o de la última que se hizo): un título de la fila de menús.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dash_ui_menu_begin(titulo: *const c_char) -> i32 {
     let t = sin_tecla(&sin_codigos(&unsafe { texto(titulo) }));
     let e = est();
     let Some(w) = e.construyendo.or(e.ventanas.len().checked_sub(1)) else { return 0 };
-    let Some(a) = e.arbol(w) else { return 0 };
-    let obj = a.crear(TituloMenu, &[(atr::TEXTO, Valor::Texto(t)), (atr::ESTILO, Valor::Int(2)), (atr::OPCIONES, Valor::Texto(String::new()))]);
     let v = &mut e.ventanas[w];
-    v.menus.push(MenuVentana { obj, opciones: Vec::new() });
+    v.menus.push(MenuVentana { titulo: t, activo: true, opciones: Vec::new() });
     let m = v.menus.len() - 1;
     e.menu = Some((w, m));
+    e.sub = None;
+    e.rehacer_menu(w);
     e.cosa(Cosa::Menu(w, m))
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn dash_ui_menu_item(titulo: *const c_char, _tecla: *const c_char, id: i32) -> i32 {
-    let t = sin_tecla(&sin_codigos(&unsafe { texto(titulo) }));
+/// Una cosa más en el menú (o en el submenú) que se llena: su número de cosa, o 0 si no hay menú abierto.
+fn nueva_opcion(o: impl FnOnce(u32) -> OpcionMenu) -> i32 {
     let e = est();
     let Some((w, m)) = e.menu else { return 0 };
-    let ops = &mut e.ventanas[w].menus[m].opciones;
-    ops.push(OpcionMenu { titulo: t, id, activa: true });
-    let k = ops.len() - 1;
-    e.rehacer_menu(w, m);
-    e.cosa(Cosa::Opcion(w, m, k))
+    let v = &mut e.ventanas[w];
+    let numero = v.siguiente_numero;
+    v.siguiente_numero = v.siguiente_numero.saturating_add(1).min(wayland::menus::MAX_NUMERO);
+    let o = o(numero);
+    let ops = &mut v.menus[m].opciones;
+    let cosa = match e.sub {
+        Some(k) => match ops.get_mut(k) {
+            Some(OpcionMenu::Sub { opciones, .. }) => {
+                opciones.push(o);
+                Cosa::Opcion(w, m, k, Some(opciones.len() - 1))
+            }
+            _ => return 0,
+        },
+        None => {
+            ops.push(o);
+            Cosa::Opcion(w, m, ops.len() - 1, None)
+        }
+    };
+    e.rehacer_menu(w);
+    e.cosa(cosa)
 }
 
-/// Las rayas de MUI entre opciones: el menú de Material del kit no las tiene; no se ven.
+/// Una entrada; `tecla`, la de MUI ("Q": se enseña y vale como Ctrl+Q).
 #[unsafe(no_mangle)]
-pub extern "C" fn dash_ui_menu_separator() {}
+pub unsafe extern "C" fn dash_ui_menu_item(titulo: *const c_char, tecla: *const c_char, id: i32) -> i32 {
+    let (t, tecla) = unsafe { (sin_tecla(&sin_codigos(&texto(titulo))), texto(tecla)) };
+    nueva_opcion(|numero| OpcionMenu::Entrada { titulo: t, tecla, id, numero, activa: true, marca: Marca::Ninguna })
+}
+
+/// S10: una casilla (`marcada` 0 o 1): elegirla la cambia; `dash_ui_get_value` dice cómo está.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dash_ui_menu_check(titulo: *const c_char, tecla: *const c_char, id: i32, marcada: i32) -> i32 {
+    let (t, tecla) = unsafe { (sin_tecla(&sin_codigos(&texto(titulo))), texto(tecla)) };
+    nueva_opcion(|numero| OpcionMenu::Entrada { titulo: t, tecla, id, numero, activa: true, marca: Marca::Casilla(marcada != 0) })
+}
+
+/// S10: una opción: las seguidas (sin separador por medio) son un grupo, y elegir una desmarca las otras.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dash_ui_menu_radio(titulo: *const c_char, tecla: *const c_char, id: i32, marcada: i32) -> i32 {
+    let (t, tecla) = unsafe { (sin_tecla(&sin_codigos(&texto(titulo))), texto(tecla)) };
+    nueva_opcion(|numero| OpcionMenu::Entrada { titulo: t, tecla, id, numero, activa: true, marca: Marca::Opcion(marcada != 0) })
+}
+
+/// Las rayas de MUI entre opciones: un separador.
+#[unsafe(no_mangle)]
+pub extern "C" fn dash_ui_menu_separator() {
+    nueva_opcion(|_| OpcionMenu::Separador);
+}
+
+/// S10: un submenú (un nivel, como en el Amiga): lo que venga hasta `dash_ui_menu_sub_end` va dentro.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dash_ui_menu_sub_begin(titulo: *const c_char) -> i32 {
+    let t = sin_tecla(&sin_codigos(&unsafe { texto(titulo) }));
+    let e = est();
+    if e.sub.is_some() {
+        // Dentro de otro: no hay segundo nivel; sus cosas van en el que está abierto.
+        return 0;
+    }
+    let Some((w, m)) = e.menu else { return 0 };
+    let ops = &mut e.ventanas[w].menus[m].opciones;
+    ops.push(OpcionMenu::Sub { titulo: t, activo: true, opciones: Vec::new() });
+    let k = ops.len() - 1;
+    e.sub = Some(k);
+    e.rehacer_menu(w);
+    e.cosa(Cosa::Opcion(w, m, k, None))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn dash_ui_menu_sub_end() {
+    est().sub = None;
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn dash_ui_menu_end() {
-    est().menu = None;
+    let e = est();
+    e.menu = None;
+    e.sub = None;
 }
 
 /// Que `obj` dé el evento `id`: `clase` 0 al pulsarlo, 1 al cambiar su valor o su texto, 2 al cerrar la ventana, 3 con
@@ -1145,7 +1424,11 @@ pub extern "C" fn dash_ui_get_text(obj: i32) -> *const c_char {
     let t = match e.de(obj) {
         Some(Cosa::Ventana(w)) => e.ventanas[w].titulo.clone(),
         Some(Cosa::Etiqueta(w, o)) => e.ventanas[w].etiquetas.get(&o).map(|x| x.0.clone()).unwrap_or_default(),
-        Some(Cosa::Opcion(w, m, k)) => e.ventanas[w].menus[m].opciones[k].titulo.clone(),
+        Some(Cosa::Menu(w, m)) => e.ventanas[w].menus[m].titulo.clone(),
+        Some(c @ Cosa::Opcion(..)) => match e.opcion(c) {
+            Some(OpcionMenu::Entrada { titulo, .. } | OpcionMenu::Sub { titulo, .. }) => titulo.clone(),
+            _ => String::new(),
+        },
         _ => match e.objeto(obj) {
             Some((w, o)) => e.arbol(w).and_then(|a| a.leer(o, atr::TEXTO)).map(Valor::texto).unwrap_or_default(),
             None => String::new(),
@@ -1182,9 +1465,15 @@ pub unsafe extern "C" fn dash_ui_set_text(obj: i32, t: *const c_char) {
             }
             e.ventanas[w].recolocar = true;
         }
-        Some(Cosa::Opcion(w, m, k)) => {
-            e.ventanas[w].menus[m].opciones[k].titulo = sin_tecla(&sin_codigos(&t));
-            e.rehacer_menu(w, m);
+        Some(Cosa::Menu(w, m)) => {
+            e.ventanas[w].menus[m].titulo = sin_tecla(&sin_codigos(&t));
+            e.rehacer_menu(w);
+        }
+        Some(c @ Cosa::Opcion(w, ..)) => {
+            if let Some(OpcionMenu::Entrada { titulo, .. } | OpcionMenu::Sub { titulo, .. }) = e.opcion(c) {
+                *titulo = sin_tecla(&sin_codigos(&t));
+            }
+            e.rehacer_menu(w);
         }
         _ => {
             let Some((w, o)) = e.objeto(obj) else { return };
@@ -1204,6 +1493,13 @@ pub unsafe extern "C" fn dash_ui_set_text(obj: i32, t: *const c_char) {
 #[unsafe(no_mangle)]
 pub extern "C" fn dash_ui_get_value(obj: i32) -> i32 {
     let e = est();
+    // S10: una casilla u opción de menú: marcada o no.
+    if let Some(c @ Cosa::Opcion(..)) = e.de(obj) {
+        return match e.opcion(c) {
+            Some(OpcionMenu::Entrada { marca: Marca::Casilla(x) | Marca::Opcion(x), .. }) => *x as i32,
+            _ => 0,
+        };
+    }
     let Some((w, o)) = e.objeto(obj) else { return 0 };
     match e.arbol(w).and_then(|a| a.leer(o, atr::VALOR)) {
         Some(Valor::Bool(b)) => *b as i32,
@@ -1215,6 +1511,28 @@ pub extern "C" fn dash_ui_get_value(obj: i32) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn dash_ui_set_value(obj: i32, valor: i32) {
     let e = est();
+    // S10: marcar o desmarcar una casilla u opción de menú (marcar una opción desmarca las de su grupo).
+    if let Some(c @ Cosa::Opcion(w, ..)) = e.de(obj) {
+        let mut opcion_marcada = None;
+        match e.opcion(c) {
+            Some(OpcionMenu::Entrada { marca: Marca::Casilla(x), .. }) => *x = valor != 0,
+            Some(OpcionMenu::Entrada { marca: Marca::Opcion(x), numero, .. }) => {
+                *x = valor != 0;
+                if valor != 0 {
+                    opcion_marcada = Some(*numero);
+                }
+            }
+            _ => return,
+        }
+        if let Some(n) = opcion_marcada {
+            // Las de su grupo, desmarcadas (lo hace el modelo del kit).
+            let mut datos = e.datos_menus(w);
+            datos.marcar(n, true);
+            desmarcar_grupo(e, w, &datos);
+        }
+        e.rehacer_menu(w);
+        return;
+    }
     let Some((w, o)) = e.objeto(obj) else { return };
     let v = match e.clase(w, o) {
         "casilla" => Valor::Bool(valor != 0),
@@ -1232,10 +1550,20 @@ pub extern "C" fn dash_ui_set_value(obj: i32, valor: i32) {
 #[unsafe(no_mangle)]
 pub extern "C" fn dash_ui_set_enabled(obj: i32, activo: i32) {
     let e = est();
-    if let Some(Cosa::Opcion(w, m, k)) = e.de(obj) {
-        e.ventanas[w].menus[m].opciones[k].activa = activo != 0;
-        e.rehacer_menu(w, m);
-        return;
+    match e.de(obj) {
+        Some(c @ Cosa::Opcion(w, ..)) => {
+            if let Some(OpcionMenu::Entrada { activa: a, .. } | OpcionMenu::Sub { activo: a, .. }) = e.opcion(c) {
+                *a = activo != 0;
+            }
+            e.rehacer_menu(w);
+            return;
+        }
+        Some(Cosa::Menu(w, m)) => {
+            e.ventanas[w].menus[m].activo = activo != 0;
+            e.rehacer_menu(w);
+            return;
+        }
+        _ => {}
     }
     let Some((w, o)) = e.objeto(obj) else { return };
     let o = match e.de(obj) {
@@ -1244,6 +1572,26 @@ pub extern "C" fn dash_ui_set_enabled(obj: i32, activo: i32) {
     };
     if let Some(a) = e.arbol(w) {
         a.poner(o, atr::DESACTIVADO, Valor::Bool(activo == 0));
+    }
+}
+
+/// S10: las marcas de las opciones, como dice `datos` (con una ya marcada y las de su grupo no): a kit-c.
+fn desmarcar_grupo(e: &mut Estado, w: usize, datos: &Datos) {
+    let marcas: Vec<(u32, Marca)> = datos.entradas().map(|(x, _)| (x.numero, x.marca)).collect();
+    for m in e.ventanas[w].menus.iter_mut() {
+        for o in m.opciones.iter_mut() {
+            let os: &mut [OpcionMenu] = match o {
+                OpcionMenu::Sub { opciones, .. } => opciones,
+                _ => core::slice::from_mut(o),
+            };
+            for x in os {
+                if let OpcionMenu::Entrada { numero, marca: marca @ Marca::Opcion(_), .. } = x
+                    && let Some((_, nueva)) = marcas.iter().find(|p| p.0 == *numero)
+                {
+                    *marca = *nueva;
+                }
+            }
+        }
     }
 }
 
@@ -1295,6 +1643,9 @@ pub unsafe extern "C" fn dash_ui_request(win: i32, titulo: *const c_char, t: *co
         etiquetas: BTreeMap::new(),
         recolocar: false,
         dicha: false,
+        siguiente_numero: 1,
+        menu_obj: None,
+        menu_dicho: Vec::new(),
     });
     let w = e.ventanas.len() - 1;
     if !e.abrir(w) {

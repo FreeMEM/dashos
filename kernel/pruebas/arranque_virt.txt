@@ -169,6 +169,10 @@ DashOS en marcha con 4 núcleos.
 ~│   [hostil] compositor: cambiar de espacio de trabajo sin ser la barra da error: sí
 # S27, oleada 2: ni dar el estado de la red y del volumen como el panel, ni saber quién está delante.
 ~│   [hostil] compositor: dar el estado de la red y del volumen sin ser el panel da error: sí
+# S10, los menús de los programas (docs/bitacoras/menus.md): ser la barra o poner el sitio sin serlo, un menú mal
+# formado, uno de más de 16 KB y elegir sin objeto de barra son errores; uno que vale casi del tope (en muchos trozos
+# del canal) pasa.
+~│   [hostil] compositor: menús: ser la barra sin serlo da error: sí; poner su sitio sin ser el centro, también: sí; un menú mal formado, también: sí; uno de más de 16 KB, también: sí; elegir sin objeto de barra, también: sí; uno que vale casi del tope, no: sí
 ~│   [hostil] sesiones: quién está delante, sin ser el panel ni la barra: -2 y nada
 # Apagar y reiniciar (decisión del usuario del 2026-11-13): solo `sesiones` tiene el permiso del kernel (llamada 51),
 # que le manda `inicio`, y solo el panel se lo puede pedir.
@@ -655,6 +659,16 @@ DashOS en marcha con 4 núcleos.
 ~│   [barra] tema del sistema: oscuro, color c44e68
 ~│   [shell] idioma: español (en RAM:Env/Sys/locale)
 ~│   [centro] idioma en marcha: español (España), de ENV:Sys/locale
+# S10, los menús de los programas (docs/bitacoras/menus.md): Ajuste menus, que el centro aplica en marcha y el
+# compositor dice a todos. Lo hostil: un sitio que no existe; y cien cambios seguidos a mano, del que queda el último.
+~│   [shell] Ajuste: menus: "arriba" no vale: dentro, barra. No se ha cambiado nada
+~│   [shell] menus: barra (en RAM:Env/Escritorio/menus)
+~│   [centro] menús en marcha: en la barra, de ENV:Escritorio/menus; en el compositor: sí
+~│   [barra] menús: en la barra
+~│   [shell] menus: barra (ENV:Escritorio/menus sitio)
+~│   [centro] menús en marcha: dentro de las ventanas, de ENV:Escritorio/menus; en el compositor: sí
+~│   [barra] menús: dentro de las ventanas
+~│   [shell] menus: dentro (ENV:Escritorio/menus sitio)
 # S6, S36: el registro común. Lo que apunta un guion sale con el programa que lo lanza (el Shell), y la hora y el
 # usuario que pone `sesiones`. Lo de antes de rotar (programas.1, de "ayer") se sigue leyendo; lo del hostil, que es de
 # Carla, Ana no lo ve.

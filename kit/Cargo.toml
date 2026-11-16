@@ -13,3 +13,4 @@ path = "src/lib.rs"
 ttf-parser = { version = "0.25", default-features = false, features = ["no-std-float"] }
 libm = "0.2"
 idioma = { package = "dashos-idioma", path = "../idioma" }
+wayland = { package = "dashos-wayland", path = "../wayland" }

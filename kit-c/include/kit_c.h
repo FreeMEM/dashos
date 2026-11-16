@@ -42,10 +42,21 @@ void dash_ui_list_clear(int32_t lista);
 int32_t dash_ui_list_count(int32_t lista);
 const char *dash_ui_list_get(int32_t lista, int32_t pos);
 
+/* Los menús de la ventana (S10): en una fila dentro de ella o, si el ajuste del sistema lo dice, en la barra de arriba;
+   el programa no cambia (docs/bitacoras/menus.md). `tecla`, la de MUI ("Q"): se enseña y vale como Ctrl+Q. */
 int32_t dash_ui_menu_begin(const char *titulo);
 int32_t dash_ui_menu_item(const char *titulo, const char *tecla, int32_t id);
 void dash_ui_menu_separator(void);
 void dash_ui_menu_end(void);
+/* Desde los menús en la barra (todo lo de antes sigue igual):
+   - una casilla o una opción (las opciones seguidas, sin separador entre medias, son un grupo); elegirla la cambia, y
+     dash_ui_get_value / dash_ui_set_value dicen y ponen si está marcada;
+   - un submenú, un nivel: lo que va entre _sub_begin y _sub_end;
+   - dash_ui_set_enabled también sobre un menú entero o un submenú. */
+int32_t dash_ui_menu_check(const char *titulo, const char *tecla, int32_t id, int32_t marcada);
+int32_t dash_ui_menu_radio(const char *titulo, const char *tecla, int32_t id, int32_t marcada);
+int32_t dash_ui_menu_sub_begin(const char *titulo);
+void dash_ui_menu_sub_end(void);
 
 /* clase: 0 pulsar, 1 cambiar (valor o texto), 2 cerrar la ventana, 3 doble clic en una lista */
 void dash_ui_on(int32_t objeto, int32_t clase, int32_t id);

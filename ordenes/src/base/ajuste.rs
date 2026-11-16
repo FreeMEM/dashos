@@ -50,11 +50,16 @@ const CONOCIDOS: &[Conocido] = &[
     Conocido { nombre: "pais", fichero: "Sys/locale", clave: prefs::CLAVE_PAIS, explica: "el país: fechas, números y dinero", clase: Clase::Pais },
     Conocido { nombre: "tema", fichero: "Escritorio/apariencia", clave: "modo", explica: "claro u oscuro", clase: Clase::Uno(&["claro", "oscuro"]) },
     Conocido { nombre: "acento", fichero: "Escritorio/apariencia", clave: "acento", explica: "el color: violeta, azul, verde, naranja o fondo", clase: Clase::Acento },
+    // S10: dónde van los menús de los programas (`docs/bitacoras/menus.md`); lo aplica el centro en marcha.
+    Conocido { nombre: "menus", fichero: "Escritorio/menus", clave: "sitio", explica: "dónde van los menús: dentro (en cada ventana) o barra (arriba, como en el Amiga)", clase: Clase::Uno(&["dentro", "barra"]) },
     Conocido { nombre: "zona", fichero: "", clave: "", explica: "la zona horaria (de la máquina)", clase: Clase::Maquina(crate::ZONA) },
 ];
 
 /// Lo que lleva encima un `Escritorio/apariencia` nuevo.
 const CABECERA_TEMA: &str = "El tema (Ajustes > Apariencia; la orden `Ajuste tema` y `Ajuste acento`). Este fichero manda.\nmodo: claro u oscuro. acento: violeta, azul, verde, naranja o fondo (la paleta del fondo de escritorio).";
+
+/// Lo que lleva encima un `Escritorio/menus` nuevo (lo mismo que escribe el centro de control).
+const CABECERA_MENUS: &str = "Dónde van los menús de los programas (Ajustes > Escritorio; la orden `Ajuste menus`). Este fichero manda.\nsitio: dentro (una fila en cada ventana) o barra (los del programa activo en la barra de arriba, como en el Amiga).";
 
 /// Lo más que se lee de un fichero de ajustes (más, no se toca).
 const MAX: usize = texto::MAX_FICHERO;
@@ -303,6 +308,8 @@ pub fn principal(o: &mut Orden) -> u64 {
                     x.comentar(prefs::CABECERA_TEXTO);
                 } else if fichero == "Escritorio/apariencia" {
                     x.comentar(CABECERA_TEMA);
+                } else if fichero == "Escritorio/menus" {
+                    x.comentar(CABECERA_MENUS);
                 }
                 x
             }

@@ -22,6 +22,7 @@ pub mod aspecto;
 pub mod atajos;
 pub mod canal;
 pub mod escena;
+pub mod menus;
 pub mod puente;
 pub mod servidor;
 pub mod shm;
@@ -324,3 +325,6 @@ mod tests_s29;
 
 #[cfg(test)]
 mod tests_commodities;
+
+#[cfg(test)]
+mod tests_menus;

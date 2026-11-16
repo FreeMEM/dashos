@@ -31,6 +31,9 @@ pub mod marca;
 // S10: Commodities y Exchange (atajos, inactividad, oscurecer, comportamientos), en su fichero.
 #[path = "commodities.rs"]
 pub mod commodities;
+// S10: los menús de los programas, en la ventana o en la barra (`docs/bitacoras/menus.md`), en su fichero.
+#[path = "menus_escena.rs"]
+pub mod menus;
 
 /// Errores de `zwp_linux_buffer_params_v1` (de `linux-dmabuf-v1.xml`, G6).
 pub const DMABUF_USADO: u32 = 0;
@@ -686,6 +689,8 @@ pub struct Escena<M: Memorias> {
     pub pegados_negados: Vec<Cliente>,
     /// S10: las commodities, sus atajos y los ajustes ClickToFront y AutoPoint (`commodities`).
     pub cx: commodities::Estado,
+    /// S10: los menús de los programas y dónde van (`menus`).
+    pub mn: menus::Estado,
 }
 
 /// U6: cada cuánto reciben sus avisos de `frame` las ventanas de una sesión de detrás (no se pintan, pero así no se
@@ -897,6 +902,7 @@ impl<M: Memorias> Escena<M> {
             pegar_con_entrada: true,
             pegados_negados: Vec::new(),
             cx: Default::default(),
+            mn: Default::default(),
         }
     }
 
@@ -1417,6 +1423,8 @@ impl<M: Memorias> Escena<M> {
         self.avisos_inactividad.retain(|a| a.0 != cliente);
         // S10: sus commodities (sus atajos quedan libres) y sus Exchange.
         self.commodities_adios(cliente);
+        // S10: sus menús, y si era la barra, los menús vuelven a las ventanas.
+        self.menus_adios(cliente);
         self.del_sistema.retain(|&c| c != cliente);
         self.temas.retain(|t| t.0 != cliente);
         self.avisos_tema.retain(|t| t.0 != cliente);
@@ -2248,6 +2256,10 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
         if let Some(r) = self.commodities(con, interfaz.name, objeto, orden, args) {
             return r;
         }
+        // S10: los menús de los programas.
+        if let Some(r) = self.menus(interfaz.name, objeto, orden, args) {
+            return r;
+        }
         let escena = &mut *self.escena;
         // H9: lo que hay para una ventana nueva (en la salida del cursor), para `configure_bounds`.
         let limites = escena.area_de(escena.salida_en(escena.cursor.0, escena.cursor.1).unwrap_or(0));
@@ -2968,6 +2980,9 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
     }
 
     fn enlazado(&mut self, con: &mut Conexion, global: &crate::servidor::Global, id: u32) {
+        if core::ptr::eq(global.interfaz, &tablas::DASHOS_MENUS_V1) {
+            self.menus_enlazado(con, id);
+        }
         if core::ptr::eq(global.interfaz, &tablas::DASHOS_TEMA_V1) {
             // El tema de ahora, en el acto; y se apunta para los cambios (con tope: de más, nada se apunta y se dice).
             avisar_tema(con, id, self.escena.tema, self.escena.esquema.as_ref());
@@ -3028,6 +3043,8 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
         self.portapapeles_destruido(objeto);
         self.decoracion_destruida(objeto);
         self.emergente_destruido(objeto);
+        // S10: un menú, o la superficie de un menú.
+        self.escena.menus_destruido(self.cliente, objeto);
         let escena = &mut *self.escena;
         let yo = escena.clientes.get_mut(&self.cliente).unwrap();
         // Un `wl_output` soltado (release).
@@ -3518,6 +3535,11 @@ impl<M: Memorias> Escena<M> {
             // H9: un clic fuera de los emergentes con agarre los cierra.
             if pulsado {
                 self.cerrar_emergentes(ahora, &mut out);
+            }
+            // S10: con los menús en la barra, el botón derecho sobre una ventana con menú los abre allí, como en el
+            // Amiga; ni él ni su soltar llegan a la ventana, y no la sube.
+            if self.menus_boton(ahora, bit, pulsado) {
+                continue;
             }
             // Pulsar sobre una ventana la sube y le da el teclado.
             if pulsado

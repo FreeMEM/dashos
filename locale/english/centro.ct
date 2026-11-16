@@ -21,8 +21,8 @@ MSG_6
 System Monitor
 ; Monitor del sistema
 MSG_7
-Desktop Panel
-; Panel del escritorio
+Desktop
+; Escritorio
 MSG_8
 About
 ; Acerca de
@@ -279,8 +279,8 @@ MSG_92
 Your processes in detail; everything else, summed up.
 ; Lo tuyo con detalle; lo demás, sumado.
 MSG_93
-The monitor on the desktop. Press Enter to change a row.
-; El monitor del fondo. Intro cambia una fila.
+The menus and the monitor on the desktop. Press Enter to change a row.
+; Los menús y el monitor del fondo. Intro cambia una fila.
 MSG_94
 The system.
 ; El sistema.
@@ -302,3 +302,12 @@ Save
 MSG_100
 save a setting
 ; guardar un ajuste
+MSG_101
+Program menus: {}
+; Menús de los programas: {}
+MSG_102
+in the window
+; en la ventana
+MSG_103
+in the top bar
+; en la barra de arriba
