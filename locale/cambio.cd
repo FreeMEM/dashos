@@ -1,0 +1,7 @@
+; Los textos de cambio (versión 1), de usuario/src/bin/cambio.rs
+; Hecho con tools/catalogo.py cd: no se edita a mano.
+;
+MSG_1 (1//)
+Hola, soy la prueba del cambio de usuario
+MSG_2 (2//)
+{} ventanas de {}

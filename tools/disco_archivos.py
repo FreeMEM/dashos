@@ -89,6 +89,32 @@ SYS_FICHEROS = [
 ]
 
 
+# Idiomas (paso 4 de docs/REVISION_LOOP.md): el árbol de `LOCALE:` que deja `make catalogos` en build/Locale (catálogos
+# en inglés, los textos del inglés y los países), en `Locale/` del disco. Y dos catálogos malos para la prueba hostil
+# de `cambio`: rota.catalog (el del kit, cortado por la mitad) y ajena.catalog (el del kit con otro nombre de fichero).
+# Y el `locale.prefs` de Carla, en su `ENV:` (inglés, Reino Unido): Ana no tiene, y va en castellano.
+import catalogo  # noqa: E402
+LOCALE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "build", "Locale")
+PREFS_CARLA = "Estado/RAM/Carla/Env/Sys/locale.prefs"
+
+
+def locale_ficheros():
+    """[(camino en el disco, bytes)] de lo de idiomas."""
+    ficheros = []
+    for carpeta, _, nombres in os.walk(LOCALE):
+        for n in nombres:
+            camino = os.path.join(carpeta, n)
+            ficheros.append(("Locale/" + os.path.relpath(camino, LOCALE).replace(os.sep, "/"), open(camino, "rb").read()))
+    kit = dict(ficheros).get("Locale/Catalogs/english/kit.catalog")
+    if kit is None:
+        sys.exit("disco de pruebas: falta build/Locale (make -C kernel catalogos)")
+    ficheros.append(("Locale/Catalogs/english/rota.catalog", kit[: len(kit) // 2]))
+    ficheros.append(("Locale/Catalogs/english/ajena.catalog", kit))
+    gb = dict(ficheros)["Locale/Countries/great_britain.country"]
+    ficheros.append((PREFS_CARLA, catalogo.hacer_prefs("great_britain", ["english"], 0, gb)))
+    return sorted(ficheros)
+
+
 def sys_esperado():
     """Las líneas del árbol de `SYS:` en el listado de `ver` (los cajones con sus padres, y los ficheros)."""
     lineas = set()
@@ -96,8 +122,11 @@ def sys_esperado():
         partes = c.split("/")
         for i in range(1, len(partes) + 1):
             lineas.add("/".join(partes[:i]) + "/ cajón")
-    for n, d in SYS_FICHEROS:
+    for n, d in SYS_FICHEROS + locale_ficheros():
         lineas.add(f"{n} {len(d)}")
+        partes = n.split("/")[:-1]
+        for i in range(1, len(partes) + 1):
+            lineas.add("/".join(partes[:i]) + "/ cajón")
     return lineas
 
 
@@ -364,7 +393,8 @@ with tempfile.TemporaryDirectory() as t:
     # nada; `C` ya existe y guarda, provisional, lo del Home del escritorio). `Prefs` ya existe (con `fuente`).
     for cajon in SYS_CAJONES:
         os.makedirs(os.path.join(raiz, *cajon.split("/")), exist_ok=True)
-    for nombre, datos in SYS_FICHEROS:
+    for nombre, datos in SYS_FICHEROS + locale_ficheros():
+        os.makedirs(os.path.dirname(os.path.join(raiz, *nombre.split("/"))), exist_ok=True)
         with open(os.path.join(raiz, *nombre.split("/")), "wb") as f:
             f.write(datos)
     # S28: el cajón de la caja Amiga (de Ana, como todo; solo suyo).

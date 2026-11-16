@@ -1,0 +1,25 @@
+# Los Estados Unidos.
+codigo US
+telefono 1
+medidas eeuu
+fecha_hora %A, %B %e, %Y, %I:%M:%S %p
+fecha %A, %B %e, %Y
+hora %I:%M:%S %p
+fecha_hora_corta %m/%d/%Y %I:%M %p
+fecha_corta %m/%d/%Y
+hora_corta %I:%M %p
+decimal .
+grupo ,
+agrupar 3
+agrupar_frac 255
+dinero_decimal .
+dinero_grupo ,
+dinero_agrupar 3
+dinero_agrupar_frac 255
+dinero_decimales 2
+moneda $
+moneda_pequena ¢
+moneda_int USD
+positivo nada junto delante delante
+negativo - junto delante delante
+semana_empieza domingo

@@ -517,7 +517,7 @@ fn soltar(app: &mut App, k: usize, z: Zona, x: i32, y: i32) {
                     let cosas: Vec<Cosa> = a.cosas.into_iter().filter(|c| c.donde.raiz == RAIZ_HOME && !c.donde.dentro_de(&papelera())).collect();
                     let t = Trabajo::nuevo(Tarea::Papelera, App::elementos(&cosas), None, Some(papelera()), App::raices());
                     if !cosas.is_empty() {
-                        app.empezar(k, t, alloc::format!("Mover {} a la papelera", if cosas.len() == 1 { alloc::format!("\"{}\"", cosas[0].e.nombre) } else { alloc::format!("{} elementos", cosas.len()) }));
+                        app.empezar(k, t, App::titulo_papelera(&cosas));
                     }
                 } else {
                     let mover = !app.ctrl && a.cosas.iter().all(|c| c.donde.raiz == d.raiz && c.donde.raiz != RAIZ_SISTEMA);
@@ -612,7 +612,7 @@ fn soltar(app: &mut App, k: usize, z: Zona, x: i32, y: i32) {
         }
         Zona::CancelarTrabajo(j) => {
             if let Some(m) = app.trabajos.get_mut(j) {
-                println!("  [explorador] cancela: {}", m.titulo);
+                println!("  [explorador] cancela: {}", m.titulo_fijo);
                 m.t.cancelar = true;
             }
         }

@@ -1,0 +1,25 @@
+# España. Tiene que dar lo mismo que el país de serie del código (idioma::Pais::espana): lo comprueba una prueba.
+codigo ES
+telefono 34
+medidas iso
+fecha_hora %A, %e de %B de %Y, %H:%M:%S
+fecha %A, %e de %B de %Y
+hora %H:%M:%S
+fecha_hora_corta %d/%m/%Y %H:%M
+fecha_corta %d/%m/%Y
+hora_corta %H:%M
+decimal ,
+grupo .
+agrupar 3
+agrupar_frac 255
+dinero_decimal ,
+dinero_grupo .
+dinero_agrupar 3
+dinero_agrupar_frac 255
+dinero_decimales 2
+moneda €
+moneda_pequena cts
+moneda_int EUR
+positivo nada espacio delante detras
+negativo - espacio delante detras
+semana_empieza lunes

@@ -157,9 +157,14 @@ name = "dashos-caja-vmm"
 version = "0.0.1"
 
 [[package]]
+name = "dashos-idioma"
+version = "0.0.1"
+
+[[package]]
 name = "dashos-kit"
 version = "0.0.1"
 dependencies = [
+ "dashos-idioma",
  "libm",
  "ttf-parser",
 ]

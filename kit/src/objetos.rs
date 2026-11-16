@@ -5,6 +5,7 @@
 //! Escrito desde el modelo que describe la documentación pública de MUI, no desde su código (S11). Los avisos solo
 //! saltan si el valor cambia de verdad: así dos objetos que se avisan el uno al otro no se quedan dando vueltas.
 
+use crate::textos::tr;
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
@@ -91,7 +92,7 @@ impl Valor {
         match self {
             Valor::Texto(t) => t.clone(),
             Valor::Int(v) => v.to_string(),
-            Valor::Bool(b) => (if *b { "sí" } else { "no" }).into(),
+            Valor::Bool(b) => (if *b { tr(1, "sí") } else { tr(2, "no") }).into(),
         }
     }
 }

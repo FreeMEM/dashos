@@ -1,0 +1,292 @@
+## version $VER: centro.catalog 1.0 (15.11.2026)
+## language english
+## codeset 106
+;
+MSG_1
+Permissions
+; Permisos
+MSG_2
+Security
+; Seguridad
+MSG_3
+Disks
+; Discos
+MSG_4
+Displays
+; Pantallas
+MSG_5
+Appearance
+; Apariencia
+MSG_6
+System Monitor
+; Monitor del sistema
+MSG_7
+Desktop Panel
+; Panel del escritorio
+MSG_8
+About
+; Acerca de
+MSG_9
+automatic
+; automático
+MSG_10
+kill
+; matar
+MSG_11
+service
+; servicio
+MSG_12
+sign in
+; entrar
+MSG_13
+crash
+; fallo
+MSG_14
+launch
+; lanzar
+MSG_15
+administer
+; administrar
+MSG_16
+shut down
+; apagar
+MSG_17
+done
+; hecho
+MSG_18
+denied
+; negado
+MSG_19
+error {}
+; error {}
+MSG_20
+System disk: {}
+; Disco del sistema: {}
+MSG_21
+Used: {} ({}%)
+; Ocupado: {} ({} %)
+MSG_22
+Free: {}
+; Libre: {}
+MSG_23
+The file service is not responding
+; El servicio de archivos no contesta
+MSG_24
+Check the disk (requires an administrator)
+; Comprobar el disco (pide administrador)
+MSG_25
+Checked, data included: no problems
+; Comprobado, datos incluidos: sin problemas
+MSG_26
+Checked: 1 problem
+; Comprobado: 1 problema
+MSG_27
+Checked: {} problems
+; Comprobado: {} problemas
+MSG_28
+The disk is busy: try again
+; El disco está ocupado: inténtalo otra vez
+MSG_29
+Interrupted: the disk is almost full
+; Interrumpido: queda poco sitio en el disco
+MSG_30
+Not checked: an administrator is required
+; No se comprobó: hace falta un administrador
+MSG_31
+Not checked ({})
+; No se comprobó ({})
+MSG_32
+selected
+; elegido
+MSG_33
+Light mode
+; Modo claro
+MSG_34
+Dark mode
+; Modo oscuro
+MSG_35
+Fixed color: {}
+; Color fijo {}
+MSG_36
+Wallpaper palette
+; Paleta del fondo
+MSG_37
+({} exceptions)
+; ({} excepciones)
+MSG_38
+Sandboxed programs: DashOS look
+; Programas de las cajas: como DashOS
+MSG_39
+Sandboxed programs: original look
+; Programas de las cajas: originales
+MSG_40
+Scale Amiga windows: {}
+; Ampliar ventanas Amiga: {}
+MSG_41
+Amiga sandbox memory: {} MB
+; Memoria de la caja Amiga: {} MB
+MSG_42
+on screen
+; en pantalla
+MSG_43
+Wallpaper: {}
+; Fondo: {}
+MSG_44
+The compositor has not reported any display
+; El compositor no ha dicho nada de la pantalla
+MSG_45
+Display {}: {} × {}
+; Pantalla {}: {} × {}
+MSG_46
+on the left
+; a la izquierda
+MSG_47
+on the right
+; a la derecha
+MSG_48
+in the middle
+; en medio
+MSG_49
+Display {}: {} × {}, {}
+; Pantalla {}: {} × {}, {}
+MSG_50
+Refresh rate: {}
+; Frecuencia: {}
+MSG_51
+Refresh rates: {}
+; Frecuencias: {}
+MSG_52
+Scale: {}
+; Escala: {}
+MSG_53
+Scales: {}
+; Escalas: {}
+MSG_54
+DashOS, version {}
+; DashOS, versión {}
+MSG_55
+Up for {} min {} s
+; Encendido hace {} min {} s
+MSG_56
+Date and time: {}
+; Fecha y hora: {}
+MSG_57
+Date and time: unknown
+; Fecha y hora: no se sabe
+MSG_58
+Running processes: {}
+; Procesos en marcha: {}
+MSG_59
+Memory in use: {} MB of {} MB (kernel, {} MB, and its heap, {} MB; {} MB were already reserved at boot)
+; Memoria en uso: {} MB de {} MB (el núcleo, {} MB, y su montón, {} MB; al arrancar ya había {} MB reservados)
+MSG_60
+Top memory users: {}
+; Lo que más gasta: {}
+MSG_61
+CPU
+; CPU
+MSG_62
+memory
+; memoria
+MSG_63
+name
+; nombre
+MSG_64
+user
+; usuario
+MSG_65
+system
+; sistema
+MSG_66
+By {}\tCPU\tMemory
+; Por {}\tCPU\tMemoria
+MSG_67
+The session service is not responding
+; sesiones no contesta
+MSG_68
+({}, desktop)
+; ({}, escritorio)
+MSG_69
+yes
+; sí
+MSG_70
+no
+; no
+MSG_71
+top left
+; arriba a la izquierda
+MSG_72
+top right
+; arriba a la derecha
+MSG_73
+bottom left
+; abajo a la izquierda
+MSG_74
+bottom right
+; abajo a la derecha
+MSG_75
+Time and date
+; Hora y fecha
+MSG_76
+CPU per core
+; CPU por núcleo
+MSG_77
+Memory
+; Memoria
+MSG_78
+Top processes
+; Los que más gastan
+MSG_79
+Network
+; Red
+MSG_80
+Show the panel on the desktop: {}
+; Enseñar el panel en el fondo: {}
+MSG_81
+Corner: {}
+; Esquina: {}
+MSG_82
+Update interval: {} s
+; Cada cuánto se mide: {} s
+MSG_83
+Graphs: {}
+; Gráficas: {}
+MSG_84
+No program has been granted permissions
+; Ningún programa tiene permisos concedidos
+MSG_85
+Remove
+; Quitar
+MSG_86
+Close
+; Cerrar
+MSG_87
+What each program may use. Removing a permission revokes it immediately.
+; Lo que cada programa puede usar. Quitarlo lo revoca ya.
+MSG_88
+Denied requests and crashes, most recent first.
+; Lo que se ha negado y los fallos, lo último primero.
+MSG_89
+How much space your data takes up.
+; Cuánto ocupa lo guardado.
+MSG_90
+Mode, color and wallpaper. Press Enter or double-click to select.
+; Modo, color y fondo. Intro o doble clic para elegir.
+MSG_91
+What the compositor reports for each display.
+; Lo que dice el compositor de cada pantalla.
+MSG_92
+Your processes in detail; everything else, summed up.
+; Lo tuyo con detalle; lo demás, sumado.
+MSG_93
+The monitor on the desktop. Press Enter to change a row.
+; El monitor del fondo. Intro cambia una fila.
+MSG_94
+The system.
+; El sistema.
+MSG_95
+End Process
+; Cerrar proceso
+MSG_96
+Settings
+; Centro de control

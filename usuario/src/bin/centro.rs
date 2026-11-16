@@ -46,6 +46,8 @@ mod panel_mosaicos;
 #[path = "../monitor.rs"]
 #[allow(dead_code)]
 mod monitor;
+#[path = "../idiomas.rs"]
+mod idiomas;
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -67,6 +69,20 @@ use wayland::Escritor;
 
 dashos::programa!(principal);
 dashos::monton!();
+
+/// Idiomas (paso 4): el nombre de su catálogo y su versión (`tools/catalogo.py` lo lee de aquí), y el catálogo en uso.
+const CATALOGO: (&str, u32) = ("centro", 1);
+static TEXTOS: idiomas::Puesto = idiomas::Puesto::nuevo();
+
+/// Un texto, en el idioma del usuario (el castellano si no hay catálogo).
+fn tr(numero: u32, de_siempre: &'static str) -> &'static str {
+    TEXTOS.texto(numero, de_siempre)
+}
+
+/// Un texto con huecos y sus valores.
+fn trf(numero: u32, de_siempre: &'static str, valores: &[&dyn core::fmt::Display]) -> String {
+    TEXTOS.con(numero, de_siempre, valores)
+}
 
 const ARCHIVOS: u32 = 2;
 const SESIONES: u32 = 3;
@@ -93,6 +109,21 @@ const CATEGORIAS: &[(&str, &str)] = &[
     ("escritorio", "Panel del escritorio"),
     ("acerca", "Acerca de"),
 ];
+/// El nombre que se ve de la categoría `k` de `CATEGORIAS`, en el idioma del usuario (el de la tabla es el de la
+/// consola, siempre en castellano).
+fn nombre_categoria(k: usize) -> &'static str {
+    match k {
+        0 => tr(1, "Permisos"),
+        1 => tr(2, "Seguridad"),
+        2 => tr(3, "Discos"),
+        3 => tr(4, "Pantallas"),
+        4 => tr(5, "Apariencia"),
+        5 => tr(6, "Monitor del sistema"),
+        6 => tr(7, "Panel del escritorio"),
+        7 => tr(8, "Acerca de"),
+        _ => "",
+    }
+}
 const MONITOR_SIS: usize = 5;
 const PANEL_FONDO: usize = 6;
 const FICHERO_MONITOR: &str = "monitor";
@@ -132,8 +163,14 @@ fn nombre_escala(e: Escala) -> String {
         Escala::Fija(f) => alloc::format!("{}x", f),
     }
 }
+/// Lo mismo, como se ve en la ventana: en el idioma del usuario.
+fn escala_visible(e: Escala) -> String {
+    match e {
+        Escala::Auto => String::from(tr(9, "automático")),
+        Escala::Fija(f) => alloc::format!("{}x", f),
+    }
+}
 const PERMISOS: usize = 0;
-const NADA_CONCEDIDO: &str = "Ningún programa tiene permisos concedidos";
 const SEGURIDAD: usize = 1;
 /// Teclas de Linux que mira el centro antes que el kit.
 const TECLA_ESC: u32 = 1;
@@ -218,19 +255,19 @@ fn registro() -> Vec<String> {
             let e = &r[8 + k * s::ENTRADA_REGISTRO..8 + (k + 1) * s::ENTRADA_REGISTRO];
             let (tipo, estado) = (u32::from_le_bytes(e[0..4].try_into().unwrap()), i32::from_le_bytes(e[4..8].try_into().unwrap()));
             let accion = match tipo {
-                s::R_MATAR => "matar",
-                s::R_SERVICIO => "servicio",
-                s::R_ENTRAR => "entrar",
-                s::R_FALLO => "fallo",
-                s::R_LANZAR => "lanzar",
-                s::R_ADMIN => "administrar",
-                s::R_APAGAR => "apagar",
+                s::R_MATAR => tr(10, "matar"),
+                s::R_SERVICIO => tr(11, "servicio"),
+                s::R_ENTRAR => tr(12, "entrar"),
+                s::R_FALLO => tr(13, "fallo"),
+                s::R_LANZAR => tr(14, "lanzar"),
+                s::R_ADMIN => tr(15, "administrar"),
+                s::R_APAGAR => tr(16, "apagar"),
                 _ => "?",
             };
             let como = match estado {
-                0 => String::from("hecho"),
-                s::PROTEGIDO => String::from("negado"),
-                e => alloc::format!("error {}", e),
+                0 => String::from(tr(17, "hecho")),
+                s::PROTEGIDO => String::from(tr(18, "negado")),
+                e => trf(19, "error {}", &[&e]),
             };
             lineas.push(alloc::format!("{} · {} {} · {}", texto(&e[8..24]), accion, texto(&e[24..40]), como).replace('|', "¦"));
         }
@@ -274,33 +311,31 @@ fn discos() -> Vec<String> {
         let (e, _, tam, libre, _) = ses.pedir(a::INFO, 0, 0, 0, "");
         if e == a::BIEN {
             let ocupado = tam.saturating_sub(libre);
-            l.push(alloc::format!("Disco del sistema: {}", megas(tam)));
-            l.push(alloc::format!("Ocupado: {} ({} %)", megas(ocupado), ocupado * 100 / tam.max(1)));
-            l.push(alloc::format!("Libre: {}", megas(libre)));
+            l.push(trf(20, "Disco del sistema: {}", &[&megas(tam)]));
+            l.push(trf(21, "Ocupado: {} ({} %)", &[&megas(ocupado), &(ocupado * 100 / tam.max(1))]));
+            l.push(trf(22, "Libre: {}", &[&megas(libre)]));
         }
     }
     if l.is_empty() {
-        l.push(String::from("El servicio de archivos no contesta"));
+        l.push(String::from(tr(23, "El servicio de archivos no contesta")));
     }
     // La acción (con Intro o doble clic): la hace `archivos` si `guardian` da por buena una contraseña de administrador.
-    l.push(String::from(COMPROBAR));
+    // Es siempre la última fila: por su sitio se sabe que es ella (el texto cambia con el idioma).
+    l.push(String::from(tr(24, "Comprobar el disco (pide administrador)")));
     l
 }
-
-/// La última fila de Discos.
-const COMPROBAR: &str = "Comprobar el disco (pide administrador)";
 
 /// Lo que se dice tras "Comprobar el disco", en llano (A15: lo hace el comprobador aparte, con los datos).
 fn resultado_comprobar(estado: i32, problemas: u64) -> String {
     use dashos::protocolo::archivos::{EN_USO, LLENO, PROTEGIDO};
     match estado {
-        0 if problemas == 0 => "Comprobado, datos incluidos: sin problemas".into(),
-        0 if problemas == 1 => "Comprobado: 1 problema".into(),
-        0 => alloc::format!("Comprobado: {} problemas", problemas),
-        EN_USO => "El disco está ocupado: inténtalo otra vez".into(),
-        LLENO => "Interrumpido: queda poco sitio en el disco".into(),
-        PROTEGIDO => "No se comprobó: hace falta un administrador".into(),
-        e => alloc::format!("No se comprobó ({})", e),
+        0 if problemas == 0 => tr(25, "Comprobado, datos incluidos: sin problemas").into(),
+        0 if problemas == 1 => tr(26, "Comprobado: 1 problema").into(),
+        0 => trf(27, "Comprobado: {} problemas", &[&problemas]),
+        EN_USO => tr(28, "El disco está ocupado: inténtalo otra vez").into(),
+        LLENO => tr(29, "Interrumpido: queda poco sitio en el disco").into(),
+        PROTEGIDO => tr(30, "No se comprobó: hace falta un administrador").into(),
+        e => trf(31, "No se comprobó ({})", &[&e]),
     }
 }
 
@@ -379,14 +414,19 @@ impl Sesion {
 
     /// Una orden: (estado, asa, a, b, c) de la respuesta.
     fn pedir(&self, orden: u32, asa: u32, x: u64, y: u64, nombre: &str) -> (i32, u32, u64, u64, u64) {
-        let mut p = [0u8; 128];
-        let n = nombre.len().min(96);
+        self.pedir_bytes(orden, asa, x, y, &nombre.as_bytes()[..nombre.len().min(96)])
+    }
+
+    /// Lo mismo, con el nombre en bytes y de hasta 224 (los caminos de los ficheros de idioma).
+    fn pedir_bytes(&self, orden: u32, asa: u32, x: u64, y: u64, nombre: &[u8]) -> (i32, u32, u64, u64, u64) {
+        let mut p = [0u8; 256];
+        let n = nombre.len().min(224);
         p[0..4].copy_from_slice(&orden.to_le_bytes());
         p[4..8].copy_from_slice(&asa.to_le_bytes());
         p[8..16].copy_from_slice(&x.to_le_bytes());
         p[16..24].copy_from_slice(&y.to_le_bytes());
         p[24..28].copy_from_slice(&(n as u32).to_le_bytes());
-        p[32..32 + n].copy_from_slice(&nombre.as_bytes()[..n]);
+        p[32..32 + n].copy_from_slice(&nombre[..n]);
         let mut r = [0u8; 32];
         if dashos::canal_escribir(ARCHIVOS, &p[..32 + n], &[]) != 0 || dashos::canal_leer_plazo(self.lectura, &mut r, &mut [], 2_000_000).0 != 32 {
             return (-1, 0, 0, 0, 0);
@@ -405,6 +445,38 @@ impl Drop for Sesion {
         dashos::memoria_quitar(VA_ARCHIVOS);
         dashos::cerrar(self.lectura);
     }
+}
+
+/// La sesión con `archivos`, para `dashos::asignaciones` (leer los ficheros de idioma por la tabla de nombres).
+struct PorSesion<'a>(&'a Sesion);
+
+impl dashos::asignaciones::Fs for PorSesion<'_> {
+    fn pedir(&mut self, orden: u32, asa: u32, x: u64, y: u64, nombre: &[u8]) -> dashos::asignaciones::Resp {
+        let (e, asa, a, b, c) = self.0.pedir_bytes(orden, asa, x, y, nombre);
+        dashos::asignaciones::Resp { e, asa, a, b, c }
+    }
+
+    fn ventana(&self) -> &[u8] {
+        self.0.ventana()
+    }
+}
+
+/// Idiomas (paso 4): lee el idioma del usuario (`locale.prefs`) y pone el catálogo del kit y el del centro. Sin tabla
+/// de nombres o sin servicio de archivos no se hace nada: todo sigue en castellano.
+///
+/// `antes` es lo que se leyó la vez anterior: el centro vive toda la sesión, así que antes de abrir su ventana mira si
+/// el `locale.prefs` cambió (`ha_cambiado`: el servicio de archivos no avisa de los cambios), y solo entonces lo lee
+/// todo otra vez. Así un cambio de idioma se ve al reabrir Ajustes.
+fn poner_idioma(antes: Option<idiomas::Idiomas>) -> Option<idiomas::Idiomas> {
+    let Some(tabla) = dashos::asignaciones::pedir_tabla(SESIONES) else { return antes };
+    let Some(ses) = Sesion::abrir() else { return antes };
+    let mut fs = PorSesion(&ses);
+    if let Some(i) = antes {
+        if !i.ha_cambiado(&mut idiomas::PorAsignaciones { fs: &mut fs, tabla: &tabla }) {
+            return Some(i);
+        }
+    }
+    Some(idiomas::arrancar(&mut fs, &tabla, &TEXTOS, CATALOGO))
 }
 
 /// Lee `Prefs/<fichero>` (como mucho `max` bytes). `Err` con el porqué si no hay, no se lee o es más largo.
@@ -690,22 +762,23 @@ fn leer_panel() -> Result<Orden, &'static str> {
 /// Las filas de Apariencia: los dos modos, los colores y el del fondo, con una marca en lo elegido; y los fondos de
 /// `Fondos/`, con una marca en el que se ve (C3). También los nombres de los fondos, en el orden de las filas.
 fn apariencia(ap: &Apariencia, cajas: &Ajuste) -> (Vec<String>, Vec<String>) {
-    let marca = |si: bool| if si { " · elegido" } else { "" };
-    let mut l = alloc::vec![alloc::format!("Modo claro{}", marca(!ap.oscuro)), alloc::format!("Modo oscuro{}", marca(ap.oscuro))];
-    l.extend(COLORES.iter().enumerate().map(|(k, c)| alloc::format!("Color fijo {}{}", c.0.to_lowercase(), marca(k == ap.color))));
-    l.push(alloc::format!("Paleta del fondo{}", marca(ap.color == DEL_FONDO)));
+    let marca = |si: bool| if si { alloc::format!(" · {}", tr(32, "elegido")) } else { String::new() };
+    let mut l = alloc::vec![alloc::format!("{}{}", tr(33, "Modo claro"), marca(!ap.oscuro)), alloc::format!("{}{}", tr(34, "Modo oscuro"), marca(ap.oscuro))];
+    l.extend((0..COLORES.len()).map(|k| alloc::format!("{}{}", trf(35, "Color fijo {}", &[&kit::tema::nombre_acento(k).to_lowercase()]), marca(k == ap.color))));
+    l.push(alloc::format!("{}{}", tr(36, "Paleta del fondo"), marca(ap.color == DEL_FONDO)));
     // S26: los programas de las cajas (Amiga, Linux), con el tema de DashOS o con el suyo. Las excepciones por caja y
     // por programa van en `Prefs/cajas`; aquí se dice si las hay.
     let excepciones = cajas.cajas.len() + cajas.programas.len();
-    let mas = if excepciones > 0 { alloc::format!(" ({} excepciones)", excepciones) } else { String::new() };
-    l.push(alloc::format!("Programas de las cajas: como DashOS{}{}", marca(cajas.general == Aspecto::Dashos), if cajas.general == Aspecto::Dashos { mas.as_str() } else { "" }));
-    l.push(alloc::format!("Programas de las cajas: originales{}{}", marca(cajas.general == Aspecto::Original), if cajas.general == Aspecto::Original { mas.as_str() } else { "" }));
-    l.push(alloc::format!("Ampliar ventanas Amiga: {}", nombre_escala(cajas.escala_de_caja(Caja::Amiga))));
-    l.push(alloc::format!("Memoria de la caja Amiga: {} MB", cajas.memoria_de_caja(Caja::Amiga)));
+    let mas = if excepciones > 0 { alloc::format!(" {}", trf(37, "({} excepciones)", &[&excepciones])) } else { String::new() };
+    l.push(alloc::format!("{}{}{}", tr(38, "Programas de las cajas: como DashOS"), marca(cajas.general == Aspecto::Dashos), if cajas.general == Aspecto::Dashos { mas.as_str() } else { "" }));
+    l.push(alloc::format!("{}{}{}", tr(39, "Programas de las cajas: originales"), marca(cajas.general == Aspecto::Original), if cajas.general == Aspecto::Original { mas.as_str() } else { "" }));
+    l.push(trf(40, "Ampliar ventanas Amiga: {}", &[&escala_visible(cajas.escala_de_caja(Caja::Amiga))]));
+    l.push(trf(41, "Memoria de la caja Amiga: {} MB", &[&cajas.memoria_de_caja(Caja::Amiga)]));
     let lista = fondos();
     let (estado, _, _, _, _, visto) = al_fondo("semilla");
     for f in &lista {
-        l.push(alloc::format!("Fondo: {}{}", f, if estado == 0 && *f == visto { " · en pantalla" } else { "" }));
+        let en_pantalla = if estado == 0 && *f == visto { alloc::format!(" · {}", tr(42, "en pantalla")) } else { String::new() };
+        l.push(alloc::format!("{}{}", trf(43, "Fondo: {}", &[f]), en_pantalla));
     }
     (l, lista)
 }
@@ -730,26 +803,26 @@ struct Pantalla {
 fn pantallas(ps: &[Pantalla]) -> Vec<String> {
     let mut ps: Vec<&Pantalla> = ps.iter().filter(|p| p.ancho > 0).collect();
     if ps.is_empty() {
-        return alloc::vec![String::from("El compositor no ha dicho nada de la pantalla")];
+        return alloc::vec![String::from(tr(44, "El compositor no ha dicho nada de la pantalla"))];
     }
     ps.sort_by_key(|p| (p.x, p.y));
     let hz = |mhz: i32| alloc::format!("{},{:03} Hz", mhz / 1000, mhz % 1000);
     let mut l: Vec<String> = if ps.len() == 1 {
-        alloc::vec![alloc::format!("Pantalla {}: {} × {}", ps[0].nombre, ps[0].ancho, ps[0].alto)]
+        alloc::vec![trf(45, "Pantalla {}: {} × {}", &[&ps[0].nombre, &ps[0].ancho, &ps[0].alto])]
     } else {
         let n = ps.len();
-        let sitio = |k: usize| if k == 0 { "a la izquierda" } else if k + 1 == n { "a la derecha" } else { "en medio" };
-        ps.iter().enumerate().map(|(k, p)| alloc::format!("Pantalla {}: {} × {}, {}", p.nombre, p.ancho, p.alto, sitio(k))).collect()
+        let sitio = |k: usize| if k == 0 { tr(46, "a la izquierda") } else if k + 1 == n { tr(47, "a la derecha") } else { tr(48, "en medio") };
+        ps.iter().enumerate().map(|(k, p)| trf(49, "Pantalla {}: {} × {}, {}", &[&p.nombre, &p.ancho, &p.alto, &sitio(k)])).collect()
     };
     if ps.iter().all(|p| p.mhz == ps[0].mhz) {
-        l.push(alloc::format!("Frecuencia: {}", hz(ps[0].mhz)));
+        l.push(trf(50, "Frecuencia: {}", &[&hz(ps[0].mhz)]));
     } else {
-        l.push(alloc::format!("Frecuencias: {}", ps.iter().map(|p| hz(p.mhz)).collect::<Vec<_>>().join(", ")));
+        l.push(trf(51, "Frecuencias: {}", &[&ps.iter().map(|p| hz(p.mhz)).collect::<Vec<_>>().join(", ")]));
     }
     if ps.iter().all(|p| p.escala == ps[0].escala) {
-        l.push(alloc::format!("Escala: {}", ps[0].escala.max(1)));
+        l.push(trf(52, "Escala: {}", &[&ps[0].escala.max(1)]));
     } else {
-        l.push(alloc::format!("Escalas: {}", ps.iter().map(|p| alloc::format!("{}", p.escala.max(1))).collect::<Vec<_>>().join(", ")));
+        l.push(trf(53, "Escalas: {}", &[&ps.iter().map(|p| alloc::format!("{}", p.escala.max(1))).collect::<Vec<_>>().join(", ")]));
     }
     l
 }
@@ -757,17 +830,17 @@ fn pantallas(ps: &[Pantalla]) -> Vec<String> {
 /// Lo de "Acerca de": una línea por dato.
 fn acerca() -> Vec<String> {
     let mut l = Vec::new();
-    l.push(alloc::format!("DashOS, versión {}", env!("CARGO_PKG_VERSION")));
+    l.push(trf(54, "DashOS, versión {}", &[&env!("CARGO_PKG_VERSION")]));
     let s = dashos::ahora_us() / 1_000_000;
-    l.push(alloc::format!("Encendido hace {} min {} s", s / 60, s % 60));
+    l.push(trf(55, "Encendido hace {} min {} s", &[&(s / 60), &(s % 60)]));
     let ns = dashos::hora_ns();
-    l.push(if ns > 0 { alloc::format!("Fecha y hora: {}", fecha(ns)) } else { String::from("Fecha y hora: no se sabe") });
+    l.push(if ns > 0 { trf(56, "Fecha y hora: {}", &[&fecha(ns)]) } else { String::from(tr(57, "Fecha y hora: no se sabe")) });
     // Cuántos procesos: la cabecera de la primera página de `PROCESOS` (cuántos van y cuántos hay).
     let mut p = [0u8; 12];
     p[0..4].copy_from_slice(&s::PROCESOS.to_le_bytes());
     let mut r = [0u8; MAX_DATOS];
     if a_sesiones(&p, &mut r) >= 8 {
-        l.push(alloc::format!("Procesos en marcha: {}", u32::from_le_bytes(r[4..8].try_into().unwrap())));
+        l.push(trf(58, "Procesos en marcha: {}", &[&u32::from_le_bytes(r[4..8].try_into().unwrap())]));
     }
     // La memoria: páginas de 4 KB en total y libres, y lo que ocupa el núcleo (los contadores 5, 6 y 7 de la llamada
     // 29, que no dicen nada de otros procesos).
@@ -778,8 +851,8 @@ fn acerca() -> Vec<String> {
     if total > 0 && libres <= total {
         let mb = |paginas: u64| paginas * 4096 * 10 / (1 << 20);
         let d = |x: u64| alloc::format!("{},{}", x / 10, x % 10);
-        l.push(alloc::format!("Memoria en uso: {} MB de {} MB (el núcleo, {} MB, y su montón, {} MB; al arrancar ya había {} MB reservados)",
-            d(mb(total - libres)), mb(total) / 10, d(nucleo * 10 / (1 << 20)), d(mb(monton)), d(mb(arranque))));
+        l.push(trf(59, "Memoria en uso: {} MB de {} MB (el núcleo, {} MB, y su montón, {} MB; al arrancar ya había {} MB reservados)",
+            &[&d(mb(total - libres)), &(mb(total) / 10), &d(nucleo * 10 / (1 << 20)), &d(mb(monton)), &d(mb(arranque))]));
     }
     // Lo que tiene cobrado el grupo de cada proceso que se ve (`MEMORIA`, por páginas): los tres que más, en la ventana;
     // la lista entera, en la consola.
@@ -805,7 +878,7 @@ fn acerca() -> Vec<String> {
     let mb = |b: u64| { let d = b * 10 / (1 << 20); alloc::format!("{},{} MB", d / 10, d % 10) };
     if !gasto.is_empty() {
         let tres: Vec<String> = gasto.iter().take(3).map(|(n, b)| alloc::format!("{} {}", n, mb(*b))).collect();
-        l.push(alloc::format!("Lo que más gasta: {}", tres.join(", ")));
+        l.push(trf(60, "Lo que más gasta: {}", &[&tres.join(", ")]));
         let todo: Vec<String> = gasto.iter().map(|(n, b)| alloc::format!("{} {}", n, mb(*b))).collect();
         let suma: u64 = gasto.iter().map(|g| g.1).sum();
         println!("  [centro] memoria por proceso ({} procesos, {} en total): {}", gasto.len(), mb(suma), todo.join("; "));
@@ -824,12 +897,23 @@ struct VistaMonitor {
 
 const ORDENES: [&str; 4] = ["CPU", "memoria", "nombre", "usuario"];
 
+/// El orden `k` de `ORDENES`, como se ve en la cabecera: en el idioma del usuario.
+fn nombre_orden(k: usize) -> &'static str {
+    match k {
+        0 => tr(61, "CPU"),
+        1 => tr(62, "memoria"),
+        2 => tr(63, "nombre"),
+        3 => tr(64, "usuario"),
+        _ => "",
+    }
+}
+
 /// El nombre de un usuario, provisional como las cuentas de `sesiones` (luego, `Estado:Cuentas/usuarios`).
 fn usuario(uid: u32) -> String {
     match uid {
         1000 => String::from("Ana"),
         1001 => String::from("Carla"),
-        u if u < s::PRIMERA_PERSONA => String::from("sistema"),
+        u if u < s::PRIMERA_PERSONA => String::from(tr(65, "sistema")),
         u => alloc::format!("{}", u),
     }
 }
@@ -888,9 +972,9 @@ fn ordenar(v: &mut VistaMonitor) {
 /// Las filas del monitor: la cabecera (Intro cambia el orden) y una por proceso, en columnas separadas por tabuladores.
 fn lineas_monitor(v: &VistaMonitor) -> Vec<String> {
     // Cabe en la ventana de siempre (560 de ancho): el usuario y el grupo van con el nombre; CPU y memoria, en columnas.
-    let mut l = alloc::vec![alloc::format!("Por {}\tCPU\tMemoria", ORDENES[v.orden])];
+    let mut l = alloc::vec![trf(66, "Por {}\tCPU\tMemoria", &[&nombre_orden(v.orden)])];
     if v.sin_datos {
-        l.push(String::from("sesiones no contesta"));
+        l.push(String::from(tr(67, "sesiones no contesta")));
     }
     for x in &v.filas {
         let nombre = match x.e.pastilla() {
@@ -903,7 +987,7 @@ fn lineas_monitor(v: &VistaMonitor) -> Vec<String> {
             monitor::M_SISTEMA | monitor::M_OTROS => String::new(),
             _ => {
                 let u = if x.e.gid == x.e.uid { usuario(x.e.uid) } else { alloc::format!("{}/{}", usuario(x.e.uid), x.e.gid) };
-                if x.e.escritorio { alloc::format!(" ({}, escritorio)", u) } else { alloc::format!(" ({})", u) }
+                if x.e.escritorio { alloc::format!(" {}", trf(68, "({}, escritorio)", &[&u])) } else { alloc::format!(" ({})", u) }
             }
         };
         l.push(alloc::format!("{}{}\t{}\t{}", nombre.replace(['|', '\t'], " "), quien, monitor::por_ciento(x.cpu), monitor::bytes(x.e.memoria)));
@@ -923,20 +1007,44 @@ fn leer_ajustes_monitor() -> monitor::Ajustes {
 }
 
 fn si_no(b: bool) -> &'static str {
-    if b { "sí" } else { "no" }
+    if b { tr(69, "sí") } else { tr(70, "no") }
+}
+
+/// La esquina `k` de `monitor::ESQUINAS`, como se ve: en el idioma del usuario.
+fn nombre_esquina(k: usize) -> &'static str {
+    match k {
+        0 => tr(71, "arriba a la izquierda"),
+        1 => tr(72, "arriba a la derecha"),
+        2 => tr(73, "abajo a la izquierda"),
+        3 => tr(74, "abajo a la derecha"),
+        _ => "",
+    }
+}
+
+/// El bloque `k` de `monitor::BLOQUES`, como se ve: en el idioma del usuario.
+fn nombre_bloque(k: usize) -> &'static str {
+    match k {
+        0 => tr(75, "Hora y fecha"),
+        1 => tr(76, "CPU por núcleo"),
+        2 => tr(77, "Memoria"),
+        3 => tr(78, "Los que más gastan"),
+        4 => tr(3, "Discos"),
+        5 => tr(79, "Red"),
+        _ => "",
+    }
 }
 
 /// Las filas del panel del escritorio: enseñarlo, la esquina, el intervalo, las gráficas y un bloque por fila.
 fn lineas_panel(aj: &monitor::Ajustes) -> Vec<String> {
-    let esquina = monitor::ESQUINAS.iter().find(|e| e.0 == aj.esquina).map_or("", |e| e.2);
+    let esquina = monitor::ESQUINAS.iter().position(|e| e.0 == aj.esquina).map_or("", nombre_esquina);
     let mut l = alloc::vec![
-        alloc::format!("Enseñar el panel en el fondo: {}", si_no(aj.mostrar)),
-        alloc::format!("Esquina: {}", esquina),
-        alloc::format!("Cada cuánto se mide: {} s", aj.intervalo),
-        alloc::format!("Gráficas: {}", si_no(aj.graficas)),
+        trf(80, "Enseñar el panel en el fondo: {}", &[&si_no(aj.mostrar)]),
+        trf(81, "Esquina: {}", &[&esquina]),
+        trf(82, "Cada cuánto se mide: {} s", &[&aj.intervalo]),
+        trf(83, "Gráficas: {}", &[&si_no(aj.graficas)]),
     ];
-    for (k, b) in monitor::BLOQUES.iter().enumerate() {
-        l.push(alloc::format!("{}: {}", b.1, si_no(aj.bloques & (1 << k) != 0)));
+    for k in 0..monitor::BLOQUES.len() {
+        l.push(alloc::format!("{}: {}", nombre_bloque(k), si_no(aj.bloques & (1 << k) != 0)));
     }
     l
 }
@@ -961,14 +1069,14 @@ fn cambiar_panel(aj: &mut monitor::Ajustes, k: usize) -> Option<String> {
     let (guardado, bytes) = guardar_prefs(FICHERO_MONITOR, texto.as_bytes());
     let releido = leer_ajustes_monitor() == *aj;
     let fondo = al_fondo("monitor").0;
-    Some(alloc::format!("guardado: {} ({} bytes); releído: {}; el fondo: {}", guardado, bytes, si_no(releido), fondo))
+    Some(alloc::format!("guardado: {} ({} bytes); releído: {}; el fondo: {}", guardado, bytes, if releido { "sí" } else { "no" }, fondo))
 }
 
 /// Las filas de la lista: "programa · servicio". Sin '|', que separa las filas (un nombre así no lo da `inicio`).
 /// Sin nada concedido, una fila que lo dice (Quitar no hace nada en ella: no hay qué).
 fn filas(lista: &[(String, String)]) -> String {
     if lista.is_empty() {
-        return String::from(NADA_CONCEDIDO);
+        return String::from(tr(84, "Ningún programa tiene permisos concedidos"));
     }
     let f: Vec<String> = lista.iter().map(|(p, s)| alloc::format!("{} · {}", p, s).replace('|', "¦")).collect();
     f.join("|")
@@ -1001,7 +1109,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     let mut pantalla: Vec<Pantalla> = Vec::new();
     let mut lista = concedidos();
     let mut arbol = Arbol::new();
-    let nombres: Vec<&str> = CATEGORIAS.iter().map(|c| c.1).collect();
+    let nombres: Vec<&str> = (0..CATEGORIAS.len()).map(nombre_categoria).collect();
     let lado = arbol.crear(Lista, &[
         (atr::OPCIONES, Valor::Texto(nombres.join("|"))),
         (atr::FILAS, Valor::Int(CATEGORIAS.len() as i64)),
@@ -1014,8 +1122,8 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     let titulo = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new())), (atr::ESTILO, Valor::Int(1))]);
     let explica = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new())), (atr::ESTILO, Valor::Int(2))]);
     let permisos = arbol.crear(Lista, &[(atr::OPCIONES, Valor::Texto(String::new())), (atr::FILAS, Valor::Int(4)), (atr::VALOR, Valor::Int(-1))]);
-    let quitar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Quitar".into())), (atr::ESTILO, Valor::Int(1))]);
-    let cerrar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cerrar".into())), (atr::ESTILO, Valor::Int(2))]);
+    let quitar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto(tr(85, "Quitar").into())), (atr::ESTILO, Valor::Int(1))]);
+    let cerrar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto(tr(86, "Cerrar").into())), (atr::ESTILO, Valor::Int(2))]);
     let marca = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);
     arbol.notificar(quitar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("quitar".into())));
     arbol.notificar(permisos, atr::DOBLE, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("elegir".into())));
@@ -1071,29 +1179,29 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     let mut aj_panel = leer_ajustes_monitor();
     let poner = |i: &mut Interfaz, cat: usize, lista: &[(String, String)], reg: &[String]| {
         let (explicacion, contenido) = if cat == PERMISOS {
-            ("Lo que cada programa puede usar. Quitarlo lo revoca ya.", filas(lista))
+            (tr(87, "Lo que cada programa puede usar. Quitarlo lo revoca ya."), filas(lista))
         } else if cat == SEGURIDAD {
-            ("Lo que se ha negado y los fallos, lo último primero.", reg.join("|"))
+            (tr(88, "Lo que se ha negado y los fallos, lo último primero."), reg.join("|"))
         } else if cat == DISCOS {
-            ("Cuánto ocupa lo guardado.", reg.join("|"))
+            (tr(89, "Cuánto ocupa lo guardado."), reg.join("|"))
         } else if cat == APARIENCIA {
-            ("Modo, color y fondo. Intro o doble clic para elegir.", reg.join("|"))
+            (tr(90, "Modo, color y fondo. Intro o doble clic para elegir."), reg.join("|"))
         } else if cat == PANTALLAS {
-            ("Lo que dice el compositor de cada pantalla.", reg.join("|"))
+            (tr(91, "Lo que dice el compositor de cada pantalla."), reg.join("|"))
         } else if cat == MONITOR_SIS {
-            ("Lo tuyo con detalle; lo demás, sumado.", reg.join("|"))
+            (tr(92, "Lo tuyo con detalle; lo demás, sumado."), reg.join("|"))
         } else if cat == PANEL_FONDO {
-            ("El monitor del fondo. Intro cambia una fila.", reg.join("|"))
+            (tr(93, "El monitor del fondo. Intro cambia una fila."), reg.join("|"))
         } else {
-            ("El sistema.", reg.join("|"))
+            (tr(94, "El sistema."), reg.join("|"))
         };
-        i.arbol.poner(titulo, atr::TEXTO, Valor::Texto(CATEGORIAS[cat].1.into()));
+        i.arbol.poner(titulo, atr::TEXTO, Valor::Texto(nombre_categoria(cat).into()));
         i.arbol.poner(explica, atr::TEXTO, Valor::Texto(explicacion.into()));
         i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(contenido));
         i.arbol.poner(permisos, atr::VALOR, Valor::Int(-1));
         i.arbol.poner(permisos, atr::PRIMERA, Valor::Int(0));
         i.arbol.poner(quitar, atr::DESACTIVADO, Valor::Bool(cat != PERMISOS && cat != MONITOR_SIS));
-        i.arbol.poner(quitar, atr::TEXTO, Valor::Texto(if cat == MONITOR_SIS { "Cerrar proceso" } else { "Quitar" }.into()));
+        i.arbol.poner(quitar, atr::TEXTO, Valor::Texto(if cat == MONITOR_SIS { tr(95, "Cerrar proceso") } else { tr(85, "Quitar") }.into()));
     };
     if cat == SEGURIDAD {
         lineas_registro = registro();
@@ -1151,7 +1259,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
         e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
         e.empezar(XDG, xdg_wm_base::req::GET_XDG_SURFACE).uint(XDG_SUPERFICIE).uint(SUPERFICIE).fin();
         e.empezar(XDG_SUPERFICIE, xdg_surface::req::GET_TOPLEVEL).uint(VENTANA).fin();
-        e.empezar(VENTANA, xdg_toplevel::req::SET_TITLE).texto(Some("Centro de control")).fin();
+        e.empezar(VENTANA, xdg_toplevel::req::SET_TITLE).texto(Some(tr(96, "Centro de control"))).fin();
         e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
         c.mandar(&e);
         let presentar = |c: &mut Cliente, i: &mut Interfaz, px: &mut [u32], (w, h): (i32, i32), adjuntar: Option<u32>| {
@@ -1524,7 +1632,8 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                 Some("elegir") if cat == DISCOS => {
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
                     let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
-                    if usize::try_from(v).ok().and_then(|v| lineas_registro.get(v)).is_some_and(|l| l == COMPROBAR) {
+                    // La acción es la última fila de Discos (lo que diga depende del idioma: se mira el sitio).
+                    if usize::try_from(v).is_ok_and(|v| v + 1 == lineas_registro.len()) {
                         let (estado, problemas) = comprobar_disco();
                         println!("  [centro] Comprobar el disco: {}, {} problemas", estado, problemas);
                         let linea = resultado_comprobar(estado, problemas);
@@ -1751,6 +1860,9 @@ fn principal() -> u64 {
     // El directorio de `inicio` (sin marca): la marca y el nombre de cada cliente del canal.
     let mut nombres: alloc::collections::BTreeMap<u64, alloc::string::String> = alloc::collections::BTreeMap::new();
     aplicar_al_arrancar();
+    // Idiomas (paso 4): antes de abrir ninguna ventana. Va tras poner el tema, que no enseña textos: así el tema no
+    // espera a `sesiones` (la tabla de nombres) ni a los ficheros de idioma.
+    let mut idioma = poner_idioma(None);
     loop {
         let (n, k, marca) = match recibir(CANAL, &mut buf, &mut ll) {
             Recibido::Mensaje { n, k, marca } => (n, k, marca),
@@ -1803,6 +1915,7 @@ fn principal() -> u64 {
             match categoria {
                 Some(cat) => {
                     println!("  [centro] abre {}", CATEGORIAS[cat].1);
+                    idioma = poner_idioma(idioma);
                     ventana(cat);
                 }
                 None => {

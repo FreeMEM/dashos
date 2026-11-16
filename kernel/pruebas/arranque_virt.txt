@@ -428,6 +428,9 @@ DashOS en marcha con 4 núcleos.
 # sin preguntar ni bloquear. Vuelve Ana (Esc en el bloqueo de Carla) y su fichero tiene todo.
 # U6, paso 2: el `cambio` de Ana abre una ventana (la captura el guion: `tools/captura_cambio.py`), suena por el
 # servicio de sonido y pide el permiso de plazo, que Ana le concede (en la prueba contesta `guardian`).
+# Idiomas (paso 4): Ana, sin locale.prefs, en castellano y a la española, sin catálogo.
+~│   [cambio] Ana: idioma español (España), de serie: "Hola, soy la prueba del cambio de usuario", "2 ventanas de Ana", el kit dice "sí"; martes, 3 de noviembre de 2026; 03/11/2026 18:05; 1.234.567; -1.234,56 €
+~│   [cambio] Ana: sus textos en su idioma: bien
 ~│   [cambio] Ana: ventana en pantalla: true
 ~│   [cambio] Ana: suena por el servicio de sonido: true (0)
 ~│   [cambio] Ana: pide plazo 0 (se pregunta a Ana), lo deja 0
@@ -439,6 +442,11 @@ DashOS en marcha con 4 núcleos.
 ~│   [sesiones] cambio pide eco desde una sesión de detrás: no se pregunta
 ~│   [cambio] Ana, detrás: escribe true, pedir eco -2, bloquear -2: bien
 ~0 muertos, 0 dicen que existen: bien
+# Idiomas (paso 4): Carla tiene su locale.prefs en inglés y del Reino Unido: los textos del programa y del kit salen de
+# sus catálogos, y las fechas, los números y el dinero, a la inglesa. Los catálogos malos no valen.
+~│   [cambio] Carla: idioma english (great_britain), de ENV:Sys/locale.prefs: "Hello, I am the user switching test", "2 windows of Carla", el kit dice "yes"; Tuesday 3 November 2026; 03/11/2026 17:05; 1,234,567; -£1,234.56
+~│   [cambio] Carla: catálogos malos (están: true): cortado false, de otro programa false, de otra versión false, fuera del cajón false; el idioma ha cambiado false: bien
+~│   [cambio] Carla: sus textos en su idioma: bien
 ~│   [cambio] Carla, como Ana: entrar -12, volver -12, salir -12, lanzar -2: bien
 ~│   [cambio] Carla, lo de Ana: abrir su volumen -12, verlo -12, cerrarlo -12; su fichero, por 0 caminos: bien
 # El permiso que Ana concedió a `cambio` no vale para el de Carla: se le pregunta a ella (y dice que no).
