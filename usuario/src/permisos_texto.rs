@@ -48,6 +48,8 @@ pub const FRASES: &[(&str, &str)] = &[
     ("atajos", "usar teclas rápidas en todo el sistema"),
     ("fondo", "saber cuándo no usas el ordenador y apagar la pantalla"),
     ("commodities", "ver y manejar tus utilidades de fondo"),
+    // S6b, S36: el modo de desarrollo de una aplicación (no da llave: con él, abierta encerrada carga de tu capa).
+    ("desarrollo", "cargar bibliotecas, órdenes y tipos de letra de tu Home: (modo de desarrollo)"),
 ];
 
 /// Lo que puede cambiar un programa de la caja Amiga con cada permiso sin llave (S28), en plural.

@@ -286,6 +286,60 @@ pub const PERMISOS_PROPIOS: u32 = 82;
 /// no hay a quién preguntar.
 pub const PERMISO_CAMBIAR: u32 = 83;
 
+/// S36, decisión 1 (rama `admin-desarrollo`): una **tanda** de acciones de administrador, que es una sola acción. De un
+/// programa con ficha: la orden y lo que mide la lista (u32), con dos llaves: la de contestar y una memoria (con leer,
+/// de 64 KB como mucho) con la lista en texto, una acción por línea (`dashos::tanda`: "matar 65540", "registro"...), de
+/// `tanda::MAX_TEXTO` bytes como mucho.
+/// `sesiones` la copia al recibirla (lo que el programa cambie después en su memoria no cuenta) y la lee entera: si una
+/// línea no vale (una acción que no es de administrador, un proceso que no existe, más de `tanda::MAX_ACCIONES`), no
+/// pregunta ni hace nada. Si vale, `guardian` recibe una pregunta con "*tanda" y pide la lista en llano
+/// (`TANDA_LISTA`); con la contraseña de un administrador (`RESPUESTA_ADMIN`), `sesiones` hace las de la lista, en orden,
+/// y se para en la primera que falle. Contesta `tanda::LARGO_RESPUESTA` bytes (`tanda::Resultado`): el estado (0 todas
+/// hechas; `NO_EXISTE` o `MAL_FORMADO` si la lista no vale; `PROTEGIDO` si no se confirmó; `OCUPADO` si ya tiene una
+/// sin contestar; o el de la que falló), cuántas se hicieron, cuántas había, en cuál se paró y el resultado de cada una.
+/// Una tanda sin contestar a la vez por programa. Desde una sesión de detrás, no.
+pub const TANDA: u32 = 120;
+/// De `guardian`: la lista de la tanda `id` en llano, para enseñarla (orden, id u32, desde u32: el byte desde el que se
+/// lee). Contesta el estado (i32), lo que mide el texto (u32), cuántos bytes van (u32), cuántas acciones hay (u32), el
+/// administrador que se propone (16 bytes: la persona de delante si es administradora; si no, vacío) y hasta
+/// `POR_PAGINA_TANDA` bytes del texto: una línea por acción, numerada ("2. Cerrar "espera", de Ana (proceso 65540)").
+/// A otro, -2 y nada más.
+pub const TANDA_LISTA: u32 = 121;
+pub const POR_PAGINA_TANDA: usize = 256 - 32;
+/// S6b, S36 (rama `admin-desarrollo`): abrir un programa instalado **encerrado**, con la ficha que tendría al abrirlo
+/// con doble clic (perfil "aplicación"), para probarlo como lo verá el usuario: su propia identidad (sus permisos, no
+/// los de quien lo abre), solo su cajón `Home:Datos/<programa>` (`Datos:`), `SYS:` y su `PROGDIR:` para leer, sin
+/// `Home:`, `Work:` ni `RAM:`, y sin la capa del usuario en `C:`, `LIBS:`, `FONTS:` ni `CLASSES:` (S6b, regla 6),
+/// salvo que el usuario lo tenga en modo de desarrollo (`PERMISO_DESARROLLO`). Orden, largo del camino (u32), 0 (u32)
+/// y el camino (un programa de `Programas/`, como los que lanza la barra). De un programa de una persona con su sesión
+/// abierta, que no esté él mismo encerrado. Contesta como `LANZAR`: un i32 y el número del proceso (u64).
+pub const ABRIR: u32 = 122;
+/// Los perfiles de S6b que lleva hoy una ficha: el de siempre (como el Shell: `Home:`, `Work:`, `RAM:` y las capas del
+/// usuario) y el encerrado de una aplicación (`ABRIR`).
+pub const PERFIL_LIBRE: u8 = 0;
+pub const PERFIL_APLICACION: u8 = 1;
+/// La raíz del cajón de datos de una aplicación encerrada (`Home:Datos/<programa>`, que se ve como `Datos:`).
+pub const RAIZ_DATOS: u8 = 10;
+pub const VOLUMEN_DATOS: &str = "Datos";
+pub const CAJON_DATOS: &str = "Datos";
+/// S6b, S36: el **modo de desarrollo** de una aplicación es un permiso más de lo concedido (en
+/// `Home:Prefs/Permisos/concedidos`, con la orden `Permiso` y en Ajustes, Permisos), que no se pide con `SERVICIO`: solo
+/// se da con `PERMISO_CAMBIAR` (con la confirmación de `guardian`) y nunca desde un programa encerrado. Con él, la
+/// aplicación abierta encerrada (`ABRIR`) carga también de la capa del usuario: estas raíces, solo para leer, con su
+/// volumen (hueco, volumen que ve el programa, cajón de `Home:` y la asignación a la que se pone delante).
+pub const PERMISO_DESARROLLO: &str = "desarrollo";
+pub const RAICES_DESARROLLO: &[(u8, &str, &str, &str)] = &[
+    (11, "HomeC", "C", "C"),
+    (12, "HomeLibs", "Libs", "LIBS"),
+    (13, "HomeFonts", "Fonts", "FONTS"),
+    (14, "HomeClasses", "Classes", "CLASSES"),
+];
+/// S6b, S36: de `sesiones` al compositor, sin marca: las ventanas del programa de esta marca van en modo de desarrollo
+/// (el compositor les pone su marca, que el programa no puede quitar). Orden, 0 (u32) y la marca (u64): 16 bytes. Los
+/// mismos números en `wayland::escena`.
+pub const AVISO_DESARROLLO: u32 = 0x5536_0020;
+pub const LARGO_AVISO_DESARROLLO: usize = 16;
+
 // Lo que contesta `MATAR`.
 pub const BIEN: i32 = 0;
 pub const NO_EXISTE: i32 = -1;

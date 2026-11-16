@@ -48,6 +48,9 @@ pub mod zona;
 /// concedidos en texto con su frase en llano (sin dependencias: se prueban en el PC).
 pub mod registro;
 pub mod permisos_texto;
+/// S6, S36 (decisión 1 del 2026-11-16): la tanda de acciones de administrador (la lista, su frase en llano y la
+/// respuesta), sin dependencias: se prueba en el PC.
+pub mod tanda;
 mod copiar;
 
 /// Llamada al sistema en crudo: número y cinco argumentos; devuelve x0 y x1. Para pruebas y para la biblioteca.
