@@ -56,6 +56,12 @@ fn nombre(base: &str, dir: u64) -> String {
 
 /// Escribe el DTB del invitado.
 pub fn generar_dtb(c: &ConfigInvitado) -> Vec<u8> {
+    generar_dtb_con(c, &|_, _| {})
+}
+
+/// Como [`generar_dtb`], y antes de cerrar la raíz `extra` añade sus nodos (con el phandle del GIC, para sus
+/// interrupciones). Lo usan los dominios de controladores (S35): su canal, su PCIe y sus zonas reservadas.
+pub fn generar_dtb_con(c: &ConfigInvitado, extra: &dyn Fn(&mut EscritorFdt, u32)) -> Vec<u8> {
     let mut f = EscritorFdt::nuevo();
     for &(d, t) in &c.reservas {
         f.reservar(d, t);
@@ -189,6 +195,7 @@ pub fn generar_dtb(c: &ConfigInvitado) -> Vec<u8> {
         f.fin_nodo();
     }
 
+    extra(&mut f, ph_gic);
     f.fin_nodo();
     f.terminar(0)
 }

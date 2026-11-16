@@ -7,6 +7,8 @@
 //! - [`psci::Psci::atender`] con los registros de una HVC;
 //! - [`gic::Distribuidor`] le dice qué interrupciones poner en los registros de lista del GIC virtual.
 //!
+//! [`dominio`] es lo de un dominio de controladores (S35): el canal con DashOS y el PCIe con el aparato prestado.
+//!
 //! [`v3d`] es la lógica de la V3D mediada (S25): la tabla de páginas sombra y los registros que el invitado no toca.
 //!
 //! Todo es `no_std` con `alloc` y sin `unsafe`: lo que llega del invitado se trata como hostil. Un descriptor fuera
@@ -25,6 +27,7 @@ extern crate alloc;
 pub mod arbol;
 pub mod arranque;
 pub mod disposicion;
+pub mod dominio;
 pub mod fdt;
 pub mod gic;
 pub mod maquina;

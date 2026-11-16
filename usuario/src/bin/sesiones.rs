@@ -100,7 +100,8 @@ const PERMISOS_KERNEL: &[&str] = &["plazo", "maquinas"];
 /// que da `inicio`): el permiso de máquinas virtuales a la caja Linux. Se apunta como concedido (sale en el centro de
 /// control, que lo puede quitar) y en el registro de seguridad. Si quien está delante lo quita, la próxima vez se le
 /// pregunta (hasta que se reinicie: lo quitado no se guarda aún en el disco).
-const SIN_PREGUNTAR: &[(&str, &str)] = &[("caja-linux", "maquinas")];
+/// S35, paso 2 (docs/bitacoras/dominio-red.md): también al servicio de un dominio de controladores, que es del sistema.
+const SIN_PREGUNTAR: &[(&str, &str)] = &[("caja-linux", "maquinas"), ("dominio", "maquinas")];
 /// Los permisos cuya concesión se apunta también en el registro de seguridad (no solo las negativas).
 /// S10: también los de commodities (`atajos`, `fondo`, `commodities`): ver lo que puede coger teclas o saber cuándo no se
 /// usa el ordenador tiene que quedar en el registro común aunque venga de serie.

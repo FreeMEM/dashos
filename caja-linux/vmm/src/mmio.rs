@@ -9,6 +9,10 @@ pub enum Clase {
     Pl011,
     Pl031,
     VirtioMmio,
+    /// El canal de un dominio de controladores con DashOS (S35, `dominio::canal`).
+    CanalDominio,
+    /// El PCIe de un dominio, con el aparato que le presta DashOS (S35, `dominio::pci`).
+    PciDominio,
 }
 
 pub trait AparatoMmio {

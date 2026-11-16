@@ -93,6 +93,8 @@ prueba: $(PRUEBAS) catalogos
 	cd ../usuario && rustc --edition 2024 --test src/zona.rs -o target/zona_pruebas && ./target/zona_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/vigilancia.rs -o target/vigilancia_pruebas && ./target/vigilancia_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/protocolo/archivos.rs -o target/protocolo_archivos_pruebas && ./target/protocolo_archivos_pruebas -q
+	@# S35, paso 2: virtio por mensajes entre virtio-red y el servicio de un dominio (mensajes malos, colas fuera de la ventana).
+	cd ../usuario && rustc --edition 2024 --test src/protocolo/virtio_msg.rs -o target/virtio_msg_pruebas && ./target/virtio_msg_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/cortafuegos.rs -o target/cortafuegos_pruebas && ./target/cortafuegos_pruebas -q
 	@# Trasfondo nativo: las cuentas del monitor (contadores raros, procesos que nacen y mueren) y sus ajustes.
 	cd ../usuario && rustc --edition 2024 --test src/monitor.rs -o target/monitor_pruebas && ./target/monitor_pruebas -q
@@ -248,6 +250,36 @@ arranque-virt-linux: usuario FORCE
 	grep -E "\[(caja-linux|sin-maquina)\]|Hipervisor" target/salida_virt_linux.txt | grep -vE "linux: (\[ |[0-9]+$$)" || true
 	@# La captura de la terminal, fuera de git (capturas-agente/ está en .git/info/exclude).
 	mkdir -p ../capturas-agente && cp target/caja-terminal.png ../capturas-agente/caja-linux-terminal.png 2>/dev/null || true
+
+# Un dominio de controladores (S35, paso 2; docs/bitacoras/dominio-red.md): la imagen de `virt` con `dominio`, en QEMU
+# con virtualization=on. La red de DashOS no tiene virtio-net-pci: tiene una e1000 que DashOS presta (sin IOMMU, solo
+# en QEMU) a un Linux mínimo en una máquina virtual (`dominio`); ese Linux la lleva y devuelve a DashOS una virtio-net
+# por mensajes, que lleva `virtio-red` de siempre. La e1000 está en el concentrador con la red de usuario de QEMU (DHCP
+# y el eco del PC en 10.0.2.100:7, con restrict=on: nada sale del PC) y el vecino de prueba (`tools/red_vecino.py`,
+# 10.0.2.53). `dominio-prueba` hace DHCP, ecos TCP y UDP, y relanza el dominio en modos hostiles (oferta falsa,
+# descriptores que no son suyos, leer fuera de su memoria, colgarse y morir a media transferencia). El kernel y el
+# initramfs del dominio, fuera de git: `tools/dominio_red.py preparar` (DOMINIO_IMAGE, DOMINIO_INITRD). Con el disco de
+# las pruebas (NVMe): así `sesiones` escribe el registro común, donde quedan las caídas del dominio, y la prueba lo lee.
+DOMINIO_DIR ?= $(HOME)/recuperar/geosian-7d/dominio-red
+DOMINIO_IMAGE ?= $(DOMINIO_DIR)/Image
+DOMINIO_INITRD ?= $(DOMINIO_DIR)/initramfs.cpio
+VIRT_DOMINIO := target/kernel8-virt-dominio.img
+RED_DOMINIO := -netdev user,id=red0,restrict=on,guestfwd=tcp:10.0.2.100:7-cmd:$(abspath ../tools/red_eco.py) -netdev dgram,id=red5,local.type=unix,local.path=$(RED)/qemu2.sock,remote.type=unix,remote.path=$(RED)/vecino.sock -netdev hubport,id=red6,hubid=0,netdev=red5 -netdev hubport,id=red2,hubid=0,netdev=red0 -netdev hubport,id=red4,hubid=0 -device e1000,netdev=red4,mac=$(RED_MAC),romfile=
+arranque-virt-dominio: usuario $(DISCO_NVME) FORCE
+	@test -f "$(DOMINIO_IMAGE)" || { echo "Falta el kernel del dominio (DOMINIO_IMAGE=$(DOMINIO_IMAGE)): no va en git; tools/dominio_red.py preparar"; exit 1; }
+	@test -f "$(DOMINIO_INITRD)" || { echo "Falta el initramfs del dominio (DOMINIO_INITRD=$(DOMINIO_INITRD)): tools/dominio_red.py preparar"; exit 1; }
+	mkdir -p target/dominio
+	cp "$(DOMINIO_IMAGE)" target/dominio/Image
+	cp "$(DOMINIO_INITRD)" target/dominio/initrd
+	cargo build $(CARGO_PERFIL) --features virt,dominio
+	$(OBJCOPY) -O binary $(ELF) $(VIRT_DOMINIO)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_DOMINIO)) cargo build --release
+	rm -f $(RED)/qemu2.sock $(RED)/vecino.sock
+	mkdir -p $(RED)
+	python3 -I ../tools/red_vecino.py $(RED) $(RED_MAC) 900 & VECINO=$$!; \
+	GUARDAR=$(abspath target/salida_virt_dominio.txt) MEMORIA=3G MAQUINA=highmem=off,virtualization=on QEMU_EXTRA="-device ramfb -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv $(RED_DOMINIO)" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_dominio.txt $(or $(TIEMPO_DOMINIO),900); \
+	R=$$?; kill $$VECINO 2>/dev/null; exit $$R
+	grep -E "\[(dominio|dominio-prueba|virtio-red)\]" target/salida_virt_dominio.txt | grep -vE "linux: \[ " || true
 
 # Arch Linux ARM en la caja Linux (H9, docs/bitacoras/caja-linux.md): la Image de Image-arch (tinyconfig con lo que
 # pide systemd), sin initramfs, y el disco de Arch como NVMe: una GPT con la partición de DashOS (en ella, el RedoxFS de

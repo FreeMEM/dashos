@@ -25,6 +25,8 @@ pub mod protocolo {
     pub mod red;
     pub mod selector;
     pub mod sesiones;
+    /// S35: virtio por mensajes, entre un conductor de DashOS y el servicio de un dominio de controladores.
+    pub mod virtio_msg;
 }
 #[cfg(feature = "monton")]
 pub mod monton;
@@ -446,6 +448,18 @@ pub fn maquina_patear(llave: u32) -> i64 {
 /// Para la máquina entera de la vCPU `llave`: todas sus vCPU salen y ya no vuelven a entrar (`E_CERRADO`).
 pub fn maquina_parar(llave: u32) -> i64 {
     llamada(48, [llave as u64, 7, 0, 0, 0]).0 as i64
+}
+
+/// S35, paso 2: presta al invitado de la máquina `llave` los registros de la llave `registros`, en su misma dirección
+/// física (sus accesos van al aparato, sin salir al servicio). 0 o un error negativo.
+pub fn maquina_prestar_registros(llave: u32, registros: u32) -> i64 {
+    llamada(48, [llave as u64, 40, registros as u64, 0, 0]).0 as i64
+}
+
+/// S35, paso 2: el objeto de memoria DMA `memoria`, visto por el invitado en su dirección de bus (la zona de DMA del
+/// aparato prestado; sin IOMMU, solo en QEMU). 0 o un error negativo.
+pub fn maquina_dma_identidad(llave: u32, memoria: u32) -> i64 {
+    llamada(48, [llave as u64, 41, memoria as u64, 0, 0]).0 as i64
 }
 
 /// Barrera de memoria entre núcleos (`dmb ish`): lo escrito antes lo ven los demás antes que lo escrito después. Para
