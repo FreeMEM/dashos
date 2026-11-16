@@ -1805,6 +1805,166 @@ fn adios_al_compositor() {
     }
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Ajustes en texto (`docs/bitacoras/ajustes-texto.md`): el centro vigila `ENV:` con los avisos de cambio del servicio
+// de archivos (`VIGILAR`) y aplica lo que cambie sin reiniciar nada: el idioma (`ENV:Sys/locale`, o su IFF) y el tema
+// (`ENV:Escritorio/apariencia`, que reparte el compositor a todos, la barra incluida). Lo cambie quien lo cambie: la
+// orden `Ajuste`, un editor, otro programa.
+
+/// La marca con que llega lo que el centro se manda a sí mismo por "yo:centro" (la que le pone `inicio`).
+const MARCA_PROPIA: u64 = u64::MAX;
+/// Cada cuánto se intenta vigilar `ENV:` mientras no se puede (antes de entrar nadie, o tras salir).
+const CADA_VIGILAR_US: u64 = 2_000_000;
+/// Lo que se vigila: `ENV:` (para ver aparecer los cajones) y los cajones de los ajustes que aplica.
+const VIGILA: [&str; 3] = ["ENV:", "ENV:Sys", "ENV:Escritorio"];
+/// El tema en texto: `modo` (claro u oscuro) y `acento` (un color de `ACENTOS`, o `fondo`).
+const TEMA_TEXTO: &str = "ENV:Escritorio/apariencia";
+
+/// Las vigilancias de `ENV:`: su número en el servicio (0, sin poner) y el temporizador de reintentar.
+struct Vigila {
+    ids: [u32; 3],
+    temporizador: u32,
+    /// El tema que se aplicó la última vez desde el texto (modo y acento), para no repetirlo.
+    tema: Option<(bool, usize)>,
+}
+
+/// La llave "yo:centro" (para escribirse a sí mismo), o 0.
+fn yo() -> u32 {
+    dashos::llaves::Tabla::leer().buscar("yo:centro").unwrap_or(0)
+}
+
+impl Vigila {
+    fn nueva() -> Vigila {
+        Vigila { ids: [0; 3], temporizador: 0, tema: None }
+    }
+
+    /// Pone las vigilancias que falten (las que se pueden: sin `ENV:` no hay ninguna). Si falta alguna, el temporizador
+    /// para reintentar; si están todas, sin él.
+    fn armar(&mut self) {
+        let yo = yo();
+        if let (Some(tabla), Some(ses), true) = (dashos::asignaciones::pedir_tabla(SESIONES), Sesion::abrir(), yo != 0) {
+            for (k, camino) in VIGILA.iter().enumerate() {
+                if self.ids[k] != 0 {
+                    continue;
+                }
+                let Ok((r, _)) = dashos::asignaciones::abrir(&mut PorSesion(&ses), &tabla, camino.as_bytes()) else { continue };
+                let puerta = dashos::llave_duplicar(yo, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, 0);
+                if puerta > 0 {
+                    let (e, id, _, _) = dashos::protocolo::archivos::vigilar(ARCHIVOS, ses.lectura, r.asa, puerta as u32, 2_000_000);
+                    if e == dashos::protocolo::archivos::BIEN {
+                        self.ids[k] = id;
+                        println!("  [centro] vigila {} (avisos de cambio)", camino);
+                    }
+                }
+                ses.pedir(dashos::protocolo::archivos::CERRAR, r.asa, 0, 0, "");
+            }
+        }
+        // Sin `ENV:` no hay que vigilar dentro; con él, el cajón que falte se vigila al aparecer (lo dice el de `ENV:`).
+        let falta_env = self.ids[0] == 0;
+        if falta_env && self.temporizador == 0 && yo != 0 {
+            let copia = dashos::llave_duplicar(yo, dashos::ESCRIBIR, 0);
+            if copia > 0 {
+                let t = dashos::temporizador_crear(copia as u32, CADA_VIGILAR_US, CADA_VIGILAR_US);
+                dashos::cerrar(copia as u32);
+                self.temporizador = if t > 0 { t as u32 } else { 0 };
+            }
+        } else if !falta_env && self.temporizador != 0 {
+            dashos::cerrar(self.temporizador);
+            self.temporizador = 0;
+        }
+    }
+
+    /// Pide los avisos (los pone a cero: el siguiente cambio vuelve a sonar) y suelta las vigilancias que acabaron
+    /// (`ENV:` se fue con la sesión, o se borró un cajón). Si hubo alguno.
+    fn avisos(&mut self) -> bool {
+        use dashos::protocolo::archivos as a;
+        let Some(ses) = Sesion::abrir() else { return false };
+        let (e, _, n, _, _) = ses.pedir(a::AVISOS, 0, 0, 0, "");
+        if e != a::BIEN {
+            return false;
+        }
+        for i in 0..n as usize {
+            if let Some((id, marcas, _)) = a::leer_aviso(ses.ventana(), i)
+                && marcas & (a::AVISO_BORRADO | a::AVISO_FUERA) != 0
+            {
+                for x in self.ids.iter_mut().filter(|x| **x == id) {
+                    *x = 0;
+                }
+            }
+        }
+        n > 0
+    }
+}
+
+/// El tema de `ENV:Escritorio/apariencia`: (oscuro, color). `Ok(None)` si no está o no trae `modo` ni `acento`.
+fn tema_de_env() -> Result<Option<(bool, usize)>, String> {
+    use kit::idioma::texto::Ajustes;
+    let Some(tabla) = dashos::asignaciones::pedir_tabla(SESIONES) else { return Ok(None) };
+    let Some(ses) = Sesion::abrir() else { return Ok(None) };
+    let mut fs = PorSesion(&ses);
+    let bytes = match idiomas::Lector::leer(&mut idiomas::PorAsignaciones { fs: &mut fs, tabla: &tabla }, TEMA_TEXTO, kit::idioma::texto::MAX_FICHERO) {
+        Ok((b, _)) => b,
+        Err(idiomas::Falta::NoExiste) => return Ok(None),
+        Err(_) => return Err("no se deja leer".into()),
+    };
+    let x = Ajustes::leer(&bytes).map_err(|_| String::from("no es texto"))?;
+    let (modo, acento) = (x.valor("modo"), x.valor("acento"));
+    if modo.is_none() && acento.is_none() {
+        return Ok(None);
+    }
+    let oscuro = match modo.unwrap_or("claro") {
+        "claro" => false,
+        "oscuro" => true,
+        otro => return Err(alloc::format!("modo {:?} no es claro ni oscuro", otro)),
+    };
+    let color = match acento.unwrap_or("fondo") {
+        "fondo" => DEL_FONDO,
+        c => COLORES.iter().position(|x| x.0.eq_ignore_ascii_case(c)).ok_or_else(|| alloc::format!("acento {:?} no es ninguno", c))?,
+    };
+    Ok(Some((oscuro, color)))
+}
+
+/// Algo cambió en `ENV:` (o es hora de reintentar vigilarlo): pide los avisos, vuelve a vigilar lo que falte, y aplica el
+/// idioma y el tema si son otros.
+fn al_cambiar_env(v: &mut Vigila, idioma: &mut Option<idiomas::Idiomas>) {
+    let hubo = v.avisos();
+    let antes = v.ids;
+    v.armar();
+    // Recién armado (acaba de entrar alguien) o con avisos: se mira todo.
+    if !hubo && antes == v.ids {
+        return;
+    }
+    // El idioma: se carga otra vez sin mirar firmas (el aviso ya dice que cambió).
+    if let (Some(tabla), Some(ses)) = (dashos::asignaciones::pedir_tabla(SESIONES), Sesion::abrir()) {
+        let nuevo = idiomas::arrancar(&mut PorSesion(&ses), &tabla, &TEXTOS, CATALOGO);
+        let de = |i: &idiomas::Idiomas| (i.local.idiomas.clone(), i.local.pais_nombre.clone());
+        if idioma.as_ref().map(de) != Some(de(&nuevo)) {
+            println!("  [centro] idioma en marcha: {} ({}), de {}", nuevo.local.idioma(), nuevo.local.pais_nombre, nuevo.origen.unwrap_or("lo de serie"));
+        }
+        *idioma = Some(nuevo);
+    }
+    // El tema.
+    match tema_de_env() {
+        Ok(Some(t)) if v.tema != Some(t) => {
+            let mut ap = Apariencia { oscuro: t.0, color: t.1, fondo: None };
+            if ap.color == DEL_FONDO {
+                ap = Apariencia { oscuro: t.0, ..leer_apariencia().unwrap_or(Apariencia::DE_SERIE) };
+                ap.color = DEL_FONDO;
+                if ap.fondo.is_none() {
+                    let _ = colores_del_fondo(&mut ap, None);
+                }
+            }
+            let puesto = poner_en_compositor(&ap, None);
+            println!("  [centro] tema en marcha: {}, color {}, de {}; en el compositor: {}", ap.modo(), ap.nombre(), TEMA_TEXTO, if puesto == 0 { "sí" } else { "no" });
+            if puesto == 0 {
+                v.tema = Some(t);
+            }
+        }
+        Ok(_) => {}
+        Err(porque) => println!("  [centro] {}: {}; se queda el tema que hay", TEMA_TEXTO, porque),
+    }
+}
+
 /// S26: el centro es también el servicio del tema. Al arrancar, pone en el compositor lo guardado (si no hay nada, lo
 /// de serie: claro, con la paleta del fondo, y los programas de las cajas como DashOS), y el compositor lo reparte a
 /// quien escucha (los programas de DashOS y las cajas). Con la paleta del fondo, pide su color al fondo de escritorio y
@@ -1863,12 +2023,21 @@ fn principal() -> u64 {
     // Idiomas (paso 4): antes de abrir ninguna ventana. Va tras poner el tema, que no enseña textos: así el tema no
     // espera a `sesiones` (la tabla de nombres) ni a los ficheros de idioma.
     let mut idioma = poner_idioma(None);
+    // Ajustes en texto: vigilar `ENV:` (sin sesión aún, se reintenta con un temporizador).
+    let mut vigila = Vigila::nueva();
+    vigila.armar();
     loop {
         let (n, k, marca) = match recibir(CANAL, &mut buf, &mut ll) {
             Recibido::Mensaje { n, k, marca } => (n, k, marca),
             Recibido::Cerrado => return 0,
             Recibido::Nada => continue,
         };
+        // Lo suyo: un timbre del servicio de archivos o el temporizador de reintentar.
+        if marca == MARCA_PROPIA {
+            cerrar_llaves(&ll[..k]);
+            al_cambiar_env(&mut vigila, &mut idioma);
+            continue;
+        }
         // Sin marca: las entradas del directorio de `inicio` (8 bytes de marca y 16 de nombre), para saber quién es quién.
         if marca == 0 && n == 24 && nombres.len() < 64 {
             let de = u64::from_le_bytes(buf[..8].try_into().unwrap());

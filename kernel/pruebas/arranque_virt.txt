@@ -608,6 +608,39 @@ DashOS en marcha con 4 núcleos.
 ~│   [shell] [1] Shell (Execute) acabó con el código 20
 ~│   [shell] [1] Wait acabó con el código 20
 ~│   [shell] No hay trabajos en marcha
+# Ajustes en texto (docs/bitacoras/ajustes-texto.md): la orden Ajuste. El idioma va al texto de ENV:Sys/locale (y su
+# IFF, Sys/locale.prefs, se genera de él); el centro de control lo vigila y cambia de idioma en marcha. Lo hostil: un
+# país que no hay, un idioma que no vale, un tema que no existe, la zona (de la máquina: pide guardian y se niega), un
+# nombre que no hay, un fichero que no es texto y uno enorme (no se tocan). Un ajuste cualquiera (fichero.clave) con
+# GUARDAR. Y el tema: con la orden, a mano con Echo y otra vez con la orden; el centro lo aplica en marcha y lo reparte
+# el compositor: Ajustes (un programa del kit) y la barra lo cambian sin reiniciar.
+~│   [shell] Ajustes (Ajuste <nombre> <valor> lo pone en ENV:; con GUARDAR, también en ENVARC:):
+~│   [shell]   zona     Europe/Madrid        la zona horaria (de la máquina) (SYS:Prefs/zona)
+~│   [shell] idioma: english, español (en RAM:Env/Sys/locale)
+~│   [centro] idioma en marcha: english (España), de ENV:Sys/locale
+~│   [shell] idioma: english, español (ENV:Sys/locale idiomas)
+~│   [shell] idiomas = english, español
+~│   [shell] Ajuste: pais: atlantida: no hay LOCALE:Countries/atlantida.country (List LOCALE:Countries enseña los que hay). No se ha cambiado nada
+~│   [shell] Ajuste: idioma: "../x" no vale como idioma (o son más de 10). No se ha cambiado nada
+~│   [shell] Ajuste: tema: "morado" no vale: claro, oscuro. No se ha cambiado nada
+~│   [shell] Ajuste: zona es un ajuste de la máquina (SYS:Prefs/zona): cambiarlo pide la confirmación de guardian, y esta orden aún no sabe pedirla. No se ha cambiado nada
+~│   [shell] zona: Europe/Madrid (SYS:Prefs/zona)
+~│   [shell] Ajuste: nada: no hay un ajuste con ese nombre (Ajuste LISTA los enseña; o fichero.clave)
+~│   [shell] Ajuste: ENV:roto: no es texto; se usa lo de serie
+~│   [shell] Ajuste: ENV:roto no es texto: no se toca (arréglalo a mano o bórralo). No se ha cambiado nada
+~│   [shell] Ajuste: ENV:enorme es demasiado grande: no se toca (arréglalo a mano o bórralo). No se ha cambiado nada
+~│   [shell] Escritorio/barra.segundos: sí (en RAM:Env/Escritorio/barra y Home:Prefs/Env-Archive/Escritorio/barra)
+~│   [shell] Escritorio/barra.segundos: sí (ENV:Escritorio/barra segundos)
+~│   [shell] tema: oscuro (en RAM:Env/Escritorio/apariencia)
+~│   [centro] tema en marcha: oscuro, color Del fondo, de ENV:Escritorio/apariencia; en el compositor: sí
+~│   [centro] tema en marcha: claro, color Del fondo, de ENV:Escritorio/apariencia; en el compositor: sí
+~│   [ajustes] tema del sistema: claro, color c44e68
+~│   [barra] tema del sistema: claro, color c44e68
+~│   [centro] tema en marcha: oscuro, color Del fondo, de ENV:Escritorio/apariencia; en el compositor: sí
+~│   [ajustes] tema del sistema: oscuro, color c44e68
+~│   [barra] tema del sistema: oscuro, color c44e68
+~│   [shell] idioma: español (en RAM:Env/Sys/locale)
+~│   [centro] idioma en marcha: español (España), de ENV:Sys/locale
 ~│   [sesiones] Shell asigna "Prueba" (3): 0
 ~│   [shell] Home:PruebaShell borrado
 ~│   [shell] Fin de la prueba del Shell

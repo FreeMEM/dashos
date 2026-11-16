@@ -5,6 +5,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 // Las de base (`SYS:C`).
+/// Ajustes en texto (`docs/bitacoras/ajustes-texto.md`): leer y poner un ajuste suelto.
+pub const AJUSTE: &str = "NOMBRE,VALOR,GUARDAR/S,LISTA/S";
 pub const ASK: &str = "PROMPT/A";
 pub const ASSIGN: &str = "NAME,TARGET/M,LIST/S,ADD/S,PREPEND/S,REMOVE/S";
 pub const CD: &str = "DIR";
@@ -25,6 +27,7 @@ pub const WAIT: &str = "TIME/N,SEC=SECS/S,MIN=MINS/S";
 
 /// Las de base, por su nombre.
 pub const BASE: &[(&str, &str)] = &[
+    ("Ajuste", AJUSTE),
     ("Ask", ASK),
     ("Assign", ASSIGN),
     ("Cd", CD),

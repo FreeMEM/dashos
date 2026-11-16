@@ -4,6 +4,7 @@
 
 use crate::Orden;
 
+pub mod ajuste;
 pub mod ask;
 pub mod assign;
 pub mod cd;
@@ -24,6 +25,7 @@ pub mod wait;
 
 /// Las órdenes por su nombre (sin distinguir mayúsculas al buscar).
 pub const BASE: &[(&str, fn(&mut Orden) -> u64)] = &[
+    ("Ajuste", ajuste::principal),
     ("Ask", ask::principal),
     ("Assign", assign::principal),
     ("Cd", cd::principal),
@@ -45,7 +47,7 @@ pub const BASE: &[(&str, fn(&mut Orden) -> u64)] = &[
 
 /// Sus nombres, sin las funciones: para quien solo quiere saber si una orden es de base (el Shell, que no las lleva
 /// dentro).
-pub const NOMBRES: &[&str] = &["Ask", "Assign", "Cd", "Copy", "Date", "Delete", "Dir", "Echo", "Filenote", "Info", "List", "MakeDir", "Protect", "Rename", "Type", "Version", "Wait"];
+pub const NOMBRES: &[&str] = &["Ajuste", "Ask", "Assign", "Cd", "Copy", "Date", "Delete", "Dir", "Echo", "Filenote", "Info", "List", "MakeDir", "Protect", "Rename", "Type", "Version", "Wait"];
 
 /// Si `nombre` es una orden de base.
 pub fn es_de_base(nombre: &str) -> bool {

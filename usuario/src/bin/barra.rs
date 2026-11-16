@@ -1472,6 +1472,8 @@ fn principal() -> u64 {
             (TEMA, dashos_tema_v1::ev::TEMA) => {
                 b.tema = Tema::del_sistema(palabra(0) | 0xff00_0000, palabra(1) != 0);
                 pantalla_barra(&mut c, &b, &mut fuente, &mut medio);
+                // Ajustes en texto: el tema cambia en marcha (lo pone el centro, de `ENV:Escritorio/apariencia`).
+                println!("  [barra] tema del sistema: {}, color {:06x}", if palabra(1) != 0 { "oscuro" } else { "claro" }, palabra(0) & 0xff_ffff);
                 if b.lanzador_abierto && lanzador_configurado {
                     pantalla_lanzador(&mut c, &mut la, &b.tema, &mut fuente, &mut medio);
                 }
