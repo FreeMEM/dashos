@@ -104,7 +104,8 @@ $(DISCO_NVME): FORCE
 # tramas malas por un socket Unix durante 20 s desde el primer TCP de DashOS (se para también al acabar la prueba).
 RED := $(abspath target/red)
 RED_MAC := 52:54:00:12:34:56
-RED_QEMU := -netdev user,id=red0,guestfwd=tcp:10.0.2.100:7-cmd:$(abspath ../tools/red_eco.py) -netdev dgram,id=red1,local.type=unix,local.path=$(RED)/qemu.sock,remote.type=unix,remote.path=$(RED)/pc.sock -netdev hubport,id=red2,hubid=0,netdev=red0 -netdev hubport,id=red3,hubid=0,netdev=red1 -netdev hubport,id=red4,hubid=0 -device virtio-net-pci,netdev=red4,disable-legacy=on,mac=$(RED_MAC),romfile=
+RED_HUB := -netdev user,id=red0,guestfwd=tcp:10.0.2.100:7-cmd:$(abspath ../tools/red_eco.py) -netdev dgram,id=red1,local.type=unix,local.path=$(RED)/qemu.sock,remote.type=unix,remote.path=$(RED)/pc.sock -netdev hubport,id=red2,hubid=0,netdev=red0 -netdev hubport,id=red3,hubid=0,netdev=red1 -netdev hubport,id=red4,hubid=0
+RED_QEMU := $(RED_HUB) -device virtio-net-pci,netdev=red4,disable-legacy=on,mac=$(RED_MAC),romfile=
 
 # Al final, el guion pulsa Reiniciar en el menú de apagado del panel y se espera al segundo arranque (REINICIO,
 # pruebas/arranque_virt_reinicio.txt; decisión del usuario del 2026-11-13).
@@ -447,7 +448,7 @@ FUNCIONES_X86 := archivos,ventanas,sonido,red,relevo
 # un RelevoJIT local, para probar cambios suyos sin subirlos (un `[patch]` por `--config`). La `rev` de Cargo.toml tiene
 # que estar en GitHub igual, y Cargo.lock cambia mientras se use: no se sube así.
 RELEVO_PATCH := $(if $(RELEVO_DIR),--config 'patch."https://github.com/FreeMEM/RelevoJIT".relevo.path="$(abspath $(RELEVO_DIR))"')
-SERVICIOS_X86 := inicio consola compositor xhci nvme disco ahci disco-sata archivos ficheros sonido virtio-sonido hda red virtio-red red-gloton red-prueba tono-a tono-b ventana-a ventana-b ajustes hola
+SERVICIOS_X86 := inicio consola compositor xhci nvme disco ahci disco-sata archivos ficheros sonido virtio-sonido hda red virtio-red intel-red red-gloton red-prueba tono-a tono-b ventana-a ventana-b ajustes hola
 
 usuario-x86-servicios: FORCE
 	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86) $(RELEVO_PATCH) $(addprefix --bin ,$(SERVICIOS_X86))
@@ -505,6 +506,15 @@ SONIDO_NOMBRE := $(if $(filter virtio,$(SONIDO_X86)),virtio-sonido,hda)
 ifeq ($(filter hda virtio,$(SONIDO_X86)),)
 $(error SONIDO_X86 tiene que ser hda o virtio)
 endif
+# X5c: la tarjeta de red, por omisión virtio-net (con iommu_platform=on si hay IOMMU); RED_X86=e1000e, la 82574L de
+# QEMU con el controlador de Intel (`intel-red`). Las dos en el concentrador de RED_HUB, con la misma MAC. Sus esperados,
+# en pruebas/arranque_x86_red_*.txt.
+RED_X86 ?= virtio
+RED_TARJETA_X86 := $(if $(filter e1000e,$(RED_X86)),-device e1000e$(coma)netdev=red4$(coma)mac=$(RED_MAC)$(coma)romfile=,-device virtio-net-pci$(coma)netdev=red4$(coma)disable-legacy=on$(coma)mac=$(RED_MAC)$(coma)romfile=$(VSONIDO_IOMMU))
+RED_NOMBRE := $(if $(filter e1000e,$(RED_X86)),intel-red,virtio-red)
+ifeq ($(filter virtio e1000e,$(RED_X86)),)
+$(error RED_X86 tiene que ser virtio o e1000e)
+endif
 arranque-x86: x86 $(DISCO_NVME)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(NUCLEO_X86)) cargo build --release --target x86_64-unknown-uefi
 	rm -f target/sonido-x86.wav target/captura-x86.ppm
@@ -513,11 +523,12 @@ arranque-x86: x86 $(DISCO_NVME)
 	$(call esperados_x86,pruebas/arranque_x86.txt,pruebas/arranque_x86_iommu.txt,target/esperados_arranque_x86.txt)
 	cat pruebas/arranque_x86_sonido_$(SONIDO_X86).txt >> target/esperados_arranque_x86.txt
 	$(if $(IOMMU),echo "~$(SONIDO_NOMBRE): DMA por la IOMMU$(coma) en su dominio" >> target/esperados_arranque_x86.txt)
-	cat pruebas/arranque_x86_red.txt >> target/esperados_arranque_x86.txt
+	cat pruebas/arranque_x86_red_$(RED_X86).txt pruebas/arranque_x86_red.txt >> target/esperados_arranque_x86.txt
+	$(if $(IOMMU),echo "~$(RED_NOMBRE): DMA por la IOMMU$(coma) en su dominio" >> target/esperados_arranque_x86.txt)
 	mkdir -p $(RED)
 	rm -f $(RED)/qemu.sock $(RED)/pc.sock
 	python3 -I ../tools/red_basura.py $(RED) $(RED_MAC) 300 & BASURA=$$!; \
-	$(ACCEL_QEMU) $(MAQUINA_IOMMU) GUARDAR=$(abspath target/salida_x86.txt) CAPTURA=$(abspath target/captura-x86.ppm) ARQ=x86_64 TECLAS=simple QEMU_EXTRA="$(IOMMU_QEMU) -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv $(SATA_QEMU) -audiodev wav,id=snd0,path=$(abspath target/sonido-x86.wav),out.frequency=48000 $(SONIDO_QEMU) $(RED_QEMU)$(VSONIDO_IOMMU)" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_arranque_x86.txt $(or $(TIEMPO_X86),240); \
+	$(ACCEL_QEMU) $(MAQUINA_IOMMU) GUARDAR=$(abspath target/salida_x86.txt) CAPTURA=$(abspath target/captura-x86.ppm) ARQ=x86_64 TECLAS=simple QEMU_EXTRA="$(IOMMU_QEMU) -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv $(SATA_QEMU) -audiodev wav,id=snd0,path=$(abspath target/sonido-x86.wav),out.frequency=48000 $(SONIDO_QEMU) $(RED_HUB) $(RED_TARJETA_X86)" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_arranque_x86.txt $(or $(TIEMPO_X86),240); \
 	R=$$?; kill $$BASURA 2>/dev/null; exit $$R
 	@if grep -q "fallo de DMA\|interrupción bloqueada" target/salida_x86.txt; then echo "MAL: fallos de DMA o interrupciones bloqueadas en el arranque"; grep "fallo de DMA\|interrupción bloqueada" target/salida_x86.txt | head; exit 1; fi
 	python3 ../tools/disco_archivos.py --comprobar-basico $(DISCO_NVME) $(VER)

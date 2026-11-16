@@ -705,7 +705,9 @@ mismos límites. Cambian los registros y lo que es de la CPU:
 - **Llaves de arranque** (X5 y X6, `kernel/src/inicio_x86.rs`). El mismo paquete que en ARM, con los ELF de x86. Los
   aparatos salen del PCIe (el ECAM de la MCFG de ACPI, todos sus buses): el xHCI (clase 0x0C0330, BAR 0), el NVMe
   (0x010802, BAR 0), el sonido de virtio (0x1af4:0x1059, BAR 4, más su configuración) y, desde X5c, el AHCI (0x010601,
-  BAR 5), el Intel HDA (0x040300, BAR 0) y la red de virtio (0x1af4:0x1041, BAR 4, más su configuración), cada uno con
+  BAR 5), el Intel HDA (0x040300, BAR 0), la red de virtio (0x1af4:0x1041, BAR 4, más su configuración) y la red de
+  Intel (`intel-red`: el I219 de la familia "Cannon Point", 0x8086:0x15BB a 0x15BE, 0x15DF a 0x15E2 y 0x0D4C a 0x0D4F,
+  y el 82574L, 0x10D3 y 0x10F6; BAR 0, más su configuración), cada uno con
   sus registros, un permiso DMA propio y su MSI (MSI-X si la tiene, en su primera entrada; si no, MSI: el AHCI y el HDA
   de QEMU). Sin INTx: en un PC su
   número sale del AML de ACPI (`_PRT`), que el kernel no lee. Además (X6): el registro y los puertos de COM1 (tipo

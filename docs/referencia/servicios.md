@@ -62,6 +62,7 @@ el segundo, el otro. La lista está en `kernel/src/inicio.rs` (`PROGRAMAS`):
 | hda (x86) | su permiso DMA, registros del controlador HDA, permiso de plazo (S3), su interrupción (opcional) | "sonido" |
 | red (`virt` y x86) | — | "red" y "red-estado" (es quien lee los dos) |
 | virtio-red (`virt` y x86) | su permiso DMA, registros y configuración del aparato, su interrupción (opcional) | "red" |
+| intel-red (x86) | su permiso DMA, registros (BAR 0) y configuración del aparato, su interrupción (opcional) | "red" |
 | red-prueba, red-gloton (pruebas, `virt` y x86) | — | "red" |
 
 En cada canal el primero que lo nombra es el servidor; los demás reciben una copia marcada (su número de programa más
@@ -73,7 +74,7 @@ con la restricción "una vez" (S4): el servicio no puede pasárselas a otro prog
 
 En x86-64 (X5 y X6) la lista es otra, `PROGRAMAS` de `kernel/src/inicio_x86.rs`, con las mismas llaves para cada
 servicio: `consola`, `compositor`, `xhci`, `nvme`, `disco`, `ahci`, `disco-sata`, `archivos`, `ficheros`, `sonido`,
-`virtio-sonido`, `hda`, `red`, `virtio-red`, `red-gloton`, `red-prueba`, `tono-a`, `tono-b`, `ventana-a`, `ventana-b`,
+`virtio-sonido`, `hda`, `red`, `virtio-red`, `intel-red`, `red-gloton`, `red-prueba`, `tono-a`, `tono-b`, `ventana-a`, `ventana-b`,
 `ajustes` y `hola` (X5c: el AHCI, el HDA y la red). Al AHCI le toca el canal "disco" si no hay NVMe; si lo hay,
 "sata", y el resto de servicios del disco siguen en el NVMe. La consola recibe el registro y, en vez de los
 registros del PL011, una llave de los puertos de COM1, que pide con `puertos_permitir` y usa con `in` y `out`. El
@@ -579,6 +580,15 @@ con 128 ranuras de recibir y 64 de enviar, y un canal suyo) y después `TRAMAS` 
 `TRAMAS` cuando pone algo para enviar. Copia cada trama entre la DMA y las ranuras: el servicio no toca los
 descriptores. Tira y cuenta lo corto (menos de 14 bytes), lo largo (más de 1518), lo que no cabe en las ranuras y los
 descriptores que el aparato devuelve sin tenerlos.
+
+**El controlador de Intel** (`usuario/src/bin/intel_red.rs`, X5c, sala limpia con `docs/spec/hw/i219.md`): la MAC del
+PCH con el PHY I219 (familia "Cannon Point", la de pegaso) y la tarjeta 82574L (la `e1000e` de QEMU), en un solo
+programa. Las mismas llaves que virtio-red (registros de la BAR 0) y el mismo trato con el servicio, que acepta
+`TARJETA` y `TRAMAS` de "virtio-red" o de "intel-red" (la primera tarjeta que se presenta). Descriptores clásicos, una
+cola de recibir de 128 búferes de 2 KB y una de enviar de 64; la MAC de `RAL0`/`RAH0`; MSI-X en el 82574 (sus causas
+en la entrada 0) y MSI en el I219; toda la multidifusión (filtra el servicio); sin control de flujo ni EEE. Tira lo
+corto, lo largo, lo partido en varios búferes y lo que llega con error. Dice en el registro cuándo sube o baja el
+enlace y a qué velocidad. Lo propio del I219 (ME, ULP, SMBus, NVM, erratas) está sin probar en hardware.
 
 **El puerto de la caja Linux (H9).** `PUERTO` y `TRAMAS_PUERTO` (`protocolo::red`), solo de "caja-linux": un puente de
 tramas para la tarjeta de su invitado (ver la caja Linux, abajo). Si la caja se va (su canal cerrado), el puerto se

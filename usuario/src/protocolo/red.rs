@@ -34,7 +34,7 @@
 //! | `CLIENTE_ESPERA` | 1: el programa duerme; el servicio la pone a 0 y le manda `EVENTO` | los dos |
 //! | `SERVICIO_ESPERA` | 1: el servicio espera al programa (anillo de envío vacío o de recepción lleno); el programa la pone a 0 y le manda `AVISO` | los dos |
 //!
-//! **El controlador** (solo el que `inicio` llama "virtio-red") manda `TARJETA` (dirección MAC en 6 bytes tras la
+//! **El controlador** (solo el que `inicio` llama "virtio-red" o "intel-red") manda `TARJETA` (dirección MAC en 6 bytes tras la
 //! orden) con la memoria de las tramas y el extremo de escritura de un canal suyo. Después, `TRAMAS` cada vez que mueve
 //! sus anillos. El servicio le manda `TRAMAS` (4 bytes) cuando pone tramas para enviar. Memoria de las tramas: cabecera
 //! de palabras (`T_*`) y ranuras de `RANURA` bytes desde el byte 64, primero las de recibir y después las de enviar; en

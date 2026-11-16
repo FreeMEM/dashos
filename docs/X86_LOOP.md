@@ -95,8 +95,12 @@ Dos líneas a la vez (decisión 4 de S30):
   (2026-11-16): hechos el AHCI (`ahci`, varios puertos, por el canal de los discos con `dashos::disco_servidor`), el HDA
   (`hda`, al servicio de mezcla) y la red de virtio en x86 (`virtio-red` con MSI-X y la pila de `red`), probados en
   QEMU sin IOMMU, con VT-d y con AMD-Vi. Lo que queda:
-  - La tarjeta de red de cada placa: Realtek RTL8125 (shiva) e Intel (pegaso). Sin empezar. Queda abierto si va con
-    controlador propio (hojas de datos públicas) o en el dominio de controladores de la zona GPL (S32, S33).
+  - La tarjeta de red de cada placa: Realtek RTL8125 (shiva) e Intel (pegaso). La de Intel, con controlador propio
+    (`intel-red`, 2026-11-16: el I219 de la familia "Cannon Point" y el 82574L), probado en QEMU con el 82574L
+    (`RED_X86=e1000e`). **Sin probar en hardware** todo lo propio del I219: el semáforo con el ME, la salida del reposo
+    ULP y del modo SMBus, el ciclo LANPHYPC, el acceso al PHY por sus páginas, la NVM en la flash y la configuración
+    del PHY desde ella, los bits OEM, el reinicio global con sus lecturas de configuración, el vaciado de los anillos
+    (errata del PCH), los ajustes al subir el enlace y la MSI. La RTL8125, sin empezar.
   - Compartir internet del móvil por USB (CDC-NCM y RNDIS): sin empezar. Necesita que el xHCI dé aparatos que no son
     HID a otros servicios.
   - AHCI: sin NCQ, multiplicadores de puertos, ATAPI, conexión en marcha ni ahorro de energía del enlace. Con un disco
@@ -854,4 +858,46 @@ Tras mover `ahci` antes que `disco`, `arranque-x86` otra vez BIEN sin IOMMU, con
 No comprobado: una máquina de verdad (ningún disco SATA, códec ni tarjeta reales); errores de disco de verdad (la recuperación no se ha visto
 funcionar); discos de 4 KB por sector; el HDA con mezcladores o selectores en el camino (el códec de QEMU va directo
 de la patilla al DAC).
+
+### 2026-11-16 — X5c: red con cable de Intel (I219 y 82574L)
+
+Papel: implementador, sala limpia con `docs/spec/hw/i219.md` (del analista) y el código de DashOS; nada de Linux, BSD
+ni QEMU. El manual del 82574 no se pudo descargar (sin conexión con las copias públicas).
+
+- **`intel-red`** (`usuario/src/bin/intel_red.rs`, MPL): un solo programa para el I219 (familia `pch_cnp`: 0x15BB a
+  0x15BE, 0x15DF a 0x15E2, 0x0D4C a 0x0D4F; pegaso es 0x15BC) y el 82574L (0x10D3, 0x10F6), con lo común (registros de
+  la MAC, descriptores clásicos, MDIC) y las diferencias por el ID (§14). El mismo papel y el mismo trato con `red`
+  que `virtio-red`: 128 búferes de recibir y 64 de enviar de 2 KB, copia entre la DMA y las ranuras, `MPE`, sin
+  sumas, sin control de flujo, sin EEE. MSI-X en el 82574 (IVAR a la entrada 0) y MSI en el I219. El enlace se mira
+  al llegar `LSC` y cada segundo, y se dice en el registro.
+- I219, según la spec y **sin probar en hardware**: vaciado de los anillos al arrancar con un anillo propio (§13.1),
+  salida del ULP con ME o sin él, PHY por SMBus o LANPHYPC (§6.2), semáforo `SWFLAG` (1,1 s como mucho), páginas
+  del PHY por las direcciones MDIO 1 y 2, reinicio global sin lecturas en 20 ms y con la lectura de configuración
+  antes y después, `LAN_INIT_DONE`, banco válido de la NVM y configuración "LCD" desde ella, bits OEM, bits
+  obligatorios, `KABGTXD`, ajustes al subir el enlace (TIPG, EMI `0xB20C`, PLL, (776, 20), EEE apagado) y `FEXTNVM4`
+  en cada mirada. Todas las esperas acotadas con los tiempos de la spec (la flash, 100 ms por ciclo).
+- 82574: reinicio con el semáforo del MDIO y `EECD.AUTO_RD`, bits de §14.3 (TARC0, GCR, GCR2...), sin ASPM (L0s y
+  L1 apagados en el control del enlace del PCIe), `RCTL.EN` sin apagar nunca tras encenderlo, `PBA` 32, MAC de
+  `RAL0` o de la EEPROM (`EERD`). El cuelgue del PHY (§14.3) se detecta y se avisa, pero no se reinicia la tarjeta en
+  marcha.
+- `inicio_x86.rs`: `Quien::Ids`, varios aparatos de un fabricante; `intel-red` con BAR 0 y su configuración. El
+  servicio `red` acepta `TARJETA` de "virtio-red" o de "intel-red".
+- `make -C kernel arranque-x86 RED_X86=e1000e` (nuevo; por omisión `virtio`): la 82574L de QEMU en el mismo
+  concentrador. Los esperados de cada tarjeta, en `pruebas/arranque_x86_red_{virtio,e1000e}.txt`. La línea de la IOMMU
+  de la red sale del Makefile, como la del sonido.
+- `red-prueba`: el eco después de la basura del PC, en una línea aparte. La 82574L tira ella misma lo corto (menos de
+  14 bytes) y lo largo (más de 1518 con `LPE` a 0): no llega al controlador y sus contadores se quedan a 0; con
+  virtio-net se sigue pidiendo que el controlador los cuente (la línea de siempre, en el esperado de virtio y en ARM).
+
+Comprobado (QEMU 11.1.3, q35, TCG): `make -C kernel arranque-x86 RED_X86=e1000e` BIEN sin IOMMU, con `IOMMU=intel` y
+con `IOMMU=amd`: la 82574L con su MSI-X (remapeada en VT-d), la MAC de `RAL0`, el enlace arriba a 1000 Mb/s, DHCP, el
+eco de 4 MB (50 a 60 MB/s), el puerto cerrado y el eco tras la basura; con IOMMU en su dominio y sin fallos de DMA.
+La primera vez sin IOMMU falló `disco-sata` ("sin servicio de discos" al abrir el disco 2, nada de la red); repetida,
+BIEN. `make -C kernel arranque-x86` (virtio-net) BIEN sin IOMMU y con `IOMMU=amd`; `make -C kernel prueba-x86` BIEN.
+ARM: `make -C kernel prueba` BIEN; `make -C kernel arranque-virt` BIEN a la segunda (la primera, todos los esperados
+bien, también la red, pero la captura del compositor con las ventanas fuera de sitio).
+
+Sin hacer: la parada ordenada (§12; los controladores no paran hoy), la multidifusión exacta (§11), el estado del
+enlace hacia `red-estado` (solo en el registro), el reinicio de la 82574 si su PHY se cuelga, la prueba del bucle en
+el PHY (§15) y las demás generaciones del I219 (`pch_spt`, `pch_tgp` y siguientes).
 

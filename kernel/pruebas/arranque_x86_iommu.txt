@@ -4,4 +4,3 @@
 ~xhci: DMA por la IOMMU, en su dominio
 ~nvme: DMA por la IOMMU, en su dominio
 ~ahci: DMA por la IOMMU, en su dominio
-~virtio-red: DMA por la IOMMU, en su dominio

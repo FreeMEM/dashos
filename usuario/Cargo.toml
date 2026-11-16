@@ -304,6 +304,12 @@ name = "virtio-red"
 path = "src/bin/virtio_red.rs"
 test = false
 
+# X5c: la red con cable de Intel (I219 del PCH y 82574L, el `e1000e` de QEMU).
+[[bin]]
+name = "intel-red"
+path = "src/bin/intel_red.rs"
+test = false
+
 [[bin]]
 name = "red"
 path = "src/bin/red.rs"

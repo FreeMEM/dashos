@@ -1,8 +1,7 @@
-# X5c: la red con cable en x86, como en arranque-virt (S13): el controlador de virtio-net con su MSI-X (en un
-# concentrador con la red de usuario de QEMU y con `tools/red_basura.py`), el servicio con smoltcp y su dirección por
-# DHCP; el eco de 4 MB con el PC con el glotón en su tope, un puerto cerrado y la basura del PC.
-~virtio-red: en el PCIe 0:
-~│   [virtio-red] MAC 52:54:00:12:34:56; colas de 128 y 64; avisos 
+# X5c: la red con cable en x86, como en arranque-virt (S13): el controlador de la tarjeta (sus líneas, en
+# `arranque_x86_red_*.txt` según RED_X86) con su MSI-X (en un concentrador con la red de usuario de QEMU y con
+# `tools/red_basura.py`), el servicio con smoltcp y su dirección por DHCP;
+# el eco de 4 MB con el PC con el glotón en su tope, un puerto cerrado y la basura del PC.
 ~│   [red] DHCP: 10.0.2.15/24, puerta 10.0.2.2, DNS 10.0.2.3
 ~│   [red-prueba] hacerse pasar por el controlador o tocar lo ajeno: 
 ~[-1, -1, -7]: bien
@@ -12,4 +11,4 @@
 ~conexiones abiertas): bien
 ~│   [red-gloton] cerradas las 8; otra vez abre: bien
 ~│   [red-prueba] puerto cerrado: rechazada: bien
-~│   [red-prueba] basura del PC tirada; eco después: bien
+~│   [red-prueba] eco después de la basura del PC: bien

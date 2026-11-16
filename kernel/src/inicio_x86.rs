@@ -53,6 +53,8 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // controlador de virtio-net, con su MSI-X. Y sus pruebas: el eco del PC y un glotón de conexiones.
     ("red", elf!("red"), &[], &["red", "red-estado"]),
     ("virtio-red", elf!("virtio-red"), &[("dma-vred", PERMISO_DMA), ("virtio-red", REGISTROS), ("vred-cfg", REGISTROS), ("virtio-red", INTERRUPCION | OPCIONAL)], &["red"]),
+    // X5c: la red con cable de Intel: el I219 del PCH (pegaso) y el 82574L (el `e1000e` de QEMU). Como virtio-red.
+    ("intel-red", elf!("intel-red"), &[("dma-ired", PERMISO_DMA), ("intel-red", REGISTROS), ("ired-cfg", REGISTROS), ("intel-red", INTERRUPCION | OPCIONAL)], &["red"]),
     ("red-gloton", elf!("red-gloton"), &[], &["red"]),
     ("red-prueba", elf!("red-prueba"), &[], &["red"]),
     // Dos clientes de Wayland de prueba (W7) y una aplicación con el kit (K7), como en ARM.
@@ -90,11 +92,16 @@ fn nombre16(n: &str) -> [u8; 16] {
 /// (especificación de xHCI); NVMe, 0x010802 (especificación de NVMe); AHCI, 0x010601, con sus registros (ABAR) en la
 /// BAR 5 (Serial ATA AHCI 1.3.1, 2.1.11); Intel HDA, 0x040300, con los suyos en la BAR 0 (HDA 1.0a, 3.3). El sonido de virtio: virtio 1.2, 4.1.2,
 /// fabricante 0x1af4 y aparato 0x1040 más el tipo, 25; en QEMU, todos sus registros en la BAR 4. La red de virtio, igual
-/// (X5c).
+/// (X5c). La red de Intel (X5c, `docs/spec/hw/i219.md`, 2.1 y 14.1): varios aparatos de Intel (0x8086), los registros
+/// en la BAR 0.
 enum Quien {
     Clase(u32),
     Id(u16, u16),
+    Ids(u16, &'static [u16]),
 }
+/// Los de `intel-red`: el I219 de la familia "Cannon Point" (la de pegaso, 0x15BC, y sus hermanos) y el 82574L (0x10D3,
+/// el `e1000e` de QEMU) con el 82574LA (0x10F6). Las demás generaciones del I219 tienen ajustes propios y aún no van.
+const INTEL_RED: &[u16] = &[0x15BB, 0x15BC, 0x15BD, 0x15BE, 0x15DF, 0x15E0, 0x15E1, 0x15E2, 0x0D4C, 0x0D4D, 0x0D4E, 0x0D4F, 0x10D3, 0x10F6];
 const APARATOS: &[(&str, Quien, usize, Option<&str>, &str)] = &[
     ("virtio-sonido", Quien::Id(0x1af4, 0x1059), 4, Some("vsonido-cfg"), "dma-vsonido"),
     ("xhci", Quien::Clase(0x0C_0330), 0, None, "dma-xhci"),
@@ -103,6 +110,7 @@ const APARATOS: &[(&str, Quien, usize, Option<&str>, &str)] = &[
     ("hda", Quien::Clase(0x04_0300), 0, None, "dma-hda"),
     // La red de virtio: fabricante 0x1af4 y aparato 0x1040 más el tipo, 1 (virtio 1.2, 4.1.2); solo el moderno.
     ("virtio-red", Quien::Id(0x1af4, 0x1041), 4, Some("vred-cfg"), "dma-vred"),
+    ("intel-red", Quien::Ids(0x8086, INTEL_RED), 0, Some("ired-cfg"), "dma-ired"),
 ];
 
 /// Prepara un aparato: su BAR (en páginas enteras), el bus master y una MSI. (física, tamaño, interrupción).
@@ -176,6 +184,7 @@ pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
         let Some(f) = funciones.iter().find(|f| match quien {
             Quien::Clase(c) => f.clase == *c,
             Quien::Id(fab, ap) => f.id == (*ap as u32) << 16 | *fab as u32,
+            Quien::Ids(fab, aps) => f.id & 0xffff == *fab as u32 && aps.contains(&((f.id >> 16) as u16)),
         }) else {
             continue;
         };
