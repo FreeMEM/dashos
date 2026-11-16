@@ -252,6 +252,9 @@ El formato del fichero, por diseñar al hacerlo.
 | `ventanas` | Capturar la pantalla y mandar teclas a otras ventanas | "ver tu pantalla y escribir en otras ventanas" |
 | `arexx:<puerto>` | Hablar con el puerto ARexx de otro programa | "dar órdenes a Tachyon" (el nombre del otro programa) |
 | `inicio` | Arrancar solo al entrar en la sesión | "abrirse solo cuando entras" |
+| `atajos` | Commodities (S10): pedir al compositor combinaciones de teclas concretas y recibir solo esas | "usar teclas rápidas en todo el sistema" |
+| `fondo` | Commodities (S10): saber cuándo no se usa el ordenador (desde 10 s), apagar la pantalla mientras, comportamientos del teclado (sin Bloq Mayús) | "saber cuándo no usas el ordenador y apagar la pantalla" |
+| `commodities` | Exchange (S10): ver y manejar las commodities de la misma persona; ClickToFront y AutoPoint | "ver y manejar tus utilidades de fondo" |
 
 Sin pedir nada: su cajón, su paquete, ventanas propias, sonido de salida y lo que el usuario le entregue.
 

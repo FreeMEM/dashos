@@ -857,8 +857,15 @@ fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, pregun
             alloc::vec![String::from("Hay otras sesiones abiertas y se cerrarán."), String::from("Contesta con el teclado.")],
             &[("Mayús+S", "Sí"), ("N", "No")],
         ),
+        // S10: los permisos de commodities, con su frase en llano (S6b); los demás, aún con su nombre.
         Pregunta::Servicio(servicio) => (
-            alloc::vec![alloc::format!("Quiere usar \"{}\".", servicio), String::from("Contesta con el teclado.")],
+            alloc::vec![
+                match dashos::protocolo::sesiones::PODERES_COMPOSITOR.iter().find(|p| p.0 == *servicio) {
+                    Some(p) => alloc::format!("Quiere {}.", p.2),
+                    None => alloc::format!("Quiere usar \"{}\".", servicio),
+                },
+                String::from("Contesta con el teclado."),
+            ],
             &[("Mayús+S", "Sí"), ("N", "No")],
         ),
         Pregunta::Fichero { prog68k, fichero, frase } => {

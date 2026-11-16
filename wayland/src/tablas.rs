@@ -1258,6 +1258,110 @@ pub mod zwp_primary_selection_source_v1 {
     }
 }
 
+pub static DASHOS_COMMODITIES_V1: Interface = Interface {
+    name: "dashos_commodities_v1",
+    version: 1,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "registrar", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::NewId, nullable: false, interface: Some("dashos_commodity_v1") }, Arg { name: "nombre", kind: Kind::Str, nullable: false, interface: None }, Arg { name: "titulo", kind: Kind::Str, nullable: false, interface: None }, Arg { name: "descripcion", kind: Kind::Str, nullable: false, interface: None }] },
+        Message { name: "vigilar", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::NewId, nullable: false, interface: Some("dashos_exchange_v1") }] },
+    ],
+    events: &[
+
+    ],
+};
+
+/// Los números de las peticiones y eventos de `dashos_commodities_v1`.
+pub mod dashos_commodities_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const REGISTRAR: u16 = 1;
+        pub const VIGILAR: u16 = 2;
+    }
+    pub mod ev {
+    }
+}
+
+pub static DASHOS_COMMODITY_V1: Interface = Interface {
+    name: "dashos_commodity_v1",
+    version: 1,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "atajo", since: 1, destructor: false, args: &[Arg { name: "numero", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "combinacion", kind: Kind::Str, nullable: false, interface: None }] },
+        Message { name: "quitar_atajo", since: 1, destructor: false, args: &[Arg { name: "numero", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "inactividad", since: 1, destructor: false, args: &[Arg { name: "segundos", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "oscurecer", since: 1, destructor: false, args: &[] },
+        Message { name: "comportamiento", since: 1, destructor: false, args: &[Arg { name: "cual", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "activo", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+    events: &[
+        Message { name: "pulsado", since: 1, destructor: false, args: &[Arg { name: "numero", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "atajo_negado", since: 1, destructor: false, args: &[Arg { name: "numero", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "motivo", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "quien", kind: Kind::Str, nullable: false, interface: None }] },
+        Message { name: "activo", since: 1, destructor: false, args: &[Arg { name: "si", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "ensenar", since: 1, destructor: false, args: &[] },
+        Message { name: "quitar", since: 1, destructor: false, args: &[] },
+        Message { name: "inactivo", since: 1, destructor: false, args: &[Arg { name: "si", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "retirado", since: 1, destructor: false, args: &[Arg { name: "permiso", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `dashos_commodity_v1`.
+pub mod dashos_commodity_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const ATAJO: u16 = 1;
+        pub const QUITAR_ATAJO: u16 = 2;
+        pub const INACTIVIDAD: u16 = 3;
+        pub const OSCURECER: u16 = 4;
+        pub const COMPORTAMIENTO: u16 = 5;
+    }
+    pub mod ev {
+        pub const PULSADO: u16 = 0;
+        pub const ATAJO_NEGADO: u16 = 1;
+        pub const ACTIVO: u16 = 2;
+        pub const ENSENAR: u16 = 3;
+        pub const QUITAR: u16 = 4;
+        pub const INACTIVO: u16 = 5;
+        pub const RETIRADO: u16 = 6;
+    }
+}
+
+pub static DASHOS_EXCHANGE_V1: Interface = Interface {
+    name: "dashos_exchange_v1",
+    version: 1,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "activar", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "si", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "ensenar", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "quitar", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "ajuste", since: 1, destructor: false, args: &[Arg { name: "cual", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "valor", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+    events: &[
+        Message { name: "commodity", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "nombre", kind: Kind::Str, nullable: false, interface: None }, Arg { name: "titulo", kind: Kind::Str, nullable: false, interface: None }, Arg { name: "descripcion", kind: Kind::Str, nullable: false, interface: None }, Arg { name: "programa", kind: Kind::Str, nullable: false, interface: None }, Arg { name: "activa", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "atajo", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "numero", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "combinacion", kind: Kind::Str, nullable: false, interface: None }, Arg { name: "estado", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "fuera", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "ajuste", since: 1, destructor: false, args: &[Arg { name: "cual", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "valor", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "listo", since: 1, destructor: false, args: &[] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `dashos_exchange_v1`.
+pub mod dashos_exchange_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const ACTIVAR: u16 = 1;
+        pub const ENSENAR: u16 = 2;
+        pub const QUITAR: u16 = 3;
+        pub const AJUSTE: u16 = 4;
+    }
+    pub mod ev {
+        pub const COMMODITY: u16 = 0;
+        pub const ATAJO: u16 = 1;
+        pub const FUERA: u16 = 2;
+        pub const AJUSTE: u16 = 3;
+        pub const LISTO: u16 = 4;
+    }
+}
+
 /// Todas las interfaces, para buscarlas por nombre.
 pub static INTERFACES: &[&Interface] = &[
     &WL_DISPLAY,
@@ -1303,4 +1407,7 @@ pub static INTERFACES: &[&Interface] = &[
     &ZWP_PRIMARY_SELECTION_DEVICE_V1,
     &ZWP_PRIMARY_SELECTION_OFFER_V1,
     &ZWP_PRIMARY_SELECTION_SOURCE_V1,
+    &DASHOS_COMMODITIES_V1,
+    &DASHOS_COMMODITY_V1,
+    &DASHOS_EXCHANGE_V1,
 ];

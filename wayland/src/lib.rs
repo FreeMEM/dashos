@@ -19,6 +19,7 @@ use alloc::vec::Vec;
 pub static MAPA_TECLADO: &[u8] = concat!(include_str!("../teclados/es.xkb"), "\0").as_bytes();
 
 pub mod aspecto;
+pub mod atajos;
 pub mod canal;
 pub mod escena;
 pub mod puente;
@@ -320,3 +321,6 @@ mod tests_linux;
 
 #[cfg(test)]
 mod tests_s29;
+
+#[cfg(test)]
+mod tests_commodities;
