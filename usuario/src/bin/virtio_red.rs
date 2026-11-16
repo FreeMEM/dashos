@@ -52,6 +52,7 @@ const C_PROPIAS: usize = 0x0C;
 const C_ESTADO: usize = 0x14;
 const C_COLA_ELEGIR: usize = 0x16;
 const C_COLA_TAMANO: usize = 0x18;
+const C_COLA_MSIX: usize = 0x1A;
 const C_COLA_ENCENDER: usize = 0x1C;
 const C_COLA_AVISO: usize = 0x1E;
 const C_COLA_DESC: usize = 0x20;
@@ -124,8 +125,9 @@ fn sumar(i: usize) {
     poner_tramas(i, tramas(i).wrapping_add(1));
 }
 fn barrera() {
-    // Lo escrito en la memoria (DMA o compartida) se ve antes que lo que venga detrás.
-    unsafe { core::arch::asm!("dmb osh") };
+    // Lo escrito en la memoria (DMA o compartida) se ve antes que lo que venga detrás (`dmb osh` en ARM; X5c: también
+    // en x86).
+    dashos::barrera::total();
 }
 
 /// Dónde están los bloques de registros dentro de la BAR (4.1.4).
@@ -210,7 +212,7 @@ impl Cola {
         if dma16(self.m + self.usados_off + 2) == self.usados {
             return None;
         }
-        unsafe { core::arch::asm!("dmb oshld") };
+        dashos::barrera::lecturas();
         let e = self.m + self.usados_off + 4 + 8 * (self.usados % self.n) as usize;
         self.usados = self.usados.wrapping_add(1);
         Some((dma32(e), dma32(e + 4)))
@@ -230,6 +232,9 @@ fn montar(b: &Bloques, bus: u64, numero: u16, m: usize, n: u16, disp_off: usize,
     poner_reg64(b.comun + C_COLA_DISP, base + disp_off as u64);
     poner_reg64(b.comun + C_COLA_USADOS, base + usados_off as u64);
     let aviso = b.aviso + reg16(b.comun + C_COLA_AVISO) as usize * b.multiplicador as usize;
+    // X5c: con MSI-X (x86), cada cola dice qué entrada de la tabla usa: la 0, la única que prepara el kernel (como en
+    // `virtio-sonido`). Con INTx (ARM) no cuenta.
+    poner_reg16(b.comun + C_COLA_MSIX, 0);
     poner_reg16(b.comun + C_COLA_ENCENDER, 1);
     Some(Cola { m, n, disp_off, usados_off, aviso, disp: 0, usados: 0 })
 }
@@ -259,7 +264,8 @@ fn principal() -> u64 {
     poner_reg8(b.comun + C_ESTADO, S_ENTERADO);
     poner_reg8(b.comun + C_ESTADO, S_ENTERADO | S_CONDUCTOR);
     poner_reg32(b.comun + C_FUNC_ELEGIR, 1);
-    if reg32(b.comun + C_FUNC) & 1 == 0 {
+    let altas = reg32(b.comun + C_FUNC);
+    if altas & 1 == 0 {
         println!("  [virtio-red] sin la versión 1");
         return 3;
     }
@@ -268,7 +274,9 @@ fn principal() -> u64 {
     poner_reg32(b.comun + C_PROPIAS_ELEGIR, 0);
     poner_reg32(b.comun + C_PROPIAS, if con_mac { F_MAC } else { 0 });
     poner_reg32(b.comun + C_PROPIAS_ELEGIR, 1);
-    poner_reg32(b.comun + C_PROPIAS, 1);
+    // VERSION_1 y, si la ofrece, VIRTIO_F_ACCESS_PLATFORM (el bit 33): detrás de una IOMMU (X5b, X5c), con las
+    // direcciones de bus que da `memoria_dma`. En ARM no la ofrece.
+    poner_reg32(b.comun + C_PROPIAS, 1 | (altas & 2));
     poner_reg8(b.comun + C_ESTADO, S_ENTERADO | S_CONDUCTOR | S_FUNC_OK);
     if reg8(b.comun + C_ESTADO) & S_FUNC_OK == 0 {
         println!("  [virtio-red] no acepta las funciones");

@@ -490,9 +490,22 @@ fn principal() -> u64 {
         }
         let actual = (reg32(sd + SD_LPIB) as usize / PERIODO) % BUFERES;
         let mut alguno = false;
+        let mut pedido = false;
         while siguiente != actual {
             let base = M_BUFERES + siguiente * PERIODO;
-            let (escritos, leidos) = (salida(0), salida(1));
+            let (mut escritos, leidos) = (salida(0), salida(1));
+            // Tras un parón (el arranque, con la IOMMU, deja este proceso sin correr hasta 30 ms) hay más búferes que
+            // llenar que períodos tiene el servicio por delante (4): se le avisa con un tic y se le espera hasta 2 ms
+            // antes de poner silencio.
+            if escritos == leidos && sonando && !pedido {
+                pedido = true;
+                dashos::canal_escribir(servicio, palabras(&[P_TIC]), &[]);
+                let fin = dashos::ahora_us() + 2000;
+                while salida(0) == leidos && dashos::ahora_us() < fin {
+                    dashos::dormir_us(100);
+                }
+                escritos = salida(0);
+            }
             if escritos != leidos {
                 dashos::barrera::lecturas();
                 let desde = VA_SALIDA + 64 + (leidos as usize % RANURAS) * PERIODO;

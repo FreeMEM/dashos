@@ -441,13 +441,13 @@ NUCLEO_X86  := target/kernel-x86.elf
 
 # Los servicios que lanza `inicio` en x86 (X5, `inicio_x86.rs`). Las mismas características que `usuario-x86`, para
 # no recompilar la biblioteca entre una y otra.
-FUNCIONES_X86 := archivos,ventanas,sonido,relevo
+FUNCIONES_X86 := archivos,ventanas,sonido,red,relevo
 
 # X7a: el crate `relevo` (RelevoJIT) viene por git con `rev` fijo (usuario/Cargo.toml). RELEVO_DIR=<ruta> lo cambia por
 # un RelevoJIT local, para probar cambios suyos sin subirlos (un `[patch]` por `--config`). La `rev` de Cargo.toml tiene
 # que estar en GitHub igual, y Cargo.lock cambia mientras se use: no se sube así.
 RELEVO_PATCH := $(if $(RELEVO_DIR),--config 'patch."https://github.com/FreeMEM/RelevoJIT".relevo.path="$(abspath $(RELEVO_DIR))"')
-SERVICIOS_X86 := inicio consola compositor xhci nvme disco ahci disco-sata archivos ficheros sonido virtio-sonido hda tono-a tono-b ventana-a ventana-b ajustes hola
+SERVICIOS_X86 := inicio consola compositor xhci nvme disco ahci disco-sata archivos ficheros sonido virtio-sonido hda red virtio-red red-gloton red-prueba tono-a tono-b ventana-a ventana-b ajustes hola
 
 usuario-x86-servicios: FORCE
 	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86) $(RELEVO_PATCH) $(addprefix --bin ,$(SERVICIOS_X86))
@@ -513,13 +513,27 @@ arranque-x86: x86 $(DISCO_NVME)
 	$(call esperados_x86,pruebas/arranque_x86.txt,pruebas/arranque_x86_iommu.txt,target/esperados_arranque_x86.txt)
 	cat pruebas/arranque_x86_sonido_$(SONIDO_X86).txt >> target/esperados_arranque_x86.txt
 	$(if $(IOMMU),echo "~$(SONIDO_NOMBRE): DMA por la IOMMU$(coma) en su dominio" >> target/esperados_arranque_x86.txt)
-	$(ACCEL_QEMU) $(MAQUINA_IOMMU) GUARDAR=$(abspath target/salida_x86.txt) CAPTURA=$(abspath target/captura-x86.ppm) ARQ=x86_64 TECLAS=simple QEMU_EXTRA="$(IOMMU_QEMU) -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv $(SATA_QEMU) -audiodev wav,id=snd0,path=$(abspath target/sonido-x86.wav),out.frequency=48000 $(SONIDO_QEMU)" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_arranque_x86.txt 90
+	cat pruebas/arranque_x86_red.txt >> target/esperados_arranque_x86.txt
+	mkdir -p $(RED)
+	rm -f $(RED)/qemu.sock $(RED)/pc.sock
+	python3 -I ../tools/red_basura.py $(RED) $(RED_MAC) 300 & BASURA=$$!; \
+	$(ACCEL_QEMU) $(MAQUINA_IOMMU) GUARDAR=$(abspath target/salida_x86.txt) CAPTURA=$(abspath target/captura-x86.ppm) ARQ=x86_64 TECLAS=simple QEMU_EXTRA="$(IOMMU_QEMU) -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv $(SATA_QEMU) -audiodev wav,id=snd0,path=$(abspath target/sonido-x86.wav),out.frequency=48000 $(SONIDO_QEMU) $(RED_QEMU)$(VSONIDO_IOMMU)" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_arranque_x86.txt $(or $(TIEMPO_X86),240); \
+	R=$$?; kill $$BASURA 2>/dev/null; exit $$R
 	@if grep -q "fallo de DMA\|interrupción bloqueada" target/salida_x86.txt; then echo "MAL: fallos de DMA o interrupciones bloqueadas en el arranque"; grep "fallo de DMA\|interrupción bloqueada" target/salida_x86.txt | head; exit 1; fi
 	python3 ../tools/disco_archivos.py --comprobar-basico $(DISCO_NVME) $(VER)
 	python3 ../tools/disco_sata.py comprobar target/sata0.img 0
 	python3 ../tools/disco_sata.py comprobar target/sata1.img 1
 	python3 ../tools/captura_ventanas.py target/captura-x86.ppm target/salida_x86.txt --sin-barra
 	python3 ../tools/sonido_wav.py target/sonido-x86.wav
+
+# X5c: un PC con un solo disco SATA y sin NVMe. El AHCI sirve entonces el canal "disco" y todo va por él: `disco` (la
+# prueba entera del NVMe, con el plazo vencido y el anillo) y `archivos`. El disco es el de arranque-virt
+# (`target/sata-disco.img`, nuevo en cada prueba) y se mira después en Linux. Sonido por HDA, sin red.
+sata-x86: x86 FORCE
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(NUCLEO_X86)) cargo build --release --target x86_64-unknown-uefi
+	python3 ../tools/disco_archivos.py target/sata-disco.img $(DASHFS_AR)
+	$(ACCEL_QEMU) $(MAQUINA_IOMMU) GUARDAR=$(abspath target/salida_sata_x86.txt) ARQ=x86_64 QEMU_EXTRA="$(IOMMU_QEMU) -drive file=$(abspath target/sata-disco.img),if=none,id=s0,format=raw,discard=unmap -device ide-hd,drive=s0,bus=ide.1 -audiodev none,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi pruebas/sata_x86.txt 180
+	python3 ../tools/disco_archivos.py --comprobar-basico target/sata-disco.img $(VER)
 
 # Los programas de usuario de x86-64 que no tocan aparatos (S30, X4), y el PIE de C29 (con las binutils del sistema).
 PIE_X86 := ../usuario/target/pie_x86

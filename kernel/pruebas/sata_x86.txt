@@ -1,0 +1,16 @@
+# X5c (`make -C kernel sata-x86`): sin NVMe, el AHCI sirve el canal "disco" con el disco de arranque-virt en su
+# puerto 1; `disco` y `archivos` van por él, como con el NVMe.
+~│   [ahci] puerto 1: disco 0, "QEMU HARDDISK", 16384 sectores de 512 bytes (8192 KB); TRIM: sí
+~│   [ahci] 1 discos; avisos por su interrupción
+~│   [ahci] disco 0: particiones: MBR; DashOS, sectores 2048 a 16383
+~│   [disco] abierto: 2048 sectores de 512 bytes
+~│   [disco] leer: bien; escribir y releer: bien; cruzando páginas: bien; rechazos: bien; vaciar: bien
+~│   [disco] descartar: bien; rechazos al descartar: bien
+~│   [disco] plazo vencido: bien; después sigue bien: bien
+~│   [disco] anillo: 16 lecturas y un rechazo: bien
+~│   [disco] anillo con órdenes a la vez, en su orden: bien
+~│   [disco] anillo otra vez: el nuevo va: bien; el viejo ya no se atiende: bien
+~│   [archivos] RedoxFS abierto: 7168 KB,
+~│   [ficheros] escribir 200 KB: bien; releer: bien; ocupa sitio: bien
+~│   [ficheros] FS8 comprobación: bien
+~│   [ficheros] FS9 instantáneas: bien

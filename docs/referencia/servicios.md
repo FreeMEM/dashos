@@ -52,14 +52,17 @@ el segundo, el otro. La lista está en `kernel/src/inicio.rs` (`PROGRAMAS`):
 | usb | permiso DMA, registros e interrupción del DWC2 | "entrada" |
 | xhci | su permiso DMA, registros del xHCI del PCIe, su INTx (opcional) | "entrada" |
 | nvme | su permiso DMA, registros del NVMe del PCIe, su interrupción (opcional) | "disco" (es quien lee) |
+| ahci (x86) | su permiso DMA, registros del AHCI (ABAR), su interrupción (opcional) | "sata" si hay NVMe; si no, "disco" (es quien lee) |
+| disco-sata (prueba, x86) | — | "sata" (o "disco") |
 | disco (prueba, solo `virt`) | — | "disco" |
 | compositor | — (en la Pi); la pantalla de UEFI y sus medidas (por UEFI, también en x86) | "buzon" (en la Pi), "entrada" (es quien lee) |
 | gpu | permiso DMA de la GPU, registros de la V3D, del puente ASB, del bloque PM y del cprman | "buzon" |
 | sonido | permiso de plazo (S3) | "sonido" (es quien lee) |
 | virtio-sonido | su permiso DMA, registros y configuración del aparato, permiso de plazo (S3), su interrupción (opcional) | "sonido" |
-| red (solo `virt`) | — | "red" y "red-estado" (es quien lee los dos) |
-| virtio-red (solo `virt`) | su permiso DMA, registros y configuración del aparato, su interrupción (opcional) | "red" |
-| red-prueba, red-gloton (pruebas, solo `virt`) | — | "red" |
+| hda (x86) | su permiso DMA, registros del controlador HDA, permiso de plazo (S3), su interrupción (opcional) | "sonido" |
+| red (`virt` y x86) | — | "red" y "red-estado" (es quien lee los dos) |
+| virtio-red (`virt` y x86) | su permiso DMA, registros y configuración del aparato, su interrupción (opcional) | "red" |
+| red-prueba, red-gloton (pruebas, `virt` y x86) | — | "red" |
 
 En cada canal el primero que lo nombra es el servidor; los demás reciben una copia marcada (su número de programa más
 1) del otro extremo, y el servidor, un mensaje sin marca por cliente con su marca (8 bytes) y su nombre (16). Solo
@@ -69,8 +72,10 @@ con la restricción "una vez" (S4): el servicio no puede pasárselas a otro prog
 ("inicio: gpu no se lanza: falta ..."). Es lo que pasa con la GPU en QEMU.
 
 En x86-64 (X5 y X6) la lista es otra, `PROGRAMAS` de `kernel/src/inicio_x86.rs`, con las mismas llaves para cada
-servicio: `consola`, `compositor`, `xhci`, `nvme`, `disco`, `archivos`, `ficheros`, `sonido`, `virtio-sonido`,
-`tono-a`, `tono-b`, `ventana-a`, `ventana-b`, `ajustes` y `hola`. La consola recibe el registro y, en vez de los
+servicio: `consola`, `compositor`, `xhci`, `nvme`, `disco`, `ahci`, `disco-sata`, `archivos`, `ficheros`, `sonido`,
+`virtio-sonido`, `hda`, `red`, `virtio-red`, `red-gloton`, `red-prueba`, `tono-a`, `tono-b`, `ventana-a`, `ventana-b`,
+`ajustes` y `hola` (X5c: el AHCI, el HDA y la red). Al AHCI le toca el canal "disco" si no hay NVMe; si lo hay,
+"sata", y el resto de servicios del disco siguen en el NVMe. La consola recibe el registro y, en vez de los
 registros del PL011, una llave de los puertos de COM1, que pide con `puertos_permitir` y usa con `in` y `out`. El
 compositor recibe la pantalla del GOP y sus medidas, como por UEFI en ARM, y nombra antes que nadie el canal de
 entrada. Las interrupciones de los aparatos son MSI-X.
@@ -226,6 +231,29 @@ escribe o descarta, o el mismo sitio de la ventana, si uno lee. Vaciar va solo, 
 todo sale como si fuera de uno en uno.
 
 Pendiente: varias colas de E/S del NVMe (una por núcleo).
+
+## AHCI, discos SATA (X5c, x86)
+
+`usuario/src/bin/ahci.rs` (Serial ATA AHCI 1.3.1). Llaves: 1 su permiso DMA, 2 sus registros (la BAR 5, ABAR), 3 su
+interrupción (MSI) si el kernel la sabe, y después su canal: "disco" si no hay NVMe, "sata" si lo hay. Reinicia el
+HBA (con el traspaso del firmware si lo tiene, CAP2.BOH), prepara cada puerto con un disco ATA (firma 0x101; ni
+lectores ATAPI ni multiplicadores de puertos) y le pide IDENTIFY: hace falta LBA de 48 bits; sectores lógicos de 512 a
+4096 bytes. Cada disco es un número, por orden de puerto (hasta 8). Órdenes sin cola (READ y WRITE DMA EXT, FLUSH
+CACHE EXT, DATA SET MANAGEMENT con TRIM si el disco lo admite), hasta 8 en vuelo en ranuras distintas, cada una con
+una entrada de PRD. Si el disco da un error, el puerto se recupera (parar, borrar errores, CLO o COMRESET) y lo que
+estaba en vuelo vuelve con -4.
+
+Sirve el mismo protocolo del canal "disco" que el NVMe (arriba), con el código común de `usuario/src/disco_servidor.rs`.
+Lo que cambia: **al abrir (orden 0), los bytes 8-15 dicen qué disco** (0 el primero; el NVMe no mira ese campo). Abrir
+otro disco cambia el disco del cliente, con la misma ventana; uno que no existe da -2. Cada disco tiene su tabla de
+particiones, y los tramos por nombre son los del NVMe en ese disco, más `disco-sata` (la prueba), que ve lo mismo que
+`disco`. El plazo de cada orden es de 10 s (un disco de verdad puede tener que arrancar el motor).
+
+`disco-sata` (la prueba) abre los discos uno a uno y, solo en los de prueba (sector 0 con "DashOS: sector 0 del disco
+SATA", `tools/disco_sata.py`), escribe, relee, vacía, descarta y usa su anillo. En uno de verdad solo lee.
+
+Pendiente: NCQ (órdenes con cola), multiplicadores de puertos, lectores ATAPI, discos que se conectan en marcha, y
+ahorro de energía del enlace. Sin probar en una máquina de verdad.
 
 ## Archivos (FS1, FS3, FS7, FS8, FS9, FS10)
 
@@ -489,12 +517,24 @@ El controlador de virtio-sound (`usuario/src/bin/virtio_sonido.rs`) pone en cada
 MSI-X (`queue_msix_vector`, virtio 1.2, 4.1.4.3): es la única que prepara el kernel. Con INTx no cuenta. En x86 (X5)
 su interrupción es esa MSI-X; en ARM, la INTx.
 
-El servicio "sonido" lee el canal "sonido"; el controlador de virtio-sound y los programas le escriben con copias
+El controlador de Intel HDA (`usuario/src/bin/hda.rs`, X5c, x86; Intel High Definition Audio 1.0a). Llaves: 1 su
+permiso DMA, 2 sus registros (BAR 0), 3 el permiso de plazo, 4 su interrupción (MSI) si la hay, y el canal "sonido".
+Reinicia el controlador y habla con los códecs por el CORB y el RIRB (sin interrupción: espera cada respuesta). En el
+primer códec que tenga una salida elige la patilla de salida conectada que prefiera (línea, altavoz, auriculares) y
+un DAC al que se llegue desde ella por mezcladores o selectores; enciende el camino (D0, la conexión elegida, los
+amplificadores sin silencio a 0 dB, la salida de la patilla y EAPD) y también las demás patillas de salida que lleguen
+al mismo DAC. El DAC va en estéreo de 16 bits a 48 kHz, flujo 1. Suena el primer flujo de salida del controlador con 8
+búferes de 256 cuadros y una interrupción por búfer; con la salida y los tics del servicio igual que virtio-sound. Si
+tras un parón hay más búferes que llenar que períodos tiene el servicio, le manda un tic y le espera hasta 2 ms antes
+de poner silencio. Pendiente: la entrada (micrófono), el volumen por el amplificador, los avisos de clavija
+(auriculares que se enchufan), HDMI y los códecs que necesiten arreglos propios. Sin probar en una máquina de verdad.
+
+El servicio "sonido" lee el canal "sonido"; el controlador (virtio-sound o, desde X5c, HDA) y los programas le escriben con copias
 marcadas, y `inicio` le dice de quién es cada marca. Mensajes de palabras de 32 bits (little-endian):
 
 | Orden | Quién | Datos | Llaves |
 |-------|-------|-------|--------|
-| 1 `SALIDA` | solo "virtio-sonido" | ranuras (1 a 64), cuadros por período (16 a 4096), ritmo (48.000) | la memoria de la salida |
+| 1 `SALIDA` | solo "virtio-sonido" o "hda" (el primero que la mande; sus tics son los que cuentan) | ranuras (1 a 64), cuadros por período (16 a 4096), ritmo (48.000) | la memoria de la salida |
 | 2 `TIC` | el controlador | | |
 | 10 `ABRIR` | un programa | muestra (0 enteros de 16 bits, 1 de 32, 2 coma flotante), canales (1 o 2), ritmo (8.000 a 192.000) | la memoria del anillo y el extremo de escritura de un canal del programa |
 | 11 `VOLUMEN` | el programa | izquierdo y derecho, como `f32` (0 a 4) | |
@@ -532,7 +572,8 @@ trasfondo, `R_ESTADO` lleva también los bytes que entraron y salieron por la ta
 palabras), también los de la caja Linux.
 
 **El controlador.** Llaves: 1 su permiso DMA, 2 sus registros (BAR 4), 3 su configuración del PCIe, 4 su interrupción
-(INTx; opcional, sin ella mira cada 2 ms) y después el canal "red". Funciones: VERSION_1 y MAC; sin sumas por el
+(INTx en ARM, MSI-X en x86 desde X5c; opcional, sin ella mira cada 2 ms) y después el canal "red". Con MSI-X, cada cola
+usa la entrada 0; detrás de una IOMMU acepta `VIRTIO_F_ACCESS_PLATFORM`. Funciones: VERSION_1 y MAC; sin sumas por el
 aparato ni TSO. Una cola de recibir de 128 búferes de 2 KB y una de enviar de 64. Manda `TARJETA` (la MAC, una memoria
 con 128 ranuras de recibir y 64 de enviar, y un canal suyo) y después `TRAMAS` cuando mueve algo; el servicio le manda
 `TRAMAS` cuando pone algo para enviar. Copia cada trama entre la DMA y las ranuras: el servicio no toca los

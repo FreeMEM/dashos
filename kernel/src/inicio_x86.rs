@@ -34,11 +34,12 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("compositor", elf!("compositor"), &[("pantalla", FIRMWARE), ("pantalla-info", DATOS)], &["ventanas"]),
     ("xhci", elf!("xhci"), &[("dma-xhci", PERMISO_DMA), ("xhci", REGISTROS), ("xhci", INTERRUPCION | OPCIONAL)], &["ventanas"]),
     ("nvme", elf!("nvme"), &[("dma-nvme", PERMISO_DMA), ("nvme", REGISTROS), ("nvme", INTERRUPCION | OPCIONAL)], &["disco"]),
-    ("disco", elf!("disco"), &[], &["disco"]),
     // X5c: los discos SATA por AHCI. Su canal es "sata" si hay NVMe (que sirve "disco"); si no, "disco" (`canal`), y
-    // los demás servicios del disco van por él. `disco-sata`, su prueba.
+    // los demás servicios del disco van por él: por eso va antes que `disco` (el primero que nombra un canal
+    // es quien lo sirve). `disco-sata`, su prueba.
     ("ahci", elf!("ahci"), &[("dma-ahci", PERMISO_DMA), ("ahci", REGISTROS), ("ahci", INTERRUPCION | OPCIONAL)], &["sata"]),
     ("disco-sata", elf!("disco-sata"), &[], &["sata"]),
+    ("disco", elf!("disco"), &[], &["disco"]),
     ("archivos", elf!("archivos"), &[], &["disco", "archivos"]),
     ("ficheros", elf!("ficheros"), &[], &["archivos"]),
     // Desde la fusión con `revision`, el sonido y su controlador reciben el permiso de plazo (S3), como en ARM.
@@ -48,6 +49,12 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("hda", elf!("hda"), &[("dma-hda", PERMISO_DMA), ("hda", REGISTROS), ("plazo", PLAZO), ("hda", INTERRUPCION | OPCIONAL)], &["sonido"]),
     ("tono-a", elf!("tono-a"), &[], &["sonido"]),
     ("tono-b", elf!("tono-b"), &[], &["sonido"]),
+    // X5c: la red, como en `virt` (S13): el servicio con la pila (nombra "red" y "red-estado" antes que nadie) y el
+    // controlador de virtio-net, con su MSI-X. Y sus pruebas: el eco del PC y un glotón de conexiones.
+    ("red", elf!("red"), &[], &["red", "red-estado"]),
+    ("virtio-red", elf!("virtio-red"), &[("dma-vred", PERMISO_DMA), ("virtio-red", REGISTROS), ("vred-cfg", REGISTROS), ("virtio-red", INTERRUPCION | OPCIONAL)], &["red"]),
+    ("red-gloton", elf!("red-gloton"), &[], &["red"]),
+    ("red-prueba", elf!("red-prueba"), &[], &["red"]),
     // Dos clientes de Wayland de prueba (W7) y una aplicación con el kit (K7), como en ARM.
     ("ventana-a", elf!("ventana-a"), &[], &["ventanas"]),
     ("ventana-b", elf!("ventana-b"), &[], &["ventanas"]),
@@ -82,7 +89,8 @@ fn nombre16(n: &str) -> [u8; 16] {
 /// registros, si se le da también su configuración y el nombre de su permiso DMA. Las clases: xHCI, 0x0C0330
 /// (especificación de xHCI); NVMe, 0x010802 (especificación de NVMe); AHCI, 0x010601, con sus registros (ABAR) en la
 /// BAR 5 (Serial ATA AHCI 1.3.1, 2.1.11); Intel HDA, 0x040300, con los suyos en la BAR 0 (HDA 1.0a, 3.3). El sonido de virtio: virtio 1.2, 4.1.2,
-/// fabricante 0x1af4 y aparato 0x1040 más el tipo, 25; en QEMU, todos sus registros en la BAR 4.
+/// fabricante 0x1af4 y aparato 0x1040 más el tipo, 25; en QEMU, todos sus registros en la BAR 4. La red de virtio, igual
+/// (X5c).
 enum Quien {
     Clase(u32),
     Id(u16, u16),
@@ -93,6 +101,8 @@ const APARATOS: &[(&str, Quien, usize, Option<&str>, &str)] = &[
     ("nvme", Quien::Clase(0x01_0802), 0, None, "dma-nvme"),
     ("ahci", Quien::Clase(0x01_0601), 5, None, "dma-ahci"),
     ("hda", Quien::Clase(0x04_0300), 0, None, "dma-hda"),
+    // La red de virtio: fabricante 0x1af4 y aparato 0x1040 más el tipo, 1 (virtio 1.2, 4.1.2); solo el moderno.
+    ("virtio-red", Quien::Id(0x1af4, 0x1041), 4, Some("vred-cfg"), "dma-vred"),
 ];
 
 /// Prepara un aparato: su BAR (en páginas enteras), el bus master y una MSI. (física, tamaño, interrupción).

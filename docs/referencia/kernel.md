@@ -704,8 +704,10 @@ mismos límites. Cambian los registros y lo que es de la CPU:
   (de 0xB0 a 0xEF). El mensaje es el mismo: 4 bytes con el número, en little-endian.
 - **Llaves de arranque** (X5 y X6, `kernel/src/inicio_x86.rs`). El mismo paquete que en ARM, con los ELF de x86. Los
   aparatos salen del PCIe (el ECAM de la MCFG de ACPI, todos sus buses): el xHCI (clase 0x0C0330, BAR 0), el NVMe
-  (0x010802, BAR 0) y el sonido de virtio (0x1af4:0x1059, BAR 4, más su configuración), cada uno con sus registros,
-  un permiso DMA propio y su MSI (MSI-X si la tiene, en su primera entrada; si no, MSI). Sin INTx: en un PC su
+  (0x010802, BAR 0), el sonido de virtio (0x1af4:0x1059, BAR 4, más su configuración) y, desde X5c, el AHCI (0x010601,
+  BAR 5), el Intel HDA (0x040300, BAR 0) y la red de virtio (0x1af4:0x1041, BAR 4, más su configuración), cada uno con
+  sus registros, un permiso DMA propio y su MSI (MSI-X si la tiene, en su primera entrada; si no, MSI: el AHCI y el HDA
+  de QEMU). Sin INTx: en un PC su
   número sale del AML de ACPI (`_PRT`), que el kernel no lee. Además (X6): el registro y los puertos de COM1 (tipo
   12, "puertos de E/S"; era el 7 hasta la fusión con `revision`, donde el 7 es el permiso de plazo) para la consola, que es un proceso como en ARM; y la pantalla del GOP que deja el cargador en
   la `InfoArranque`, como memoria del firmware ("pantalla") y sus medidas ("pantalla-info"), con el mismo formato que

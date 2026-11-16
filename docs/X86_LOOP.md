@@ -91,7 +91,20 @@ Dos líneas a la vez (decisión 4 de S30):
   - VT-d solo en modo clásico (tabla raíz y de contexto, segundo nivel), sin el modo escalable. No se mira si la
     unidad tiene el clásico: en una que solo tuviera el escalable, no funcionaría.
 - [ ] X5c **Aparatos de un PC de verdad**: AHCI (SATA), HDA (sonido), y la red de cada placa o, mientras, la del
-  dominio de controladores de la zona GPL; y compartir internet del móvil por USB (CDC-NCM y RNDIS).
+  dominio de controladores de la zona GPL; y compartir internet del móvil por USB (CDC-NCM y RNDIS). **A medias**
+  (2026-11-16): hechos el AHCI (`ahci`, varios puertos, por el canal de los discos con `dashos::disco_servidor`), el HDA
+  (`hda`, al servicio de mezcla) y la red de virtio en x86 (`virtio-red` con MSI-X y la pila de `red`), probados en
+  QEMU sin IOMMU, con VT-d y con AMD-Vi. Lo que queda:
+  - La tarjeta de red de cada placa: Realtek RTL8125 (shiva) e Intel (pegaso). Sin empezar. Queda abierto si va con
+    controlador propio (hojas de datos públicas) o en el dominio de controladores de la zona GPL (S32, S33).
+  - Compartir internet del móvil por USB (CDC-NCM y RNDIS): sin empezar. Necesita que el xHCI dé aparatos que no son
+    HID a otros servicios.
+  - AHCI: sin NCQ, multiplicadores de puertos, ATAPI, conexión en marcha ni ahorro de energía del enlace. Con un disco
+    SATA y sin NVMe, el AHCI sirve "disco" y `archivos` va por él (`make -C kernel sata-x86`).
+  - HDA: solo la salida, sin volumen por el amplificador, sin avisos de clavija, sin HDMI ni arreglos por códec.
+  - Nada de esto probado en una máquina de verdad. `disco` (la prueba en bruto del NVMe, que escribe el sector 2) se
+    lanza siempre en x86: en un PC de verdad, antes de X9, habrá que quitarla o hacer que mire si el disco es de prueba,
+    como `disco-sata`.
 - [ ] X10 a X17 **La gráfica compartida** (`docs/diseño/S34-grafica-compartida.md`): X10 hipervisor de x86 (VT-x con
   EPT, AMD-V con NPT); X11 pasar un aparato PCIe a una máquina virtual; X12 el dominio de gráficos; X13 canal y
   memoria compartida sin copia; X14 Mesa en DashOS (Venus y contexto nativo); X15 el compositor sobre el dominio;
@@ -785,3 +798,60 @@ sin número): por eso la prueba cambia la MSI de verdad del aparato.
 
 No comprobado: el bloqueo del formato compatible; una VT-d de verdad; varias unidades (unas con remapeo y otras sin
 él); `arranque-x86` con KVM. Lo que queda está en la tarea X11b.
+
+
+### 2026-11-16 — X5c (a medias): AHCI, HDA y la red de virtio en x86
+
+Papel: implementador. Hecho (sala limpia: Serial ATA AHCI 1.3.1 de Intel, ATA8-ACS para las órdenes, Intel High
+Definition Audio 1.0a, virtio 1.2; nada de Linux, BSD ni QEMU):
+
+- **AHCI** (`usuario/src/bin/ahci.rs`): traspaso del firmware si lo hay, reinicio del HBA, cada puerto con un disco ATA
+  preparado (parado, su lista de órdenes y su zona de FIS, enlace con COMRESET si hace falta, firma), IDENTIFY, LBA de
+  48 bits. Varios puertos: cada disco tiene su número. Órdenes sin cola en ranuras distintas (hasta 8 en vuelo),
+  vaciar con FLUSH CACHE EXT, descartar con DATA SET MANAGEMENT (TRIM), recuperación de errores (6.2.2.1). Su MSI (sin
+  MSI-X: el primer aparato de q35 que la usa; el código del kernel ya estaba).
+- **El canal de los discos, común** (`usuario/src/disco_servidor.rs`): el protocolo del NVMe (tramos por nombre, tabla
+  de particiones, ventanas, anillo con lotes, plazos) separado del controlador (`Controlador`). Varios discos: el
+  número va al abrir, en los bytes del primer sector (el NVMe no lo mira). `nvme.rs` sigue con su copia para no tocar
+  ARM; se puede pasar a este módulo más adelante.
+- `inicio_x86.rs`: el AHCI (clase 0x010601, BAR 5) con el canal "sata" si hay NVMe y "disco" si no (va antes que
+  `disco` en la lista: el primero que nombra un canal lo sirve; probándolo sin NVMe, `disco` se quedaba con el lado del
+  servidor); `disco-sata`, su prueba, que solo escribe en discos que empiezan con la marca de `tools/disco_sata.py`.
+- `make -C kernel sata-x86` (nuevo): un PC con un solo disco SATA (el de `arranque-virt`) y sin NVMe; `disco` (su prueba
+  entera, también el plazo vencido de A16 y el anillo en orden de A15) y `archivos` van por el AHCI.
+- **HDA** (`usuario/src/bin/hda.rs`): reinicio, CORB y RIRB, el códec recorrido (grupo de audio, patillas de salida
+  conectadas por preferencia, camino a un DAC por mezcladores y selectores), el camino encendido a 0 dB, el primer
+  flujo de salida con 8 búferes de 256 cuadros. Hacia el servicio `sonido`, igual que `virtio-sonido`. `sonido` acepta
+  "virtio-sonido" o "hda" (el primero que manda la salida; solo sus tics marcan el ritmo).
+- **Red** en x86: `red`, `virtio-red`, `red-gloton` y `red-prueba` en `inicio_x86.rs`, la opción `red` en
+  `FUNCIONES_X86`. `virtio-red`: la entrada 0 de MSI-X en cada cola, `VIRTIO_F_ACCESS_PLATFORM` si se ofrece y las
+  barreras de `dashos::barrera` (antes, `dmb` de ARM a mano; en ARM sale lo mismo).
+- `make -C kernel arranque-x86`: dos discos SATA (puertos 0 y 2, `target/sata0.img` y `sata1.img`, nuevos en cada
+  prueba y mirados después en Linux), el sonido por HDA (`intel-hda` y `hda-duplex`; `SONIDO_X86=virtio` vuelve a
+  virtio-sound) y la red de `arranque-virt` (`RED_QEMU`, con el eco y la basura del PC; `iommu_platform=on` con IOMMU).
+  El plazo pasa de 90 a 240 s (`TIEMPO_X86`). Los esperados del sonido y de la red, en `pruebas/arranque_x86_*.txt`.
+
+Dos cosas que salieron probando:
+
+- El RIRB de QEMU para el CORB al llegar a RINTCNT respuestas si RIRBCTL.RINTCTL está apagado: no hay más respuestas
+  hasta que se borra RIRBSTS.RINTFL, que sin RINTCTL no se pone. Con RINTCTL encendido (y la interrupción del CORB
+  apagada en INTCTL), y RIRBSTS borrado tras cada respuesta, va.
+- Con VT-d, al arrancar, el controlador de sonido se queda hasta 30 ms sin correr (también `virtio-sonido`: "parado
+  33 ms"). Con 8 búferes (42 ms) aguanta, pero el servicio solo tiene 4 períodos por delante: salía un período en
+  silencio y la prueba del WAV daba dos chasquidos. El HDA ahora, si le faltan períodos, manda un tic y espera a la
+  mezcla hasta 2 ms. Por qué se para tanto el arranque con VT-d no se ha mirado.
+
+Comprobado (QEMU 11.1.3, q35, TCG): `make -C kernel arranque-x86` BIEN sin IOMMU, con `IOMMU=intel` (dos veces) y con
+`IOMMU=amd`, y con `SONIDO_X86=virtio`: los dos discos SATA escritos y leídos en Linux, el WAV del HDA sin huecos ni
+chasquidos, la red (DHCP, eco de 4 MB a unos 47 MB/s, puerto cerrado, basura), y con IOMMU el AHCI, el HDA y la red en
+su dominio, con su MSI remapeada en VT-d, sin fallos de DMA ni interrupciones bloqueadas. `make -C kernel prueba-x86`
+BIEN sin IOMMU, con `IOMMU=intel` y con `IOMMU=amd`. ARM: `make -C kernel prueba` y `make -C kernel arranque-virt`
+BIEN.
+
+`make -C kernel sata-x86` BIEN sin IOMMU, con `IOMMU=intel` y con `IOMMU=amd` (y el disco, leído después en Linux).
+Tras mover `ahci` antes que `disco`, `arranque-x86` otra vez BIEN sin IOMMU, con `IOMMU=intel` y con `IOMMU=amd`.
+
+No comprobado: una máquina de verdad (ningún disco SATA, códec ni tarjeta reales); errores de disco de verdad (la recuperación no se ha visto
+funcionar); discos de 4 KB por sector; el HDA con mezcladores o selectores en el camino (el códec de QEMU va directo
+de la patilla al DAC).
+
