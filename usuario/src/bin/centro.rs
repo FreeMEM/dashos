@@ -1850,7 +1850,7 @@ impl Vigila {
                 let Ok((r, _)) = dashos::asignaciones::abrir(&mut PorSesion(&ses), &tabla, camino.as_bytes()) else { continue };
                 let puerta = dashos::llave_duplicar(yo, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, 0);
                 if puerta > 0 {
-                    let (e, id, _, _) = dashos::protocolo::archivos::vigilar(ARCHIVOS, ses.lectura, r.asa, puerta as u32, 2_000_000);
+                    let (e, id, _, _) = dashos::vigilar::vigilar(ARCHIVOS, ses.lectura, r.asa, puerta as u32, 2_000_000);
                     if e == dashos::protocolo::archivos::BIEN {
                         self.ids[k] = id;
                         println!("  [centro] vigila {} (avisos de cambio)", camino);

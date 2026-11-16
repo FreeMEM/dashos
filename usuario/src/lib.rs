@@ -14,6 +14,8 @@ pub mod hid_informe;
 pub mod particiones;
 pub mod servicio;
 pub mod avisos_cliente;
+/// Avisos de cambio del servicio de archivos: pedir una vigilancia (con su puerta).
+pub mod vigilar;
 /// Los protocolos de los servicios, compartidos con sus clientes (E7).
 pub mod protocolo {
     pub mod archivos;

@@ -312,7 +312,7 @@ fn vigilar(arch: &Archivos, raiz: u32, camino: &[u8], escr: u32) -> (i32, u32, u
     if r.e != a::BIEN {
         return (r.e, 0, 0, 0);
     }
-    let v = a::vigilar(ARCHIVOS, arch.lectura, r.asa, puerta(escr), 3_000_000);
+    let v = dashos::vigilar::vigilar(ARCHIVOS, arch.lectura, r.asa, puerta(escr), 3_000_000);
     arch.cerrar(r.asa);
     v
 }
@@ -419,7 +419,7 @@ fn avisos_ana(arch: &Archivos) -> bool {
 fn avisos_hostiles(arch: &Archivos) -> bool {
     let (lect, escr) = dashos::canal_crear();
     let ajeno = vigilar(arch, s::RAIZ_SYS as u32, b"DeCarla", escr).0;
-    let mala = a::vigilar(ARCHIVOS, arch.lectura, 9999, puerta(escr), 3_000_000).0;
+    let mala = dashos::vigilar::vigilar(ARCHIVOS, arch.lectura, 9999, puerta(escr), 3_000_000).0;
     let sin_puerta = arch.orden(a::VIGILAR, RAM, 0, 0, b"").e;
     // Una puerta que se cierra: al primer cambio, el servicio ve que nadie lee y la quita.
     let (l2, e2) = dashos::canal_crear();
@@ -450,7 +450,7 @@ fn avisos_hostiles(arch: &Archivos) -> bool {
     let t0 = dashos::ahora_us();
     let (mut si, mut no, mut otro) = (0, 0, 0);
     for _ in 0..5000 {
-        match a::vigilar(ARCHIVOS, arch.lectura, tec.asa, puerta(escr), 3_000_000).0 {
+        match dashos::vigilar::vigilar(ARCHIVOS, arch.lectura, tec.asa, puerta(escr), 3_000_000).0 {
             a::BIEN => si += 1,
             a::SIN_SITIO => no += 1,
             _ => otro += 1,

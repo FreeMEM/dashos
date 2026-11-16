@@ -114,26 +114,6 @@ pub const AVISO_BORRADO: u32 = 2;
 pub const AVISO_FUERA: u32 = 4;
 pub const AVISO_MOVIDO: u32 = 8;
 
-/// Pide `VIGILAR` lo de la asa `asa` con la puerta `puerta` (que viaja: ya no es del que llama), por el canal del
-/// servicio `archivos`, y espera la respuesta en `lectura` (el canal de respuestas de la sesión del cliente) hasta
-/// `plazo_us`: (estado, número de la vigilancia, cuántas tiene el cliente, cuántas hay en el servicio). Las demás
-/// órdenes de avisos (`NO_VIGILAR`, `AVISOS`) no llevan llave: van como cualquier otra.
-pub fn vigilar(archivos: u32, lectura: u32, asa: u32, puerta: u32, plazo_us: u64) -> (i32, u32, u64, u64) {
-    let mut m = [0u8; CABECERA];
-    m[0..4].copy_from_slice(&VIGILAR.to_le_bytes());
-    m[4..8].copy_from_slice(&asa.to_le_bytes());
-    if crate::canal_escribir(archivos, &m, &[puerta]) != 0 {
-        crate::cerrar(puerta);
-        return (ERROR_DEL_DISCO, 0, 0, 0);
-    }
-    let mut r = [0u8; 32];
-    if crate::canal_leer_plazo(lectura, &mut r, &mut [], plazo_us).0 != 32 {
-        return (ERROR_DEL_DISCO, 0, 0, 0);
-    }
-    let u = |i: usize| u64::from_le_bytes(r[i..i + 8].try_into().unwrap());
-    (i32::from_le_bytes(r[0..4].try_into().unwrap()), u32::from_le_bytes(r[4..8].try_into().unwrap()), u(8), u(16))
-}
-
 /// Un timbre de vigilancia: (número de la vigilancia, cambios que llevaba). `None` si no lo es.
 pub fn leer_timbre(b: &[u8]) -> Option<(u32, u64)> {
     (b.len() >= LARGO_TIMBRE && u32::from_le_bytes(b[0..4].try_into().unwrap()) == TIMBRE_VIGILAR)
