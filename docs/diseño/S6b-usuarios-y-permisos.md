@@ -271,6 +271,17 @@ la tabla son provisionales; lo que se fija es que cada permiso tiene su frase en
 **El Shell es como la caja**: una aplicación con `Home:`, `Work:` y red, y lo que se lanza desde él hereda su ficha.
 Quien compila un programa en Dash y lo prueba desde el Shell no se encuentra ninguna pregunta.
 
+**Probar una pieza propia sin quitar el encierro** (decidido el 2026-11-16, S36). Dos cosas que tienen que existir:
+
+- **Modo de desarrollo por aplicación.** El usuario marca una aplicación y esa sí carga de su capa (`Home:Libs`,
+  `Home:C`, `Home:Fonts`). Las demás siguen como en la regla 6. Marcarla pide la confirmación de `guardian`: si no,
+  la marcaría el mismo programa malo que dejó la biblioteca. La marca se ve en la ficha de la aplicación y queda en
+  el registro (`Estado:Registros/seguridad`, S6). Se quita igual.
+- **Una orden para lanzar desde el Shell un programa encerrado**, con la ficha que tendría al abrirlo con doble
+  clic, para probarlo como lo verá el usuario. Sin ella, lo lanzado desde el Shell hereda `Home:`, `Work:` y red.
+
+Dónde se guarda la marca y el nombre de la orden, por diseñar al hacerlo.
+
 ## Administradores
 
 - Administrador es quien está en el grupo `admin`. No hay otra diferencia: sus programas corren con los mismos
@@ -282,6 +293,10 @@ Quien compila un programa en Dash y lo prueba desde el Shell no se encuentra nin
 - **La acción la hace el servicio que la tiene a su cargo** (el gestor de paquetes instala, `archivos` repara). El
   programa que la pidió no recibe ningún poder general.
 - Cada acción se confirma. Sin "vale durante 5 minutos".
+- **Una tanda es una acción** (decidido el 2026-11-16, S36). Varias cosas que se piden juntas (los diez paquetes de
+  un plan de `Paq`, un usuario nuevo con sus grupos) van en una sola ventana de `guardian`, que enseña la lista
+  entera y pide la contraseña una vez. El servicio hace solo lo que estaba en la lista enseñada; lo demás no se hace
+  y pide su propia confirmación.
 - Queda apuntada en el registro de seguridad (`Estado:Registros/seguridad`, S6).
 
 ### Que la ventana sea de verdad la del sistema
@@ -344,7 +359,8 @@ kernel.
    el proceso de la aplicación. Nunca en el compositor, `sesiones`, `guardian` ni `archivos`.
 6. **Las aplicaciones encerradas no cargan bibliotecas de `Home:Libs`.** Solo de su paquete, de `Paquetes:` y de
    `SYS:`. Si no, un programa del Shell deja una biblioteca en `Home:Libs` y se cuela en todas las aplicaciones del
-   usuario, con sus permisos. Cambia S4b para ese perfil.
+   usuario, con sus permisos. Cambia S4b para ese perfil. La única excepción es la aplicación que el usuario marca
+   en modo de desarrollo, con la confirmación de `guardian` (ver "Perfiles").
 7. **Ningún mensaje tumba un servicio.** Cada campo que manda un cliente se valida: tamaños, índices, asas. Cada
    servicio tiene su prueba de mensajes al azar.
 8. **Lo que cae se relanza con sus mismas llaves, no con más**, y queda apuntado en el registro de seguridad.
@@ -420,11 +436,13 @@ Fran aprobó las nueve el 2026-11-10:
 2. El usuario 0 no tiene privilegios y el bit `setuid` no hace nada.
 3. El Shell es como la caja Amiga (`Home:`, `Work:` y red); un programa suelto con doble clic va encerrado.
 4. Ni un administrador lee el cajón de otro usuario; cada usuario recibe un código de recuperación en papel.
-5. Cada acción de administrador se confirma, sin plazo de gracia.
+5. Cada acción de administrador se confirma, sin plazo de gracia. Confirmado el 2026-11-16 (S36), con un ajuste:
+   una tanda es una acción (una ventana con la lista entera y una contraseña).
 6. Las ventanas del sistema llevan una imagen o frase secreta del usuario (el detalle, en S10).
 7. Volumen `Estado:` para lo que escribe el sistema.
 8. Los discos ajenos se leen en un proceso aparte.
-9. Las aplicaciones encerradas no cargan de `Home:Libs`.
+9. Las aplicaciones encerradas no cargan de `Home:Libs`. Confirmado el 2026-11-16 (S36), con un ajuste: el modo
+   de desarrollo por aplicación y la orden que lanza un programa encerrado desde el Shell (ver "Perfiles").
 
 ## Cómo encaja
 

@@ -70,7 +70,8 @@ vista de otro proceso propio se pide por su PID, con la misma orden y en el Moni
 
 Las aplicaciones encerradas (perfil "aplicación" y "suelto" de S6b) no tienen la capa del usuario en `LIBS:`, `C:`
 ni `FONTS:`: solo su paquete, `Paquetes:` y `SYS:`. Así un programa no deja una biblioteca en `Home:Libs` que se
-cuele en todas las demás.
+cuele en todas las demás. La excepción es la aplicación que el usuario marca en modo de desarrollo, con la
+confirmación de `guardian`: esa sí tiene la capa del usuario (S6b, decidido el 2026-11-16).
 
 Otras asignaciones:
 

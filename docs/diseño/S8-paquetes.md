@@ -56,6 +56,9 @@ Nombre provisional. Es una orden en `C:` y un servicio del sistema:
 - Todo lo que Ajustes hace con los paquetes tiene su orden (S0): `Paq Generaciones` (la lista, con fecha y lo que
   cambió), `Paq Volver <n>` (a una de la lista), `Paq Limpiar` (lo mismo que "limpiar" en Ajustes) y
   `Paq Info <nombre>` (versión, permisos que pide y ficheros).
+- **Un plan, una contraseña** (S6b, decidido el 2026-11-16). Cuando el plan toca `Paquetes:`, `guardian` enseña la
+  lista entera de lo que se instala, se quita y se actualiza, y pide la contraseña una vez. `Paq` hace solo lo que
+  estaba en esa lista.
 - **Repositorios** con un índice firmado. Claves de confianza: la de DashOS, la de Hangar y las que añada un
   administrador (S6).
 - **La lista de repositorios y las claves de confianza son ficheros de texto** en `Estado:`, que todos leen: la

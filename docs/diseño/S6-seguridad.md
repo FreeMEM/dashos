@@ -51,7 +51,11 @@ En Linux, `root` lo puede todo. Si un programa consigue ser `root`, el sistema e
 - **En DashOS hay administradores, no un superusuario.** Un administrador es un usuario del grupo `admin`.
 - **Para hacer algo de administrador hay que confirmarlo con la contraseña**, en una ventana que dibuja el sistema, no
   el programa. Es lo que hacen macOS y polkit. La confirmación da una capacidad para esa acción concreta, no un
-  permiso para todo.
+  permiso para todo. No hay "vale durante 5 minutos": ese rato es justo lo que aprovecha un programa malo para colar
+  su acción detrás de la del usuario.
+- **Una tanda es una acción** (decidido el 2026-11-16, S36). Instalar diez paquetes de un plan de `Paq`, o crear un
+  usuario con sus grupos, es una sola ventana que enseña la lista entera y pide la contraseña una vez. Lo que no
+  está en la lista enseñada no se hace.
 - **`SYS:` no lo cambia ni un administrador.** Solo las actualizaciones del sistema, firmadas (S8, S14). Un
   administrador puede instalar paquetes en `Paquetes:`, pero no tocar el sistema base a mano.
 
@@ -72,7 +76,8 @@ Tiene que existir un **modo de desarrollo**, con estas condiciones:
 
 Qué piezas se pueden sustituir, con qué clave se firman las propias y cómo se montan encima de `SYS:`: por diseñar
 al hacerlo, con revisión de seguridad. Activarlo habrá que añadirlo entonces a la lista de acciones de administrador
-de S6b. Lo que no cambia: las aplicaciones encerradas siguen sin cargar de `Home:Libs` (S6b, decisión 9).
+de S6b. Lo que no cambia: las aplicaciones encerradas siguen sin cargar de `Home:Libs` (S6b, decisión 9). Para
+probar una biblioteca propia con una de ellas está el modo de desarrollo por aplicación (S6b, "Perfiles").
 
 ## Permisos de cada aplicación
 
