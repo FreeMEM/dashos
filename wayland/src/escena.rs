@@ -676,6 +676,10 @@ pub struct Escena<M: Memorias> {
     marcas_antes: Vec<Rect>,
     pestana_linux: marca::Pestana,
     pestana_amiga: marca::Pestana,
+    /// S6b, S36: la de una aplicación en modo de desarrollo.
+    pestana_desarrollo: marca::Pestana,
+    /// S6b, S36: los clientes de una aplicación en modo de desarrollo (lo dice `sesiones`, `AVISO_DESARROLLO`).
+    pub de_desarrollo: Vec<Cliente>,
     /// S29: si pegar (`receive`) pide una tecla o un clic reciente en el programa (`portapapeles::PEGAR_MS`); el
     /// compositor del PC, sin teclado ni ratón, lo quita. Y a quién se le negó, para que quien atiende lo diga.
     pub pegar_con_entrada: bool,
@@ -701,6 +705,10 @@ pub const MAX_DETRAS: usize = 8;
 /// o quitar (0) (u32) y 4 de relleno: 24 bytes. Número alto, aparte de los de U6.
 pub const AVISO_PODER: u32 = 0x5536_0010;
 pub const LARGO_AVISO_PODER: usize = 24;
+/// S6b, S36: las ventanas de un cliente van en modo de desarrollo (su marca, que el programa no puede quitar): orden, 0
+/// (u32) y marca (u64): 16 bytes.
+pub const AVISO_DESARROLLO: u32 = 0x5536_0020;
+pub const LARGO_AVISO_DESARROLLO: usize = 16;
 /// El primer usuario de una persona (los de debajo son del sistema).
 pub const PRIMERA_PERSONA: u32 = 1000;
 
@@ -712,6 +720,8 @@ pub enum AvisoSesiones {
     Detras(Vec<u32>),
     /// S10: los permisos de commodities de un cliente, antes y después.
     Poder { marca: Cliente, antes: u32, despues: u32 },
+    /// S6b, S36: un cliente en modo de desarrollo.
+    Desarrollo { marca: Cliente },
 }
 
 /// Un aviso de inactividad pedido (U3).
@@ -882,6 +892,8 @@ impl<M: Memorias> Escena<M> {
             pestana_linux: marca::Pestana::de_pixeles(marca::TEXTO_LINUX, marca::COLOR_LINUX, marca::TINTA),
             de_caja_amiga: Vec::new(),
             pestana_amiga: marca::Pestana::de_pixeles(marca::TEXTO_AMIGA, marca::COLOR_AMIGA, marca::TINTA_AMIGA),
+            pestana_desarrollo: marca::Pestana::de_pixeles(marca::TEXTO_DESARROLLO, marca::COLOR_DESARROLLO, marca::TINTA_DESARROLLO),
+            de_desarrollo: Vec::new(),
             pegar_con_entrada: true,
             pegados_negados: Vec::new(),
             cx: Default::default(),
@@ -897,6 +909,22 @@ impl<M: Memorias> Escena<M> {
         }
         if vale(&amiga) {
             self.pestana_amiga = amiga;
+        }
+    }
+
+    /// La pestaña de cada clase de marca (0 Linux, 1 Amiga, 2 modo de desarrollo).
+    fn pestana_de(&self, clase: u8) -> &marca::Pestana {
+        match clase {
+            1 => &self.pestana_amiga,
+            2 => &self.pestana_desarrollo,
+            _ => &self.pestana_linux,
+        }
+    }
+
+    /// S6b, S36: la pestaña del modo de desarrollo, pintada con el kit (como `poner_pestanas`).
+    pub fn poner_pestana_desarrollo(&mut self, p: marca::Pestana) {
+        if p.w > 0 && p.h > 0 && p.w <= 400 && p.h <= 100 && p.px.len() == (p.w * p.h * 4) as usize {
+            self.pestana_desarrollo = p;
         }
     }
 
@@ -1143,9 +1171,11 @@ impl<M: Memorias> Escena<M> {
                 } else {
                     self.personas.remove(&cliente);
                 }
-                // S10: "que se olvide" (uid 0, el programa acabó): sus permisos de commodities también.
+                // S10: "que se olvide" (uid 0, el programa acabó): sus permisos de commodities también. S6b, S36: y su
+                // modo de desarrollo.
                 if uid == 0 {
                     self.cx.poderes.remove(&cliente);
+                    self.de_desarrollo.retain(|&c| c != cliente);
                 }
                 AvisoSesiones::Persona { marca: cliente, uid, nombre: m[16..32].try_into().unwrap() }
             }
@@ -1155,6 +1185,14 @@ impl<M: Memorias> Escena<M> {
                 AvisoSesiones::Detras(self.detras.clone())
             }
             // S10: no cambia quién se ve: vuelve sin recomponer.
+            (AVISO_DESARROLLO, LARGO_AVISO_DESARROLLO) => {
+                let cliente = u64::from_le_bytes(m[8..16].try_into().unwrap());
+                if !self.de_desarrollo.contains(&cliente) {
+                    self.de_desarrollo.push(cliente);
+                }
+                self.danos.push(Rect { x: 0, y: 0, w: i32::MAX / 2, h: i32::MAX / 2 });
+                return Some(AvisoSesiones::Desarrollo { marca: cliente });
+            }
             (AVISO_PODER, LARGO_AVISO_PODER) => {
                 let cliente = u64::from_le_bytes(m[8..16].try_into().unwrap());
                 let antes = self.cx.poderes_de(cliente);
@@ -1308,9 +1346,20 @@ impl<M: Memorias> Escena<M> {
         // una ventana del sistema en la barra).
         let de_caja = self.ventana_con_titulo().is_some_and(|v| self.de_caja.contains(&v.0));
         let de_amiga = self.ventana_con_titulo().is_some_and(|v| self.de_caja_amiga.contains(&v.0));
+        // S6b, S36: y el de una aplicación en modo de desarrollo, con "Desarrollo · ".
+        let de_desarrollo = self.ventana_con_titulo().is_some_and(|v| self.de_desarrollo.contains(&v.0));
         let t_caja;
-        let t = if de_caja || de_amiga {
-            t_caja = marca::titulo_con(if de_amiga { marca::PREFIJO_AMIGA } else { marca::PREFIJO_LINUX }, self.titulo_activo());
+        let t = if de_caja || de_amiga || de_desarrollo {
+            t_caja = marca::titulo_con(
+                if de_amiga {
+                    marca::PREFIJO_AMIGA
+                } else if de_desarrollo {
+                    marca::PREFIJO_DESARROLLO
+                } else {
+                    marca::PREFIJO_LINUX
+                },
+                self.titulo_activo(),
+            );
             t_caja.as_str()
         } else {
             self.titulo_activo()
@@ -1378,6 +1427,7 @@ impl<M: Memorias> Escena<M> {
         self.barras.retain(|&c| c != cliente);
         self.de_caja.retain(|&c| c != cliente);
         self.de_caja_amiga.retain(|&c| c != cliente);
+        self.de_desarrollo.retain(|&c| c != cliente);
         self.pegados_negados.retain(|&c| c != cliente);
         self.avisos_lanzador.retain(|t| t.0 != cliente);
         self.avisos_titulo.retain(|t| t.0 != cliente);
@@ -1768,7 +1818,8 @@ impl<M: Memorias> Escena<M> {
         // capas de fondo (C3: el fondo de escritorio, que puede ir en franjas), tampoco: no están encima de nada.
         let mut sombras: Vec<(usize, Rect, i32)> = Vec::new();
         // S29: las marcas de las ventanas de las cajas: antes de qué capa van, lo que ocupa la ventana y su pestaña.
-        let mut marcas: Vec<(usize, Rect, Rect, bool, bool)> = Vec::new();
+        // La clase de la marca: 0 la caja Linux, 1 la caja Amiga, 2 el modo de desarrollo (S6b, S36).
+        let mut marcas: Vec<(usize, Rect, Rect, u8, bool)> = Vec::new();
         // S29: las capas de esas ventanas (de la primera a antes de la última) y a qué se recortan.
         let mut recortes: Vec<(usize, usize, Rect)> = Vec::new();
         for (c, id) in self.raices() {
@@ -1798,12 +1849,14 @@ impl<M: Memorias> Escena<M> {
             // S29: la marca de una ventana de la caja, encima de todo lo suyo (antes de la capa de la ventana siguiente);
             // lo suyo, recortado a lo que rodea la marca.
             let amiga = self.de_caja_amiga.contains(&c);
-            if (self.de_caja.contains(&c) || amiga)
+            let desarrollo = self.de_desarrollo.contains(&c);
+            let clase = if amiga { 1 } else if desarrollo { 2 } else { 0 };
+            if (self.de_caja.contains(&c) || amiga || desarrollo)
                 && self.bloqueo.is_none()
                 && let Some(caja) = marca::caja_de(cli, id)
             {
                 let area = self.area_de(self.salida_de(caja));
-                let p = if amiga { &self.pestana_amiga } else { &self.pestana_linux };
+                let p = self.pestana_de(clase);
                 // Con la barra de DashOS la marca va dentro de la barra (la pinta `decoracion`): sin pestaña. Sin barra,
                 // la pestaña va por dentro de la ventana, nunca fuera (sin solapas: lo pidió el usuario el 2026-11-13).
                 let mut sin_arriba = false;
@@ -1816,7 +1869,7 @@ impl<M: Memorias> Escena<M> {
                     sin_arriba = amiga && hueco.is_some_and(|(_, alto)| alto > 0);
                     marca::sitio_pestana(caja, area, (p.w, p.h), amiga, hueco)
                 };
-                marcas.push((capas.len(), caja, sitio, amiga, sin_arriba));
+                marcas.push((capas.len(), caja, sitio, clase, sin_arriba));
                 recortes.push((desde, capas.len(), caja));
             }
         }
@@ -1897,7 +1950,13 @@ impl<M: Memorias> Escena<M> {
         // S29: una fila del color de la caja, tan ancha como la marca más ancha (las tiras del borde la repiten).
         let ancho_marcas = marcas.iter().map(|m| m.1.w.max(0) as usize).max().unwrap_or(0);
         let fila_marca: Vec<u8> = marca::COLOR_LINUX.to_le_bytes().repeat(ancho_marcas);
-        let fila_amiga: Vec<u8> = if marcas.iter().any(|m| m.3) { marca::COLOR_AMIGA.to_le_bytes().repeat(ancho_marcas) } else { Vec::new() };
+        let fila_amiga: Vec<u8> = if marcas.iter().any(|m| m.3 == 1) { marca::COLOR_AMIGA.to_le_bytes().repeat(ancho_marcas) } else { Vec::new() };
+        let fila_desarrollo: Vec<u8> = if marcas.iter().any(|m| m.3 == 2) { marca::COLOR_DESARROLLO.to_le_bytes().repeat(ancho_marcas) } else { Vec::new() };
+        let fila_de = |clase: u8| match clase {
+            1 => &fila_amiga,
+            2 => &fila_desarrollo,
+            _ => &fila_marca,
+        };
         let mut con_bufer: Vec<(Rect, i32, i32, &[u8], crate::shm::Bufer, Option<(Rect, i32)>)> = Vec::new();
         let mut esquinas: Vec<Option<Rect>> = Vec::new();
         let mut s_i = 0;
@@ -1906,7 +1965,7 @@ impl<M: Memorias> Escena<M> {
         for (k, &(c, id, x, y)) in capas.iter().enumerate() {
             // S29: la marca de la ventana de antes, si acabó en la capa anterior.
             while m_i < marcas.len() && marcas[m_i].0 == k {
-                let (fila, pestana) = if marcas[m_i].3 { (&fila_amiga, &self.pestana_amiga) } else { (&fila_marca, &self.pestana_linux) };
+                let (fila, pestana) = (fila_de(marcas[m_i].3), self.pestana_de(marcas[m_i].3));
                 con_bufer.extend(marca::capas(marcas[m_i].1, marcas[m_i].2, fila, &pestana.px, marcas[m_i].4));
                 m_i += 1;
             }
@@ -1955,7 +2014,7 @@ impl<M: Memorias> Escena<M> {
         }
         // S29: la marca de la última ventana.
         for m in &marcas[m_i..] {
-            let (fila, pestana) = if m.3 { (&fila_amiga, &self.pestana_amiga) } else { (&fila_marca, &self.pestana_linux) };
+            let (fila, pestana) = (fila_de(m.3), self.pestana_de(m.3));
             con_bufer.extend(marca::capas(m.1, m.2, fila, &pestana.px, m.4));
         }
         esquinas.resize(con_bufer.len(), None);

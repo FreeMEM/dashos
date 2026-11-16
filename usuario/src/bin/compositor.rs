@@ -812,6 +812,8 @@ fn principal() -> u64 {
     {
         use escena::marca as m;
         escena.poner_pestanas(pestana_kit(m::TEXTO_LINUX, m::COLOR_LINUX, m::TINTA), pestana_kit(m::TEXTO_AMIGA, m::COLOR_AMIGA, m::TINTA_AMIGA));
+        // S6b, S36: la del modo de desarrollo.
+        escena.poner_pestana_desarrollo(pestana_kit(m::TEXTO_DESARROLLO, m::COLOR_DESARROLLO, m::TINTA_DESARROLLO));
     }
     escena.poner_salidas(vec![Salida { global: GLOBAL_SALIDAS[0], nombre: "DASHOS-1".into(), descripcion: "Pantalla de DashOS".into(), rect, mhz: 60_000 }]);
     let danos = escena.componer(&mut c.marco, ancho, alto, ancho as usize, 0, &mut |_, _, _| {});
@@ -902,6 +904,10 @@ fn principal() -> u64 {
                 } else if !nombres.contains_key(m) {
                     lanzados.insert(*m, String::from(core::str::from_utf8(&nombre[..fin]).unwrap_or("?")));
                 }
+            }
+            // S6b, S36: una aplicación en modo de desarrollo: sus ventanas llevan su marca.
+            Some(escena::AvisoSesiones::Desarrollo { marca: m }) => {
+                println!("  [compositor] {} va en modo de desarrollo: sus ventanas llevan la marca", nombre_de(&nombres, &lanzados, *m));
             }
             Some(escena::AvisoSesiones::Detras(uids)) => {
                 let ocultos = clientes.keys().filter(|&&c| escena.oculto(c)).count();

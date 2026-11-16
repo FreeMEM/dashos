@@ -52,6 +52,14 @@ pub const TEXTO_AMIGA: &str = match option_env!("DASHOS_MARCA_AMIGA") {
     _ => "68K",
 };
 
+/// S6b, S36 (rama `admin-desarrollo`): una aplicación en modo de desarrollo (carga de la capa del usuario). La misma
+/// marca, en magenta (ni del tema de Material ni de las cajas), con "DESARROLLO" en la pestaña y "Desarrollo · " en la
+/// barra de la pantalla. La pone el compositor por lo que dice `sesiones`: el programa no la puede quitar.
+pub const COLOR_DESARROLLO: u32 = 0xffb0_1f7a;
+pub const TINTA_DESARROLLO: u32 = 0xffff_ffff;
+pub const TEXTO_DESARROLLO: &str = "DESARROLLO";
+pub const PREFIJO_DESARROLLO: &str = "Desarrollo · ";
+
 /// Cada letra de la pestaña: 5 × 7, una fila por byte (el bit 4 es la columna de la izquierda), a escala `ESCALA`.
 const ESCALA: i32 = 2;
 const MARGEN_X: i32 = 6;
@@ -71,6 +79,11 @@ const LETRAS: &[(char, [u8; 7])] = &[
     ('A', [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001]),
     ('S', [0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110]),
     ('\u{25a3}', [0b01010, 0b11111, 0b10001, 0b10101, 0b10001, 0b11111, 0b01010]),
+    // Para el modo de desarrollo: "DESARROLLO".
+    ('D', [0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110]),
+    ('E', [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111]),
+    ('R', [0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001]),
+    ('O', [0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110]),
 ];
 
 /// Una pestaña ya pintada: píxeles ARGB premultiplicados (en bytes, como un búfer de `wl_shm`), ancho y alto.

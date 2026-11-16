@@ -467,3 +467,57 @@ fn marca_con_geometria_recorta() {
     assert_eq!(en(&p, 279, 150), COLOR_LINUX);
     assert_eq!(en(&p, 150, 150) & 0xffffff, 0x404040);
 }
+
+/// S6b, S36 (rama `admin-desarrollo`): una aplicación en modo de desarrollo lleva la marca magenta con "DESARROLLO" y su
+/// título, "Desarrollo · " delante en la barra. Solo la pone `sesiones` (un aviso sin marca): un cliente que manda el
+/// mismo aviso no se la pone a nadie, y tampoco se la quita. Cuando `sesiones` dice que el programa acabó, se va.
+#[test]
+fn marca_del_modo_de_desarrollo() {
+    let mut escena = escena_800();
+    let (dev, otro): (Cliente, Cliente) = (0x1_0005, 0x1_0006);
+    escena.barras.push(5);
+    let (mut a, mut b, mut barra) = (Conexion::new(), Conexion::new(), Conexion::new());
+    let mut e = Escritor::new();
+    e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+    e.empezar(2, wl_registry::req::BIND).uint(6).texto(Some("dashos_tema_v1")).uint(1).uint(60).fin();
+    mandar(&mut escena, &mut barra, 5, &e);
+    let aviso = |m: u64| {
+        let mut x = [0u8; LARGO_AVISO_DESARROLLO];
+        x[0..4].copy_from_slice(&AVISO_DESARROLLO.to_le_bytes());
+        x[8..16].copy_from_slice(&m.to_le_bytes());
+        x
+    };
+    // Un programa que se lo manda a sí mismo (con su marca): nada.
+    assert_eq!(escena.aviso_de_sesiones(otro, &aviso(otro)), None);
+    assert!(escena.de_desarrollo.is_empty());
+    // De `sesiones` (sin marca): el de `dev`.
+    assert_eq!(escena.aviso_de_sesiones(0, &aviso(dev)), Some(AvisoSesiones::Desarrollo { marca: dev }));
+    // Corto o largo, no es el aviso.
+    assert_eq!(escena.aviso_de_sesiones(0, &aviso(otro)[..12]), None);
+    abrir(&mut escena, &mut a, dev, 200, 120, "Editor");
+    abrir(&mut escena, &mut b, otro, 200, 120, "Notas");
+    escena.colocar(dev, 7, 100, 100);
+    escena.colocar(otro, 7, 450, 300);
+    let ((dx, dy), (ox, oy)) = (sitio(&escena, dev), sitio(&escena, otro));
+    let p = componer(&mut escena);
+    for (x, y) in [(dx, dy + 60), (dx + 199, dy + 60), (dx + 100, dy), (dx + 100, dy + 119)] {
+        assert_eq!(en(&p, x, y), marca::COLOR_DESARROLLO, "borde en ({x}, {y})");
+    }
+    let (pw, ph) = marca::medida_pestana(marca::TEXTO_DESARROLLO);
+    assert!((0..pw).any(|x| (0..ph).any(|y| en(&p, dx + GROSOR + x, dy + GROSOR + y) == marca::TINTA_DESARROLLO)), "las letras");
+    assert_ne!(en(&p, ox, oy + 60), marca::COLOR_DESARROLLO, "la otra, sin marca");
+    // El título de la que tiene el teclado: la de `otro`, tal cual; la de `dev`, con su prefijo.
+    let mut fuera = Vec::new();
+    escena.dar_teclado((otro, 7), &mut fuera);
+    escena.revisar_titulo();
+    assert_eq!(core::mem::take(&mut escena.avisos_titulo).last().map(|t| t.2.clone()), Some(String::from("Notas")));
+    escena.dar_teclado((dev, 7), &mut fuera);
+    escena.revisar_titulo();
+    assert_eq!(core::mem::take(&mut escena.avisos_titulo).last().map(|t| t.2.clone()), Some(String::from("Desarrollo · Editor")));
+    // Acaba (sesiones lo olvida, uid 0): sin marca.
+    let mut olvido = [0u8; LARGO_AVISO_PERSONA];
+    olvido[0..4].copy_from_slice(&AVISO_PERSONA.to_le_bytes());
+    olvido[8..16].copy_from_slice(&dev.to_le_bytes());
+    escena.aviso_de_sesiones(0, &olvido);
+    assert!(escena.de_desarrollo.is_empty());
+}
