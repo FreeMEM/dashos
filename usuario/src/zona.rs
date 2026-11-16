@@ -8,6 +8,9 @@
 //! futuros de las reglas (habrá que poner al día esta tabla, o leer la base de datos de zonas de la IANA) y las zonas
 //! escritas al estilo POSIX ("CET-1CEST,M3.5.0,M10.5.0/3").
 //!
+//! La zona es del sistema: `Prefs/zona` del disco del sistema (`SYS:Prefs/zona`), una línea con su nombre. La leen la
+//! barra y el crate `idioma` (las fechas y horas de los programas), que incluye este mismo fichero: una sola tabla.
+//!
 //! Sin `alloc` ni nada de DashOS: se prueba en el PC con `rustc --edition 2024 --test usuario/src/zona.rs`.
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -85,6 +88,12 @@ pub const ZONAS: &[Zona] = &[
 pub fn buscar(nombre: &str) -> Option<&'static Zona> {
     let nombre = nombre.trim();
     ZONAS.iter().find(|z| z.nombre.eq_ignore_ascii_case(nombre))
+}
+
+/// La zona que dice un fichero `Prefs/zona`: su primera línea, sin espacios alrededor. `None` si no es texto o la zona
+/// no está en la tabla.
+pub fn de_fichero(bytes: &[u8]) -> Option<&'static Zona> {
+    core::str::from_utf8(bytes).ok()?.lines().next().and_then(buscar)
 }
 
 /// Días desde el 1 de enero de 1970 del día `d` del mes `m` del año `a` (días civiles, con eras de 400 años).
@@ -219,6 +228,12 @@ mod pruebas {
         let b = buscar("America/Bogota").unwrap();
         assert_eq!(local_ns(b, inv * 1_000_000_000) / 1_000_000_000, inv - 5 * 3_600);
         assert_eq!(buscar("Marte/Olympus"), None);
+        // El fichero: la primera línea; lo que no es texto o no está en la tabla, nada.
+        assert_eq!(de_fichero(b"Europe/Madrid\n").map(|z| z.nombre), Some("Europe/Madrid"));
+        assert_eq!(de_fichero(b" europe/london \r\nEurope/Madrid\n").map(|z| z.nombre), Some("Europe/London"));
+        for malo in [&b""[..], b"\n", b"\nEurope/Madrid", b"Marte/Olympus\n", b"Europe/Madrid\xff\n", b"\xff\xfe", &[0; 64], b"Europe/Madrid/../../x"] {
+            assert_eq!(de_fichero(malo), None, "{malo:?}");
+        }
         assert_eq!(buscar(""), None);
         // Sin nombres repetidos.
         for (i, z) in ZONAS.iter().enumerate() {

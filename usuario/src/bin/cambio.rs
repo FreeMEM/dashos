@@ -669,7 +669,9 @@ fn llaves_y_selector(persona: &str, con_selector: bool) -> bool {
 /// Idiomas (paso 4 de `docs/REVISION_LOOP.md`): el programa dice lo suyo en el idioma de quien lo lanza. Ana no tiene
 /// `locale.prefs`: castellano y España, sin catálogo. Carla lo tiene en su `ENV:` en inglés y del Reino Unido: los
 /// textos del programa y los del kit salen de sus catálogos de `LOCALE:Catalogs/english`, los días y los meses de
-/// `LOCALE:Languages/english.language`, y las fechas, los números y el dinero, a la inglesa. Lo hostil, con Carla: un
+/// `LOCALE:Languages/english.language`, y las fechas, los números y el dinero, a la inglesa. La hora, de las dos en la
+/// zona del sistema (`SYS:Prefs/zona`, Europe/Madrid en el disco de pruebas, como la barra): la de Carla en su
+/// `locale.prefs` (UTC) solo valdría sin zona. Lo hostil, con Carla: un
 /// catálogo cortado, uno que es de otro programa, uno de otra versión y un nombre que quiere salir del cajón no valen
 /// (y los textos siguen saliendo).
 fn en_su_idioma(arch: &Archivos, quien: &str, ingles: bool) -> bool {
@@ -692,7 +694,7 @@ fn en_su_idioma(arch: &Archivos, quien: &str, ingles: bool) -> bool {
         quien, i.local.idioma(), i.local.pais_nombre, i.origen.unwrap_or("serie"), saludo, cuenta, del_kit, fecha, corta, numero, dinero
     );
     let quiere = if ingles {
-        ["english", "Hello, I am the user switching test", "2 windows of Carla", "yes", "Tuesday 3 November 2026", "03/11/2026 17:05", "1,234,567", "-£1,234.56"]
+        ["english", "Hello, I am the user switching test", "2 windows of Carla", "yes", "Tuesday 3 November 2026", "03/11/2026 18:05", "1,234,567", "-£1,234.56"]
     } else {
         ["español", "Hola, soy la prueba del cambio de usuario", "2 ventanas de Ana", "sí", "martes, 3 de noviembre de 2026", "03/11/2026 18:05", "1.234.567", "-1.234,56 €"]
     };

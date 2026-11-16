@@ -454,8 +454,9 @@ DashOS en marcha con 4 núcleos.
 ~│   [cambio] Ana, detrás: escribe true, pedir eco -2, bloquear -2: bien
 ~0 muertos, 0 dicen que existen: bien
 # Idiomas (paso 4): Carla tiene su locale.prefs en inglés y del Reino Unido: los textos del programa y del kit salen de
-# sus catálogos, y las fechas, los números y el dinero, a la inglesa. Los catálogos malos no valen.
-~│   [cambio] Carla: idioma english (great_britain), de ENV:Sys/locale.prefs: "Hello, I am the user switching test", "2 windows of Carla", el kit dice "yes"; Tuesday 3 November 2026; 03/11/2026 17:05; 1,234,567; -£1,234.56
+# sus catálogos, y las fechas, los números y el dinero, a la inglesa. Los catálogos malos no valen. La hora va en la
+# zona del sistema (SYS:Prefs/zona, Europe/Madrid, la de la barra), no en la UTC de su locale.prefs: 18:05.
+~│   [cambio] Carla: idioma english (great_britain), de ENV:Sys/locale.prefs: "Hello, I am the user switching test", "2 windows of Carla", el kit dice "yes"; Tuesday 3 November 2026; 03/11/2026 18:05; 1,234,567; -£1,234.56
 ~│   [cambio] Carla: catálogos malos (están: true): cortado false, de otro programa false, de otra versión false, fuera del cajón false; el idioma ha cambiado false: bien
 ~│   [cambio] Carla: sus textos en su idioma: bien
 ~│   [cambio] Carla, como Ana: entrar -12, volver -12, salir -12, lanzar -2: bien

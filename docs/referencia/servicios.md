@@ -709,8 +709,12 @@ repetida (DAD), direcciones que no delaten la MAC (RFC 7217 o temporales), DHCPv
 el encaminador (RDNSS) y contestar al ping.
 
 **Lo que se configura** está en `Prefs/Red` del disco del sistema (la raíz del servicio en el de archivos, solo lo lee):
-`hosts` y `hora`, una línea con el nombre o la dirección del servidor de hora (si no hay, `pool.ntp.org`). El servicio
-lo lee al arrancar; para que vea un cambio hay que relanzarlo.
+`hosts` y `hora`, el servidor de hora: la primera línea que no está vacía ni empieza por `#`, con un nombre o una
+dirección, o `ninguno` para no preguntar la hora a nadie. Sin fichero (o sin línea), `pool.ntp.org`. Si el fichero está
+pero no se deja leer, o el servicio no puede leer sus ajustes (una máquina sin disco del sistema), no hay servidor de
+hora: no se habla con un tercero sin saber qué dice el ajuste (`dashos::sntp::servidor`; el estado lo dice en
+`E_HORA_APAGADA`). Las imágenes de prueba lo llevan apuntando al vecino de mentira (`tools/red_vecino.py`) o sin
+disco, apagado. El servicio lo lee al arrancar; para que vea un cambio hay que relanzarlo.
 
 **La hora por la red** (`usuario/src/bin/hora.rs`, con `usuario/src/sntp.rs`). `hora` es el único programa con el
 permiso del reloj (llamada 39 con 1, `docs/referencia/kernel.md`); de la red tiene solo la llave de conectar. Pregunta
@@ -719,7 +723,9 @@ golpe y vuelve a preguntar cada hora (si falla, a los 30 s y cada vez más despa
 un número al azar en vez de la hora; solo vale la respuesta que lo devuelve, de un servidor con hora (ni estrato 0 ni
 sin sincronizar) y posterior a 2024. La barra enseña la hora en la zona de `Prefs/zona` del disco del sistema (una
 línea, como `Europe/Madrid`; la lee al arrancar por su raíz 1; sin ella, UTC), con `usuario/src/zona.rs`: UTC, las
-zonas de Europa con la regla de la Unión Europea y unas cuantas sin cambio de hora.
+zonas de Europa con la regla de la Unión Europea y unas cuantas sin cambio de hora. Las fechas y horas que escribe el
+crate `idioma` (`Local`) usan la misma zona y la misma tabla (lee `SYS:Prefs/zona`); los minutos de `locale.prefs`
+solo valen si no hay zona.
 
 **La memoria de una conexión** la crea el servicio (cuenta en su cupo) y el programa recibe una copia que no puede
 pasar. Así no puede dar una memoria revocable y quitársela al servicio con él dentro. Cabecera de palabras (cabeza y
