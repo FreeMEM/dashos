@@ -295,7 +295,10 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // runtime de Dash sabe dónde está cada una por cuántas trae: 2 o 4, así; 3, lo que lanza `sesiones` (1 su canal, 2
     // archivos, 3 ventanas). Al final, para no cambiar las marcas de los de antes ni la cascada de sus ventanas (antes de
     // la caja Amiga, Ajustes salía encima del botón de cerrar de su ventana).
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso"), dash_ventana))]
+    // Con `linux`, fuera (como `espia`): a su ventana solo la lleva el guion de `arranque-virt`; en las pruebas de la
+    // caja Linux nadie la cierra, sale encima de la terminal de la caja cuando acaba la caja Amiga y se queda con el
+    // teclado y con los clics del guion (`arranque-virt-gpu` perdía así "terminal viva").
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux"), not(feature = "uso"), dash_ventana))]
     ("dash-ventana", programa!("dash-ventana"), &[], &["ventanas", "archivos", "sesiones", "selector"]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", programa!("medir-fs"), &[], &["archivos"]),
