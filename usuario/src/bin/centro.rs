@@ -1129,6 +1129,8 @@ struct VistaMonitor {
     filas: Vec<monitor::Visto>,
     medido: u64,
     sin_datos: bool,
+    /// S6b, rama `cuentas`: el nombre de cada usuario, de `Estado:Cuentas/usuarios` (se lee al abrir el monitor).
+    nombres: Vec<(u32, String)>,
 }
 
 const ORDENES: [&str; 4] = ["CPU", "memoria", "nombre", "usuario"];
@@ -1144,14 +1146,27 @@ fn nombre_orden(k: usize) -> &'static str {
     }
 }
 
-/// El nombre de un usuario, provisional como las cuentas de `sesiones` (luego, `Estado:Cuentas/usuarios`).
-fn usuario(uid: u32) -> String {
-    match uid {
-        1000 => String::from("Ana"),
-        1001 => String::from("Carla"),
-        u if u < s::PRIMERA_PERSONA => String::from(tr(65, "sistema")),
-        u => alloc::format!("{}", u),
+/// El nombre de un usuario: el de su cuenta (`nombres`), "sistema" si no es una persona, o su número.
+fn usuario(uid: u32, nombres: &[(u32, String)]) -> String {
+    match nombres.iter().find(|n| n.0 == uid) {
+        Some(n) => n.1.clone(),
+        None if uid < s::PRIMERA_PERSONA => String::from(tr(65, "sistema")),
+        None => alloc::format!("{}", uid),
     }
+}
+
+/// S6b, rama `cuentas`: los nombres de las cuentas, de `Estado:Cuentas/usuarios` (que leen todos), por la raíz del disco.
+/// Sin él, ninguno (salen por su número).
+fn nombres_de_cuentas() -> Vec<(u32, String)> {
+    use dashos::protocolo::archivos as a;
+    let Some(ses) = Sesion::abrir() else { return Vec::new() };
+    let camino = alloc::format!("{}/{}", dashos::cuentas::CAJON, dashos::cuentas::USUARIOS);
+    let (e, _, leidos, _, _) = ses.pedir_bytes(a::LEER_NOMBRE, 1, 0, dashos::cuentas::MAX_FICHERO as u64, camino.as_bytes());
+    if e != a::BIEN {
+        return Vec::new();
+    }
+    let (c, ..) = dashos::cuentas::Cuentas::leer(&ses.ventana()[..leidos as usize], b"");
+    c.todas().map(|x| (x.uid, String::from(x.nombre.as_str()))).collect()
 }
 
 /// Mide los núcleos (para el reparto) y los procesos (`MONITOR`, todas sus páginas). `false` si `sesiones` no contesta.
@@ -1222,7 +1237,7 @@ fn lineas_monitor(v: &VistaMonitor) -> Vec<String> {
         let quien = match x.e.clase {
             monitor::M_SISTEMA | monitor::M_OTROS => String::new(),
             _ => {
-                let u = if x.e.gid == x.e.uid { usuario(x.e.uid) } else { alloc::format!("{}/{}", usuario(x.e.uid), x.e.gid) };
+                let u = if x.e.gid == x.e.uid { usuario(x.e.uid, &v.nombres) } else { alloc::format!("{}/{}", usuario(x.e.uid, &v.nombres), x.e.gid) };
                 if x.e.escritorio { alloc::format!(" {}", trf(68, "({}, escritorio)", &[&u])) } else { alloc::format!(" ({})", u) }
             }
         };
@@ -1417,7 +1432,7 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
     i.ctx.tema = ap.tema();
     let mut lineas_registro: Vec<String> = Vec::new();
     // Trasfondo: el monitor del sistema y los ajustes del panel del escritorio.
-    let mut vm = VistaMonitor { med: monitor::Medidor::default(), orden: 0, filas: Vec::new(), medido: 0, sin_datos: false };
+    let mut vm = VistaMonitor { med: monitor::Medidor::default(), orden: 0, filas: Vec::new(), medido: 0, sin_datos: false, nombres: nombres_de_cuentas() };
     let mut aj_panel = leer_ajustes_monitor();
     let poner = |i: &mut Interfaz, cat: usize, lista: &[(String, String)], reg: &[String]| {
         let (explicacion, contenido) = if cat == PERMISOS {
@@ -1684,6 +1699,8 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                             l
                         }
                         MONITOR_SIS => {
+                            // Los nombres de las cuentas, al día cada vez que se entra al monitor.
+                            vm.nombres = nombres_de_cuentas();
                             medir_monitor(&mut vm);
                             dashos::dormir_us(250_000);
                             medir_monitor(&mut vm);

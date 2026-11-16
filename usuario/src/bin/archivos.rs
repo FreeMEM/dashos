@@ -2304,14 +2304,18 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
             // a: 0 sin cifrar; 1 cifrado; 2 cifrado con Argon2 barato (pruebas). Cifrado, con la primera contraseña en
             // los b primeros bytes de la ventana, como al abrirlo, y llaves del azar del kernel (R10): sin azar de
             // calidad, no.
+            // S6b, rama `cuentas`: con `CON_RECUPERACION`, también la ranura del código de recuperación (su azar y su sal
+            // van detrás de las llaves), que se contesta en la ventana.
             let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
-            if p.a > 2 || p.b as usize > MAX_CLAVE || (p.a != 0 && p.b == 0) {
+            let recuperacion = p.a & CON_RECUPERACION != 0;
+            let tipo = p.a & !CON_RECUPERACION;
+            if tipo > 2 || p.b as usize > MAX_CLAVE || (tipo != 0 && p.b == 0) || (recuperacion && tipo == 0) {
                 return mal(MAL_FORMADO);
             }
             let mut clave = [0u8; MAX_CLAVE];
             let largo = p.b as usize;
-            let mut llaves = [0u8; 48];
-            if p.a != 0 {
+            let mut llaves = [0u8; 48 + 16 + 15];
+            if tipo != 0 {
                 let v = c.ventana();
                 clave[..largo].copy_from_slice(&v[..largo]);
                 v[..largo].fill(0);
@@ -2320,24 +2324,37 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                     return mal(SIN_AZAR);
                 }
             }
-            let coste = if p.a == 1 { dashfs::seal::Cost::NORMAL } else { dashfs::seal::Cost::CHEAP };
+            // Rama `cuentas`: el de verdad cabe en el servicio (`Cost::SERVICE`, 16 MiB); con `NORMAL` (64 MiB) se quedaba
+            // sin memoria y caía.
+            let coste = if tipo == 1 { dashfs::seal::Cost::SERVICE } else { dashfs::seal::Cost::CHEAP };
+            let mut codigo = dashos::cuentas::codigo_recuperacion(llaves[64..79].try_into().unwrap());
             let hecho = fs.tx(|tx| {
                 // Su raíz, de quien lo hace (R6), desde el principio.
                 let dueno = (ficha.uid, ficha.gid);
-                if p.a == 0 {
+                if tipo == 0 {
                     return tx.create_volume_owned(nombre, hora.0, hora.1, dueno);
                 }
                 let master: [u8; 32] = llaves[..32].try_into().unwrap();
-                let salt: [u8; 16] = llaves[32..].try_into().unwrap();
+                let salt: [u8; 16] = llaves[32..48].try_into().unwrap();
+                if recuperacion {
+                    let otra: [u8; 16] = llaves[48..64].try_into().unwrap();
+                    return tx.create_encrypted_volume_with_recovery(nombre, hora.0, hora.1, &clave[..largo], &codigo, &master, [salt, otra], coste, dueno);
+                }
                 tx.create_encrypted_volume_owned(nombre, hora.0, hora.1, &clave[..largo], &master, salt, coste, dueno)
             });
             clave.fill(0);
             llaves.fill(0);
-            core::hint::black_box((&clave, &llaves));
-            match hecho {
+            let r = match hecho {
+                Ok(id) if recuperacion => {
+                    c.ventana()[..codigo.len()].copy_from_slice(&codigo);
+                    Respuesta { estado: BIEN, a: id, b: codigo.len() as u64, ..Default::default() }
+                }
                 Ok(id) => Respuesta { estado: BIEN, a: id, ..Default::default() },
                 Err(e) => mal(estado_de(e)),
-            }
+            };
+            codigo.fill(0);
+            core::hint::black_box((&clave, &llaves, &codigo));
+            r
         }
         // S32: crecer en uso. Una transacción: añade los bloques nuevos al asignador y pone el tamaño.
         CRECER => {

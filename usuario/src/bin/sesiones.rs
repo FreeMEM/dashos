@@ -48,6 +48,7 @@ use preguntas_ficheros as pf;
 mod sesiones_disco;
 use dashos::permisos_texto as pt;
 use dashos::registro as rg;
+use dashos::cuentas as cu;
 use dashos::tanda;
 use sesiones_disco as sd;
 
@@ -196,7 +197,7 @@ impl Registro {
 
     /// Como `linea`, con el qué y el motivo tal como llegan (de un programa: `registro::linea` los limpia).
     fn linea_bytes(&mut self, f: usize, programa: &[u8], uid: u32, clase: &str, que: &[u8], motivo: &[u8]) {
-        let usuario = sd::usuario(uid, CUENTAS, PRIMERA_PERSONA);
+        let usuario = sd::usuario(uid, nombre_de(uid).as_ref().map(|n| n.as_str()), PRIMERA_PERSONA);
         let mut h = [0u8; 24];
         let hn = rg::hora(dashos::hora_ns(), dashos::ahora_us(), &mut h);
         let mut l = [0u8; rg::MAX_LINEA];
@@ -477,11 +478,52 @@ struct Ficha {
     desarrollo: bool,
 }
 
-/// Las cuentas, provisionales (luego, `Estado:Cuentas/usuarios`): usuario y nombre, que es también el de su volumen
-/// cifrado y su `Home:`.
-const CUENTAS: &[(u32, &str)] = &[(1000, "Ana"), (1001, "Carla")];
-/// Los del grupo `admin` (U5), provisional como `CUENTAS`.
-const ADMIN: &[u32] = &[1000];
+/// S6b, rama `cuentas`: las cuentas y los grupos, leídos de `Estado:Cuentas/` al arrancar (`cargar_cuentas`) y
+/// cambiados solo por las acciones de administrador de una tanda. Antes, fijas en el código (Ana y Carla, y Ana en
+/// `admin`). Solo las toca el hilo principal (el del aviso de memoria no las mira), siempre por `con_cuentas` y
+/// `cambiar_cuentas`, que no dejan salir referencias: así no hay dos préstamos a la vez.
+struct Lista(core::cell::UnsafeCell<cu::Cuentas>);
+// SAFETY: solo el hilo principal la usa (ver arriba).
+unsafe impl Sync for Lista {}
+static CUENTAS: Lista = Lista(core::cell::UnsafeCell::new(cu::Cuentas::vacia()));
+
+/// El Argon2 de los volúmenes de las cuentas nuevas: el de verdad del servicio (`Cost::SERVICE`, 16 MiB y 3 pasadas).
+const COSTE_BARATO: bool = false;
+
+fn con_cuentas<R>(f: impl FnOnce(&cu::Cuentas) -> R) -> R {
+    // SAFETY: un solo hilo, y la referencia no sale de `f` (su resultado no puede depender de ella).
+    f(unsafe { &*CUENTAS.0.get() })
+}
+
+fn cambiar_cuentas<R>(f: impl FnOnce(&mut cu::Cuentas) -> R) -> R {
+    // SAFETY: como `con_cuentas`; nadie más la tiene prestada mientras.
+    f(unsafe { &mut *CUENTAS.0.get() })
+}
+
+/// El nombre de la cuenta del usuario `uid` (activa o retirada), para el registro y lo que se enseña.
+fn nombre_de(uid: u32) -> Option<cu::Nombre> {
+    con_cuentas(|c| c.por_uid(uid).map(|x| x.nombre))
+}
+
+/// El volumen cifrado (su `Home:`) del usuario `uid`, si su cuenta está activa.
+fn volumen_de(uid: u32) -> Option<cu::Nombre> {
+    con_cuentas(|c| c.activa(uid).map(|x| x.volumen))
+}
+
+/// Si `uid` es una persona con su cuenta activa.
+fn tiene_cuenta(uid: u32) -> bool {
+    con_cuentas(|c| c.activa(uid).is_some())
+}
+
+/// La cuenta activa que se llama exactamente `nombre`: su usuario y su volumen (para entrar y para la contraseña de un
+/// administrador).
+fn para_entrar(nombre: &[u8]) -> Option<(u32, cu::Nombre)> {
+    con_cuentas(|c| c.para_entrar(nombre).map(|x| (x.uid, x.volumen)))
+}
+
+fn es_admin(uid: u32) -> bool {
+    con_cuentas(|c| c.es_admin(uid))
+}
 /// En las preguntas pendientes, el "servicio" de una acción de administrador: `ACCION + i` (i en `ACCIONES`).
 const ACCION: usize = 1000;
 /// S28: el "servicio" de un permiso sin llave (la guardia de ficheros de la caja Amiga, `preguntas_ficheros`), en lo
@@ -679,7 +721,7 @@ fn ram_salir(uid: u32, cuenta: &str, grupo: u32) {
 /// es una persona con cuenta; si no, ninguna.
 fn asignaciones_de(uid: u32) -> Tabla {
     let mut t = Tabla::vacia();
-    if uid >= PRIMERA_PERSONA && CUENTAS.iter().any(|c| c.0 == uid) {
+    if uid >= PRIMERA_PERSONA && tiene_cuenta(uid) {
         let _ = asig::de_sesion(&mut t, false);
     }
     t
@@ -780,7 +822,7 @@ fn tabla_de(f: &Ficha, asignaciones: &Tabla, progdir: u8) -> Tabla {
     // S6b, S36: una aplicación encerrada ve `SYS:`, su cajón (`Datos:`) y, en modo de desarrollo, la capa del usuario.
     if lanzado && f.perfil == PERFIL_APLICACION {
         let _ = propia.poner_volumen(b"SYS", RAIZ_SYS, b"");
-        if CUENTAS.iter().any(|c| c.0 == f.uid) {
+        if tiene_cuenta(f.uid) {
             let _ = propia.poner_volumen(VOLUMEN_DATOS.as_bytes(), RAIZ_DATOS, b"");
             if f.desarrollo {
                 for &(hueco, volumen, _, _) in RAICES_DESARROLLO {
@@ -790,7 +832,7 @@ fn tabla_de(f: &Ficha, asignaciones: &Tabla, progdir: u8) -> Tabla {
         }
     } else if lanzado || es(f, CEDEN_RAICES) {
         let _ = propia.poner_volumen(b"SYS", RAIZ_SYS, b"");
-        if CUENTAS.iter().any(|c| c.0 == f.uid) {
+        if tiene_cuenta(f.uid) {
             let _ = propia.poner_volumen(b"Home", RAIZ_HOME, b"");
             let _ = propia.poner_volumen(b"RAM", RAIZ_RAM, b"");
             let _ = propia.poner_volumen(b"Work", RAIZ_WORK, b"");
@@ -931,15 +973,234 @@ impl Tanda {
     }
 }
 
+/// S6b, rama `cuentas`: la contraseña de la cuenta nueva de una tanda (la teclea el administrador en la ventana de
+/// `guardian`, con la suya), de la tanda `id`, hasta que se usa. Aparte de `Tanda` (que se copia): así no quedan copias.
+struct ClaveNueva {
+    id: u32,
+    b: [u8; 128],
+    n: usize,
+}
+
+impl ClaveNueva {
+    const fn nada() -> ClaveNueva {
+        ClaveNueva { id: 0, b: [0; 128], n: 0 }
+    }
+
+    /// Fuera de la memoria (S6b, regla 9).
+    fn borrar(&mut self) {
+        self.b.fill(0);
+        core::hint::black_box(&self.b);
+        self.n = 0;
+        self.id = 0;
+    }
+}
+
+/// La hora del calendario en segundos (0 si el sistema no la sabe). Antes de 2026 no es creíble: el plazo de una cuenta
+/// borrada no se cuenta con ella (`cuentas::Fallo::SinHora`).
+fn hora_s() -> u64 {
+    let s = dashos::hora_ns() / 1_000_000_000;
+    if s < 1_767_225_600 { 0 } else { s }
+}
+
+/// S6b, rama `cuentas`: lee las cuentas de `Estado:Cuentas/` al arrancar. Lo que no vale se salta (las buenas se quedan)
+/// y se dice, aquí y en el registro de seguridad. Después, las borradas a las que se les acabó el plazo se borran del
+/// todo, con su volumen.
+fn cargar_cuentas(registro: &mut Registro) {
+    let mut u = [0u8; cu::MAX_FICHERO + 1];
+    let mut g = [0u8; cu::MAX_FICHERO + 1];
+    match sd::leer_cuentas(ARCHIVOS_ALTAS, &mut u, &mut g) {
+        Ok((nu, ng)) => {
+            let (c, iu, ig) = cu::Cuentas::leer(&u[..nu], &g[..ng]);
+            cambiar_cuentas(|x| *x = c);
+            let admins = con_cuentas(|c| c.admins());
+            println!(
+                "  [sesiones] cuentas de Estado:Cuentas: {} ({} activas), {} grupos, {} administradores",
+                c.todas().count(),
+                c.todas().filter(|x| x.activa()).count(),
+                c.grupos().count(),
+                admins
+            );
+            for (f, inf) in [("usuarios", iu), ("grupos", ig)] {
+                if inf.malas > 0 {
+                    let motivo = if inf.cortada { "el fichero está cortado o dañado: se saltan; las buenas se quedan" } else { "se saltan; las buenas se quedan" };
+                    println!("  [sesiones] cuentas: {} líneas de {} no valen (la primera, la {}){}; {}", inf.malas, f, inf.primera_mala, if inf.cortada { ", la última cortada" } else { "" }, motivo);
+                    registro.linea(rg::SEGURIDAD, b"sesiones", 0, "cuentas", format_args!("{} líneas de Estado:Cuentas/{} no valen (la primera, la {})", inf.malas, f, inf.primera_mala), motivo);
+                }
+            }
+            if nu == 0 {
+                println!("  [sesiones] cuentas: no hay Estado:Cuentas/usuarios: nadie puede entrar");
+                registro.linea(rg::SEGURIDAD, b"sesiones", 0, "cuentas", format_args!("no hay cuentas"), "falta Estado:Cuentas/usuarios");
+            }
+        }
+        Err(f) => {
+            let motivo = match f {
+                sd::Fallo::Ajeno => "un fichero no es de sesiones (alguien lo escribió a mano): no se lee",
+                sd::Fallo::Cajon => "el cajón no se pudo crear o no es de sesiones: no se lee",
+                sd::Fallo::Disco(_) => "el servicio de archivos no lo dio",
+            };
+            println!("  [sesiones] cuentas: {}; nadie puede entrar", motivo);
+            registro.linea(rg::SEGURIDAD, b"sesiones", 0, "cuentas", format_args!("no lee las cuentas de Estado:Cuentas"), motivo);
+        }
+    }
+    // Las borradas que vencieron: fuera, con su volumen (si no se puede quitar el volumen, la cuenta se queda).
+    let ahora = hora_s();
+    let mut quitadas = 0;
+    for _ in 0..cu::MAX_CUENTAS {
+        let Some(c) = con_cuentas(|c| c.todas().find(|x| ahora != 0 && cu::Cuentas::vencida(x, ahora)).copied()) else { break };
+        let e = sd::quitar_volumen(ARCHIVOS_ALTAS, c.volumen.bytes());
+        if e != BIEN && e != dashos::protocolo::archivos::NO_EXISTE {
+            println!("  [sesiones] cuentas: {} venció, pero su volumen no se quita ({}): se queda", c.nombre.as_str(), e);
+            break;
+        }
+        cambiar_cuentas(|x| x.quitar(c.uid));
+        quitadas += 1;
+        println!("  [sesiones] cuentas: {} (usuario {}) llevaba más de {} días borrada: se borra del todo, con su volumen ({})", c.nombre.as_str(), c.uid, cu::PLAZO_RETIRADA_S / 86400, e);
+        registro.linea(rg::SEGURIDAD, b"sesiones", c.uid, "cuentas", format_args!("borra del todo la cuenta {} (usuario {}) y su volumen", c.nombre.as_str(), c.uid), "se acabó el plazo para devolverla");
+    }
+    if quitadas > 0 && guardar_cuentas().is_err() {
+        println!("  [sesiones] cuentas: no se guardan tras borrar las vencidas");
+    }
+}
+
+/// Escribe las dos listas en `Estado:Cuentas/`. Primero `usuarios`: si falla `grupos`, un miembro que aún no está se
+/// salta al leer.
+fn guardar_cuentas() -> Result<(), sd::Fallo> {
+    let mut b = [0u8; cu::MAX_FICHERO];
+    let n = con_cuentas(|c| c.escribir_usuarios(&mut b)).ok_or(sd::Fallo::Disco(dashos::protocolo::archivos::SIN_SITIO))?;
+    sd::guardar_cuenta(ARCHIVOS_ALTAS, cu::USUARIOS.as_bytes(), &b[..n])?;
+    let n = con_cuentas(|c| c.escribir_grupos(&mut b)).ok_or(sd::Fallo::Disco(dashos::protocolo::archivos::SIN_SITIO))?;
+    sd::guardar_cuenta(ARCHIVOS_ALTAS, cu::GRUPOS.as_bytes(), &b[..n])
+}
+
+/// Hace en `c` (una copia, para mirar una tanda antes de preguntar, o las de verdad) la acción de cuentas `a`, que pide
+/// el usuario `pide`, con las sesiones `abiertas`: (estado, el número de la cuenta).
+fn accion_de_cuenta(c: &mut cu::Cuentas, a: &tanda::Accion, pide: u32, abiertas: &[u32; 8], ahora: u64) -> Result<u32, cu::Fallo> {
+    match a.nombre() {
+        "crear" => c.crear(a.cuenta(), a.objetivo as u32, a.otro()),
+        "borrar" => {
+            let uid = c.puede_retirar(a.cuenta(), pide)?;
+            if abiertas.contains(&uid) {
+                return Err(cu::Fallo::SesionAbierta);
+            }
+            if ahora == 0 {
+                return Err(cu::Fallo::SinHora);
+            }
+            c.retirar(a.cuenta(), pide, ahora)
+        }
+        "devolver" => c.devolver(a.cuenta()),
+        "meter" => c.meter(a.cuenta(), a.otro()).map(|x| x.0),
+        "sacar" => c.sacar(a.cuenta(), a.otro()).map(|x| x.0),
+        _ => Err(cu::Fallo::Linea),
+    }
+}
+
+/// Borrar, devolver, meter en un grupo o sacar: en las cuentas y en el disco; si no se guarda, como estaba.
+fn cambiar_cuenta(t: &Tanda, a: &tanda::Accion, abiertas: &[u32; 8], registro: &mut Registro) -> (i32, u64) {
+    let antes = con_cuentas(|c| *c);
+    // Ni la propia de quien la pide ni la de quien la confirmó.
+    let confirma = para_entrar(nombre(&t.quien).as_bytes()).map_or(0, |x| x.0);
+    let r = cambiar_cuentas(|c| {
+        if a.nombre() == "borrar" && c.por_nombre(a.cuenta()).is_some_and(|x| x.uid == confirma) {
+            return Err(cu::Fallo::Propia);
+        }
+        accion_de_cuenta(c, a, t.uid, abiertas, hora_s())
+    });
+    let uid = match r {
+        Ok(uid) => uid,
+        Err(f) => return (f.estado(), 0),
+    };
+    if let Err(f) = guardar_cuentas() {
+        cambiar_cuentas(|c| *c = antes);
+        println!("  [sesiones] cuentas: no se guardan ({:?}): queda como estaba", f);
+        return (dashos::protocolo::archivos::ERROR_DEL_DISCO, 0);
+    }
+    let cuenta = core::str::from_utf8(a.cuenta()).unwrap_or("?");
+    let otro = core::str::from_utf8(a.otro()).unwrap_or("?");
+    let por = Texto16::de(format_args!("pedido por {}, con la contraseña de {}", nombre(&t.programa), nombre(&t.quien)));
+    match a.nombre() {
+        "borrar" => registro.linea(rg::SEGURIDAD, b"sesiones", uid, "cuentas", format_args!("borra la cuenta {} (usuario {}): se puede devolver durante {} días", cuenta, uid, cu::PLAZO_RETIRADA_S / 86400), por.como_str()),
+        "devolver" => registro.linea(rg::SEGURIDAD, b"sesiones", uid, "cuentas", format_args!("devuelve la cuenta {} (usuario {})", cuenta, uid), por.como_str()),
+        "meter" => registro.linea(rg::SEGURIDAD, b"sesiones", uid, "cuentas", format_args!("pone a {} en el grupo {}", cuenta, otro), por.como_str()),
+        _ => registro.linea(rg::SEGURIDAD, b"sesiones", uid, "cuentas", format_args!("quita a {} del grupo {}", cuenta, otro), por.como_str()),
+    }
+    println!("  [sesiones] cuentas: {} {} {}: hecho", a.nombre(), cuenta, otro);
+    (BIEN, uid as u64)
+}
+
+/// Crea la cuenta nueva de la tanda: su volumen cifrado (con la contraseña que tecleó el administrador y un código de
+/// recuperación), la línea en `Estado:Cuentas/usuarios` y el código a `guardian`, que lo enseña para apuntarlo en papel
+/// (el programa que la pidió no lo ve). Si algo falla, como estaba: sin cuenta y sin volumen.
+fn crear_cuenta(t: &Tanda, a: &tanda::Accion, nueva: &mut ClaveNueva, canal_guardian: u32, registro: &mut Registro) -> (i32, u64) {
+    let uid = match con_cuentas(|c| c.puede_crear(a.cuenta(), a.objetivo as u32, a.otro())) {
+        Ok(u) => u,
+        Err(f) => return (f.estado(), 0),
+    };
+    if nueva.id != t.id || nueva.n < cu::MIN_CLAVE {
+        nueva.borrar();
+        return (cu::Fallo::ClaveCorta.estado(), 0);
+    }
+    let mut codigo = [0u8; cu::LARGO_CODIGO];
+    let t0 = dashos::ahora_us();
+    let hecho = sd::hacer_volumen(ARCHIVOS_ALTAS, uid, a.cuenta(), &nueva.b[..nueva.n], COSTE_BARATO, &mut codigo);
+    nueva.borrar();
+    let cuenta = core::str::from_utf8(a.cuenta()).unwrap_or("?");
+    if let Err(e) = hecho {
+        println!("  [sesiones] cuentas: el volumen de {} no se hace ({})", cuenta, e);
+        return (e, 0);
+    }
+    let ms = (dashos::ahora_us() - t0) / 1000;
+    let antes = con_cuentas(|c| *c);
+    let creada = cambiar_cuentas(|c| c.crear(a.cuenta(), uid, a.otro()));
+    let guardada = creada.is_ok() && guardar_cuentas().is_ok();
+    if !guardada {
+        cambiar_cuentas(|c| *c = antes);
+        let quitado = sd::quitar_volumen(ARCHIVOS_ALTAS, a.cuenta());
+        codigo.fill(0);
+        println!("  [sesiones] cuentas: {} no se guarda; su volumen, fuera ({})", cuenta, quitado);
+        return (creada.err().map_or(dashos::protocolo::archivos::ERROR_DEL_DISCO, |f| f.estado()), 0);
+    }
+    println!("  [sesiones] cuentas: crea {} (usuario {}), con su volumen cifrado y su código de recuperación, en {} ms", cuenta, uid, ms);
+    let por = Texto16::de(format_args!("pedido por {}, con la contraseña de {}", nombre(&t.programa), nombre(&t.quien)));
+    registro.linea(rg::SEGURIDAD, b"sesiones", uid, "cuentas", format_args!("crea la cuenta {} (usuario {}), con su volumen cifrado", cuenta, uid), por.como_str());
+    // El código, a `guardian`: el nombre de la cuenta donde va el programa, "*codigo" y el código tras la pregunta.
+    let mut q = [0u8; PREGUNTA];
+    q[4..8].copy_from_slice(&uid.to_le_bytes());
+    q[8..8 + a.cuenta().len()].copy_from_slice(a.cuenta());
+    q[24..31].copy_from_slice(b"*codigo");
+    q[40..40 + codigo.len()].copy_from_slice(&codigo);
+    if dashos::canal_escribir(canal_guardian, &q, &[]) != 0 {
+        println!("  [sesiones] cuentas: el código de {} no llega a guardian", cuenta);
+    }
+    q.fill(0);
+    codigo.fill(0);
+    core::hint::black_box((&q, &codigo));
+    (BIEN, uid as u64)
+}
+
 /// S36, decisión 1: sigue con la tanda `t`, ya confirmada, desde la acción en que va: cada una por el servicio que la
 /// tiene a su cargo (`sesiones` cierra procesos y da el registro de todos; el comprobador aparte comprueba el disco), en
 /// orden, y se para en la primera que falle. Devuelve `false` si se queda esperando al comprobador (sigue cuando
 /// conteste); `true` si acabó (bien, o parada en una).
-fn seguir_tanda(t: &mut Tanda, fichas: &mut [Option<Ficha>], lee_todo: &mut [u64; MAX_LEE_TODO], selector: u32, comprobando: &mut Option<(u32, [u8; 16], [u8; 16], u64, u32)>, registro: &mut Registro) -> bool {
+#[allow(clippy::too_many_arguments)]
+fn seguir_tanda(
+    t: &mut Tanda,
+    fichas: &mut [Option<Ficha>],
+    lee_todo: &mut [u64; MAX_LEE_TODO],
+    selector: u32,
+    comprobando: &mut Option<(u32, [u8; 16], [u8; 16], u64, u32)>,
+    registro: &mut Registro,
+    nueva: &mut ClaveNueva,
+    abiertas: &[u32; 8],
+    canal_guardian: u32,
+) -> bool {
     while t.resultado.hechas < t.n {
         let i = t.resultado.hechas;
         let a = t.acciones[i];
         let (estado, dato) = match a.nombre() {
+            // S6b, rama `cuentas`: las cuentas, por `sesiones`, que es quien las lleva (y el servicio de archivos hace el
+            // volumen de una nueva).
+            "crear" => crear_cuenta(t, &a, nueva, canal_guardian, registro),
+            "borrar" | "devolver" | "meter" | "sacar" => cambiar_cuenta(t, &a, abiertas, registro),
             "registro" => {
                 if !lee_todo.contains(&t.de) {
                     lee_todo.rotate_right(1);
@@ -1136,12 +1397,12 @@ fn cargar_permisos(uid: Option<u32>, concedidos: &mut [Option<Concedido>], regis
     if !CON_DISCO.load(core::sync::atomic::Ordering::Relaxed) {
         return;
     }
-    let cuenta = uid.and_then(|u| CUENTAS.iter().find(|c| c.0 == u)).map(|c| c.1);
+    let cuenta = uid.and_then(volumen_de);
     if uid.is_some() && cuenta.is_none() {
         return;
     }
-    let (vol, cam) = match cuenta {
-        Some(c) => (c.as_bytes(), pt::CAJON_PERSONA.as_bytes()),
+    let (vol, cam) = match &cuenta {
+        Some(c) => (c.bytes(), pt::CAJON_PERSONA.as_bytes()),
         None => (&b""[..], pt::CAJON_SISTEMA.as_bytes()),
     };
     let mut van = 0;
@@ -1154,7 +1415,7 @@ fn cargar_permisos(uid: Option<u32>, concedidos: &mut [Option<Concedido>], regis
         };
         van += conceder(concedidos, p, s, u) as usize;
     });
-    let donde = cuenta.unwrap_or("sistema");
+    let donde = cuenta.as_ref().map_or("sistema", |c| c.as_str());
     match r {
         Ok(_) => println!("  [sesiones] permisos concedidos ({}): {} leídos de su Prefs/Permisos", donde, van),
         Err(f) => {
@@ -1179,8 +1440,10 @@ fn guardar_de(uid: u32, concedidos: &[Option<Concedido>], abiertas: &[u32; 8], p
     }
     let de_serie = |c: &&Concedido| SIN_PREGUNTAR.iter().any(|&(q, sv)| q == nombre(&c.0) && sv == permiso_de(c));
     let campo = |n: &[u8; 16]| n.iter().position(|&c| c == 0).unwrap_or(16);
+    let vol_persona = if uid >= PRIMERA_PERSONA { volumen_de(uid) } else { None };
     let r = if uid >= PRIMERA_PERSONA {
-        let Some(cuenta) = CUENTAS.iter().find(|c| c.0 == uid).map(|c| c.1) else { return };
+        let Some(vol) = vol_persona.as_ref() else { return };
+        let cuenta = vol.as_str();
         if !abiertas.contains(&uid) {
             if !por_guardar.contains(&uid) {
                 if let Some(h) = por_guardar.iter_mut().find(|h| **h == 0) {
@@ -1194,7 +1457,7 @@ fn guardar_de(uid: u32, concedidos: &[Option<Concedido>], abiertas: &[u32; 8], p
             *h = 0;
         }
         let lineas = concedidos.iter().flatten().filter(|c| c.2 == uid && !de_serie(c)).map(|c| (&c.0[..campo(&c.0)], &c.3[..campo(&c.3)], None));
-        (cuenta, sd::guardar_permisos(ARCHIVOS_ALTAS, cuenta.as_bytes(), pt::CAJON_PERSONA.as_bytes(), lineas))
+        (cuenta, sd::guardar_permisos(ARCHIVOS_ALTAS, vol.bytes(), pt::CAJON_PERSONA.as_bytes(), lineas))
     } else {
         let lineas = concedidos.iter().flatten().filter(|c| c.2 < PRIMERA_PERSONA && !de_serie(c)).map(|c| (&c.0[..campo(&c.0)], &c.3[..campo(&c.3)], Some(c.2)));
         ("sistema", sd::guardar_permisos(ARCHIVOS_ALTAS, b"", pt::CAJON_SISTEMA.as_bytes(), lineas))
@@ -1590,6 +1853,8 @@ fn principal() -> u64 {
     // S36, decisión 1: las tandas de acciones de administrador sin acabar, y la que espera al comprobador (su hueco).
     let mut tandas: [Option<Tanda>; MAX_TANDAS] = [None; MAX_TANDAS];
     let mut tanda_comprobando: Option<usize> = None;
+    // S6b, rama `cuentas`: la contraseña de la cuenta nueva de la tanda que se está haciendo.
+    let mut clave_nueva = ClaveNueva::nada();
     let mut canal_guardian = 0u32;
     // El permiso de apagar del kernel (llega de `inicio`, `PERMISO_APAGAR`) y lo que espera la respuesta de `guardian`
     // (número de la pregunta, si es reiniciar, quién lo pidió y cuándo: pasado un minuto sin respuesta, se olvida).
@@ -1642,6 +1907,8 @@ fn principal() -> u64 {
             Err(e) => println!("  [sesiones] sin el registro común en el disco ({}): lo que se apunte se pierde", e),
         }
         registro.linea(rg::SISTEMA, b"sesiones", 0, "servicio", format_args!("en marcha"), "");
+        // S6b, rama `cuentas`: las cuentas, de `Estado:Cuentas/`, antes que nada que las mire.
+        cargar_cuentas(&mut registro);
         // S6b, S36: lo concedido a los programas del sistema, en `Estado:Prefs/Permisos/`; y lo de antes, en el cajón
         // de `sesiones`, se pasa a su sitio (el de cada persona, cuando entre).
         cargar_permisos(None, &mut concedidos, &mut registro);
@@ -1722,8 +1989,9 @@ fn principal() -> u64 {
                 match tanda_comprobando.take() {
                     Some(h) if let Some(t) = tandas[h].as_mut() => {
                         let sigue = apuntar_en_tanda(t, estado, dato, &mut registro);
-                        if !sigue || seguir_tanda(t, &mut fichas, &mut lee_todo, selector, &mut comprobando, &mut registro) {
+                        if !sigue || seguir_tanda(t, &mut fichas, &mut lee_todo, selector, &mut comprobando, &mut registro, &mut clave_nueva, &abiertas, canal_guardian) {
                             acabar_tanda(t, &mut registro);
+                            clave_nueva.borrar();
                             tandas[h] = None;
                         } else {
                             tanda_comprobando = Some(h);
@@ -1922,22 +2190,22 @@ fn principal() -> u64 {
                     let (nl, cl) = (u32_en(4) as usize, u32_en(8) as usize);
                     // U6: entrar en una sesión que ya está abierta (detrás) es volver a ella: la contraseña se comprueba
                     // sin tocar el volumen.
-                    let ya_dentro = u32_en(0) == ENTRAR
-                        && m.get(12..12 + nl).and_then(|u| CUENTAS.iter().find(|c| c.1.as_bytes() == u)).is_some_and(|c| abiertas.contains(&c.0));
-                    let estado = match (&archivos, guardian, m.get(12..12 + nl), m.get(12 + nl..12 + nl + cl)) {
+                    // S6b, rama `cuentas`: la cuenta por su nombre exacto, de `Estado:Cuentas/usuarios`: para entrar y volver,
+                    // activa (una borrada no entra); para salir, la que sea. Su contraseña es la de su volumen.
+                    let la_cuenta = m.get(12..12 + nl).and_then(|u| {
+                        if u32_en(0) == SALIR { con_cuentas(|c| c.todas().find(|x| x.nombre.bytes() == u).map(|x| (x.uid, x.volumen))) } else { para_entrar(u) }
+                    });
+                    let ya_dentro = u32_en(0) == ENTRAR && la_cuenta.is_some_and(|c| abiertas.contains(&c.0));
+                    let estado = match (&archivos, guardian, la_cuenta, m.get(12 + nl..12 + nl + cl)) {
                         (_, false, ..) => dashos::protocolo::archivos::PROTEGIDO,
-                        (Some(a), true, Some(usuario), Some(clave)) if u32_en(0) == ENTRAR => a.abrir_volumen(usuario, clave, ya_dentro),
-                        (Some(a), true, Some(usuario), Some(clave)) if u32_en(0) == VOLVER => a.abrir_volumen(usuario, clave, true),
+                        // Sin una cuenta activa con ese nombre (no existe, o está borrada): como una contraseña mala.
+                        (Some(_), true, None, _) if m.get(12..12 + nl).is_some() => dashos::protocolo::archivos::PROTEGIDO,
+                        (Some(a), true, Some((_, vol)), Some(clave)) if u32_en(0) == ENTRAR => a.abrir_volumen(vol.bytes(), clave, ya_dentro),
+                        (Some(a), true, Some((_, vol)), Some(clave)) if u32_en(0) == VOLVER => a.abrir_volumen(vol.bytes(), clave, true),
                         // Salir con programas suyos aún vivos (los que lanzó `sesiones` como él), no: -13, como con
                         // algo abierto en su volumen.
-                        (Some(_), true, Some(usuario), _)
-                            if CUENTAS.iter().find(|c| c.1.as_bytes() == usuario).is_some_and(|&(uid, _)| {
-                                fichas.iter().flatten().any(|f| f.uid == uid && f.marca >= PRIMER_PID_PROPIO)
-                            }) =>
-                        {
-                            -13
-                        }
-                        (Some(a), true, Some(usuario), _) => a.pedir(dashos::protocolo::archivos::CERRAR_VOLUMEN, 0, usuario),
+                        (Some(_), true, Some((uid, _)), _) if u32_en(0) == SALIR && fichas.iter().flatten().any(|f| f.uid == uid && f.marca >= PRIMER_PID_PROPIO) => -13,
+                        (Some(a), true, Some((_, vol)), _) if u32_en(0) == SALIR => a.pedir(dashos::protocolo::archivos::CERRAR_VOLUMEN, 0, vol.bytes()),
                         _ => -1,
                     };
                     let quien = m.get(12..12 + nl).and_then(|u| core::str::from_utf8(u).ok()).unwrap_or("?");
@@ -1952,13 +2220,13 @@ fn principal() -> u64 {
                         registro.apuntar(R_ENTRAR, estado, &pide, quien.as_bytes());
                     }
                     if estado == BIEN && guardian {
-                        if let Some(&(uid, _)) = CUENTAS.iter().find(|c| c.1.as_bytes() == quien.as_bytes()) {
+                        if let Some((uid, vol)) = la_cuenta {
                             match u32_en(0) {
                                 ENTRAR if !abiertas.contains(&uid) => {
                                     if let Some(i) = abiertas.iter().position(|x| *x == 0) {
                                         abiertas[i] = uid;
                                         // Su `RAM:`, con `T:` y `ENV:`, antes de que corra nada suyo.
-                                        grupos_sesion[i] = ram_entrar(uid, quien, &fichas, t_entrar);
+                                        grupos_sesion[i] = ram_entrar(uid, vol.as_str(), &fichas, t_entrar);
                                         // S6b, S36: lo que concedió, de su `Home:Prefs/Permisos/`; y lo que se le concedió
                                         // con el volumen cerrado, ahí.
                                         cargar_permisos(Some(uid), &mut concedidos, &mut registro);
@@ -1992,8 +2260,8 @@ fn principal() -> u64 {
                             }
                             if activa != antes {
                                 let detras = abiertas.iter().filter(|&&x| x != 0 && x != activa).count();
-                                let de = CUENTAS.iter().find(|c| c.0 == activa).map_or("nadie", |c| c.1);
-                                println!("  [sesiones] delante, la sesión de {}; detrás, {}", de, detras);
+                                let de = nombre_de(activa);
+                                println!("  [sesiones] delante, la sesión de {}; detrás, {}", de.as_ref().map_or("nadie", |n| n.as_str()), detras);
                             }
                             // U6, paso 2: al compositor y al sonido, antes de contestar a `guardian` (que luego quita
                             // el bloqueo: por el mismo canal, así no se ve un cuadro de la sesión de detrás).
@@ -2053,8 +2321,8 @@ fn principal() -> u64 {
                                 let corto_ = camino.rsplit(|&c| c == b'/').next().unwrap_or(camino);
                                 let dir = &camino[..camino.len() - corto_.len()];
                                 let dir = dir.strip_suffix(b"/").unwrap_or(dir);
-                                let cuenta = CUENTAS.iter().find(|c| c.0 == uid).map(|c| c.1.as_bytes());
-                                alta_archivos(pid, uid, gid, dir, cuenta, None, encierro);
+                                let vol = volumen_de(uid);
+                                alta_archivos(pid, uid, gid, dir, vol.as_ref().map(|v| v.bytes()), None, encierro);
                                 // Y su llave de archivos, marcada con su número: va la segunda.
                                 let archivos_suyo = dashos::llave_duplicar(ARCHIVOS_ALTAS, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, pid);
                                 // U6: la tercera, la del compositor, también con su número. Antes, el compositor y el
@@ -2209,7 +2477,8 @@ fn principal() -> u64 {
                             let pid = siguiente_pid;
                             let canal_suyo = dashos::llave_duplicar(PROPIO, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, pid);
                             // Sus raíces, las de quien lo lanza (la 0, su mismo cajón) y una más: su `PROGDIR:`.
-                            let cuenta = CUENTAS.iter().find(|c| c.0 == f.uid).map(|c| c.1.as_bytes());
+                            let vol = volumen_de(f.uid);
+                            let cuenta = vol.as_ref().map(|v| v.bytes());
                             let largo_dir = f.progdir.iter().position(|&c| c == 0).unwrap_or(24);
                             let mut cam = [0u8; 160];
                             // S6b, S36: el de una aplicación encerrada, solo desde las raíces que tiene (su `PROGDIR:` o
@@ -2329,8 +2598,8 @@ fn principal() -> u64 {
                         let (sys, home, progdir) = if lanzado { (RAIZ_SYS, RAIZ_HOME, 0) } else { (SIN_RAIZ, SIN_RAIZ, SIN_RAIZ) };
                         poner(b"SYS", sys, b"", b"");
                         poner(b"Programas", sys, b"", b"Programas");
-                        if let Some(&(_, cuenta)) = CUENTAS.iter().find(|c| c.0 == f.uid) {
-                            poner(b"Home", home, cuenta.as_bytes(), b"");
+                        if let Some(vol) = volumen_de(f.uid) {
+                            poner(b"Home", home, vol.bytes(), b"");
                         }
                         if lanzado {
                             let largo = f.progdir.iter().position(|&c| c == 0).unwrap_or(24);
@@ -2649,11 +2918,31 @@ fn principal() -> u64 {
                             }
                             Ok(n) => {
                                 t.n = n;
-                                t.acciones = acciones;
                                 t.resultado = tanda::Resultado::nuevo(n);
                                 let mut e = BIEN;
+                                // S6b, rama `cuentas`: las de cuentas, probadas en orden sobre una copia (una puede contar
+                                // con las de antes: crear y luego meter en un grupo): si una no se podría hacer (un nombre
+                                // repetido, la cuenta propia, el último administrador...), no se pregunta. La de crear,
+                                // con el número que tendrá, que es el que se enseña.
+                                let mut prueba = con_cuentas(|c| *c);
+                                let ahora = hora_s();
+                                for (i, a) in acciones[..n].iter_mut().enumerate() {
+                                    if !matches!(a.nombre(), "crear" | "borrar" | "devolver" | "meter" | "sacar") {
+                                        continue;
+                                    }
+                                    match accion_de_cuenta(&mut prueba, a, uid, &abiertas, ahora) {
+                                        Ok(u) if a.nombre() == "crear" => a.objetivo = u as u64,
+                                        Ok(_) => {}
+                                        Err(f) => {
+                                            e = f.estado();
+                                            por = Texto16::de(format_args!("la línea {}: {}", i + 1, f));
+                                            break;
+                                        }
+                                    }
+                                }
+                                t.acciones = acciones;
                                 // La lista en llano, con el nombre de lo que se cierra: se enseña esta y se hace esta.
-                                for (i, a) in acciones[..n].iter().enumerate() {
+                                for (i, a) in acciones[..if e == BIEN { n } else { 0 }].iter().enumerate() {
                                     let destino = (a.nombre() == "matar").then(|| fichas.iter().flatten().find(|f| f.marca == a.objetivo).copied());
                                     let (prog, persona) = match destino {
                                         Some(None) => {
@@ -2661,9 +2950,10 @@ fn principal() -> u64 {
                                             por = Texto16::de(format_args!("la línea {}: no hay un proceso {}", i + 1, a.objetivo));
                                             break;
                                         }
-                                        Some(Some(f)) => (f.nombre, CUENTAS.iter().find(|c| c.0 == f.uid).map_or("", |c| c.1)),
-                                        None => ([0; 16], ""),
+                                        Some(Some(f)) => (f.nombre, nombre_de(f.uid)),
+                                        None => ([0; 16], None),
                                     };
+                                    let persona = persona.as_ref().map_or("", |n| n.as_str());
                                     let linea = sd::Texto::<112>::de(format_args!("{}. {}\n", i + 1, tanda::Frase { accion: *a, programa: nombre(&prog), persona }));
                                     let b = linea.bytes();
                                     let cabe = b.len().min(TEXTO_TANDA - t.largo);
@@ -2695,6 +2985,10 @@ fn principal() -> u64 {
                         q[8..24].copy_from_slice(&programa);
                         q[24..30].copy_from_slice(b"*tanda");
                         q[40..44].copy_from_slice(&(t.n as u32).to_le_bytes());
+                        // S6b, rama `cuentas`: si crea una cuenta, su nombre: `guardian` pide también su contraseña.
+                        if let Some(a) = t.acciones[..t.n].iter().find(|a| a.nombre() == "crear") {
+                            q[48..48 + a.cuenta().len()].copy_from_slice(a.cuenta());
+                        }
                         if dashos::canal_escribir(canal_guardian, &q, &[]) == 0 {
                             t.id = id;
                             println!("  [sesiones] {} pide una tanda de {} acciones de administrador: se pregunta", nombre(&programa), t.n);
@@ -2721,8 +3015,8 @@ fn principal() -> u64 {
                             r[8..12].copy_from_slice(&(van as u32).to_le_bytes());
                             r[12..16].copy_from_slice(&(t.n as u32).to_le_bytes());
                             // Se propone la persona de delante, si es administradora.
-                            if let Some(c) = CUENTAS.iter().find(|c| c.0 == activa && ADMIN.contains(&c.0)) {
-                                r[16..16 + c.1.len().min(16)].copy_from_slice(&c.1.as_bytes()[..c.1.len().min(16)]);
+                            if let Some(n) = nombre_de(activa).filter(|_| es_admin(activa)) {
+                                r[16..16 + n.bytes().len()].copy_from_slice(n.bytes());
                             }
                             r[32..32 + van].copy_from_slice(&t.texto[desde..desde + van]);
                             van
@@ -2739,18 +3033,28 @@ fn principal() -> u64 {
                     let (id, lu, lc) = (u32_en(4), u32_en(8) as usize, u32_en(12) as usize);
                     let usuario = m.get(16..16 + lu).unwrap_or(b"");
                     let clave = m.get(16 + lu..16 + lu + lc).unwrap_or(b"");
+                    // S6b, rama `cuentas`: detrás, si la tanda crea una cuenta, su contraseña (largo u32 y la contraseña).
+                    let ln = u32_en(16 + lu + lc) as usize;
+                    let otra = m.get(20 + lu + lc..20 + lu + lc + ln).filter(|o| o.len() <= 128).unwrap_or(b"");
+                    // Un administrador (activo, del grupo `admin` de `Estado:Cuentas/grupos`) con su contraseña buena: la
+                    // comprueba `sesiones` con su volumen, sin abrirlo.
+                    let admin = para_entrar(usuario).filter(|x| es_admin(x.0));
                     // S36, decisión 1: la contraseña de una tanda: con la buena de un administrador, se hace la lista
                     // enseñada, en orden; si no, nada.
                     // Solo una que aún no se confirmó (la que espera al comprobador ya está en marcha).
                     if let Some(h) = tandas.iter().position(|t| t.is_some_and(|t| t.id == id && t.quien == [0; 16])) {
                         let mut t = tandas[h].take().unwrap();
-                        let admin = CUENTAS.iter().find(|c| c.1.as_bytes() == usuario).is_some_and(|c| ADMIN.contains(&c.0));
-                        let clave_buena = admin && archivos.as_ref().is_some_and(|a| a.abrir_volumen(usuario, clave, true) == BIEN);
+                        let clave_buena = admin.is_some_and(|(_, vol)| archivos.as_ref().is_some_and(|a| a.abrir_volumen(vol.bytes(), clave, true) == BIEN));
                         if clave_buena {
                             t.quien = nombre16(usuario);
+                            clave_nueva.borrar();
+                            clave_nueva.id = t.id;
+                            clave_nueva.n = otra.len();
+                            clave_nueva.b[..otra.len()].copy_from_slice(otra);
                             println!("  [sesiones] tanda de {}: confirmada con la contraseña de {}; se hacen {}", nombre(&t.programa), nombre(&t.quien), t.n);
-                            if seguir_tanda(&mut t, &mut fichas, &mut lee_todo, selector, &mut comprobando, &mut registro) {
+                            if seguir_tanda(&mut t, &mut fichas, &mut lee_todo, selector, &mut comprobando, &mut registro, &mut clave_nueva, &abiertas, canal_guardian) {
                                 acabar_tanda(&t, &mut registro);
+                                clave_nueva.borrar();
                             } else {
                                 tandas[h] = Some(t);
                                 tanda_comprobando = Some(h);
@@ -2767,8 +3071,7 @@ fn principal() -> u64 {
                         registro.uid = fichas.iter().flatten().find(|f| f.marca == de).map_or(0, |f| f.uid);
                         // Un administrador (del grupo `admin`) con su contraseña buena: la comprueba `sesiones` con su
                         // volumen, sin abrirlo. Sin plazo de gracia: cada acción, la suya.
-                        let admin = CUENTAS.iter().find(|c| c.1.as_bytes() == usuario).is_some_and(|c| ADMIN.contains(&c.0));
-                        let clave_buena = admin && archivos.as_ref().is_some_and(|a| a.abrir_volumen(usuario, clave, true) == BIEN);
+                        let clave_buena = admin.is_some_and(|(_, vol)| archivos.as_ref().is_some_and(|a| a.abrir_volumen(vol.bytes(), clave, true) == BIEN));
                         let hecho = match (clave_buena, &archivos) {
                             // A15: lo hace el comprobador aparte, con los datos, sin parar al servicio de archivos ni a
                             // `sesiones`: la respuesta llega luego (`MARCA_COMPROBADOR`). Una a la vez.
@@ -2807,13 +3110,13 @@ fn principal() -> u64 {
                 BLOQUEAR => {
                     // U3: bloquear la sesión de su usuario, si la tiene abierta; la pantalla la pone `guardian`.
                     // U6: y solo la de delante (la de detrás ya está bloqueada; si no, su pantalla saldría encima de otra).
-                    let cuenta = yo.and_then(|f| CUENTAS.iter().find(|c| c.0 == f.uid && abiertas.contains(&c.0) && activa == c.0));
+                    let cuenta = yo.filter(|f| abiertas.contains(&f.uid) && activa == f.uid).and_then(|f| nombre_de(f.uid).map(|n| (f.uid, n)));
                     let quien = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
                     let estado = match cuenta {
-                        Some(&(uid, nombre_cuenta)) if canal_guardian != 0 => {
+                        Some((uid, nombre_cuenta)) if canal_guardian != 0 => {
                             let mut q = [0u8; PREGUNTA];
                             q[4..8].copy_from_slice(&uid.to_le_bytes());
-                            q[8..8 + nombre_cuenta.len().min(16)].copy_from_slice(&nombre_cuenta.as_bytes()[..nombre_cuenta.len().min(16)]);
+                            q[8..8 + nombre_cuenta.bytes().len()].copy_from_slice(nombre_cuenta.bytes());
                             q[24..33].copy_from_slice(b"*bloquear");
                             if dashos::canal_escribir(canal_guardian, &q, &[]) == 0 { BIEN } else { -1 }
                         }
@@ -3059,12 +3362,13 @@ fn principal() -> u64 {
                     let largo = (u32_en(4) as usize).min(m.len().saturating_sub(8));
                     let fichero = m.get(8..8 + largo).unwrap_or(b"");
                     // De la sesión de quien lo pide: su usuario, con la sesión abierta y su cuenta.
-                    let cuenta = yo.and_then(|f| CUENTAS.iter().find(|c| c.0 == f.uid && abiertas.contains(&f.uid)));
+                    let cuenta = yo.filter(|f| abiertas.contains(&f.uid)).and_then(|f| volumen_de(f.uid).map(|v| (f.uid, v)));
                     let estado = if !yo.is_some_and(|f| es(&f, GUARDAN_AJUSTES)) {
                         PROTEGIDO
                     } else if !dashos::protocolo::archivos::ajuste_valido(fichero) {
                         -3
-                    } else if let Some(&(uid, cuenta)) = cuenta {
+                    } else if let Some((uid, vol)) = cuenta {
+                        let cuenta = vol.as_str();
                         let mut r = cabecera_ram(dashos::protocolo::archivos::RAM_GUARDAR, uid, uid);
                         r[16] = cuenta.len() as u8;
                         r[17] = fichero.len() as u8;
@@ -3121,11 +3425,11 @@ fn principal() -> u64 {
                         PROTEGIDO
                     } else if modo == MODO_SALIR {
                         // Como `BLOQUEAR`: lo hace `guardian`, con la cuenta de quien está delante.
-                        match CUENTAS.iter().find(|c| c.0 == activa && activa != 0) {
-                            Some(&(uid, cuenta)) if canal_guardian != 0 => {
+                        match nombre_de(activa).filter(|_| activa != 0) {
+                            Some(cuenta) if canal_guardian != 0 => {
                                 let mut q = [0u8; PREGUNTA];
-                                q[4..8].copy_from_slice(&uid.to_le_bytes());
-                                q[8..8 + cuenta.len().min(16)].copy_from_slice(&cuenta.as_bytes()[..cuenta.len().min(16)]);
+                                q[4..8].copy_from_slice(&activa.to_le_bytes());
+                                q[8..8 + cuenta.bytes().len()].copy_from_slice(cuenta.bytes());
                                 q[24..30].copy_from_slice(b"*salir");
                                 if dashos::canal_escribir(canal_guardian, &q, &[]) == 0 { BIEN } else { PROTEGIDO }
                             }
@@ -3166,12 +3470,12 @@ fn principal() -> u64 {
                 }
                 DELANTE => {
                     // S27: el nombre de quien está delante, solo al panel y a la barra (los nombres que da `inicio`).
-                    let cuenta = CUENTAS.iter().find(|c| c.0 == activa && activa != 0);
+                    let cuenta = nombre_de(activa).filter(|_| activa != 0);
                     let mut r = [0u8; LARGO_DELANTE];
                     match (yo.is_some_and(|f| es(&f, VEN_DELANTE)), cuenta) {
                         (true, Some(c)) => {
-                            let n = c.1.len().min(16);
-                            r[4..4 + n].copy_from_slice(&c.1.as_bytes()[..n]);
+                            let n = c.bytes().len();
+                            r[4..4 + n].copy_from_slice(c.bytes());
                             dashos::canal_escribir(respuesta, &r, &[]);
                         }
                         (puede, _) => {
@@ -3246,7 +3550,8 @@ fn principal() -> u64 {
                 REGISTRO_LEER => {
                     let (fichero, parte, desde) = (u32_en(4) as usize, u32_en(8), u64_en(12));
                     let todo = marca != 0 && lee_todo.contains(&marca);
-                    let lector = yo.and_then(|f| CUENTAS.iter().find(|c| c.0 == f.uid)).map_or("", |c| c.1);
+                    let lector_ = yo.and_then(|f| nombre_de(f.uid));
+                    let lector = lector_.as_ref().map_or("", |c| c.as_str());
                     let (estado, hasta, generacion, llave, largo) = if yo.is_some() { registro.texto.leer(fichero, parte, desde, lector, todo) } else { (PROTEGIDO, 0, 0, 0, 0) };
                     let mut r = [0u8; LARGO_REGISTRO_LEER];
                     r[0..4].copy_from_slice(&estado.to_le_bytes());

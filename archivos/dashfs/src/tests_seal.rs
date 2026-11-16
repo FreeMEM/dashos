@@ -216,6 +216,40 @@ fn passwords_and_recovery() {
     assert_clean(&mut fs, "passwords");
 }
 
+/// DashOS, S6b: an account's volume is made with its password and a recovery code; both open it, after closing and
+/// opening the disk, and its root is the person's from the start.
+#[test]
+fn made_with_a_recovery_code() {
+    let mut fs = new_fs(16);
+    let id = fs
+        .tx(|tx| {
+            tx.create_encrypted_volume_with_recovery(
+                "Berta",
+                1,
+                0,
+                b"clave de Berta",
+                b"ABCD-EFGH-JKLM-NPQR-STUV-WXYZ",
+                &[0x42; 32],
+                [[7; 16], [8; 16]],
+                Cost::CHEAP,
+                (1002, 1002),
+            )
+        })
+        .unwrap();
+    fill(&mut fs, id, b"hola");
+    fs.tx(|tx| tx.lock_volume(id)).unwrap();
+    let mut fs = reopen(fs);
+    assert_eq!(fs.tx(|tx| tx.unlock_volume(id, b"otra")).err().unwrap().errno, EACCES);
+    fs.tx(|tx| tx.unlock_volume(id, b"ABCD-EFGH-JKLM-NPQR-STUV-WXYZ")).unwrap();
+    fs.tx(|tx| tx.lock_volume(id)).unwrap();
+    fs.tx(|tx| tx.unlock_volume(id, b"clave de Berta")).unwrap();
+    assert_eq!(fs.tx_in(id, |tx| Ok(read_all(tx))).unwrap()["texto"].len(), 8000);
+    assert_eq!(fs.tx(|tx| tx.volume_slots(id)).unwrap()[..3], [SlotKind::Password, SlotKind::Recovery, SlotKind::Empty]);
+    let raiz = fs.tx_in(id, |tx| tx.read_tree(TreePtr::<Node>::root())).unwrap();
+    assert_eq!((raiz.data().uid(), raiz.data().gid()), (1002, 1002));
+    assert_clean(&mut fs, "recovery");
+}
+
 #[test]
 fn snapshots_and_removal_of_an_encrypted_volume() {
     let mut fs = new_fs(16);

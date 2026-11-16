@@ -135,6 +135,11 @@ path = "src/bin/sueltas/type.rs"
 test = false
 
 [[bin]]
+name = "orden-usuario"
+path = "src/bin/sueltas/usuario.rs"
+test = false
+
+[[bin]]
 name = "orden-version"
 path = "src/bin/sueltas/version.rs"
 test = false
