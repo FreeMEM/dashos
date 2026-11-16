@@ -534,6 +534,29 @@ impl<D: Disk> Transaction<'_, D> {
         self.create_volume_inner(name, ctime, ctime_nsec, Some((keys, master)), owner)
     }
 
+    /// Like `create_encrypted_volume_owned`, with a second slot for a recovery code (DashOS, S6b: the code written
+    /// down on paper when an account is made), with its own salt.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_encrypted_volume_with_recovery(
+        &mut self,
+        name: &str,
+        ctime: u64,
+        ctime_nsec: u32,
+        password: &[u8],
+        recovery: &[u8],
+        master: &[u8; 32],
+        salts: [[u8; 16]; 2],
+        cost: Cost,
+        owner: (u32, u32),
+    ) -> Result<u64> {
+        let mut keys = BlockData::<VolumeKeys>::empty(BlockAddr::default()).unwrap();
+        keys.data_mut()
+            .add(SlotKind::Password, password, salts[0], cost, master)?;
+        keys.data_mut()
+            .add(SlotKind::Recovery, recovery, salts[1], cost, master)?;
+        self.create_volume_inner(name, ctime, ctime_nsec, Some((keys, master)), owner)
+    }
+
     fn create_volume_inner(
         &mut self,
         name: &str,

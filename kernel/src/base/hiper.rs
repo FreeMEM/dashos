@@ -384,6 +384,18 @@ struct Interior {
     cargos: Vec<crate::cupo::Cargo>,
     /// Dónde ve el invitado la GICV, si se le proyectó.
     gicv: Option<u64>,
+    /// Los registros de aparatos prestados (S35, `docs/bitacoras/dominio-red.md`): (física = la del invitado, tamaño).
+    aparatos: Vec<(u64, u64)>,
+}
+
+impl Interior {
+    /// Si `[ipa, ipa + tam)` pisa algo que el invitado ya ve: memoria, la GICV o un aparato prestado.
+    fn pisa(&self, ipa: u64, tam: u64) -> bool {
+        let solapa = |b: u64, t: u64| ipa < b + t && b < ipa + tam;
+        self.memorias.iter().any(|(b, t, _)| solapa(*b, *t))
+            || self.gicv.is_some_and(|g| solapa(g, TAM_GICV))
+            || self.aparatos.iter().any(|&(b, t)| solapa(b, t))
+    }
 }
 
 impl Espacio {
@@ -393,7 +405,7 @@ impl Espacio {
             return Err(Error::NoHay);
         }
         let cargo = cupo.cobrar(PAGINA).ok_or(Error::Memoria)?;
-        let mut interior = Interior { tablas: Vec::new(), memorias: Vec::new(), cargos: Vec::new(), gicv: None };
+        let mut interior = Interior { tablas: Vec::new(), memorias: Vec::new(), cargos: Vec::new(), gicv: None, aparatos: Vec::new() };
         interior.cargos.try_reserve(8).map_err(|_| Error::Memoria)?;
         interior.tablas.try_reserve(8).map_err(|_| Error::Memoria)?;
         interior.cargos.push(cargo);
@@ -417,13 +429,29 @@ impl Espacio {
     /// la lee sin caché. Puede ser con sus vCPU en marcha: solo se añaden entradas que no había (y la etapa 2 no guarda
     /// en las TLB las que faltan), así que no hace falta vaciar las TLB.
     pub fn anadir(&self, memoria: Arc<Memoria>, ipa: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<(), Error> {
+        // Ni memoria DMA (la de un aparato prestado va por `anadir_dma`) ni una vista (llamada 50): el invitado
+        // escribiría en páginas que se dieron solo para leer.
+        if memoria.bus().is_some() {
+            return Err(Error::Argumento);
+        }
+        self.anadir_con(memoria, ipa, cupo)
+    }
+
+    /// Memoria DMA para el aparato prestado a un dominio sin IOMMU (S35, paso 2; solo en QEMU, `dominio-red.md`): el
+    /// invitado la ve en su dirección de bus, la misma que usa el aparato, así lo que el invitado programe en el aparato
+    /// cae ahí. Solo ordena a un invitado que se porta bien: sin IOMMU, el aparato alcanza toda la memoria.
+    pub fn anadir_dma(&self, memoria: Arc<Memoria>, cupo: &Arc<crate::cupo::Cupo>) -> Result<(), Error> {
+        let Some(bus) = memoria.bus() else { return Err(Error::Argumento) };
+        self.anadir_con(memoria, bus, cupo)
+    }
+
+    fn anadir_con(&self, memoria: Arc<Memoria>, ipa: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<(), Error> {
         let tam = memoria.tamano();
-        // Ni memoria DMA ni una vista (llamada 50): el invitado escribiría en páginas que se dieron solo para leer.
-        if memoria.bus().is_some() || memoria.es_vista() || tam == 0 || ipa % PAGINA != 0 || ipa.checked_add(tam).is_none_or(|f| f > IPA_MAX) {
+        if memoria.es_vista() || tam == 0 || ipa % PAGINA != 0 || ipa.checked_add(tam).is_none_or(|f| f > IPA_MAX) {
             return Err(Error::Argumento);
         }
         let mut i = self.interior.tomar();
-        if i.memorias.iter().any(|(b, t, _)| ipa < b + t && *b < ipa + tam) || i.gicv.is_some_and(|g| ipa < g + TAM_GICV && g < ipa + tam) {
+        if i.pisa(ipa, tam) {
             return Err(Error::Argumento);
         }
         let ultima = ipa + tam - 1;
@@ -600,11 +628,7 @@ impl Espacio {
             return Err(Error::NoHay);
         }
         let mut i = self.interior.tomar();
-        if i.gicv.is_some()
-            || ipa % PAGINA != 0
-            || ipa.checked_add(TAM_GICV).is_none_or(|f| f > IPA_MAX)
-            || i.memorias.iter().any(|(b, t, _)| ipa < b + t && *b < ipa + TAM_GICV)
-        {
+        if i.gicv.is_some() || ipa % PAGINA != 0 || ipa.checked_add(TAM_GICV).is_none_or(|f| f > IPA_MAX) || i.pisa(ipa, TAM_GICV) {
             return Err(Error::Argumento);
         }
         let cargo = cupo.cobrar(2 * PAGINA).ok_or(Error::Memoria)?;
@@ -617,6 +641,36 @@ impl Espacio {
             poner(l3, ((a >> 12) & 511) as usize, (gicv + p * PAGINA) | S2_APARATO);
         }
         i.gicv = Some(ipa);
+        // SAFETY: barrera: las tablas, escritas antes de que las recorra la etapa 2.
+        unsafe { core::arch::asm!("dsb ish") };
+        Ok(())
+    }
+
+    /// Presta al invitado los registros de un aparato (S35, paso 2): `[fisica, fisica + tam)`, en páginas enteras, en
+    /// la misma dirección (como memoria de dispositivo, sin ejecutar). Sus accesos ya no salen al servicio: van al
+    /// aparato. Lo que cuestan las tablas se cobra a `cupo`.
+    pub fn prestar_registros(&self, fisica: u64, tam: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<(), Error> {
+        if tam == 0 || fisica % PAGINA != 0 || tam % PAGINA != 0 || fisica.checked_add(tam).is_none_or(|f| f > IPA_MAX) {
+            return Err(Error::Argumento);
+        }
+        let mut i = self.interior.tomar();
+        if i.pisa(fisica, tam) {
+            return Err(Error::Argumento);
+        }
+        let ultima = fisica + tam - 1;
+        let n = (ultima / GB - fisica / GB + 1) + (ultima / MB2 - fisica / MB2 + 1);
+        let cargo = cupo.cobrar(n * PAGINA).ok_or(Error::Memoria)?;
+        i.cargos.try_reserve(1).map_err(|_| Error::Memoria)?;
+        i.aparatos.try_reserve(1).map_err(|_| Error::Memoria)?;
+        i.cargos.push(cargo);
+        i.aparatos.push((fisica, tam));
+        for p in 0..tam / PAGINA {
+            let a = fisica + p * PAGINA;
+            let l2 = i.siguiente(self.l1, (a >> 30) as usize)?;
+            let l3 = i.siguiente(l2, ((a >> 21) & 511) as usize)?;
+            poner(l3, ((a >> 12) & 511) as usize, a | S2_APARATO);
+        }
+        drop(i);
         // SAFETY: barrera: las tablas, escritas antes de que las recorra la etapa 2.
         unsafe { core::arch::asm!("dsb ish") };
         Ok(())

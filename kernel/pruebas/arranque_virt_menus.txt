@@ -28,4 +28,23 @@ DashOS en marcha con 4 núcleos
 ~[centro] menús en marcha: dentro de las ventanas, de ENV:Escritorio/menus; en el compositor: sí
 ~[shell] menús: dentro de la ventana
 ~[dash-ui] menús: dentro de la ventana
+# menus-pulido: las teclas en la fila del Shell; en la ventana de Dash (kit-c), las teclas y la rueda en "Largo", que
+# no cabe, y el menú que se cierra cuando el teclado se va.
+~[shell] menú: Borrar la pantalla
+~[dash-ventana] menú: Entrada 30
+~[dash-ventana] menú: Entrada 1
+~[dash-ui] menús cerrados: el teclado se fue
+# `menus-prueba` (kit nativo) en la barra: las teclas en un submenú que no cabe, la rueda en un menú y en un submenú que
+# no caben, el clic que cierra (el compositor se lo traga), y su menú cambiado veinte veces mientras se ve.
+~[menus-prueba] los menús van a la barra por segunda vez: abre su ventana
+~[barra] elige en el menú: Opción 13 (113)
+~[menus-prueba] elegido: 113 (Opción 13)
+~[barra] elige en el menú: Entrada 
+~[barra] menús cerrados: un clic fuera
+~[compositor] menús: un clic fuera cierra lo desplegado en la barra: no llega a nadie
+~[menus-prueba] cambia su menú: vuelta 20 de 20
+# Dentro de su ventana: las teclas en el submenú y la rueda en "Largo". Y la ventana que se cierra con su menú
+# desplegado en la barra.
+~[menus-prueba] elegido: 110 (Opción 10)
+~[menus-prueba] cierra su ventana (
 ~[sesiones] Shell asigna "MenusHechos=RAM:" (0): 0

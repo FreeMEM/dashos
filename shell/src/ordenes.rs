@@ -29,6 +29,9 @@ pub const PROTECT: &str = "FILE/A,FLAGS,ADD/S,SUB/S";
 pub const REGISTRO: &str = "APUNTA/S,TEXTO/M,MOTIVO/K,VECES/K/N,PROGRAMA/K,CLASE/K,DESDE/K,HASTA/K,ULTIMAS/K/N,DE/K,TODO/S,SEGUIR/S";
 pub const RENAME: &str = "FROM/A,TO=AS/A";
 pub const TYPE: &str = "FROM/M,NUMBER/S,HEX/S";
+/// S6b, rama `cuentas`: las cuentas de usuario: verlas, y crear, borrar, devolver y cambiar grupos (en una tanda de
+/// acciones de administrador).
+pub const USUARIO: &str = "ACCION,NOMBRE,MAS/M,UID/K/N";
 pub const VERSION: &str = "";
 pub const WAIT: &str = "TIME/N,SEC=SECS/S,MIN=MINS/S";
 
@@ -54,6 +57,7 @@ pub const BASE: &[(&str, &str)] = &[
     ("Registro", REGISTRO),
     ("Rename", RENAME),
     ("Type", TYPE),
+    ("Usuario", USUARIO),
     ("Version", VERSION),
     ("Wait", WAIT),
 ];

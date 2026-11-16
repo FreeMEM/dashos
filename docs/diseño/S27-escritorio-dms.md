@@ -13,6 +13,17 @@ sacadas de sus capturas a 1920 × 1080.
 Sigue a S10 (el escritorio), S10b (escritorios de terceros y la política de ventanas), S10c (el centro de control) y S23
 (las pantallas del Amiga). Bitácora: `docs/bitacoras/escritorio-dms.md`.
 
+## 0. Decidido el 2026-11-16: portar DMS, no solo inspirarse
+
+El usuario: "vamos a crear un sistema de escritorio configurable como el de DMS de Niri. De hecho si te lo puedes
+fusilar, estaría bien". DMS (DankMaterialShell, ahora Dux Modular Shell) pasó de GPL-3.0 a MIT el 12/11/2025, así que
+su código se puede leer y portar a Rust y al kit (QML no se usa tal cual), con su aviso de copyright MIT en
+`docs/licencias/` y en las cabeceras de lo portado. Deja de valer la "sala limpia" de DMS de la primera oleada (no la
+de Linux, BSD, AROS, UAE ni QEMU, que sigue). Copia de su código, fuera de git: `~/recuperar/geosian-7d/dms-fuente/`
+(la versión que usa el usuario). El modelo de configuración también se toma de DMS (`settings.json`: `barConfigs` con
+`leftWidgets`/`centerWidgets`/`rightWidgets`, `dockConfigs`, `controlCenterWidgets`, `desktopWidgetInstances`...),
+llevado a ficheros de texto de `ENVARC:` (S36, regla 1).
+
 ## 1. Qué es DMS, pieza por pieza
 
 DMS tiene dos estilos: "Expressive" (el de serie: píldoras, y los controles se deforman al pulsarlos) y "Classic" (el

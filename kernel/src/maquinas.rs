@@ -201,6 +201,17 @@ impl Maquina {
         self.comun.espacio.globo(ipas, soltar, proceso, llaves_de)
     }
 
+    /// Presta al invitado los registros de un aparato, en su misma dirección física (S35, paso 2).
+    pub fn prestar_registros(&self, fisica: u64, tam: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<(), hiper::Error> {
+        self.comun.espacio.prestar_registros(fisica, tam, cupo)
+    }
+
+    /// Memoria DMA para el aparato prestado, vista por el invitado en su dirección de bus (S35, paso 2; sin IOMMU, solo
+    /// en QEMU).
+    pub fn anadir_dma(&self, memoria: Arc<Memoria>, cupo: &Arc<crate::cupo::Cupo>) -> Result<(), hiper::Error> {
+        self.comun.espacio.anadir_dma(memoria, cupo)
+    }
+
     /// Proyecta la GICV del GIC virtual donde el invitado espera la interfaz de CPU de su GIC (para todas sus vCPU).
     pub fn proyectar_gicv(&self, ipa: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<(), hiper::Error> {
         self.comun.espacio.proyectar_gicv(ipa, cupo)

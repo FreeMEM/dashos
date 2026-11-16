@@ -803,6 +803,14 @@ impl Ventana {
                 self.control = 0;
                 self.mayusculas = 0;
                 self.alt = false;
+                // S10 (menus-pulido): lo desplegado en la fila se cierra si el teclado se va a otra ventana.
+                if self.menus.abierto() {
+                    self.menus.cerrar();
+                    self.menus_sucios = true;
+                    self.sucia = true;
+                    self.entera = true;
+                    println!("  [shell] menús cerrados: el teclado se fue");
+                }
             }
             (TECLADO, wl_keyboard::ev::KEY) => {
                 self.serie = palabra(0);

@@ -3405,6 +3405,8 @@ impl<M: Memorias> Escena<M> {
             self.danos.push(cursor_rect(antes));
             self.danos.push(cursor_rect(self.cursor));
         }
+        // S10: con un menú desplegado en la barra, el clic de fuera solo lo cierra: para lo demás, ese botón no existe.
+        let botones = self.menus_tragar(botones);
         // Arrastrando una ventana (Super y el botón izquierdo): va con el cursor, también de una salida a otra. Al
         // soltar, si cambió de salida, se dice. Mientras, los botones no llegan a nadie.
         if let Some(((c, sup), ox, oy, desde)) = self.arrastre {

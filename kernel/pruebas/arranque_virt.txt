@@ -734,6 +734,10 @@ DashOS en marcha con 4 núcleos.
 ~│   [tanda] se para en la que falla (-1 1 2; vivo: false): bien
 ~│   [sesiones] tanda de Shell: no es la contraseña de un administrador; no se hace nada
 ~│   [tanda] con la contraseña mala no se hace (-2; vivo: true): bien
+# S6b, rama `cuentas`: las cuentas, sin pasar por `Usuario`: `sesiones` las prueba antes de preguntar. Y el volumen
+# de una cuenta, ni hacerlo ni quitarlo sin el derecho de administrar.
+~│   [tanda] cuentas: repetidas, números usados o malos, reservadas, la propia, la última administradora: no se preguntan: bien
+~│   [tanda] hacer un volumen o quitar el de Carla sin administrar: -12 y -12: bien
 ~│   [tanda] prueba hostil acabada: bien
 # S6b, S36: `Abrir` abre encerrado, como con doble clic. Sin modo de desarrollo, la aplicación no carga de Home:Libs; con
 # él (`Permiso DAR espera desarrollo`, confirmado en `guardian`), sí, y el compositor marca sus ventanas; quitado, otra
@@ -756,6 +760,37 @@ DashOS en marcha con 4 núcleos.
 ~│   [sesiones] Shell quita a espera el permiso desarrollo: el usuario dice sí (0)
 ~│   [encerrada] vuelta 3, modo de desarrollo: no; LIBS:prueba.library: no la encuentra (-2): bien
 ~│   [sesiones] Shell asigna "Prueba" (3): 0
+# S6b, rama `cuentas`: las cuentas, de Estado:Cuentas/ (el disco trae, a propósito, cuatro líneas malas: se saltan y
+# Ana y Carla entran igual). `Usuario CREAR` sale en la ventana de `guardian` con la contraseña de Ana y la de la cuenta
+# nueva (las teclea el guion); el código de recuperación sale solo allí. Borrar se deshace con devolver.
+~│   [sesiones] cuentas de Estado:Cuentas: 2 (2 activas), 1 grupos, 1 administradores
+~│   [sesiones] cuentas: 4 líneas de usuarios no valen (la primera, la 4), la última cortada
+~│   [shell] Ana               1000  Ana                      admin
+~│   [guardian] tanda en pantalla: Shell pide 2 (administrador propuesto: Ana) (y la contraseña de la cuenta nueva Berta): 1. Crear la cuenta "Berta" (Berta Gil), número 1002, con su volumen cifrado | 2. Poner a "Berta" en el grupo "fotos"
+~│   [sesiones] cuentas: crea Berta (usuario 1002), con su volumen cifrado y su código de recuperación
+~│   [shell] 2. Poner a "Berta" en el grupo "fotos": hecho
+~│   [guardian] código de recuperación de Berta: visto
+~│   [shell] Berta             1002  Berta Gil                fotos  borrada: se puede devolver hasta el
+~│   [shell] 1. Devolver la cuenta "Berta", que estaba borrada: hecho
+~│   [shell] 1. Quitar a "Berta" del grupo "fotos": hecho
+# Lo hostil: nada de esto llega a preguntar.
+~│   [shell] Usuario: no se hace nada: ya hay una cuenta con ese nombre
+~│   [shell] Usuario: no se pide nada: el nombre no vale
+~│   [shell] Usuario: no se hace nada: ese nombre es del sistema
+~│   [shell] Usuario: no se hace nada: ese número ya es de otra cuenta
+~│   [shell] Usuario: no se hace nada: es tu propia cuenta
+~│   [shell] Usuario: no se hace nada: es la última cuenta del grupo admin
+~│   [shell] Usuario: no se hace nada: no existe
+~│   [shell] Administrar: no se pide nada: la línea 2 crea otra cuenta: una por tanda
+~│   [shell] Administrar: no se hace ninguna: no existe
+~│   [shell] No se puede escribir en SYS:Estado/Cuentas/usuarios: está protegido
+~│   [shell] Delete: SYS:Estado/Cuentas/usuarios: está protegido
+~│   [shell] No se puede escribir en SYS:Estado/Cuentas/otra: está protegido
+# Con la contraseña mala de un administrador y con la de Carla (que no lo es), no; con una corta para Dora, tampoco.
+~│   [guardian] tanda de Shell: se confirma como Carla
+~│   [shell] Usuario: no se hace nada: no se confirmó con la contraseña de un administrador
+~│   [shell] Usuario: se paró en la 1: la contraseña de la cuenta nueva es corta: 8 letras o más
+~│   [shell] Berta             1002  Berta Gil                -
 ~│   [shell] Home:PruebaShell borrado
 ~│   [shell] Fin de la prueba del Shell
 ~│   [shell] acaba con el código 0

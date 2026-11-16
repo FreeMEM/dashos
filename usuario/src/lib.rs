@@ -31,6 +31,8 @@ pub mod protocolo {
     pub mod red;
     pub mod selector;
     pub mod sesiones;
+    /// S35: virtio por mensajes, entre un conductor de DashOS y el servicio de un dominio de controladores.
+    pub mod virtio_msg;
 }
 #[cfg(feature = "monton")]
 pub mod monton;
@@ -59,6 +61,9 @@ pub mod permisos_texto;
 /// S6, S36 (decisión 1 del 2026-11-16): la tanda de acciones de administrador (la lista, su frase en llano y la
 /// respuesta), sin dependencias: se prueba en el PC.
 pub mod tanda;
+/// S6b, rama `cuentas`: las cuentas de usuario en `Estado:Cuentas/` (leer, comprobar, cambiar y escribir), sin
+/// dependencias: se prueba en el PC.
+pub mod cuentas;
 #[cfg(target_arch = "aarch64")]
 mod copiar;
 
@@ -594,6 +599,18 @@ pub fn maquina_aparato_leer(llave: u32, aparato: u32, off: u64, bytes: u64) -> i
 /// invitado no puede cambiar (las BAR, la MSI, las capacidades: los emula el monitor).
 pub fn maquina_aparato_escribir(llave: u32, aparato: u32, off: u64, bytes: u64, valor: u64) -> i64 {
     llamada(60, [llave as u64, aparato as u64, 4, off | bytes << 16, valor]).0 as i64
+}
+
+/// S35, paso 2: presta al invitado de la máquina `llave` los registros de la llave `registros`, en su misma dirección
+/// física (sus accesos van al aparato, sin salir al servicio). 0 o un error negativo.
+pub fn maquina_prestar_registros(llave: u32, registros: u32) -> i64 {
+    llamada(48, [llave as u64, 40, registros as u64, 0, 0]).0 as i64
+}
+
+/// S35, paso 2: el objeto de memoria DMA `memoria`, visto por el invitado en su dirección de bus (la zona de DMA del
+/// aparato prestado; sin IOMMU, solo en QEMU). 0 o un error negativo.
+pub fn maquina_dma_identidad(llave: u32, memoria: u32) -> i64 {
+    llamada(48, [llave as u64, 41, memoria as u64, 0, 0]).0 as i64
 }
 
 /// Barrera de memoria entre núcleos (`dmb ish`): lo escrito antes lo ven los demás antes que lo escrito después. Para

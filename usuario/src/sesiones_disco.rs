@@ -68,6 +68,41 @@ impl Cliente {
         Some(c)
     }
 
+    /// Rama `cuentas`: un cliente sin la raíz de su cajón (la 1), con su usuario y sus derechos (`D_ADMINISTRAR`): para
+    /// hacer el volumen de una cuenta nueva, que nace de su persona desde la raíz (R6). La raíz 0 en `raiz0`.
+    pub fn abrir_como(altas: u32, marca: u64, uid: u32, derechos: u32, raiz0: &[u8], va: usize) -> Option<Cliente> {
+        let mut m = [0u8; 256];
+        if raiz0.len() > 64 {
+            return None;
+        }
+        m[0..4].copy_from_slice(&a::ALTA.to_le_bytes());
+        m[4..8].copy_from_slice(&derechos.to_le_bytes());
+        m[8..16].copy_from_slice(&marca.to_le_bytes());
+        m[16..20].copy_from_slice(&uid.to_le_bytes());
+        m[20..24].copy_from_slice(&uid.to_le_bytes());
+        m[24..28].copy_from_slice(&(raiz0.len() as u32).to_le_bytes());
+        m[a::CABECERA..a::CABECERA + raiz0.len()].copy_from_slice(raiz0);
+        if dashos::canal_escribir(altas, &m[..a::CABECERA + raiz0.len()], &[]) != 0 {
+            return None;
+        }
+        let escribir = u32::try_from(dashos::llave_duplicar(altas, dashos::ESCRIBIR | dashos::TRANSFERIR, marca)).ok()?;
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut p = [0u8; a::CABECERA];
+        p[0..4].copy_from_slice(&a::SESION.to_le_bytes());
+        let mut rr = [0u8; 32];
+        let mut ll = [0u32; 1];
+        let bien = dashos::canal_escribir(escribir, &p, &[suyo]) == 0 && {
+            let (n, k, _) = dashos::canal_leer_plazo(lectura, &mut rr, &mut ll, PLAZO_US);
+            n == 32 && k == 1 && i32::from_le_bytes(rr[0..4].try_into().unwrap()) == a::BIEN && dashos::memoria_proyectar(ll[0], va, true) == 0
+        };
+        let c = Cliente { escribir, lectura, va, tam: (u64::from_le_bytes(rr[8..16].try_into().unwrap()) as usize).clamp(4096, a::VENTANA_MAX), marca };
+        if !bien {
+            c.cerrar(altas);
+            return None;
+        }
+        Some(c)
+    }
+
     /// Una orden: (estado, asa, a, b) de la respuesta.
     pub fn orden(&self, orden: u32, asa: u32, x: u64, y: u64, nombre: &[u8]) -> (i32, u32, u64, u64) {
         let mut p = [0u8; 256];
@@ -148,10 +183,11 @@ impl<const N: usize> core::fmt::Write for Texto<N> {
     }
 }
 
-/// El nombre con que sale el usuario `uid` en el registro: el de su cuenta, `sistema` si no es una persona, o su número.
-pub fn usuario(uid: u32, cuentas: &[(u32, &str)], primera_persona: u32) -> Texto<16> {
-    match cuentas.iter().find(|c| c.0 == uid) {
-        Some(c) => Texto::de(format_args!("{}", c.1)),
+/// El nombre con que sale el usuario `uid` en el registro: el de su cuenta (`cuenta`, si tiene), `sistema` si no es una
+/// persona, o su número.
+pub fn usuario(uid: u32, cuenta: Option<&str>, primera_persona: u32) -> Texto<16> {
+    match cuenta {
+        Some(c) => Texto::de(format_args!("{}", c)),
         None if uid < primera_persona => Texto::de(format_args!("{}", r::DEL_SISTEMA)),
         None => Texto::de(format_args!("{}", uid)),
     }
@@ -482,4 +518,163 @@ pub fn guardar_permisos<'x>(altas: u32, vol: &[u8], cam: &[u8], lineas: impl Ite
     })();
     c.cerrar(altas);
     r_
+}
+
+/// Rama `cuentas` (S6b): la marca del cliente de las cuentas (uno a la vez, solo mientras lee o escribe), y la del que
+/// hace el volumen de una cuenta nueva.
+const MARCA_CUENTAS: u64 = 0x6375_6500_0000_0001;
+const MARCA_VOLUMEN: u64 = 0x6375_6500_0000_0002;
+const VA_CUENTAS: usize = 0x60_0000_0000;
+const VA_VOLUMEN: usize = 0x64_0000_0000;
+
+/// Lee `Estado:Cuentas/usuarios` y `grupos` en `usuarios` y `grupos` (que miden `cuentas::MAX_FICHERO` + 1, para ver si
+/// pasan del tope). Da lo que se leyó de cada uno (0 si no está). Un fichero que no es de `sesiones` (puesto a mano)
+/// no se lee: es `Fallo::Ajeno`, y no se lee el otro tampoco.
+pub fn leer_cuentas(altas: u32, usuarios: &mut [u8], grupos: &mut [u8]) -> Result<(usize, usize), Fallo> {
+    use dashos::cuentas as cu;
+    let raiz0 = cu::CAJON.rsplit_once('/').map_or("", |x| x.0);
+    let c = Cliente::abrir(altas, MARCA_CUENTAS, SESIONES_UID, raiz0.as_bytes(), b"", cu::CAJON.as_bytes(), VA_CUENTAS).ok_or(Fallo::Cajon)?;
+    let r_ = (|| {
+        let mut leidos = [0usize; 2];
+        for (i, (nombre, sal)) in [(cu::USUARIOS, &mut *usuarios), (cu::GRUPOS, &mut *grupos)].into_iter().enumerate() {
+            let (e, asa, tam, _) = c.orden(a::BUSCAR, 1, 0, 0, nombre.as_bytes());
+            if e == a::NO_EXISTE {
+                continue;
+            }
+            if e != a::BIEN {
+                return Err(Fallo::Disco(e));
+            }
+            let suyo = c.es_suyo(asa);
+            let cuanto = (tam as usize).min(sal.len()).min(c.tam);
+            let leido = if suyo { c.orden(a::LEER, asa, 0, cuanto as u64, b"") } else { (a::BIEN, 0, 0, 0) };
+            c.orden(a::CERRAR, asa, 0, 0, b"");
+            if !suyo {
+                return Err(Fallo::Ajeno);
+            }
+            if leido.0 != a::BIEN {
+                return Err(Fallo::Disco(leido.0));
+            }
+            let n = (leido.2 as usize).min(cuanto);
+            sal[..n].copy_from_slice(&c.ventana()[..n]);
+            leidos[i] = n;
+        }
+        Ok((leidos[0], leidos[1]))
+    })();
+    c.cerrar(altas);
+    r_
+}
+
+/// Escribe entero el fichero `nombre` (`usuarios` o `grupos`) de `Estado:Cuentas/` con `texto`, de una sola escritura
+/// (una transacción del servicio de archivos): si lo nuevo es más corto que lo de antes, se rellena con un comentario
+/// hasta su largo y después se recorta. Así un corte de luz deja lo de antes o lo nuevo entero, nunca lo nuevo con el
+/// final de lo de antes (que podría devolver una línea borrada). El cajón 0755 y el fichero 0644: lo leen todos.
+pub fn guardar_cuenta(altas: u32, nombre: &[u8], texto: &[u8]) -> Result<(), Fallo> {
+    use dashos::cuentas as cu;
+    let raiz0 = cu::CAJON.rsplit_once('/').map_or("", |x| x.0);
+    let c = Cliente::abrir(altas, MARCA_CUENTAS, SESIONES_UID, raiz0.as_bytes(), b"", cu::CAJON.as_bytes(), VA_CUENTAS).ok_or(Fallo::Cajon)?;
+    let r_ = (|| {
+        c.orden(a::PROTEGER, 1, 0, 0o755, b"");
+        let (e, asa, tam, _) = c.orden(a::BUSCAR, 1, 0, 0, nombre);
+        let (asa, antes) = match e {
+            a::BIEN if c.es_suyo(asa) => (asa, tam as usize),
+            a::BIEN | a::NO_EXISTE => {
+                if e == a::BIEN {
+                    // Uno que no es de `sesiones` en su cajón: fuera (el cajón sí es suyo).
+                    c.orden(a::CERRAR, asa, 0, 0, b"");
+                    c.orden(a::BORRAR, 1, 0, 0, nombre);
+                }
+                let (e, asa, ..) = c.orden(a::CREAR, 1, a::FICHERO as u64, 0, nombre);
+                if e != a::BIEN {
+                    return Err(Fallo::Disco(e));
+                }
+                (asa, 0)
+            }
+            e => return Err(Fallo::Disco(e)),
+        };
+        c.orden(a::PROTEGER, asa, 0, 0o644, b"");
+        let v = c.ventana();
+        let largo = texto.len().max(antes);
+        if largo > v.len() {
+            c.orden(a::CERRAR, asa, 0, 0, b"");
+            return Err(Fallo::Disco(a::SIN_SITIO));
+        }
+        v[..texto.len()].copy_from_slice(texto);
+        match antes.saturating_sub(texto.len()) {
+            0 => {}
+            1 => v[texto.len()] = b'\n',
+            sobra => {
+                v[texto.len()] = b'#';
+                v[texto.len() + 1..largo - 1].fill(b' ');
+                v[largo - 1] = b'\n';
+                let _ = sobra;
+            }
+        }
+        let (e, _, escrito, _) = c.orden(a::ESCRIBIR, asa, 0, largo as u64, b"");
+        let recortado = if e == a::BIEN && largo > texto.len() { c.orden(a::TAMANO, asa, texto.len() as u64, 0, b"").0 } else { a::BIEN };
+        c.orden(a::CERRAR, asa, 0, 0, b"");
+        c.orden(a::VACIAR, 0, 0, 0, b"");
+        if e != a::BIEN || escrito != largo as u64 {
+            return Err(Fallo::Disco(if e != a::BIEN { e } else { a::LLENO }));
+        }
+        if recortado != a::BIEN {
+            return Err(Fallo::Disco(recortado));
+        }
+        Ok(())
+    })();
+    c.cerrar(altas);
+    r_
+}
+
+/// Hace el volumen cifrado `nombre` de la persona `uid` (su `Home:`), con la contraseña `clave` y un código de
+/// recuperación (que deja en `codigo`), su raíz suya y 0700 (S6b), y lo deja cerrado. Con `barato`, el Argon2 de las
+/// pruebas. Un estado del servicio si no se pudo.
+pub fn hacer_volumen(altas: u32, uid: u32, nombre: &[u8], clave: &[u8], barato: bool, codigo: &mut [u8; dashos::cuentas::LARGO_CODIGO]) -> Result<(), i32> {
+    let c = Cliente::abrir_como(altas, MARCA_VOLUMEN, uid, a::D_ADMINISTRAR, b"Estado", VA_VOLUMEN).ok_or(a::ERROR_DEL_DISCO)?;
+    let r_ = (|| {
+        let v = c.ventana();
+        let clave = &clave[..clave.len().min(128)];
+        v[..clave.len()].copy_from_slice(clave);
+        let tipo = if barato { 2 } else { 1 };
+        // El servicio borra la contraseña de la ventana al copiarla, y deja ahí el código (donde estaba ella): no se
+        // borra aquí hasta copiarlo.
+        let (e, _, _, largo) = c.orden(a::HACER_VOLUMEN, 0, tipo | a::CON_RECUPERACION, clave.len() as u64, nombre);
+        if e != a::BIEN {
+            v[..clave.len()].fill(0);
+            return Err(e);
+        }
+        if largo as usize != codigo.len() {
+            v[..codigo.len()].fill(0);
+            c.orden(a::CERRAR_VOLUMEN, 0, 0, 0, nombre);
+            return Err(a::MAL_FORMADO);
+        }
+        codigo.copy_from_slice(&v[..dashos::cuentas::LARGO_CODIGO]);
+        v[..codigo.len()].fill(0);
+        // Su raíz, solo suya (nace 0755).
+        let (e, raiz, ..) = c.orden(a::VOLUMEN, 0, 0, 0, nombre);
+        let protegido = if e == a::BIEN { c.orden(a::PROTEGER, raiz, 0, 0o700, b"").0 } else { e };
+        if e == a::BIEN {
+            c.orden(a::CERRAR, raiz, 0, 0, b"");
+        }
+        let cerrado = c.orden(a::CERRAR_VOLUMEN, 0, 0, 0, nombre).0;
+        c.orden(a::VACIAR, 0, 0, 0, b"");
+        if protegido != a::BIEN {
+            return Err(protegido);
+        }
+        if cerrado != a::BIEN {
+            return Err(cerrado);
+        }
+        Ok(())
+    })();
+    c.cerrar(altas);
+    r_
+}
+
+/// Quita del todo el volumen `nombre` (el de una cuenta borrada a la que se le acabó el plazo), con un cliente con el
+/// derecho de administrar. El estado del servicio.
+pub fn quitar_volumen(altas: u32, nombre: &[u8]) -> i32 {
+    let Some(c) = Cliente::abrir_como(altas, MARCA_VOLUMEN, SESIONES_UID, a::D_ADMINISTRAR, b"Estado", VA_VOLUMEN) else { return a::ERROR_DEL_DISCO };
+    let e = c.orden(a::QUITAR_VOLUMEN, 0, 0, 0, nombre).0;
+    c.orden(a::VACIAR, 0, 0, 0, b"");
+    c.cerrar(altas);
+    e
 }
