@@ -197,12 +197,18 @@ DashOS en marcha con 4 núcleos.
 ~│   [hostil] centro: los mosaicos del panel sin ser el panel: -1 y nada
 # U2: sesiones, primera parte. Un programa del usuario 1001 no mata a uno del 1000, y sí a uno suyo.
 ~│   [sesiones] en marcha, con el servicio de archivos
+# S6, S36: el registro común, con su cliente propio de archivos (cajón suyo, 0700).
+~│   [sesiones] registro común en Estado:Registros/: seguridad, sistema y programas
+~│   [sesiones] permisos concedidos (sistema): 0 leídos de su Prefs/Permisos
 # U3: entrar abre el volumen cifrado del usuario y salir lo cierra; solo puede pedirlo `guardian` (aquí, `entrada`).
 ~│   [entrada] Carla: contraseña mala -12, buena 0, volver con mala -12 y con buena 0, salir 0: bien
 ~│   [sesiones] hostil pide entrar como Carla: -12
 # U4: la llave de un servicio solo con permiso; marcada, sin poder regalarla y revocable.
 ~│   [sesiones] pide pide eco: el usuario dice sí (0)
 ~│   [pide] U4: bien
+# S6, S36 (S3): `pide`, con su tope de 16 MB, pide memoria hasta que no le cabe; `sesiones` lo apunta en el registro.
+~│   [pide] tope de memoria: le caben 
+~│   [sesiones] pide topa con su tope de memoria (16 MB): 1 vez
 ~│   [pide] llave de plazo: pedirla 0, entrar en la clase true, dejarla 0, después entra false: bien
 # U4: la pregunta, en una capa encima de todo; lo pulsado en el primer segundo no cuenta.
 ~│   [guardian] ¿pide puede usar eco? El usuario dice sí
@@ -598,6 +604,46 @@ DashOS en marcha con 4 núcleos.
 ~│   [shell] [1] Shell (Execute) acabó con el código 20
 ~│   [shell] [1] Wait acabó con el código 20
 ~│   [shell] No hay trabajos en marcha
+# S6, S36: el registro común. Lo que apunta un guion sale con el programa que lo lanza (el Shell), y la hora y el
+# usuario que pone `sesiones`. Lo de antes de rotar (programas.1, de "ayer") se sigue leyendo; lo del hostil, que es de
+# Carla, Ana no lo ve.
+~ Shell (Ana) programa: hola desde el guion del Shell: una prueba
+~ prueba (sistema) programa: la última de ayer
+~│   [shell] Nada en el registro con eso.
+# Lo hostil: escapes y saltos de línea no llegan a la línea; la ráfaga se corta (y se dice cuántas se perdieron); los
+# ficheros no se tocan a mano; una clase que no existe.
+~ Shell (Ana) programa: ?[2J?[31mrojo
+~│   [shell] Registro: va demasiado deprisa: 
+~│   [shell] deprisa: 5
+~ Shell (Ana) registro: 
+~│   [shell] No se puede escribir en SYS:Estado/Registros/seguridad: está protegido
+~│   [shell] Delete: SYS:Estado/Registros/seguridad: está protegido
+~│   [shell] Type: SYS:Estado/Registros/seguridad: está protegido
+~│   [shell] Registro: no hay líneas de la clase "inventada"
+# Leer el de todos es una acción de administrador (en la prueba, guardian da la contraseña de Ana).
+~│   [guardian] Shell pide registro: contesta como Ana
+~ hostil (Carla) permiso: no se da "eco"
+# En vivo: lo que llega mientras mira.
+~ Shell (Ana) programa: una línea en vivo
+# S6b, S36: los permisos, en Home:Prefs/Permisos/concedidos. Ver lo propio es libre; dar y quitar lo confirma el usuario
+# en la ventana del sistema (el guion de QEMU: a pide, sí, y la primera vez la D de los detalles; a otro, no).
+~│   [shell] Ningún programa tuyo tiene permisos concedidos.
+~│   [guardian] pregunta en pantalla: cambiar permiso: Shell quiere dar a pide eco
+~│   [guardian] detalles de la pregunta: a la vista
+~│   [sesiones] Shell da a pide el permiso eco: el usuario dice sí (0)
+~│   [shell] Hecho: pide puede usar el servicio de prueba "eco" (eco).
+~│   [shell] pide: usar el servicio de prueba "eco" (eco)
+~│   [shell] pide eco
+~│   [sesiones] Shell da a hostil el permiso eco: el usuario dice no (-2)
+~│   [shell] dar a hostil: 10
+~│   [shell] Permiso: no hay un permiso "inventado"
+# Lo hostil: el fichero no se escribe ni se borra a mano; con otro cajón en su sitio, ni se lee ni se escribe ahí.
+~│   [shell] No se puede escribir en Home:Prefs/Permisos/concedidos: está protegido
+~│   [shell] Delete: Home:Prefs/Permisos/concedidos: está protegido
+~│   [sesiones] permisos concedidos (Ana): no se escriben (Cajon)
+~│   [sesiones] Shell quita a pide el permiso plazo: el usuario dice sí (0)
+~│   [sesiones] Shell quita a pide el permiso eco: el usuario dice sí (0)
+~│   [sesiones] permisos concedidos (Ana): 0 escritos en su Prefs/Permisos
 ~│   [sesiones] Shell asigna "Prueba" (3): 0
 ~│   [shell] Home:PruebaShell borrado
 ~│   [shell] Fin de la prueba del Shell

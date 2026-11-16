@@ -97,10 +97,20 @@ desde el menú de la barra.
 
 Arriba de cada espacio de trabajo, como en las pantallas del Amiga, y con lo de DMS a la derecha:
 
-- **A la izquierda**: el título del espacio de trabajo y **los menús del programa activo**. Los títulos de los menús se
-  ven en la barra y se abren con el clic normal, para que quien no conoce el Amiga los encuentre (S36, regla 9). El
-  botón derecho los sigue abriendo desde cualquier sitio, como en el Amiga: queda como atajo. Los programas Wayland de
-  Linux con menú propio lo siguen teniendo dentro de su ventana.
+- **A la izquierda**: el título del espacio de trabajo y, si el usuario eligió los menús clásicos (abajo), **los
+  menús del programa activo**.
+
+**Dónde van los menús de un programa** (decidido por el usuario el 2026-11-16, pasado por la sesión de Dash): dos
+maneras, elegidas para todo el sistema en Ajustes, categoría Escritorio (y con la orden `Ajuste`, S36 regla 1):
+
+- **Moderna, de serie**: una fila de menús dentro de cada ventana, como ya pinta kit-c. Se ve sin saber nada del
+  Amiga (S36, regla 9).
+- **Clásica del Amiga**: los menús del programa activo en la barra de arriba de la pantalla. Los títulos se ven y se
+  abren con el clic normal; el botón derecho los abre desde cualquier sitio, como en el Amiga.
+
+El kit nativo y kit-c leen el ajuste y pintan el menú en un sitio u otro; el programa no cambia. Cambiar el ajuste se
+aplica sin reiniciar los programas (aviso de cambio de `ENV:`). Los programas Wayland de Linux con menú propio lo
+siguen teniendo dentro de su ventana. La caja Amiga sigue su propio modelo dentro de sus pantallas.
 - **A la derecha**: bandeja de iconos de programas, red, sonido, batería si la hay, reloj y notificaciones.
 
 ### Lanzador, notificaciones y Commodities
@@ -232,8 +242,8 @@ Decidido por el usuario (2026-11-03): **aspecto de Material Design** (Material 3
    pantalla propia de un programa de Amiga, y "monitor" para el aparato.
 2. ¿Disposición por defecto de un espacio de trabajo nuevo: flotante (Workbench clásico) o mosaico con desplazamiento
    (niri)? Recomendado: Workbench flotante, y el resto en mosaico con desplazamiento.
-3. ¿Menús del programa en la barra de la pantalla con el botón derecho, como el Amiga? Recomendado: sí, y además a
-   la vista en la barra con el clic normal (S36, regla 9).
+3. ~~¿Menús del programa en la barra de la pantalla?~~ Decidido el 2026-11-16: dentro de la ventana de serie; la
+   barra de arriba, como opción de todo el sistema (ver "Dónde van los menús de un programa").
 
 ## Cómo encaja
 
@@ -244,7 +254,7 @@ Decidido por el usuario (2026-11-03): **aspecto de Material Design** (Material 3
 - Con S6: "Información" enseña dueño y permisos; el escritorio no puede leer lo que no le toca.
 - Con S7 y S8: el lanzador encuentra programas de los tres mundos.
 - Con S9: escala por monitor y conexión en caliente.
-- S11: el kit de interfaz nativo trae los menús a la barra.
+- S11: el kit de interfaz nativo pinta los menús en la ventana o en la barra, según el ajuste.
 
 ## Fuentes
 

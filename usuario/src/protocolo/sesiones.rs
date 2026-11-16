@@ -121,7 +121,8 @@ pub const ADMINISTRAR: u32 = 14;
 pub const RESPUESTA_ADMIN: u32 = 15;
 /// Las acciones de administrador que hay: comprobar el disco (la hace `archivos`) y matar un proceso de otro usuario o
 /// del sistema (su número, u64, tras el nombre de la acción).
-pub const ACCIONES: &[&str] = &["comprobar", "matar"];
+/// S6, S36: y leer el registro de todos ("registro"): quien la pide lee todo con `REGISTRO_LEER` mientras viva.
+pub const ACCIONES: &[&str] = &["comprobar", "matar", "registro"];
 /// De un programa (U3): bloquear la sesión de su usuario (orden). Solo si su usuario tiene la sesión abierta; `sesiones`
 /// se lo pide a `guardian` (por su llave de preguntas, con "*bloquear" y el nombre del usuario en lugar del programa).
 /// Contesta 0, o -2.
@@ -226,13 +227,9 @@ pub const LARGO_AVISO_PODER: usize = 24;
 pub const PODER_ATAJOS: u32 = 1;
 pub const PODER_FONDO: u32 = 2;
 pub const PODER_COMMODITIES: u32 = 4;
-/// Los permisos que no dan una llave sino un poder del compositor (S10): su nombre, su bit y su frase en llano (S6b:
-/// "<programa> quiere ...").
-pub const PODERES_COMPOSITOR: &[(&str, u32, &str)] = &[
-    ("atajos", PODER_ATAJOS, "usar teclas rápidas en todo el sistema"),
-    ("fondo", PODER_FONDO, "saber cuándo no usas el ordenador y apagar la pantalla"),
-    ("commodities", PODER_COMMODITIES, "ver y manejar tus utilidades de fondo"),
-];
+/// Los permisos que no dan una llave sino un poder del compositor (S10): su nombre y su bit. Su frase en llano está con
+/// las de los demás, en `permisos_texto::FRASES`.
+pub const PODERES_COMPOSITOR: &[(&str, u32)] = &[("atajos", PODER_ATAJOS), ("fondo", PODER_FONDO), ("commodities", PODER_COMMODITIES)];
 /// Las personas tienen el usuario 1000 o más (S6b); lo de debajo es del sistema. Un programa ve los procesos de su
 /// usuario y los del sistema, no los de otras personas (U6).
 pub const PRIMERA_PERSONA: u32 = 1000;
@@ -251,6 +248,32 @@ pub const R_LANZAR: u32 = 5;
 pub const R_ADMIN: u32 = 6;
 /// Apagar, reiniciar o cerrar la sesión (`APAGAR`): lo hecho y lo negado.
 pub const R_APAGAR: u32 = 7;
+
+/// S6, S36 (regla 2): leer el registro común (`dashos::registro`), de cualquier programa: orden, fichero (u32: 0
+/// seguridad, 1 sistema, 2 programas), parte (u32: 0 el de ahora, 1 el `.1` de antes de rotar), desde (u64: el byte
+/// del de ahora desde el que se lee; si pasa del final, es que rotó, y se lee desde el principio) y una llave para
+/// contestar. Contesta el estado (i32), cuántas veces ha rotado ese fichero (u32), hasta qué byte llegó (u64: el `desde`
+/// de la próxima vez), lo que miden las líneas (u64) y, si hay alguna, una llave de memoria solo para leer con ellas:
+/// las de su usuario y las del sistema; todas, si quien pide confirmó antes la acción de administrador "registro".
+/// Número alto, para no chocar con las órdenes de otras ramas.
+pub const REGISTRO_LEER: u32 = 80;
+pub const LARGO_REGISTRO_LEER: usize = 24;
+/// S6, S36: apuntar en el registro común, de cualquier programa con ficha: orden, largo del qué (u32), largo del
+/// motivo (u32), clase (16 bytes, rellenos de ceros: solo cuenta en los programas del sistema, y de
+/// `registro::CLASES_DEL_SISTEMA`; los demás apuntan "programa"), el qué y el motivo. La hora, el programa y el usuario
+/// los pone `sesiones`. Va a `programas` (o a `sistema`, de un programa del sistema con otra clase). Contesta un i32:
+/// 0, o `OCUPADO` si va más deprisa que `registro::RAFAGA` (no se apunta; se cuenta y se dice luego).
+pub const APUNTAR: u32 = 81;
+/// S6b, S36 (regla 3): lo concedido a los programas del usuario de quien pide, para la orden `Permiso`; ver lo propio es
+/// libre. Como `CONCEDIDOS` (orden y desde u32; la misma respuesta), pero de cualquier programa y solo lo de su usuario.
+pub const PERMISOS_PROPIOS: u32 = 82;
+/// S6b, S36: dar o quitar un permiso a un programa del usuario de quien pide (orden, 1 dar o 0 quitar u32, largo del
+/// programa u32, largo del permiso u32, el programa y el permiso). Lo confirma el usuario en `guardian` (una pregunta
+/// con "+dar" o "+quitar" donde va el servicio, y en el detalle el programa, un 0 y el permiso): un guion no se concede
+/// nada a escondidas. Solo desde la sesión de delante. Quitar revoca en el acto las llaves que tenga. Contesta un i32:
+/// 0 hecho, `NO_EXISTE` si el permiso no existe o (quitar) no estaba concedido, `PROTEGIDO` si el usuario dijo que no o
+/// no hay a quién preguntar.
+pub const PERMISO_CAMBIAR: u32 = 83;
 
 // Lo que contesta `MATAR`.
 pub const BIEN: i32 = 0;

@@ -100,8 +100,18 @@ path = "src/bin/sueltas/makedir.rs"
 test = false
 
 [[bin]]
+name = "orden-permiso"
+path = "src/bin/sueltas/permiso.rs"
+test = false
+
+[[bin]]
 name = "orden-protect"
 path = "src/bin/sueltas/protect.rs"
+test = false
+
+[[bin]]
+name = "orden-registro"
+path = "src/bin/sueltas/registro.rs"
 test = false
 
 [[bin]]

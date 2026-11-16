@@ -2185,3 +2185,22 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   2026-11-16: tanda completa 12 de 12 y `arranque-virt-shell` bien, a la primera. Por decidir con el usuario: tres
   de gusto (menú de Tab, rojo al teclear, color del indicador) y si las ventanas del sistema usan la barra del
   compositor.
+- **Menús de las ventanas** (decidido por el usuario, 2026-11-16, por la sesión de Dash): de serie, una fila dentro
+  de cada ventana (como kit-c); opción de todo el sistema en Ajustes para llevarlos a la barra de arriba, al estilo
+  clásico del Amiga. Escrito en S10. Por hacer: el ajuste, el kit nativo y kit-c pintando en un sitio u otro, y la
+  barra mostrando los menús del programa activo.
+- **S35 paso 1 hecho: medido un Linux mínimo** (rama `medir-linux`, unida; 2026-11-16). Linux 7.3.4 oficial, sin
+  módulos ni distribución, desde `tinyconfig`, en QEMU: dominio de red y Wi-Fi juntos arranca con 15 a 17 MB en
+  aarch64 y usa 14 a 17 MB parado (+0,7 MB por procesador, +0,3 a 1,5 MB con tráfico); x86-64, 17 MB con
+  `CONFIG_PHYSICAL_START=0x200000`. El objetivo de 48 MB se cumple con margen. Sin medir: Wi-Fi real con firmware,
+  `wpa_supplicant`/`iwd` en el dominio, el servidor virtio de verdad, hardware real. Guion `tools/medir_dominios.py`,
+  configuración en `caja-linux/dominios/`; los kernels, fuera de git. Por decidir: si el kernel de los dominios y el
+  de la caja Linux (6.18) van en la misma versión. Siguiente de S35: prestar un aparato USB a un dominio y recibir
+  red por virtio.
+- **Unida `registro-permisos` (2026-11-16)**: registro común en texto en `Estado:Registros/` (`seguridad`, `sistema`,
+  `programas`; solo lo escribe `sesiones`, rota a 64 KB), orden `Registro`; lo concedido en
+  `Home:Prefs/Permisos/concedidos` (y `Estado:Prefs/Permisos/` para lo del sistema), orden `Permiso` (dar y quitar
+  con `guardian`); preguntas en llano con "Detalles"; el kernel cuenta los topes de cada grupo; `archivos`
+  `HUECO_SUYO`; órdenes 80 a 83 de `sesiones`. Tanda completa y `arranque-virt-shell`: todo bien a la primera. Sin
+  ver en pantalla las preguntas nuevas. Fallo apuntado: volver a una instantánea pierde lo registrado después.
+  Queda: modo de desarrollo, tanda de administrador, el registro en Ajustes.

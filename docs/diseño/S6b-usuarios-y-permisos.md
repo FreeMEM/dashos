@@ -239,6 +239,16 @@ cajón de `sesiones` (S28); su sitio es este.
 
 El formato del fichero, por diseñar al hacerlo.
 
+**Hecho** (rama `registro-permisos`, 2026-11-16). `Home:Prefs/Permisos/concedidos`: una cabecera que dice qué es y
+cómo se cambia, y una línea por permiso, `programa permiso`. El cajón (`Permisos`) y el fichero son de `sesiones`
+(0755 y 0644): el dueño los lee; nadie más los escribe. `sesiones` lo lee al entrar la persona y lo escribe al cambiar
+algo (si el volumen está cerrado, cuando entre). Un cajón o un fichero que no es de `sesiones` (uno puesto a mano) no se
+lee ni se escribe, y queda en el registro: el servicio de archivos solo da a `sesiones` ese cajón si es suyo
+(`HUECO_SUYO`). Lo de los programas del sistema, que no son de nadie, en `Estado:Prefs/Permisos/concedidos` (con el
+usuario del sistema en una tercera columna). La orden `Permiso` lista lo propio (libre) y da o quita con la
+confirmación de `guardian` ("¿Cambiar un permiso?", con el teclado y la D para los detalles); quitar revoca en el acto.
+Pendiente del usuario: el sitio de lo del sistema (`Estado:Prefs/Permisos/`).
+
 ### Lista de permisos
 
 | Permiso | Qué da | Lo que lee el usuario ("Editor quiere...") |

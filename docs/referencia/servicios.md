@@ -316,7 +316,10 @@ leer y escribir), largo del volumen y del camino (un byte cada uno), el volumen 
 ponen al abrir la sesión. S28: con el hueco `HUECO_PAPELERA` (0x80), ese camino no es una raíz sino la **papelera** del
 cliente: lo que borra (un fichero, no un cajón) va ahí, con su nombre o "nombre.N" si ya hay uno, en vez de borrarse. Queda
 fuera de sus raíces (no la ve ni la vacía); si falta, se crea, suya y 0700. Hoy la tiene la caja Amiga
-(`Estado/Servicios/caja-amiga.papelera`). Sin alta no hay sesión (-12). Con la orden 101, **baja**, también sin marca (la manda
+(`Estado/Servicios/caja-amiga.papelera`). S6, S36: con el bit `HUECO_SUYO` (0x40) en el hueco de una raíz, el último
+cajón del camino se crea si falta (del cliente, 0755; los de antes que falten, del dueño de la raíz del volumen) y, si
+ya está y no es del cliente, esa raíz no se da: así `sesiones` tiene su cajón en el `Home:Prefs` de una persona sin que
+nadie se lo cambie por otro. Sin alta no hay sesión (-12). Con la orden 101, **baja**, también sin marca (la manda
 `sesiones` cuando acaba algo que lanzó): se sueltan la sesión de esa marca (bytes 8-15), sus asas y raíces, y su alta.
 Las fichas provisionales están en `usuario/src/bin/inicio.rs` (`FICHAS`). Con ellas:
 
@@ -456,8 +459,24 @@ cada programa y el registro de seguridad. Diseño: `diseño/S6b-usuarios-y-permi
 `usuario/src/protocolo/sesiones.rs`. Llaves: 1 el permiso de la clase de plazo (para repartirlo), 2 su canal con
 archivos, 3 `eco` sin marca (para repartirlo), 4 su canal, 5 una copia sin marca de su canal (de ella salen las llaves
 con que nace lo que lanza) y 6 una copia sin marca del canal de archivos (las altas de lo que lanza). Su cajón,
-`Estado/Servicios/sesiones` (usuario 1, 0700): `registro` (la cuenta y un anillo de 1.024 entradas) y `permisos` (una
-línea "programa servicio" por permiso concedido). Cuentas y frases, provisionales en el código (`CUENTAS`, `ADMIN`).
+`Estado/Servicios/sesiones` (usuario 1, 0700): `registro` (la cuenta y un anillo de 1.024 entradas, el de antes de S36,
+que sigue leyendo el centro de control). Cuentas y frases, provisionales en el código (`CUENTAS`, `ADMIN`).
+
+**El registro común** (S6, regla 2 de S36; rama `registro-permisos`). Texto en `Estado/Registros/` (cajón de
+`sesiones`, 0700): `seguridad` (lo que decide `sesiones`: permisos dados, quitados y negados, acciones de
+administrador, entradas, cierres), `sistema` (servicios que vuelven, quién topa con su tope de memoria, memoria baja,
+lo que niega la guardia de la caja Amiga) y `programas` (lo que apuntan los programas). Una línea por hecho: hora (UTC),
+programa, usuario, clase y el texto con su motivo; formato y limpieza en `usuario/src/registro.rs`. Solo `sesiones`
+escribe, y solo al final; a los 64 KB el fichero pasa a `.1`. Lo escribe con un cliente propio de archivos (marca
+aparte, raíz con `HUECO_SUYO`). Cada uno lee lo suyo y lo del sistema; todo, con la acción de administrador
+"registro". Lo que un programa apunta lleva siempre su nombre y su usuario: no elige ni el fichero ni la clase (salvo
+los del sistema, entre `registro::CLASES_DEL_SISTEMA`), y va con un ritmo por programa y usuario (`registro::RAFAGA`).
+
+**Lo concedido** (S6b, regla 3 de S36). En texto: lo de cada persona en su `Home:Prefs/Permisos/concedidos` (se lee
+al entrar y se escribe al cambiar; si su volumen está cerrado, cuando entre), y lo de los programas del sistema en
+`Estado/Prefs/Permisos/concedidos` (`usuario/src/permisos_texto.rs`). El cajón y el fichero son de `sesiones`; el
+dueño los lee. Un cajón o un fichero que no es de `sesiones` no se lee ni se escribe (queda en el registro). Lo de
+antes, en `Estado/Servicios/sesiones/permisos`, se pasa a su sitio al arrancar y se borra.
 
 `DELANTE` (21, S27): quién está delante (un i32 y 16 bytes con el nombre). Solo al panel rápido y a la barra, por el
 nombre que da `inicio`; a otro, o sin nadie delante, -2 y nada más.
@@ -498,15 +517,20 @@ de respuesta:
 | 40 lanzar ayudante | un programa lanzado del disco (el Shell nativo) | Lanza otro programa **con su misma ficha** (`bitacoras/shell-nativa.md`): usuario, grupo, identidad (el nombre de la ficha: los permisos son suyos), raíces y asignaciones. El ELF lo manda quien pide, en un objeto de memoria (segunda llave, con leer): lo leyó él con sus permisos, y `sesiones` no abre nada por él. u32 lo que mide, u8 la raíz suya donde estaba (0xff, ninguna), u8 largo del nombre, u16 largo del cajón, el nombre y el cajón (hasta 80 bytes). Una tercera llave, si viene, es la cuarta del ayudante (su canal de arranque). Su `PROGDIR:` es la raíz 5, en ese cajón, con el tope de la raíz de origen. Hasta 32 procesos lanzados del disco por usuario. Contesta como lanzar |
 | 11 preguntas | `guardian` | La llave por la que se le pregunta: permisos, acciones de administrador y bloquear |
 | 12 respuesta, 13 retirar | `guardian` | Sí o no a un permiso (lo concedido se guarda; S28: 2 es "sí, solo esta vez", sin guardarlo); quitar uno concedido (se borra y se revocan sus llaves) |
-| 14 administrar | cualquiera | Una acción de la lista cerrada ("comprobar", "matar"), con la contraseña de un administrador que pide `guardian`. Desde una sesión de detrás, -2 (U6) |
+| 14 administrar | cualquiera | Una acción de la lista cerrada ("comprobar", "matar", "registro": leer el registro de todos mientras viva quien la pidió), con la contraseña de un administrador que pide `guardian`. Desde una sesión de detrás, -2 (U6) |
 | 15 respuesta de administrador | `guardian` | Usuario y contraseña para esa acción; se comprueban con su volumen |
 | 16 bloquear | uno del usuario con la sesión delante | `guardian` bloquea la sesión con su pantalla |
 | 18 activa | cualquiera | Si su sesión está delante (1), detrás (0) o no tiene (-2). U6: cambio rápido de usuario |
 | 27 escuchar memoria | las cajas (`caja-amiga`, `caja-linux`) | aviso-cajas: con la llave de contestar y el lado de escribir de un canal que solo lee la caja. Por él le manda `sesiones` (nadie más tiene esa llave) el aviso de memoria baja del kernel: orden 28 `SOLTAR`, el nivel (1 que suelte lo que pueda; 0 normal), lo libre para procesos y lo que había al arrancar. A otro programa, -2, y el canal que da se cierra sin usar |
 | 29 soltado | una caja apuntada | Lo que soltó por un aviso (u64, bytes). `sesiones` mide lo que tiene cobrado su grupo y lo apunta junto a lo que tenía al llegar el aviso. A otro, -2 |
+| 80 leer el registro | cualquiera | S6, S36: el fichero (u32: 0 seguridad, 1 sistema, 2 programas), la parte (u32: 0 el de ahora, 1 el `.1`) y desde qué byte (u64). Contesta el estado, cuántas veces rotó (u32), hasta qué byte llegó (u64), lo que miden las líneas (u64) y una llave de memoria solo para leer con las que ve: las de su usuario y las del sistema; todas, tras la acción "registro". La orden `Registro` |
+| 81 apuntar | cualquiera | S6, S36: una línea en `programas` (el qué, el motivo y una clase que solo cuenta en los del sistema). La hora, el programa y el usuario los pone `sesiones`. Más deprisa que el ritmo, -3 (se cuenta y se dice en la siguiente) |
+| 82 lo concedido, propio | cualquiera | S6b, S36: como 17, pero solo lo de su usuario. La orden `Permiso` |
+| 83 dar o quitar un permiso | cualquiera, desde la sesión de delante | S6b, S36: 1 dar o 0 quitar, el programa y el permiso. Lo confirma el usuario en `guardian` ("+dar" o "+quitar"; el detalle, el programa y el permiso); quitar revoca en el acto. 0, -1 (no existe o no lo tenía) o -2 (no) |
 
 Las negativas (matar, servicio, entrar, lanzar, administrar, bloquear) y los procesos que mueren por un fallo quedan en
-el registro.
+el registro de antes; eso y más (lo que se da y se quita, lo que se cierra, quién topa con su tope, lo que vuelve, la
+memoria baja), en el registro común, en llano.
 
 Quién es `guardian`, el centro o la barra lo dice el nombre que da `inicio` (S10): lo lanzado desde el disco se llama
 como su fichero, y un `Programas/guardian` no tiene los poderes de `guardian`.

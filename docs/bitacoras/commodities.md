@@ -278,3 +278,28 @@ AmigaOS (los autodocs de `commodities.library` y el capítulo de Commodities Exc
 - La regla de `AGENTS.md` de `unsafe` solo en `kernel/src/base/`: FKey copia el programa a la memoria que pasa a
   `sesiones` con un bloque `unsafe`, igual que el Shell (`ordenes/src/bin/shell.rs`, `cargar`). Lo demás de los
   programas no añade `unsafe` (Exchange pinta en la memoria de `ventana_cliente::Lamina`).
+
+## 2026-11-16 (tarde): unida `revision` (69485b98, con `registro-permisos`)
+
+- Conflictos en `sesiones.rs`, `guardian.rs` y `disco_archivos.py`, resueltos conservando las dos cosas.
+- **Frases**: las tres de commodities pasan a la tabla común (`usuario/src/permisos_texto.rs`, `FRASES`); `guardian`
+  las enseña como las demás (la de `registro-permisos`, con "Detalles" en la D). `PODERES_COMPOSITOR` ya no lleva frase.
+- **Dónde se guardan**: como cualquier permiso de `REPARTE`, lo que el usuario concede va a
+  `Home:Prefs/Permisos/concedidos` (o `Estado:Prefs/Permisos/concedidos` los del sistema), con la orden `Permiso`.
+- **Quitar**: el aviso al compositor va dentro de `quitar_permiso`, el que usan `RETIRAR` (Ajustes) y `Permiso QUITAR`:
+  los dos retiran el poder en el acto.
+- **Registro común**: lo negado ya iba; lo concedido de serie (`PERMISOS`) se apunta también (`SE_APUNTA` lleva los
+  tres); lo que deja el programa (`DEJAR`), con su línea; lo que da el usuario y lo que se quita, por el camino común.
+- **El aviso `0x5536_0010`**: no choca (los de `registro-permisos` son órdenes 80 a 83 y no hay avisos nuevos al
+  compositor). Mide 24 bytes, como la entrada de directorio de `inicio`; se distinguen por la primera palabra, que en
+  la de `inicio` es la marca baja de un programa suyo (no llega a 0x5536_0010).
+- **F1 a F12 solas valen como atajo** (recomendación del coordinador, aún sin el sí del usuario): interruptor
+  `wayland::atajos::FUNCION_SOLAS`; con `false`, vuelven a pedir Ctrl y Alt. Lo que cuesta: una commodity puede quitar a
+  los programas una tecla de función sola (F2 de renombrar en el explorador, F5). Con Mayúsculas o Ctrl solo, no.
+- Pruebas tras la unión: `cargo test` de `wayland` 116 bien (nueva: F5 sola salta y no llega; con Mayúsculas, sí
+  llega); `permisos_texto` y `registro` del PC, bien; `make prueba`, `arranque-virt` (con el registro común: las
+  concesiones de serie de `commodity-prueba` salen en `Estado:Registros/seguridad` con su frase), `-2`, `-linux` y
+  `-shell`, bien. `arranque-virt-wayland` con `ARCH_IMAGE` y `ARCH_DISCO` de `~/.cache/dashos-caja-linux`: lo del
+  compositor bien; faltan las mismas 12 líneas de GTK, Firefox y la partición de 6135 MB, del disco de programas
+  grandes, que no está en esta máquina; parada por su PID. No comprobado: la línea en el registro de la concesión al
+  Shell (el fichero de seguridad tras la prueba empieza después; las de `commodity-prueba` sí están).

@@ -657,6 +657,16 @@ while time.time() - inicio < total:
             if "¿pide " in linea:
                 time.sleep(1.3)
                 mandar("sendkey shift-s")
+            elif "pregunta en pantalla: cambiar permiso: " in linea:
+                # S6b, S36: la orden `Permiso` del Shell: a `pide`, que sí; a otro, que no. La primera vez, antes, la D
+                # (los detalles: el nombre interno del permiso).
+                time.sleep(1.3)
+                globals()["cambios_vistos"] = globals().get("cambios_vistos", 0) + 1
+                if cambios_vistos == 1 and sigue_preguntando():
+                    mandar("sendkey d")
+                    time.sleep(0.5)
+                if sigue_preguntando():
+                    mandar("sendkey " + ("shift-s" if " a pide " in linea else "n"))
             elif " quiere cambiar " in linea:
                 time.sleep(1.3)
                 if sigue_preguntando():

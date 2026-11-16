@@ -229,7 +229,7 @@ fn reservados_y_lo_que_no_vale() {
         ("ctrl subirvolumen", 2),
         ("a", 1),
         ("mayús a", 1),
-        ("f1", 1),
+        ("mayús f1", 1),
         ("ctrl c", 1),
         ("ctrl mayús n", 1),
         ("alt f4", 1),
@@ -584,4 +584,33 @@ fn autopoint_y_clicktofront() {
     escena.raton(400, 300, 1);
     escena.raton(0, 0, 0);
     assert_eq!(escena.orden.last().map(|o| o.0), Some(5));
+}
+
+/// Las teclas de función solas (`atajos::FUNCION_SOLAS`, recomendación pendiente del usuario): F5 sola salta y no llega
+/// a la ventana; con Mayúsculas, no es atajo y llega.
+#[test]
+fn teclas_de_funcion_solas() {
+    let mut escena = escena_800();
+    let mut v = Conexion::new();
+    ventana(&mut escena, &mut v, 9, 200, 100);
+    let mut c = Conexion::new();
+    escena.poner_poderes(4, PODER_ATAJOS, true);
+    commodity(&mut escena, &mut c, 4, "FKey");
+    pedir_atajo(&mut escena, &mut c, 4, 5, "f5");
+    if !crate::atajos::FUNCION_SOLAS {
+        assert_eq!(negados(&mut c), [(5, 1)]);
+        return;
+    }
+    assert!(negados(&mut c).is_empty());
+    const F5: u8 = 0x3E;
+    let mut out = escena.tecla(F5, true);
+    out.extend(escena.tecla(F5, false));
+    assert_eq!(teclas_de(&out, 63), 0);
+    assert_eq!(avisos_de(&mut escena, 4), [Aviso::Pulsado { objeto: 31, numero: 5 }]);
+    let mut out = escena.tecla(0xE1, true);
+    out.extend(escena.tecla(F5, true));
+    out.extend(escena.tecla(F5, false));
+    out.extend(escena.tecla(0xE1, false));
+    assert_eq!(teclas_de(&out, 63), 2);
+    assert!(avisos_de(&mut escena, 4).is_empty());
 }

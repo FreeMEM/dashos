@@ -54,6 +54,10 @@ pub struct Cupo {
     /// Tiempo de CPU de sus procesos y de los de sus subgrupos, vivos y muertos, en cuentas del contador (trasfondo,
     /// llamada 52). Solo sube; da la vuelta a los 2^64 (siglos).
     cpu: AtomicU64,
+    /// S3 (topar con el cupo deja rastro): las veces que un cobro a este grupo no cupo por un tope, el suyo o el de
+    /// uno de encima, sin contar el del raíz (eso es que la máquina no tiene memoria, no un tope). Solo sube. Lo lee
+    /// quien tiene la llave del grupo (`grupo_uso`), y `sesiones` lo apunta en el registro.
+    topado: AtomicU64,
     /// Lo que este grupo tiene cobrado a su padre (`COSTE_GRUPO`), con el padre: por aquí sube cada cobro.
     _del_padre: Option<Cargo>,
     miembros: Cerrojo<Vec<Weak<Control>>>,
@@ -105,6 +109,7 @@ impl Cupo {
             muerto: core::sync::atomic::AtomicBool::new(false),
             usado: AtomicU64::new(0),
             cpu: AtomicU64::new(0),
+            topado: AtomicU64::new(0),
             _del_padre: del_padre,
             miembros: Cerrojo::default(),
             hijos: Cerrojo::default(),
@@ -229,6 +234,9 @@ impl Cupo {
         let mut g = self;
         loop {
             if !g.sumar(n) {
+                if g.padre().is_some() {
+                    self.topado.fetch_add(1, Ordering::Relaxed);
+                }
                 let mut d = self;
                 while !core::ptr::eq(d, g) {
                     d.usado.fetch_sub(n, Ordering::Relaxed);
@@ -267,6 +275,11 @@ impl Cupo {
                 Some(cargo) => c = &cargo.cupo,
             }
         }
+    }
+
+    /// Las veces que un cobro a este grupo no cupo por un tope que no es el del raíz (`topado`).
+    pub fn topado(&self) -> u64 {
+        self.topado.load(Ordering::Relaxed)
     }
 
     /// (tope, usado), en bytes. Lo usado cuenta lo de sus subgrupos.

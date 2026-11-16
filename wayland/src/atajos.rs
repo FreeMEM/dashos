@@ -19,6 +19,11 @@ pub const MAYUS: u8 = 4;
 pub const SUPER: u8 = 8;
 pub const ALTGR: u8 = 16;
 
+/// Las teclas de función solas (F1 a F12, sin ningún modificador) valen como atajo, como en FKey del Amiga: no chocan
+/// con escribir. Recomendación del coordinador (2026-11-16), pendiente del sí del usuario: con `false`, vuelven a pedir
+/// Ctrl y Alt como las demás.
+pub const FUNCION_SOLAS: bool = true;
+
 /// Lo más largo que se acepta escrito.
 pub const MAX_TEXTO: usize = 64;
 
@@ -42,7 +47,7 @@ impl Motivo {
     /// En llano, para Exchange y para la orden.
     pub fn texto(self) -> &'static str {
         match self {
-            Motivo::NoVale => "no vale: lleva Ctrl, Alt y una tecla",
+            Motivo::NoVale => "no vale: lleva Ctrl, Alt y una tecla (o es una de función sola)",
             Motivo::Reservado => "es del sistema",
             Motivo::Ocupado => "la tiene otra",
             Motivo::Demasiados => "demasiadas",
@@ -159,6 +164,10 @@ impl Combinacion {
         if self.mods & CTRL != 0 && self.mods & ALT != 0 && matches!(self.tecla, TECLA_SUPR | TECLA_RETROCESO) {
             return Err(Motivo::Reservado);
         }
+        let funcion = matches!(self.tecla, 59..=68 | 87 | 88);
+        if FUNCION_SOLAS && funcion && self.mods == 0 {
+            return Ok(());
+        }
         if self.mods & (CTRL | ALT) != CTRL | ALT {
             return Err(Motivo::NoVale);
         }
@@ -263,9 +272,13 @@ mod pruebas {
     #[test]
     fn sin_ctrl_y_alt_no_es_atajo() {
         // Escribir, y los atajos de los programas (copiar, nueva carpeta, cerrar la ventana): no se pueden coger.
-        for t in ["a", "mayús a", "f1", "esc", "espacio", "mayús f5", "5", "ctrl c", "ctrl v", "ctrl mayús n", "alt f4", "alt supr",
-            "ctrl retroceso", "ctrl mayús esc", "alt mayús tab"] {
+        for t in ["a", "mayús a", "esc", "espacio", "mayús f5", "5", "ctrl c", "ctrl v", "ctrl mayús n", "alt f4", "alt supr",
+            "ctrl retroceso", "ctrl mayús esc", "alt mayús tab", "ctrl f1"] {
             assert_eq!(entender(t), Err(Motivo::NoVale), "{t}");
+        }
+        // Las de función, solas, sí (`FUNCION_SOLAS`); con un modificador que no sea Ctrl+Alt, no.
+        for t in ["f1", "F5", "f12"] {
+            assert_eq!(entender(t).is_ok(), FUNCION_SOLAS, "{t}");
         }
         for t in ["ctrl alt t", "ctrl alt mayús t", "ctrl alt f1", "ctrl alt espacio", "alt ctrl 5"] {
             assert!(entender(t).is_ok(), "{t}");
