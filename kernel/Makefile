@@ -447,7 +447,7 @@ FUNCIONES_X86 := archivos,ventanas,sonido,relevo
 # un RelevoJIT local, para probar cambios suyos sin subirlos (un `[patch]` por `--config`). La `rev` de Cargo.toml tiene
 # que estar en GitHub igual, y Cargo.lock cambia mientras se use: no se sube así.
 RELEVO_PATCH := $(if $(RELEVO_DIR),--config 'patch."https://github.com/FreeMEM/RelevoJIT".relevo.path="$(abspath $(RELEVO_DIR))"')
-SERVICIOS_X86 := inicio consola compositor xhci nvme disco ahci disco-sata archivos ficheros sonido virtio-sonido tono-a tono-b ventana-a ventana-b ajustes hola
+SERVICIOS_X86 := inicio consola compositor xhci nvme disco ahci disco-sata archivos ficheros sonido virtio-sonido hda tono-a tono-b ventana-a ventana-b ajustes hola
 
 usuario-x86-servicios: FORCE
 	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86) $(RELEVO_PATCH) $(addprefix --bin ,$(SERVICIOS_X86))
@@ -497,13 +497,23 @@ x86: usuario-x86-servicios FORCE
 # X5c: dos discos SATA en el AHCI de q35, en los puertos 0 y 2 (nuevos en cada prueba, `tools/disco_sata.py`); se miran
 # después en Linux.
 SATA_QEMU := -drive file=$(abspath target/sata0.img),if=none,id=sata0,format=raw,discard=unmap -device ide-hd,drive=sata0,bus=ide.0 -drive file=$(abspath target/sata1.img),if=none,id=sata1,format=raw,discard=unmap -device ide-hd,drive=sata1,bus=ide.2
+# X5c: el sonido, por omisión el de un PC (Intel HDA con el códec hda-duplex); SONIDO_X86=virtio, virtio-sound. Sus
+# esperados, en pruebas/arranque_x86_sonido_*.txt.
+SONIDO_X86 ?= hda
+SONIDO_QEMU := $(if $(filter virtio,$(SONIDO_X86)),-device virtio-sound-pci$(coma)audiodev=snd0$(VSONIDO_IOMMU),-device intel-hda -device hda-duplex$(coma)audiodev=snd0)
+SONIDO_NOMBRE := $(if $(filter virtio,$(SONIDO_X86)),virtio-sonido,hda)
+ifeq ($(filter hda virtio,$(SONIDO_X86)),)
+$(error SONIDO_X86 tiene que ser hda o virtio)
+endif
 arranque-x86: x86 $(DISCO_NVME)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(NUCLEO_X86)) cargo build --release --target x86_64-unknown-uefi
 	rm -f target/sonido-x86.wav target/captura-x86.ppm
 	python3 ../tools/disco_sata.py crear target/sata0.img 0
 	python3 ../tools/disco_sata.py crear target/sata1.img 1
 	$(call esperados_x86,pruebas/arranque_x86.txt,pruebas/arranque_x86_iommu.txt,target/esperados_arranque_x86.txt)
-	$(ACCEL_QEMU) $(MAQUINA_IOMMU) GUARDAR=$(abspath target/salida_x86.txt) CAPTURA=$(abspath target/captura-x86.ppm) ARQ=x86_64 TECLAS=simple QEMU_EXTRA="$(IOMMU_QEMU) -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv $(SATA_QEMU) -audiodev wav,id=snd0,path=$(abspath target/sonido-x86.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0$(VSONIDO_IOMMU)" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_arranque_x86.txt 90
+	cat pruebas/arranque_x86_sonido_$(SONIDO_X86).txt >> target/esperados_arranque_x86.txt
+	$(if $(IOMMU),echo "~$(SONIDO_NOMBRE): DMA por la IOMMU$(coma) en su dominio" >> target/esperados_arranque_x86.txt)
+	$(ACCEL_QEMU) $(MAQUINA_IOMMU) GUARDAR=$(abspath target/salida_x86.txt) CAPTURA=$(abspath target/captura-x86.ppm) ARQ=x86_64 TECLAS=simple QEMU_EXTRA="$(IOMMU_QEMU) -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv $(SATA_QEMU) -audiodev wav,id=snd0,path=$(abspath target/sonido-x86.wav),out.frequency=48000 $(SONIDO_QEMU)" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_arranque_x86.txt 90
 	@if grep -q "fallo de DMA\|interrupción bloqueada" target/salida_x86.txt; then echo "MAL: fallos de DMA o interrupciones bloqueadas en el arranque"; grep "fallo de DMA\|interrupción bloqueada" target/salida_x86.txt | head; exit 1; fi
 	python3 ../tools/disco_archivos.py --comprobar-basico $(DISCO_NVME) $(VER)
 	python3 ../tools/disco_sata.py comprobar target/sata0.img 0

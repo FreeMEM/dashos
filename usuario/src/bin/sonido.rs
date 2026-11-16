@@ -4,7 +4,7 @@
 //! marca es de quién), los del controlador y los de los programas, cada uno con su marca. El protocolo, en
 //! `docs/referencia/servicios.md`:
 //!
-//! - El controlador (solo el que `inicio` llama "virtio-sonido") manda `SALIDA` con una memoria compartida: cabecera
+//! - El controlador (solo uno de los que `inicio` llama "virtio-sonido" o "hda", X5c; el primero) manda `SALIDA` con una memoria compartida: cabecera
 //!   (escritos, leídos, ranuras, cuadros por período) y las ranuras desde el byte 64, cada una un período en estéreo de
 //!   16 bits. Después, un `TIC` cada vez que el aparato devuelve un búfer: el reloj del hardware manda (S19). Con cada
 //!   tic, el servicio mezcla hasta tener `ADELANTE` períodos listos.
@@ -42,6 +42,8 @@ const ABRIR: u32 = 10;
 const VOLUMEN: u32 = 11;
 const CERRAR: u32 = 12;
 const GENERAL: u32 = 13;
+/// Los controladores, por el nombre que da `inicio`: el primero que manda `SALIDA` es el que suena (X5c).
+const CONTROLADORES: [&str; 2] = ["virtio-sonido", "hda"];
 /// Quién puede cambiar el volumen general, por el nombre que da `inicio`.
 const PONEN_GENERAL: &[&str] = &["panel"];
 const E_CERRADO: i64 = -4;
@@ -154,6 +156,8 @@ fn principal() -> u64 {
     let mut detras: Vec<u32> = Vec::new();
     let mut clientes: BTreeMap<u64, Cliente> = BTreeMap::new();
     let mut salida: Option<Salida> = None;
+    // La marca del controlador que suena (el que mandó `SALIDA`): solo sus tics marcan el ritmo.
+    let mut controlador: u64 = 0;
     let mut huecos: u64 = 0;
     let mut ultimo_tic = 0u64;
     // E9: lo que cuesta mezclar un período (µs): suma, cuántos y el peor. Se dice al cerrar cada flujo.
@@ -209,7 +213,7 @@ fn principal() -> u64 {
         let nombre = nombres.get(&marca).cloned().unwrap_or_else(|| String::from("?"));
         let para_mensajes = nombres.get(&marca).or_else(|| lanzados.get(&marca)).cloned().unwrap_or_else(|| String::from("?"));
         match w(0) {
-            SALIDA if n == 16 && k == 1 && nombre == "virtio-sonido" && salida.is_none() => {
+            SALIDA if n == 16 && k == 1 && CONTROLADORES.contains(&nombre.as_str()) && salida.is_none() => {
                 let (ranuras, cuadros, ritmo) = (w(1), w(2), w(3));
                 let cabe = (DATOS as i64 + ranuras as i64 * cuadros as i64 * 4) <= dashos::memoria_tamano(llaves[0]);
                 if ritmo != 48_000 || !(1..=64).contains(&ranuras) || !(16..=4096).contains(&cuadros) || !cabe || dashos::memoria_proyectar(llaves[0], VA_SALIDA, true) != 0 {
@@ -219,10 +223,11 @@ fn principal() -> u64 {
                 }
                 periodo.resize(2 * cuadros as usize, 0);
                 salida = Some(Salida { ranuras, cuadros });
+                controlador = marca;
                 println!("  [sonido] salida por {}: {} ranuras de {} cuadros a 48 kHz", nombre, ranuras, cuadros);
             }
             // Solo el controlador marca el ritmo de la mezcla (S8).
-            TIC if nombre == "virtio-sonido" => {
+            TIC if marca == controlador && marca != 0 => {
                 cerrar_llaves(&llaves);
                 let Some(s) = &salida else { continue };
                 // Medida de A6: tics separados más de 15 ms, o un tic que tarda más de 3 ms en mezclar.

@@ -20,7 +20,6 @@ DashOS en marcha (x86-64)
 ~PCIe: 1 tramos de ECAM en la MCFG,
 ~xhci: en el PCIe 0:
 ~nvme: en el PCIe 0:
-~virtio-sonido: en el PCIe 0:
 # X6: la consola es un proceso, con el registro y los puertos de COM1 (el mapa de E/S de la TSS).
 ~│   [inicio] consola lanzado en su grupo, con 2 llaves
 ~│   [inicio] todo lanzado; se queda vigilando los servicios
@@ -83,14 +82,3 @@ DashOS en marcha (x86-64)
 ~│   [ficheros] FS8 comprobación: bien
 ~│   [ficheros] FS9 instantáneas: bien
 ~│   [ficheros] FS10 volúmenes: bien
-# El sonido: el controlador de virtio-sound, el servicio y dos programas que suenan a la vez; tools/sonido_wav.py mira
-# el WAV de QEMU.
-~│   [sonido] salida por virtio-sonido: 8 ranuras de 256 cuadros a 48 kHz
-~│   [virtio-sonido] suena el flujo 0 para el servicio
-~│   [virtio-sonido] avisos por su interrupción
-~│   [sonido] tono-a abre un flujo: I16, 1 canales, 48000 Hz
-~│   [sonido] tono-b abre un flujo: F32, 2 canales, 44100 Hz
-~│   [tono-a] 1,5 s escritos; ahora falla a propósito
-~│   [sonido] tono-a ya no está: su flujo sale con fundido
-~│   [sonido] tono-a: flujo cerrado
-~│   [sonido] tono-b: flujo cerrado

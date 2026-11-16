@@ -1,7 +1,6 @@
-# X5b (`make -C kernel arranque-x86 IOMMU=intel` o `IOMMU=amd`): la IOMMU encendida, y el xHCI, el NVMe y el sonido de
-# virtio, cada uno en su dominio; lo demás de arranque_x86.txt tiene que seguir saliendo igual, y sin fallos de DMA.
+# X5b (`make -C kernel arranque-x86 IOMMU=intel` o `IOMMU=amd`): la IOMMU encendida, y el xHCI, el NVMe y el sonido
+# (su línea la pone el Makefile), cada uno en su dominio; lo demás de arranque_x86.txt tiene que seguir saliendo igual, y sin fallos de DMA.
 ~traducción encendida
 ~xhci: DMA por la IOMMU, en su dominio
 ~nvme: DMA por la IOMMU, en su dominio
-~virtio-sonido: DMA por la IOMMU, en su dominio
 ~ahci: DMA por la IOMMU, en su dominio

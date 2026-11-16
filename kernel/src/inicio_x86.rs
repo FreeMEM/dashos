@@ -44,6 +44,8 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Desde la fusión con `revision`, el sonido y su controlador reciben el permiso de plazo (S3), como en ARM.
     ("sonido", elf!("sonido"), &[("plazo", PLAZO)], &["sonido"]),
     ("virtio-sonido", elf!("virtio-sonido"), &[("dma-vsonido", PERMISO_DMA), ("virtio-sonido", REGISTROS), ("vsonido-cfg", REGISTROS), ("plazo", PLAZO), ("virtio-sonido", INTERRUPCION | OPCIONAL)], &["sonido"]),
+    // X5c: el sonido de un PC (Intel HDA). Si hay los dos, suena el primero que se presenta al servicio.
+    ("hda", elf!("hda"), &[("dma-hda", PERMISO_DMA), ("hda", REGISTROS), ("plazo", PLAZO), ("hda", INTERRUPCION | OPCIONAL)], &["sonido"]),
     ("tono-a", elf!("tono-a"), &[], &["sonido"]),
     ("tono-b", elf!("tono-b"), &[], &["sonido"]),
     // Dos clientes de Wayland de prueba (W7) y una aplicación con el kit (K7), como en ARM.
@@ -79,7 +81,7 @@ fn nombre16(n: &str) -> [u8; 16] {
 /// Los aparatos del PCIe que se dan a `inicio`: nombre, cómo se reconoce (clase o fabricante y aparato), la BAR de sus
 /// registros, si se le da también su configuración y el nombre de su permiso DMA. Las clases: xHCI, 0x0C0330
 /// (especificación de xHCI); NVMe, 0x010802 (especificación de NVMe); AHCI, 0x010601, con sus registros (ABAR) en la
-/// BAR 5 (Serial ATA AHCI 1.3.1, 2.1.11). El sonido de virtio: virtio 1.2, 4.1.2,
+/// BAR 5 (Serial ATA AHCI 1.3.1, 2.1.11); Intel HDA, 0x040300, con los suyos en la BAR 0 (HDA 1.0a, 3.3). El sonido de virtio: virtio 1.2, 4.1.2,
 /// fabricante 0x1af4 y aparato 0x1040 más el tipo, 25; en QEMU, todos sus registros en la BAR 4.
 enum Quien {
     Clase(u32),
@@ -90,6 +92,7 @@ const APARATOS: &[(&str, Quien, usize, Option<&str>, &str)] = &[
     ("xhci", Quien::Clase(0x0C_0330), 0, None, "dma-xhci"),
     ("nvme", Quien::Clase(0x01_0802), 0, None, "dma-nvme"),
     ("ahci", Quien::Clase(0x01_0601), 5, None, "dma-ahci"),
+    ("hda", Quien::Clase(0x04_0300), 0, None, "dma-hda"),
 ];
 
 /// Prepara un aparato: su BAR (en páginas enteras), el bus master y una MSI. (física, tamaño, interrupción).
