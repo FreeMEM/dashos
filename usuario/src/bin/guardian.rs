@@ -298,6 +298,12 @@ fn principal() -> u64 {
     let quitado = retirar("cambio", "plazo");
     println!("  [guardian] U6: retirar a cambio el permiso de plazo: {}; a pide el de eco: {}", quitado, retirar("pide", "eco"));
     let cambio = cambio && quitado == 0;
+    // Shell nativo: se lanza como Ana, con su guion de prueba (lo que escribe va al registro), y se espera a que acabe.
+    if quien.as_deref() == Some("Ana") {
+        let (e_shell, p_shell) = lanzar_con_argumentos("System/Shell", 1000, "REGISTRO ORDEN Execute S:Prueba-Shell");
+        let acaba = e_shell == 0 && esperar_fin(p_shell, 240_000_000);
+        println!("  [guardian] Shell nativo: lanza System/Shell como Ana: {}, acaba: {}", e_shell, acaba);
+    }
     // U6, paso 2, prueba hostil: `Programas/panel` (una copia de `cambio`), lanzado del disco con el nombre del panel
     // rápido, no tiene sus poderes en el compositor (lo comprueba él). Se lanza como `guardian` (sin `Home:`).
     let (e_panel, p_panel) = lanzar_como("Programas/panel", 0);
@@ -473,6 +479,37 @@ fn lanzar_como(camino: &str, como: u32) -> (i32, u64) {
     let (lectura, suyo) = dashos::canal_crear();
     let mut r = [0u8; 12];
     let n = if dashos::canal_escribir(SESIONES, &p[..12 + camino.len()], &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 5_000_000).0 } else { -1 };
+    dashos::cerrar(lectura);
+    if n == 12 { (i32::from_le_bytes(r[0..4].try_into().unwrap()), u64::from_le_bytes(r[4..12].try_into().unwrap())) } else { (i32::MIN, 0) }
+}
+
+/// Shell nativo: como `lanzar_como`, con argumentos: van por el canal de arranque del programa ("arranque"), ya
+/// puestos en su cola (`shell::protocolo`). Nadie atiende ese canal después: el programa no tiene a quién pedirle nada.
+fn lanzar_con_argumentos(camino: &str, como: u32, args: &str) -> (i32, u64) {
+    use shell::protocolo as sp;
+    let (nuestro, suyo) = dashos::canal_crear();
+    let mut m = [0u8; 256];
+    m[0..4].copy_from_slice(&sp::ARRANQUE.to_le_bytes());
+    m[12..16].copy_from_slice(&(args.len() as u32).to_le_bytes());
+    let mut bien = dashos::canal_escribir(nuestro, &m[..sp::LARGO_ARRANQUE], &[]) == 0;
+    for trozo in args.as_bytes().chunks(sp::POR_DATOS) {
+        m[0..4].copy_from_slice(&sp::DATOS.to_le_bytes());
+        m[4..4 + trozo.len()].copy_from_slice(trozo);
+        bien &= dashos::canal_escribir(nuestro, &m[..4 + trozo.len()], &[]) == 0;
+    }
+    dashos::cerrar(nuestro);
+    if !bien {
+        dashos::cerrar(suyo);
+        return (i32::MIN, 0);
+    }
+    let mut p = [0u8; 64];
+    p[0..4].copy_from_slice(&LANZAR.to_le_bytes());
+    p[4..8].copy_from_slice(&(camino.len() as u32).to_le_bytes());
+    p[8..12].copy_from_slice(&como.to_le_bytes());
+    p[12..12 + camino.len()].copy_from_slice(camino.as_bytes());
+    let (lectura, respuesta) = dashos::canal_crear();
+    let mut r = [0u8; 12];
+    let n = if dashos::canal_escribir(SESIONES, &p[..12 + camino.len()], &[respuesta, suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 5_000_000).0 } else { -1 };
     dashos::cerrar(lectura);
     if n == 12 { (i32::from_le_bytes(r[0..4].try_into().unwrap()), u64::from_le_bytes(r[4..12].try_into().unwrap())) } else { (i32::MIN, 0) }
 }

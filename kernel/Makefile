@@ -31,7 +31,9 @@ $(IMAGEN): usuario FORCE
 	$(OBJCOPY) -O binary $(ELF) $(IMAGEN)
 
 usuario: kit-c FORCE
-	cd ../usuario && cargo build --release --features archivos,ventanas,sonido,imagenes,red,caja
+	cd ../usuario && cargo build --release --features archivos,ventanas,sonido,imagenes,red,caja,ordenes
+	@# El Shell nativo y las órdenes de SYS:C (van al disco, no a la imagen del kernel).
+	cd ../ordenes && cargo build --release
 	cd ../usuario && cargo build --release --target aarch64_be-unknown-none-softfloat --bin hola --bin fpu_b
 	$(BOOTLIN)/aarch64_be-linux-as -EL -o $(PIE).o ../usuario/asm/pie.s
 	$(BOOTLIN)/aarch64_be-linux-ld -EL -pie --no-dynamic-linker -z noexecstack -z stack-size=32768 -o $(PIE) $(PIE).o
@@ -68,6 +70,8 @@ prueba: $(PRUEBAS) catalogos
 	cd ../wayland && cargo test --quiet
 	cd ../sonido && cargo test --quiet
 	cd ../amigados && cargo test --quiet --release
+	@# El Shell nativo: patrones, plantillas, líneas, rutas, el intérprete y la consola (hostiles incluidos).
+	cd ../shell && cargo test --quiet
 	cd ../archivos/herramientas && cargo test --quiet --release
 	cd ../kit && cargo test --quiet
 	cd ../caja-linux/vmm && cargo test --quiet

@@ -805,13 +805,21 @@ fn listar(c: &mut Cliente) -> Result<Vec<String>, &'static str> {
     }
     dashos::memoria_quitar(VA_ARCHIVOS);
     dashos::cerrar(lectura);
+    // El Shell nativo no está en `Programas/` sino en `SYS:System` (S4b): va en la lista con su nombre.
+    if !programas.iter().any(|p| p == lanzables::NOMBRE_SHELL) {
+        programas.push(String::from(lanzables::NOMBRE_SHELL));
+    }
     programas.sort_by_key(|p| p.to_lowercase());
     resultado.map(|_| programas)
 }
 
 /// Pide a `sesiones` que lance `Programas/<nombre>` (como quien está delante): su estado y el número del proceso.
 fn lanzar(c: &mut Cliente, nombre: &str) -> (i32, u64) {
-    let camino = alloc::format!("{}{}", core::str::from_utf8(lanzables::CAJON).unwrap_or("Programas/"), nombre);
+    let camino = if nombre == lanzables::NOMBRE_SHELL {
+        String::from(core::str::from_utf8(lanzables::SHELL).unwrap_or("System/Shell"))
+    } else {
+        alloc::format!("{}{}", core::str::from_utf8(lanzables::CAJON).unwrap_or("Programas/"), nombre)
+    };
     let mut p = Vec::with_capacity(12 + camino.len());
     p.extend_from_slice(&s::LANZAR.to_le_bytes());
     p.extend_from_slice(&(camino.len() as u32).to_le_bytes());

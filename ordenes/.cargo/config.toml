@@ -1,0 +1,10 @@
+[build]
+target = "aarch64-unknown-none-softfloat"
+
+[unstable]
+build-std = ["core", "alloc", "compiler_builtins"]
+build-std-features = ["compiler-builtins-mem"]
+
+# El mismo guion de enlace que los programas de `usuario/`.
+[target.aarch64-unknown-none-softfloat]
+rustflags = ["-C", "link-arg=-T../usuario/enlace.ld", "-C", "relocation-model=static"]

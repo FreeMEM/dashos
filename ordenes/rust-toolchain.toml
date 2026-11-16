@@ -1,0 +1,5 @@
+# Rust nightly: el destino aarch64_be-unknown-none-softfloat es de nivel 3 y necesita -Zbuild-std.
+# Probado con rustc 1.101.0-nightly (3e92e1a2d 2026-11-01). Fijar una fecha cuando haga falta reproducir.
+[toolchain]
+channel = "nightly"
+components = ["rust-src"]

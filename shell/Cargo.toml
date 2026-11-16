@@ -1,0 +1,10 @@
+[package]
+name = "dashos-shell"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "El Shell nativo de DashOS, al estilo de AmigaDOS: patrones, plantillas (ReadArgs), líneas, rutas, el intérprete y la consola"
+
+[lib]
+name = "shell"
+path = "src/lib.rs"
