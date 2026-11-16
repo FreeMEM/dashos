@@ -15,10 +15,12 @@
 //! de 16 bytes (§7). Sin sumas de comprobación por el aparato, sin TSO, sin VLAN, sin control de flujo, sin EEE, toda la
 //! multidifusión (filtra el servicio). Copia cada trama entre la DMA y las ranuras; rellena con ceros hasta 60 bytes al
 //! enviar y quita los 4 del CRC al recibir. Si falta el firmware, avisa y sigue (§6.2). Si el servicio se va, la parada
-//! ordenada (§12); con un error del bus (`SYSErr`), parada y arranque en marcha con la misma DMA (§11).
+//! ordenada (§12); con un error del bus (`SYSErr` y errores en el estado del PCI), parada y arranque en marcha con la
+//! misma DMA (§11).
 //!
-//! **Sin probar en hardware**: QEMU no emula esta tarjeta. La prueba es la de verdad, pasando la de shiva a QEMU con
-//! VFIO (`make -C kernel arranque-x86 RED_X86=vfio`, `tools/vfio_red.sh`).
+//! QEMU no emula esta tarjeta: se prueba pasando la de shiva a QEMU con VFIO (`make -C kernel arranque-x86
+//! RED_X86=vfio`, `tools/vfio_red.sh`). Así funcionó el 2026-11-16 (commit d7823fda); los ajustes de §17 (`StopReq` al
+//! salir de OOB, el orden del PHY y `SYSErr` con el estado del PCI) son posteriores.
 
 #![no_std]
 #![no_main]
@@ -100,6 +102,9 @@ const RXCFG_BASE: u32 = 0x4000_0F00;
 const RXCFG_ACEPTAR: u32 = (1 << 1) | (1 << 2) | (1 << 3);
 const TXCFG: u32 = 0x0300_0700;
 const I_SYSERR: u32 = 1 << 15;
+/// El registro de estado del PCI y sus bits de error (8 y 11 a 15: paridad, "aborts" y error de sistema; §11).
+const PCI_ESTADO: usize = 0x06;
+const PCI_ESTADO_ERRORES: u16 = (1 << 8) | (0x1F << 11);
 const I_LINKCHG: u32 = 1 << 5;
 /// `RxOK | RxErr | TxOK | TxErr | RxOverflow | LinkChg` (§11).
 const MASCARA: u32 = 0x003F;
@@ -345,8 +350,10 @@ fn poner_mac(m: &[u8; 6]) {
     bloquear();
 }
 
-/// Esperar a que la MAC tenga las FIFO vacías (§12, pasos 3.2 y 3.3). Verdad si se vaciaron.
+/// Pedir la parada (`StopReq`) y esperar a que la MAC tenga las FIFO vacías (§12, pasos 3.1 a 3.3). Verdad si se
+/// vaciaron.
 fn esperar_fifo() -> bool {
+    activar8(CHIP_CMD, CMD_STOP_REQ);
     let vacias = MCU_TX_EMPTY | MCU_RX_EMPTY;
     let a = hasta(42, 100, || r8(MCU) & vacias == vacias);
     let b = hasta(42, 100, || r16(INTR_MITIGATE) & 0x0103 == 0x0103);
@@ -359,7 +366,7 @@ fn reiniciar() -> bool {
     hasta(100, 100, || r8(CHIP_CMD) & CMD_RESET == 0)
 }
 
-/// Salir del modo "fuera de banda" (§8, paso 5).
+/// Salir del modo "fuera de banda" (§8, paso 5). Las FIFO se vacían con `StopReq` puesto, como al parar (§17, 1).
 fn salir_de_oob() {
     activar32(MISC, MISC_RXDV_GATED);
     dormir_ms(2);
@@ -448,17 +455,22 @@ fn preparar_phy(firmware: Option<&fw::Firmware>) {
     mac_ocp_bits(0xE052, 1 << 0, 0);
     bien &= phy_bits(0xA442, (1 << 12) | (1 << 13), 0);
     bien &= phy_bits(0xA430, 1 << 15, 0);
-    // El anuncio (§6.6, paso 4): 10, 100, 1000 y 2500, sin pausa.
+    // Reinicio suave (§6.6, punto 5, el orden de Linux): sin aislar, con el reinicio y reiniciar la negociación;
+    // hasta 600 ms a que baje el bit 15, y 1 ms más. Puede devolver los registros estándar a sus valores de partida:
+    // por eso el anuncio va después.
+    bien &= phy_bits(BMCR, 1 << 10, (1 << 15) | (1 << 9));
+    if !hasta(12, 50_000, || phy(BMCR).is_some_and(|v| v & (1 << 15) == 0)) {
+        println!("  [rtl-red] el PHY no termina su reinicio suave");
+    }
+    dormir_ms(1);
+    // El anuncio (§6.6, punto 4): 10, 100, 1000 y 2500, sin pausa.
     bien &= poner_phy(ANAR, 0x01E1);
     bien &= phy_bits(GBCR, 0, 1 << 9);
     bien &= phy_bits(0xA5D4, (1 << 8) | (1 << 12), 1 << 7);
+    // Negociar con él: negociación encendida y reiniciada, sin aislar y sin el bit de reinicio.
+    bien &= phy_bits(BMCR, (1 << 10) | (1 << 15), (1 << 12) | (1 << 9));
     if !bien {
         println!("  [rtl-red] el PHY no contesta a toda la configuración; se sigue");
-    }
-    // Reiniciar y negociar (§6.6, paso 5).
-    poner_phy(BMCR, 0x9200);
-    if !hasta(50, 50_000, || phy(BMCR).is_some_and(|v| v & (1 << 15) == 0)) {
-        println!("  [rtl-red] el PHY no termina su reinicio tras la negociación");
     }
 }
 
@@ -575,7 +587,6 @@ fn parar(fabrica: &[u8; 6], final_: bool) {
         quitar32(RX_CONFIG, 0x3F);
         activar32(MISC, MISC_RXDV_GATED);
         dormir_ms(2);
-        activar8(CHIP_CMD, CMD_STOP_REQ);
         if !esperar_fifo() {
             println!("  [rtl-red] las FIFO no se vacían al parar; se sigue");
         }
@@ -743,6 +754,7 @@ fn principal() -> u64 {
     let mut con_enlace = false;
     let mut proxima_mirada = 0u64;
     let (mut rotas, mut tx_errores) = (0u64, 0u64);
+    let mut syserr_avisado = false;
     let mut buf = [0u8; 16];
     let mut ll = [0u32; 8];
     loop {
@@ -764,10 +776,21 @@ fn principal() -> u64 {
             w32(INTR_STATUS, causas);
         }
         let mut movido = false;
-        if causas & I_SYSERR != 0 {
+        // `SYSErr` solo no basta (algún chip de la familia lo pone sin motivo, §11): se reinicia si además el estado del
+        // PCI tiene errores (paridad, "aborts", error de sistema), que se borran escribiéndolos.
+        let errores_pci = if causas & I_SYSERR != 0 { cfg16(PCI_ESTADO) & PCI_ESTADO_ERRORES } else { 0 };
+        if causas & I_SYSERR != 0 && errores_pci == 0 && !syserr_avisado {
+            syserr_avisado = true;
+            println!("  [rtl-red] SYSErr sin errores en el estado del PCI; se sigue");
+        }
+        if errores_pci != 0 {
+            poner_cfg16(PCI_ESTADO, errores_pci);
             // Error del bus: parada y arranque en marcha con la misma DMA (§11); lo que estaba en vuelo se pierde.
             let perdidas = (tx_cola + N_TX - tx_limpio) % N_TX;
-            println!("  [rtl-red] error del bus (SYSErr); se reinicia la tarjeta ({} tramas de enviar perdidas)", perdidas);
+            println!(
+                "  [rtl-red] error del bus (SYSErr, estado del PCI {:#06x}); se reinicia la tarjeta ({} tramas de enviar perdidas)",
+                errores_pci, perdidas
+            );
             parar(&fabrica, false);
             poner_mac(&mac);
             preparar_anillos(bus);

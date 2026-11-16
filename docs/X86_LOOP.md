@@ -1002,3 +1002,23 @@ Preguntas para el analista (`docs/spec/hw/rtl8125.md`):
    en cada vuelta y se reinicia si está.
 10. §12 paso 8: aquí se apaga el PHY al parar. ¿Lo vuelve a encender r8169 de Linux al recuperar la tarjeta (tras
     devolverla desde vfio-pci), o hay que dejarlo encendido?
+
+Con las respuestas del analista (`docs/spec/hw/rtl8125.md` §17, commit `7fea3aef`), el mismo día:
+
+- (1) Al salir de OOB, las FIFO se vacían con `StopReq` puesto, como al parar (lo pone ahora `esperar_fifo`). Debería
+  quitar el aviso visto en shiva.
+- (6) El PHY, en el orden de Linux: tras el firmware y §6.5, reinicio suave (BMCR: sin el bit 10, con el 15 y el 9;
+  hasta 600 ms a que baje el 15, y 1 ms), después el anuncio (ANAR, GBCR, `0xA5D4`) y por último reiniciar la
+  negociación (bits 12 y 9, sin el 10 ni el 15). Antes era el anuncio y luego `BMCR` = 0x9200.
+- (9) `SYSErr` solo ya no reinicia: se mira el estado del PCI (`0x06`); con algún bit de error (8, 11 a 15) se borran
+  escribiéndolos, se avisa y se reinicia en marcha; sin ellos, se avisa una vez y se sigue.
+- (4) Los saltos hacia delante se validan como Linux: uno que acaba justo al final de la lista es inválido
+  (`i + 1 + R ≥ n`; `PHY_READCOUNT_EQ_SKIP`, `i + 2 ≥ n`). Con su prueba en `rtl8125_fw.rs` (las tres órdenes de saltar
+  y la de la cuenta). El `rtl8125b-2.fw` de shiva sigue siendo válido (en seco: 798 acciones).
+- Lo demás de §17 no obliga: los casos raros (2, 3, `PHY_BJMPN` de 0, `inicio` < 45) siguen como error, más prudente
+  que Linux y sin efecto con el firmware real; 7, 8 y 10 confirman lo hecho.
+
+Comprobado: `make -C kernel arranque-x86` (virtio-net) BIEN; `arranque-x86 RED_X86=e1000e` BIEN; `prueba-x86` BIEN;
+ARM `make -C kernel prueba` BIEN (con las 9 pruebas del intérprete). `cargo clippy` de `rtl-red` sin avisos. **Sin
+probar en la tarjeta**: estos cambios no han pasado aún por la RTL8125B de shiva (`RED_X86=vfio`, la lanza el
+coordinador).

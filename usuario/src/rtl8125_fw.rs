@@ -9,10 +9,11 @@
 //! §3.2) y las esperas. Así se prueba en el PC con un aparato falso (`rustc --test`, en `make -C kernel prueba`).
 //!
 //! Primero se valida el fichero entero (cabecera, suma, códigos, saltos y cambios de modo); solo si todo vale se
-//! ejecuta. Lo que la especificación no dice se trata como error (ver las preguntas al analista en `docs/X86_LOOP.md`):
-//! un `PHY_BJMPN` de 0 (se repetiría siempre igual), un acceso en modo PHY a un registro por debajo de 0x10 con una
-//! página distinta de la estándar, una lectura del "registro 0x1F" en modo MAC y una dirección OCP impar o mayor de
-//! 0xFFFF. Y un tope de acciones ejecutadas, para que un bucle de espera del fichero no cuelgue el controlador.
+//! ejecuta. Los saltos se validan como Linux (§6.3, "Validación exacta"); además, más prudente que Linux y con las
+//! respuestas del analista (§17), son error un `PHY_BJMPN` de 0 (se repetiría siempre igual), un acceso en modo PHY a
+//! un registro por debajo de 0x10 con una página distinta de la estándar, una lectura del "registro 0x1F" en modo MAC
+//! y una dirección OCP impar o mayor de 0xFFFF (el firmware real no usa ninguno). Y un tope de acciones ejecutadas,
+//! para que un bucle de espera del fichero no cuelgue el controlador.
 
 /// La base de la página estándar del PHY (§3.2): el registro MII `r` está en `0xA400 + 2·r`.
 pub const BASE_ESTANDAR: u16 = 0xA400;
@@ -148,15 +149,15 @@ pub fn validar(datos: &[u8]) -> Result<Firmware<'_>, Fallo> {
                     return Err(Fallo::Salto(i));
                 }
             }
-            // Saltarse la siguiente: tiene que existir.
+            // Como Linux (§6.3, "Validación exacta"): saltarse la siguiente pide que haya otra detrás de ella.
             PHY_READCOUNT_EQ_SKIP => {
-                if i + 2 > n {
+                if i + 2 >= n {
                     return Err(Fallo::Salto(i));
                 }
             }
-            // Saltarse las `r` siguientes: como mucho, hasta el final de la lista.
+            // Saltarse las `r` siguientes: tiene que caer dentro de la lista; acabar justo al final no vale (como Linux).
             PHY_COMP_EQ_SKIPN | PHY_COMP_NEQ_SKIPN | PHY_SKIPN => {
-                if i + 1 + r > n {
+                if i + 1 + r >= n {
                     return Err(Fallo::Salto(i));
                 }
             }
@@ -417,10 +418,17 @@ mod pruebas {
         // Atrás más allá del principio, y un salto de 0.
         assert_eq!(validar(&con_cabecera("v", &[accion(PHY_READ, 1, 0), accion(PHY_BJMPN, 2, 0)])).unwrap_err(), Fallo::Salto(1));
         assert_eq!(validar(&con_cabecera("v", &[accion(PHY_BJMPN, 0, 0)])).unwrap_err(), Fallo::Salto(0));
-        // Adelante más allá del final; justo hasta el final sí vale.
-        assert_eq!(validar(&con_cabecera("v", &[accion(PHY_SKIPN, 2, 0), accion(PHY_WRITE, 0, 1)])).unwrap_err(), Fallo::Salto(0));
-        assert!(validar(&con_cabecera("v", &[accion(PHY_SKIPN, 1, 0), accion(PHY_WRITE, 0, 1)])).is_ok());
-        assert_eq!(validar(&con_cabecera("v", &[accion(PHY_WRITE, 0, 1), accion(PHY_READCOUNT_EQ_SKIP, 0, 1)])).unwrap_err(), Fallo::Salto(1));
+        // Adelante más allá del final, o justo hasta el final (inválido para Linux, §6.3); dentro de la lista sí vale.
+        let w = accion(PHY_WRITE, 0, 1);
+        assert_eq!(validar(&con_cabecera("v", &[accion(PHY_SKIPN, 2, 0), w])).unwrap_err(), Fallo::Salto(0));
+        for c in [PHY_SKIPN, PHY_COMP_EQ_SKIPN, PHY_COMP_NEQ_SKIPN] {
+            assert_eq!(validar(&con_cabecera("v", &[accion(c, 1, 0), w])).unwrap_err(), Fallo::Salto(0));
+            assert_eq!(validar(&con_cabecera("v", &[w, accion(c, 2, 0), w, w])).unwrap_err(), Fallo::Salto(1));
+            assert!(validar(&con_cabecera("v", &[accion(c, 1, 0), w, w])).is_ok());
+        }
+        assert_eq!(validar(&con_cabecera("v", &[w, accion(PHY_READCOUNT_EQ_SKIP, 0, 1)])).unwrap_err(), Fallo::Salto(1));
+        assert_eq!(validar(&con_cabecera("v", &[accion(PHY_READCOUNT_EQ_SKIP, 0, 1), w])).unwrap_err(), Fallo::Salto(0));
+        assert!(validar(&con_cabecera("v", &[accion(PHY_READCOUNT_EQ_SKIP, 0, 1), w, w])).is_ok());
         // Cambio de modo con un dato que no es 0 ni 1.
         assert_eq!(validar(&con_cabecera("v", &[accion(PHY_MDIO_CHG, 0, 2)])).unwrap_err(), Fallo::Modo(0));
         // Lo malo al final invalida también lo bueno de antes: no se ejecuta nada.
@@ -530,7 +538,10 @@ mod pruebas {
         fw.ejecutar(&mut b).unwrap();
         assert_eq!(b.diario.iter().filter(|&&(c, d, _)| c == 'r' && d == 0xB800).count(), 3);
         // Un bucle sin salida acaba en el tope.
-        let f = con_cabecera("v", &[accion(PHY_READ, 0, 0), accion(PHY_COMP_NEQ_SKIPN, 1, 0), accion(PHY_BJMPN, 2, 0)]);
+        let f = con_cabecera(
+            "v",
+            &[accion(PHY_READ, 0, 0), accion(PHY_COMP_NEQ_SKIPN, 1, 0), accion(PHY_BJMPN, 2, 0), accion(PHY_WRITE, 0, 1)],
+        );
         assert_eq!(validar(&f).unwrap().ejecutar(&mut Falso::default()).unwrap_err(), Fallo::Tope);
     }
 
