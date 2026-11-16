@@ -118,6 +118,15 @@ apagado, y el usuario solo vería que no hay Wi-Fi. Por eso el instalador lo mir
 botón (S36, regla 8): "Para usar el Wi-Fi hay que encender una opción de la placa. Te digo cómo". El detalle (VT-d,
 AMD-Vi), a un clic.
 
+## Decidido el 2026-11-16
+
+El usuario: "hay que crear un instalador en disco que respete otros sistemas operativos y que permita usarse live
+desde un pendrive". Queda decidido el punto 2 de abajo: **el instalador es DashOS de verdad arrancado de un pendrive**,
+que se puede usar en vivo (sin instalar) y desde ahí instalar. Para probar sin riesgo, el banco de AmiCachy
+(`~/Projects/AmiCachy/dev/dualboot-vm/`: discos base de Windows 11 con NTFS limpio y de Debian con GRUB-EFI, y
+`verify-untouched.sh`, que compara las particiones antes y después); los discos base no se tocan nunca: cada prueba
+en una capa qcow2 propia.
+
 ## Lo que queda abierto
 
 1. ¿Primera versión solo con hueco libre o disco entero (recomendado), o también encoger particiones ajenas?
