@@ -25,6 +25,8 @@ pub mod protocolo {
     pub mod red;
     pub mod selector;
     pub mod sesiones;
+    /// S35: virtio por mensajes, entre un conductor de DashOS y el servicio de un dominio de controladores.
+    pub mod virtio_msg;
 }
 #[cfg(feature = "monton")]
 pub mod monton;
