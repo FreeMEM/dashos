@@ -241,13 +241,14 @@ tabla. **Por diseñar al hacerlo**: el formato de la tabla (texto), dónde vive 
 **Pruebas hostiles que tendrá**: corte de luz a mitad de actualizar; deshacer con un programa abierto; disco lleno;
 un programa que intenta escribir en el almacén o en la tabla; una tabla dañada (se usa la anterior y se avisa).
 
-## Lo que queda abierto
+## Decidido el 2026-11-16 (lo que quedaba abierto)
 
-1. ¿Nombre de la orden: `Paq`, u otro?
-2. ¿Sistema base como imagen firmada, y paquetes solo por encima, como Silverblue? Recomendado: sí. La otra opción es
-   que todo sean paquetes, como Arch, que es más flexible pero menos seguro de actualizar.
-3. ¿Hangar como catálogo encima de `Paq`, con una arquitectura nueva de DashOS en su catálogo? Recomendado:
-   sí. Toca decidirlo en el proyecto Hangar.
+El usuario: "Paq está bien, sistema base como imagen y hangar como catálogo encima de Paq".
+
+1. **La orden se llama `Paq`.**
+2. **El sistema base es una imagen firmada**, de solo lectura, y los paquetes van solo por encima (como Silverblue).
+3. **Hangar es el catálogo encima de `Paq`**: en DashOS, Hangar enseña y pide; `Paq` resuelve, baja, verifica e
+   instala. Lo que toque al catálogo y al servicio se lleva en el proyecto Hangar.
 
 ## Cómo encaja
 
