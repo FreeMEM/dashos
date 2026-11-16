@@ -467,3 +467,23 @@ test = false
 name = "guarda"
 path = "src/bin/guarda.rs"
 test = false
+
+# S10, Commodities (docs/bitacoras/commodities.md): su prueba de virt y las clásicas de SYS:Tools/Commodities sin
+# ventana (Blanker y NoCapsLock; FKey y Exchange están en `ordenes/`).
+[[bin]]
+name = "commodity-prueba"
+path = "src/bin/commodity_prueba.rs"
+test = false
+required-features = ["ventanas"]
+
+[[bin]]
+name = "blanker"
+path = "src/bin/blanker.rs"
+test = false
+required-features = ["ventanas"]
+
+[[bin]]
+name = "nocapslock"
+path = "src/bin/nocapslock.rs"
+test = false
+required-features = ["ventanas"]
