@@ -2185,3 +2185,7 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   2026-11-16: tanda completa 12 de 12 y `arranque-virt-shell` bien, a la primera. Por decidir con el usuario: tres
   de gusto (menú de Tab, rojo al teclear, color del indicador) y si las ventanas del sistema usan la barra del
   compositor.
+- **Menús de las ventanas** (decidido por el usuario, 2026-11-16, por la sesión de Dash): de serie, una fila dentro
+  de cada ventana (como kit-c); opción de todo el sistema en Ajustes para llevarlos a la barra de arriba, al estilo
+  clásico del Amiga. Escrito en S10. Por hacer: el ajuste, el kit nativo y kit-c pintando en un sitio u otro, y la
+  barra mostrando los menús del programa activo.

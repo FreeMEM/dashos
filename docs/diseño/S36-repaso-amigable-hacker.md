@@ -40,7 +40,8 @@ Son consecuencia directa del principio de S0. Los diseños se corrigen para cump
    con su memoria y su tope, y su registro sale a un fichero. Afecta a: S7, S13, S35.
 8. **Lo que falta se ofrece, no se explica.** Si algo no va de serie (un códec, un controlador), al necesitarlo sale un
    aviso en llano con un solo botón. Afecta a: S33, S32.
-9. **Lo que existe se ve.** Los menús de un programa se enseñan también con el clic normal en la barra; el botón
+9. **Lo que existe se ve.** (Menús: el usuario decidió el 2026-11-16 que de serie van en una fila dentro de la
+   ventana, y en la barra como opción clásica; S10.) Los menús de un programa se enseñan también con el clic normal en la barra; el botón
    derecho queda como atajo del Amiga. Afecta a: S10.
 10. **Dormir e hibernar no pierden sin avisar.** Si hay imagen de hibernación, se arranca con la generación que la
     hizo; al despertar se dice qué programas no guardaron. Afecta a: S22, S8.
