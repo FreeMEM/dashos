@@ -30,9 +30,10 @@ fn main() {
     }
 }
 
-/// Los programas que nombra `fuente` (`src/inicio.rs`) con `programa!("...")`, de `usuario/target/<destino>`, comprimidos con LZ4 en OUT_DIR (`nombre.lz4`): el
-/// tamaño original (u32), su huella FNV-1a de 64 bits y el bloque. Los descomprime `src/lz4.rs` al arrancar. Uno que no
-/// esté compilado se salta (el `programa!` que lo nombra no llega a usarse: es de otra placa o de otra prueba).
+/// Los programas que nombra `fuente` (`src/inicio.rs`) con `programa!("...")`, de `usuario/target/<destino>`,
+/// comprimidos con LZ4 en OUT_DIR (`nombre.lz4`): el tamaño original (u32), su huella FNV-1a de 64 bits y el bloque. Los
+/// descomprime `src/lz4.rs` al arrancar. Uno que no esté compilado se salta (el `programa!` que lo nombra no llega a
+/// usarse: es de otra placa o de otra prueba).
 fn comprimir_programas(dir: &str, fuente: &str, destino: &str) {
     let usuario = format!("{}/../usuario/target/{}/release", dir, destino);
     println!("cargo:rerun-if-changed={}", fuente);

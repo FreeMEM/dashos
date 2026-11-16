@@ -25,6 +25,12 @@ Nueve ficheros con conflicto; en todos, las dos partes. Lo de ARM no cambia.
   PC y el puerto reenviado; sin ellos QEMU no arrancaba). Dos líneas esperadas cambian: la raíz del disco (21
   entradas, el árbol de `SYS:` de `revision`) y el DHCP (con `restrict=on` ya no da puerta ni DNS).
 
+Después, `revision` avanzó con la demo (ebb99cfc): unida sin conflictos (la opción `demo` es solo de ARM).
+
+Las pruebas (`make prueba`, `arranque-virt`, `arranque-x86` y `prueba-x86`, con y sin `ACCEL=kvm`) pasaron con todo
+el trabajo junto (la unión, la hora y `x86-uso`), no con cada commit por separado. `prueba-x86` con KVM falla en C28,
+como antes de esta rama. `arranque-virt` falló una vez en "[dash-ventana] pulsado" y pasó a la segunda.
+
 ## 2026-11-16: `make -C kernel x86-uso`
 
 - **La imagen**: opción `uso` del kernel en x86. `kernel/src/inicio_x86_uso.rs` es la lista de programas de `virt` con
