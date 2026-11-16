@@ -53,11 +53,18 @@ Nombre provisional. Es una orden en `C:` y un servicio del sistema:
 
 - `Paq Instalar <nombre>`, `Paq Quitar <nombre>`, `Paq Buscar <texto>`, `Paq Actualizar` (todo al día) y
   `Paq Volver` (deshacer la última transacción). Con alias cortos en inglés para quien venga de Linux.
+- Todo lo que Ajustes hace con los paquetes tiene su orden (S0): `Paq Generaciones` (la lista, con fecha y lo que
+  cambió), `Paq Volver <n>` (a una de la lista), `Paq Limpiar` (lo mismo que "limpiar" en Ajustes) y
+  `Paq Info <nombre>` (versión, permisos que pide y ficheros).
 - **Repositorios** con un índice firmado. Claves de confianza: la de DashOS, la de Hangar y las que añada un
   administrador (S6).
+- **La lista de repositorios y las claves de confianza son ficheros de texto** en `Estado:`, que todos leen: la
+  lista, en uno; las claves, un fichero por clave. Se miran y se cambian con `Paq Repos` y `Paq Claves`, y en
+  Ajustes. Añadir un repositorio o una clave sigue siendo acción de administrador (S6b). Cajón y formato, por diseñar.
 - **Dependencias** por nombre y versión, y por lo que un paquete ofrece, por ejemplo `mui.library 20`.
 - **Sin choques de ficheros**: cada paquete vive en su cajón, y las asignaciones en capas (S4b) deciden quién gana.
-  Si dos paquetes ofrecen la misma biblioteca, el gestor pregunta o sigue la prioridad que diga el repositorio.
+  Si dos paquetes ofrecen la misma biblioteca, no se pregunta: manda la prioridad que diga el repositorio. Quien
+  quiera otra la elige con una orden de `Paq`.
 - **Actualizaciones por trozos**, como casync, para la imagen de `SYS:` y para los paquetes grandes.
 - **Recetas**: cada paquete nativo se construye desde una receta en un repositorio, al estilo de los `PKGBUILD` de
   Arch, en un servidor de construcción.
@@ -99,7 +106,9 @@ del proyecto Hangar, que tiene abierta la pregunta de qué sistemas cubre. Este 
 ### Actualizaciones
 
 - `Paq` mira si hay novedades una vez al día, y baja en segundo plano.
-- Los paquetes se actualizan al momento. Si el programa está abierto, se avisa para reiniciarlo.
+- Los paquetes se actualizan al momento. Un programa abierto sigue con su versión hasta que se cierra (ver
+  "Generaciones"), y la nueva entra la próxima vez que se abre, sin aviso. Solo se avisa para reiniciarlo si la
+  actualización es de seguridad.
 - `SYS:` se actualiza al reiniciar. Se avisa, nunca se fuerza.
 - Las actualizaciones de seguridad se marcan como tales en el índice.
 
@@ -117,8 +126,10 @@ cuando un programa de verdad lo pida; una palabra que un `Paq` viejo no conoce e
 `S:User-Startup`, y abortarían): corre en una caja de instalación aparte, sin red y con tope de tiempo, sobre una
 capa de captura que no toca el sistema. Al acabar, `Paq` reparte lo capturado: lo del cajón elegido, al cajón del
 paquete; lo de `C:`, `LIBS:`, `DEVS:`, `FONTS:` y `LOCALE:`, a las capas del paquete (la lista cerrada de S4b); de
-`S:User-Startup` solo las líneas `Assign`, que pasan a ser sus asignaciones; lo demás se descarta y se enseña. Hace
-falta el `Installer` del AmigaOS del usuario (DashOS no lo trae): sin él, el paquete se instala como cajón.
+`S:User-Startup` solo las líneas `Assign`, que pasan a ser sus asignaciones; lo demás se descarta y se enseña, y la
+lista de lo descartado se guarda en un fichero de texto junto al paquete. Hace falta el `Installer` del AmigaOS del
+usuario (DashOS no lo trae): sin él, el paquete se instala como cajón, y se dice en llano qué falta y dónde ponerlo
+("Este programa trae un instalador de Amiga y falta el programa Installer. Se ha copiado tal cual").
 
 **Firmas.** Lo que baja de un repositorio va comprobado por el índice firmado, que lleva la huella de cada paquete.
 La firma del fichero (`PKG-FILE-2`) es opcional y sirve para lo suelto (un USB, lo entregado fuera):
@@ -191,7 +202,7 @@ falten y cambiar de tabla de golpe. Volver atrás es usar la tabla anterior.
   iconos, `PROGDIR:` y los guiones siguen valiendo tras actualizar. Las versiones guardadas viven en un almacén que
   solo toca `Paq`, que no estorba en el explorador pero se ve con "Mostrar todos los ficheros" y se lee desde el
   Shell (ordenado, no escondido: S0); `Paquetes:` es la vista de la generación en uso (cada proceso ya
-  tiene su vista de los nombres, S4b).
+  tiene su vista de los nombres, S4b). La tabla de cada generación es un fichero de texto que se puede leer.
 - No hay fichero de configuración que escribir ni lenguaje que aprender. Se instala y se quita igual que antes.
 - Una sola acción nueva: "Deshacer la última actualización", en Ajustes y en `Paq`. Quien quiera, puede ver la lista
   de generaciones con su fecha y lo que cambió, y elegir una. Nadie está obligado a mirarla.
@@ -213,14 +224,16 @@ falten y cambiar de tabla de golpe. Volver atrás es usar la tabla anterior.
 - **Un programa abierto sigue con su versión** hasta que se cierra: su vista no cambia en marcha.
 - **Con `SYS:`** no cambia nada: la base sigue siendo una imagen firmada con dos ranuras (S14). Una generación apunta
   la versión de `SYS:` con la que se hizo, para que al arrancar con la ranura anterior se use la tabla que le toca.
+- **Con una imagen de hibernación** (S22): si la hay, se arranca con la generación y el `SYS:` que la hicieron, para
+  no perder la sesión abierta. La actualización entra en el siguiente arranque limpio.
 - **No cambia el formato de paquetes** ni Hangar. Sustituye a la idea anterior de "una instantánea nueva de `Paquetes:` por transacción"
   (punto 2 de arriba, ya cambiado): la transacción es ahora el cambio de tabla. Las instantáneas (S5) siguen para los datos.
 
 **Lo que no se toma de NixOS**: su lenguaje, las huellas en las rutas y montar el sistema entero a base de enlaces.
 
 **Coste que se acepta**: más disco mientras se guardan versiones viejas (lo acota la limpieza), y que `Paq` lleve la
-tabla. **Por diseñar al hacerlo**: el formato de la tabla, dónde vive el almacén, y cómo se resuelven `Paquetes:*/C`
-y las demás capas con la tabla sin que cueste al abrir programas (hay que medirlo).
+tabla. **Por diseñar al hacerlo**: el formato de la tabla (texto), dónde vive el almacén, y cómo se resuelven
+`Paquetes:*/C` y las demás capas con la tabla sin que cueste al abrir programas (hay que medirlo).
 
 **Pruebas hostiles que tendrá**: corte de luz a mitad de actualizar; deshacer con un programa abierto; disco lleno;
 un programa que intenta escribir en el almacén o en la tabla; una tabla dañada (se usa la anterior y se avisa).
