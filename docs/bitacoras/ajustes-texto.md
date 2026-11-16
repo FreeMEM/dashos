@@ -113,10 +113,33 @@ confirmación de `guardian`, y esta orden aún no sabe pedirla"). Permisos y cue
 
 ## 5. El centro de control
 
-Hecho: vigila `ENV:` y aplica el idioma y el tema en marcha (apartado 3).
+Vigila `ENV:` y aplica el idioma y el tema en marcha (apartado 3). Y la apariencia ya no va a `C/Prefs/apariencia`:
+está en `ENV:Escritorio/apariencia` (en uso) y `ENVARC:Escritorio/apariencia` (guardada), en texto (`modo`, `acento`
+y, con la paleta del fondo, `semilla` y `esquemas`, lo calculado), el mismo fichero que escribe la orden `Ajuste`. Un
+solo sitio: `C/Prefs/apariencia` ya no se lee ni se escribe, y la comprobación del disco tras la prueba exige que no
+esté.
 
-**No hecho**: que su ventana escriba los ficheros de texto con Guardar, Usar y Cancelar. Sigue guardando la apariencia,
-el panel, el fondo y el monitor en `SYS:C/Prefs/*` como antes. El porqué, en "Lo que queda".
+- **Guardar sin tener el `Home:`** (decidido con el coordinador, 2026-11-16): el centro no tiene raíz en el `Home:`
+  cifrado (bloquearía cerrar la sesión). Escribe `ENV:` (su raíz de `RAM:` pasa a ser de leer y escribir) y, para
+  guardar, pide a `sesiones` la orden nueva **`GUARDAR_ENV` (90)**, que hace `archivos` con la orden nueva
+  **`RAM_GUARDAR` (120)**: copia `Env/<fichero>` del `RAM:` de la sesión a `Prefs/Env-Archive/<fichero>` del volumen del
+  usuario (cajones 0700, fichero 0600, suyos). Condiciones: solo los programas de `GUARDAN_AJUSTES` (hoy el centro, por
+  el nombre que da `inicio`; uno del disco con ese nombre no vale); siempre la sesión de quien lo pide (el mensaje no
+  nombra ninguna); solo nombres que no salen del cajón (`archivos::ajuste_valido`, comprobado en `sesiones` y otra vez
+  en `archivos`); hasta 64 KB y solo ficheros. Lo negado va al registro de seguridad de `sesiones` (`R_AJUSTE`, 90); el
+  registro común de `registro-permisos` tiene su hueco marcado en el mismo sitio. Lo de la máquina sigue pidiendo
+  `guardian` (la orden `Ajuste` no lo pone; `GUARDAR_ENV` solo llega al `Home:` del usuario).
+- **La ventana** (Apariencia): lo que se elige se ve ya y va a `ENV:`; tres botones, como en las Prefs del Amiga:
+  **Guardar** (a `ENVARC:`, por `sesiones`), **Usar** (se queda en `ENV:`, sin guardar) y **Cancelar** (vuelve a como
+  estaba al abrir). Cerrar con cambios sin Guardar ni Usar es Guardar (S27). El panel rápido (modo claro u oscuro)
+  escribe `ENV:` y guarda.
+- **Antes de entrar nadie** no hay `ENV:` ni `ENVARC:` del usuario: vale la de fábrica (`SYS:Prefs/Env-Archive`, por
+  `ENVARC:`) o la de serie, y lo que se elige queda en uso sin guardarse ("en uso (sin sesión: no se guarda)"). En la
+  prueba, toda la parte de Apariencia de la ventana pasa antes de entrar Ana: por eso sus líneas lo dicen así. Al entrar,
+  manda lo que haya en su `ENV:`.
+- El explorador y el Workbench no necesitan vigilar el tema: lo reciben del compositor (`dashos_tema_v1`) y cambian en
+  marcha como la barra. El fondo, el panel, el monitor y el aspecto de las cajas siguen en `C/Prefs/*` (no eran del
+  encargo).
 
 ## Pruebas
 
@@ -163,18 +186,21 @@ se midió con el servicio de antes de esta rama.
    haya `Sys/locale` con idiomas o país.
 6. **Vigilar pide poder leer** (un cajón, listarlo), y el tope es de 64 por programa.
 7. **La zona horaria es de la máquina** (como `hora` y `red`, S4b): la orden la lee y se niega a ponerla.
+8. **Quién puede pedir `GUARDAR_ENV`**: solo el centro de control. La orden `Ajuste` no lo necesita (el Shell tiene el
+   `Home:`).
+9. **La ventana sobrescribe un `Escritorio/apariencia` que no se entiende** al elegir (es una elección entera); la
+   orden `Ajuste`, en cambio, no pisa un fichero roto.
+10. **Antes de entrar nadie, lo elegido en Apariencia no se guarda** (no hay de quién).
 
 ## Lo que queda
 
-- **La ventana de Ajustes escribiendo los ficheros de texto, con Guardar, Usar y Cancelar.** Usar escribiría
-  `ENV:Escritorio/apariencia` (el centro tiene hoy el `RAM:` solo para leer: un cambio de una línea en `sesiones`).
-  Guardar tiene que escribir `ENVARC:`, que es el `Home:` cifrado del usuario, y el centro no lo tiene: el `Home:` del
-  escritorio es aún `SYS:C` (provisional, bitácora de asignaciones). Darle a un programa del escritorio una raíz en el
-  volumen del usuario bloquea salir (`CERRAR_VOLUMEN` no cierra con algo abierto). Lo propuesto: una orden de
-  `sesiones` que guarde un fichero de `ENV:` en el `ENVARC:` de su usuario (como el "Save" del Amiga), hecha por
-  `archivos` (la inversa de `RAM_COPIAR`), y entonces mudar la apariencia de `C/Prefs/apariencia` al texto (el panel, el
-  fondo, el monitor y las cajas detrás). Mientras, lo que se elige en la ventana va a `C/Prefs/apariencia` y al
-  compositor, y un cambio de `ENV:Escritorio/apariencia` lo pisa en marcha.
+- Los botones Guardar, Usar y Cancelar de la ventana **no se pulsan en la prueba**: el guion pasa por Apariencia antes
+  de entrar Ana, sin `ENV:`. Guardar por `sesiones` sí se prueba (el modo del panel, ya dentro), y lo hostil también.
+  Probarlos pide mover el tramo del centro en `guardian` y en el guion tras la entrada, que cambia mucho de lo
+  esperado (el tema de las pantallas de bloqueo, por ejemplo).
+- Lo que se ve de la apariencia antes de entrar nadie (la pantalla de entrada) debería ser un ajuste de la máquina
+  (`Estado:Prefs`, con `guardian`), no lo último elegido.
+- Los demás ficheros del centro (`C/Prefs/panel`, `fondo`, `monitor`, `cajas`) a `ENV:`/`ENVARC:`, igual.
 - Regenerar `Sys/locale.prefs` cuando el texto se edita a mano (hoy solo lo hace la orden): un servicio de ajustes que
   vigile y lo rehaga; y el sentido contrario (lo que escribe el `Locale` de 68k, al texto).
 - La barra no cambia de idioma: es del sistema (usuario 1), común a todas las sesiones, y no tiene el `ENV:` de nadie.

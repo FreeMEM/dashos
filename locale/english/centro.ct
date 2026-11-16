@@ -290,3 +290,15 @@ End Process
 MSG_96
 Settings
 ; Centro de control
+MSG_97
+Use
+; Usar
+MSG_98
+Cancel
+; Cancelar
+MSG_99
+Save
+; Guardar
+MSG_100
+save a setting
+; guardar un ajuste

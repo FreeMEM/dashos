@@ -363,6 +363,7 @@ SYS_FICHEROS = [
 import catalogo  # noqa: E402
 LOCALE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "build", "Locale")
 PREFS_CARLA = "Prefs/Env-Archive/Sys/locale.prefs"
+APARIENCIA_ANA = "Prefs/Env-Archive/Escritorio/apariencia"
 
 
 def locale_ficheros():
@@ -413,7 +414,6 @@ if sys.argv[1] == "--comprobar":
     # Por la tabla de particiones, con el mismo lector que el servicio de disco (A14).
     desde = "tabla"
     arbol = subprocess.run([ver, disco, desde], check=True, capture_output=True, text=True).stdout.splitlines()
-    apariencia = subprocess.run([ver, disco, desde, "C/Prefs/apariencia"], check=True, capture_output=True).stdout
     fondo = subprocess.run([ver, disco, desde, "C/Prefs/fondo"], capture_output=True).stdout
     esperado = [
         "C/ cajón",
@@ -430,7 +430,8 @@ if sys.argv[1] == "--comprobar":
         "C/Fondos/ cajón",
         *[f"C/Fondos/{n} {os.path.getsize(os.path.join(FONDOS, n))}" for n in sorted(fondos_prueba.FONDOS)],
         "C/Prefs/ cajón",
-        f"C/Prefs/apariencia {len(apariencia)}",
+        # Ajustes en texto: la apariencia ya no va aquí, sino en ENV:/ENVARC:Escritorio/apariencia (un solo sitio): en
+        # C/Prefs no tiene que estar.
         # La escala de las ventanas Amiga, que pone el guion con la fila de Apariencia: "general dashos" y
         # "escala amiga 1".
         "C/Prefs/cajas 48",
@@ -519,11 +520,6 @@ if sys.argv[1] == "--comprobar":
     # FS8: y nada roto, ni un bloque perdido.
     comprobado = subprocess.run([ver, disco, desde, "--comprobar"], capture_output=True, text=True).stdout
     fallos = []
-    # S10c: lo que guardó el centro de control al elegir el modo oscuro, con doble clic el azul y después el color del
-    # fondo (C3), con el atardecer: su semilla y los 26 colores de sus esquemas (13 por modo), calculados una vez.
-    partes = apariencia.decode(errors="replace").rstrip("\n").split(" ")
-    if partes[:3] != ["oscuro", "fondo", "c44e68"] or len(partes) != 29 or not all(len(p) == 6 for p in partes[2:]):
-        fallos.append(f"C/Prefs/apariencia: {apariencia!r}")
     if fondo != b"atardecer.png\n":
         fallos.append(f"C/Prefs/fondo: {fondo!r}")
     # C2: los mosaicos del panel. Rotos al empezar; el panel quitó Bloquear y lo volvió a poner en su sitio: los de serie.
@@ -708,13 +704,10 @@ with tempfile.TemporaryDirectory() as t:
         f.write("privado de prueba\n")
     os.chmod(os.path.join(privado, "nota.txt"), 0o600)
     os.chmod(privado, 0o700)
-    # S10c: la apariencia guardada del centro de control, en basura (bytes que no son UTF-8 y un color que no existe): el
-    # centro se queda con la de serie, y al elegir otra la reescribe. Cajón 0700 y fichero 0600: el hostil no la ve.
+    # Lo que el centro de control guarda en `Prefs` (el panel y el fondo; la apariencia va en `ENVARC:`, abajo): cajón
+    # 0700 y ficheros 0600, que el hostil no ve.
     prefs = os.path.join(raiz, "C", "Prefs")
     os.makedirs(prefs)
-    with open(os.path.join(prefs, "apariencia"), "wb") as f:
-        f.write(b"\xff\xfeoscuro magenta\x00")
-    os.chmod(os.path.join(prefs, "apariencia"), 0o600)
     # C2: los mosaicos del panel rápido, rotos: uno repetido y uno que no existe (la basura, en las pruebas de PC). El centro y el
     # panel se quedan los de serie; al guardar, el centro lo reescribe.
     with open(os.path.join(prefs, "panel"), "wb") as f:
@@ -740,6 +733,15 @@ with tempfile.TemporaryDirectory() as t:
         nombre, _, contenido = par.partition("=")
         if nombre not in ("apariencia", "fondo", "cajas", "panel"):
             raise SystemExit(f"DASHOS_PREFS: {nombre} no es un Prefs del centro")
+        if nombre == "apariencia":
+            # Ajustes en texto: la apariencia de fábrica (`SYS:Prefs/Env-Archive/Escritorio/apariencia`), en texto, de
+            # "claro fondo" o "oscuro violeta" (modo y acento).
+            modo, _, acento = contenido.partition(" ")
+            escritorio = os.path.join(raiz, "Prefs", "Env-Archive", "Escritorio")
+            os.makedirs(escritorio, exist_ok=True)
+            with open(os.path.join(escritorio, "apariencia"), "w") as f:
+                f.write(f"modo = {modo}\nacento = {acento.split(' ')[0] or 'fondo'}\n")
+            continue
         with open(os.path.join(prefs, nombre), "w") as f:
             f.write(contenido.replace("\\n", "\n") + "\n")
         os.chmod(os.path.join(prefs, nombre), 0o600)
@@ -806,6 +808,14 @@ with tempfile.TemporaryDirectory() as t:
         f.write(prefs_carla())
     subprocess.run([os.path.join(os.path.dirname(duenos), "poner"), fs, "0", "Carla", "1001:1001", PREFS_CARLA, prefs],
                    input=b"clave de Carla\n", check=True)
+    # Ajustes en texto, hostil: la apariencia guardada de Ana (su `ENVARC:`, en su volumen), puesta a mano y mal (un
+    # modo que no existe). Al entrar ella, `sesiones` la copia a su `ENV:` y el centro dice que no se entiende y deja el
+    # tema que hay; `Ajuste tema` la arregla (prueba del Shell).
+    apariencia_ana = os.path.join(t, "apariencia")
+    with open(apariencia_ana, "w") as f:
+        f.write("# puesto a mano\nmodo = morado\n")
+    subprocess.run([os.path.join(os.path.dirname(duenos), "poner"), fs, "0", "Ana", "1000:1000", APARIENCIA_ANA, apariencia_ana],
+                   input=b"clave de Ana\n", check=True)
     subprocess.run([duenos, fs, "0", "1:1", "camino=Estado/Servicios/sesiones"], check=True)
     subprocess.run([duenos, fs, "0", "1001:1001", "camino=DeCarla"], check=True)
     # A10: un daño que la comprobación encuentra y la reparación arregla (los enlaces de LEEME.txt, 7 en vez de 1).

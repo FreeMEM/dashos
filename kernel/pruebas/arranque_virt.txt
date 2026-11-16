@@ -211,8 +211,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [guardian] preguntas de pide, una por servicio y usuario: bien
 ~│   [guardian] retirar a pide el permiso de plazo 0, otra vez -1: bien
 # S10c, C1: el centro de control abre Permisos (lo pide `guardian`, como un clic); el usuario quita el de eco de pide.
-# La apariencia guardada está en basura: se queda la de serie.
-~│   [centro] apariencia guardada: no se entiende; se queda la de serie
+# Ajustes en texto: la apariencia en uso (antes de entrar nadie, la de serie: no hay ENV:).
+~│   [centro] apariencia en uso: claro, color Paleta del fondo (sin calcular)
 ~│   [centro] Permisos en pantalla: 1 concedidos
 ~│   [centro] quita a pide el permiso de eco con el botón: 0; quedan 0
 ~│   [centro] Permisos, lo que se ve: Ningún programa tiene permisos concedidos
@@ -233,6 +233,9 @@ DashOS en marcha con 4 núcleos.
 ~│   [panel] abierto; mosaico a
 ~│   [centro] modo claro (lo pide el panel), guardado: 0
 ~│   [centro] modo oscuro (lo pide el panel), guardado: 0
+# Ajustes en texto: el modo del panel va a ENV:Escritorio/apariencia y, por `sesiones`, a ENVARC: de Ana (el centro no
+# tiene su Home:).
+~│   [sesiones] centro guarda ENV:Escritorio/apariencia en ENVARC: de Ana: 
 ~│   [sonido] volumen general: 90 % (lo pide panel)
 ~│   [sonido] volumen general: 100 % (lo pide panel)
 # C2, el modo de edición del panel: quitar Bloquear y Hecho (lo guarda el centro, que lo relee; el panel ya no lo
@@ -368,9 +371,9 @@ DashOS en marcha con 4 núcleos.
 # Apariencia (C3): modo oscuro, y la ventana se repinta con el esquema oscuro.
 ~│   [centro] Apariencia: Modo claro · elegido
 # S26: la de serie es la paleta del fondo; aquí, sin fondo aún (el guardado es el enorme), sin calcular.
-~│   [centro] Apariencia: oscuro, color Paleta del fondo (sin calcular); guardada: 0 (13 bytes); releída: sí
+~│   [centro] Apariencia: oscuro, color Paleta del fondo (sin calcular); en uso (sin sesión: no se guarda)
 # Con el ratón: doble clic en "Color fijo azul" (dos clics en la misma fila, en menos de 500 ms).
-~│   [centro] Apariencia: oscuro, color Azul; guardada: 0 (12 bytes); releída: sí
+~│   [centro] Apariencia: oscuro, color Azul; en uso (sin sesión: no se guarda)
 # Y el tema llega a los demás programas por el compositor (dashos_tema_v1): Ajustes se repinta.
 ~│   [ajustes] tema del sistema: oscuro, color 0061a4
 # C3: el fondo de escritorio (`fondo`, una capa de fondo). En el disco, Prefs/fondo dice enorme.png (una cabecera de
@@ -383,7 +386,7 @@ DashOS en marcha con 4 núcleos.
 # "Paleta del fondo": el centro calcula una vez los esquemas de la semilla, los guarda con la apariencia y los da al
 # compositor, que los reparte: Ajustes, que estaba abierta, los usa sin calcular.
 ~│   [centro] colores del fondo: semilla 3d6f88, esquemas claro y oscuro en 
-~│   [centro] Apariencia: oscuro, color Del fondo; guardada: 0 (202 bytes); releída: sí
+~│   [centro] Apariencia: oscuro, color Del fondo; en uso (sin sesión: no se guarda)
 ~│   [ajustes] tema del sistema: oscuro, color 3d6f88, esquema del centro (
 # Hostil: una imagen rota (su CRC no cuadra) no tumba a nadie: se quedan el fondo y el tema de antes.
 ~│   [fondo] rota.png: un trozo está roto (su CRC no cuadra); se queda ondas.png
@@ -476,6 +479,9 @@ DashOS en marcha con 4 núcleos.
 # Ana se fue con 64 vigilancias puestas: el servicio las soltó al acabar ella.
 ~ en el servicio con la de Carla: bien
 # Ajustes en texto, hostil: Carla no escribe la zona (de la máquina) ni la capa de fábrica de `ENVARC:`.
+~│   [ram] Carla: guardar ENV: en ENVARC: por sesiones [-2, -2]; la orden de archivos con su llave -1
+~│   [sesiones] ram pide guardar ENV:"Sys/locale" en ENVARC:: -2
+~│   [sesiones] ram pide guardar ENV:"../../Prefs/Red/hora" en ENVARC:: -2
 ~│   [ram] Carla: escribir la zona de la máquina -12 y en ENVARC: de fábrica -12: bien
 ~(ENV: sigue como al entrar: true): bien
 ~│   [guardian] cambio de usuario: entra Ana (0 intentos malos); Carla sigue detrás
@@ -631,6 +637,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [shell] Ajuste: ENV:enorme es demasiado grande: no se toca (arréglalo a mano o bórralo). No se ha cambiado nada
 ~│   [shell] Escritorio/barra.segundos: sí (en RAM:Env/Escritorio/barra y Home:Prefs/Env-Archive/Escritorio/barra)
 ~│   [shell] Escritorio/barra.segundos: sí (ENV:Escritorio/barra segundos)
+# La apariencia que Ana tenía guardada a mano y mal (modo morado): al entrar, el centro la lee de ENV: y deja el tema.
+~│   [centro] ENV:Escritorio/apariencia: modo "morado" no es claro ni oscuro; se queda el tema que hay
 ~│   [shell] tema: oscuro (en RAM:Env/Escritorio/apariencia)
 ~│   [centro] tema en marcha: oscuro, color Del fondo, de ENV:Escritorio/apariencia; en el compositor: sí
 ~│   [centro] tema en marcha: claro, color Del fondo, de ENV:Escritorio/apariencia; en el compositor: sí
