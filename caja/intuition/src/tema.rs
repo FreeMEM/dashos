@@ -17,7 +17,7 @@ use crate::gadtools::{Gt, celdas, formatear, gt, kind, mando, texto, texto_n};
 use crate::nitido::{Alinea, Estilo};
 use crate::marco::{ANCHO_CERRAR, ANCHO_PROF, GADGET_TAMANO};
 use crate::menus::ANCHO_AMIGA;
-use crate::lienzo::{Lienzo, Rect};
+use crate::lienzo::{Pinta, Rect};
 
 pub(crate) use crate::gadtools::{bisel, llenar};
 
@@ -99,18 +99,18 @@ pub(crate) struct VistaMarco<'a> {
 /// Un aspecto de los controles.
 pub(crate) trait Tema {
     /// Pinta un gadget de GadTools (con su etiqueta) en el lienzo de su ventana. Devuelve lo que ha tocado.
-    fn gadget(&self, l: &mut Lienzo, glifos: &[[u8; 8]], p: &Plumas, v: &Vista) -> Rect;
+    fn gadget(&self, l: &mut dyn Pinta, glifos: &[[u8; 8]], p: &Plumas, v: &Vista) -> Rect;
     /// Pinta la barra de menús y el menú que cae.
-    fn menu(&self, l: &mut Lienzo, glifos: &[[u8; 8]], p: &Plumas, v: &VistaMenu);
+    fn menu(&self, l: &mut dyn Pinta, glifos: &[[u8; 8]], p: &Plumas, v: &VistaMenu);
     /// Las plumas de un marco de `DrawBevelBoxA` (índices de `dri_Pens`): (arriba e izquierda, abajo y derecha).
     fn plumas_bisel(&self, hundido: bool) -> (usize, usize);
     /// Un marco de `DrawBevelBoxA` pintado directamente en el lienzo (`r`, ya en sus coordenadas). `false` si el tema
     /// lo pinta con las plumas por el `RastPort`, como 3.x.
-    fn bisel_caja(&self, _l: &mut Lienzo, _r: Rect, _hundido: bool, _cresta: bool) -> bool {
+    fn bisel_caja(&self, _l: &mut dyn Pinta, _r: Rect, _hundido: bool, _cresta: bool) -> bool {
         false
     }
     /// Los bordes de una ventana (barra de título y gadgets del sistema). `false`: los de siempre (`marco.rs`).
-    fn marco(&self, _l: &mut Lienzo, _glifos: &[[u8; 8]], _v: &VistaMarco) -> bool {
+    fn marco(&self, _l: &mut dyn Pinta, _glifos: &[[u8; 8]], _v: &VistaMarco) -> bool {
         false
     }
     /// El color de dentro de una ventana nueva. `None`: el de la pluma 0, como en 3.x.
@@ -145,7 +145,7 @@ impl Elegido {
 
 /// La etiqueta de un gadget (la de un mx no sale: sus opciones van donde diría su lugar, arriba), con el color de
 /// dentro (`PLACETEXT_IN`) y el de fuera. Devuelve lo que ha tocado. La comparten los dos temas: el mismo sitio.
-fn etiqueta(l: &mut Lienzo, glifos: &[[u8; 8]], s: &Gt, r: Rect, dentro: u32, fuera: u32) -> Rect {
+fn etiqueta(l: &mut dyn Pinta, glifos: &[[u8; 8]], s: &Gt, r: Rect, dentro: u32, fuera: u32) -> Rect {
     etiqueta_desde(l, glifos, s, r, dentro, fuera, 0)
 }
 
@@ -160,7 +160,7 @@ fn ancho_nivel(s: &Gt) -> i32 {
 
 /// `etiqueta`, con la de la izquierda `antes` píxeles más allá (la del deslizador en el tema de DashOS, fuera del
 /// campo de su nivel: encima, como en 3.1, la letra de DashOS no puede volver y sale en topaz).
-fn etiqueta_desde(l: &mut Lienzo, glifos: &[[u8; 8]], s: &Gt, r: Rect, dentro: u32, fuera: u32, antes: i32) -> Rect {
+fn etiqueta_desde(l: &mut dyn Pinta, glifos: &[[u8; 8]], s: &Gt, r: Rect, dentro: u32, fuera: u32, antes: i32) -> Rect {
     if s.etiqueta.is_empty() || s.tipo == kind::MX {
         return Rect::nuevo(0, 0, -1, -1);
     }
@@ -189,7 +189,7 @@ fn etiqueta_desde(l: &mut Lienzo, glifos: &[[u8; 8]], s: &Gt, r: Rect, dentro: u
 
 /// El nivel de un deslizador, a su izquierda en un campo de GTSL_MaxLevelLen letras, encima de la etiqueta (como en
 /// 3.1, que con los dos a la izquierda los pisa). Devuelve lo que ha tocado.
-fn nivel(l: &mut Lienzo, glifos: &[[u8; 8]], s: &Gt, r: Rect, fondo: u32, tinta: u32) -> Rect {
+fn nivel(l: &mut dyn Pinta, glifos: &[[u8; 8]], s: &Gt, r: Rect, fondo: u32, tinta: u32) -> Rect {
     if s.tipo != kind::SLIDER || s.formato.is_empty() {
         return Rect::nuevo(0, 0, -1, -1);
     }
@@ -209,7 +209,7 @@ fn nivel(l: &mut Lienzo, glifos: &[[u8; 8]], s: &Gt, r: Rect, fondo: u32, tinta:
 pub(crate) struct Clasico;
 
 impl Tema for Clasico {
-    fn gadget(&self, l: &mut Lienzo, glifos: &[[u8; 8]], p: &Plumas, v: &Vista) -> Rect {
+    fn gadget(&self, l: &mut dyn Pinta, glifos: &[[u8; 8]], p: &Plumas, v: &Vista) -> Rect {
         let (claro, oscuro, tinta, fondo, relleno, tinta_rel, bloque) =
             (p.claro, p.oscuro, p.texto, p.fondo, p.relleno, p.texto_relleno, p.bloque);
         let (s, r, desactivado, paleta, elementos, cadena, cursor, activo_texto) =
@@ -385,7 +385,7 @@ impl Tema for Clasico {
         dano
     }
 
-    fn menu(&self, l: &mut Lienzo, glifos: &[[u8; 8]], p: &Plumas, v: &VistaMenu) {
+    fn menu(&self, l: &mut dyn Pinta, glifos: &[[u8; 8]], p: &Plumas, v: &VistaMenu) {
         let (fondo, tinta, claro, oscuro) = (p.barra_bloque, p.barra_detalle, p.claro, p.oscuro);
         let (alto_barra, an_l, titulos, elems, caja, msel) = (v.alto_barra, v.ancho, v.titulos, v.elems, v.caja, v.msel);
         // La barra: la de la ventana, de fondo claro, con los títulos.
@@ -552,7 +552,7 @@ impl Forma {
 }
 
 /// Los píxeles del lienzo que toca una caja en octavos.
-fn pixeles_de(l: &Lienzo, x0: i64, y0: i64, x1: i64, y1: i64) -> Option<(i32, i32, i32, i32)> {
+fn pixeles_de(l: &dyn Pinta, x0: i64, y0: i64, x1: i64, y1: i64) -> Option<(i32, i32, i32, i32)> {
     let (an, al) = (l.ancho() as i64, l.alto() as i64);
     let px0 = x0.div_euclid(8).max(0);
     let py0 = y0.div_euclid(8).max(0);
@@ -562,7 +562,7 @@ fn pixeles_de(l: &Lienzo, x0: i64, y0: i64, x1: i64, y1: i64) -> Option<(i32, i3
 }
 
 /// Pone `c` en `(x, y)` con una cobertura de `n` dieciseisavos sobre lo que haya.
-fn cubrir(l: &mut Lienzo, x: i32, y: i32, c: u32, n: u32) {
+fn cubrir(l: &mut dyn Pinta, x: i32, y: i32, c: u32, n: u32) {
     match n {
         0 => {}
         16.. => l.poner(x, y, c),
@@ -574,7 +574,7 @@ fn cubrir(l: &mut Lienzo, x: i32, y: i32, c: u32, n: u32) {
 }
 
 /// Pinta una forma de color `c` con los bordes suaves; con `hueco`, solo lo que queda fuera de él (un contorno).
-pub(crate) fn forma(l: &mut Lienzo, f: Forma, hueco: Option<Forma>, c: u32) {
+pub(crate) fn forma(l: &mut dyn Pinta, f: Forma, hueco: Option<Forma>, c: u32) {
     if f.vacia() {
         return;
     }
@@ -605,12 +605,12 @@ pub(crate) fn forma(l: &mut Lienzo, f: Forma, hueco: Option<Forma>, c: u32) {
 }
 
 /// Un contorno de `grosor` octavos por dentro de `f`.
-pub(crate) fn contorno(l: &mut Lienzo, f: Forma, grosor: i64, c: u32) {
+pub(crate) fn contorno(l: &mut dyn Pinta, f: Forma, grosor: i64, c: u32) {
     forma(l, f, Some(f.encoger(grosor)), c);
 }
 
 /// Un trazo recto de `a` a `b` (en octavos) de `grosor` octavos, con las puntas redondas.
-pub(crate) fn trazo(l: &mut Lienzo, a: (i64, i64), b: (i64, i64), grosor: i64, c: u32) {
+pub(crate) fn trazo(l: &mut dyn Pinta, a: (i64, i64), b: (i64, i64), grosor: i64, c: u32) {
     let k = |v: i64| v.clamp(-LEJOS * 8, LEJOS * 8);
     let (a, b, grosor) = ((k(a.0), k(a.1)), (k(b.0), k(b.1)), grosor.clamp(0, 256));
     let m = grosor / 2 + 1;
@@ -649,7 +649,7 @@ pub(crate) fn trazo(l: &mut Lienzo, a: (i64, i64), b: (i64, i64), grosor: i64, c
 }
 
 /// Un triángulo que apunta abajo (el de un desplegable), de `ancho` píxeles impar, con la punta en `(cx, y + alto)`.
-fn triangulo_abajo(l: &mut Lienzo, cx: i32, y: i32, medio: i32, c: u32) {
+fn triangulo_abajo(l: &mut dyn Pinta, cx: i32, y: i32, medio: i32, c: u32) {
     for k in 0..=medio {
         llenar(l, Rect::nuevo(cx - (medio - k), y + k, cx + (medio - k), y + k), c);
     }
@@ -668,14 +668,14 @@ pub(crate) struct Material {
 
 impl Material {
     /// Un campo con contorno (de texto, de número, un desplegable): esquinas de 4 y su interior en `dentro`.
-    fn campo(&self, l: &mut Lienzo, r: Rect, borde: u32, grosor: i64, dentro: u32) {
+    fn campo(&self, l: &mut dyn Pinta, r: Rect, borde: u32, grosor: i64, dentro: u32) {
         let f = Forma::de(r, 32);
         forma(l, f, None, borde);
         forma(l, f.encoger(grosor), None, dentro);
     }
 
     /// Una barra de desplazamiento: pista y mando como píldoras.
-    fn barra(&self, l: &mut Lienzo, pista: Rect, mando: Rect) {
+    fn barra(&self, l: &mut dyn Pinta, pista: Rect, mando: Rect) {
         let t = &self.t;
         let horizontal = pista.x1 - pista.x0 >= pista.y1 - pista.y0;
         forma(l, Forma::de(pista, redondo(pista, 64)), None, t.contenedor_alto);
@@ -690,7 +690,7 @@ impl Material {
 }
 
 impl Tema for Material {
-    fn gadget(&self, l: &mut Lienzo, glifos: &[[u8; 8]], _p: &Plumas, v: &Vista) -> Rect {
+    fn gadget(&self, l: &mut dyn Pinta, glifos: &[[u8; 8]], _p: &Plumas, v: &Vista) -> Rect {
         let t = &self.t;
         let (s, r, desactivado, paleta, elementos, cadena, cursor, activo_texto) =
             (v.s, v.r, v.desactivado, v.paleta, v.elementos, v.cadena, v.cursor, v.activo_texto);
@@ -896,12 +896,12 @@ impl Tema for Material {
         if desactivado {
             // Desactivado: todo al 38 % sobre la superficie, como Material 3.
             // (Con `filtrar`, los textos nítidos de dentro siguen valiendo, más claros.)
-            l.filtrar(r, |p| mezcla(p, t.superficie, 158));
+            l.filtrar(r, &|p| mezcla(p, t.superficie, 158));
         }
         dano
     }
 
-    fn menu(&self, l: &mut Lienzo, glifos: &[[u8; 8]], _p: &Plumas, v: &VistaMenu) {
+    fn menu(&self, l: &mut dyn Pinta, glifos: &[[u8; 8]], _p: &Plumas, v: &VistaMenu) {
         let t = &self.t;
         let (alto_barra, an_l, titulos, elems, caja, msel) = (v.alto_barra, v.ancho, v.titulos, v.elems, v.caja, v.msel);
         // La barra de menús: la de título de la ventana, con los títulos; el señalado, en una píldora del acento suave.
@@ -963,14 +963,14 @@ impl Tema for Material {
         Clasico.plumas_bisel(hundido)
     }
 
-    fn bisel_caja(&self, l: &mut Lienzo, r: Rect, _hundido: bool, _cresta: bool) -> bool {
+    fn bisel_caja(&self, l: &mut dyn Pinta, r: Rect, _hundido: bool, _cresta: bool) -> bool {
         // Una tarjeta con contorno (Material 3, "outlined card"): el contorno variante, esquinas de 4; dentro, lo del
         // programa, sin tocar.
         contorno(l, Forma::de(r, 32), 8, self.t.variante_contorno);
         true
     }
 
-    fn marco(&self, l: &mut Lienzo, glifos: &[[u8; 8]], v: &VistaMarco) -> bool {
+    fn marco(&self, l: &mut dyn Pinta, glifos: &[[u8; 8]], v: &VistaMarco) -> bool {
         use crate::estructuras::wflg;
         let t = &self.t;
         let (an, al) = (v.ancho, v.alto);
@@ -1029,6 +1029,7 @@ impl Tema for Material {
 mod pruebas {
     use super::*;
     use crate::{CajaGrafica, CompositorDePrueba};
+    use crate::lienzo::LienzoPropio;
     use alloc::vec;
 
     /// Unos tokens con cada papel de un color distinto (y ninguno del esquema de serie): así se ve de dónde sale cada
@@ -1094,7 +1095,7 @@ mod pruebas {
     }
 
     /// Lo que cambió en `l` respecto al fondo (su caja), o un rectángulo vacío.
-    fn cambiado(l: &Lienzo) -> Rect {
+    fn cambiado(l: &dyn Pinta) -> Rect {
         let mut r = Rect::nuevo(0, 0, -1, -1);
         for y in 0..l.alto() as i32 {
             for x in 0..l.ancho() as i32 {
@@ -1106,8 +1107,8 @@ mod pruebas {
         r
     }
 
-    fn pintar(tema: &dyn Tema, s: &Gt, r: Rect, desactivado: bool, elementos: &[Vec<u8>]) -> (Lienzo, Rect) {
-        let mut l = Lienzo::nuevo(480, 320, FONDO, 0);
+    fn pintar(tema: &dyn Tema, s: &Gt, r: Rect, desactivado: bool, elementos: &[Vec<u8>]) -> (LienzoPropio, Rect) {
+        let mut l = LienzoPropio::nuevo(480, 320, FONDO, 0);
         let paleta: Vec<u32> = (0..8).map(|i| 0xff00_0000 | (i * 0x10_2030)).collect();
         let v = Vista { s, r, desactivado, paleta: &paleta, elementos, cadena: b"hola", cursor: 2, activo_texto: true };
         let d = tema.gadget(&mut l, &glifos(), &P, &v);
@@ -1174,7 +1175,7 @@ mod pruebas {
         }
     }
 
-    fn en(l: &Lienzo, x: i32, y: i32) -> u32 {
+    fn en(l: &dyn Pinta, x: i32, y: i32) -> u32 {
         l.pixel(x, y)
     }
 
@@ -1259,7 +1260,7 @@ mod pruebas {
     #[test]
     fn menu_material() {
         let m = Material { t: T };
-        let mut l = Lienzo::nuevo(300, 200, FONDO, 0);
+        let mut l = LienzoPropio::nuevo(300, 200, FONDO, 0);
         let titulos = [Titulo { x: 4, an: 60, nombre: b"Proyecto".to_vec(), activo: true }];
         let elems = [
             Elem { r: Rect::nuevo(6, 14, 105, 23), texto: b"Abrir".to_vec(), tx: 2, raya: false, activo: false, marca: None, tecla: Some(b'A') },
@@ -1284,7 +1285,7 @@ mod pruebas {
         use crate::estructuras::wflg;
         let m = Material { t: T };
         for activa in [true, false] {
-            let mut l = Lienzo::nuevo(200, 100, FONDO, 0);
+            let mut l = LienzoPropio::nuevo(200, 100, FONDO, 0);
             let flags = wflg::CLOSEGADGET | wflg::DEPTHGADGET | wflg::SIZEGADGET | wflg::DRAGBAR;
             let v = VistaMarco { ancho: 200, alto: 100, flags, bordes: [4, 11, 18, 2], activa, titulo: b"Hola" };
             assert!(m.marco(&mut l, &glifos(), &v));
@@ -1303,7 +1304,7 @@ mod pruebas {
             assert!((200 - ANCHO_PROF..200).any(|x| en(&l, x, 2) == tinta));
         }
         // El clásico deja que los pinte marco.rs.
-        let mut l = Lienzo::nuevo(10, 10, FONDO, 0);
+        let mut l = LienzoPropio::nuevo(10, 10, FONDO, 0);
         let v = VistaMarco { ancho: 10, alto: 10, flags: 0, bordes: [0; 4], activa: true, titulo: b"" };
         assert!(!Clasico.marco(&mut l, &glifos(), &v));
     }
@@ -1312,7 +1313,7 @@ mod pruebas {
     #[test]
     fn bisel_como_tarjeta() {
         let m = Material { t: T };
-        let mut l = Lienzo::nuevo(100, 100, FONDO, 0);
+        let mut l = LienzoPropio::nuevo(100, 100, FONDO, 0);
         assert!(m.bisel_caja(&mut l, Rect::nuevo(10, 10, 89, 59), false, false));
         assert_eq!(en(&l, 50, 10), T.variante_contorno);
         assert_eq!(en(&l, 10, 30), T.variante_contorno);
@@ -1367,14 +1368,14 @@ mod pruebas {
                     s.colores = [u32::MAX, 0, 1, 256][k % 4];
                     s.desplaz = u32::MAX - k as u32;
                     s.textos.clear();
-                    let mut l = Lienzo::nuevo(480, 320, FONDO, 0);
+                    let mut l = LienzoPropio::nuevo(480, 320, FONDO, 0);
                     let v = Vista { s: &s, r, desactivado: k % 2 == 0, paleta: &[], elementos: &elementos, cadena: b"x", cursor: usize::MAX, activo_texto: true };
                     m.gadget(&mut l, &glifos(), &P, &v);
                 }
             }
         }
         // Las formas sueltas, con radios y grosores absurdos.
-        let mut l = Lienzo::nuevo(64, 64, FONDO, 0);
+        let mut l = LienzoPropio::nuevo(64, 64, FONDO, 0);
         for f in [Forma::de(Rect::nuevo(0, 0, 63, 63), i64::MAX), Forma::de(Rect::nuevo(0, 0, 63, 63), -5), Forma::circulo(32 * 8, 32 * 8, i64::MAX / 4)] {
             forma(&mut l, f, None, T.primario);
             contorno(&mut l, f, i64::MAX / 4, T.primario);
@@ -1388,7 +1389,7 @@ mod pruebas {
     /// Un círculo pequeño sale redondo y suave: simétrico y con píxeles intermedios en el borde.
     #[test]
     fn circulos_suaves() {
-        let mut l = Lienzo::nuevo(20, 20, 0xffff_ffff, 0);
+        let mut l = LienzoPropio::nuevo(20, 20, 0xffff_ffff, 0);
         forma(&mut l, Forma::circulo(80, 80, 36), None, 0xff00_0000);
         assert_eq!(l.pixel(10, 10), 0xff00_0000);
         assert_eq!(l.pixel(0, 0), 0xffff_ffff);

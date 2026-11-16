@@ -80,7 +80,7 @@ fn atender_pedido(app: &mut App, m: &[u8], marca: u64) {
     let Some((&raiz, nombres)) = resto.split_first() else { return };
     let raiz = raiz as u32;
     let mut lugar = Lugar::raiz(raiz);
-    let valido = (1..=3).contains(&raiz)
+    let valido = (RAIZ_SISTEMA..=RAIZ_AMIGA).contains(&raiz)
         && (nombres.is_empty()
             || nombres.split(|&b| b == 0).all(|n| match core::str::from_utf8(n) {
                 Ok(n) if nombre_valido(n) && lugar.nombres.len() < MAX_HONDO => {
@@ -517,7 +517,7 @@ fn soltar(app: &mut App, k: usize, z: Zona, x: i32, y: i32) {
                     let cosas: Vec<Cosa> = a.cosas.into_iter().filter(|c| c.donde.raiz == RAIZ_HOME && !c.donde.dentro_de(&papelera())).collect();
                     let t = Trabajo::nuevo(Tarea::Papelera, App::elementos(&cosas), None, Some(papelera()), App::raices());
                     if !cosas.is_empty() {
-                        app.empezar(k, t, alloc::format!("Mover {} a la papelera", if cosas.len() == 1 { alloc::format!("\"{}\"", cosas[0].e.nombre) } else { alloc::format!("{} elementos", cosas.len()) }));
+                        app.empezar(k, t, App::titulo_papelera(&cosas));
                     }
                 } else {
                     let mover = !app.ctrl && a.cosas.iter().all(|c| c.donde.raiz == d.raiz && c.donde.raiz != RAIZ_SISTEMA);
@@ -612,7 +612,7 @@ fn soltar(app: &mut App, k: usize, z: Zona, x: i32, y: i32) {
         }
         Zona::CancelarTrabajo(j) => {
             if let Some(m) = app.trabajos.get_mut(j) {
-                println!("  [explorador] cancela: {}", m.titulo);
+                println!("  [explorador] cancela: {}", m.titulo_fijo);
                 m.t.cancelar = true;
             }
         }

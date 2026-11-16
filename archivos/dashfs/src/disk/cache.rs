@@ -133,6 +133,10 @@ impl<T: Disk> Disk for DiskCache<T> {
         self.inner.size()
     }
 
+    fn size_is_limit(&self) -> bool {
+        self.inner.size_is_limit()
+    }
+
     fn flush(&mut self) -> Result<()> {
         self.inner.flush()
     }

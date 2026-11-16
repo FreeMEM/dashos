@@ -4,6 +4,13 @@ Del 2026-11-10. Recomendaciones aceptadas por el usuario el mismo día. Concreta
 (controladores de Linux en procesos aparte, en la zona GPL) y añade a S13 lo que hace falta para el Wi-Fi. Es diseño:
 no hay código.
 
+> **Sustituido en lo de LKL (decidido por el usuario el 2026-11-16, S36).** Los controladores de Linux van en
+> máquinas virtuales: los dominios de controladores de [S35](S35-controladores-de-linux.md). LKL se retira. Todo lo que
+> este documento dice de LKL (la opción B, "Recomendación aceptada", lo que pide al kernel, el Wi-Fi por el proceso
+> LKL, las fases L1 y L2 y la decisión 1) queda como historia y no se hace. **Lo de red sigue valiendo**: SACK y las
+> marcas de tiempo si hacen falta, y `amissl.library` nativa. Los hilos en los procesos también siguen haciendo
+> falta, pero ya no por LKL. El Wi-Fi de la Pi sigue por decidir con la placa delante (S35).
+
 ## El problema
 
 La decisión de S12 era imitar, para cada controlador de Linux, las partes del kernel que usa (memoria, DMA,
@@ -25,6 +32,8 @@ sus pilas (Wi-Fi, Bluetooth, USB, ALSA). GPL-2.0.
 - Cuesta: muchos menos controladores que Linux, y no tiene el del Wi-Fi de la Pi.
 
 ## Recomendación aceptada: B, LKL
+
+> Retirada el 2026-11-16: vale S35. Se deja el texto como estaba.
 
 - **Un proceso "linux"** en la zona GPL (`AGENTS.md` regla 7), con LKL y solo los controladores que hacen falta. Puede
   haber varios, uno por aparato, para que un fallo no tumbe los demás.

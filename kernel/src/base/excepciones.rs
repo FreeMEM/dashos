@@ -36,6 +36,11 @@ impl Marco {
     pub fn poner_x2(&mut self, v: u64) {
         self.x[2] = v;
     }
+
+    /// Un cuarto (`grupo_uso`: las veces que el grupo topó con un tope, S3).
+    pub fn poner_x3(&mut self, v: u64) {
+        self.x[3] = v;
+    }
 }
 
 unsafe extern "C" {

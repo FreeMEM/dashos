@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="dashos_menus_v1">
+  <copyright>
+    Protocolo propio de DashOS (S10, "Dónde van los menús de un programa"; `docs/bitacoras/menus.md`). Licencia
+    MPL-2.0, como el resto de DashOS.
+  </copyright>
+
+  <interface name="dashos_menus_v1" version="1">
+    <description summary="los menús de los programas: en la ventana o en la barra de arriba">
+      Todos los programas lo ven. El ajuste de todo el sistema (`ENV:Escritorio/menus`, que lee el centro de control)
+      dice dónde van los menús: en una fila dentro de cada ventana (de serie) o en la barra de arriba, como en el
+      Amiga. El compositor lo dice a cada programa con `sitio`, al enlazar y cada vez que cambia, y el kit pinta la
+      fila o la quita.
+
+      Un programa da el menú de cada ventana suya (`menu`), lo tenga en la fila o no: así el cambio de sitio es
+      inmediato. El compositor solo enseña a la barra el de la ventana con el teclado de quien está delante (el mismo
+      que el título de la barra), nunca el de otra ventana, otra sesión o con la sesión bloqueada; y lo que se elige en
+      la barra solo llega al programa de ese menú. Por eso no hace falta permiso: nadie ve ni manda nada que no sea
+      suyo o de lo que tiene delante.
+    </description>
+
+    <enum name="error">
+      <entry name="no_permitido" value="0" summary="la petición es solo del centro de control o de la barra"/>
+      <entry name="demasiados" value="1" summary="más menús de los que caben (uno por ventana, 16 por programa)"/>
+      <entry name="no_vale" value="2" summary="un menú que no vale (wayland::menus), una superficie que no es suya o un sitio que no existe"/>
+    </enum>
+
+    <enum name="sitio">
+      <entry name="dentro" value="0" summary="una fila de menús dentro de cada ventana"/>
+      <entry name="barra" value="1" summary="los del programa activo, en la barra de arriba"/>
+    </enum>
+
+    <request name="destroy" type="destructor"/>
+
+    <request name="menu">
+      <description summary="el menú de una ventana">
+        Una superficie del mismo programa (la de su ventana) y su objeto de menú. Una por superficie; como mucho 16 por
+        programa. Al destruir la superficie o el objeto, el menú se va.
+      </description>
+      <arg name="id" type="new_id" interface="dashos_menu_v1"/>
+      <arg name="superficie" type="object" interface="wl_surface"/>
+    </request>
+
+    <request name="poner_sitio">
+      <description summary="cambiar dónde van los menús">
+        Solo el centro de control (aplica `ENV:Escritorio/menus`); a otro, error. Un sitio que no existe, también.
+      </description>
+      <arg name="sitio" type="uint" enum="sitio"/>
+    </request>
+
+    <request name="barra">
+      <description summary="ser la barra de arriba">
+        Solo la barra de la pantalla (el nombre que le da `inicio`); a otro, error.
+      </description>
+      <arg name="id" type="new_id" interface="dashos_menus_barra_v1"/>
+    </request>
+
+    <event name="sitio">
+      <description summary="dónde van los menús ahora">
+        Al enlazar y cada vez que cambia. En la barra solo si el ajuste lo dice y hay una barra que los enseñe: si la
+        barra se va, los menús vuelven a las ventanas.
+      </description>
+      <arg name="sitio" type="uint" enum="sitio"/>
+    </event>
+  </interface>
+
+  <interface name="dashos_menu_v1" version="1">
+    <description summary="el menú de una ventana">
+      El programa lo da entero cada vez que cambia (activar, marcar, otro título), en el texto de `wayland::menus`
+      (como mucho 16 KB). Si es el de la ventana activa y los menús van en la barra, la barra lo enseña al momento.
+    </description>
+
+    <request name="destroy" type="destructor"/>
+
+    <request name="poner">
+      <description summary="el menú entero">Un texto que no vale es un error de protocolo.</description>
+      <arg name="datos" type="array"/>
+    </request>
+
+    <request name="abrir">
+      <description summary="abrir los menús en la barra">
+        Como el botón derecho (una tecla del programa, F10): solo si es el menú que enseña la barra ahora; si no, nada.
+      </description>
+    </request>
+
+    <event name="elegido">
+      <description summary="se eligió una entrada en la barra">
+        Su número. El compositor ya miró que existe y que se puede elegir en el último menú que dio el programa.
+      </description>
+      <arg name="numero" type="uint"/>
+    </event>
+  </interface>
+
+  <interface name="dashos_menus_barra_v1" version="1">
+    <description summary="la barra: los menús del programa activo">
+      Solo para la barra de la pantalla.
+    </description>
+
+    <request name="destroy" type="destructor"/>
+
+    <request name="elegir">
+      <description summary="se eligió una entrada">
+        La generación del menú que se enseñaba y el número de la entrada. Si ya es otra ventana, o la entrada no existe
+        o no se puede elegir, no pasa nada.
+      </description>
+      <arg name="generacion" type="uint"/>
+      <arg name="numero" type="uint"/>
+    </request>
+
+    <event name="menu">
+      <description summary="el menú del programa activo">
+        Cada vez que cambia: otra ventana con el teclado (otra generación) o el mismo menú cambiado (la misma). Vacío
+        si la ventana no tiene menú, no hay ninguna, la sesión está bloqueada o los menús van dentro de las ventanas.
+      </description>
+      <arg name="generacion" type="uint"/>
+      <arg name="datos" type="array"/>
+    </event>
+
+    <event name="abrir">
+      <description summary="abrir los menús">
+        El botón derecho sobre una ventana con menú de DashOS (no le llega a la ventana), o la tecla del programa.
+      </description>
+    </event>
+  </interface>
+</protocol>

@@ -1,0 +1,154 @@
+## version $VER: english.language 1.0 (15.11.2026)
+## language english
+## codeset 106
+;
+MSG_1
+Sunday
+; domingo
+MSG_2
+Monday
+; lunes
+MSG_3
+Tuesday
+; martes
+MSG_4
+Wednesday
+; miércoles
+MSG_5
+Thursday
+; jueves
+MSG_6
+Friday
+; viernes
+MSG_7
+Saturday
+; sábado
+MSG_8
+Sun
+; dom
+MSG_9
+Mon
+; lun
+MSG_10
+Tue
+; mar
+MSG_11
+Wed
+; mié
+MSG_12
+Thu
+; jue
+MSG_13
+Fri
+; vie
+MSG_14
+Sat
+; sáb
+MSG_15
+January
+; enero
+MSG_16
+February
+; febrero
+MSG_17
+March
+; marzo
+MSG_18
+April
+; abril
+MSG_19
+May
+; mayo
+MSG_20
+June
+; junio
+MSG_21
+July
+; julio
+MSG_22
+August
+; agosto
+MSG_23
+September
+; septiembre
+MSG_24
+October
+; octubre
+MSG_25
+November
+; noviembre
+MSG_26
+December
+; diciembre
+MSG_27
+Jan
+; ene
+MSG_28
+Feb
+; feb
+MSG_29
+Mar
+; mar
+MSG_30
+Apr
+; abr
+MSG_31
+May
+; may
+MSG_32
+Jun
+; jun
+MSG_33
+Jul
+; jul
+MSG_34
+Aug
+; ago
+MSG_35
+Sep
+; sep
+MSG_36
+Oct
+; oct
+MSG_37
+Nov
+; nov
+MSG_38
+Dec
+; dic
+MSG_39
+Yes
+; Sí
+MSG_40
+No
+; No
+MSG_41
+AM
+; a. m.
+MSG_42
+PM
+; p. m.
+MSG_43
+-
+; -
+MSG_44
+-
+; -
+MSG_45
+“
+; «
+MSG_46
+”
+; »
+MSG_47
+Yesterday
+; Ayer
+MSG_48
+Today
+; Hoy
+MSG_49
+Tomorrow
+; Mañana
+MSG_50
+Future
+; Futuro

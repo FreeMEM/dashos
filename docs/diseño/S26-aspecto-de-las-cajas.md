@@ -63,6 +63,21 @@ compositor era el de serie hasta abrir Ajustes) y que la de serie sea la paleta 
 el centro, con la paleta del fondo elegida, la paleta sale del nuevo y llega a todos. El compositor guarda lo último y
 se lo dice a cada programa al enlazar y cada vez que cambia: el reparto es el de siempre, con un evento más.
 
+**Corregido por el repaso de S0 (S36, regla 1).** Que solo el centro pueda cambiar el tema es lo hecho hoy, pero deja
+el tema sin guion ni Shell, y choca con S10 (cambiar el tema o el fondo con un guion) y con S10b (un servicio de
+apariencia sin pantalla). Lo que tiene que ser:
+
+- **El dueño del tema es el servicio de apariencia de S10b**, no la ventana. Es el único al que el compositor deja
+  cambiar el tema.
+- **Manda el fichero de texto.** `Prefs/apariencia` y `Prefs/cajas` son ficheros de `ENVARC:` (la capa del usuario,
+  `Home:Prefs/Env-Archive`, S4b). El servicio los vigila, los relee al guardarse y aplica el cambio.
+- **La ventana de Ajustes y el Shell escriben ese mismo fichero**: Apariencia en Ajustes, la orden `Ajuste` (S27,
+  apartado 7), un guion por ARexx, o un editor de texto. Vale lo mismo.
+- **Si el fichero no vale**, no se aplica: se sigue con el ajuste anterior y sale un aviso que dice el fichero y la
+  línea que falla, con una línea en `Estado:Registros/` (S6).
+- Hasta que exista ese servicio, el centro hace su papel. Sacar de la ventana el cálculo de la paleta y la vigilancia
+  del fichero es trabajo pendiente (orden de trabajo, punto 8).
+
 ### 2. El ajuste "Aspecto de los programas de las cajas"
 
 En Apariencia, dos filas: **"Programas de las cajas: como DashOS"** y **"Programas de las cajas: originales"**. Debajo
@@ -77,9 +92,10 @@ programa amiga dashos Directory Opus
 ```
 
 Gana la excepción del programa, después la de la caja, después la general. Las excepciones se ponen a mano en el
-fichero por ahora; en la interfaz, la idea es ponerlas donde S23 pone la "compatibilidad por programa": en las
-propiedades del programa (Información en el Workbench, o la ficha del programa de Linux), con una casilla "Aspecto
-original". El centro solo dice cuántas hay.
+fichero por ahora, y el centro solo dice cuántas hay. Con el ratón tiene que poderse lo mismo, en dos sitios: donde
+S23 pone la "compatibilidad por programa", en las propiedades del programa (Información en el Workbench, o la ficha
+del programa de Linux), con una casilla "Aspecto original"; y en Apariencia, la lista de las excepciones con un botón
+para quitar cada una. Los dos escriben el mismo fichero.
 
 ### 3. La caja Amiga: qué se puede y qué no
 
@@ -127,7 +143,9 @@ protocolo, con su prueba).
 
 **Al cambiar el tema con el programa abierto.** GTK 3 cambia en el acto: GLib vigila el fichero de GSettings y el
 agente pone cada vez un nombre de tema nuevo ("DashOS-1", "DashOS-2"), que es lo que hace a GTK volver a leerlo. GTK 4,
-libadwaita, Qt y foot lo ven al abrirse otra vez. Para que cambien en el acto falta el **portal de ajustes**
+libadwaita, Qt y foot lo ven al abrirse otra vez; hasta que esté el portal, al cambiar el tema con programas de Linux
+abiertos sale un aviso corto: "Algunos programas de Linux lo verán al abrirlos de nuevo". Para que cambien en el acto
+falta el **portal de ajustes**
 (`org.freedesktop.portal.Settings`: `color-scheme`, `accent-color`, `gtk-theme` y la letra, con su aviso
 `SettingChanged`), que es lo que escuchan GTK 4, libadwaita, Qt 6, Firefox y Electron. Se puede hacer en el mismo agente
 (un servicio de D-Bus mínimo en el bus de la sesión de root), sin xdg-desktop-portal.
@@ -178,10 +196,13 @@ plumas y el mismo pintor de ReAction y MUI nativos.
 3. **El pintor Material de GadTools y de los bordes de intuition**, con las plumas de `tema.rs`, en cuanto se fusione
    GadTools. Con oráculo: los rectángulos de los gadgets, los mismos que en 3.x.
 4. **Qt con su tema** (qt6ct o Kvantum generados) y más plantillas de terminales.
-5. **Excepciones en la interfaz**: la casilla "Aspecto original" en las propiedades de cada programa.
+5. **Excepciones en la interfaz**: la casilla "Aspecto original" en las propiedades de cada programa, y la lista de
+   excepciones en Apariencia con su botón de quitar. Conviene adelantarlo: hoy solo se ponen a mano.
 6. **ReAction y MUI nativos** sobre el kit (S11), que ya salen con el aspecto de DashOS.
 7. **Letras** (C3): tamaño y letra elegibles, y la versión 4 del protocolo; una letra de DashOS en mapa de bits para
    la caja Amiga, por programa.
+8. **El tema, fuera de la ventana** (S36, regla 1): el servicio de apariencia de S10b como dueño, que vigila los
+   ficheros de `ENVARC:`; el aviso con la línea que falla; y la orden `Ajuste` y ARexx escribiendo el mismo fichero.
 
 ## Preguntas para el usuario
 

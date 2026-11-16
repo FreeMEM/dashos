@@ -384,6 +384,12 @@ impl<F: SistemaArchivos> Dos<F> {
         self.cerrojos.len()
     }
 
+    /// Apunta una lista de segmentos cargada fuera de dos (InternalLoadSeg con un flujo propio, que la caja lee con
+    /// las funciones 68k del programa), para que UnLoadSeg la acepte.
+    pub fn apuntar_segmentos(&mut self, seg: u32, tarea: u32) {
+        self.segmentos.insert(seg, tarea);
+    }
+
     /// Ficheros abiertos y no cerrados.
     pub fn ficheros_abiertos(&self) -> usize {
         self.ficheros.len()

@@ -29,8 +29,8 @@ mismo radio en todo). También tiene cuatro densidades, de "Spacious" a "Dense".
   clic en el reloj abre el "Dash" (abajo).
 - **A la derecha**: la bandeja del sistema, el uso de CPU y de memoria, la campana de los avisos (con un punto si hay) y
   una píldora de estado con la red, el bluetooth y el volumen en el color de acento, que abre el centro de control.
-- Se puede poner en cualquier borde, hasta cuatro barras, ocultarla sola, o cambiarla por un "marco" alrededor de la
-  pantalla o por una "isla" (una píldora compacta que se abre con un muelle).
+- Se puede poner en cualquier borde, hasta cuatro barras, ocultarla sola, o cambiarla por un "marco" alrededor del
+  monitor o por una "isla" (una píldora compacta que se abre con un muelle).
 
 ### El centro de control
 
@@ -81,7 +81,7 @@ mismo radio en todo). También tiene cuatro densidades, de "Spacious" a "Dense".
 ### Con niri
 
 - niri pone las ventanas en **columnas que se desplazan a lo ancho** (lo que no cabe sigue a la derecha) y los
-  **espacios de trabajo uno debajo de otro**, por pantalla. Siempre hay un espacio vacío al final.
+  **espacios de trabajo uno debajo de otro**, por monitor. Siempre hay un espacio vacío al final.
 - La barra de DMS enseña los espacios de niri; las columnas no tienen indicador propio.
 - La vista general de niri enseña el fondo (o el fondo difuminado), y en ella el lanzador busca en cuanto se escribe.
 
@@ -127,7 +127,7 @@ En columnas:
 
 - Cada ventana nueva abre una columna a la derecha de la que tiene el teclado. Las columnas tienen anchos por pasos
   (1/3, 1/2, 2/3 y entera, con Super+R) y ocupan todo el alto que deja la barra.
-- Lo que no cabe sigue a la derecha, fuera de la pantalla. Super+Izquierda y Super+Derecha pasan de columna, y la tira
+- Lo que no cabe sigue a la derecha, fuera del monitor. Super+Izquierda y Super+Derecha pasan de columna, y la tira
   se desplaza para que la del teclado se vea entera (con un muelle, sin saltos).
 - Dos ventanas pueden ir en una misma columna, una sobre otra (Super+Coma la mete en la de al lado; Super+Punto la saca).
 - Los diálogos, los selectores y las ventanas de tamaño fijo nacen flotando encima.
@@ -139,12 +139,16 @@ En columnas:
   ventana" de "dibujar" (S10b, sección 5). La disposición en columnas es una función que, con la lista de ventanas del
   espacio, el área útil y el desplazamiento, da el sitio y el tamaño de cada una. Se prueba en el PC sin pintar nada.
 - **Los espacios de trabajo**, hechos en S27, son la base: cada espacio tiene su disposición y su desplazamiento.
-- **Multimonitor**: cada pantalla tiene sus espacios (como niri). Hoy los espacios son de todo el escritorio; pasar a
-  "por pantalla" es un cambio pequeño en `Escena` (el espacio que se ve, por salida).
+- **Los tres nombres** (decidido por el usuario el 2026-11-16, S36): **monitor** es el aparato; **espacio de
+  trabajo**, lo de todos los días, del 1 al 9; **pantalla**, solo la pantalla propia de un programa de Amiga, que se
+  ve como un espacio más. Las teclas que mandan son las de aquí: Super+1..9 y Super+arriba y abajo.
+- **Multimonitor**: cada monitor tiene sus espacios (como niri). Hoy los espacios son de todo el escritorio; pasar a
+  "por monitor" es un cambio pequeño en `Escena` (el espacio que se ve, por salida).
 - **Las pantallas del Amiga (S23)**: cada pantalla propia de un programa 68k es un espacio más, a pantalla completa y
   siempre flotante (su mapa de bits es el fondo, y sus ventanas van encima, como en el Amiga). Amiga izquierda + M y N
-  pasan de una pantalla a otra como Super+arriba y abajo entre espacios. La de Workbench es el escritorio: sus ventanas
-  siguen la disposición del espacio en que se abren.
+  quedan como atajo del Amiga para lo mismo que Super+abajo y Super+arriba: pasar al espacio siguiente y al anterior,
+  sea una pantalla del Amiga o no. El gesto de arrastrar una pantalla hacia abajo se conserva (S23). La de Workbench es
+  el escritorio: sus ventanas siguen la disposición del espacio en que se abren.
 - **El Workbench de DashOS** (los iconos del fondo) es una capa de fondo: se ve en todos los espacios y no entra en las
   columnas. Sus ventanas de cajones son ventanas normales. En columnas, un cajón abierto es una columna más; quien quiera
   el Workbench de siempre usa el espacio en flotante.
@@ -190,6 +194,8 @@ Detalle en `docs/bitacoras/escritorio-dms.md`.
     panel rápido como Super+A.
 - **Espacios de trabajo** (compositor, `wayland/src/escena.rs`): del 1 al 9, como lo descrito en la sección 3 sin las
   columnas. `dashos_tema_v1` pasa a la versión 3: evento `espacios` para la barra y petición `espacio` solo de la barra.
+  Falta (S0: lo del ratón, también por guion): la misma petición por el canal de órdenes del compositor y por ARexx
+  (S10b, sección 3), con el poder "Espacios de trabajo".
 - **Lanzador**: en el centro de lo que deja la barra, 600 de ancho, buscador de 56, hasta 7 filas de 56 con el icono
   (la inicial en un cuadrado redondeado del contenedor primario), el nombre y de dónde sale, y un pie con las teclas y
   cuántos casan. La lista (buscar, elegir, desplazar) va aparte, en `usuario/src/lanzador_lista.rs`, con sus pruebas.
@@ -212,6 +218,9 @@ El usuario aceptó las siete recomendaciones de arriba (2026-11-13). Detalle en 
   - Rejilla de dos columnas: la red (lo que dice el servicio de red: "Conectada · 10.0.2.15", "Sin dirección" o "Sin
     red"), el modo oscuro y bloquear. Cada mosaico con su icono en un cuadrado redondeado (en el primario si está
     encendido), el nombre y el estado. El modo de edición no cambia.
+  - Esos textos son los de hoy y tienen jerga. Por S0 (mensajes en llano, el detalle a un clic) tienen que quedar
+    así: "Este monitor no deja cambiar el brillo" en vez de "Sin control aquí"; "Conectada" o "Con cable, pero sin
+    Internet" en vez de la dirección y de "Sin dirección", con la dirección en el detalle del mosaico.
 - **Píldora de estado de la barra** con el estado de verdad: el panel pregunta a la red cada 10 s y lleva el volumen;
   cuando cambia algo, lo da al compositor (petición `estado`, `dashos_tema_v1` versión 5, solo del panel), que se lo
   pasa a la barra. Sin red, el icono de red sale tachado y en el color suave; con el silencio, el altavoz lleva una
@@ -241,5 +250,70 @@ El usuario aceptó las siete recomendaciones de arriba (2026-11-13). Detalle en 
 5. **El lanzador.** Ahora es una lista. DMS deja elegir lista o rejilla. Recomiendo lista hasta que los programas
    tengan iconos (S8): una rejilla de iniciales no dice mucho.
 6. **Paso del volumen con las teclas.** 5 % (DMS usa 3 %; los botones del panel, 10 %). Recomiendo 5 %.
-7. **Atajos.** Super sola abre el lanzador (S10), Super+1..9 los espacios. DMS usa Super+Espacio para el lanzador.
+7. **Atajos.** Super sola abre el lanzador (S10), Super+1..9 los espacios (y Amiga + M y N, el siguiente y el
+   anterior, como atajo del Amiga). DMS usa Super+Espacio para el lanzador.
    Recomiendo dejar Super sola y añadir también Super+Espacio en la oleada 2.
+
+## 7. Ajustes de todo DashOS al estilo de DMS (pedido del usuario, 2026-11-15)
+
+La idea de los Ajustes de DMS (Super+Coma): una ventana con barra lateral de categorías, un buscador que encuentra
+cualquier ajuste por su nombre, cambios que se ven al momento sin "Aplicar", y todo guardado en ficheros de texto.
+Se toma la idea (sin leer su código), y se casa con las Prefs del Amiga:
+
+- **Una sola cara, las Prefs de siempre por debajo.** Cada categoría de Ajustes es un editor de `SYS:Prefs` (S4b):
+  guarda en `ENVARC:` (la capa del usuario, `Home:Prefs/Env-Archive`) y lo en uso va en `ENV:`; los servicios vigilan
+  `ENV:` y aplican el cambio al momento. Quien prefiera el Amiga abre `SYS:Prefs/Monitores` suelto, y es lo mismo.
+- **Categorías**: Apariencia (tema claro u oscuro y por la hora, color dinámico del fondo, acento, fuentes, iconos,
+  densidad, animaciones), Fondo, Barra, Panel rápido, Dock, Lanzador, Avisos y no molestar, Espacios de trabajo y
+  columnas, Atajos, Monitores (resolución, escala, varios), Sonido (salidas, entradas, volumen por programa), Red
+  (cable, Wi-Fi cuando haya, cortafuegos), Bluetooth (cuando haya), Teclado y ratón, Idioma y región (S4b, catálogos),
+  Fecha y hora (zona, hora por red), Energía, Usuarios (cuentas, contraseña, avatar; lo de otros, con administrador),
+  Privacidad y permisos (lo concedido a cada programa, S6b), Programas (Paq y Hangar, actualizaciones, S8), Disco
+  (volúmenes y espacio, S32), Caja Amiga (memoria, pantallas, ajustes del 68k) y Caja Linux (memoria, núcleos, disco).
+- **El buscador** busca en los nombres y en palabras clave de cada ajuste, también en el idioma del usuario, y abre
+  la categoría con el ajuste resaltado. El lanzador (Super+Espacio) también encuentra ajustes.
+- **De máquina o de usuario**: lo de máquina (hora del sistema, red del sistema, usuarios, programas de todos) lleva el
+  candado de administrador (S6b) y va en la capa de la máquina de `ENVARC:`, en `Estado:Prefs` (S4b): texto que
+  todos leen y que se escribe con acción de administrador, desde la ventana o con la orden `Ajuste`. Lo demás es de
+  cada usuario y va en su `Home:`.
+- **Ficheros de texto legibles** en `ENVARC:`, y el fichero de texto es el que manda (S36, regla 1): se pueden
+  copiar entre máquinas y guardar en git, y editarlos a mano vale lo mismo que usar la ventana. También para los que
+  lee la caja Amiga: su `.prefs` en IFF se genera del texto (abajo, "Sincronizado con la caja Amiga"). "Volver a
+  fábrica" por categoría: quitar ese fichero de la capa del usuario (S4b dice cómo se deshace).
+- **Lo protegido es solo lo de seguridad**: permisos, cuentas y ajustes de la máquina pasan por `guardian`, vengan de
+  la ventana o del Shell (S10c, S6b). Todo lo demás lo cambia su dueño sin preguntas, por fichero, ventana u orden.
+- **Sirve recién instalado**: la zona horaria sale de serie del idioma y país elegidos al instalar (S32), sin
+  preguntar otra vez; se cambia en Fecha y hora. Hoy la hora es UTC (sección 2).
+- Hoy los Ajustes (C1, C3) tienen 8 secciones; faltan Red, Sonido, Teclado, Idioma, Fecha y hora y Usuarios, el
+  buscador por ajuste y la casación con `SYS:Prefs`/`ENVARC:` (que depende de las asignaciones nativas, paso 2).
+
+### Y como un Workbench: el cajón `Prefs` con sus herramientas (2026-11-15)
+
+Ajustes y el cajón `SYS:Prefs` son dos puertas a lo mismo, no dos sistemas:
+
+- **Un programa por categoría en `SYS:Prefs`, con su icono**: `Apariencia`, `Fondo` (el `WBPattern`), `Monitores` (el
+  `ScreenMode`), `Fuentes` (el `Font`), `Idioma` (el `Locale`), `Hora` (el `Time`), `Teclado y ratón` (el `Input`),
+  `Puntero` (el `Pointer`), `Sonido`, `Red`, `Barra`, `Avisos`, `Energía`, `Usuarios`, `Permisos`, `Impresoras` (el
+  `Printer`), `Programas`... Se abre el cajón en el Workbench y se lanza cada uno suelto, como siempre.
+- **Ajustes es el contenedor**: su barra lateral lista los programas del cajón `SYS:Prefs` (y los de `Paquetes:` y
+  `Home:` que traigan su `Prefs`), y cada categoría es ese mismo editor dentro de la ventana. Mismo código, mismos
+  ficheros. Un programa instalado que trae su editor de preferencias aparece solo en los dos sitios.
+- **Los tres botones del Amiga, con vista al momento de DMS**: lo que se toca se ve ya (va a `ENV:`); **Guardar** lo
+  escribe también en `ENVARC:` (para siempre), **Usar** lo deja solo en esta sesión, **Cancelar** vuelve a como estaba.
+  En la ventana de Ajustes, cerrar es Guardar (como DMS); en el editor suelto, los tres botones. Para que cerrar no
+  deje sin vuelta atrás, la ventana de Ajustes lleva a la vista un "Deshacer cambios" por categoría, que vuelve a
+  como estaba al abrirla (S0: deshacer antes que preguntar).
+- **Presets**: `SYS:Prefs/Presets` (de fábrica) y `Home:Prefs/Presets` (los suyos): un fichero de preferencias con su
+  icono; doble clic lo aplica. Exportar e importar es copiar ese fichero.
+- **Desde el Shell y los guiones**, como en el Amiga: `Idioma FROM fichero USE` o `SAVE`, para ponerlo en
+  `User-Startup` o en un guion. Eso carga un fichero entero. Para un ajuste suelto hay una orden común a todas las
+  categorías, **`Ajuste`**: `Ajuste LEE clave` lo enseña y `Ajuste PON clave valor` lo cambia, con `USE` (solo esta
+  sesión, `ENV:`) o `SAVE` (también en `ENVARC:`). Escribe el mismo fichero de texto que la ventana, así que lo que
+  se hace con el ratón se hace igual en un guion. Si el ajuste es de la máquina, pide la acción de administrador. La
+  sintaxis exacta y los nombres de las claves, por diseñar al hacerlo.
+- **Sincronizado con la caja Amiga**: las preferencias que también entiende AmigaOS (idioma, país, fuentes, modo de
+  pantalla, teclado, puntero, paleta) las necesita la caja en `ENV:Sys/*.prefs`, en el formato IFF del Amiga (S4b).
+  Son justo las que más se tocan, y un IFF no se lee ni se edita a mano. Por eso manda el fichero de texto: el
+  `.prefs` en IFF se genera de él cada vez que cambia. Si el usuario abre el `Locale` o el `Font` originales de 68k
+  dentro de la caja y escriben el IFF, ese cambio se lleva al texto, y DashOS lo ve al momento. Cómo se casan los
+  dos sentidos sin pisarse, por diseñar al hacerlo.

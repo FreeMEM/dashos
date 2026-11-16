@@ -189,6 +189,8 @@ impl<M: Memorias> Escena<M> {
                 Some((crate::escena::marca::TEXTO_AMIGA, crate::escena::marca::COLOR_AMIGA, crate::escena::marca::TINTA_AMIGA))
             } else if self.de_caja.contains(&c) {
                 Some((crate::escena::marca::TEXTO_LINUX, crate::escena::marca::COLOR_LINUX, crate::escena::marca::TINTA))
+            } else if self.de_desarrollo.contains(&c) {
+                Some((crate::escena::marca::TEXTO_DESARROLLO, crate::escena::marca::COLOR_DESARROLLO, crate::escena::marca::TINTA_DESARROLLO))
             } else {
                 None
             };

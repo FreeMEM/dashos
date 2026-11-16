@@ -321,6 +321,11 @@ pub fn kmain() -> ! {
     planificador::iniciar_nucleo();
     reloj::iniciar(100);
     reloj::habilitar_irq();
+    // A14: la hora del calendario, del reloj de la placa (el RTC del CMOS), como en ARM.
+    match base::rtc::segundos().filter(|&s| reloj::poner_hora(s)) {
+        Some(_) => kprintln!("Hora: del reloj de la placa"),
+        None => kprintln!("Hora: sin reloj de la placa"),
+    }
     // X10: AMD-V o VT-x. Cada núcleo lo enciende la primera vez que corre una vCPU.
     kprintln!("Hipervisor: {}", base::hiper::iniciar());
     let n = nucleos::despertar(&a);

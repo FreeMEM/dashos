@@ -862,6 +862,12 @@ pub struct Interfaz {
     menu: Option<Menu>,
     /// Un clic fuera cerró el menú: hasta soltar el botón, el ratón no hace nada más (ni pulsa lo que haya debajo).
     tragar: bool,
+    /// S10: los menús de la ventana (`crate::menus`): una fila arriba, o fuera (en la barra) si `fuera`. Se ponen con
+    /// `poner_menus`; lo elegido sale por `elegido_menu`.
+    pub menus: Option<crate::menus::Menus>,
+    elegidos: alloc::collections::VecDeque<u32>,
+    /// F10 con los menús en la barra: el programa tiene que pedir al compositor que los abra allí.
+    pub abrir_fuera: bool,
 }
 
 /// Lo más que separa los dos clics de un doble clic, en ms (lo de MUI y Workbench por defecto).
@@ -892,6 +898,70 @@ impl Interfaz {
             area: Rect::default(),
             menu: None,
             tragar: false,
+            menus: None,
+            elegidos: alloc::collections::VecDeque::new(),
+            abrir_fuera: false,
+        }
+    }
+
+    /// S10: lo que ocupa la fila de menús arriba (0 sin menús o con los menús fuera).
+    fn alto_menus(&self) -> i32 {
+        if self.menus.as_ref().is_some_and(|m| !m.fuera && !m.datos.vacio()) { crate::menus::FILA } else { 0 }
+    }
+
+    /// S10: pone (o cambia) los menús de la ventana; lo abierto sigue si sigue existiendo. Coloca otra vez en el área
+    /// de antes: la fila puede salir o irse.
+    pub fn poner_menus(&mut self, datos: crate::menus::Datos) {
+        match self.menus.as_mut() {
+            Some(m) => m.poner(datos),
+            None => self.menus = Some(crate::menus::Menus::new(datos)),
+        }
+        if !self.area.vacio() {
+            self.colocar(self.area);
+        }
+    }
+
+    /// S10: los menús, dentro de la ventana (la fila) o fuera (en la barra). Lo abierto se cierra.
+    pub fn menus_fuera(&mut self, fuera: bool) {
+        if let Some(m) = self.menus.as_mut() {
+            m.fuera = fuera;
+            m.cerrar();
+        }
+        if !self.area.vacio() {
+            self.colocar(self.area);
+        }
+    }
+
+    /// S10: lo siguiente que se eligió en los menús (en la fila, con un atajo o, por `elegir_menu_fuera`, en la
+    /// barra), si hay.
+    pub fn elegido_menu(&mut self) -> Option<u32> {
+        self.elegidos.pop_front()
+    }
+
+    /// S10: lo eligió la barra (el compositor lo dice): como si se eligiera aquí. Devuelve si se pudo.
+    pub fn elegir_menu_fuera(&mut self, numero: u32) -> bool {
+        let ok = self.menus.as_mut().is_some_and(|m| m.elegir_fuera(numero));
+        if ok {
+            self.elegidos.push_back(numero);
+        }
+        ok
+    }
+
+    /// Lo que devuelven los menús, en lo que entiende quien llama: `Some(dibujar)` si era suyo.
+    fn de_menus(&mut self, r: crate::menus::Resultado) -> Option<bool> {
+        use crate::menus::Resultado as R;
+        match r {
+            R::Nada => None,
+            R::Hecho => Some(false),
+            R::Repintar => Some(true),
+            R::Elegido(n) => {
+                self.elegidos.push_back(n);
+                Some(true)
+            }
+            R::AbrirFuera => {
+                self.abrir_fuera = true;
+                Some(false)
+            }
         }
     }
 
@@ -930,7 +1000,10 @@ impl Interfaz {
         let m = grupos::medir(&n);
         let dos = 2 * self.margen;
         let mas = |v: i32| v.saturating_add(dos).min(SIN_MAX);
-        Medida { min: (m.min.0 + dos, m.min.1 + dos), max: (mas(m.max.0), mas(m.max.1)), peso: m.peso }
+        // S10: la fila de menús, arriba, a todo lo ancho (con 8 a cada lado).
+        let fila = self.alto_menus();
+        let ancho_fila = if fila > 0 { self.menus.as_ref().map_or(0, |mn| mn.ancho_fila(&mut self.ctx.medium)) + 16 } else { 0 };
+        Medida { min: ((m.min.0 + dos).max(ancho_fila), m.min.1 + dos + fila), max: (mas(m.max.0), mas(m.max.1).saturating_add(fila).min(SIN_MAX)), peso: m.peso }
     }
 
     /// Coloca los objetos en `r` (con el `margen` alrededor).
@@ -939,7 +1012,12 @@ impl Interfaz {
         let (n, objs) = self.nodo(&raiz);
         self.raiz = raiz;
         let mut rects = Vec::new();
-        grupos::colocar(&n, r.dentro(self.margen), &mut rects);
+        // S10: la fila de menús arriba; lo demás, debajo.
+        let fila = self.alto_menus();
+        if let Some(mn) = self.menus.as_mut() {
+            mn.colocar(Rect::new(r.x + 8, r.y, r.w - 16, crate::menus::FILA), r, &mut self.ctx.regular, &mut self.ctx.medium);
+        }
+        grupos::colocar(&n, Rect::new(r.x, r.y + fila, r.w, r.h - fila).dentro(self.margen), &mut rects);
         self.sitios = objs.into_iter().zip(rects).filter_map(|(o, r)| Some((o?, r))).collect();
         self.area = r;
         // El menú, si hay, se vuelve a colocar con su desplegable: que se siga viendo la opción actual.
@@ -973,6 +1051,13 @@ impl Interfaz {
         }
         self.sincronizar_menu();
         self.dibujar_menu(l);
+        // S10: la fila de menús (con su raya debajo) y, encima de todo, lo desplegado.
+        if let (Some(mn), true) = (self.menus.as_ref(), self.alto_menus() > 0) {
+            let t = self.ctx.tema;
+            l.rellenar(Rect::new(self.area.x, self.area.y + crate::menus::FILA - 1, self.area.w, 1), t.variante_contorno);
+            mn.dibujar_fila(l, &t, &mut self.ctx.medium, (0, 0));
+            mn.dibujar_abierto(l, &t, &mut self.ctx.regular, &mut self.ctx.medium, (0, 0));
+        }
         l.esquinas_transparentes(todo, self.esquinas);
         self.arbol.sucios();
     }
@@ -1001,6 +1086,10 @@ impl Interfaz {
         if self.menu.is_some() || pasos == 0 {
             return false;
         }
+        if let Some(mn) = self.menus.as_mut().filter(|m| m.abierto()) {
+            let r = mn.rueda(x, y, pasos);
+            return self.de_menus(r).unwrap_or(false);
+        }
         let debajo: Vec<Obj> = self.sitios.iter().filter(|(_, r)| r.contiene(x, y)).map(|(o, _)| *o).collect();
         for o in debajo {
             let obj = self.arbol.objeto(o).unwrap();
@@ -1025,7 +1114,17 @@ impl Interfaz {
         if self.menu.is_some() {
             return self.raton_menu(x, y, pulsado);
         }
-        let r = self.raton_sin_menu(x, y, pulsado);
+        // S10: los menús de la ventana, antes que lo de debajo.
+        let mut cambio_menus = false;
+        if let Some(mn) = self.menus.as_mut() {
+            let antes = mn.encima();
+            let r = mn.raton(x, y, pulsado);
+            cambio_menus = antes != mn.encima();
+            if let Some(d) = self.de_menus(r) {
+                return d || cambio_menus;
+            }
+        }
+        let r = self.raton_sin_menu(x, y, pulsado) || cambio_menus;
         // Un clic en un desplegable lo abre.
         self.sincronizar_menu() || r
     }
@@ -1090,6 +1189,15 @@ impl Interfaz {
     /// Una tecla de Linux (lo que manda el compositor): va al objeto con el foco si usa el teclado; el tabulador pasa
     /// el foco al siguiente que lo use. Devuelve si hay que dibujar.
     pub fn tecla(&mut self, codigo: u32, pulsada: bool) -> bool {
+        // S10: los menús (F10, sus atajos con Ctrl, y lo abierto) antes que el foco.
+        if self.menu.is_none() && let Some(mn) = self.menus.as_mut() {
+            let r = mn.tecla(codigo, pulsada);
+            if let Some(d) = self.de_menus(r) {
+                // La tecla también cuenta para el teclado de la interfaz (mayúsculas, teclas muertas).
+                self.teclado.tecla(codigo, pulsada);
+                return d;
+            }
+        }
         let Some(t) = self.teclado.tecla(codigo, pulsada) else { return false };
         let tab = t == crate::teclado::Tecla::Tabulador || t == crate::teclado::Tecla::TabuladorAtras;
         if self.menu.is_some() {
@@ -1401,6 +1509,57 @@ mod pruebas {
     /// Dos colores iguales salvo el redondeo (1 por canal): una capa mezclada en el lienzo y la de `tema::mezcla`.
     fn casi(a: u32, b: u32) -> bool {
         (0..4).all(|k| ((a >> (8 * k)) & 0xff).abs_diff((b >> (8 * k)) & 0xff) <= 1)
+    }
+
+    /// S10: los menús de la ventana: la fila arriba (lo demás, debajo), elegir con el ratón y con un atajo, F10, y
+    /// fuera (en la barra): sin fila, lo de dentro sube, F10 pide abrirlos fuera y lo elegido en la barra llega igual.
+    #[test]
+    fn menus_de_la_ventana() {
+        let (mut i, [texto, _, _, _, aceptar]) = ventana();
+        let datos = crate::menus::Datos::leer(b"menus 1\nM\tProyecto\nE\t1\tNuevo\tCtrl+N\n-\nE\t2\tSalir\tCtrl+Q\nM\tVer\nE\t3\tRejilla\t\tc\n").unwrap();
+        i.colocar(Rect::new(0, 0, 400, 300));
+        let y_sin = i.sitios[&texto].y;
+        let alto_sin = i.medida().min.1;
+        i.poner_menus(datos);
+        assert_eq!(i.sitios[&texto].y, y_sin + crate::menus::FILA, "lo de dentro no bajó con la fila");
+        assert_eq!(i.medida().min.1, alto_sin + crate::menus::FILA);
+        // Un clic en "Proyecto" y otro en "Salir".
+        let t = i.menus.as_ref().unwrap().sitio_titulo(0).unwrap();
+        assert!(t.y + t.h <= crate::menus::FILA);
+        clic(&mut i, (t.x + 5, t.y + 5));
+        let s = i.menus.as_ref().unwrap().sitio_entrada(2).unwrap();
+        clic(&mut i, (s.x + 5, s.y + 5));
+        assert_eq!(i.elegido_menu(), Some(2));
+        assert_eq!(i.elegido_menu(), None);
+        // Lo de debajo sigue atendiendo: el botón.
+        let c = centro(&i, aceptar);
+        clic(&mut i, c);
+        assert_eq!(i.arbol.leer(texto, atr::TEXTO).map(Valor::texto).as_deref(), Some("Aceptado"));
+        // Ctrl+N; y F10, abajo e Intro (la primera de Proyecto).
+        i.tecla(29, true);
+        assert!(i.tecla(49, true));
+        i.tecla(49, false);
+        i.tecla(29, false);
+        assert_eq!(i.elegido_menu(), Some(1));
+        i.tecla(68, true);
+        i.tecla(28, true);
+        assert_eq!(i.elegido_menu(), Some(1));
+        // Fuera: sin fila; F10 pide abrirlos fuera; lo de la barra llega igual y cambia la casilla.
+        i.menus_fuera(true);
+        assert_eq!(i.sitios[&texto].y, y_sin);
+        assert_eq!(i.medida().min.1, alto_sin);
+        i.tecla(68, true);
+        assert!(core::mem::take(&mut i.abrir_fuera));
+        assert!(i.elegir_menu_fuera(3));
+        assert_eq!(i.elegido_menu(), Some(3));
+        assert_eq!(i.menus.as_ref().unwrap().datos.buscar(3).unwrap().marca, crate::menus::Marca::Casilla(true));
+        assert!(!i.elegir_menu_fuera(99));
+        // Pintar con la fila y lo desplegado.
+        i.menus_fuera(false);
+        i.tecla(68, true);
+        let mut px = vec![0u32; 400 * 300];
+        let mut l = Lienzo::new(&mut px, 400, 300, 400);
+        i.dibujar(&mut l);
     }
 
     #[test]

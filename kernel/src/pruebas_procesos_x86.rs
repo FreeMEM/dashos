@@ -151,6 +151,7 @@ fn crear_proceso(codigo: &[u8], mensaje: &str, nucleo: usize, llave: Option<obje
         cupo: crate::cupo::Cupo::raiz(),
         _cargo: crate::cupo::Cupo::raiz().cobrar(0).expect("el grupo raíz no tiene límite"),
         control: control.clone(),
+        nombres: objetos::NombresLlaves::NINGUNO,
     });
     let ptr = alloc::sync::Arc::into_raw(p) as usize;
     unsafe { planificador::crear_en(arrancar_proceso, ptr, nucleo, ptr) };

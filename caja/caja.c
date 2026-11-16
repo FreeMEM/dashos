@@ -675,6 +675,9 @@ extern const uint8_t prog_capa[], prog_capa_fin[];
 extern const uint8_t prog_glotona[], prog_glotona_fin[];
 extern const uint8_t prog_memh[], prog_memh_fin[];
 extern const uint8_t prog_procesos[], prog_procesos_fin[];
+extern const uint8_t prog_ils[], prog_ils_fin[];
+extern const uint8_t prog_dtprueba[], prog_dtprueba_fin[];
+extern const uint8_t prog_cgx[], prog_cgx_fin[];
 extern const uint8_t prog_dash_test_reaction[], prog_dash_test_reaction_fin[];
 extern const uint8_t prog_dash_test_doc_reaction[], prog_dash_test_doc_reaction_fin[];
 extern const uint8_t prog_dash_ctrl_c[], prog_dash_ctrl_c_fin[];
@@ -1429,14 +1432,14 @@ int caja_main(void)
         if (!bien) { M68K_PrintContext(&m68k); fallos++; }
         sistema = caja_bloques(0);
 
-        /* 8b3a. Los tipos de datatypes: con el AmigaOS del usuario (su C:AddDataTypes), `AddDataTypes REFRESH QUIET`,
+        /* 8b3a. Los tipos de datatypes: con el AmigaOS del usuario (su AmigaOS:C/AddDataTypes; su C: no se asigna), `AddDataTypes REFRESH QUIET`,
            como su Startup-Sequence. Recorre DEVS:DataTypes con MatchFirst y deja los tipos a datatypes: lo que no
            suelta pasa al sistema (si se soltara, datatypes se quedaría con memoria libre). A los 20 s, el vigilante lo
            corta. Sin él, lo dice y sigue. No cuenta como fallo: DashOS no trae AddDataTypes. */
         {
             const uint8_t *adt = 0;
             uint32_t adt_largo = 0;
-            if (caja_fichero_de_dos("C:AddDataTypes", &adt, &adt_largo)) {
+            if (caja_fichero_de_dos("AmigaOS:C/AddDataTypes", &adt, &adt_largo)) {
                 ctrl_c_corriendo = 1;
                 long h = sc(SC_HILO_CREAR, (long)manda_ctrl_c, (long)(pila_vigia + PILA_VIGIA_LEN), 20000L * 1000, 0, 0);
                 tarea_args = "REFRESH QUIET\n";
@@ -1450,6 +1453,13 @@ int caja_main(void)
                 if (h >= 0) sc(SC_HILO_UNIR, h, 0, 0, 0, 0);
                 di("AddDataTypes REFRESH acabó con %d (vector %d), %d llamadas nativas, en %u ms, %u avisos, %u bloques pasan al sistema\n",
                    (int)d0, v, llamadas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), tarea_pasadas);
+                sistema = caja_bloques(0);
+                /* Y que datatypes tenga los tipos: una ILBM del AmigaOS del usuario por NewDTObject (dtprueba.c). No
+                   cuenta como fallo: depende del AmigaOS del usuario. */
+                v = ejecuta_hunk("dtprueba", prog_dtprueba, (size_t)(prog_dtprueba_fin - prog_dtprueba), execbase, &d0,
+                                 &llamadas, &sobras);
+                di("dtprueba.exe acabó con %d (vector %d), %d llamadas nativas, %u avisos, %u bloques sin soltar\n",
+                   (int)d0, v, llamadas, caja_avisos(), sobras);
                 sistema = caja_bloques(0);
             } else {
                 di("AddDataTypes: no está (sin el AmigaOS del usuario): datatypes sin tipos\n");
@@ -1486,6 +1496,26 @@ int caja_main(void)
         } else {
             di("memh.exe: sin la prueba del aviso de memoria baja (no hay a quién pedirlo)\n");
         }
+
+        /* 8b3d. InternalLoadSeg con un flujo propio (ils.c), como AddDataTypes con el código de un descriptor: lo lee
+           la función de leer 68k del programa, y lo hostil (-1, de más, basura, sin función, vacío) da 0. */
+        t0 = ahora_us();
+        v = ejecuta_hunk("ils", prog_ils, (size_t)(prog_ils_fin - prog_ils), execbase, &d0, &llamadas, &sobras);
+        t1 = ahora_us();
+        bien = v == -1 && d0 == 0 && sobras == 0 && caja_bloques(0) == sistema;
+        di("ils.exe acabó con %d, %d llamadas nativas, en %u ms, %u avisos, %u bloques sin soltar: %s\n",
+           (int)d0, llamadas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, bien ? "bien" : "MAL");
+        if (!bien) { M68K_PrintContext(&m68k); fallos++; }
+
+        /* 8b3e. cybergraphics.library y Picasso96API.library nativas (cgx.c): píxeles, LockBitMap, RenderInfo y lo
+           hostil (los avisos que da no cuentan como fallo); un mapa cogido que se suelta sin soltar su cerrojo. */
+        t0 = ahora_us();
+        v = ejecuta_hunk("cgx", prog_cgx, (size_t)(prog_cgx_fin - prog_cgx), execbase, &d0, &llamadas, &sobras);
+        t1 = ahora_us();
+        bien = v == -1 && d0 == 0 && sobras == 0 && caja_bloques(0) == sistema;
+        di("cgx.exe acabó con %d, %d llamadas nativas, en %u ms, %u avisos, %u bloques sin soltar: %s\n",
+           (int)d0, llamadas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, bien ? "bien" : "MAL");
+        if (!bien) { M68K_PrintContext(&m68k); fallos++; }
 
         /* 8b4. Programas de AmigaOS del usuario (SYS:C/Prefs/programas-amiga, con DASHOS_PROGRAMAS_AMIGA): las demos de
            MUI, Tachyon... Para ver hasta dónde llegan y qué les falta (el registro de lo que falta, faltan.rs): a los 6 s

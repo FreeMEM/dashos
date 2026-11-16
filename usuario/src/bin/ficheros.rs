@@ -210,7 +210,8 @@ fn principal() -> u64 {
     // Listar la raíz: tamaño, fecha, modo, tipo, largo del nombre, bits del Amiga, largo del comentario, nombre y
     // comentario, de 8 en 8 bytes.
     let r = c.pedir(LISTAR, 0, 0, 0, "");
-    let mut nombres: [(&str, u8); 8] = [("", 0); 8];
+    // Paso 2 de las asignaciones: la raíz es `SYS:`, con sus cajones (21 entradas).
+    let mut nombres: [(&str, u8); 32] = [("", 0); 32];
     let v = c.ventana();
     let mut off = 0;
     for e in nombres.iter_mut().take(r.a as usize) {
@@ -218,9 +219,9 @@ fn principal() -> u64 {
         *e = (core::str::from_utf8(&v[off + 24..off + 24 + largo]).unwrap_or("?"), v[off + 18]);
         off += (24 + largo + v[off + 22] as usize).next_multiple_of(8);
     }
-    let lista = &mut nombres[..r.a as usize];
+    let lista = &mut nombres[..(r.a as usize).min(32)];
     lista.sort_unstable();
-    let mut texto = [0u8; 128];
+    let mut texto = [0u8; 512];
     let mut t = 0;
     for (n, tipo) in lista.iter() {
         for b in n.bytes().chain(if *tipo == 2 { "/ " } else { " " }.bytes()) {
@@ -402,6 +403,19 @@ fn principal() -> u64 {
         && modo_y_bits(&c) == (0o644, NO_BORRAR)
         && c.pedir(PROTEGER, h.asa, GUION, 0o644, "").estado == 0
         && c.pedir(PROTEGER, h.asa, 1 << 20, 0o644, "").estado == -1;
+    // La fecha de modificación (FECHAR): se pone y se lee con DATOS; nanosegundos de más, una asa que no es o una fecha
+    // fuera de rango, no.
+    // Al acabar se le devuelve su fecha: la comprobación del disco tras la prueba mira que lo escrito sea de hoy.
+    let antes = c.pedir(DATOS, h.asa, 0, 0, "").b;
+    let fecha = c.pedir(FECHAR, h.asa, 1_700_000_000, 5, "").estado == 0
+        && c.pedir(DATOS, h.asa, 0, 0, "").b == 1_700_000_000
+        && c.pedir(FECHAR, h.asa, 1_700_000_000, 1_000_000_000, "").estado == -1
+        && c.pedir(FECHAR, h.asa, u64::MAX, 0, "").estado == -1
+        && c.pedir(FECHAR, 999, 1_700_000_000, 0, "").estado == -5
+        && c.pedir(DATOS, h.asa, 0, 0, "").b == 1_700_000_000
+        && c.pedir(FECHAR, h.asa, antes, 0, "").estado == 0
+        && c.pedir(DATOS, h.asa, 0, 0, "").b == antes;
+    println!("  [ficheros] fecha de modificación: {}", si(fecha));
     println!(
         "  [ficheros] FS6 mayúsculas: {}; FS7 comentario: {}, en la lista: {}; bits: {}",
         si(mayusculas),
@@ -634,7 +648,64 @@ fn principal() -> u64 {
     let hecho = c.pedir(HACER_VOLUMEN, 0, 0, 0, "Temporal");
     let t = c.pedir(VOLUMEN, 0, 0, 0, "Temporal");
     let g = c.pedir(CREAR, t.asa, ARCHIVO, 0, "x");
+    // S32, su tope: 80 KB. Pasarlo da LLENO en él y no en el principal; sin tope, cabe. Lo que se escribe no se
+    // comprime (si no, ocuparía un bloque).
+    let tope = {
+        let puesto = c.pedir(CUOTA, 0, 80 * 1024, 1, "Temporal");
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        for b in c.ventana_mut()[..32 * 1024].iter_mut() {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            *b = x as u8;
+        }
+        let cabe = c.pedir(ESCRIBIR, g.asa, 0, 32 * 1024, "");
+        let usado = c.pedir(CUOTA, 0, 0, 0, "Temporal");
+        let h = c.pedir(CREAR, t.asa, ARCHIVO, 0, "y");
+        let no_cabe = c.pedir(ESCRIBIR, h.asa, 0, 32 * 1024, "");
+        // En el principal sí.
+        let escrito = c.pedir(BUSCAR, 0, 0, 0, "Escrito");
+        let p = c.pedir(CREAR, escrito.asa, ARCHIVO, 0, "tope.bin");
+        let fuera = c.pedir(ESCRIBIR, p.asa, 0, 32 * 1024, "");
+        c.pedir(CERRAR, p.asa, 0, 0, "");
+        let borrado = c.pedir(BORRAR, escrito.asa, 0, 0, "tope.bin").estado == 0;
+        c.pedir(CERRAR, escrito.asa, 0, 0, "");
+        let quitado = c.pedir(CUOTA, 0, 0, 1, "Temporal");
+        let ahora = c.pedir(ESCRIBIR, h.asa, 0, 32 * 1024, "");
+        c.pedir(CERRAR, h.asa, 0, 0, "");
+        let bien = puesto.estado == 0
+            && puesto.b == 80 * 1024
+            && cabe.a == 32 * 1024
+            && usado.estado == 0
+            && usado.a >= 32 * 1024
+            && usado.a <= 80 * 1024
+            && no_cabe.estado == LLENO
+            && fuera.a == 32 * 1024
+            && borrado
+            && quitado.estado == 0
+            && quitado.b == 0
+            && ahora.a == 32 * 1024
+            && c.pedir(CUOTA, 0, 0, 0, "").estado == MAL_FORMADO
+            && c.pedir(CUOTA, 0, 0, 0, "No está").estado == NO_EXISTE;
+        if !bien {
+            println!("  [ficheros] S32 tope: puesto {} {}, cabe {} {}, usado {} {}, no cabe {} {}, fuera {} {}, quitado {} {}, ahora {} {}", puesto.estado, puesto.b, cabe.estado, cabe.a, usado.estado, usado.a, no_cabe.estado, no_cabe.a, fuera.estado, fuera.a, quitado.estado, quitado.b, ahora.estado, ahora.a);
+        }
+        bien
+    };
+    // S32, crecer en uso: a todo el disco (lo que ya mide, o más si la partición es mayor), y no a menos ni a más.
+    let crecido = {
+        let todo = c.pedir(CRECER, 0, 0, 0, "");
+        let menos = c.pedir(CRECER, 0, 4096 * 1024, 0, "");
+        let mas = c.pedir(CRECER, 0, 1 << 50, 0, "");
+        let bien = todo.estado == 0 && todo.a >= 4096 * 1024 && menos.estado == MAL_FORMADO && mas.estado == MAL_FORMADO;
+        if !bien {
+            println!("  [ficheros] S32 crecer: todo {} {}, menos {}, más {}", todo.estado, todo.a, menos.estado, mas.estado);
+        }
+        bien
+    };
     let quitado = hecho.estado == 0
+        && tope
+        && crecido
         && g.estado == 0
         && c.pedir(QUITAR_VOLUMEN, 0, 0, 0, "Temporal").estado == EN_USO
         && c.pedir(CERRAR, g.asa, 0, 0, "").estado == 0

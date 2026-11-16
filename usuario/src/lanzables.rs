@@ -25,6 +25,16 @@ pub fn de_programas(camino: &[u8]) -> bool {
     camino.strip_prefix(CAJON).is_some_and(nombre_valido)
 }
 
+/// El Shell nativo (`docs/bitacoras/shell-nativa.md`): está en `SYS:System`, no en `Programas/`, y el lanzador lo
+/// enseña con este nombre.
+pub const SHELL: &[u8] = b"System/Shell";
+pub const NOMBRE_SHELL: &str = "Shell";
+
+/// Si la barra (y el escritorio) puede pedir que se lance `camino`: un programa de `Programas/`, o el Shell.
+pub fn lanzable(camino: &[u8]) -> bool {
+    de_programas(camino) || camino == SHELL
+}
+
 /// Si el proceso de la marca `marca`, que se llama `su_nombre`, es uno de los programas del sistema `nombres`. Solo
 /// cuenta el nombre que da `inicio` (marca baja): lo lanzado desde el disco se llama como su fichero, y un fichero
 /// `Programas/guardian` no es `guardian`.
@@ -39,6 +49,11 @@ mod pruebas {
     #[test]
     fn solo_programas_de_su_cajon() {
         assert!(de_programas(b"Programas/hola"));
+        // El Shell es lo único de fuera de `Programas/` que se deja lanzar; lo que se le parece, no.
+        assert!(lanzable(b"System/Shell") && lanzable(b"Programas/hola"));
+        for malo in [&b"System/Shell2"[..], b"System/shell", b"System/Format", b"System/", b"/System/Shell", b"System/../System/Shell", b"Programas/../System/Shell"] {
+            assert!(!lanzable(malo), "{:?}", core::str::from_utf8(malo));
+        }
         assert!(de_programas(b"Programas/Calculadora 2"));
         for malo in [
             &b"Programas/"[..],

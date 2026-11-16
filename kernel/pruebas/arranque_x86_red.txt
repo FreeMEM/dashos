@@ -2,7 +2,8 @@
 # `arranque_x86_red_*.txt` según RED_X86) con su MSI-X (en un concentrador con la red de usuario de QEMU y con
 # `tools/red_basura.py`), el servicio con smoltcp y su dirección por DHCP;
 # el eco de 4 MB con el PC con el glotón en su tope, un puerto cerrado y la basura del PC.
-~│   [red] DHCP: 10.0.2.15/24, puerta 10.0.2.2, DNS 10.0.2.3
+# Desde la unión con `revision`, la red de usuario de QEMU va con restrict=on: su DHCP no da puerta ni DNS.
+~│   [red] DHCP: 10.0.2.15/24
 ~│   [red-prueba] hacerse pasar por el controlador o tocar lo ajeno: 
 ~[-1, -1, -7]: bien
 ~│   [red-gloton] tope en 8 conexiones; 50 intentos más dan -3: bien

@@ -36,6 +36,12 @@ pub(crate) fn lvo_de(biblioteca: &str, funcion: &str) -> i32 {
         _ if funcion == "OpenLibrary" || funcion == "OpenDevice" => 0,
         "layers.library" => caja_intuition::LAYERS.iter().position(|n| *n == funcion).map_or(0, caja_intuition::lvo::lvo),
         "keymap.library" => caja_intuition::KEYMAP.iter().position(|n| *n == funcion).map_or(0, caja_intuition::lvo::lvo),
+        "cybergraphics.library" => {
+            caja_intuition::cgx::FUNCIONES.iter().position(|n| *n == funcion).map_or(0, caja_intuition::lvo::lvo)
+        }
+        "Picasso96API.library" => {
+            caja_intuition::p96::FUNCIONES.iter().position(|n| *n == funcion).map_or(0, caja_intuition::lvo::lvo)
+        }
         "gadtools.library" => {
             caja_intuition::lvo::GADTOOLS.iter().position(|(n, _)| *n == funcion).map_or(0, caja_intuition::lvo::lvo)
         }

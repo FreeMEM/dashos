@@ -17,7 +17,11 @@ o dos máquinas de verdad al final.
 - **Lo nativo es little-endian.** Solo la caja Amiga es big-endian (decisión del 2026-11-03).
 - **Desde hoy, el kernel dice al arrancar qué CPU es y si admite big-endian en EL0** y páginas de 4 KB
   (`ID_AA64MMFR0_EL1`). En QEMU `virt`: "Cortex-A72; big-endian en EL0: sí (y en EL1); páginas de 4 KB: sí". Es lo
-  primero que hay que leer en cada máquina nueva.
+  primero que hay que leer en cada máquina nueva. Hoy sale por la consola de arranque. Tiene que quedar también en el
+  registro de arranque (`Estado:Registros/`, S6 y S14) y en la orden que describe la máquina (ver "Lo que no funciona
+  en cada máquina").
+- `DASHOS_PANTALLA` se da al compilar el cargador: no es un ajuste del usuario. El modo de pantalla del usuario se
+  elige en Ajustes y con su orden (S9).
 
 ## Las máquinas
 
@@ -58,6 +62,19 @@ RTX Spark, depende de lo que diga su CPU al arrancar. El resto de DashOS (todo l
    debería arrancar; el teclado y el panel táctil del portátil, el Wi-Fi y la batería son controladores propios.
 5. **Mac, al final.** Es el más distinto: otro controlador de interrupciones (AIC), IOMMU de 16 KB, disco que no es
    NVMe estándar, teclado propio. Arranca con m1n1 y U-Boot de Asahi.
+
+## Lo que no funciona en cada máquina, dicho
+
+En un portátil o en la RTX Spark habrá cosas que aún no van (el Wi-Fi, la batería, el teclado propio, la GPU). El
+usuario no tiene que adivinarlo. Tiene que existir una lista llana en Ajustes ("En este ordenador aún no funciona:
+Wi-Fi, batería") y la misma lista en una orden de Shell, que además describe la máquina (CPU, big-endian en EL0,
+páginas). El nombre de la orden, por decidir al hacerla.
+
+## Instalar sin pasos de informático
+
+La meta es que el usuario solo grabe la imagen y arranque. Para la CM5, la imagen de DashOS llevaría dentro el firmware
+UEFI (rpi5-uefi), si su licencia lo deja; no se ha comprobado. En el Mac, el instalador haría el paso de m1n1; depende
+de la pregunta 3 de abajo.
 
 ## Lo que debe decidir el usuario
 

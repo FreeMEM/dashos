@@ -442,8 +442,99 @@ fn archivos(memoria: u32) -> bool {
         println!("  [hostil] archivos, permisos: {}", permisos(lectura, copia));
         println!("  [hostil] A7 préstamos: {}", prestamos(lectura, copia));
         println!("  [hostil] selector: {}", cedida(lectura, copia));
+        println!("  [hostil] asignaciones: {}", nombres_hostiles(lectura, copia));
     }
     vivo
+}
+
+/// El servicio de archivos para `dashos::asignaciones`, por las órdenes de siempre del hostil.
+struct PorNombres {
+    lectura: u32,
+    copia: u32,
+}
+
+impl dashos::asignaciones::Fs for PorNombres {
+    fn pedir(&mut self, orden: u32, asa: u32, x: u64, y: u64, nombre: &[u8]) -> dashos::asignaciones::Resp {
+        let e = core::str::from_utf8(nombre).ok().and_then(|n| pedir(self.lectura, self.copia, orden, asa, x, y, n));
+        match e {
+            Some((e, asa)) => dashos::asignaciones::Resp { e, asa, ..Default::default() },
+            None => dashos::asignaciones::Resp { e: i32::MIN, ..Default::default() },
+        }
+    }
+
+    fn ventana(&self) -> &[u8] {
+        &[]
+    }
+}
+
+/// Paso 2 de las asignaciones: el hostil (Carla, lanzado por `inicio` con su cajón como única raíz) pide su tabla: trae
+/// las asignaciones de la sesión pero ningún volumen (no tiene sus raíces), y por ellas no llega a nada. Con una tabla
+/// escrita a mano que dice que `SYS:` es una raíz que no tiene, tampoco. Y `ASIGNAR` no tapa volúmenes, no pone raíces,
+/// no admite caminos que suben ni bucles, ni lo mal formado; `sesiones` sigue contestando. Devuelve lo que falló, o
+/// "bien".
+fn nombres_hostiles(lectura: u32, copia: u32) -> &'static str {
+    use dashos::asignaciones::{self as asig, Cambio, Tabla};
+    let Some(t) = asig::pedir_tabla(SESIONES) else { return "sin tabla de nombres" };
+    if t.volumenes().count() != 0 || t.buscar(b"LIBS").is_none() || t.buscar(b"PROGDIR").is_some() {
+        return "su tabla no es la de un programa sin raíces";
+    }
+    let mut fs = PorNombres { lectura, copia };
+    for c in [&b"LIBS:x"[..], b"C:grande.txt", b"ENVARC:", b"Programas:hola", b"T:"] {
+        if asig::abrir(&mut fs, &t, c).is_ok() {
+            return "llega a algo por un nombre de su tabla";
+        }
+    }
+    let falsa = Tabla::desde(b"*SYS=@9\n*Home=@15\nLIBS=Home:Libs,SYS:Libs\n").unwrap();
+    if asig::abrir(&mut fs, &falsa, b"SYS:").is_ok() || asig::abrir(&mut fs, &falsa, b"LIBS:").is_ok() || asig::crear(&mut fs, &falsa, b"Home:x", FICHERO).is_ok() {
+        return "llega a algo con una tabla falsa";
+    }
+    let largo = {
+        let mut l = alloc::vec![b'N'; asig::MAX_NOMBRE + 1];
+        l.extend_from_slice(b"=SYS:");
+        l
+    };
+    let casos: [(Cambio, &[u8], i32); 13] = [
+        (Cambio::Poner, b"SYS=C:", PROTEGIDO),
+        (Cambio::Poner, b"home=LIBS:", PROTEGIDO),
+        (Cambio::Quitar, b"Work", PROTEGIDO),
+        (Cambio::Poner, b"PROGDIR=SYS:", PROTEGIDO),
+        (Cambio::Poner, b"X=@1", MAL_FORMADO),
+        (Cambio::Anadir, b"LIBS=@2/Libs", MAL_FORMADO),
+        (Cambio::Poner, b"X=Home:../DeCarla", MAL_FORMADO),
+        (Cambio::Poner, b"X=Home:/a", MAL_FORMADO),
+        (Cambio::Poner, b"X:Y=SYS:", MAL_FORMADO),
+        (Cambio::Poner, &largo, MAL_FORMADO),
+        (Cambio::Poner, b"Uno=Dos:", 0),
+        (Cambio::Poner, b"Dos=Uno:", asig::BUCLE),
+        (Cambio::Anadir, b"Uno=Uno:x", asig::BUCLE),
+    ];
+    for (cambio, texto, quiere) in casos {
+        let e = asig::asignar_en_sesiones(SESIONES, cambio, texto);
+        if e != quiere {
+            println!("  [hostil] asignar \"{}\" da {} (tenía que dar {})", core::str::from_utf8(texto).unwrap_or("?"), e, quiere);
+            return "ASIGNAR deja algo que no debe";
+        }
+    }
+    // A mano: un cambio que no existe y un largo que no cabe en el mensaje.
+    for (cambio, largo) in [(99u32, 3u32), (0, u32::MAX), (0, 300)] {
+        let mut p = [0u8; 20];
+        p[0..4].copy_from_slice(&dashos::protocolo::sesiones::ASIGNAR.to_le_bytes());
+        p[4..8].copy_from_slice(&cambio.to_le_bytes());
+        p[8..12].copy_from_slice(&largo.to_le_bytes());
+        p[12..17].copy_from_slice(b"X=C:a");
+        let (l, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 4];
+        let n = if escribir(SESIONES, &p, &[suyo]) { dashos::canal_leer_plazo(l, &mut r, &mut [], 2_000_000).0 } else { -1 };
+        dashos::cerrar(l);
+        if n != 4 || i32::from_le_bytes(r) != MAL_FORMADO {
+            return "ASIGNAR a mano con basura no da mal formado";
+        }
+    }
+    match asig::pedir_tabla(SESIONES) {
+        Some(t) if t.buscar(b"Uno").is_some() && t.buscar(b"Dos").is_none() && t.buscar(b"X").is_none() && t.volumenes().count() == 0 => "bien",
+        Some(_) => "su tabla quedó con lo que no debía",
+        None => "sesiones ya no contesta la tabla",
+    }
 }
 
 /// Sonido: ataques y, después, abrir un flujo tiene que dar el aviso de "pide muestras".
@@ -544,7 +635,101 @@ fn compositor(memoria: u32) -> bool {
     // Esta conexión ya no vale: se cierra y se abre otra.
     escribir(VENTANAS, &[TROZO_ADIOS], &[]);
     let Some((lectura, copia)) = conectar() else { return false };
-    compositor_contesta(lectura, copia, 53) && tema_ajeno() && barra_ajena()
+    compositor_contesta(lectura, copia, 53) && tema_ajeno() && barra_ajena() && menus_ajenos()
+}
+
+/// S10, los menús de los programas (`docs/bitacoras/menus.md`): ser la barra o poner el sitio sin serlo, un menú mal
+/// formado, uno de más de 16 KB y elegir sin tener objeto de barra son errores de protocolo; uno que vale y llega casi
+/// a los 16 KB (en muchos trozos del canal), no. El global de los menús es el 40 de cualquier cliente.
+fn menus_ajenos() -> bool {
+    use wayland::menus::MAX_DATOS;
+    use wayland::tablas::{dashos_menu_v1, dashos_menus_barra_v1, dashos_menus_v1, wl_compositor, wl_registry};
+    const GLOBAL_MENUS: u32 = 40;
+    // Manda `e` troceado (un mensaje grande no cabe en uno del canal) y un sync (70); dice si hubo error (en el objeto
+    // que sea) antes del sync, y su texto.
+    let probar = |e: &mut Escritor| -> Option<(bool, alloc::string::String)> {
+        escribir(VENTANAS, &[TROZO_ADIOS], &[]);
+        let (lectura, copia) = conectar()?;
+        e.empezar(1, wl_display::req::SYNC).uint(70).fin();
+        for t in wayland::canal::trocear(e).ok()? {
+            if !escribir(VENTANAS, &t.bytes, &t.llaves) {
+                return None;
+            }
+        }
+        let mut b = [0u8; 256];
+        let mut flujo = alloc::vec::Vec::new();
+        while let Some(n) = leer_con_plazo(lectura, copia, &mut b) {
+            if b[0] != TROZO_DATOS {
+                continue;
+            }
+            flujo.extend_from_slice(&b[1..n]);
+            while let Ok((o, ord, tam)) = leer_cabecera(&flujo) {
+                if o == 1 && ord == wl_display::ev::ERROR {
+                    let texto = flujo.get(20..tam).map(|t| alloc::string::String::from_utf8_lossy(t).trim_end_matches('\0').into()).unwrap_or_default();
+                    return Some((true, texto));
+                }
+                if o == 70 && ord == wl_callback::ev::DONE {
+                    return Some((false, alloc::string::String::new()));
+                }
+                flujo.drain(..tam);
+            }
+        }
+        None
+    };
+    let empezar = |e: &mut Escritor| {
+        e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(GLOBAL_MENUS).texto(Some("dashos_menus_v1")).uint(1).uint(60).fin();
+    };
+    // Con una superficie suya (la 7) y su menú (61), un texto de menú.
+    let con_menu = |datos: &[u8]| {
+        let mut e = Escritor::new();
+        empezar(&mut e);
+        e.empezar(2, wl_registry::req::BIND).uint(1).texto(Some("wl_compositor")).uint(6).uint(3).fin();
+        e.empezar(3, wl_compositor::req::CREATE_SURFACE).uint(7).fin();
+        e.empezar(60, dashos_menus_v1::req::MENU).uint(61).uint(7).fin();
+        e.empezar(61, dashos_menu_v1::req::PONER).array(datos).fin();
+        e
+    };
+    let mut e = Escritor::new();
+    empezar(&mut e);
+    e.empezar(60, dashos_menus_v1::req::BARRA).uint(62).fin();
+    let barra = probar(&mut e).is_some_and(|r| r.0);
+    let mut e = Escritor::new();
+    empezar(&mut e);
+    e.empezar(60, dashos_menus_v1::req::PONER_SITIO).uint(1).fin();
+    let sitio = probar(&mut e).is_some_and(|r| r.0);
+    let mal = probar(&mut con_menu(b"menus 1\nE\t1\tSin menu\n")).is_some_and(|r| r.0 && r.1.contains("no vale"));
+    let mut enorme = alloc::vec::Vec::from(&b"menus 1\nM\tA\n"[..]);
+    while enorme.len() <= MAX_DATOS {
+        enorme.extend_from_slice(b"-\n");
+    }
+    let grande = probar(&mut con_menu(&enorme)).is_some_and(|r| r.0 && r.1.contains("demasiado grande"));
+    // Uno que vale, casi del tope: 16 menús de 30 entradas con títulos largos.
+    let mut vale = alloc::string::String::from("menus 1\n");
+    let mut n = 0;
+    'lleno: for m in 0..16 {
+        vale.push_str(&alloc::format!("M\tMenú {m}\n"));
+        for _ in 0..30 {
+            n += 1;
+            let linea = alloc::format!("E\t{n}\tUna entrada con un título bastante largo {n}\tCtrl+Mayús+F12\n");
+            if vale.len() + linea.len() > MAX_DATOS {
+                break 'lleno;
+            }
+            vale.push_str(&linea);
+        }
+    }
+    let lleno = probar(&mut con_menu(vale.as_bytes())).is_some_and(|r| !r.0);
+    // Elegir en un menú sin ser la barra: no hay objeto de barra al que mandarlo.
+    let mut e = Escritor::new();
+    empezar(&mut e);
+    e.empezar(62, dashos_menus_barra_v1::req::ELEGIR).uint(1).uint(1).fin();
+    let elegir = probar(&mut e).is_some_and(|r| r.0);
+    escribir(VENTANAS, &[TROZO_ADIOS], &[]);
+    println!(
+        "  [hostil] compositor: menús: ser la barra sin serlo da error: {}; poner su sitio sin ser el centro, también: {}; un menú mal formado, también: {}; uno de más de 16 KB, también: {}; elegir sin objeto de barra, también: {}; uno que vale casi del tope, no: {} ({} bytes)",
+        si(barra), si(sitio), si(mal), si(grande), si(elegir), si(lleno), vale.len()
+    );
+    barra && sitio && mal && grande && lleno && elegir
 }
 
 /// S10: ponerse de barra. Sin el poder de escritorio (que el compositor da por el nombre que pone `inicio`), las capas
@@ -1024,11 +1209,14 @@ fn disco() -> bool {
 }
 
 /// A14: nadie pone la hora con la llamada de leerla (ni con otros valores), y la hora no va hacia atrás. En `virt`, la
-/// del reloj de la placa: creíble.
+/// del reloj de la placa: creíble. S13: con 1 la llamada pone la hora, pero pide el permiso del reloj, que solo tiene
+/// `hora`: con cada llave del hostil (y con números que no son llaves) da error y la hora no salta.
 fn hora() -> bool {
     let antes = dashos::hora_ns();
-    let rechazos = [1u64, 2, u64::MAX, 1 << 63].iter().all(|&q| dashos::llamada(39, [q, 1_000_000_000, 0, 0, 0]).0 as i64 == -1);
+    let rechazos = [2u64, u64::MAX, 1 << 63].iter().all(|&q| dashos::llamada(39, [q, 1_000_000_000, 0, 0, 0]).0 as i64 == -1)
+        && (0..64u64).chain([1_000_000_000, u64::MAX]).all(|l| (dashos::llamada(39, [1, l, 1_900_000_000_000_000_000, 0, 0]).0 as i64) < 0);
     let despues = dashos::hora_ns();
+    let rechazos = rechazos && despues - antes.min(despues) < 60_000_000_000;
     let creible = antes == 0 || antes / 1_000_000_000 >= 1_704_067_200;
     rechazos && despues >= antes && creible && (antes == 0) == (despues == 0)
 }

@@ -22,6 +22,10 @@ propia sesión sin cerrar la de Ana. Cuando Carla bloquea, Ana vuelve con su con
 | Sonido | En silencio (paso 2) | Que la música de Ana no suene encima de lo de Carla. Sus anillos se siguen leyendo a su ritmo: no se le llenan ni se cuelga |
 | Volver | Con su contraseña | Como desbloquear. `sesiones` la comprueba con su volumen, sin reabrirlo |
 
+Lo que se negó a la sesión de detrás no se pierde en silencio. Queda en el registro (`Estado:Registros/`, S6), con
+el programa, lo que pidió y la hora. Y al volver, su dueño ve un aviso con lo que se pidió mientras no estaba ("Editor
+quiso usar la red y se le dijo que no"), para que sepa por qué falló su programa. Por hacer.
+
 `sesiones` sabe qué sesión está **delante**: la del último que entró o volvió con su contraseña. Es la única pieza
 que lo decide. El compositor y `guardian` siguen lo que diga.
 
@@ -32,7 +36,8 @@ así. Caben 8 abiertas a la vez (lo que ya guarda `sesiones`).
 
 En la pantalla de bloqueo, **Esc** pasa a "Cambiar de usuario": se escribe el nombre y luego la contraseña, como en
 la pantalla de entrada. Con Esc otra vez se vuelve al bloqueo de antes. Pie de la pantalla: "Esc: cambiar de
-usuario".
+usuario". Ese pie es además un botón "Cambiar de usuario" que se pulsa con el ratón (S0: todo se puede hacer con el
+ratón). Hoy solo está la tecla.
 
 - Si el nombre es el de alguien con la sesión abierta, se vuelve a ella (contraseña comprobada, volumen sin tocar).
 - Si no, se entra: se abre su volumen y empieza su sesión.
@@ -108,8 +113,8 @@ Lo que no cubre:
 - Canales laterales: cuánto tarda la CPU, cuánta memoria queda. Sin medir.
 - Los ficheros compartidos del disco (`SYS:`, `Work:`) siguen sus permisos (capa 1): lo que Ana deje legible para
   todos, Carla lo lee.
-- Lo concedido se guarda en el cajón de `sesiones`, con el usuario; S6b lo quiere en el `Home:` de cada uno. Va con
-  `Prefs` de usuarios.
+- Lo concedido se guarda hoy en el cajón de `sesiones`, con el usuario. Su sitio es el de S6b:
+  `Home:Prefs/Permisos/`, en texto que el dueño lee, con la orden `Permiso`. Va con `Prefs` de usuarios.
 - Los programas que lanza `inicio` con el usuario de una persona (en las pruebas: `centro`, `selector`, `ficheros`
   como 1000) son "de Ana" sin estar en su sesión. Es provisional: lo de una persona lo lanzará `sesiones`.
 

@@ -41,7 +41,7 @@ fn globales() -> [Global; 6] {
         Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
         Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
         Global { nombre: 5, interfaz: &tablas::WL_DATA_DEVICE_MANAGER, version: 3 },
-        Global { nombre: 6, interfaz: &tablas::DASHOS_TEMA_V1, version: 6 },
+        Global { nombre: 6, interfaz: &tablas::DASHOS_TEMA_V1, version: 7 },
     ]
 }
 
@@ -230,6 +230,43 @@ fn marca_de_la_caja_amiga() {
     assert_eq!(marca::titulo_con(marca::PREFIJO_AMIGA, ""), "");
     escena.adios(amiga);
     assert!(escena.de_caja_amiga.is_empty());
+}
+
+/// La caja Amiga pone sus ventanas delante o detrás (`dashos_tema_v1.apilar`, versión 7: `ScreenToFront` y
+/// `ScreenToBack`), sin tocar el teclado. Un programa que no es de la caja Amiga, o una superficie que no es suya: nada.
+#[test]
+fn apilar_de_la_caja_amiga() {
+    let mut escena = escena_800();
+    let (amiga, otro): (Cliente, Cliente) = (5, 9);
+    escena.de_caja_amiga.push(amiga);
+    let (mut a, mut b) = (Conexion::new(), Conexion::new());
+    abrir(&mut escena, &mut a, amiga, 200, 120, "pantalla");
+    abrir(&mut escena, &mut b, otro, 200, 120, "nativo");
+    escena.colocar(amiga, 7, 100, 100);
+    escena.colocar(otro, 7, 150, 150);
+    assert_eq!(escena.orden, vec![(amiga, 7), (otro, 7)]);
+    let apilar = |sup: u32, fondo: u32| {
+        let mut e = Escritor::new();
+        e.empezar(2, wl_registry::req::BIND).uint(6).texto(Some("dashos_tema_v1")).uint(7).uint(60).fin();
+        e.empezar(60, dashos_tema_v1::req::APILAR).uint(sup).uint(fondo).fin();
+        e
+    };
+    // Delante, y otra vez detrás.
+    mandar(&mut escena, &mut a, amiga, &apilar(7, 0));
+    assert_eq!(escena.orden, vec![(otro, 7), (amiga, 7)]);
+    let mut e = Escritor::new();
+    e.empezar(60, dashos_tema_v1::req::APILAR).uint(7).uint(1).fin();
+    mandar(&mut escena, &mut a, amiga, &e);
+    assert_eq!(escena.orden, vec![(amiga, 7), (otro, 7)]);
+    // De una superficie que no existe: nada.
+    let mut e = Escritor::new();
+    e.empezar(60, dashos_tema_v1::req::APILAR).uint(999).uint(0).fin();
+    mandar(&mut escena, &mut a, amiga, &e);
+    assert_eq!(escena.orden, vec![(amiga, 7), (otro, 7)]);
+    // Un programa nativo no se sube (ni baja) así.
+    mandar(&mut escena, &mut b, otro, &apilar(7, 1));
+    assert_eq!(escena.orden, vec![(amiga, 7), (otro, 7)]);
+    escena.adios(amiga);
 }
 
 /// La pestaña que pone el compositor (`poner_pestanas`): se usa la suya, sus esquinas transparentes dejan ver la
@@ -429,4 +466,58 @@ fn marca_con_geometria_recorta() {
     assert_eq!(en(&p, 120, 150), COLOR_LINUX);
     assert_eq!(en(&p, 279, 150), COLOR_LINUX);
     assert_eq!(en(&p, 150, 150) & 0xffffff, 0x404040);
+}
+
+/// S6b, S36 (rama `admin-desarrollo`): una aplicación en modo de desarrollo lleva la marca magenta con "DESARROLLO" y su
+/// título, "Desarrollo · " delante en la barra. Solo la pone `sesiones` (un aviso sin marca): un cliente que manda el
+/// mismo aviso no se la pone a nadie, y tampoco se la quita. Cuando `sesiones` dice que el programa acabó, se va.
+#[test]
+fn marca_del_modo_de_desarrollo() {
+    let mut escena = escena_800();
+    let (dev, otro): (Cliente, Cliente) = (0x1_0005, 0x1_0006);
+    escena.barras.push(5);
+    let (mut a, mut b, mut barra) = (Conexion::new(), Conexion::new(), Conexion::new());
+    let mut e = Escritor::new();
+    e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+    e.empezar(2, wl_registry::req::BIND).uint(6).texto(Some("dashos_tema_v1")).uint(1).uint(60).fin();
+    mandar(&mut escena, &mut barra, 5, &e);
+    let aviso = |m: u64| {
+        let mut x = [0u8; LARGO_AVISO_DESARROLLO];
+        x[0..4].copy_from_slice(&AVISO_DESARROLLO.to_le_bytes());
+        x[8..16].copy_from_slice(&m.to_le_bytes());
+        x
+    };
+    // Un programa que se lo manda a sí mismo (con su marca): nada.
+    assert_eq!(escena.aviso_de_sesiones(otro, &aviso(otro)), None);
+    assert!(escena.de_desarrollo.is_empty());
+    // De `sesiones` (sin marca): el de `dev`.
+    assert_eq!(escena.aviso_de_sesiones(0, &aviso(dev)), Some(AvisoSesiones::Desarrollo { marca: dev }));
+    // Corto o largo, no es el aviso.
+    assert_eq!(escena.aviso_de_sesiones(0, &aviso(otro)[..12]), None);
+    abrir(&mut escena, &mut a, dev, 200, 120, "Editor");
+    abrir(&mut escena, &mut b, otro, 200, 120, "Notas");
+    escena.colocar(dev, 7, 100, 100);
+    escena.colocar(otro, 7, 450, 300);
+    let ((dx, dy), (ox, oy)) = (sitio(&escena, dev), sitio(&escena, otro));
+    let p = componer(&mut escena);
+    for (x, y) in [(dx, dy + 60), (dx + 199, dy + 60), (dx + 100, dy), (dx + 100, dy + 119)] {
+        assert_eq!(en(&p, x, y), marca::COLOR_DESARROLLO, "borde en ({x}, {y})");
+    }
+    let (pw, ph) = marca::medida_pestana(marca::TEXTO_DESARROLLO);
+    assert!((0..pw).any(|x| (0..ph).any(|y| en(&p, dx + GROSOR + x, dy + GROSOR + y) == marca::TINTA_DESARROLLO)), "las letras");
+    assert_ne!(en(&p, ox, oy + 60), marca::COLOR_DESARROLLO, "la otra, sin marca");
+    // El título de la que tiene el teclado: la de `otro`, tal cual; la de `dev`, con su prefijo.
+    let mut fuera = Vec::new();
+    escena.dar_teclado((otro, 7), &mut fuera);
+    escena.revisar_titulo();
+    assert_eq!(core::mem::take(&mut escena.avisos_titulo).last().map(|t| t.2.clone()), Some(String::from("Notas")));
+    escena.dar_teclado((dev, 7), &mut fuera);
+    escena.revisar_titulo();
+    assert_eq!(core::mem::take(&mut escena.avisos_titulo).last().map(|t| t.2.clone()), Some(String::from("Desarrollo · Editor")));
+    // Acaba (sesiones lo olvida, uid 0): sin marca.
+    let mut olvido = [0u8; LARGO_AVISO_PERSONA];
+    olvido[0..4].copy_from_slice(&AVISO_PERSONA.to_le_bytes());
+    olvido[8..16].copy_from_slice(&dev.to_le_bytes());
+    escena.aviso_de_sesiones(0, &olvido);
+    assert!(escena.de_desarrollo.is_empty());
 }

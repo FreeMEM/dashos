@@ -345,3 +345,40 @@ fn proceso_y_cli() {
         b.llamar(lvo::SET_IO_ERR, &[1]);
     }
 }
+
+/// InternalLoadSeg(fh, table, funcarray, stack)(d0/a0/a1/a2), como lo usa AddDataTypes.
+#[test]
+fn internal_load_seg() {
+    let mut b = Banco::nuevo();
+    let ils = |b: &mut Banco, fh: u32| -> u32 {
+        let mut r = Registros::default();
+        r.d[0] = fh;
+        let acc = b.dos.llamar(&mut b.caja, lvo::INTERNAL_LOAD_SEG, &mut r);
+        assert_eq!(acc, Accion::Seguir);
+        r.d[0]
+    };
+    // Con un fichero de dos: desde donde esté hasta el final.
+    let fh = b.open("SYS:C/Dir", MODE_OLDFILE);
+    let seg = ils(&mut b, fh);
+    assert_eq!(seg, 0x1234);
+    assert_eq!(b.caja.cargado[0], [0, 0, 3, 0xF3, 1, 2, 3, 4]);
+    assert_eq!(b.llamar(lvo::INTERNAL_UN_LOAD_SEG, &[seg, 0]), DOSTRUE);
+    assert_eq!(b.caja.descargado, [0x1234]);
+    // Ya al final: nada que cargar.
+    assert_eq!(ils(&mut b, fh), 0);
+    assert_eq!(b.io_err(), ERROR_BAD_HUNK);
+    b.close(fh);
+    // Hostil: un fichero que no es de dos (un flujo propio con funciones 68k), 0, la consola, NIL:.
+    assert!(b.avisos().is_empty());
+    assert_eq!(ils(&mut b, 0x0BAD_F00D), 0);
+    assert_eq!(b.io_err(), ERROR_NOT_IMPLEMENTED);
+    assert_eq!(ils(&mut b, 0), 0);
+    let cons = b.caja.mem.leer32(b.proceso + process::PR_CIS).unwrap();
+    assert_eq!(ils(&mut b, cons), 0);
+    assert_eq!(b.io_err(), ERROR_OBJECT_WRONG_TYPE);
+    let nil = b.open("NIL:", MODE_OLDFILE);
+    assert_eq!(ils(&mut b, nil), 0);
+    assert_eq!(b.io_err(), ERROR_OBJECT_WRONG_TYPE);
+    b.close(nil);
+    b.limpio(0, 1);
+}

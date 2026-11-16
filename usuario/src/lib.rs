@@ -20,6 +20,8 @@ pub mod particiones;
 pub mod disco_servidor;
 pub mod servicio;
 pub mod avisos_cliente;
+/// Avisos de cambio del servicio de archivos: pedir una vigilancia (con su puerta).
+pub mod vigilar;
 /// Los protocolos de los servicios, compartidos con sus clientes (E7).
 pub mod protocolo {
     pub mod archivos;
@@ -27,17 +29,36 @@ pub mod protocolo {
     pub mod comprobar;
     pub mod pantallas;
     pub mod red;
+    pub mod selector;
     pub mod sesiones;
 }
 #[cfg(feature = "monton")]
 pub mod monton;
 pub mod prestados;
+/// Volúmenes y asignaciones con nombre (S4b): la tabla de cada proceso y cómo se resuelve (sin dependencias: se prueba
+/// en el PC).
+pub mod asignaciones;
+/// La tabla de llaves: qué es cada llave con que nace el programa (sin dependencias: se prueba en el PC).
+pub mod llaves;
 pub mod hilos;
 pub mod red_cliente;
 /// S29: el cortafuegos de la caja Linux en el servicio de red (sin dependencias: se prueba en el PC).
 pub mod cortafuegos_caja;
 /// X5c: el intérprete del firmware del PHY de la RTL8125 (sin dependencias: se prueba en el PC).
 pub mod rtl8125_fw;
+/// S13: el cortafuegos de entrada del servicio de red, DNS, SNTP y las zonas horarias (sin dependencias: se prueban en
+/// el PC).
+pub mod cortafuegos;
+pub mod dns;
+pub mod sntp;
+pub mod zona;
+/// S6, S36: el registro común en `Estado:Registros/` (el formato de la línea, quién ve qué, el ritmo) y los permisos
+/// concedidos en texto con su frase en llano (sin dependencias: se prueban en el PC).
+pub mod registro;
+pub mod permisos_texto;
+/// S6, S36 (decisión 1 del 2026-11-16): la tanda de acciones de administrador (la lista, su frase en llano y la
+/// respuesta), sin dependencias: se prueba en el PC.
+pub mod tanda;
 #[cfg(target_arch = "aarch64")]
 mod copiar;
 
@@ -163,6 +184,22 @@ pub fn memoria_dma(permiso: u32, tamano: usize) -> (i64, u64) {
     (a as i64, b)
 }
 
+/// Un objeto de memoria disperso (llamada 57): mide `tamano` bytes (hasta 1 GB) y nace sin ninguna página puesta. Se
+/// cobra al grupo de la llave `grupo` (con escribir; 0, el propio), y solo lo que tenga puesto. Devuelve la llave o un
+/// error negativo. Las páginas se ponen y se sueltan con `memoria_paginas`; tocar una que no está puesta es un fallo.
+pub fn memoria_dispersa(tamano: usize, grupo: u32) -> i64 {
+    llamada(57, [tamano as u64, grupo as u64, 0, 0, 0]).0 as i64
+}
+
+/// Pone (`poner`) o suelta `cuantas` páginas (de 1 a 256) del objeto de memoria `llave` (con escribir) desde la
+/// `primera` (llamada 58). Poner da páginas nuevas a cero, cobradas al grupo del objeto; soltar las devuelve al
+/// sistema. Devuelve cuántas quedaron como se pedía, en orden desde la primera (menos de `cuantas` si al poner no cupo
+/// más en el tope del grupo o no queda memoria), o un error negativo: -5 si el tramo se sale, -3 si el objeto lo tiene
+/// alguien más (otro proceso, un mensaje, una vista) o la llave no deja escribir, -7 si no se pudo poner ninguna.
+pub fn memoria_paginas(llave: u32, poner: bool, primera: usize, cuantas: usize) -> i64 {
+    llamada(58, [llave as u64, poner as u64, primera as u64, cuantas as u64, 0]).0 as i64
+}
+
 /// Quita la proyección de un objeto de memoria que empieza en `direccion` (C45).
 pub fn memoria_quitar(direccion: usize) -> i64 {
     llamada(21, [direccion as u64, 0, 0, 0, 0]).0 as i64
@@ -189,7 +226,7 @@ pub fn registros_proyectar(llave: u32, direccion: usize) -> i64 {
 /// En x86 (X6): el proceso puede usar con `in` y `out` los puertos de E/S de `llave` (una llave de puertos). En ARM
 /// no hay llaves de puertos.
 pub fn puertos_permitir(llave: u32) -> i64 {
-    llamada(56, [llave as u64, 0, 0, 0, 0]).0 as i64
+    llamada(59, [llave as u64, 0, 0, 0, 0]).0 as i64
 }
 
 /// La interrupción de `llave` llegará como mensaje (su número, 4 bytes) al otro lado de `canal`.
@@ -294,6 +331,12 @@ pub fn ahora_ns() -> u64 {
 /// A14: la hora del calendario, en nanosegundos desde 1970 (UTC); 0 si el sistema no la sabe (la Pi 4 no tiene reloj).
 pub fn hora_ns() -> u64 {
     llamada(39, [0; 5]).0
+}
+
+/// S13: pone la hora del calendario (nanosegundos desde 1970, UTC), con el permiso del reloj (solo lo tiene `hora`). 0
+/// si se puso; `E_ARGUMENTO` si no es creíble (anterior a 2024), y otro error si la llave no es el permiso.
+pub fn hora_poner(permiso: u32, ns: u64) -> i64 {
+    llamada(39, [1, permiso as u64, ns, 0, 0]).0 as i64
 }
 
 /// Sin hipervisor (H9): el kernel no arrancó en EL2.
@@ -580,6 +623,24 @@ pub fn proceso_crear_en(grupo: u32, memoria: u32, tamano: usize, llaves: &[u32])
     llamada(12, [memoria as u64, tamano as u64, llaves.as_ptr() as u64, llaves.len() as u64, grupo as u64]).0 as i64
 }
 
+/// Como `proceso_crear_en`, diciendo qué es cada llave: `nombres[i]` es el de `llaves[i]` (`llaves::nombre16`). El
+/// programa los lee con `llaves::Tabla::leer`. `E_ARGUMENTO` si no hay un nombre por llave o son más de 8.
+pub fn proceso_crear_con_nombres(grupo: u32, memoria: u32, tamano: usize, llaves: &[u32], nombres: &[[u8; llaves::NOMBRE]]) -> i64 {
+    if llaves.len() > llaves::MAX || nombres.len() != llaves.len() {
+        return E_ARGUMENTO;
+    }
+    // Un solo bloque: los números de llave y, detrás, sus nombres.
+    let mut b = [0u8; (4 + llaves::NOMBRE) * llaves::MAX];
+    for (i, l) in llaves.iter().enumerate() {
+        b[4 * i..4 * i + 4].copy_from_slice(&l.to_ne_bytes());
+    }
+    let o = 4 * llaves.len();
+    for (i, n) in nombres.iter().enumerate() {
+        b[o + llaves::NOMBRE * i..o + llaves::NOMBRE * (i + 1)].copy_from_slice(n);
+    }
+    llamada(12, [memoria as u64, tamano as u64, b.as_ptr() as u64, llaves.len() as u64 | llaves::CON_NOMBRES, grupo as u64]).0 as i64
+}
+
 /// Un subgrupo del propio con un tope de `tope` bytes (C42). Desde S3 es un tope y no una reserva: no se aparta nada
 /// del propio (solo los 512 bytes del grupo), y los topes de los hijos pueden sumar más que la máquina.
 pub fn grupo_crear(tope: u64) -> i64 {
@@ -594,6 +655,36 @@ pub fn grupo_matar(grupo: u32) -> i64 {
 pub fn grupo_uso(grupo: u32) -> (i64, u64) {
     let (a, b) = llamada(20, [grupo as u64, 0, 0, 0, 0]);
     (a as i64, b)
+}
+
+/// S3 (topar con el cupo deja rastro): las veces que un cobro al grupo no cupo por un tope (el suyo o uno de encima,
+/// no el de la máquina entera); negativo si la llave no vale. Solo sube: quien lo vigila compara con lo de antes.
+pub fn grupo_topado(grupo: u32) -> i64 {
+    let (r0, r3): (u64, u64);
+    // x86-64: el cuarto resultado vuelve en r10 (`Marco::poner_x3`).
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        asm!("syscall",
+            inlateout("rax") 20u64 => r0,
+            in("rdi") grupo as u64, in("rsi") 0u64,
+            inlateout("rdx") 0u64 => _,
+            inlateout("r10") 0u64 => r3,
+            inlateout("r8") 0u64 => _,
+            out("rcx") _, out("r11") _,
+            options(nostack));
+    }
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        asm!("svc #0",
+            in("x8") 20u64,
+            inlateout("x0") grupo as u64 => r0,
+            inlateout("x1") 0u64 => _,
+            inlateout("x2") 0u64 => _,
+            inlateout("x3") 0u64 => r3,
+            in("x4") 0u64,
+            options(nostack));
+    }
+    if (r0 as i64) < 0 { r0 as i64 } else { r3 as i64 }
 }
 
 /// (tope, usado con sus subgrupos, usado sin ellos) en bytes, o un error negativo en el tope (S3).

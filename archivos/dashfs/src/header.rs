@@ -71,11 +71,16 @@ pub struct Header {
 impl Header {
     #[cfg(feature = "std")]
     pub fn new(size: u64) -> Header {
-        let uuid = uuid::Uuid::new_v4();
+        Self::with_uuid(size, *uuid::Uuid::new_v4().as_bytes())
+    }
+
+    /// A new header with the given UUID (DashOS: without `std` there is no source of random numbers here; whoever
+    /// creates the file system brings it).
+    pub fn with_uuid(size: u64, uuid: [u8; 16]) -> Header {
         let mut header = Header {
             signature: *SIGNATURE,
             version: VERSION.into(),
-            uuid: *uuid.as_bytes(),
+            uuid,
             size: size.into(),
             ..Default::default()
         };

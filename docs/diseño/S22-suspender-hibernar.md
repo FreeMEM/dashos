@@ -55,8 +55,22 @@ Cada fase tiene plazo. Lo que no contesta a tiempo se para a la fuerza:
 | 4. Parar aparatos | Se matan los controladores y se apagan sus aparatos por el firmware | 0,5 s por aparato | Se corta su corriente |
 | 5. Dormir | Núcleos apagados salvo uno, en espera con las fuentes de despertar (botón, teclado, alarma) | — | — |
 
+Lo que se para a la fuerza no se pierde en silencio (S36, regla 10). Al despertar sale un aviso en llano que nombra
+los programas que no contestaron a tiempo ("Editor no llegó a guardar antes de dormir"). Y cada ciclo deja sus líneas
+en `Estado:Registros/` (S6): qué se paró a la fuerza, qué aparato falló y qué despertó la máquina. Se lee con la orden
+`Registro`.
+
 Un vigilante por hardware cubre el kernel: si en fases 4 y 5 algo se queda colgado dentro del kernel, la placa
 reinicia, y la hibernación (si se pidió) sigue en el disco.
+
+## Cómo se pide dormir
+
+- **Con el ratón**: en el menú de apagado (S10b), "Suspender" e "Hibernar". No preguntan: dormir se deshace
+  despertando.
+- **Desde el Shell**: las órdenes `Dormir` e `Hibernar`, con `HASTA hora` para poner la alarma que despierta. Así un
+  guion hace lo mismo que el menú. La sintaxis exacta, por diseñar al hacerlo.
+- **Solo**: por tiempo sin uso, por la tapa o por el botón, según los ajustes de energía. Esos ajustes son un fichero
+  de texto en `ENVARC:` (S4b, S27), que escriben Ajustes y la orden `Ajuste`. Qué claves lleva, por diseñar al hacerlo.
 
 ## Despertar
 
@@ -76,11 +90,17 @@ reinicia, y la hibernación (si se pidió) sigue en el disco.
   reponerla, se relanzan como al despertar.
 - **Al arrancar**, el kernel mira si hay imagen. `guardian` pide la contraseña, se comprueba la firma de la imagen y
   que es del mismo kernel; si todo cuadra, se repone y se sigue como al despertar.
-- **Si algo no cuadra** (otro kernel tras una actualización, imagen corrupta, contraseña cancelada), arranque normal:
-  no se pierde nada de disco, porque archivos lo guardó antes. Se pierde la sesión abierta, y se avisa.
+- **Una actualización no tira la sesión** (S36, regla 10). Si hay imagen, se arranca con el `SYS:` y la generación de
+  paquetes que la hicieron (S8, S14), aunque haya una actualización esperando. La nueva entra en el siguiente arranque
+  limpio. Así el usuario no pierde lo abierto por algo que no hizo.
+- **Si algo no cuadra** (un kernel que ya no está, imagen corrupta, contraseña cancelada), arranque normal: no se
+  pierde nada de disco, porque archivos lo guardó antes. Se pierde la sesión abierta, y se avisa en llano, con el
+  motivo en el registro.
 - **Las cajas van en la imagen sin hacer nada**: la máquina virtual de Linux y la caja Amiga son memoria de procesos.
   La caja Linux recibe su aviso por virtio para que su reloj y su red se pongan al día.
-- **Dónde**: un área propia en el disco, del tamaño de la memoria en uso; no hace falta un intercambio.
+- **Dónde**: un área propia en el disco, del tamaño de la memoria en uso; no hace falta un intercambio. Ese sitio
+  tiene que tener dueño: o lo reserva el instalador (S32) o es un volumen elástico de DashFS. Cuál, por diseñar al
+  hacerlo. Si la imagen no cabe, se dice antes de empezar ("No hay sitio para hibernar") y se ofrece suspender.
 
 ## Cómo se prueba
 
@@ -88,7 +108,8 @@ reinicia, y la hibernación (si se pidió) sigue en el disco.
   después, que todo responde y el disco está entero.
 - **Hostiles**: un controlador que no se deja parar (se duerme igual), uno que se cae al despertar (el sistema
   despierta, ese aparato se relanza), un programa que ignora el aviso (se congela igual).
-- **Hibernar**: imagen corrupta a propósito, imagen de otro kernel y contraseña mala: arranque normal y aviso.
+- **Hibernar**: imagen corrupta a propósito, imagen de otro kernel y contraseña mala: arranque normal y aviso. Con
+  una actualización esperando: se arranca con la generación de la imagen y la sesión vuelve.
 - **En la placa**: consumo en reposo, tiempo de dormirse y de despertar, al panel de medidas.
 
 ## Fases
@@ -117,6 +138,7 @@ diferido de archivos (A1 y A2).
 - S2: el kernel congela grupos.
 - S3: compresión LZ4 de la imagen.
 - S5 y FS10: la imagen cifrada como los volúmenes.
-- S6b: `guardian` pide la contraseña al volver.
+- S6b: `guardian` pide la contraseña al volver. S6: el registro de cada ciclo, en `Estado:Registros/`.
+- S8: con imagen de hibernación se arranca con la generación que la hizo.
 - S7 y S4: las cajas van en la imagen.
 - S14: el gestor de servicios hace de director de las fases.

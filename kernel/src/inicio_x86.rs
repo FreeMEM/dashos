@@ -24,8 +24,23 @@ macro_rules! elf {
 
 static INICIO: &[u8] = elf!("inicio");
 
+// Con `uso` (`make x86-uso`), el escritorio entero de la imagen de usar, como `virt-uso` en ARM, con sus programas
+// comprimidos (`build.rs`; los descomprime `crate::lz4` al montar el paquete).
+#[cfg(feature = "uso")]
+macro_rules! programa {
+    ($n:literal) => {
+        include_bytes!(concat!(env!("OUT_DIR"), "/", $n, ".lz4"))
+    };
+}
+#[cfg(feature = "uso")]
+#[path = "inicio_x86_uso.rs"]
+mod uso;
+#[cfg(feature = "uso")]
+use uso::PROGRAMAS;
+
 /// Los servicios que lanza `inicio`, en orden, con los aparatos (por nombre y tipo) y los canales (por nombre) que le
 /// pasa a cada uno: los de ARM (`inicio.rs`) que tienen sus aparatos en un PC.
+#[cfg(not(feature = "uso"))]
 static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // La consola (C48), con el registro y los puertos de COM1 (X6).
     ("consola", elf!("consola"), &[("registro", REGISTRO), ("serie", PUERTOS)], &[]),
@@ -51,14 +66,15 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("tono-b", elf!("tono-b"), &[], &["sonido"]),
     // X5c: la red, como en `virt` (S13): el servicio con la pila (nombra "red" y "red-estado" antes que nadie) y el
     // controlador de virtio-net, con su MSI-X. Y sus pruebas: el eco del PC y un glotón de conexiones.
-    ("red", elf!("red"), &[], &["red", "red-estado"]),
+    // Desde la unión con `revision`, como allí: cliente de "archivos" (lee `Prefs/Red`) y el permiso de escuchar.
+    ("red", elf!("red"), &[], &["archivos", "red", "red-estado", "red-escuchar"]),
     ("virtio-red", elf!("virtio-red"), &[("dma-vred", PERMISO_DMA), ("virtio-red", REGISTROS), ("vred-cfg", REGISTROS), ("virtio-red", INTERRUPCION | OPCIONAL)], &["red"]),
     // X5c: la red con cable de Intel: el I219 del PCH (pegaso) y el 82574L (el `e1000e` de QEMU). Como virtio-red.
     ("intel-red", elf!("intel-red"), &[("dma-ired", PERMISO_DMA), ("intel-red", REGISTROS), ("ired-cfg", REGISTROS), ("intel-red", INTERRUPCION | OPCIONAL)], &["red"]),
     // X5c: la red con cable de Realtek (RTL8125B, la de shiva), con el firmware de su PHY (`FIRMWARE_RTL8125`).
     ("rtl-red", elf!("rtl-red"), &[("dma-rtl", PERMISO_DMA), ("rtl-red", REGISTROS), ("rtl-cfg", REGISTROS), ("rtl8125b-fw", DATOS), ("rtl-red", INTERRUPCION | OPCIONAL)], &["red"]),
     ("red-gloton", elf!("red-gloton"), &[], &["red"]),
-    ("red-prueba", elf!("red-prueba"), &[], &["red"]),
+    ("red-prueba", elf!("red-prueba"), &[], &["red", "red-escuchar"]),
     // Dos clientes de Wayland de prueba (W7) y una aplicación con el kit (K7), como en ARM.
     ("ventana-a", elf!("ventana-a"), &[], &["ventanas"]),
     ("ventana-b", elf!("ventana-b"), &[], &["ventanas"]),
@@ -75,8 +91,15 @@ const FIRMWARE: u32 = 5;
 const DATOS: u32 = 6;
 /// El permiso de pedir la clase de plazo (S3), como en `inicio.rs`.
 const PLAZO: u32 = 7;
-/// Puertos de E/S (X6): los de COM1, para la consola.
-const PUERTOS: u32 = 12;
+/// El permiso de máquinas virtuales (como en `inicio.rs`): para `sesiones`, que lo reparte.
+const MAQUINAS: u32 = 8;
+/// Los permisos de apagar y del aviso de memoria baja: `inicio` los busca por su nombre y se los manda a `sesiones`.
+const APAGAR: u32 = 10;
+const AVISO_MEMORIA: u32 = 11;
+/// El permiso de poner la hora del calendario (S13): para `hora`.
+const RELOJ: u32 = 12;
+/// Puertos de E/S (X6): los de COM1, para la consola. Era el 12 antes de unir `revision`, donde el 12 es el del reloj.
+const PUERTOS: u32 = 13;
 /// COM1: la UART 16550 de un PC, ocho puertos desde 0x3F8.
 const COM1: (u32, u32) = (0x3f8, 8);
 const OPCIONAL: u32 = 0x100;
@@ -170,6 +193,17 @@ fn pantalla_del_gop() -> Option<(Objeto, Objeto)> {
     Some((Objeto::Firmware { fisica: pagina, tamano: fin - pagina }, Objeto::Memoria(alloc::sync::Arc::new(info))))
 }
 
+/// El tamaño del ELF de un programa de `PROGRAMAS`: con `uso` van comprimidos, y el original es lo primero que guarda
+/// `build.rs`.
+fn tamano_elf(elf: &[u8]) -> u32 {
+    if cfg!(feature = "uso") { elf.get(0..4).map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])) } else { elf.len() as u32 }
+}
+
+/// El ELF entero de un programa de `PROGRAMAS` (con `uso`, descomprimido). `None` si no cuadra.
+fn elf_entero(elf: &[u8]) -> Option<alloc::borrow::Cow<'_, [u8]>> {
+    if cfg!(feature = "uso") { crate::lz4::programa(elf).map(alloc::borrow::Cow::Owned) } else { Some(alloc::borrow::Cow::Borrowed(elf)) }
+}
+
 /// Arma las llaves de arranque y lanza `inicio`. Falso si no se pudo.
 pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
     let mut llaves: Vec<Llave> = Vec::new();
@@ -240,6 +274,20 @@ pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
             apuntar(&mut llaves, "rtl8125b-fw", DATOS, Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), LEER | crate::objetos::TRANSFERIR));
         }
     }
+    // Como en `inicio.rs`: lo que se sabe de la máquina ("sistema": la RAM, si hay hipervisor y la RAM pedida para el
+    // invitado de la caja Linux, aquí 0), el permiso de máquinas virtuales y los de apagar, del aviso de memoria y
+    // del reloj. `inicio` los da a quien los nombra (`sesiones`, `hora`) o los busca por su nombre.
+    if let Some(m) = memoria::Memoria::nueva(memoria::PAGINA as usize, &crate::cupo::Cupo::raiz()) {
+        let mut datos = [0u8; 24];
+        datos[0..8].copy_from_slice(&(memoria::paginas().total() as u64 * memoria::PAGINA).to_le_bytes());
+        datos[8..16].copy_from_slice(&(crate::base::hiper::hay() as u64).to_le_bytes());
+        m.escribir(0, &datos);
+        apuntar(&mut llaves, "sistema", DATOS, Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), LEER | crate::objetos::TRANSFERIR));
+    }
+    apuntar(&mut llaves, "hipervisor", MAQUINAS, Llave::nueva(Objeto::PermisoMaquina, DERECHOS));
+    apuntar(&mut llaves, "apagar", APAGAR, Llave::nueva(Objeto::PermisoApagar, DERECHOS));
+    apuntar(&mut llaves, "memoria", AVISO_MEMORIA, Llave::nueva(Objeto::PermisoMemoria, DERECHOS));
+    apuntar(&mut llaves, "reloj", RELOJ, Llave::nueva(Objeto::PermisoReloj, DERECHOS));
     // Un servicio al que le falta algún aparato no se lanza.
     let lanzables: Vec<_> = PROGRAMAS
         .iter()
@@ -279,16 +327,25 @@ pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
             });
             de_canales |= 1 << i;
         }
-        paquete.extend_from_slice(&(elf.len() as u32).to_le_bytes());
+        paquete.extend_from_slice(&tamano_elf(elf).to_le_bytes());
         paquete.extend_from_slice(&de_canales.to_le_bytes());
         paquete.extend_from_slice(&suyos_aparatos);
         paquete.extend_from_slice(&nombre16(nombre));
     }
-    for (_, elf, _, _) in lanzables.iter() {
+    // Los nombres de los canales, para la tabla de llaves de cada programa (como en `inicio.rs`).
+    paquete.extend_from_slice(&(canales.len() as u32).to_le_bytes());
+    for c in &canales {
+        paquete.extend_from_slice(&nombre16(c));
+    }
+    for (nombre, elf, _, _) in lanzables.iter() {
         while paquete.len() % 8 != 0 {
             paquete.push(0);
         }
-        paquete.extend_from_slice(elf);
+        let Some(elf) = elf_entero(elf) else {
+            kprintln!("inicio: {} no se descomprime (o no da su huella)", nombre);
+            return false;
+        };
+        paquete.extend_from_slice(&elf);
     }
     let raiz = crate::cupo::Cupo::raiz();
     let Some(m) = memoria::Memoria::nueva(paquete.len(), &raiz) else { return false };

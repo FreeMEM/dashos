@@ -20,7 +20,7 @@ use caja_exec::{Exec, Memoria, Registros};
 
 use crate::acceso::{Acceso, palabra};
 use crate::estructuras::{drawinfo as dri, idcmp, ie, tag, window as win};
-use crate::lienzo::{Lienzo, Rect};
+use crate::lienzo::{Pinta, Rect};
 use crate::nitido::{Alinea, Estilo};
 use crate::lvo::{GADTOOLS as T, fila};
 use crate::tema::{Plumas, Vista};
@@ -254,7 +254,7 @@ pub(crate) fn leer_etiquetas<M: Memoria>(ex: &Exec<M>, mut d: u32) -> Result<Vec
 }
 
 /// Un texto con la fuente topaz/8 en el lienzo: arriba a la izquierda en `(x, y)`, cortado en `hasta` (x exclusiva).
-pub(crate) fn texto(l: &mut Lienzo, glifos: &[[u8; 8]], x: i32, y: i32, s: &[u8], c: u32, hasta: i32) -> i32 {
+pub(crate) fn texto(l: &mut dyn Pinta, glifos: &[[u8; 8]], x: i32, y: i32, s: &[u8], c: u32, hasta: i32) -> i32 {
     let mut x = x;
     for &b in s {
         if x + fuente::ANCHO as i32 > hasta {
@@ -278,7 +278,7 @@ pub(crate) fn texto(l: &mut Lienzo, glifos: &[[u8; 8]], x: i32, y: i32, s: &[u8]
 /// llega hasta `hasta` (dentro del lienzo) y la letra de DashOS, más estrecha, puede enseñar más del texto.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn texto_n(
-    l: &mut Lienzo,
+    l: &mut dyn Pinta,
     glifos: &[[u8; 8]],
     x: i32,
     y: i32,
@@ -288,7 +288,7 @@ pub(crate) fn texto_n(
     alinea: Alinea,
     estilo: Estilo,
 ) -> i32 {
-    if !l.nitido || s.is_empty() {
+    if !l.nitido() || s.is_empty() {
         return texto(l, glifos, x, y, s, c, hasta);
     }
     let fw = fuente::ANCHO as i64;
@@ -308,21 +308,13 @@ pub(crate) fn texto_n(
     fin_x
 }
 
-pub(crate) fn llenar(l: &mut Lienzo, r: Rect, c: u32) {
-    let r = r.interseccion(&l.rect());
-    if r.vacio() {
-        return;
-    }
-    for y in r.y0..=r.y1 {
-        for x in r.x0..=r.x1 {
-            l.poner(x, y, c);
-        }
-    }
+pub(crate) fn llenar(l: &mut dyn Pinta, r: Rect, c: u32) {
+    l.rellenar(r, c);
 }
 
 /// Un marco de GadTools: claro arriba y a la izquierda, oscuro abajo y a la derecha (al revés si `hundido`). Como en
 /// 3.x, las esquinas de abajo a la izquierda y de arriba a la derecha son del color de abajo y de arriba.
-pub(crate) fn bisel(l: &mut Lienzo, r: Rect, claro: u32, oscuro: u32, hundido: bool) {
+pub(crate) fn bisel(l: &mut dyn Pinta, r: Rect, claro: u32, oscuro: u32, hundido: bool) {
     let (a, b) = if hundido { (oscuro, claro) } else { (claro, oscuro) };
     llenar(l, Rect::nuevo(r.x0, r.y0, r.x1 - 1, r.y0), a);
     llenar(l, Rect::nuevo(r.x0, r.y0, r.x0, r.y1 - 1), a);
@@ -429,7 +421,7 @@ impl<C: Compositor> CajaGrafica<C> {
             GT_GETGADGETATTRSA => self.gt_get_attrs(ex, a[0], a[3]),
             GETVISUALINFOA => {
                 let s = a[0];
-                if s != self.intui.wb.dir {
+                if self.pantalla(s).is_none() {
                     return Err(Fallo::PantallaDesconocida { dir: s });
                 }
                 let vi = ex.alloc_mem(8, memf::PUBLIC | memf::CLEAR)?;
@@ -920,8 +912,9 @@ impl<C: Compositor> CajaGrafica<C> {
         let Some(r) = Self::caja_en(ex, w, g) else { return };
         let Some(bm) = self.intui.ventanas.get(&w).map(|v| v.bm) else { return };
         let desactivado = ex.l16(g.wrapping_add(gadget::FLAGS)).unwrap_or(0) & gadget::GFLG_DISABLED != 0;
-        let plumas = self.plumas(ex);
-        let paleta: Vec<u32> = (0..s.colores.min(256)).map(|i| self.color(self.intui.wb.cm, (i + s.desplaz) as u8)).collect();
+        let plumas = self.plumas(ex, w);
+        let cm = self.pantalla_de(w).cm;
+        let paleta: Vec<u32> = (0..s.colores.min(256)).map(|i| self.color(cm, (i + s.desplaz) as u8)).collect();
         let elementos = if s.tipo == kind::LISTVIEW { Self::elementos(ex, s.lista) } else { Vec::new() };
         let (cadena, cursor) = if s.info != 0 {
             let buf = ex.l32(s.info.wrapping_add(stringinfo::BUFFER)).unwrap_or(0);
@@ -944,7 +937,8 @@ impl<C: Compositor> CajaGrafica<C> {
                 Rect::nuevo(bi, ba, gm.ancho - bd - 1, gm.alto - bb - 1)
             })
         };
-        let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return };
+        let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) else { return };
+        let l = &mut l;
         let bordes: Vec<(i32, i32, u32)> = match dentro_gzz {
             Some(d) => {
                 let (an, al) = (l.ancho() as i32, l.alto() as i32);
@@ -977,19 +971,20 @@ impl<C: Compositor> CajaGrafica<C> {
         l.danar(dano.interseccion(&l.rect()));
     }
 
-    /// Los colores del tema: los de las plumas de la `DrawInfo` del Workbench (la de la memoria del 68k, la que ve el
-    /// programa), con las de intuition si no se puede leer.
-    pub(crate) fn plumas<M: Memoria>(&self, ex: &Exec<M>) -> Plumas {
-        let di = self.intui.wb.drawinfo;
+    /// Los colores del tema para la ventana `w`: los de las plumas de la `DrawInfo` de su pantalla (la de la memoria del
+    /// 68k, la que ve el programa) con la paleta de su pantalla, con las de intuition si no se puede leer.
+    pub(crate) fn plumas<M: Memoria>(&self, ex: &Exec<M>, w: u32) -> Plumas {
+        let pa = self.pantalla_de(w);
+        let (di, cm, propias) = (pa.drawinfo, pa.cm, pa.plumas);
         let tabla = ex.l32(di.wrapping_add(dri::DRI_PENS)).unwrap_or(0);
         let n = ex.l16(di.wrapping_add(dri::DRI_NUMPENS)).unwrap_or(0) as usize;
         let pen = |i: usize| -> u32 {
             let p = if i < n && tabla != 0 {
-                ex.l16(tabla.wrapping_add(2 * i as u32)).unwrap_or(self.intui.wb.plumas[i])
+                ex.l16(tabla.wrapping_add(2 * i as u32)).unwrap_or(propias[i])
             } else {
-                self.intui.wb.plumas[i]
+                propias[i]
             };
-            self.color(self.intui.wb.cm, p as u8)
+            self.color(cm, p as u8)
         };
         Plumas {
             detalle: pen(dri::DETAILPEN),
@@ -1119,7 +1114,8 @@ impl<C: Compositor> CajaGrafica<C> {
         }
         let (dx, dy) = self.origen_capa(i.capa);
         let capa = self.recorte_capa(i.capa);
-        let Some(l) = self.gfx.lienzos.get_mut(&i.bm) else { return Ok(false) };
+        let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, i.bm) else { return Ok(false) };
+        let l = &mut l;
         let clip = capa.map_or(l.rect(), |c| c.interseccion(&l.rect()));
         let r = Rect::nuevo(x.saturating_add(dx), y.saturating_add(dy), x.saturating_add(an - 1).saturating_add(dx), y.saturating_add(al - 1).saturating_add(dy));
         // Lo de fuera del recorte (otra capa, los bordes de una GIMMEZEROZERO) se guarda y se devuelve.
