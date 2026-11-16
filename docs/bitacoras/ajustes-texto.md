@@ -147,6 +147,10 @@ Resultado sobre lo último: `make prueba`, `arranque-virt` (a la segunda: la pri
 ReAction de la caja Amiga salió encima de la del centro justo cuando el guion iba a pulsar Quitar, y el guion se
 quedó esperando; no se repitió), `arranque-virt-2`, `arranque-virt-linux` y `arranque-virt-shell`: bien.
 
+Paso 5 (Guardar por `sesiones`), sobre lo último: `make prueba`, `arranque-virt-2`, `arranque-virt-linux` y
+`arranque-virt-shell` bien; `arranque-virt` bien a la segunda: la primera falló solo en la prueba A15 del comprobador
+("la foto: error 5", 2 de 50 vueltas limpias, al arrancar, antes de que el centro escriba nada); no se repitió.
+
 - PC: `cargo test` de `idioma` (los del formato, `Sys/locale` que manda, la lista de idiomas), `shell` y la de
   `vigilancia.rs` (ráfaga, puerta llena y cerrada, borrado y fuera, miles y el que se va).
 - QEMU (`make arranque-virt`), en `Programas/ram`:
