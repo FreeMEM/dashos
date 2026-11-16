@@ -39,6 +39,8 @@ pub mod mmio;
 #[path = "../memoria.rs"]
 pub mod memoria;
 pub mod mmu;
+/// A14 en x86: el reloj de la placa (el RTC del CMOS).
+pub mod rtc;
 #[path = "../monton.rs"]
 pub mod monton;
 pub mod nucleos;
