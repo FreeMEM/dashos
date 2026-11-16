@@ -8,3 +8,7 @@ build-std-features = ["compiler-builtins-mem"]
 # El mismo guion de enlace que los programas de `usuario/`.
 [target.aarch64-unknown-none-softfloat]
 rustflags = ["-C", "link-arg=-T../usuario/enlace.ld", "-C", "relocation-model=static"]
+
+# x86-64 (`make x86-uso`): como los programas de `usuario/` en x86 (su guion de enlace y sus opciones).
+[target.x86_64-unknown-none]
+rustflags = ["-C", "link-arg=-T../usuario/enlace_x86.ld", "-C", "link-arg=-znorelro", "-C", "relocation-model=static", "-C", "code-model=small", "--cfg", "aes_force_soft", "--cfg", "poly1305_force_soft"]

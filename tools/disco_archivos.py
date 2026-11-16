@@ -33,8 +33,11 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fondos_prueba  # noqa: E402
 
+# Los programas del disco son de la arquitectura de la imagen: de ARM, o de x86-64 con DASHOS_ARQ=x86_64 (`make
+# x86-uso`).
+DESTINO = "x86_64-unknown-none" if os.environ.get("DASHOS_ARQ") == "x86_64" else "aarch64-unknown-none-softfloat"
 # U2: un programa en el disco, para que `sesiones` lo lance desde ahí (el mismo `hola` que se construye).
-HOLA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "usuario", "target", "aarch64-unknown-none-softfloat", "release", "hola")
+HOLA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "usuario", "target", DESTINO, "release", "hola")
 # Y `pide`: lanzado desde el disco, nace con su canal con `sesiones` y repite la prueba de U4 con su número nuevo.
 PIDE = os.path.join(os.path.dirname(HOLA), "pide")
 # U6: `cambio`, la prueba del cambio rápido de usuario (lo lanza `guardian`, como Ana y como Carla).
@@ -113,7 +116,7 @@ SYS_CAJONES = [
 # El Shell nativo (docs/bitacoras/shell-nativa.md): el programa, en `System/Shell`; sus órdenes, en `C/` (el `SYS:C` de
 # S4b), cada una un programa (`usuario/src/bin/ordenes/`); y el guion de su prueba, `S/Prueba-Shell`, que `guardian`
 # le hace ejecutar como Ana: ejercita las órdenes y lo hostil, y deja el disco como estaba.
-ORDENES_BIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ordenes", "target", "aarch64-unknown-none-softfloat", "release")
+ORDENES_BIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ordenes", "target", DESTINO, "release")
 SHELL = os.path.join(ORDENES_BIN, "shell")
 # Las órdenes de base van juntas en un programa, `C/Ordenes` (17 órdenes en unos 100 KB): sueltas, cada una lleva su
 # copia de lo común y entre todas ocupan 880 KB, que en este disco de 7 MB dejan sin sitio a las pruebas de archivos.

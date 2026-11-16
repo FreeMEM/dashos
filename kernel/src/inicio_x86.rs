@@ -24,8 +24,23 @@ macro_rules! elf {
 
 static INICIO: &[u8] = elf!("inicio");
 
+// Con `uso` (`make x86-uso`), el escritorio entero de la imagen de usar, como `virt-uso` en ARM, con sus programas
+// comprimidos (`build.rs`; los descomprime `crate::lz4` al montar el paquete).
+#[cfg(feature = "uso")]
+macro_rules! programa {
+    ($n:literal) => {
+        include_bytes!(concat!(env!("OUT_DIR"), "/", $n, ".lz4"))
+    };
+}
+#[cfg(feature = "uso")]
+#[path = "inicio_x86_uso.rs"]
+mod uso;
+#[cfg(feature = "uso")]
+use uso::PROGRAMAS;
+
 /// Los servicios que lanza `inicio`, en orden, con los aparatos (por nombre y tipo) y los canales (por nombre) que le
 /// pasa a cada uno: los de ARM (`inicio.rs`) que tienen sus aparatos en un PC.
+#[cfg(not(feature = "uso"))]
 static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // La consola (C48), con el registro y los puertos de COM1 (X6).
     ("consola", elf!("consola"), &[("registro", REGISTRO), ("serie", PUERTOS)], &[]),
@@ -161,6 +176,17 @@ fn pantalla_del_gop() -> Option<(Objeto, Objeto)> {
     Some((Objeto::Firmware { fisica: pagina, tamano: fin - pagina }, Objeto::Memoria(alloc::sync::Arc::new(info))))
 }
 
+/// El tamaño del ELF de un programa de `PROGRAMAS`: con `uso` van comprimidos, y el original es lo primero que guarda
+/// `build.rs`.
+fn tamano_elf(elf: &[u8]) -> u32 {
+    if cfg!(feature = "uso") { elf.get(0..4).map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])) } else { elf.len() as u32 }
+}
+
+/// El ELF entero de un programa de `PROGRAMAS` (con `uso`, descomprimido). `None` si no cuadra.
+fn elf_entero(elf: &[u8]) -> Option<alloc::borrow::Cow<'_, [u8]>> {
+    if cfg!(feature = "uso") { crate::lz4::programa(elf).map(alloc::borrow::Cow::Owned) } else { Some(alloc::borrow::Cow::Borrowed(elf)) }
+}
+
 /// Arma las llaves de arranque y lanza `inicio`. Falso si no se pudo.
 pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
     let mut llaves: Vec<Llave> = Vec::new();
@@ -272,7 +298,7 @@ pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
             });
             de_canales |= 1 << i;
         }
-        paquete.extend_from_slice(&(elf.len() as u32).to_le_bytes());
+        paquete.extend_from_slice(&tamano_elf(elf).to_le_bytes());
         paquete.extend_from_slice(&de_canales.to_le_bytes());
         paquete.extend_from_slice(&suyos_aparatos);
         paquete.extend_from_slice(&nombre16(nombre));
@@ -282,11 +308,15 @@ pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
     for c in &canales {
         paquete.extend_from_slice(&nombre16(c));
     }
-    for (_, elf, _, _) in lanzables.iter() {
+    for (nombre, elf, _, _) in lanzables.iter() {
         while paquete.len() % 8 != 0 {
             paquete.push(0);
         }
-        paquete.extend_from_slice(elf);
+        let Some(elf) = elf_entero(elf) else {
+            kprintln!("inicio: {} no se descomprime (o no da su huella)", nombre);
+            return false;
+        };
+        paquete.extend_from_slice(&elf);
     }
     let raiz = crate::cupo::Cupo::raiz();
     let Some(m) = memoria::Memoria::nueva(paquete.len(), &raiz) else { return false };
