@@ -16,7 +16,9 @@ Lee `PLAN.md` antes de empezar. Ahí están las decisiones tomadas, las piezas y
    Con los chips del Amiga (S18, usuario, 2026-11-08): el núcleo de vAmiga (`Core`, MPL-2.0) se puede leer y
    reutilizar con su aviso, tras revisar las cabeceras. UAE, WinUAE y Amiberry (GPL) no se leen; solo un analista,
    y solo para un comportamiento concreto que no salga del manual, de vAmiga ni de las pruebas, en prosa.
-2. **Nada de código de la ROM en el repositorio.** Ni desensamblados, ni traducciones, ni volcados.
+2. **Nada de código de la ROM en el repositorio.** Ni desensamblados, ni traducciones, ni volcados. Vale también
+   para la ROM libre de AROS (S18, S36): su binario se baja al construir la imagen, con su huella comprobada, y
+   nunca entra en git; su código no se lee (regla de sala limpia).
 3. **Los cambios en ficheros de Emu68 siguen siendo MPL-2.0.** Lo propio de DashOS va en ficheros aparte.
 4. **Los cambios en Dash los hacen las sesiones de Dash** (`~/Projects/FreeMEMLang`). Aquí solo se usa.
 5. **Cada función de la API llega con su prueba del oráculo.** El mismo binario 68k se ejecuta en FS-UAE con el

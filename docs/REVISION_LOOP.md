@@ -2146,3 +2146,6 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   (por usuario, cuando estén unidas las ramas del escritorio) y `pool.ntp.org` de serie, con ajuste para cambiarlo o
   apagarlo. Pendiente al unir: que ninguna prueba salga a Internet (en `arranque-virt-linux` el servicio de red
   preguntó por `pool.ntp.org`).
+- **`RAM:` (rama `ram-volumen`, por unir)**: el usuario acepta (2026-11-16) el tope (la 32.ª parte de la memoria,
+  entre 16 y 256 MB) como ajuste, que `ENV:` no se guarde al salir (como en el Amiga), y dejar para después el tope de
+  memoria de la sesión entera. La orden de S9 se llama `ModoMonitor`; `AGENTS.md` nombra la ROM de AROS en su regla 2.

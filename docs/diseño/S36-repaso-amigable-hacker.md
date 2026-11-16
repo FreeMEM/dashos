@@ -160,7 +160,7 @@ cambió en su sitio. Donde no había nada decidido se dice qué tiene que existi
 el formato queda "por diseñar al hacerlo".
 
 Nombres comunes, los mismos en todos: órdenes `Ajuste`, `Registro`, `Permiso`, `Instantanea`, `Caja`, `Status`,
-`Break`, `Usuario`, `Avisos`, `Sonido`, `Pantalla`, `Dormir` e `Hibernar`; cajón `Estado:Registros/`; "modo de
+`Break`, `Usuario`, `Avisos`, `Sonido`, `ModoMonitor`, `Dormir` e `Hibernar`; cajón `Estado:Registros/`; "modo de
 desarrollo"; "Mostrar todos los ficheros". Quién define cada cosa: S4b, las capas y los cajones; S6, el registro y el
 modo de desarrollo; S6b, los permisos; S5, las instantáneas; S7, la orden `Caja`; S27 (apartado 7), la orden `Ajuste`.
 
@@ -208,7 +208,7 @@ Nombres nuevos y provisionales: `Estado:Prefs` y `Estado:Devs` (la capa de la m�
 | S27 | 1 | La orden `Ajuste`; el texto manda sobre el IFF; "Deshacer cambios"; textos del panel en llano; zona horaria de serie |
 | S26 | 1, 2 | El dueño del tema es el servicio de apariencia; aviso con la línea que falla; excepciones con el ratón |
 | S23 | 1, 9 | "Probar con Workbench clásico"; la ficha como tooltypes; ver en ventana desde el menú |
-| S9 | 1 | La orden `Pantalla`; el modo nuevo se prueba y vuelve solo |
+| S9 | 1 | La orden `ModoMonitor`; el modo nuevo se prueba y vuelve solo |
 | S19 | 1, 2 | Aviso al cambiar de salida; regla de salida de serie; la orden `Sonido`; registro de quién grabó |
 | S19b | 1, 2 | Ventana de cables y grafo en texto; período con nombres llanos; registro de plugins quitados |
 | S22 | 2, 10 | Se arranca con la generación de la imagen; aviso de lo que no guardó; `Dormir` e `Hibernar`; el sitio de la imagen |
@@ -231,7 +231,7 @@ medias de S4-1. Con ellos son 152 aplicados de 162.
 | S18-2, S4-1 | S18, S4, S32, PLAN | La ROM de AROS en la imagen de `SYS:`, bajada al construir, nunca en git. Manda el Kickstart del usuario si lo hay. La caja elige sola el modo. Se dice que no irán todos los juegos. Fase 2 de S18 |
 
 Con el cambio de nombres, la categoría de Ajustes y el programa de `SYS:Prefs` pasan a llamarse "Monitores", y el
-poder de S10b, "Espacios de trabajo". La orden `Pantalla` de S9 no se ha renombrado (duda 7).
+poder de S10b, "Espacios de trabajo". La orden de S9 se llama `ModoMonitor` (usuario, 2026-11-16).
 
 ## No aplicado
 
@@ -269,7 +269,7 @@ Dudas que salieron al aplicar:
    no se tocó.
 6. Las órdenes de S21 (qué chip hace cada trabajo), S24 (describir la máquina), S33 (clases de DataTypes) y S20
    (montar imágenes) quedan sin nombre.
-7. La orden `Pantalla` (S9) cambia el modo de un monitor. Con los tres nombres le tocaría llamarse de otra forma,
+7. Resuelta el 2026-11-16: se llama `ModoMonitor`. Antes: la orden `Pantalla` (S9) cambia el modo de un monitor. Con los tres nombres le tocaría llamarse de otra forma,
    pero "Monitor" choca con el Monitor del sistema. Se deja como está hasta que se decida. Tampoco se ha tocado
    "modo de pantalla" ni `Prefs/ScreenMode`, que son nombres del Amiga.
 8. En S18, pasar un programa de la caja nativa a máquina entera "al primer acceso a los chips" obliga a volver a
