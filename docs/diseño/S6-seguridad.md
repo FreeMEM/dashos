@@ -176,6 +176,17 @@ Es uno solo para todo el sistema:
 
 El formato de la línea, cuánto se guarda y cómo se separa lo de cada usuario: por diseñar al hacerlo.
 
+**Hecho** (rama `registro-permisos`, 2026-11-16; bitácora `docs/bitacoras/registro-permisos.md`). Tres ficheros de
+texto: `seguridad`, `sistema` y `programas`, para que lo que manda un programa no se coma lo de seguridad. Una línea:
+`2026-11-16T08:41:30Z editor Ana permiso no se da "red" (usar la red): el usuario dijo que no` (hora en UTC, programa,
+usuario, clase y qué, con el motivo tras ": "). Solo escribe `sesiones`, que pone la hora, el programa y el usuario
+(sabe quién es cada uno por la marca de su llave); solo añade al final, y a los 64 KB el fichero pasa a `.1`. Cada uno
+lee lo suyo y lo del sistema; todo, con la acción de administrador "registro". Lo que apunta un programa va con un
+ritmo por programa y usuario, y lo que se pierde por ir deprisa se dice. La orden `Registro` lee, filtra (programa,
+clase, fechas), sigue en vivo y apunta. Pendiente del usuario: que leer el de todos pida contraseña; los tres ficheros
+y su tope; que cada persona no pueda leer el suyo con `Type` (está en el cajón de `sesiones`, 0700). La lista en
+Ajustes, no hecha.
+
 La A72 de la Pi 4 no tiene las defensas por hardware de CPUs más nuevas, como PAN, PAC, BTI o MTE (S3). La A76 de la
 Pi 5 añade PAN, pero tampoco tiene PAC, BTI ni MTE. Lo que se hace a mano en su lugar está en S16.
 

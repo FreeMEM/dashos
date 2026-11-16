@@ -101,7 +101,7 @@ Proceso: excepción de clase 0x20 en 0xffffff8000080000
 C32: registros de EL0 bien
 # S3: los cupos son topes; la memoria llena de verdad falla limpio y avisa por el canal del oyente (llamada 53).
 memoria: quedan
-  topes: cadena true, sin cobro a medias true, devuelto true, cien hermanos de 1 TB true; memoria llena a
+  topes: cadena true, sin cobro a medias true, contado true, devuelto true, cien hermanos de 1 TB true; memoria llena a
 S3: cupos como topes y aviso de memoria baja bien
 # C51: hola (C19 y C30), padre (C39) y grupos (C42) los lanza también el lanzador, y cada grupo tiene que quedar a cero.
   subgrupos uno dentro de otro: 7 niveles como mucho

@@ -38,6 +38,7 @@ mod preguntas_ficheros;
 use preguntas_ficheros as pf;
 
 use alloc::string::String;
+use dashos::permisos_texto as pt;
 use dashos::println;
 use dashos::protocolo::sesiones::{ENTRAR, FICHA, LANZAR, POR_PAGINA, PREGUNTA, PREGUNTAS, PROCESOS, RESPUESTA, RESPUESTA_ADMIN, RETIRAR, SALIR, VOLVER};
 use kit::lienzo::{Lienzo, Rect};
@@ -158,7 +159,7 @@ fn principal() -> u64 {
         let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
         let programa = &q[8..8 + campo(&q[8..24])];
         let servicio = &q[24..24 + campo(&q[24..40])];
-        if de_apagar(&q) {
+        if de_apagar(&q) || de_permiso(&q) {
             continue;
         }
         // S28: la guardia de ficheros de la caja Amiga (un permiso sin llave): siempre, esta vez o no.
@@ -301,7 +302,7 @@ fn principal() -> u64 {
     // Shell nativo: se lanza como Ana, con su guion de prueba (lo que escribe va al registro), y se espera a que acabe.
     if quien.as_deref() == Some("Ana") {
         let (e_shell, p_shell) = lanzar_con_argumentos("System/Shell", 1000, "REGISTRO ORDEN Execute S:Prueba-Shell");
-        let acaba = e_shell == 0 && esperar_fin(p_shell, 240_000_000);
+        let acaba = e_shell == 0 && esperar_atendiendo(p_shell, 240_000_000, preguntas);
         println!("  [guardian] Shell nativo: lanza System/Shell como Ana: {}, acaba: {}", e_shell, acaba);
     }
     // U6, paso 2, prueba hostil: `Programas/panel` (una copia de `cambio`), lanzado del disco con el nombre del panel
@@ -386,7 +387,7 @@ fn de_apagar(q: &[u8; PREGUNTA]) -> bool {
 fn atender(preguntas: u32) -> ! {
     loop {
         let mut q = [0u8; PREGUNTA];
-        if dashos::canal_leer(preguntas, &mut q, &mut []).0 as usize != PREGUNTA || de_apagar(&q) {
+        if dashos::canal_leer(preguntas, &mut q, &mut []).0 as usize != PREGUNTA || de_apagar(&q) || de_permiso(&q) {
             continue;
         }
         let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
@@ -440,7 +441,7 @@ fn contestar_a_cambio(preguntas: u32, max_us: u64, hasta: impl Fn((u32, u32)) ->
     let mut cuentas = (0, 0);
     while dashos::ahora_us() < fin && !hasta(cuentas) {
         let mut q = [0u8; PREGUNTA];
-        if dashos::canal_leer_plazo(preguntas, &mut q, &mut [], 200_000).0 as usize != PREGUNTA {
+        if dashos::canal_leer_plazo(preguntas, &mut q, &mut [], 200_000).0 as usize != PREGUNTA || de_permiso(&q) {
             continue;
         }
         let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
@@ -662,6 +663,90 @@ fn preguntar(programa: &str, servicio: &str) -> bool {
     r
 }
 
+/// S6b, S36: si `q` es un cambio de permiso ("+dar" o "+quitar", de la orden `Permiso`), se pregunta al usuario y se
+/// contesta a `sesiones`. Si no, falso.
+fn de_permiso(q: &[u8; PREGUNTA]) -> bool {
+    let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
+    let pide = core::str::from_utf8(&q[8..8 + campo(&q[8..24])]).unwrap_or("?");
+    let dar = match &q[24..24 + campo(&q[24..40])] {
+        b"+dar" => true,
+        b"+quitar" => false,
+        _ => return false,
+    };
+    let (programa, permiso) = pf::leer_detalle(&q[40..]);
+    let (programa, permiso) = (limpiar(programa, "un programa"), limpiar(permiso, "?"));
+    let mut memoria = 0;
+    let r = preguntar_dentro(pide, &Pregunta::Cambio { dar, programa: &programa, permiso: &permiso }, &mut memoria);
+    dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
+    dashos::memoria_quitar(VA);
+    if memoria > 0 {
+        dashos::cerrar(memoria);
+    }
+    let si = r == pf::RESPUESTA_SIEMPRE;
+    println!("  [guardian] cambiar permiso: ¿{} puede {} a {} {}? El usuario dice {}", pide, if dar { "dar" } else { "quitar" }, programa, permiso, if si { "sí" } else { "no" });
+    let mut m = [0u8; 12];
+    m[0..4].copy_from_slice(&RESPUESTA.to_le_bytes());
+    m[4..8].copy_from_slice(&q[0..4]);
+    m[8..12].copy_from_slice(&(si as u32).to_le_bytes());
+    pedir(&m, &[]);
+    true
+}
+
+/// Shell nativo, con S36: espera a que acabe el proceso `pid` (como `esperar_fin`), atendiendo mientras las preguntas
+/// que le lleguen: el guion del Shell usa `Permiso` y `Registro TODO`, que preguntan. Los cambios de permiso, al usuario
+/// (en la prueba contesta el guion de QEMU); la acción de administrador "registro" del Shell, con la contraseña de Ana,
+/// como hace con `pide` y el centro; las demás acciones, negadas; los permisos, al usuario.
+fn esperar_atendiendo(pid: u64, max_us: u64, preguntas: u32) -> bool {
+    let hasta = dashos::ahora_us() + max_us;
+    let mut mirado = 0u64;
+    while dashos::ahora_us() < hasta {
+        if dashos::ahora_us() >= mirado + 500_000 {
+            if !vivo(pid) {
+                return true;
+            }
+            mirado = dashos::ahora_us();
+        }
+        let mut q = [0u8; PREGUNTA];
+        if dashos::canal_leer_plazo(preguntas, &mut q, &mut [], 300_000).0 as usize != PREGUNTA || de_apagar(&q) || de_permiso(&q) {
+            continue;
+        }
+        let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
+        let programa = &q[8..8 + campo(&q[8..24])];
+        let servicio = &q[24..24 + campo(&q[24..40])];
+        if pf::es_permiso(servicio) {
+            let r = preguntar_fichero(core::str::from_utf8(programa).unwrap_or("?"), servicio, &q[40..]);
+            let mut m = [0u8; 12];
+            m[0..4].copy_from_slice(&RESPUESTA.to_le_bytes());
+            m[4..8].copy_from_slice(&q[0..4]);
+            m[8..12].copy_from_slice(&r.to_le_bytes());
+            pedir(&m, &[]);
+            continue;
+        }
+        let mut r = [0u8; 64];
+        let largo = if servicio.first() == Some(&b'*') {
+            let (usuario, clave): (&[u8], &[u8]) = if programa == b"Shell" && servicio == b"*registro" { (b"Ana", b"clave de Ana") } else { (b"", b"") };
+            r[0..4].copy_from_slice(&RESPUESTA_ADMIN.to_le_bytes());
+            r[4..8].copy_from_slice(&q[0..4]);
+            r[8..12].copy_from_slice(&(usuario.len() as u32).to_le_bytes());
+            r[12..16].copy_from_slice(&(clave.len() as u32).to_le_bytes());
+            r[16..16 + usuario.len()].copy_from_slice(usuario);
+            r[16 + usuario.len()..16 + usuario.len() + clave.len()].copy_from_slice(clave);
+            println!("  [guardian] {} pide {}: {}", core::str::from_utf8(programa).unwrap_or("?"), core::str::from_utf8(&servicio[1..]).unwrap_or("?"),
+                if usuario.is_empty() { "no" } else { "contesta como Ana" });
+            16 + usuario.len() + clave.len()
+        } else {
+            let si = preguntar(core::str::from_utf8(programa).unwrap_or("?"), core::str::from_utf8(servicio).unwrap_or("?"));
+            r[0..4].copy_from_slice(&RESPUESTA.to_le_bytes());
+            r[4..8].copy_from_slice(&q[0..4]);
+            r[8..12].copy_from_slice(&(si as u32).to_le_bytes());
+            12
+        };
+        pedir(&r[..largo], &[]);
+        r.fill(0);
+    }
+    false
+}
+
 /// S28: la guardia de ficheros de la caja Amiga. `programa` es quien pide en `sesiones` (la caja), `permiso` el permiso
 /// sin llave (`ejec:...`) y `detalle` el programa 68k y el fichero (`preguntas_ficheros::detalle`), que no se fían: se
 /// enseñan limpios. Lo mismo que `preguntar`, con tres respuestas: Mayús+S siempre (se guarda), E solo esta vez y N no.
@@ -697,6 +782,8 @@ fn limpiar(t: &str, si_no: &str) -> String {
 enum Pregunta<'a> {
     Servicio(&'a str),
     Fichero { prog68k: &'a str, fichero: &'a str, frase: &'a str },
+    /// S6b, S36: dar o quitar un permiso a un programa, que pide otro (la orden `Permiso` del Shell).
+    Cambio { dar: bool, programa: &'a str, permiso: &'a str },
 }
 
 fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u32 {
@@ -704,7 +791,12 @@ fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u
     const CAPA: u32 = 21;
     // El diálogo; su sombra la pone el compositor, como a las demás capas. El de un fichero, más grande.
     let fichero = matches!(pregunta, Pregunta::Fichero { .. });
-    let (ancho_d, alto_d) = if fichero { DIALOGO_FICHERO } else { DIALOGO };
+    // S6b, S36: el nombre interno del permiso, solo en "Detalles" (con la D). El de un cambio de permiso (la orden
+    // `Permiso`) es el diálogo grande, como el de un fichero de la caja; el de un permiso, el de siempre (los detalles
+    // van en la línea de "Contesta con el teclado").
+    let con_detalles = matches!(pregunta, Pregunta::Cambio { .. }) || matches!(pregunta, Pregunta::Servicio(s) if !s.starts_with('*'));
+    let mut detalles = false;
+    let (ancho_d, alto_d) = if fichero || matches!(pregunta, Pregunta::Cambio { .. }) { DIALOGO_FICHERO } else { DIALOGO };
     const ESPERA_US: u64 = 1_000_000;
     /// El tema del sistema (S10c): llega al enlazar, antes que la configuración de la capa.
     const TEMA: u32 = 22;
@@ -758,7 +850,7 @@ fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u
                     return pf::RESPUESTA_NO;
                 }
                 let px = unsafe { core::slice::from_raw_parts_mut(VA as *mut u32, tamano / 4) };
-                pintar_pregunta(px, ancho_d, alto_d, programa, pregunta, &mut fuente, &mut medio, &tema);
+                pintar_pregunta(px, ancho_d, alto_d, programa, pregunta, detalles, &mut fuente, &mut medio, &tema);
                 let copia = dashos::llave_duplicar(m as u32, dashos::LEER | dashos::TRANSFERIR, 0);
                 let mut e = Escritor::new();
                 e.empezar(CAPA, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(palabra(0)).fin();
@@ -786,6 +878,9 @@ fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u
                     Pregunta::Fichero { prog68k, fichero, frase } => {
                         println!("  [guardian] pregunta en pantalla: {}: {} quiere cambiar {}, {}", programa, prog68k, fichero, frase)
                     }
+                    Pregunta::Cambio { dar, programa: p, permiso } => {
+                        println!("  [guardian] pregunta en pantalla: cambiar permiso: {} quiere {} a {} {}", programa, if *dar { "dar" } else { "quitar" }, p, permiso)
+                    }
                 }
             }
             (TECLADO, wl_keyboard::ev::KEYMAP) => {
@@ -805,6 +900,19 @@ fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u
                     // dar un permiso.
                     Some(Tecla::Letra('S')) => return pf::RESPUESTA_SIEMPRE,
                     Some(Tecla::Letra('e' | 'E')) if fichero => return pf::RESPUESTA_ESTA_VEZ,
+                    // S6b, S36: la D enseña (o esconde) el nombre interno del permiso: el detalle, a una tecla.
+                    Some(Tecla::Letra('d' | 'D')) if con_detalles && *memoria != 0 => {
+                        detalles = !detalles;
+                        let tamano = (ancho_d * alto_d * 4) as usize;
+                        let px = unsafe { core::slice::from_raw_parts_mut(VA as *mut u32, tamano / 4) };
+                        pintar_pregunta(px, ancho_d, alto_d, programa, pregunta, detalles, &mut fuente, &mut medio, &tema);
+                        let mut e = Escritor::new();
+                        e.empezar(SUPERFICIE, wl_surface::req::ATTACH).uint(BUFER).int(0).int(0).fin();
+                        e.empezar(SUPERFICIE, wl_surface::req::DAMAGE).int(0).int(0).int(ancho_d).int(alto_d).fin();
+                        e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
+                        c.mandar(&e);
+                        println!("  [guardian] detalles de la pregunta: {}", if detalles { "a la vista" } else { "escondidos" });
+                    }
                     Some(Tecla::Letra('n' | 'N')) => return pf::RESPUESTA_NO,
                     _ => {}
                 }
@@ -832,7 +940,7 @@ const MAX_NOMBRE_VISTO: usize = 60;
 /// S28: la de un fichero de la caja Amiga: "Programa de Amiga" de título, y "<programa> quiere cambiar <fichero>, un
 /// programa ejecutable. ¿Lo dejas?" partido en líneas; las respuestas, "Mayús+S Siempre", "E Esta vez" y "N No".
 #[allow(clippy::too_many_arguments)]
-fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, pregunta: &Pregunta, fuente: &mut Fuente, medio: &mut Fuente, t: &Tema) {
+fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, pregunta: &Pregunta, detalles: bool, fuente: &mut Fuente, medio: &mut Fuente, t: &Tema) {
     let mut l = Lienzo::new(px, ancho, alto, ancho as usize);
     l.borrar(Rect::new(0, 0, ancho, alto), 0);
     let caja = Rect::new(0, 0, ancho, alto);
@@ -846,6 +954,7 @@ fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, pregun
         Pregunta::Servicio("*reiniciar") => String::from("¿Reiniciar el equipo?"),
         Pregunta::Servicio(_) => alloc::format!("¿Dar permiso a \"{}\"?", programa),
         Pregunta::Fichero { .. } => String::from("Programa de Amiga"),
+        Pregunta::Cambio { .. } => String::from("¿Cambiar un permiso?"),
     };
     let tam = [24u32, 22, 20].into_iter().find(|&tam| fuente.medir(&titulo, tam).ancho <= ancho_texto).unwrap_or(20);
     l.recortar(Rect::new(x, caja.y, ancho_texto, caja.h));
@@ -857,10 +966,32 @@ fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, pregun
             alloc::vec![String::from("Hay otras sesiones abiertas y se cerrarán."), String::from("Contesta con el teclado.")],
             &[("Mayús+S", "Sí"), ("N", "No")],
         ),
-        Pregunta::Servicio(servicio) => (
-            alloc::vec![alloc::format!("Quiere usar \"{}\".", servicio), String::from("Contesta con el teclado.")],
-            &[("Mayús+S", "Sí"), ("N", "No")],
-        ),
+        // S6b, S36: la frase en llano del permiso; el nombre interno, solo en "Detalles".
+        Pregunta::Servicio(servicio) => {
+            let mut v = partir(fuente, &alloc::format!("Quiere {}.", pt::frase(servicio)), ancho_texto, 2);
+            v.push(if detalles {
+                alloc::format!("Detalles: permiso \"{}\" (D: esconder).", recortar(servicio).trim_matches('"'))
+            } else {
+                String::from("Contesta con el teclado (D: detalles).")
+            });
+            (v, &[("Mayús+S", "Sí"), ("N", "No")])
+        }
+        Pregunta::Cambio { dar, programa: p, permiso } => {
+            let texto = alloc::format!(
+                "{} quiere {} {} {} {}.",
+                recortar(programa),
+                if *dar { "dar a" } else { "quitar a" },
+                recortar(p),
+                if *dar { "permiso para" } else { "el permiso de" },
+                pt::frase(permiso)
+            );
+            let mut v = partir(fuente, &texto, ancho_texto, 3);
+            v.push(String::from(if detalles { "Contesta con el teclado (D: esconder los detalles)." } else { "Contesta con el teclado (D: detalles)." }));
+            if detalles {
+                v.push(alloc::format!("Detalles: permiso \"{}\"", recortar(permiso).trim_matches('"')));
+            }
+            (v, &[("Mayús+S", "Sí"), ("N", "No")])
+        }
         Pregunta::Fichero { prog68k, fichero, frase } => {
             let texto = alloc::format!(
                 "{} quiere cambiar {}, {}. ¿Lo dejas? Lo pide {}.",

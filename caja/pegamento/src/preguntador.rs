@@ -86,3 +86,30 @@ fn pedir(permiso: &[u8], detalle: &[u8]) -> (i32, u32) {
     let como = u32::from_le_bytes(r[4..8].try_into().unwrap());
     (estado, como)
 }
+
+/// S6, S36: lo que la guardia niega sin preguntar (el bloque de arranque de una imagen, por ejemplo) va al registro común
+/// (`Estado:Registros/sistema`, clase "guardia"), por la misma llave de `sesiones`: la hora, el programa (la caja) y el
+/// usuario los pone `sesiones`. Si va demasiado deprisa, `sesiones` no lo apunta y lo cuenta. Sin la llave, nada.
+pub fn apuntar(que: &str, motivo: &str) {
+    use dashos::protocolo::sesiones::APUNTAR;
+    let (q, mo) = (que.as_bytes(), motivo.as_bytes());
+    let lq = q.len().min(200);
+    let lm = mo.len().min(220 - lq);
+    let mut m = [0u8; 256];
+    m[0..4].copy_from_slice(&APUNTAR.to_le_bytes());
+    m[4..8].copy_from_slice(&(lq as u32).to_le_bytes());
+    m[8..12].copy_from_slice(&(lm as u32).to_le_bytes());
+    m[12..19].copy_from_slice(b"guardia");
+    m[28..28 + lq].copy_from_slice(&q[..lq]);
+    m[28 + lq..28 + lq + lm].copy_from_slice(&mo[..lm]);
+    let (lectura, vuelta) = dashos::canal_crear();
+    if dashos::canal_escribir(LLAVE_SESIONES, &m[..28 + lq + lm], &[vuelta]) != 0 {
+        dashos::cerrar(lectura);
+        dashos::cerrar(vuelta);
+        return;
+    }
+    // Lo justo para que no se acumulen respuestas; si `sesiones` tarda, la caja sigue.
+    let mut r = [0u8; 4];
+    dashos::canal_leer_plazo(lectura, &mut r, &mut [], 200_000);
+    dashos::cerrar(lectura);
+}

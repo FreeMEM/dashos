@@ -157,7 +157,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 17 | `revocar` | `x0` revocador | 0 |
 | 18 | `grupo_crear` | `x0` tope en bytes | Llave de grupo |
 | 19 | `grupo_matar` | `x0` llave de grupo | 0 |
-| 20 | `grupo_uso` | `x0` llave de grupo | `x0` tope, `x1` usado con sus subgrupos, `x2` usado sin ellos |
+| 20 | `grupo_uso` | `x0` llave de grupo | `x0` tope, `x1` usado con sus subgrupos, `x2` usado sin ellos, `x3` veces que topó |
 | 21 | `memoria_quitar` | `x0` dirección donde empieza una proyección | 0 |
 | 23 | `registro_leer` | `x0` llave del registro, `x1` búfer, `x2` capacidad | Bytes leídos |
 | 22 | `memoria_dma` | `x0` permiso DMA, `x1` tamaño | `x0` llave de memoria, `x1` dirección de bus |
@@ -310,7 +310,9 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   recibe `E_CERRADO`. Así se suelta todo lo que el grupo dejó, también los ciclos entre canales.
 - **20, `grupo_uso`.** Pide el derecho de leer. Devuelve el tope (`x0`), lo usado por el grupo con sus subgrupos (`x1`)
   y lo usado sin ellos (`x2`, lo suyo menos lo de cada subgrupo vivo; una foto que, con cobros a la vez, puede ir algo
-  por delante o por detrás). En la biblioteca, `grupo_uso` y `grupo_uso_propio`.
+  por delante o por detrás). En `x3`, las veces que un cobro a ese grupo no cupo por un tope (el suyo o el de uno de
+  encima; no el del grupo raíz, que es la máquina sin memoria): solo sube, y `sesiones` lo mira para apuntar en el
+  registro quién topó con su cupo (S3, S6). En la biblioteca, `grupo_uso`, `grupo_uso_propio` y `grupo_topado`.
 - **54, `grupo_tope`** (S3). Cambia el tope de un grupo. Pide su llave con escribir, y que no sea el grupo de quien
   llama ni uno de encima: un proceso no se sube su tope (la caja Amiga no cambia el suyo; se lo pone `sesiones`, que
   tiene la llave de su grupo). Uno por debajo de lo usado vale: no se quita nada, y todo cobro falla hasta que lo usado

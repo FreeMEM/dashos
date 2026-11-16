@@ -2402,7 +2402,17 @@ fn alta(fs: &mut Fs, altas: &mut BTreeMap<u64, Ficha>, clientes: &mut [Option<Cl
             }
             continue;
         }
+        // S6, S36: el cajón suyo (`HUECO_SUYO`): se crea si falta; si no es del cliente, no se le da.
+        let suyo = hueco & HUECO_SUYO as usize != 0;
+        let hueco = hueco & !(HUECO_SUYO as usize);
         if hueco == 0 || hueco >= RAICES || (tope != R && tope != R | W) {
+            continue;
+        }
+        if suyo {
+            match (ram, cajon_suyo(fs, vol, cam, uid, gid)) {
+                (None, Some(r)) => raices[hueco] = Some((r.0, r.1, tope)),
+                _ => println!("  [archivos] alta: la raíz {} ({}:{}) no se crea o no es del cliente: no se da", hueco, vol, cam),
+            }
             continue;
         }
         let id = match ram {
@@ -2434,6 +2444,52 @@ fn alta(fs: &mut Fs, altas: &mut BTreeMap<u64, Ficha>, clientes: &mut [Option<Cl
     if let Some(c) = clientes.iter_mut().flatten().find(|c| c.marca == marca) {
         c.ficha = f;
     }
+}
+
+/// S6, S36: el cajón `cam` del volumen `vol` (vacío, el principal) para la raíz de un cliente con `HUECO_SUYO`: si
+/// falta el último, se crea, del cliente (`uid` y `gid`) y 0755; si ya está, tiene que ser un cajón del cliente. Los de
+/// antes que falten se crean del dueño de la raíz del volumen (el `Prefs` de una persona es suyo), 0755.
+fn cajon_suyo(fs: &mut Fs, vol: &str, cam: &str, uid: u32, gid: u32) -> Option<(u64, TreePtr<Node>)> {
+    let id = if vol.is_empty() { Ok(0) } else { fs.tx(|tx| tx.find_volume(vol)) }.ok()?;
+    let partes: Vec<&str> = cam.split('/').filter(|p| !p.is_empty()).collect();
+    let (ultimo, antes) = partes.split_last()?;
+    let hora = ahora();
+    fs.tx_in(id, |tx| {
+        let mut n = tx.read_tree(TreePtr::<Node>::root())?;
+        let (uid_raiz, gid_raiz) = (n.data().uid(), n.data().gid());
+        for parte in antes {
+            n = match tx.find_node(n.ptr(), parte) {
+                Ok(x) => x,
+                Err(_) => {
+                    let x = tx.create_node(n.ptr(), parte, Node::MODE_DIR | 0o755, hora.0, hora.1)?;
+                    let mut d = tx.read_tree(x.ptr())?;
+                    d.data_mut().set_uid(uid_raiz);
+                    d.data_mut().set_gid(gid_raiz);
+                    tx.sync_tree(d)?;
+                    tx.read_tree(x.ptr())?
+                }
+            };
+            if !n.data().is_dir() {
+                return Err(Error::new(ENOTDIR));
+            }
+        }
+        let p = match tx.find_node(n.ptr(), ultimo) {
+            Ok(p) => p,
+            Err(_) => {
+                let p = tx.create_node(n.ptr(), ultimo, Node::MODE_DIR | 0o755, hora.0, hora.1)?;
+                let mut d = tx.read_tree(p.ptr())?;
+                d.data_mut().set_uid(uid);
+                d.data_mut().set_gid(gid);
+                tx.sync_tree(d)?;
+                tx.read_tree(p.ptr())?
+            }
+        };
+        if !p.data().is_dir() || p.data().uid() != uid {
+            return Err(Error::new(EACCES));
+        }
+        Ok((id, p.ptr()))
+    })
+    .ok()
 }
 
 /// S28: el cajón de la papelera de un cliente, `cam` desde la raíz del volumen `vol` (vacío, el principal). Si falta el

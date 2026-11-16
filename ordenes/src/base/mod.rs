@@ -16,7 +16,9 @@ pub mod filenote;
 pub mod info;
 pub mod list;
 pub mod makedir;
+pub mod permiso;
 pub mod protect;
+pub mod registro;
 pub mod rename;
 pub mod type_;
 pub mod version;
@@ -36,7 +38,9 @@ pub const BASE: &[(&str, fn(&mut Orden) -> u64)] = &[
     ("Info", info::principal),
     ("List", list::principal),
     ("MakeDir", makedir::principal),
+    ("Permiso", permiso::principal),
     ("Protect", protect::principal),
+    ("Registro", registro::principal),
     ("Rename", rename::principal),
     ("Type", type_::principal),
     ("Version", version::principal),
@@ -45,7 +49,7 @@ pub const BASE: &[(&str, fn(&mut Orden) -> u64)] = &[
 
 /// Sus nombres, sin las funciones: para quien solo quiere saber si una orden es de base (el Shell, que no las lleva
 /// dentro).
-pub const NOMBRES: &[&str] = &["Ask", "Assign", "Cd", "Copy", "Date", "Delete", "Dir", "Echo", "Filenote", "Info", "List", "MakeDir", "Protect", "Rename", "Type", "Version", "Wait"];
+pub const NOMBRES: &[&str] = &["Ask", "Assign", "Cd", "Copy", "Date", "Delete", "Dir", "Echo", "Filenote", "Info", "List", "MakeDir", "Permiso", "Protect", "Registro", "Rename", "Type", "Version", "Wait"];
 
 /// Si `nombre` es una orden de base.
 pub fn es_de_base(nombre: &str) -> bool {
