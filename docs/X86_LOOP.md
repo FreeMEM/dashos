@@ -100,7 +100,10 @@ Dos líneas a la vez (decisión 4 de S30):
     (`RED_X86=e1000e`). **Sin probar en hardware** todo lo propio del I219: el semáforo con el ME, la salida del reposo
     ULP y del modo SMBus, el ciclo LANPHYPC, el acceso al PHY por sus páginas, la NVM en la flash y la configuración
     del PHY desde ella, los bits OEM, el reinicio global con sus lecturas de configuración, el vaciado de los anillos
-    (errata del PCH), los ajustes al subir el enlace y la MSI. La RTL8125, sin empezar.
+    (errata del PCH), los ajustes al subir el enlace y la MSI. La RTL8125B con controlador propio (`rtl-red`,
+    2026-11-16) y el intérprete de su firmware, probado solo con ficheros sintéticos; el controlador, **sin probar en
+    hardware** (QEMU no la emula): la prueba es pasando la tarjeta de shiva a QEMU con VFIO
+    (`make -C kernel arranque-x86 RED_X86=vfio PCI_RED=0000:03:00.0 ACCEL=kvm`, los comandos en `tools/vfio_red.sh`).
   - Compartir internet del móvil por USB (CDC-NCM y RNDIS): sin empezar. Necesita que el xHCI dé aparatos que no son
     HID a otros servicios.
   - AHCI: sin NCQ, multiplicadores de puertos, ATAPI, conexión en marcha ni ahorro de energía del enlace. Con un disco
@@ -925,3 +928,72 @@ como antes de esta tarea, así que ARM no cambia.
 Sin hacer: la multidifusión exacta (§11), el estado del enlace hacia `red-estado` (solo en el registro), la prueba
 del bucle en el PHY (§15) y las demás generaciones del I219 (`pch_spt`, `pch_tgp` y siguientes).
 
+### 2026-11-16 — X5c: red con cable de Realtek (RTL8125B), sin probar en hardware
+
+Papel: implementador, sala limpia con `docs/spec/hw/rtl8125.md` (del analista) y el código de DashOS; nada de Linux,
+BSD ni QEMU. El firmware real (`rtl8125b-2.fw` de shiva) solo se leyó como datos, para ver que el intérprete lo acepta.
+
+- **`rtl-red`** (`usuario/src/bin/rtl_red.rs`, MPL): solo la RTL8125B (XID 0x641); con otro XID, o en modo SFP, lo
+  dice y sale sin tocar nada. Arranque en el orden de la spec (§8): D0, sin ASPM ni CLKREQ en el control del enlace,
+  salida de OOB (con el PHY en "UPS" si lo está), reinicio, MAC de fábrica (`0x19E0`) escrita como activa, PHY
+  (encendido, firmware, configuración de la 8125B, EEE apagado como OpenBSD, anuncio de 10 a 2500 sin pausa,
+  negociación), ePHY y la parte común, anillos (parte alta antes que la baja), toda la multidifusión. Descriptores de
+  16 bytes; 128 y 64 búferes de 2 KB; relleno a 60 bytes; CRC fuera; timbre otra vez si quedan pendientes. MSI-X en
+  su entrada 0 (o cada 2 ms sin ella). El enlace, de `PHYstatus` al llegar `LinkChg` y cada segundo. Parada ordenada
+  (§12) si el servicio se va; con `SYSErr`, parada y arranque en marcha con la misma DMA. Todas las esperas acotadas;
+  lo que no responde se avisa y se sigue, salvo el reinicio de la MAC (se abandona).
+- **El firmware** (`usuario/src/rtl8125_fw.rs`, MPL, sin dependencias): valida el fichero entero (cabecera, suma,
+  `inicio` y `n`, formato antiguo, códigos, saltos y cambios de modo) antes de ejecutar nada, y lo interpreta sobre un
+  `Bus` (OCP del PHY y de la MAC, esperas) con la base compartida de los dos modos. Tope de 200 000 acciones
+  ejecutadas. Sus pruebas (9, con ficheros sintéticos y un aparato falso) van en `make -C kernel prueba`. En seco
+  sobre el `rtl8125b-2.fw` de shiva: válido, versión `rtl8125b-2_0.0.2 07/13/20`, 800 acciones.
+- **De dónde sale el firmware**: no hay en DashOS un sistema de ficheros para los controladores al arrancar, así que
+  el Makefile copia el del sistema donde se compila (`/lib/firmware/rtl_nic/rtl8125b-2.fw[.zst|.xz]`, o
+  `FIRMWARE_RTL8125=...`; vacío para dejarlo fuera) a `kernel/target/firmware/`, `build.rs` lo mete en el kernel de x86
+  y `inicio_x86.rs` lo da a `rtl-red` como datos ("rtl8125b-fw", siempre que esté la tarjeta, con tamaño 0 si no hay).
+  No va en git. **Aviso de licencia**: una imagen de x86 hecha en un sistema que lo tenga lo lleva dentro; si se
+  reparte, con `LICENSE.r8169` al lado (§6.4).
+- `inicio_x86.rs`: `rtl-red` con la BAR 2, su configuración y el firmware. `red` acepta "rtl-red".
+- **La prueba con la tarjeta de verdad, preparada y sin ejecutar** (pide sudo): `make -C kernel arranque-x86
+  RED_X86=vfio PCI_RED=0000:03:00.0 ACCEL=kvm [MAC_RED=...] [IOMMU=intel]` arranca q35 con `-device
+  vfio-pci,host=...,rombar=0` en vez de la tarjeta emulada, sin el concentrador ni la basura del PC; con `IOMMU=intel`,
+  la VT-d con `caching-mode=on` (AMD-Vi se niega). Esperados en `pruebas/arranque_x86_red_vfio.txt`: el aparato, el
+  PHY, el firmware (aplicado o no, según lo lleve el kernel), la versión y la MAC (la de Linux con `MAC_RED`), el
+  enlace, DHCP 10.0.2.15, el eco de 4 MB y el puerto cerrado. `tools/vfio_red.sh [PCI] [OTRO]` comprueba sin
+  privilegios (la tarjeta sola en su grupo de IOMMU, ni ella ni OTRO con la ruta por defecto) e imprime los comandos:
+  el otro lado (enp4s0, la I226-V: 10.0.2.2 y 10.0.2.100, ufw, `dnsmasq` dando 10.0.2.15 y el eco de
+  `tools/red_eco.py` con `systemd-socket-activate` en el puerto 7), soltar la tarjeta de r8169 a vfio-pci, el límite
+  de memoria bloqueada, la prueba y devolverlo todo.
+
+Comprobado (QEMU 11.1.3, q35, TCG): `make -C kernel arranque-x86` (virtio-net) BIEN; `make -C kernel arranque-x86
+RED_X86=e1000e` BIEN; `make -C kernel prueba-x86` BIEN. ARM: `make -C kernel prueba` BIEN, con las pruebas del
+intérprete. `cargo clippy` de `rtl-red` sin avisos. `tools/vfio_red.sh` en shiva: la RTL8125 (03:00.0, r8169, enp3s0)
+sola en el grupo 26, la ruta por defecto por wlan0; se niega si OTRO es wlan0.
+
+**Sin probar en hardware: todo `rtl-red`.** Ni la versión, ni la salida de OOB, ni el firmware aplicado, ni el PHY, el
+ePHY, los anillos, la MSI-X, el enlace o la parada. Tampoco la prueba con VFIO (`RED_X86=vfio` solo se ha visto en
+seco con `make -n`). Sin hacer: el paso 17 de §8 (latencia de L0s y L1; ASPM va apagado), el bucle de la MAC o del PHY
+(§14), la multidifusión exacta, el parche de las tramas PTP cortas (§7.2; la pila no hace PTP) y el estado del enlace
+hacia `red-estado` (solo en el registro).
+
+Preguntas para el analista (`docs/spec/hw/rtl8125.md`):
+
+1. §8 A.5.1 dice "vaciar FIFO (punto 11.2)", que no existe. Se esperan las FIFO vacías como en §12 3.2 y 3.3
+   (`MCU` bits 4 y 5, `IntrMitigate` & 0x0103), **sin** poner `StopReq`. ¿Es eso, o va también `StopReq`?
+2. §3.2 y §6.3: en modo PHY, ¿qué dirección tiene un registro por debajo de 0x10 con una página que no es la
+   estándar? Ahora es un error que para el firmware.
+3. §6.3: ¿qué devuelve leer el "registro 0x1F" en modo MAC? Ahora es un error.
+4. §6.3: ¿un `PHY_BJMPN` de 0 es válido (se repetiría siempre)? Ahora invalida el fichero. ¿Un salto hacia delante
+   que acaba justo al final de la lista es válido? Ahora sí. En modo PHY, ¿vale un registro mayor que 0x1F? Ahora
+   sí (`0xA400 + 2·R`). ¿Linux pone algún tope a los bucles del fichero? Aquí, 200 000 acciones.
+5. §6.3: ¿`inicio` puede caer dentro de la cabecera (menos de 45) o tiene que ir alineado? Ahora se exige al menos 45
+   y no se mira la alineación.
+6. §6.6 paso 5: el `BMCR` = 0x9200 (con el bit de reinicio) va después del firmware y de §6.5. ¿Ese reinicio no deshace
+   lo que se escribió en §6.5 o el EEE apagado? Si Linux hace un reinicio "suave" distinto, ¿cuál es exactamente?
+7. §8 A.2: "ECPM" se ha tomado como el bit 8 del control del enlace del PCIe (Enable Clock Power Management). ¿Es ese?
+8. §7.2: los bits de error al enviar (23, 20, `[19:16]`) vienen del formato de 32 bytes de OpenBSD. ¿Valen en el de
+   16? Ahora solo se mira el 23 y se avisa una vez.
+9. §11: `SYSErr` no está en la máscara de Linux. ¿Sube en `IntrStatus` sin estar en la máscara? Aquí se lee el estado
+   en cada vuelta y se reinicia si está.
+10. §12 paso 8: aquí se apaga el PHY al parar. ¿Lo vuelve a encender r8169 de Linux al recuperar la tarjeta (tras
+    devolverla desde vfio-pci), o hay que dejarlo encendido?

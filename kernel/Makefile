@@ -63,6 +63,8 @@ prueba: $(PRUEBAS)
 	cd ../usuario && rustc --edition 2024 --test src/terminal.rs -o target/terminal_pruebas && ./target/terminal_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/protocolo/avisos.rs -o target/avisos_pruebas && ./target/avisos_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/cortafuegos_caja.rs -o target/cortafuegos_caja_pruebas && ./target/cortafuegos_caja_pruebas -q
+	@# X5c: el intérprete del firmware del PHY de la RTL8125 (ficheros sintéticos y un aparato falso).
+	cd ../usuario && rustc --edition 2024 --test src/rtl8125_fw.rs -o target/rtl8125_fw_pruebas && ./target/rtl8125_fw_pruebas -q
 	@# S27: el volumen y el OSD del panel, la lista del lanzador y la fecha de la barra.
 	cd ../usuario && rustc --edition 2024 --test src/volumen_osd.rs -o target/volumen_osd_pruebas && ./target/volumen_osd_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/lanzador_lista.rs -o target/lanzador_lista_pruebas && ./target/lanzador_lista_pruebas -q
@@ -448,7 +450,24 @@ FUNCIONES_X86 := archivos,ventanas,sonido,red,relevo
 # un RelevoJIT local, para probar cambios suyos sin subirlos (un `[patch]` por `--config`). La `rev` de Cargo.toml tiene
 # que estar en GitHub igual, y Cargo.lock cambia mientras se use: no se sube así.
 RELEVO_PATCH := $(if $(RELEVO_DIR),--config 'patch."https://github.com/FreeMEM/RelevoJIT".relevo.path="$(abspath $(RELEVO_DIR))"')
-SERVICIOS_X86 := inicio consola compositor xhci nvme disco ahci disco-sata archivos ficheros sonido virtio-sonido hda red virtio-red intel-red red-gloton red-prueba tono-a tono-b ventana-a ventana-b ajustes hola
+SERVICIOS_X86 := inicio consola compositor xhci nvme disco ahci disco-sata archivos ficheros sonido virtio-sonido hda red virtio-red intel-red rtl-red red-gloton red-prueba tono-a tono-b ventana-a ventana-b ajustes hola
+
+# X5c: el firmware del PHY de la RTL8125B (`rtl8125b-2.fw` de linux-firmware), si este sistema lo tiene: va dentro del
+# kernel de x86 (`inicio_x86.rs`) y `rtl-red` lo aplica. No va en git. Se descomprime (.zst o .xz) en
+# target/firmware/; FIRMWARE_RTL8125= (vacío) lo deja fuera, y el controlador sigue sin él. Es de Realtek: una imagen que
+# se reparta con él lleva también su licencia (`LICENSE.r8169`, en /usr/share/licenses/linux-firmware*/).
+FIRMWARE_RTL8125 ?= $(firstword $(wildcard /lib/firmware/rtl_nic/rtl8125b-2.fw /lib/firmware/rtl_nic/rtl8125b-2.fw.zst /lib/firmware/rtl_nic/rtl8125b-2.fw.xz))
+FW_RTL := target/firmware/rtl8125b-2.fw
+firmware-x86: FORCE
+	mkdir -p target/firmware
+	case "$(FIRMWARE_RTL8125)" in \
+	  "") : > $(FW_RTL).nuevo ;; \
+	  *.zst) zstd -q -d -c "$(FIRMWARE_RTL8125)" > $(FW_RTL).nuevo ;; \
+	  *.xz) xz -d -c "$(FIRMWARE_RTL8125)" > $(FW_RTL).nuevo ;; \
+	  *) cat "$(FIRMWARE_RTL8125)" > $(FW_RTL).nuevo ;; \
+	esac
+	if cmp -s $(FW_RTL).nuevo $(FW_RTL); then rm -f $(FW_RTL).nuevo; else mv -f $(FW_RTL).nuevo $(FW_RTL); fi
+	@echo "Firmware de la RTL8125B: $(or $(FIRMWARE_RTL8125),ninguno) ($$(stat -c %s $(FW_RTL)) bytes)"
 
 usuario-x86-servicios: FORCE
 	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86) $(RELEVO_PATCH) $(addprefix --bin ,$(SERVICIOS_X86))
@@ -464,7 +483,8 @@ usuario-x86-servicios: FORCE
 # INTR_REMAP de la DMAR; la de QEMU 11 ya lo trae por omisión con TCG). Con INTREMAP=off, sin él: todo en formato
 # compatible, como antes. Con KVM, kernel-irqchip=split
 # (QEMU no deja remapear con el APIC de KVM).
-INTREMAP_INTEL := $(coma)intremap=$(if $(filter off,$(INTREMAP)),off,on)
+# Con RED_X86=vfio, la VT-d de QEMU avisa de cada cambio de sus tablas (caching-mode=on) para que QEMU las siga.
+INTREMAP_INTEL := $(coma)intremap=$(if $(filter off,$(INTREMAP)),off,on)$(if $(filter vfio,$(RED_X86)),$(coma)caching-mode=on)
 IOMMU_QEMU := $(if $(filter intel,$(IOMMU)),-device intel-iommu$(INTREMAP_INTEL),$(if $(filter amd,$(IOMMU)),-device amd-iommu$(coma)dma-remap=on$(coma)intremap=on))
 MAQUINA_IOMMU := $(if $(and $(filter kvm,$(ACCEL)),$(IOMMU)),MAQUINA=kernel-irqchip=split)
 # Las líneas que añade el remapeo de la VT-d: su unidad y, en prueba-x86, la prueba de X11 con remapeo.
@@ -488,7 +508,7 @@ endif
 endif
 
 # PCID=1 enciende PCID en el kernel de x86 (opción `pcid`); sin él, apagado (decisión del usuario del 2026-11-15).
-x86: usuario-x86-servicios FORCE
+x86: usuario-x86-servicios firmware-x86 FORCE
 	cargo build $(CARGO_PERFIL) --target x86_64-unknown-none $(if $(PCID),--features pcid)
 	$(OBJCOPY_X86) --strip-debug $(ELF_X86) $(NUCLEO_X86)
 
@@ -509,12 +529,34 @@ endif
 # X5c: la tarjeta de red, por omisión virtio-net (con iommu_platform=on si hay IOMMU); RED_X86=e1000e, la 82574L de
 # QEMU con el controlador de Intel (`intel-red`). Las dos en el concentrador de RED_HUB, con la misma MAC. Sus esperados,
 # en pruebas/arranque_x86_red_*.txt.
+# RED_X86=vfio PCI_RED=0000:03:00.0 ACCEL=kvm: una tarjeta de verdad del PC pasada a QEMU con VFIO (la RTL8125 de
+# shiva, con `rtl-red`; sin su ROM, que OVMF no la toque), en vez de la emulada y sin el concentrador: al otro lado
+# del cable, lo que diga
+# `tools/vfio_red.sh` (DHCP y eco en Linux). Antes, la tarjeta en vfio-pci (el guion imprime los comandos). Sus
+# esperados, en pruebas/arranque_x86_red_vfio.txt; con MAC_RED=xx:xx:..., también esa MAC (la que tenía en Linux).
 RED_X86 ?= virtio
-RED_TARJETA_X86 := $(if $(filter e1000e,$(RED_X86)),-device e1000e$(coma)netdev=red4$(coma)mac=$(RED_MAC)$(coma)romfile=,-device virtio-net-pci$(coma)netdev=red4$(coma)disable-legacy=on$(coma)mac=$(RED_MAC)$(coma)romfile=$(VSONIDO_IOMMU))
-RED_NOMBRE := $(if $(filter e1000e,$(RED_X86)),intel-red,virtio-red)
-ifeq ($(filter virtio e1000e,$(RED_X86)),)
-$(error RED_X86 tiene que ser virtio o e1000e)
+RED_TARJETA_X86 := $(if $(filter vfio,$(RED_X86)),-device vfio-pci$(coma)host=$(PCI_RED)$(coma)rombar=0,$(if $(filter e1000e,$(RED_X86)),-device e1000e$(coma)netdev=red4$(coma)mac=$(RED_MAC)$(coma)romfile=,-device virtio-net-pci$(coma)netdev=red4$(coma)disable-legacy=on$(coma)mac=$(RED_MAC)$(coma)romfile=$(VSONIDO_IOMMU)))
+RED_NOMBRE := $(if $(filter vfio,$(RED_X86)),rtl-red,$(if $(filter e1000e,$(RED_X86)),intel-red,virtio-red))
+ifeq ($(filter virtio e1000e vfio,$(RED_X86)),)
+$(error RED_X86 tiene que ser virtio, e1000e o vfio)
 endif
+ifeq ($(RED_X86),vfio)
+ifeq ($(PCI_RED),)
+$(error RED_X86=vfio necesita PCI_RED (por ejemplo PCI_RED=0000:03:00.0; ver tools/vfio_red.sh))
+endif
+ifneq ($(ACCEL),kvm)
+$(error RED_X86=vfio necesita ACCEL=kvm)
+endif
+ifeq ($(IOMMU),amd)
+$(error RED_X86=vfio va sin IOMMU en QEMU o con IOMMU=intel (la AMD-Vi de QEMU no lleva aparatos de VFIO))
+endif
+endif
+RED_HUB_X86 := $(if $(filter vfio,$(RED_X86)),,$(RED_HUB))
+# Los esperados de la tarjeta pasada: la línea del firmware depende de si va dentro del kernel; la MAC, si se da.
+ESPERADOS_VFIO = { sed -n '1,/^\# --- firmware/p' pruebas/arranque_x86_red_vfio.txt; \
+	if [ -s $(FW_RTL) ]; then echo "~│   [rtl-red] firmware aplicado: "; else echo "~│   [rtl-red] sin firmware del PHY"; fi; \
+	$(if $(MAC_RED),echo "~MAC $(MAC_RED);";) \
+	sed -n '/^\# --- firmware/,$$p' pruebas/arranque_x86_red_vfio.txt; } >> target/esperados_arranque_x86.txt
 arranque-x86: x86 $(DISCO_NVME)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(NUCLEO_X86)) cargo build --release --target x86_64-unknown-uefi
 	rm -f target/sonido-x86.wav target/captura-x86.ppm
@@ -523,12 +565,12 @@ arranque-x86: x86 $(DISCO_NVME)
 	$(call esperados_x86,pruebas/arranque_x86.txt,pruebas/arranque_x86_iommu.txt,target/esperados_arranque_x86.txt)
 	cat pruebas/arranque_x86_sonido_$(SONIDO_X86).txt >> target/esperados_arranque_x86.txt
 	$(if $(IOMMU),echo "~$(SONIDO_NOMBRE): DMA por la IOMMU$(coma) en su dominio" >> target/esperados_arranque_x86.txt)
-	cat pruebas/arranque_x86_red_$(RED_X86).txt pruebas/arranque_x86_red.txt >> target/esperados_arranque_x86.txt
 	$(if $(IOMMU),echo "~$(RED_NOMBRE): DMA por la IOMMU$(coma) en su dominio" >> target/esperados_arranque_x86.txt)
+	$(if $(filter vfio,$(RED_X86)),$(ESPERADOS_VFIO),cat pruebas/arranque_x86_red_$(RED_X86).txt pruebas/arranque_x86_red.txt >> target/esperados_arranque_x86.txt)
 	mkdir -p $(RED)
 	rm -f $(RED)/qemu.sock $(RED)/pc.sock
-	python3 -I ../tools/red_basura.py $(RED) $(RED_MAC) 300 & BASURA=$$!; \
-	$(ACCEL_QEMU) $(MAQUINA_IOMMU) GUARDAR=$(abspath target/salida_x86.txt) CAPTURA=$(abspath target/captura-x86.ppm) ARQ=x86_64 TECLAS=simple QEMU_EXTRA="$(IOMMU_QEMU) -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv $(SATA_QEMU) -audiodev wav,id=snd0,path=$(abspath target/sonido-x86.wav),out.frequency=48000 $(SONIDO_QEMU) $(RED_HUB) $(RED_TARJETA_X86)" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_arranque_x86.txt $(or $(TIEMPO_X86),240); \
+	$(if $(filter vfio,$(RED_X86)),true,python3 -I ../tools/red_basura.py $(RED) $(RED_MAC) 300) & BASURA=$$!; \
+	$(ACCEL_QEMU) $(MAQUINA_IOMMU) GUARDAR=$(abspath target/salida_x86.txt) CAPTURA=$(abspath target/captura-x86.ppm) ARQ=x86_64 TECLAS=simple QEMU_EXTRA="$(IOMMU_QEMU) -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv $(SATA_QEMU) -audiodev wav,id=snd0,path=$(abspath target/sonido-x86.wav),out.frequency=48000 $(SONIDO_QEMU) $(RED_HUB_X86) $(RED_TARJETA_X86)" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_arranque_x86.txt $(or $(TIEMPO_X86),240); \
 	R=$$?; kill $$BASURA 2>/dev/null; exit $$R
 	@if grep -q "fallo de DMA\|interrupción bloqueada" target/salida_x86.txt; then echo "MAL: fallos de DMA o interrupciones bloqueadas en el arranque"; grep "fallo de DMA\|interrupción bloqueada" target/salida_x86.txt | head; exit 1; fi
 	python3 ../tools/disco_archivos.py --comprobar-basico $(DISCO_NVME) $(VER)
@@ -562,7 +604,7 @@ NUCLEO_X86_PRUEBAS := target/kernel-x86-pruebas.elf
 # X11: el aparato `edu` de QEMU, para pasarlo a una máquina (con DMA de 32 bits: la prueba le hace escribir en
 # 0xFEE0_0000).
 EDU_X11 := -device edu,dma_mask=0xffffffff
-prueba-x86: usuario-x86 FORCE
+prueba-x86: usuario-x86 firmware-x86 FORCE
 	cargo build $(CARGO_PERFIL) --target x86_64-unknown-none --features pruebas$(if $(PCID),$(coma)pcid)
 	$(OBJCOPY_X86) --strip-debug $(ELF_X86) $(NUCLEO_X86_PRUEBAS)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(NUCLEO_X86_PRUEBAS)) cargo build --release --target x86_64-unknown-uefi

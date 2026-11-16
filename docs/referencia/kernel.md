@@ -707,7 +707,9 @@ mismos límites. Cambian los registros y lo que es de la CPU:
   (0x010802, BAR 0), el sonido de virtio (0x1af4:0x1059, BAR 4, más su configuración) y, desde X5c, el AHCI (0x010601,
   BAR 5), el Intel HDA (0x040300, BAR 0), la red de virtio (0x1af4:0x1041, BAR 4, más su configuración) y la red de
   Intel (`intel-red`: el I219 de la familia "Cannon Point", 0x8086:0x15BB a 0x15BE, 0x15DF a 0x15E2 y 0x0D4C a 0x0D4F,
-  y el 82574L, 0x10D3 y 0x10F6; BAR 0, más su configuración), cada uno con
+  y el 82574L, 0x10D3 y 0x10F6; BAR 0, más su configuración) y la de Realtek (`rtl-red`: la RTL8125, 0x10ec:0x8125;
+  BAR 2, más su configuración y, siempre que esté, el firmware de su PHY como datos, "rtl8125b-fw": un u32 con el
+  tamaño y `rtl8125b-2.fw` detrás, o tamaño 0 si el sistema donde se compiló el kernel no lo tenía), cada uno con
   sus registros, un permiso DMA propio y su MSI (MSI-X si la tiene, en su primera entrada; si no, MSI: el AHCI y el HDA
   de QEMU). Sin INTx: en un PC su
   número sale del AML de ACPI (`_PRT`), que el kernel no lee. Además (X6): el registro y los puertos de COM1 (tipo

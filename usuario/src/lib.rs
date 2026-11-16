@@ -36,6 +36,8 @@ pub mod hilos;
 pub mod red_cliente;
 /// S29: el cortafuegos de la caja Linux en el servicio de red (sin dependencias: se prueba en el PC).
 pub mod cortafuegos_caja;
+/// X5c: el intérprete del firmware del PHY de la RTL8125 (sin dependencias: se prueba en el PC).
+pub mod rtl8125_fw;
 #[cfg(target_arch = "aarch64")]
 mod copiar;
 

@@ -4,7 +4,7 @@
 //! es cada marca), los del controlador de la tarjeta y los de los programas con permiso, cada uno con su marca. El
 //! protocolo, en `usuario/src/protocolo/red.rs` y `docs/referencia/servicios.md`.
 //!
-//! - El controlador (solo el que `inicio` llama "virtio-red" o "intel-red") manda `TARJETA` con la memoria de las tramas y un canal
+//! - El controlador (solo el que `inicio` llama "virtio-red", "intel-red" o "rtl-red") manda `TARJETA` con la memoria de las tramas y un canal
 //!   suyo. El servicio es para smoltcp un aparato Ethernet que lee y escribe esas ranuras: cada trama se copia antes de
 //!   dársela a la pila, y nada de la cabecera se cree sin mirar.
 //! - La dirección, por DHCP.
@@ -658,7 +658,7 @@ fn principal() -> u64 {
                 rechazos += 1;
                 cerrar_llaves(&llaves);
             } else if w(0) == p::TARJETA || w(0) == p::TRAMAS {
-                if !matches!(quien, Some("virtio-red" | "intel-red")) {
+                if !matches!(quien, Some("virtio-red" | "intel-red" | "rtl-red")) {
                     rechazos += 1;
                     cerrar_llaves(&llaves);
                 } else if w(0) == p::TARJETA && red.is_none() && k == 2 && n >= 10 {

@@ -18,7 +18,20 @@ fn main() {
     // (`src/inicio_x86.rs`).
     if !x86 {
         comprimir_programas(&dir);
+    } else {
+        firmware_rtl8125(&dir);
     }
+}
+
+/// X5c: el firmware del PHY de la RTL8125B para `src/inicio_x86.rs`. El Makefile lo deja descomprimido en
+/// `target/firmware/rtl8125b-2.fw` (vacío si el sistema no lo tiene); sin él, uno vacío: el controlador sigue sin
+/// firmware.
+fn firmware_rtl8125(dir: &str) {
+    let ruta = format!("{}/target/firmware/rtl8125b-2.fw", dir);
+    println!("cargo:rerun-if-changed={}", ruta);
+    let datos = std::fs::read(&ruta).unwrap_or_default();
+    let out = std::env::var("OUT_DIR").unwrap();
+    std::fs::write(format!("{}/rtl8125b-2.fw", out), datos).unwrap();
 }
 
 /// Los programas que nombra `src/inicio.rs` con `programa!("...")`, comprimidos con LZ4 en OUT_DIR (`nombre.lz4`): el

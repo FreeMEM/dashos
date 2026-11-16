@@ -63,6 +63,7 @@ el segundo, el otro. La lista está en `kernel/src/inicio.rs` (`PROGRAMAS`):
 | red (`virt` y x86) | — | "red" y "red-estado" (es quien lee los dos) |
 | virtio-red (`virt` y x86) | su permiso DMA, registros y configuración del aparato, su interrupción (opcional) | "red" |
 | intel-red (x86) | su permiso DMA, registros (BAR 0) y configuración del aparato, su interrupción (opcional) | "red" |
+| rtl-red (x86) | su permiso DMA, registros (BAR 2) y configuración del aparato, el firmware de su PHY (datos), su interrupción (opcional) | "red" |
 | red-prueba, red-gloton (pruebas, `virt` y x86) | — | "red" |
 
 En cada canal el primero que lo nombra es el servidor; los demás reciben una copia marcada (su número de programa más
@@ -74,7 +75,7 @@ con la restricción "una vez" (S4): el servicio no puede pasárselas a otro prog
 
 En x86-64 (X5 y X6) la lista es otra, `PROGRAMAS` de `kernel/src/inicio_x86.rs`, con las mismas llaves para cada
 servicio: `consola`, `compositor`, `xhci`, `nvme`, `disco`, `ahci`, `disco-sata`, `archivos`, `ficheros`, `sonido`,
-`virtio-sonido`, `hda`, `red`, `virtio-red`, `intel-red`, `red-gloton`, `red-prueba`, `tono-a`, `tono-b`, `ventana-a`, `ventana-b`,
+`virtio-sonido`, `hda`, `red`, `virtio-red`, `intel-red`, `rtl-red`, `red-gloton`, `red-prueba`, `tono-a`, `tono-b`, `ventana-a`, `ventana-b`,
 `ajustes` y `hola` (X5c: el AHCI, el HDA y la red). Al AHCI le toca el canal "disco" si no hay NVMe; si lo hay,
 "sata", y el resto de servicios del disco siguen en el NVMe. La consola recibe el registro y, en vez de los
 registros del PL011, una llave de los puertos de COM1, que pide con `puertos_permitir` y usa con `in` y `out`. El
@@ -590,6 +591,18 @@ en la entrada 0) y MSI en el I219; toda la multidifusión (filtra el servicio); 
 corto, lo largo, lo partido en varios búferes y lo que llega con error, y suma a esas cuentas lo que tira la tarjeta
 misma (sus contadores). Dice en el registro cuándo sube o baja el enlace y a qué velocidad. Si el servicio se va,
 para la tarjeta en orden y termina. Lo propio del I219 (ME, ULP, SMBus, NVM, erratas) está sin probar en hardware.
+
+**El controlador de Realtek** (`usuario/src/bin/rtl_red.rs`, X5c, sala limpia con `docs/spec/hw/rtl8125.md`): la
+RTL8125B (XID 0x641, la de shiva); otras versiones de la RTL8125 se dicen en el registro y no se tocan. Llaves: 1 su
+permiso DMA, 2 sus registros (BAR 2), 3 su configuración, 4 el firmware del PHY (`rtl8125b-2.fw`, que el kernel lleva
+dentro si el sistema donde se compiló lo tenía; tamaño 0 si no), 5 su interrupción (opcional) y después el canal
+"red". El servicio acepta `TARJETA` y `TRAMAS` de "rtl-red" igual que de los otros dos. Valida el firmware entero antes
+de aplicarlo (`usuario/src/rtl8125_fw.rs`) y sin él sigue, avisando. Descriptores de 16 bytes, 128 búferes de recibir
+y 64 de enviar de 2 KB; la MAC de fábrica (`0x19E0`), que vuelve a dejar al parar; MSI-X en su entrada 0; toda la
+multidifusión; sin control de flujo, sin EEE, sin ASPM. Rellena con ceros hasta 60 bytes al enviar y quita el CRC al
+recibir; tira lo corto, lo largo, lo partido y lo que llega con error. Dice en el registro su versión, el PHY, el
+firmware y el enlace (hasta 2500 Mb/s). Si el servicio se va, parada ordenada; con un error del bus, arranque en
+marcha. **Sin probar en hardware** (QEMU no la emula; la prueba es pasándola con VFIO, `tools/vfio_red.sh`).
 
 **El puerto de la caja Linux (H9).** `PUERTO` y `TRAMAS_PUERTO` (`protocolo::red`), solo de "caja-linux": un puente de
 tramas para la tarjeta de su invitado (ver la caja Linux, abajo). Si la caja se va (su canal cerrado), el puerto se

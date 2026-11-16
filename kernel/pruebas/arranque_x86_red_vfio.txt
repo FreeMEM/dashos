@@ -1,0 +1,13 @@
+# X5c: una tarjeta de verdad pasada a QEMU con VFIO (RED_X86=vfio PCI_RED=... ACCEL=kvm): la RTL8125B de shiva con
+# `rtl-red` (docs/spec/hw/rtl8125.md, 16). Al otro lado del cable, la I226-V de shiva en Linux con DHCP y un eco en
+# 10.0.2.100:7, como la red de usuario de QEMU (`tools/vfio_red.sh`). Sin la basura del PC (no hay concentrador).
+# El Makefile pone la línea del firmware (aplicado o no, según lo tenga el kernel) y, con MAC_RED, la MAC esperada.
+~rtl-red: en el PCIe 0:
+~│   [rtl-red] PHY 001cc8
+# --- firmware (el Makefile añade aquí sus líneas)
+~│   [rtl-red] RTL8125B (10ec:8125, XID 0x641); MAC 
+~; colas de 128 y 64; avisos por su interrupción (MSI-X)
+~│   [rtl-red] enlace arriba: 
+~│   [red] DHCP: 10.0.2.15/24, puerta 10.0.2.2, DNS 10.0.2.3
+~│   [red-prueba] eco de 4 MB al azar: vuelve igual: bien
+~│   [red-prueba] puerto cerrado: rechazada: bien

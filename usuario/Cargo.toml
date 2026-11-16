@@ -310,6 +310,12 @@ name = "intel-red"
 path = "src/bin/intel_red.rs"
 test = false
 
+# X5c: la red con cable de Realtek (RTL8125B, la de shiva).
+[[bin]]
+name = "rtl-red"
+path = "src/bin/rtl_red.rs"
+test = false
+
 [[bin]]
 name = "red"
 path = "src/bin/red.rs"

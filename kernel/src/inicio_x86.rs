@@ -55,6 +55,8 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("virtio-red", elf!("virtio-red"), &[("dma-vred", PERMISO_DMA), ("virtio-red", REGISTROS), ("vred-cfg", REGISTROS), ("virtio-red", INTERRUPCION | OPCIONAL)], &["red"]),
     // X5c: la red con cable de Intel: el I219 del PCH (pegaso) y el 82574L (el `e1000e` de QEMU). Como virtio-red.
     ("intel-red", elf!("intel-red"), &[("dma-ired", PERMISO_DMA), ("intel-red", REGISTROS), ("ired-cfg", REGISTROS), ("intel-red", INTERRUPCION | OPCIONAL)], &["red"]),
+    // X5c: la red con cable de Realtek (RTL8125B, la de shiva), con el firmware de su PHY (`FIRMWARE_RTL8125`).
+    ("rtl-red", elf!("rtl-red"), &[("dma-rtl", PERMISO_DMA), ("rtl-red", REGISTROS), ("rtl-cfg", REGISTROS), ("rtl8125b-fw", DATOS), ("rtl-red", INTERRUPCION | OPCIONAL)], &["red"]),
     ("red-gloton", elf!("red-gloton"), &[], &["red"]),
     ("red-prueba", elf!("red-prueba"), &[], &["red"]),
     // Dos clientes de Wayland de prueba (W7) y una aplicación con el kit (K7), como en ARM.
@@ -93,7 +95,7 @@ fn nombre16(n: &str) -> [u8; 16] {
 /// BAR 5 (Serial ATA AHCI 1.3.1, 2.1.11); Intel HDA, 0x040300, con los suyos en la BAR 0 (HDA 1.0a, 3.3). El sonido de virtio: virtio 1.2, 4.1.2,
 /// fabricante 0x1af4 y aparato 0x1040 más el tipo, 25; en QEMU, todos sus registros en la BAR 4. La red de virtio, igual
 /// (X5c). La red de Intel (X5c, `docs/spec/hw/i219.md`, 2.1 y 14.1): varios aparatos de Intel (0x8086), los registros
-/// en la BAR 0.
+/// en la BAR 0. La de Realtek (X5c), 0x10ec:0x8125, en la BAR 2.
 enum Quien {
     Clase(u32),
     Id(u16, u16),
@@ -111,7 +113,14 @@ const APARATOS: &[(&str, Quien, usize, Option<&str>, &str)] = &[
     // La red de virtio: fabricante 0x1af4 y aparato 0x1040 más el tipo, 1 (virtio 1.2, 4.1.2); solo el moderno.
     ("virtio-red", Quien::Id(0x1af4, 0x1041), 4, Some("vred-cfg"), "dma-vred"),
     ("intel-red", Quien::Ids(0x8086, INTEL_RED), 0, Some("ired-cfg"), "dma-ired"),
+    // La Realtek RTL8125 (`docs/spec/hw/rtl8125.md`, 2.1): los registros en la BAR 2 (la 4 es la tabla de MSI-X).
+    ("rtl-red", Quien::Id(0x10ec, 0x8125), 2, Some("rtl-cfg"), "dma-rtl"),
 ];
+
+/// El firmware del PHY de la RTL8125B (`rtl8125b-2.fw`, `docs/spec/hw/rtl8125.md` 6.3), si el sistema donde se compila
+/// lo tiene: el Makefile lo deja en `target/firmware/` y `build.rs` lo copia (vacío si no está). No va en git: es de
+/// Realtek, con su licencia (`LICENSE.r8169` de linux-firmware), que tiene que acompañar a una imagen que se reparta.
+static FIRMWARE_RTL8125: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/rtl8125b-2.fw"));
 
 /// Prepara un aparato: su BAR (en páginas enteras), el bus master y una MSI. (física, tamaño, interrupción).
 fn preparar(f: &Funcion, bar: usize, nombre: &str) -> Option<(u64, u64, Option<u32>)> {
@@ -180,6 +189,7 @@ pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
         apuntar(&mut llaves, "pantalla", FIRMWARE, Llave::nueva(pantalla, DERECHOS));
         apuntar(&mut llaves, "pantalla-info", DATOS, Llave::nueva(info, LEER | crate::objetos::TRANSFERIR));
     }
+    let mut con_rtl = false;
     for (nombre, quien, bar, cfg, dma) in APARATOS {
         let Some(f) = funciones.iter().find(|f| match quien {
             Quien::Clase(c) => f.clase == *c,
@@ -211,6 +221,7 @@ pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
         };
         let Some((fisica, tamano, irq)) = preparar(f, *bar, nombre) else { continue };
         apuntar(&mut llaves, nombre, REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano }, DERECHOS));
+        con_rtl |= *nombre == "rtl-red";
         if let Some(c) = cfg {
             apuntar(&mut llaves, c, REGISTROS, Llave::nueva(Objeto::Registros { fisica: f.fisica_cfg, tamano: memoria::PAGINA }, DERECHOS));
         }
@@ -219,6 +230,15 @@ pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
         }
         let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(permiso));
         apuntar(&mut llaves, dma, PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
+    }
+    // El firmware de la RTL8125, si está su tarjeta: su tamaño (u32) y el fichero; tamaño 0 si no se tiene. Siempre que
+    // esté la tarjeta, para que las llaves de `rtl-red` no cambien de número.
+    if con_rtl {
+        if let Some(m) = memoria::Memoria::nueva(4 + FIRMWARE_RTL8125.len(), &crate::cupo::Cupo::raiz()) {
+            m.escribir(0, &(FIRMWARE_RTL8125.len() as u32).to_le_bytes());
+            m.escribir(4, FIRMWARE_RTL8125);
+            apuntar(&mut llaves, "rtl8125b-fw", DATOS, Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), LEER | crate::objetos::TRANSFERIR));
+        }
     }
     // Un servicio al que le falta algún aparato no se lanza.
     let lanzables: Vec<_> = PROGRAMAS
