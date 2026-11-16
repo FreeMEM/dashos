@@ -43,10 +43,12 @@ pub struct Ecam {
 
 /// Un ámbito de aparatos de la DMAR (VT-d, 8.3.1): de qué tipo es (1 un aparato del PCI, 2 un puente con todo lo que
 /// cuelga de él, 3 un IOAPIC, 4 un HPET, 5 un aparato del espacio de nombres de ACPI), el bus donde empieza y el camino
-/// (aparato, función) por los puentes hasta él. El último paso del camino es el aparato.
+/// (aparato, función) por los puentes hasta él. El último paso del camino es el aparato. `id`, el número de enumeración:
+/// en un IOAPIC, su ID de la MADT (el remapeo de interrupciones necesita saber qué número de PCI lleva cada IOAPIC).
 #[derive(Clone, Debug)]
 pub struct Ambito {
     pub tipo: u8,
+    pub id: u8,
     pub bus: u8,
     pub camino: Vec<(u8, u8)>,
 }
@@ -104,6 +106,8 @@ pub struct Acpi {
     /// Las IOMMU (DMAR o IVRS, X5b), y la memoria que algunos aparatos usan por DMA por su cuenta.
     pub iommus: Vec<Iommu>,
     pub reservas_dma: Vec<ReservaDma>,
+    /// La DMAR dice que la plataforma admite el remapeo de interrupciones (su bandera INTR_REMAP, 8.1).
+    pub dmar_remapeo: bool,
 }
 
 fn leer<T: Copy>(fisica: u64) -> T {
@@ -248,17 +252,19 @@ fn ambitos(mut p: u64, fin: u64) -> Vec<Ambito> {
             break;
         }
         let camino = (0..(l - 6) / 2).map(|k| (leer::<u8>(p + 6 + 2 * k), leer::<u8>(p + 7 + 2 * k))).collect();
-        v.push(Ambito { tipo, bus: leer(p + 5), camino });
+        v.push(Ambito { tipo, id: leer(p + 4), bus: leer(p + 5), camino });
         p += l;
     }
     v
 }
 
-/// La DMAR (VT-d, 8.1): tras la cabecera, el ancho de las direcciones (u8), banderas (u8) y 10 reservados; desde el
+/// La DMAR (VT-d, 8.1): tras la cabecera, el ancho de las direcciones (u8), banderas (u8: bit 0 INTR_REMAP, la
+/// plataforma admite el remapeo de interrupciones) y 10 reservados; desde el
 /// byte 48, estructuras con tipo (u16) y largo (u16). Tipo 0, una unidad (DRHD, 8.3): banderas (u8, bit 0
 /// INCLUDE_PCI_ALL), tamaño (u8), segmento (u16), base de sus registros (u64) y ámbitos desde el byte 16. Tipo 1, una
 /// reserva (RMRR, 8.4): 2 reservados, segmento (u16), base (u64), límite (u64, el último byte) y ámbitos desde el 24.
 fn leer_dmar(d: u64, fin: u64, a: &mut Acpi) {
+    a.dmar_remapeo = leer::<u8>(d + 37) & 1 != 0;
     let mut p = d + 48;
     while p + 4 <= fin {
         let (tipo, l) = (leer::<u16>(p), leer::<u16>(p + 2) as u64);

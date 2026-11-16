@@ -12,8 +12,9 @@
 //! 5. hace que el aparato escriba por DMA en 0x0800_0000, fuera de su memoria: la IOMMU lo bloquea (lo mira el kernel).
 //!
 //! El remapeo de las interrupciones (que el aparato no pueda mandar otra MSI que la suya) lo prueba el kernel después,
-//! cambiando a mano el dato de su MSI: en QEMU no vale hacerlo con un DMA del aparato a 0xFEE0_0000, porque ese DMA
-//! llega a la IOMMU sin número de aparato y la AMD-Vi de QEMU lo toma como del IOAPIC.
+//! cambiando a mano su MSI (con AMD-Vi el dato; con VT-d la dirección, a la entrada de otro aparato): en QEMU no vale
+//! hacerlo con un DMA del aparato a 0xFEE0_0000, porque ese DMA llega a la IOMMU sin número de aparato (la AMD-Vi de
+//! QEMU lo toma como del IOAPIC, y la VT-d no comprueba el origen).
 //!
 //! Después para la máquina, y el aparato se puede asignar a otra. Sale con 10 si todo cuadra, con 12 si no hay IOMMU y
 //! la llamada se niega como debe, y con 1 si algo falla (y dice qué).

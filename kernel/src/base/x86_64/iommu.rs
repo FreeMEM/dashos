@@ -4,7 +4,8 @@
 //!
 //! Escrito con la especificación de VT-d de Intel ("Intel Virtualization Technology for Directed I/O Architecture
 //! Specification": 3.4, las tablas raíz y de contexto en modo clásico; 3.7 y 9.8, las tablas de páginas de segundo
-//! nivel; 6.5, la invalidación por registros; 7.1 a 7.3, los fallos y su aviso; 10.4, los registros) y la de AMD
+//! nivel; 6.5.1, la invalidación por registros; 6.5.2, la cola de invalidaciones; 5.1 y 9.10, el remapeo de
+//! interrupciones; 7.1 a 7.3, los fallos y su aviso; 10.4, los registros) y la de AMD
 //! (n.º 48882, "AMD I/O Virtualization Technology (IOMMU) Specification": 2.2, la tabla de aparatos y las de páginas;
 //! 2.4, la cola de órdenes; 2.5, el registro de eventos; 3.4, los registros). QEMU (`intel-iommu`, `amd-iommu`) sirve
 //! de banco de pruebas.
@@ -17,10 +18,15 @@
 //! - Los fallos se avisan por una interrupción del kernel (`apic::VECTOR_IOMMU`, al núcleo 0): se cuentan, se guardan
 //!   los últimos y se escriben en la consola (aparato, dirección, motivo). El aparato no se para: su DMA solo falla.
 //!
-//! Sin remapeo de interrupciones para los aparatos de los servicios: las MSI (0xFEE0_0000 a 0xFEEF_FFFF) pasan sin
-//! traducir en las dos (VT-d, 5.1; AMD, 2.2.5, con IV = 0 en la entrada del aparato). Los que se pasan a una máquina
-//! virtual (X11) sí, en AMD-Vi: una tabla de remapeo de una entrada por aparato (`remapear_interrupciones`). En VT-d
-//! todavía no (haría falta remapear todas las del sistema: con la VT-d, el remapeo es de toda la unidad).
+//! El remapeo de interrupciones:
+//! - VT-d (X11b): si la unidad lo tiene (ECAP.IR, con la cola de invalidaciones), es de toda la unidad. Todas las
+//!   interrupciones del anfitrión que pasan por ella (las MSI y MSI-X de los aparatos, las de los IOAPIC) van en formato
+//!   remapeable: el mensaje lleva el número de una entrada de la tabla de remapeo (`irte_poner`), y la entrada dice el
+//!   vector y el núcleo, y qué aparato la puede usar (SVT = 01: su número del PCI entero). Las de formato compatible se
+//!   bloquean (GCMD.CFI a 0). Una tabla para todas las unidades, de `ENTRADAS_IR` entradas; cada entrada es de una
+//!   fuente (aparato y clave). Los avisos de fallos de la propia unidad (FEDATA y FEADDR) no se remapean (5.1).
+//! - AMD-Vi: solo los aparatos que se pasan a una máquina virtual (X11), con una tabla de una entrada por aparato
+//!   (`remapear_interrupciones`). Las de los servicios pasan sin traducir (2.2.5, con IV = 0 en la entrada del aparato).
 
 use super::cerrojo::Cerrojo;
 use super::mmio::Ventana;
@@ -54,6 +60,19 @@ pub struct Fallo {
     pub banderas: u16,
 }
 
+impl Fallo {
+    /// VT-d: es de una interrupción (el remapeo), no de DMA (motivos 0x20 a 0x2F, 7.1.3).
+    pub fn de_interrupcion(&self) -> bool {
+        self.tipo == Tipo::Intel && (0x20..0x30).contains(&self.motivo)
+    }
+
+    /// VT-d, de una interrupción: el índice de la tabla de remapeo (bits 63:48 de la palabra baja del registro de
+    /// fallos, que aquí va en `direccion`).
+    pub fn indice(&self) -> u16 {
+        (self.direccion >> 48) as u16
+    }
+}
+
 struct EstadoDominio {
     unidad: usize,
     id: u16,
@@ -81,6 +100,21 @@ struct Unidad {
     nfr: usize,
     iro: usize,
     raiz: u64,
+    /// La cola de invalidaciones (6.5.2), si está encendida: su física (0 si no; entonces se invalida por registros),
+    /// dónde va la próxima orden (en bytes), la página donde la unidad escribe el sello de la orden de espera y el
+    /// último sello. Con la cola encendida, las invalidaciones por registros ya no valen (6.5).
+    iq: u64,
+    iq_cola: u64,
+    iq_sello: u64,
+    iq_secuencia: u32,
+    /// Las órdenes de invalidar la IOTLB por la cola, con el vaciado de lecturas y escrituras si la unidad lo pide
+    /// (bits 7 y 6 del descriptor; CAP.DRD y CAP.DWD).
+    iq_drenar: u64,
+    /// Admite el remapeo de interrupciones (ECAP.IR) y su formato de x2APIC (ECAP.EIM).
+    ir_cap: bool,
+    eim_cap: bool,
+    /// El remapeo de interrupciones está encendido (GSTS.IRES).
+    ir: bool,
     // AMD-Vi.
     tabla_aparatos: u64,
     vacia: u64,
@@ -92,12 +126,31 @@ struct Unidad {
     control: u64,
 }
 
+/// El remapeo de interrupciones de VT-d: una tabla para todas las unidades que lo tienen encendido.
+struct Remapeo {
+    /// Física de la tabla (`ENTRADAS_IR` entradas de 16 bytes); 0 si no hay remapeo.
+    tabla: u64,
+    /// Formato de x2APIC (IRTA.EIME): el destino de las entradas es el ID de APIC de 32 bits; si no, de 8 bits.
+    eime: bool,
+    /// Todas las unidades con remapeo leen la tabla mirando la caché de la CPU.
+    coherente: bool,
+    /// De quién es cada entrada: (número de PCI de la fuente, clave). Libre si `None`.
+    duenos: Vec<Option<(u16, u32)>>,
+    /// Los IOAPIC con remapeo: (su ID de la MADT, número de PCI con que manda sus mensajes).
+    ioapics: Vec<(u8, u16)>,
+}
+
 struct Estado {
     unidades: Vec<Unidad>,
     dominios: Vec<EstadoDominio>,
+    ir: Remapeo,
 }
 
-static ESTADO: Cerrojo<Estado> = Cerrojo::new(Estado { unidades: Vec::new(), dominios: Vec::new() });
+static ESTADO: Cerrojo<Estado> = Cerrojo::new(Estado {
+    unidades: Vec::new(),
+    dominios: Vec::new(),
+    ir: Remapeo { tabla: 0, eime: false, coherente: true, duenos: Vec::new(), ioapics: Vec::new() },
+});
 static ACTIVA: AtomicBool = AtomicBool::new(false);
 static FALLOS: AtomicU64 = AtomicU64::new(0);
 /// Los últimos fallos, para quien quiera mirarlos (las pruebas).
@@ -133,6 +186,16 @@ fn virt(fisica: u64) -> usize {
 fn leer_f(fisica: u64) -> u64 {
     // Solo se llama con entradas de tablas de este módulo (de `paginas_fijas`, en el mapa lineal).
     unsafe { core::ptr::read_volatile(virt(fisica) as *const u64) }
+}
+
+/// Como `leer_f`, para lo que escribe la unidad (el sello de la cola de VT-d): si no es coherente, la línea se saca
+/// antes de la caché, para no leer lo que había.
+fn leer_f_fresco(fisica: u64, coherente: bool) -> u64 {
+    if !coherente {
+        unsafe { core::arch::asm!("clflush [{}]", in(reg) virt(fisica), options(nostack, preserves_flags)) };
+        barrera();
+    }
+    leer_f(fisica)
 }
 
 fn poner_f(fisica: u64, v: u64, coherente: bool) {
@@ -188,12 +251,27 @@ const FEDATA: usize = 0x3c;
 const FEADDR: usize = 0x40;
 const FEUADDR: usize = 0x44;
 const PMEN: usize = 0x64;
+const IQH: usize = 0x80;
+const IQT: usize = 0x88;
+const IQA: usize = 0x90;
+const IRTA: usize = 0xb8;
 // Bits de GCMD y GSTS (los mismos en los dos).
 const TE: u32 = 1 << 31;
 const SRTP: u32 = 1 << 30;
 const WBF: u32 = 1 << 27;
 const QIE: u32 = 1 << 26;
 const IRE: u32 = 1 << 25;
+const SIRTP: u32 = 1 << 24;
+const CFI: u32 = 1 << 23;
+/// FSTS.IQE: una orden mala en la cola de invalidaciones.
+const FSTS_IQE: u32 = 1 << 4;
+// ECAP: cola de invalidaciones, remapeo de interrupciones y su formato de x2APIC.
+const ECAP_QI: u64 = 1 << 1;
+const ECAP_IR: u64 = 1 << 3;
+const ECAP_EIM: u64 = 1 << 4;
+/// Las entradas de la tabla de remapeo de interrupciones: 256 (una página de 16 bytes cada una; IRTA.S = 7, 2^(S+1)).
+pub const ENTRADAS_IR: usize = 256;
+const IRTA_S: u64 = 7;
 /// Los bits de GSTS que no se escriben de vuelta en GCMD (los de una vez: RTPS, FLS, WBFS e IRTPS; 10.4.4).
 const GSTS_PERSISTENTES: u32 = 0x96FF_FFFF;
 
@@ -209,20 +287,79 @@ fn intel_vaciar_escrituras(u: &Unidad) {
     }
 }
 
-/// Invalida la caché de contextos entera (6.5.1.1, global).
-fn intel_invalidar_contextos(u: &Unidad) -> bool {
+/// Invalida la caché de contextos entera: por registros (6.5.1.1, global) o, con la cola, con un descriptor de
+/// invalidación de contextos global (6.5.2.1: tipo 1, G = 01).
+fn intel_invalidar_contextos(u: &mut Unidad) -> bool {
+    if u.iq != 0 {
+        return intel_orden(u, [1 | 1 << 4, 0]) && intel_esperar_cola(u);
+    }
     u.regs.escribir64(CCMD, 1 << 63 | 1 << 61);
     esperar(|| u.regs.leer64(CCMD) & 1 << 63 == 0)
 }
 
-/// Invalida la IOTLB: entera (`dominio` = None) o la de un dominio (6.5.1.2).
-fn intel_invalidar_iotlb(u: &Unidad, dominio: Option<u16>) -> bool {
+/// Invalida la IOTLB: entera (`dominio` = None) o la de un dominio. Por registros (6.5.1.2) o, con la cola, con un
+/// descriptor de invalidación de la IOTLB (6.5.2.3: tipo 2, G = 01 global o 10 de un dominio, y el dominio en 31:16).
+fn intel_invalidar_iotlb(u: &mut Unidad, dominio: Option<u16>) -> bool {
+    if u.iq != 0 {
+        let orden = match dominio {
+            None => 2 | 1 << 4,
+            Some(d) => 2 | 2 << 4 | (d as u64) << 16,
+        } | u.iq_drenar;
+        return intel_orden(u, [orden, 0]) && intel_esperar_cola(u);
+    }
     let orden = match dominio {
         None => 1 << 63 | 1 << 60,
         Some(d) => 1 << 63 | 2 << 60 | (d as u64) << 32,
     } | u.drenar;
     u.regs.escribir64(u.iro + 8, orden);
     esperar(|| u.regs.leer64(u.iro + 8) & 1 << 63 == 0)
+}
+
+/// Pone un descriptor de 128 bits en la cola de invalidaciones (6.5.2) y mueve la cola (IQT). Falso si la unidad no
+/// la vacía a tiempo (llena) o dio un error de cola (FSTS.IQE).
+fn intel_orden(u: &mut Unidad, orden: [u64; 2]) -> bool {
+    let siguiente = (u.iq_cola + 16) % PAGINA;
+    if !esperar(|| u.regs.leer64(IQH) & 0x7fff0 != siguiente || u.regs.leer32(FSTS) & FSTS_IQE != 0) {
+        return false;
+    }
+    if u.regs.leer32(FSTS) & FSTS_IQE != 0 {
+        return false;
+    }
+    poner_f(u.iq + u.iq_cola, orden[0], u.coherente);
+    poner_f(u.iq + u.iq_cola + 8, orden[1], u.coherente);
+    barrera();
+    u.iq_cola = siguiente;
+    u.regs.escribir64(IQT, siguiente);
+    true
+}
+
+/// Un descriptor de espera (6.5.2.8: tipo 5, SW = 1, el sello en 63:32 y dónde escribirlo en la palabra alta) y la
+/// espera a que la unidad lo escriba: entonces ha hecho todas las órdenes de antes.
+fn intel_esperar_cola(u: &mut Unidad) -> bool {
+    u.iq_secuencia = u.iq_secuencia.wrapping_add(1).max(1);
+    let s = u.iq_secuencia;
+    if !intel_orden(u, [5 | 1 << 5 | (s as u64) << 32, u.iq_sello]) {
+        return false;
+    }
+    let (sello, coherente) = (u.iq_sello, u.coherente);
+    let regs = &u.regs;
+    esperar(|| leer_f_fresco(sello, coherente) as u32 == s || regs.leer32(FSTS) & FSTS_IQE != 0) && regs.leer32(FSTS) & FSTS_IQE == 0
+}
+
+/// Enciende la cola de invalidaciones de una unidad (6.5.2, 10.4.23 a 10.4.25): una página (256 descriptores de 128
+/// bits, IQA.QS = 0 y DW = 0), la cola a 0 y GCMD.QIE. Falso si no se enciende (la unidad sigue con los registros).
+fn intel_encender_cola(u: &mut Unidad) -> bool {
+    let (Some(iq), Some(sello)) = (pagina_nueva(1), pagina_nueva(1)) else { return false };
+    u.regs.escribir64(IQT, 0);
+    u.regs.escribir64(IQA, iq);
+    gcmd(&u.regs, QIE, true);
+    if !esperar(|| u.regs.leer32(GSTS) & QIE != 0) {
+        return false;
+    }
+    u.iq = iq;
+    u.iq_sello = sello;
+    u.iq_cola = u.regs.leer64(IQH) & 0x7fff0;
+    true
 }
 
 /// Enciende una unidad de VT-d con sus registros en `base`: tabla raíz vacía (nadie hace DMA), el aviso de fallos y la
@@ -265,6 +402,14 @@ pub fn encender_intel(base: u64) -> Result<usize, &'static str> {
         nfr,
         iro,
         raiz: 0,
+        iq: 0,
+        iq_cola: 0,
+        iq_sello: 0,
+        iq_secuencia: 0,
+        iq_drenar: (if cap & 1 << 55 != 0 { 1 << 7 } else { 0 }) | (if cap & 1 << 54 != 0 { 1 << 6 } else { 0 }),
+        ir_cap: ecap & ECAP_IR != 0 && ecap & ECAP_QI != 0,
+        eim_cap: ecap & ECAP_EIM != 0,
+        ir: false,
         tabla_aparatos: 0,
         vacia: 0,
         ordenes: 0,
@@ -284,13 +429,18 @@ pub fn encender_intel(base: u64) -> Result<usize, &'static str> {
             }
         }
     }
+    // Con remapeo de interrupciones hace falta la cola de invalidaciones (su caché solo se invalida por ella, 6.5.2.7):
+    // se enciende ya, y desde aquí todo se invalida por la cola. Sin remapeo, por registros, como siempre.
+    if u.ir_cap && !intel_encender_cola(&mut u) {
+        u.ir_cap = false;
+    }
     u.raiz = pagina_nueva(1).ok_or("sin memoria para la tabla raíz")?;
     u.regs.escribir64(RTADDR, u.raiz);
     gcmd(&u.regs, SRTP, true);
     if !esperar(|| u.regs.leer32(GSTS) & SRTP != 0) {
         return Err("no toma la tabla raíz");
     }
-    if !intel_invalidar_contextos(&u) || !intel_invalidar_iotlb(&u, None) {
+    if !intel_invalidar_contextos(&mut u) || !intel_invalidar_iotlb(&mut u, None) {
         return Err("no invalida sus cachés");
     }
     // El aviso de fallos, enmascarado mientras se limpia lo que hubiera.
@@ -346,6 +496,206 @@ fn intel_atender(u: &Unidad, apuntar: &mut dyn FnMut(Fallo)) {
     }
     // Los bits de error que se borran escribiendo 1: PFO, AFO, APF, IQE, ICE e ITE.
     u.regs.escribir32(FSTS, fsts & 0x7d);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// El remapeo de interrupciones de VT-d (5.1, 9.10, 10.4.29).
+
+/// Las claves de las entradas de la tabla de remapeo, dentro de su fuente: una MSI (con su vector) o la patilla de un
+/// IOAPIC.
+pub const CLAVE_MSI: u32 = 0;
+pub const CLAVE_IOAPIC: u32 = 1 << 16;
+
+/// VT-d: ¿puede la unidad remapear interrupciones? (ECAP.IR, y su cola de invalidaciones encendida.)
+pub fn puede_remapear(unidad: usize) -> bool {
+    ESTADO.tomar().unidades.get(unidad).is_some_and(|u| u.tipo == Tipo::Intel && u.ir_cap)
+}
+
+/// VT-d: ¿tiene la unidad el remapeo de interrupciones encendido?
+pub fn remapea(unidad: usize) -> bool {
+    ESTADO.tomar().unidades.get(unidad).is_some_and(|u| u.ir)
+}
+
+/// ¿Hay alguna unidad de VT-d con el remapeo encendido? Y si es en formato de x2APIC (destinos de 32 bits).
+pub fn remapeo() -> Option<bool> {
+    let e = ESTADO.tomar();
+    (e.ir.tabla != 0).then_some(e.ir.eime)
+}
+
+/// Invalida en todas las unidades con remapeo la caché de entradas de interrupción (6.5.2.7: tipo 4; G = 0 todas,
+/// o G = 1 con el índice en 47:32 e IM = 0, una).
+fn ir_invalidar(e: &mut Estado, indice: Option<u16>) -> bool {
+    let orden = match indice {
+        None => 4,
+        Some(i) => 4 | 1 << 4 | (i as u64) << 32,
+    };
+    let mut bien = true;
+    for u in e.unidades.iter_mut().filter(|u| u.ir) {
+        bien &= intel_orden(u, [orden, 0]) && intel_esperar_cola(u);
+    }
+    bien
+}
+
+/// VT-d: enciende el remapeo de interrupciones en `unidades` (todas con `puede_remapear`), con una tabla para todas,
+/// vacía, y con el formato compatible bloqueado (CFI a 0). `ioapics`: los IOAPIC que pasan por ellas, (ID de la MADT,
+/// número de PCI con el que mandan sus mensajes; de los ámbitos de la DMAR). Con x2APIC, en su formato (EIME) si todas
+/// lo tienen. Desde aquí, una interrupción que pase por esas unidades solo llega si tiene su entrada (`irte_poner`):
+/// quien llama vuelve a programar en formato remapeable lo que ya estuviera en marcha (`ioapic::rehacer`).
+pub fn encender_remapeo(unidades: &[usize], ioapics: &[(u8, u16)]) -> Result<(), &'static str> {
+    let mut g = ESTADO.tomar();
+    let e = &mut *g;
+    if e.ir.tabla != 0 {
+        return Err("ya está encendido");
+    }
+    let us: Vec<usize> = unidades.iter().copied().filter(|&i| e.unidades.get(i).is_some_and(|u| u.tipo == Tipo::Intel && u.ir_cap)).collect();
+    if us.is_empty() {
+        return Err("ninguna unidad lo admite");
+    }
+    let mut duenos = Vec::new();
+    let mut ios = Vec::new();
+    if duenos.try_reserve_exact(ENTRADAS_IR).is_err() || ios.try_reserve_exact(ioapics.len()).is_err() {
+        return Err("sin memoria");
+    }
+    duenos.resize(ENTRADAS_IR, None);
+    ios.extend_from_slice(ioapics);
+    let tabla = pagina_nueva(ENTRADAS_IR * 16 / PAGINA as usize).ok_or("sin memoria para la tabla")?;
+    let eime = super::apic::x2apic() && us.iter().all(|&i| e.unidades[i].eim_cap);
+    let coherente = us.iter().all(|&i| e.unidades[i].coherente);
+    if !coherente {
+        // La tabla, a cero, fuera de la caché (la unidad la lee de la memoria).
+        for k in 0..(ENTRADAS_IR * 2) as u64 {
+            poner_f(tabla + 8 * k, 0, false);
+        }
+    }
+    barrera();
+    for &i in &us {
+        let u = &mut e.unidades[i];
+        // 10.4.29: la tabla, EIME (bit 11) y su tamaño (S, 2^(S+1) entradas); GCMD.SIRTP y esperar a GSTS.IRTPS.
+        u.regs.escribir64(IRTA, tabla | (eime as u64) << 11 | IRTA_S);
+        gcmd(&u.regs, SIRTP, true);
+        if !esperar(|| u.regs.leer32(GSTS) & SIRTP != 0) {
+            return Err("no toma la tabla de remapeo");
+        }
+        // Lo que tuviera en su caché de entradas, fuera; luego el formato compatible bloqueado y el remapeo encendido.
+        if !(intel_orden(u, [4, 0]) && intel_esperar_cola(u)) {
+            return Err("no invalida su caché de entradas de interrupción");
+        }
+        if u.regs.leer32(GSTS) & CFI != 0 {
+            gcmd(&u.regs, CFI, false);
+            esperar(|| u.regs.leer32(GSTS) & CFI == 0);
+        }
+        gcmd(&u.regs, IRE, true);
+        if !esperar(|| u.regs.leer32(GSTS) & IRE != 0) {
+            return Err("no enciende el remapeo");
+        }
+        u.ir = true;
+    }
+    e.ir = Remapeo { tabla, eime, coherente, duenos, ioapics: ios };
+    Ok(())
+}
+
+/// La palabra baja de una entrada (9.10, formato remapeado): P, TM (bit 4: por nivel), entrega fija (DLM 000) a un
+/// destino físico (DM 0), sin RH, IM 0 (remapeada, no "posted"), el vector (23:16) y el destino (63:32: el ID de x2APIC
+/// entero con EIME; si no, el de 8 bits en 47:40).
+fn irte_bajo(destino: u32, vector: u8, nivel: bool, eime: bool) -> u64 {
+    let dst = if eime { destino as u64 } else { ((destino & 0xff) as u64) << 8 };
+    1 | (nivel as u64) << 4 | (vector as u64) << 16 | dst << 32
+}
+
+/// La palabra alta: el número de PCI de la fuente (SID, 79:64), SQ = 00 (los 16 bits) y SVT = 01 (83:82: se comprueba
+/// el origen). Un mensaje con el índice de esta entrada que venga de otro aparato se bloquea (motivo 0x26).
+fn irte_alto(sid: u16) -> u64 {
+    sid as u64 | 1 << 18
+}
+
+/// VT-d: la entrada de la tabla de remapeo de la fuente (`sid`, `clave`), a `vector` del APIC `destino`. Si la fuente
+/// ya tenía una, se cambia (sin tocar la palabra alta: así la unidad nunca ve media entrada); si no, se le da una
+/// libre. Devuelve su índice (lo que va en el mensaje), o `None` sin remapeo, sin entradas libres o con un destino de
+/// más de 8 bits sin el formato de x2APIC.
+pub fn irte_poner(sid: u16, clave: u32, destino: u32, vector: u8, nivel: bool) -> Option<u16> {
+    let mut g = ESTADO.tomar();
+    let e = &mut *g;
+    let r = &mut e.ir;
+    if r.tabla == 0 || (!r.eime && destino > 0xff) {
+        return None;
+    }
+    let bajo = irte_bajo(destino, vector, nivel, r.eime);
+    let i = match r.duenos.iter().position(|d| *d == Some((sid, clave))) {
+        Some(i) => {
+            let sitio = r.tabla + 16 * i as u64;
+            if leer_f(sitio) == bajo {
+                return Some(i as u16);
+            }
+            poner_f(sitio, bajo, r.coherente);
+            i
+        }
+        None => {
+            let i = r.duenos.iter().position(|d| d.is_none())?;
+            r.duenos[i] = Some((sid, clave));
+            let sitio = r.tabla + 16 * i as u64;
+            poner_f(sitio + 8, irte_alto(sid), r.coherente);
+            barrera();
+            poner_f(sitio, bajo, r.coherente);
+            i
+        }
+    };
+    barrera();
+    ir_invalidar(e, Some(i as u16)).then_some(i as u16)
+}
+
+/// VT-d: quita las entradas de la fuente `sid` (con `clave`, o todas): sus mensajes se bloquean (motivo 0x22, entrada
+/// sin P) y las entradas quedan libres.
+pub fn irte_quitar(sid: u16, clave: Option<u32>) {
+    let mut g = ESTADO.tomar();
+    let e = &mut *g;
+    let r = &mut e.ir;
+    if r.tabla == 0 {
+        return;
+    }
+    let mut quitadas = false;
+    for i in 0..r.duenos.len() {
+        match r.duenos[i] {
+            Some((s, c)) if s == sid && clave.is_none_or(|k| k == c) => {
+                let sitio = r.tabla + 16 * i as u64;
+                poner_f(sitio, 0, r.coherente);
+                barrera();
+                poner_f(sitio + 8, 0, r.coherente);
+                r.duenos[i] = None;
+                quitadas = true;
+            }
+            _ => {}
+        }
+    }
+    if quitadas {
+        barrera();
+        ir_invalidar(e, None);
+    }
+}
+
+/// La dirección de un mensaje en formato remapeable (5.1.5.2) con el índice `indice`: 0xFEE en 31:20, el índice
+/// (14:0) en 19:5, el formato (bit 4 a 1), SHV a 0 (el dato no cuenta: va a 0) y el bit 15 del índice en el bit 2.
+pub fn direccion_remapeada(indice: u16) -> u64 {
+    0xFEE0_0000 | ((indice as u64) & 0x7fff) << 5 | 1 << 4 | ((indice as u64) >> 15 & 1) << 2
+}
+
+/// VT-d: el número de PCI con que manda sus mensajes el IOAPIC de ID `id`, si pasa por una unidad con remapeo.
+pub fn ioapic_remapeado(id: u8) -> Option<u16> {
+    let e = ESTADO.tomar();
+    if e.ir.tabla == 0 {
+        return None;
+    }
+    e.ir.ioapics.iter().find(|x| x.0 == id).map(|x| x.1)
+}
+
+/// VT-d: la entrada `indice` de la tabla de remapeo, para las pruebas: (dueño, palabra baja, palabra alta).
+pub fn irte_leer(indice: u16) -> Option<(Option<(u16, u32)>, u64, u64)> {
+    let e = ESTADO.tomar();
+    let r = &e.ir;
+    if r.tabla == 0 || indice as usize >= ENTRADAS_IR {
+        return None;
+    }
+    let sitio = r.tabla + 16 * indice as u64;
+    Some((r.duenos[indice as usize], leer_f(sitio), leer_f(sitio + 8)))
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -460,6 +810,14 @@ pub fn encender_amd(base: u64) -> Result<usize, &'static str> {
         nfr: 0,
         iro: 0,
         raiz: 0,
+        iq: 0,
+        iq_cola: 0,
+        iq_sello: 0,
+        iq_secuencia: 0,
+        iq_drenar: 0,
+        ir_cap: false,
+        eim_cap: false,
+        ir: false,
         tabla_aparatos: tabla,
         vacia,
         ordenes,
@@ -656,23 +1014,47 @@ impl Dominio {
         invalidar(u, d.id);
     }
 
-    /// AMD-Vi (X11; AMD 48882, 2.2.5.1 y tabla 7): las interrupciones fijas del aparato pasan por su tabla de remapeo,
-    /// de una sola entrada (IntTabLen 0): la 0, a `vector` del APIC `destino` (físico, de 8 bits), fija. El aparato
-    /// tiene que mandar su MSI con el dato 0 (el índice, bits 10:0) a 0xFEE0_0000. Cualquier otro mensaje que mande
-    /// (otro dato, por DMA a 0xFEE0_0000) da con una entrada sin RemapEn y se aborta; las NMI, INIT, ExtInt y LINT,
-    /// también (sus pases a 0). Falso en VT-d (sin remapeo todavía), con un destino de más de 8 bits o sin memoria.
-    pub fn remapear_interrupciones(self, destino: u32, vector: u8) -> bool {
+    /// ¿Pasan por remapeo las interrupciones del aparato? (Siempre en AMD-Vi; en VT-d, si su unidad lo tiene encendido.)
+    pub fn con_remapeo(self) -> bool {
+        let e = ESTADO.tomar();
+        e.dominios.get(self.0 as usize).and_then(|d| e.unidades.get(d.unidad)).is_some_and(|u| u.tipo == Tipo::Amd || u.ir)
+    }
+
+    /// Las interrupciones del aparato (X11), por el remapeo, a `vector` del APIC `destino` (físico), fijas y por flanco.
+    /// Devuelve el mensaje que tiene que mandar el aparato (dirección y dato), o `None` sin remapeo, con un destino que no
+    /// cabe o sin memoria.
+    ///
+    /// - VT-d: su entrada en la tabla de remapeo de todo el sistema (`irte_poner`), con la comprobación del origen: solo
+    ///   este aparato la puede usar. El mensaje, en formato remapeable con ese índice. Lo que mande con otro índice (de
+    ///   otra fuente) se bloquea por el origen; en formato compatible, por CFI.
+    /// - AMD-Vi (AMD 48882, 2.2.5.1 y tabla 7): su tabla de remapeo, de una sola entrada (IntTabLen 0): la 0. El aparato
+    ///   manda su MSI con el dato 0 (el índice, bits 10:0) a 0xFEE0_0000. Cualquier otro mensaje que mande (otro dato,
+    ///   por DMA a 0xFEE0_0000) da con una entrada sin RemapEn y se aborta; las NMI, INIT, ExtInt y LINT, también (sus
+    ///   pases a 0).
+    pub fn remapear_interrupciones(self, destino: u32, vector: u8) -> Option<(u64, u32)> {
+        let (amd, aparato) = {
+            let e = ESTADO.tomar();
+            let d = e.dominios.get(self.0 as usize)?;
+            let u = e.unidades.get(d.unidad)?;
+            if u.tipo == Tipo::Intel && !u.ir {
+                return None;
+            }
+            (u.tipo == Tipo::Amd, d.aparato)
+        };
+        if !amd {
+            let i = irte_poner(aparato, CLAVE_MSI | vector as u32, destino, vector, false)?;
+            return Some((direccion_remapeada(i), 0));
+        }
         let mut g = ESTADO.tomar();
         let e = &mut *g;
-        let Some(d) = e.dominios.get_mut(self.0 as usize) else { return false };
-        let Some(u) = e.unidades.get_mut(d.unidad) else { return false };
-        if u.tipo != Tipo::Amd || destino > 0xff {
-            return false;
+        let d = e.dominios.get_mut(self.0 as usize)?;
+        let u = e.unidades.get_mut(d.unidad)?;
+        if destino > 0xff {
+            return None;
         }
         if d.irt == 0 {
             // Una página entera a cero: alineada a 128 bytes, y lo que haya detrás de la entrada 0 no remapea.
-            let Some(t) = pagina_nueva(1) else { return false };
-            d.irt = t;
+            d.irt = pagina_nueva(1)?;
         }
         // La entrada (figura 15): RemapEn (bit 0), IntType 0 (fija), DM 0 (física), Destination (15:8), Vector (23:16).
         let irte = 1u64 | (destino as u64) << 8 | (vector as u64) << 16;
@@ -683,19 +1065,27 @@ impl Dominio {
         poner_f(dte + 16, 1 | (d.irt & 0x000F_FFFF_FFFF_FFC0) | 2 << 60, true);
         barrera();
         let aparato = d.aparato;
-        amd_orden(u, [aparato as u64 | 5 << 60, 0]) && amd_invalidar_aparato(u, aparato) && amd_esperar_ordenes(u)
+        (amd_orden(u, [aparato as u64 | 5 << 60, 0]) && amd_invalidar_aparato(u, aparato) && amd_esperar_ordenes(u)).then_some((0xFEE0_0000, 0))
     }
 
-    /// AMD-Vi (X11): todas las interrupciones del aparato se abortan (IV = 1 e IntCtl = 00b, sin pases). Es como queda
-    /// un aparato que se ha pasado a una máquina y ya no es de nadie. En VT-d, nada.
+    /// Todas las interrupciones del aparato se abortan. Es como queda un aparato que se ha pasado a una máquina y ya no
+    /// es de nadie (X11). AMD-Vi: IV = 1 e IntCtl = 00b, sin pases. VT-d con remapeo: sus entradas de la tabla, quitadas
+    /// (cualquier mensaje suyo en formato remapeable da con una entrada vacía o de otro; en compatible, bloqueado).
     pub fn bloquear_interrupciones(self) {
+        let (amd, aparato) = {
+            let e = ESTADO.tomar();
+            let Some(d) = e.dominios.get(self.0 as usize) else { return };
+            let Some(u) = e.unidades.get(d.unidad) else { return };
+            (u.tipo == Tipo::Amd, d.aparato)
+        };
+        if !amd {
+            irte_quitar(aparato, None);
+            return;
+        }
         let mut g = ESTADO.tomar();
         let e = &mut *g;
         let Some(d) = e.dominios.get(self.0 as usize) else { return };
         let Some(u) = e.unidades.get_mut(d.unidad) else { return };
-        if u.tipo != Tipo::Amd {
-            return;
-        }
         let dte = u.tabla_aparatos + d.aparato as u64 * 32;
         poner_f(dte + 16, 1, true);
         barrera();
@@ -732,12 +1122,6 @@ impl Dominio {
     /// El aparato del dominio (bus, aparato y función).
     pub fn aparato(self) -> u16 {
         ESTADO.tomar().dominios.get(self.0 as usize).map(|d| d.aparato).unwrap_or(0)
-    }
-
-    /// ¿Es de una AMD-Vi? (Si no, de una VT-d.)
-    pub fn es_amd(self) -> bool {
-        let e = ESTADO.tomar();
-        e.dominios.get(self.0 as usize).and_then(|d| e.unidades.get(d.unidad)).is_some_and(|u| u.tipo == Tipo::Amd)
     }
 
     /// Su número de dominio en la IOMMU.
@@ -814,6 +1198,14 @@ pub fn motivo(f: &Fallo) -> &'static str {
         (Tipo::Intel, 9) => "tabla de contexto en una dirección mala",
         (Tipo::Intel, 0xa..=0xc) => "bits reservados puestos en una tabla",
         (Tipo::Intel, 0xd) => "tipo de traducción bloqueado",
+        // VT-d, 7.1.3 (los del remapeo de interrupciones).
+        (Tipo::Intel, 0x20) => "petición de interrupción con bits reservados",
+        (Tipo::Intel, 0x21) => "índice más allá de la tabla de remapeo",
+        (Tipo::Intel, 0x22) => "entrada de remapeo vacía",
+        (Tipo::Intel, 0x23) => "tabla de remapeo en una dirección mala",
+        (Tipo::Intel, 0x24) => "bits reservados puestos en una entrada de remapeo",
+        (Tipo::Intel, 0x25) => "interrupción en formato compatible, bloqueada",
+        (Tipo::Intel, 0x26) => "la entrada de remapeo es de otro aparato (origen)",
         // AMD, 2.5.2 (códigos de evento).
         (Tipo::Amd, 1) => "entrada mala en la tabla de aparatos",
         (Tipo::Amd, 2) => "fallo de página de E/S: no está proyectado o sin permiso",
@@ -876,6 +1268,10 @@ pub fn atender() {
         if n < ESCRITOS_MAX {
             let (b, a, fu) = (f.origen >> 8, (f.origen >> 3) & 0x1f, f.origen & 7);
             match f.tipo {
+                Tipo::Intel if f.de_interrupcion() => crate::kprintln!(
+                    "IOMMU: interrupción bloqueada de {}:{}.{}: entrada {}: {} (motivo {:#x})",
+                    b, a, fu, f.indice(), motivo(&f), f.motivo
+                ),
                 Tipo::Intel => crate::kprintln!(
                     "IOMMU: fallo de DMA de {}:{}.{}: {} en {:#x}: {} (motivo {})",
                     b, a, fu, if f.escritura { "escritura" } else { "lectura" }, f.direccion, motivo(&f), f.motivo
@@ -886,7 +1282,7 @@ pub fn atender() {
                 ),
             }
         } else if n == ESCRITOS_MAX {
-            crate::kprintln!("IOMMU: más fallos de DMA distintos; desde aquí solo se cuentan");
+            crate::kprintln!("IOMMU: más fallos distintos; desde aquí solo se cuentan");
         }
     }
 }

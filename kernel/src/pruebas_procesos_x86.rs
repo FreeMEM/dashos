@@ -742,7 +742,8 @@ fn prueba_relevo() {
 /// llamada se niega (el programa sale con 12). Con ella, el programa sale con 10 si el invitado leyó su configuración,
 /// usó la BAR, hizo DMA en su memoria y recibió la interrupción. Aquí se mira además que el DMA fuera de su memoria se
 /// bloqueó (sin tocar esa física del anfitrión), que, muerto el monitor, el aparato está callado, libre y sin alcanzar
-/// nada, y, con AMD-Vi, que el remapeo de interrupciones no deja pasar otra MSI que la suya (`msi_remapeada`).
+/// nada, y, con remapeo de interrupciones (AMD-Vi, o VT-d con IR), que no deja pasar otra MSI que la suya
+/// (`msi_remapeada`).
 static MAQUINA_PCI: &[u8] = programa_x86!("maquina_pci");
 
 /// Lo que el invitado manda copiar fuera de su memoria (en `maquina_pci.rs`).
@@ -791,12 +792,13 @@ pub fn prueba_pasar(funciones: &[crate::pci::Funcion]) {
     kprintln!("X11: al morir el monitor, el aparato queda bloqueado y libre {}", bien(libre && callado && bloqueado));
     let remapeo = match msi_remapeada(&ap) {
         Some((buena, falsa_parada)) => {
-            kprintln!("X11: con el remapeo de AMD-Vi, su MSI llega y otra no {}", bien(buena && falsa_parada));
+            let cual = if hw::unidades().iter().any(|u| u.0 == hw::Tipo::Amd) { "AMD-Vi" } else { "VT-d" };
+            kprintln!("X11: con el remapeo de {}, su MSI llega y otra no {}", cual, bien(buena && falsa_parada));
             buena && falsa_parada
         }
         None => {
-            kprintln!("  sin remapeo de interrupciones (VT-d): el aparato podría mandar cualquier MSI");
-            !hw::unidades().iter().any(|u| u.0 == hw::Tipo::Amd)
+            kprintln!("  sin remapeo de interrupciones (VT-d sin IR): el aparato podría mandar cualquier MSI");
+            !hw::unidades().iter().any(|u| u.0 == hw::Tipo::Amd) && hw::remapeo().is_none()
         }
     };
     kprintln!("  el programa acabó {:?}", fin);
@@ -806,12 +808,17 @@ pub fn prueba_pasar(funciones: &[crate::pci::Funcion]) {
     );
 }
 
-/// Con AMD-Vi (`None` si no hay remapeo): el kernel asigna el aparato a un espacio de invitado vacío, como haría la
-/// llamada, y le hace levantar una interrupción: llega. Luego cambia a mano el dato de su MSI de verdad por el vector de
-/// su MSI en el anfitrión, como iría un mensaje sin remapeo (lo que mandaría un aparato reprogramado por el invitado),
-/// y vuelve a levantarla: con la tabla de remapeo de una entrada, no llega. (Devuelve si llegó la buena y si se paró
+/// Con remapeo (`None` si no lo hay): el kernel asigna el aparato a un espacio de invitado vacío, como haría la
+/// llamada, y le hace levantar una interrupción: llega. Luego cambia a mano su MSI de verdad (lo que mandaría un aparato
+/// reprogramado por el invitado) y vuelve a levantarla: no tiene que llegar. (Devuelve si llegó la buena y si se paró
 /// la otra.) El aparato queda suelto.
+/// - AMD-Vi: el dato, al vector de su MSI en el anfitrión, como iría un mensaje sin remapeo. Con la tabla de remapeo de
+///   una entrada, se aborta.
+/// - VT-d: la dirección, en formato remapeable, al índice de una entrada de otro aparato que apunta al mismo vector del
+///   mismo núcleo. Se bloquea por la comprobación del origen (SID), y llega el fallo (motivo 0x26) con su número. (El
+///   formato compatible también se bloquea en una VT-d de verdad, pero la de QEMU lo deja pasar: no se prueba aquí.)
 fn msi_remapeada(ap: &alloc::sync::Arc<crate::pasar::Aparato>) -> Option<(bool, bool)> {
+    use crate::base::iommu as hw;
     let espacio = crate::base::hiper::Espacio::nuevo(&crate::cupo::Cupo::raiz()).ok()?;
     ap.tomar().ok()?;
     let Ok((Some(irq), banderas)) = ap.conectar(&espacio) else {
@@ -848,14 +855,54 @@ fn msi_remapeada(ap: &alloc::sync::Arc<crate::pasar::Aparato>) -> Option<(bool, 
     };
     let buena = levantar();
     let p = f.capacidad(crate::pci::CAP_MSI);
+    let amd = hw::unidades().iter().any(|u| u.0 == hw::Tipo::Amd);
+    // VT-d: una entrada de otra fuente (otro número de PCI) al mismo vector y núcleo que la del aparato.
+    let ajena = (!amd).then(|| {
+        let otro = ap.numero() ^ 1;
+        let destino = crate::nucleos::apic_de(0).unwrap_or(0);
+        (otro, hw::irte_poner(otro, hw::CLAVE_MSI | 0xffff, destino, ap.vector().unwrap_or(0), false))
+    });
+    let fallos_antes = hw::fallos();
+    let mut puesta = false;
     if let Some(p) = p {
         let dato = if f.leer(p) & (1 << 23) != 0 { p + 12 } else { p + 8 };
-        f.escribir_n(dato, 2, ap.vector().unwrap_or(0) as u32);
+        match ajena {
+            None => {
+                f.escribir_n(dato, 2, ap.vector().unwrap_or(0) as u32);
+                puesta = true;
+            }
+            Some((_, Some(i))) => {
+                f.escribir(p + 4, hw::direccion_remapeada(i) as u32);
+                f.escribir_n(dato, 2, 0);
+                puesta = true;
+            }
+            Some((_, None)) => {}
+        }
     }
-    let falsa = p.is_some() && levantar();
-    kprintln!("  remapeo: la MSI del aparato {}; con el dato cambiado a mano, {}", if buena { "llega" } else { "NO llega" }, if falsa { "LLEGA" } else { "no llega" });
+    let falsa = puesta && levantar();
+    // VT-d: el fallo de origen, del aparato.
+    let avisada = amd || {
+        hw::atender();
+        hw::fallos() > fallos_antes && hw::fallos_recientes().iter().any(|x| x.origen == ap.numero() && x.motivo == 0x26)
+    };
+    if let Some((otro, _)) = ajena {
+        hw::irte_quitar(otro, Some(hw::CLAVE_MSI | 0xffff));
+    }
+    let como = if amd { "con el dato cambiado a mano" } else { "apuntada a la entrada de otro aparato" };
+    kprintln!(
+        "  remapeo: la MSI del aparato {}; {}, {}{}",
+        if buena { "llega" } else { "NO llega" },
+        como,
+        if falsa { "LLEGA" } else { "no llega" },
+        if amd { "" } else if avisada { " (fallo de origen avisado)" } else { " (SIN fallo de origen)" }
+    );
     ap.soltar();
-    Some((buena, p.is_some() && !falsa))
+    // VT-d: suelto, ya no tiene entradas en la tabla (sus mensajes dan con una vacía o de otro).
+    let sin_entradas = amd || (0..hw::ENTRADAS_IR as u16).all(|i| hw::irte_leer(i).is_none_or(|(d, _, _)| d.is_none_or(|d| d.0 != ap.numero())));
+    if !sin_entradas {
+        kprintln!("  remapeo: suelto, el aparato aún tiene entradas en la tabla");
+    }
+    Some((buena, puesta && !falsa && avisada && sin_entradas))
 }
 
 /// El kernel pone en marcha el `edu` a mano (memoria y bus master) y le pide copiar 64 bytes de su búfer a 0x11000,

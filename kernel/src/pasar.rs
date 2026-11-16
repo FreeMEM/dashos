@@ -3,8 +3,8 @@
 //! memoria física, y la llamada se niega.
 //!
 //! Escrito con la especificación de PCI Express 6.0 (7.5.1, la cabecera de tipo 0 y su registro de mando; 6.6.2, FLR;
-//! 7.7.1 y 7.7.2, MSI y MSI-X) y la de la IOMMU de AMD (n.º 48882, 2.2.5, el remapeo de interrupciones). Sala limpia:
-//! ni VFIO ni KVM ni Xen.
+//! 7.7.1 y 7.7.2, MSI y MSI-X), la de la IOMMU de AMD (n.º 48882, 2.2.5, el remapeo de interrupciones) y la de VT-d
+//! de Intel (5.1 y 9.10, el remapeo de interrupciones). Sala limpia: ni VFIO ni KVM ni Xen.
 //!
 //! Un `Aparato` es una función del PCIe (cabecera de tipo 0) que ya no es de ningún servicio del anfitrión: el kernel
 //! la apunta como suya al crear el objeto (`reclamar`) y `inicio` no da sus registros ni su permiso DMA a nadie. La
@@ -14,9 +14,11 @@
 //!   memoria del invitado: la dirección de DMA es la física del invitado, y lo que se añada después a la máquina
 //!   (`maquina_memoria`) también entra. Su MSI la programa el kernel, nunca el invitado: llega al anfitrión como una
 //!   interrupción de aparato, cuya llave recibe el monitor; el monitor la entrega a la vCPU como cualquier otra (el
-//!   bloque de interrupciones de X10). Con AMD-Vi, además, las interrupciones del aparato pasan por una tabla de remapeo
-//!   con una sola entrada: aunque el invitado le haga escribir por DMA en 0xFEE0_0000 lo que quiera, no puede mandar al
-//!   anfitrión otra interrupción que la suya. Con VT-d todavía no (`base::iommu`): el aparato podría mandar cualquiera.
+//!   bloque de interrupciones de X10). Además, sus interrupciones pasan por el remapeo de la IOMMU: con AMD-Vi, una tabla
+//!   de remapeo suya con una sola entrada; con VT-d, su entrada en la tabla de todo el sistema, que solo vale para él
+//!   (se comprueba su número de PCI) y apunta a su vector de siempre, con las de formato compatible bloqueadas. Aunque
+//!   el invitado le haga mandar lo que quiera, no puede llevar al anfitrión otra interrupción que la suya. Con una VT-d
+//!   sin remapeo (sin ECAP.IR), el aparato se pasa igual, pero podría mandar cualquiera: la llamada lo dice.
 //! - **Proyecta sus BAR** en el espacio físico del invitado (NPT o EPT, sin caché) donde diga, salvo las páginas de la
 //!   tabla y la PBA de MSI-X, que siguen saliendo al monitor (las emula él).
 //! - **Lee y escribe su configuración**, filtrada: se lee entera salvo las BAR y la ROM (dan 0: las emula el monitor, que
@@ -26,8 +28,8 @@
 //!   (las BAR, la MSI y la MSI-X, las capacidades) da `E_DERECHOS`: el monitor lo emula.
 //!
 //! Al parar la máquina (o al soltarse su última vCPU: el monitor murió), el aparato se calla (sin bus master ni
-//! decodificación, sin MSI), su dominio se vacía (todo su DMA falla) y sus interrupciones se abortan (AMD-Vi), y queda
-//! libre para otra máquina.
+//! decodificación, sin MSI), su dominio se vacía (todo su DMA falla) y sus interrupciones se abortan (su tabla de
+//! AMD-Vi sin remapeo, o su entrada de VT-d quitada), y queda libre para otra máquina.
 
 use crate::base::hiper::{self, Espacio};
 use crate::cerrojo::Cerrojo;
@@ -245,16 +247,19 @@ impl Aparato {
         let mut irq = None;
         if let Some((intid, direccion, dato)) = self.msi {
             let destino = ((direccion >> 12) & 0xff) as u32;
-            let como = if d.remapear_interrupciones(destino, dato as u8) {
-                banderas |= REMAPEADAS;
-                // Con remapeo, el dato es el índice en su tabla: la entrada 0.
-                self.f.dar_msi(0xFEE0_0000, 0)
-            } else if d.es_amd() {
-                // Con AMD-Vi siempre se remapea: si no se pudo (sin memoria), no se pasa.
-                return Err(hiper::Error::Memoria);
-            } else {
-                crate::kprintln!("X11: VT-d sin remapeo de interrupciones: el aparato pasado podría mandar cualquier MSI");
-                self.f.dar_msi(direccion, dato)
+            let como = match d.remapear_interrupciones(destino, dato as u8) {
+                Some((dir, dat)) => {
+                    banderas |= REMAPEADAS;
+                    // El mensaje con el índice de su entrada (AMD-Vi: el dato 0, la única de su tabla; VT-d: en la
+                    // dirección, en formato remapeable).
+                    self.f.dar_msi(dir, dat)
+                }
+                // Con remapeo (AMD-Vi, o VT-d con él encendido), si no se pudo (sin memoria o sin entradas), no se pasa.
+                None if d.con_remapeo() => return Err(hiper::Error::Memoria),
+                None => {
+                    crate::kprintln!("X11: VT-d sin remapeo de interrupciones (la unidad no lo tiene): el aparato pasado podría mandar cualquier MSI");
+                    self.f.dar_msi(direccion, dato)
+                }
             };
             if como.is_some() {
                 let mut e = self.estado.tomar();

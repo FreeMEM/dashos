@@ -98,7 +98,8 @@ fn preparar(f: &Funcion, bar: usize, nombre: &str) -> Option<(u64, u64, Option<u
         return None;
     }
     f.encender(false);
-    let irq = interrupciones::msi().and_then(|(intid, direccion, dato)| f.dar_msi(direccion, dato).map(|como| (intid, como)));
+    // Con el remapeo de VT-d, en formato remapeable y con su entrada en la tabla (`iommu::dar_msi`).
+    let irq = interrupciones::msi().and_then(|(intid, direccion, dato)| crate::iommu::dar_msi(f, direccion, dato).map(|como| (intid, como)));
     match irq {
         Some((i, como)) => kprintln!("{}: en el PCIe {}:{}.{}, registros en {:#x} ({} KB), {} en la {}", nombre, f.bus, f.aparato, f.funcion, base, tamano / 1024, como, i),
         None => kprintln!("{}: en el PCIe {}:{}.{}, registros en {:#x} ({} KB), sin MSI", nombre, f.bus, f.aparato, f.funcion, base, tamano / 1024),

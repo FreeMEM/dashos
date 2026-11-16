@@ -4,6 +4,10 @@
 //! redirección) y la especificación de ACPI 6.5 (5.2.12.5, los cambios de las interrupciones ISA). Cada IOAPIC lleva
 //! las interrupciones globales (GSI) desde su `gsi_base`; las ISA van a la GSI de su número salvo que la MADT diga
 //! otra cosa.
+//!
+//! Con el remapeo de interrupciones de VT-d (X11b, `iommu.rs`), cada entrada va en formato remapeable (VT-d, 5.1.5.1):
+//! en vez del destino, el índice de su entrada en la tabla de remapeo (63:49 y el bit 11) y el bit 48 a 1; el vector y
+//! el modo (flanco o nivel) siguen en la entrada, iguales que en la tabla (el IOAPIC los usa para el EOI).
 
 use crate::cerrojo::Cerrojo;
 use alloc::vec::Vec;
@@ -18,6 +22,8 @@ const NIVEL: u32 = 1 << 15;
 const ACTIVA_BAJA: u32 = 1 << 13;
 
 struct Uno {
+    /// Su ID de la MADT (con él se busca su número de PCI para el remapeo).
+    id: u8,
     /// Dirección virtual de sus registros.
     base: usize,
     gsi_base: u32,
@@ -63,7 +69,7 @@ pub fn iniciar(acpi: &super::acpi::Acpi) -> u32 {
             escribir(base, REDIRECCION + 2 * i, ENMASCARADA);
             escribir(base, REDIRECCION + 2 * i + 1, 0);
         }
-        e.ioapics.push(Uno { base, gsi_base: io.gsi_base, entradas });
+        e.ioapics.push(Uno { id: io.id, base, gsi_base: io.gsi_base, entradas });
     }
     e.cambios = acpi.cambios.clone();
     e.ioapics.iter().map(|i| i.entradas).sum()
@@ -101,18 +107,51 @@ pub fn linea_de_gsi(gsi: u32) -> Linea {
 /// Lleva la línea `l` al vector `vector` (de aparatos, `apic::PRIMER_VECTOR_APARATO` a `ULTIMO_VECTOR_APARATO`) del
 /// núcleo de APIC `destino`, y la desenmascara. Falso si el vector no es de aparatos o ningún IOAPIC lleva esa GSI.
 pub fn dirigir(l: Linea, vector: u8, destino: u32) -> bool {
-    if !(super::apic::PRIMER_VECTOR_APARATO..=super::apic::ULTIMO_VECTOR_APARATO).contains(&vector) || destino > 0xff {
+    if !(super::apic::PRIMER_VECTOR_APARATO..=super::apic::ULTIMO_VECTOR_APARATO).contains(&vector) {
         return false;
     }
     let e = ESTADO.tomar();
     let Some(io) = e.ioapics.iter().find(|i| (i.gsi_base..i.gsi_base + i.entradas).contains(&l.gsi)) else { return false };
-    let i = l.gsi - io.gsi_base;
-    let bajo = vector as u32 | if l.nivel { NIVEL } else { 0 } | if l.activa_baja { ACTIVA_BAJA } else { 0 };
+    programar(io, l.gsi - io.gsi_base, l.nivel, l.activa_baja, vector, destino)
+}
+
+/// Programa la entrada `i` de `io` y la desenmascara: en formato remapeable si su IOAPIC pasa por una unidad de VT-d con
+/// remapeo (con su entrada en la tabla, clave = la GSI), si no en el compatible (destino de 8 bits en 63:56).
+fn programar(io: &Uno, i: u32, nivel: bool, activa_baja: bool, vector: u8, destino: u32) -> bool {
+    let mut bajo = vector as u32 | if nivel { NIVEL } else { 0 } | if activa_baja { ACTIVA_BAJA } else { 0 };
+    let alto = match super::iommu::ioapic_remapeado(io.id) {
+        Some(sid) => {
+            let clave = super::iommu::CLAVE_IOAPIC | (io.gsi_base + i);
+            let Some(k) = super::iommu::irte_poner(sid, clave, destino, vector, nivel) else { return false };
+            bajo |= ((k as u32) >> 15 & 1) << 11;
+            1 << 16 | ((k as u32) & 0x7fff) << 17
+        }
+        None if destino > 0xff => return false,
+        None => destino << 24,
+    };
     // Primero el destino, con la entrada aún enmascarada; luego lo demás, que la desenmascara.
     escribir(io.base, REDIRECCION + 2 * i, ENMASCARADA);
-    escribir(io.base, REDIRECCION + 2 * i + 1, destino << 24);
+    escribir(io.base, REDIRECCION + 2 * i + 1, alto);
     escribir(io.base, REDIRECCION + 2 * i, bajo);
     true
+}
+
+/// Tras encender el remapeo de VT-d (`crate::iommu`): las entradas desenmascaradas que estén en formato compatible se
+/// vuelven a programar en el remapeable (las compatibles ya se bloquean). Las que no se puedan, quedan enmascaradas.
+pub fn rehacer() {
+    let e = ESTADO.tomar();
+    for io in &e.ioapics {
+        for i in 0..io.entradas {
+            let bajo = leer(io.base, REDIRECCION + 2 * i);
+            let alto = leer(io.base, REDIRECCION + 2 * i + 1);
+            if bajo & ENMASCARADA != 0 || alto & 1 << 16 != 0 {
+                continue;
+            }
+            if !programar(io, i, bajo & NIVEL != 0, bajo & ACTIVA_BAJA != 0, bajo as u8, alto >> 24) {
+                escribir(io.base, REDIRECCION + 2 * i, bajo | ENMASCARADA);
+            }
+        }
+    }
 }
 
 /// Enmascara la GSI `gsi`.

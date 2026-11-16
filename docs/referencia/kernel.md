@@ -649,8 +649,10 @@ mismos límites. Cambian los registros y lo que es de la CPU:
       En `x1`, las banderas: 1, sus interrupciones pasan por el remapeo de la IOMMU; 2, se hizo FLR. Con **AMD-Vi**,
       el aparato tiene una tabla de remapeo de una sola entrada (la suya: dato 0 a 0xFEE0_0000): aunque el invitado
       le haga escribir por DMA en 0xFEE0_0000 lo que quiera, no llega otra interrupción, y las NMI, INIT, ExtInt y LINT
-      se abortan. Con **VT-d**, todavía sin remapeo (bandera 1 a 0): el aparato podría mandar al anfitrión cualquier
-      MSI. Con la memoria del invitado y la MSI listas, deja la memoria y el bus master encendidos y la INTx apagada.
+      se abortan. Con **VT-d** con remapeo (X11b), su entrada en la tabla de remapeo de todo el sistema, que solo vale
+      para él (se comprueba su número de PCI) y apunta a su vector de siempre; lo que mande con otra entrada, o en
+      formato compatible, se bloquea y el kernel lo avisa en la consola. Solo con una VT-d sin remapeo (sin ECAP.IR, o
+      la DMAR sin INTR_REMAP) la bandera 1 va a 0: el aparato podría mandar al anfitrión cualquier MSI. Con la memoria del invitado y la MSI listas, deja la memoria y el bus master encendidos y la INTx apagada.
       `E_LIMITE` si ya está en una máquina (o sin huecos en la tabla de llaves), `E_ARGUMENTO` si la máquina está
       parada, `E_NO_HAY` sin IOMMU o sin hipervisor.
     - **1, proyectar la BAR** `x3` en la física del invitado `x4` (alineada a 4 KB), sin caché y sin ejecutar (NPT con
@@ -721,8 +723,11 @@ mismos límites. Cambian los registros y lo que es de la CPU:
   falla: el aparato no lee nada o no escribe, el kernel lo cuenta y escribe en la consola el aparato, la dirección y el
   motivo, y sigue. El controlador no recibe aviso (lo que haga el aparato con el error depende de él: el NVMe de QEMU
   contesta como si nada). Un aparato de virtio debe aceptar `VIRTIO_F_ACCESS_PLATFORM` (bit 33) si lo ofrece.
-  Las MSI de los aparatos de los servicios no pasan por la IOMMU (sin remapeo de interrupciones); las de un aparato
-  pasado a una máquina, sí con AMD-Vi (X11).
+  Con VT-d, si la unidad y la DMAR admiten el remapeo de interrupciones (X11b), todas las interrupciones del
+  anfitrión pasan por él: las MSI y MSI-X de los aparatos de los servicios y las de los IOAPIC van en formato
+  remapeable, cada una con su entrada (solo su aparato la puede usar), y las de formato compatible se bloquean. Para un
+  servicio no cambia nada: su llave de interrupción es la misma. Con AMD-Vi, las de los servicios no pasan por el
+  remapeo; las de un aparato pasado a una máquina, sí (X11).
 - **Sin IOMMU** (X5): sin DMAR ni IVRS, el permiso DMA da memoria por debajo de 4 GB, pero un aparato con el bus
   master encendido alcanza toda la memoria física: un controlador de un aparato del PCIe puede leer y escribir
   cualquier cosa por DMA. En ARM (`virt`) pasa lo mismo sin SMMU; en la Pi, el PCIe se limita al primer GB (C51).
