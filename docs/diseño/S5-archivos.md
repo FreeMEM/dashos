@@ -69,7 +69,8 @@ llevar a big-endian sin rehacerlo, se pasa a B usando RedoxFS como guía.
 ### Lo que hay que añadirle
 
 - **Instantáneas** de un volumen o de un cajón. Con copia al escribir son baratas: se guarda la raíz vieja.
-- **Compresión** por bloques, con LZ4 por defecto (rápida) y zstd a elegir (comprime más).
+- **Compresión** por bloques, con LZ4 por defecto (rápida) y zstd a elegir (comprime más). Se elige con un ajuste
+  de la máquina, en texto (`Estado:Prefs`, S4b), desde Ajustes o con la orden `Ajuste`. Su nombre, por diseñar.
 - **Búsqueda sin distinguir mayúsculas**, guardando el nombre tal como se escribió. Un volumen se puede crear
   distinguiendo mayúsculas, si se pide (S4b).
 - **Atributos extra**: el comentario del Amiga, sus bits de protección y lo que pida la capa de Linux.
@@ -89,11 +90,21 @@ llevar a big-endian sin rehacerlo, se pasa a B usando RedoxFS como guía.
 
 - **El cajón de cada usuario, cifrado con su contraseña.** La clave se abre al entrar en la sesión.
 - **Adiantum (ChaCha) en la Pi 4**, porque no tiene AES. En la Pi 5, AES con su hardware.
-- Cifrar el disco entero es una opción aparte, no la de serie.
+- Cifrar el disco entero es una opción aparte, no la de serie. Dónde se elige está abierto (S32, pregunta 4). Lo
+  elegido queda en los ajustes de la máquina, en texto, donde se puede leer.
+
+### Un fichero dañado
+
+Cuando una suma no cuadra, el fichero no se lee como si nada. El usuario ve un aviso en llano: "Este fichero está
+dañado. Recuperar de una copia anterior", que lleva a sus versiones anteriores (abajo). Y queda una línea en el
+registro (`Estado:Registros/`, S6) con el fichero y el bloque.
 
 ### Otros sistemas de archivos
 
 Cada uno es un proceso aparte, y se monta desde `DEVS:DOSDrivers` (S4b).
+
+Lo que se enchufa (una memoria USB, una tarjeta de cámara) se monta solo y sale en el escritorio, sin lista de
+montaje. `DOSDrivers` queda para lo que no es corriente.
 
 | Sistema | Para qué | Cómo |
 |---|---|---|
@@ -107,8 +118,25 @@ Cada uno es un proceso aparte, y se monta desde `DEVS:DOSDrivers` (S4b).
 
 - **`SYS:` es una instantánea de solo lectura.** Una actualización escribe una instantánea nueva al lado y, al
   reiniciar, el arranque usa la nueva. Si falla, vuelve a la anterior (S14).
-- **`Paquetes:`** igual: cada transacción del gestor de paquetes es una instantánea (S8).
+- **`Paquetes:`**: cada transacción del gestor de paquetes era una instantánea; desde el 2026-11-15 es un cambio
+  de generación (S8).
 - **`Usuarios:`** con instantáneas periódicas a elegir, como "Time Machine" en macOS.
+
+### Las instantáneas tienen cara (2026-11-15, S36)
+
+Son el "deshacer" de medio sistema, así que se tienen que poder usar sin ayuda:
+
+- **Cada instantánea se ve como un cajón de solo lectura**, con su fecha. Las del volumen de un usuario, en
+  `Home:Instantáneas/<fecha>` (nombre provisional). Se abre y se copia un fichero con el ratón, sin contraseña: es
+  leer lo suyo.
+- **"Versiones anteriores"** en el menú del icono de un fichero o de un cajón: lista las que hay y saca la elegida.
+- **La orden `Instantanea`**: listar, crear, copiar de una y volver. Lo mismo que la ventana, para el Shell y los
+  guiones.
+- **Volver entero sigue existiendo** (S29). Antes de volver se toma otra instantánea de lo de ahora, para poder
+  deshacer el volver.
+
+Hoy las instantáneas son de un volumen entero y no hay orden para leer un fichero de una (S28). Cómo se enseñan como
+cajón, por diseñar al hacerlo.
 
 ## Lo que queda abierto
 
@@ -125,6 +153,7 @@ Cada uno es un proceso aparte, y se monta desde `DEVS:DOSDrivers` (S4b).
 - Con S4 y S4b: guarda los atributos del Amiga, ignora mayúsculas y sirve los volúmenes y asignaciones.
 - S6 usa dueño, grupo y permisos.
 - S8 y S14 usan las instantáneas para instalar y actualizar.
+- S28 y S29 las usan para deshacer; la orden `Instantanea` y "Versiones anteriores" son las de aquí.
 - S12 necesita el controlador de la tarjeta SD con borrado (TRIM) y el de USB.
 
 ## Fuentes

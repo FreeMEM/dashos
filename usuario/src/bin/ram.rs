@@ -377,7 +377,8 @@ fn carla_segunda(arch: &Archivos, t: &Tabla) -> bool {
     let en_home = if en_home.e == a::BIEN { arch.leer(en_home.asa) } else { Err(en_home.e) };
     // Se deja como estaba, para la próxima prueba sobre el mismo disco.
     let mut limpio = true;
-    for (cajon, nombre) in [(&b"Prefs/Env-Archive/Sys"[..], &b"idioma"[..]), (b"Prefs/Env-Archive/Escritorio", b"tema"), (b"Prefs/Env-Archive", b"Sys"), (b"Prefs/Env-Archive", b"Escritorio"), (b"Prefs", b"Env-Archive"), (b"", b"Prefs"), (b"", b"ram.fase")] {
+    // Solo lo que puso esta prueba: en `Prefs/Env-Archive/Sys` está también su `locale.prefs` (idiomas), que se queda.
+    for (cajon, nombre) in [(&b"Prefs/Env-Archive/Sys"[..], &b"idioma"[..]), (b"Prefs/Env-Archive/Escritorio", b"tema"), (b"Prefs/Env-Archive", b"Escritorio"), (b"", b"ram.fase")] {
         let r = arch.orden(a::BUSCAR, HOME, 0, 0, cajon);
         limpio &= r.e == a::BIEN && arch.orden(a::BORRAR, r.asa, 0, 0, nombre).e == a::BIEN;
         arch.cerrar(r.asa);

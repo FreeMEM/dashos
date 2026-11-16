@@ -17,8 +17,11 @@
 //! 14: se come la memoria a trozos de 64 KB y gira (S3).
 //! 16: intenta subir a 1 TB el tope del grupo de su llave 2 (el suyo) y sale con el error en positivo (S3).
 //! 15: se come la memoria a trozos de 16 MB (el máximo) y sale con cuántos le dieron (250 si no acaba en E_MEMORIA; S3).
-//! 17: crea un objeto de memoria disperso, lo proyecta, pone y escribe su página 1 y lee la 0, que no está puesta:
-//! tiene que morir por fallo (llamada 56 y 57). Si llega a leerla, sale con 0.
+//! 17: lee su tabla de llaves (llamada 56) y sale con lo que ve: cuántas tiene (por 16), más 1 si "orden" es la 1, 2 si
+//! "datos" es la 2, 4 si un búfer de un solo nombre recibe solo el primero (y la cuenta entera) y 8 si un búfer que no
+//! es suyo da E_ARGUMENTO.
+//! 18: crea un objeto de memoria disperso, lo proyecta, pone y escribe su página 1 y lee la 0, que no está puesta:
+//! tiene que morir por fallo (llamadas 57 y 58). Si llega a leerla, sale con 0.
 //! Si no le llega nada, se queda bloqueado leyendo (para matarlo bloqueado).
 
 #![no_std]
@@ -76,6 +79,19 @@ fn principal() -> u64 {
             }
         }
         16 => (-dashos::grupo_tope(2, 1 << 40)) as u64,
+        17 => {
+            let t = dashos::llaves::Tabla::leer();
+            let mut uno = [0xaau8; 32];
+            let dice = dashos::llamada(56, [uno.as_mut_ptr() as u64, 16, 0, 0, 0]).0 as i64;
+            let corto = dice == t.cuantas() as i64 && (dice == 0 || (uno[..5] == *b"orden" && uno[16..] == [0xaa; 16]));
+            // La dirección 8 no es suya; con capacidad 0 no se toca el búfer.
+            let ajeno = dashos::llamada(56, [8, 16, 0, 0, 0]).0 as i64 == if dice == 0 { 0 } else { -1 } && dashos::llamada(56, [8, 0, 0, 0, 0]).0 as i64 == dice;
+            t.cuantas() as u64 * 16
+                + (t.buscar("orden") == Some(1)) as u64
+                + 2 * (t.buscar("datos") == Some(2)) as u64
+                + 4 * corto as u64
+                + 8 * ajeno as u64
+        }
         15 => {
             let mut n = 0;
             loop {
@@ -157,7 +173,7 @@ fn principal() -> u64 {
                 }
             }
         }
-        17 => {
+        18 => {
             let va = 0x30_0000_0000usize;
             let m = dashos::memoria_dispersa(64 << 10, 0);
             if m <= 0 || dashos::memoria_proyectar(m as u32, va, true) != 0 || dashos::memoria_paginas(m as u32, true, 1, 1) != 1 {

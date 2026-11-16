@@ -49,6 +49,11 @@ fn usar(eco: u32) -> Result<bool, i64> {
 }
 
 fn principal() -> u64 {
+    // Su tabla de llaves. Lanzado por `inicio`, solo "sesiones"; desde el disco, las de `sesiones`, y sin el selector
+    // de ficheros: aquí no lo lanza la persona del selector (lo lanzan `entrada`, del sistema, y como Carla).
+    let t = dashos::llaves::Tabla::leer();
+    let n = |nombre: &str| t.buscar(nombre).unwrap_or(0);
+    println!("  [pide] tabla de llaves: selector {}, sesiones {}, archivos {}, ventanas {} (de {})", n("selector"), n("sesiones"), n("archivos"), n("ventanas"), t.cuantas());
     dashos::dormir_us(1_500_000);
     let (estado, eco) = pedir(SERVICIO, "eco");
     let contesta = eco != 0 && usar(eco) == Ok(true);

@@ -144,10 +144,10 @@ pub enum Error {
 
 /// Proyecciones de objetos de memoria por proceso, hasta los cupos de S16 (F).
 const MAX_PROYECCIONES: usize = 1024;
-/// Páginas como mucho por llamada 57 (`Espacio::paginas_de`): acota el rato con los cerrojos tomados, como el globo.
+/// Páginas como mucho por llamada 58 (`Espacio::paginas_de`): acota el rato con los cerrojos tomados, como el globo.
 pub const MAX_PAGINAS_SUELTAS: usize = 256;
 
-/// Por qué no se ponen o sueltan páginas de un objeto de memoria (llamada 57).
+/// Por qué no se ponen o sueltan páginas de un objeto de memoria (llamada 58).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FalloPaginas {
     /// El tramo se sale del objeto, o son demasiadas páginas de una vez.
@@ -523,7 +523,7 @@ impl Espacio {
         }
     }
 
-    /// Llamada 57: pone (`poner`) o suelta las páginas `primera..primera + n` del objeto `m` (`n` hasta
+    /// Llamada 58: pone (`poner`) o suelta las páginas `primera..primera + n` del objeto `m` (`n` hasta
     /// [`MAX_PAGINAS_SUELTAS`]), en orden, y dice cuántas quedaron como se pedía desde la primera; se para en la primera
     /// que no puede. Una que ya estaba como se pedía cuenta como hecha.
     ///

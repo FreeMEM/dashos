@@ -181,7 +181,10 @@ Lo que se toma de C:
   - Anillos en memoria compartida para datos en volumen: disco, red, audio y pantalla. El kernel solo avisa de que
     hay trabajo. Es la idea de `io_uring` de Linux, que Redox también ha copiado este año.
 - **Capacidades**: cada objeto del kernel (memoria, hilo, canal, interrupción) se usa a través de una llave con
-  derechos concretos. Las llaves se pueden pasar en los mensajes y recortar, pero nunca ampliar.
+  derechos concretos. Las llaves se pueden pasar en los mensajes y recortar, pero nunca ampliar. Se pueden mirar
+  (S0): tiene que existir una llamada de solo lectura que liste las llaves de un proceso (clase y derechos), para quien
+  tenga la llave de ese proceso. La orden `Status` (S2) y el Monitor del sistema la usan. Por hacer, con la revisión de
+  S16.
 - **Interrupciones**: llegan al controlador como un mensaje.
 - **Temporizadores**.
 

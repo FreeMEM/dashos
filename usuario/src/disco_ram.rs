@@ -3,7 +3,7 @@
 //! devuelven al sistema cuando DashFS lo descarta (TRIM, `Disk::discard`, que manda desde A14) o lo olvida (`forget`).
 //!
 //! No sabe de dónde salen las páginas: se lo dice quien lo usa con el rasgo [`Paginas`]. En DashOS es un objeto de
-//! memoria disperso cobrado al grupo de la sesión (llamadas 56 y 57, `usuario/src/bin/archivos.rs`); en las pruebas del
+//! memoria disperso cobrado al grupo de la sesión (llamadas 57 y 58, `usuario/src/bin/archivos.rs`); en las pruebas del
 //! PC (`archivos/herramientas/src/disco_ram_pruebas.rs`), memoria normal con un tope.
 //!
 //! Dos cosas que no hace un disco de verdad:

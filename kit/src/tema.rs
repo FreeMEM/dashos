@@ -6,6 +6,7 @@
 //! Estados: encima, foco y pulsado ponen una capa del color del contenido con 8 %, 10 % y 10 % de opacidad; un
 //! control desactivado enseña su contenido al 38 % y su fondo al 12 %.
 
+use crate::textos::tr;
 use crate::color::{Paletas, Visto};
 use crate::lienzo::Color;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -84,6 +85,17 @@ impl Tema {
 
 /// Los colores de acento que ofrece el centro de control (S10c); el primero, el violeta de referencia.
 pub const ACENTOS: [(&str, Color); 4] = [("Violeta", 0xff67_50a4), ("Azul", 0xff00_61a4), ("Verde", 0xff38_6a20), ("Naranja", 0xff8b_5000)];
+
+/// El nombre del acento número `i` de `ACENTOS`, en el idioma del usuario.
+pub fn nombre_acento(i: usize) -> &'static str {
+    match i {
+        0 => tr(10, "Violeta"),
+        1 => tr(11, "Azul"),
+        2 => tr(12, "Verde"),
+        3 => tr(13, "Naranja"),
+        _ => "",
+    }
+}
 
 /// Los esquemas de los `ACENTOS`, ya calculados con `desde_color` (en el PC; la prueba `tabla_igual_que_el_calculo`
 /// lo comprueba): color, oscuro, y primario, sobre primario, contenedor primario, sobre contenedor primario,

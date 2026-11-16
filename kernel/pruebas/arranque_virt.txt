@@ -439,6 +439,9 @@ DashOS en marcha con 4 núcleos.
 # sin preguntar ni bloquear. Vuelve Ana (Esc en el bloqueo de Carla) y su fichero tiene todo.
 # U6, paso 2: el `cambio` de Ana abre una ventana (la captura el guion: `tools/captura_cambio.py`), suena por el
 # servicio de sonido y pide el permiso de plazo, que Ana le concede (en la prueba contesta `guardian`).
+# Idiomas (paso 4): Ana, sin locale.prefs, en castellano y a la española, sin catálogo.
+~│   [cambio] Ana: idioma español (España), de serie: "Hola, soy la prueba del cambio de usuario", "2 ventanas de Ana", el kit dice "sí"; martes, 3 de noviembre de 2026; 03/11/2026 18:05; 1.234.567; -1.234,56 €
+~│   [cambio] Ana: sus textos en su idioma: bien
 ~│   [cambio] Ana: ventana en pantalla: true
 ~│   [cambio] Ana: suena por el servicio de sonido: true (0)
 ~│   [cambio] Ana: pide plazo 0 (se pregunta a Ana), lo deja 0
@@ -450,6 +453,11 @@ DashOS en marcha con 4 núcleos.
 ~│   [sesiones] cambio pide eco desde una sesión de detrás: no se pregunta
 ~│   [cambio] Ana, detrás: escribe true, pedir eco -2, bloquear -2: bien
 ~0 muertos, 0 dicen que existen: bien
+# Idiomas (paso 4): Carla tiene su locale.prefs en inglés y del Reino Unido: los textos del programa y del kit salen de
+# sus catálogos, y las fechas, los números y el dinero, a la inglesa. Los catálogos malos no valen.
+~│   [cambio] Carla: idioma english (great_britain), de ENV:Sys/locale.prefs: "Hello, I am the user switching test", "2 windows of Carla", el kit dice "yes"; Tuesday 3 November 2026; 03/11/2026 17:05; 1,234,567; -£1,234.56
+~│   [cambio] Carla: catálogos malos (están: true): cortado false, de otro programa false, de otra versión false, fuera del cajón false; el idioma ha cambiado false: bien
+~│   [cambio] Carla: sus textos en su idioma: bien
 ~│   [cambio] Carla, como Ana: entrar -12, volver -12, salir -12, lanzar -2: bien
 ~│   [cambio] Carla, lo de Ana: abrir su volumen -12, verlo -12, cerrarlo -12; su fichero, por 0 caminos: bien
 # El permiso que Ana concedió a `cambio` no vale para el de Carla: se le pregunta a ella (y dice que no).
@@ -493,6 +501,49 @@ DashOS en marcha con 4 núcleos.
 ~│   [comprobador] pedido con los datos: 0 (0 problemas
 ~│   [sesiones] pide mata a eco (usuario 1), con permiso de administrador
 ~│   [pide] raíces: PROGDIR:pide 0, Programas:hola 0, SYS:LEEME.txt 0; crear por SYS: -12, cerrarla -5: bien
+# La tabla de llaves (`dashos::llaves`): `inicio` y `sesiones` dicen a cada programa qué es cada llave que le dan, y el
+# programa las busca por su nombre. `pide`, lanzado por `inicio`, solo tiene "sesiones"; desde el disco, las de
+# `sesiones`. Sin el selector de ficheros: no lo lanza la persona del selector (lo lanza `entrada`, del sistema, y
+# como Carla).
+~│   [pide] tabla de llaves: selector 0, sesiones 1, archivos 0
+~│   [pide] tabla de llaves: selector 0, sesiones 1, archivos 2
+# `sesiones` da el selector a los programas de la persona del selector (Ana): el `cambio` de Ana lo tiene y el selector
+# lo conoce por su nombre; el de Carla no lo tiene.
+~│   [sesiones] dará el selector de ficheros a lo que lance
+~│   [cambio] Ana: tabla de llaves (4): sesiones, archivos y ventanas en su sitio; selector de ficheros: lo tiene y la conoce como "cambio": bien
+~│   [cambio] Carla: tabla de llaves (3): sesiones, archivos y ventanas en su sitio; selector de ficheros: no lo tiene: bien
+# "Guardar como" desde un programa del disco (`Programas/guarda`, lanzado desde la barra como Ana, lo último de la
+# prueba: el guion espera a que haya salido todo lo demás). Nace con el selector y lo encuentra por su nombre.
+~│   [sesiones] barra lanza Programas/guarda: 0
+~│   [guarda] tabla de llaves: sesiones 1, archivos 2, ventanas 3, selector 4
+# Lo hostil, sin ventana: C entero como raíz (solo para la prueba del hostil de `inicio`), una petición mal formada, y
+# crear en C por su cuenta.
+~│   [selector] guarda pide C entero como raíz: no (eso no lo elige el usuario)
+~│   [guarda] sin ventana: el selector lo conoce como "guarda" (0), una petición mal formada -1, C entero como raíz 0, crear en C por su cuenta -12: bien
+# Un camino en vez de un nombre, dos peticiones a la vez y cancelar con la ventana en pantalla; y nombres con ':', ".."
+# y larguísimos.
+~│   [selector] guarda propone un nombre que no vale (Letra('/'), 40 bytes): el campo empezará vacío
+~│   [selector] guarda pide con otra petición suya esperando: ocupado
+~│   [selector] guarda ya no quiere (canceló o se fue): se cierra su ventana
+~│   [selector] guarda propone un nombre que no vale (Letra(':'), 12 bytes)
+~│   [selector] guarda propone un nombre que no vale (Puntos, 2 bytes)
+~│   [selector] guarda propone un nombre que no vale (Largo, 200 bytes)
+~│   [guarda] dos a la vez: la segunda -101; cancelar a medias: -100 (asa 0); con nombres que no valen, retiradas 4 de 4: bien
+# El guion pulsa "Guardar" con el nombre propuesto: el fichero nace en C y llega su asa y su nombre, sin camino.
+~│   [selector] ventana de guardar en pantalla, para guarda: C (
+~│   [selector] el usuario guarda C/informe.txt (nuevo): se cede para leer y escribir: 0
+~│   [guarda] guardar: 0, "informe.txt" (solo el nombre), nuevo; lo escribe y lo lee por la asa, y con ella no llega a más: bien
+# Otra vez: el guion borra el nombre e Intro (vacío no vale), lo teclea e Intro: ya existe, y pulsa "Sustituir".
+~│   [selector] el nombre del campo no vale (Vacio, 0 bytes): no se guarda
+~│   [selector] "informe.txt" ya existe en C: se pregunta si sustituir
+~│   [selector] el usuario guarda C/informe.txt (sustituye): se cede para leer y escribir: 0
+~│   [guarda] guardar otra vez: 0, "informe.txt", ya existía y el usuario dijo sustituir; queda del tamaño de lo nuevo: bien
+# "Abrir" con el patrón "informe*": solo se ve ese fichero (Fin e Intro). Llega solo para leer: aunque es del mismo
+# usuario, con esa asa no lo cambia.
+~│   [selector] ventana de abrir en pantalla, para guarda: C (
+~│   [selector] el usuario elige C/informe.txt con Intro: se cede solo para leer: 0
+~│   [guarda] abrir: 0, "informe.txt"; lo lee 0; escribirlo -12, recortarlo -12, ponerle fecha -12 (datos 0, mide 17): bien
+~│   [guarda] acabado: bien
 ~│   [pide] U2, tabla de nombres con PROGDIR: bien
 ~│   [pide] Home: crea 0 y borra 0 en el volumen de Carla: bien
 ~│   [entrada] lanzar como Carla (entró) 0, como Ana (no entró) -2, salir después 0: bien
@@ -562,6 +613,47 @@ DashOS en marcha con 4 núcleos.
 ~│   [red-prueba] puerto cerrado: rechazada: bien
 # El PC manda basura (cortas, largas, enormes, IPv4 y ARP rotas): el controlador y el servicio siguen.
 ~│   [red-prueba] basura del PC tirada; eco después: bien
+# S13, segunda parte (docs/bitacoras/red.md). Sin Internet: contra el vecino del PC (`tools/red_vecino.py`, otro aparato
+# en el concentrador, 10.0.2.53: un servidor de nombres de mentira, la hora por SNTP y un eco por UDP) y quien entra
+# desde fuera por un puerto reenviado (`tools/red_entra.py`).
+# Lo que se configura, en Prefs/Red del disco: hosts (tres nombres y una línea que no vale) y el servidor de hora, que
+# el servicio resuelve con hosts. IPv6: la dirección del prefijo que anuncia QEMU, por SLAAC.
+~│   [red] Prefs/Red: 3 nombres en hosts; servidor de hora hora.prueba
+~│   [red] servidor de hora: 10.0.2.53
+~│   [red] IPv6 por SLAAC: fec0::5054:ff:fe12:3456/64
+# UDP: el eco vuelve igual y lo que manda otra dirección sin pedirlo no llega; con 200 datagramas de golpe sin leer,
+# llegan los que caben y los demás se pierden y se cuentan; una cabecera imposible rompe solo ese zócalo. Sin el
+# permiso de escuchar no se elige puerto ni se espera a que entren.
+~│   [red-prueba] UDP, eco con el vecino: bien
+~│   [red-prueba] UDP, 200 datagramas de golpe sin leer: bien
+~│   [red-prueba] UDP, una cabecera imposible: bien
+~escuchar sin el permiso: bien (UDP
+# Nombres: la caché respeta lo que vale la respuesta (3 s), los alias, hosts y localhost. Hostil: respuestas con otro
+# identificador, desde otra dirección o puerto, a otra pregunta, con un nombre comprimido en bucle y cortadas (sale la
+# buena y las falsas se cuentan); truncada, inexistente, veinte direcciones, nombres malos y uno de 240 bytes; un
+# servidor que no contesta (tres intentos).
+~│   [red-prueba] nombres: bien
+~│   [red-prueba] hosts: bien
+~│   [red-prueba] nombres, respuestas falsas (otro identificador, otro origen, otra pregunta, bucle, cortada): bien
+~│   [red-prueba] nombres, raros: bien
+~│   [red-prueba] nombres, un servidor mudo: bien
+# Escuchar, con el permiso aparte y el cortafuegos cerrado de serie: lo que intenta entrar antes de que nadie escuche
+# se tira sin contestar; con el permiso, entra, llega su línea y vuelve su eco. Por UDP, lo mismo.
+~│   [red-prueba] escuchar por TCP: bien
+~│   [red-prueba] escuchar por UDP: bien
+~│   [red-prueba] IPv6: bien
+~│   [red-prueba] la hora por SNTP: bien
+# El glotón, sin los permisos de escuchar ni del reloj, lo intenta; y pregunta 2000 nombres de golpe: 8 en curso.
+~│   [red-gloton] escuchar sin el permiso: bien
+~│   [red-gloton] poner la hora sin el permiso del reloj, con 64 llaves: bien
+~│   [red-gloton] 2000 preguntas de nombres de golpe: bien
+# La hora por la red: `hora`, el único con el permiso del reloj, la toma del vecino (tras tres respuestas que no
+# valen) y pone el reloj. La barra la enseña en la zona de Prefs/zona (Europe/Madrid).
+~│   [hora] una hora que no es creíble o una llave que no es el permiso no ponen el reloj: bien
+~│   [hora] reloj puesto por SNTP de 10.0.2.53
+~│   [hora] respuestas que no valían, tiradas: 
+~│   [barra] hora: 
+~(Europe/Madrid, UTC+
 # Sin la llave del canal "red" no hay red.
 ~│   [sin-red] sin la llave: 1024 llaves probadas, llegan 0; por un canal propio sí: bien
 # H4, primer paso de la caja Amiga (`caja/`, docs/bitacoras/caja-amiga.md): el JIT de Emu68 en un proceso big-endian.

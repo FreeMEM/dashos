@@ -171,7 +171,7 @@ fn principal() -> u64 {
     if ok != 0 {
         return ok;
     }
-    // 40-59: memoria dispersa (llamadas 56 y 57), para el `RAM:` de una sesión.
+    // 40-59: memoria dispersa (llamadas 57 y 58), para el `RAM:` de una sesión.
     let (ok, puestas) = dispersa(tamano);
     if ok != 0 {
         return ok;
@@ -185,7 +185,7 @@ fn principal() -> u64 {
     42
 }
 
-/// Memoria dispersa (llamadas 56 y 57): un objeto de 4 MB en un grupo de 1 MB. El paso que falla y 0, o 0 y cuántas
+/// Memoria dispersa (llamadas 57 y 58): un objeto de 4 MB en un grupo de 1 MB. El paso que falla y 0, o 0 y cuántas
 /// páginas dejó poner el tope.
 fn dispersa(tamano: usize) -> (u64, u64) {
     use dashos::{memoria_dispersa, memoria_paginas, memoria_proyectar};
@@ -238,7 +238,7 @@ fn dispersa(tamano: usize) -> (u64, u64) {
     // de memoria, una sin escribir.
     let sin_escribir = dashos::llave_duplicar(m, dashos::LEER | dashos::TRANSFERIR, 0);
     if memoria_paginas(m, true, PAGINAS - 1, 2) != -5 || memoria_paginas(m, true, PAGINAS, 1) != -5 || memoria_paginas(m, true, usize::MAX, 1) != -5
-        || memoria_paginas(m, true, 0, 0) != -5 || memoria_paginas(m, false, 0, 257) != -5 || dashos::llamada(57, [m as u64, 2, 0, 1, 0]).0 as i64 != -1
+        || memoria_paginas(m, true, 0, 0) != -5 || memoria_paginas(m, false, 0, 257) != -5 || dashos::llamada(58, [m as u64, 2, 0, 1, 0]).0 as i64 != -1
         || memoria_paginas(g, false, 0, 1) != -6 || sin_escribir <= 0 || memoria_paginas(sin_escribir as u32, false, 9, 1) != -3
     {
         return (48, 0);
@@ -260,7 +260,7 @@ fn dispersa(tamano: usize) -> (u64, u64) {
     if memoria_paginas(m, false, 256, 256) != 256 || grupo_uso(g).1 != fijo {
         return (51, 0);
     }
-    let p = hijo_en(g, tamano, &[17]);
+    let p = hijo_en(g, tamano, &[18]);
     if p <= 0 || proceso_esperar(p as u32).0 != 2 {
         return (51, 0);
     }

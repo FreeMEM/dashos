@@ -17,9 +17,11 @@
 //!   primera ventana da -1 si no se dijo otro número.
 //! - El montón es el del programa (`malloc`/`free` del runtime de Dash); los textos van en UTF-8 y los que se devuelven
 //!   valen hasta unas cuantas llamadas después (el programa los copia).
-//! - El compositor, por la llave que diga `dash_ui_usar_llave` (el runtime de Dash la sabe por cuántas trae el programa:
-//!   `runtime/dashos/plat.c` de Dash). Sin ella, la 3 si la hay (lo que lanza `sesiones`: 1 su canal, 2 archivos, 3
-//!   ventanas) o si no la 1 (lo que lanza `inicio` con los canales "ventanas" y "archivos").
+//! - El compositor, por la llave que se llama "ventanas" en la tabla de llaves del programa (`dashos::llaves`: quien
+//!   lo lanza, `inicio` o `sesiones`, dice qué es cada llave). Sin tabla (un DashOS de antes), la que diga
+//!   `dash_ui_usar_llave`, o la 3 si la hay (lo que lanzaba `sesiones`), o la 1.
+//! - `dash_llave("selector")`: la llave que se llama así en la tabla, para lo que el runtime de Dash hace por su
+//!   cuenta (los ficheros, el selector).
 
 #![no_std]
 
@@ -331,8 +333,19 @@ impl Estado {
         if self.cliente.is_some() {
             return true;
         }
-        // Sin decir cuál: la 3 si existe (lo que lanza `sesiones`); si no, la 1 (lo que lanza `inicio`).
-        let llave = if self.llave != 0 { self.llave } else if dashos::memoria_tamano(3) != -2 { 3 } else { 1 };
+        // La que se llama "ventanas" en la tabla de llaves: lo dice quien lanzó el programa, y manda sobre lo que diga
+        // `dash_ui_usar_llave` (el runtime de Dash de antes la adivina por cuántas llaves trae, y con las 4 de
+        // `sesiones` se equivoca). Sin tabla (un DashOS de antes): la que se dijo, o la 3 si existe (lo que lanzaba
+        // `sesiones`), o la 1 (lo que lanzaba `inicio`).
+        let llave = if let Some(l) = dashos::llaves::buscar("ventanas") {
+            l
+        } else if self.llave != 0 {
+            self.llave
+        } else if dashos::memoria_tamano(3) != -2 {
+            3
+        } else {
+            1
+        };
         ventana_cliente::usar_llave(llave);
         let Some(mut c) = Cliente::conectar() else { return false };
         let Some(globales) = c.globales() else { return false };
@@ -798,7 +811,21 @@ fn etiqueta_material(t: &str) -> String {
 
 // ---- la ABI de C (include/kit_c.h) ----
 
-/// La llave del canal "ventanas" (de serie, la 3 si existe y si no la 1).
+/// La llave con que nació el programa que se llama `nombre` en su tabla de llaves ("ventanas", "archivos",
+/// "sesiones", "selector"...): su número, o 0 si no tiene ninguna con ese nombre (o nació sin tabla).
+///
+/// # Safety
+/// `nombre` es un texto de C acabado en cero, o nulo.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dash_llave(nombre: *const c_char) -> i32 {
+    if nombre.is_null() {
+        return 0;
+    }
+    let n = unsafe { CStr::from_ptr(nombre) };
+    n.to_str().ok().and_then(dashos::llaves::buscar).map_or(0, |l| l as i32)
+}
+
+/// La llave del canal "ventanas" para un programa sin tabla de llaves. Con tabla, manda la que se llama "ventanas".
 #[unsafe(no_mangle)]
 pub extern "C" fn dash_ui_usar_llave(llave: i32) {
     if llave > 0 {

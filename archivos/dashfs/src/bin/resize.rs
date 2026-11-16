@@ -1,206 +1,124 @@
+//! Cambia el tamaño de un sistema de archivos DashFS que no está montado (S32). Crecer añade los bloques nuevos;
+//! encoger muda antes lo que haya en el tramo que se quita (`dashfs::resize`).
+
+use std::time::Instant;
 use std::{env, process};
 
+use dashfs::check::{self, Options, Problem};
+use dashfs::resize::ResizeError;
+use dashfs::{BLOCK_SIZE, Disk, DiskFile, FileSystem};
 use humansize::{BINARY, DECIMAL, format_size};
-use dashfs::{BlockAddr, BlockMeta, Disk, DiskFile, FileSystem};
 use uuid::Uuid;
 
-fn resize<D: Disk>(fs: &mut FileSystem<D>, size_arg: String) -> Result<(), String> {
-    let disk_size = fs
-        .disk
-        .size()
-        .map_err(|err| format!("failed to read disk size: {}", err))?;
+fn usage() -> ! {
+    eprintln!("dashfs-resize DISCO [TAMAÑO | min | max] [--abrir VOLUMEN]...");
+    eprintln!("  TAMAÑO: en bytes o con unidad (500MiB, 2GB); si no es múltiplo de 4096, el múltiplo de antes");
+    eprintln!("  min: lo más pequeño que se pueda; max (o nada): todo el disco");
+    eprintln!("  --abrir VOLUMEN: abre ese volumen cifrado para poder mudar lo suyo al encoger; su contraseña se");
+    eprintln!("    lee de la entrada, una línea por volumen, en el orden en que se piden");
+    process::exit(2);
+}
 
-    // Find contiguous free region
-    //TODO: better error management
-    let mut last_free = None;
-    let mut last_end = 0;
-    fs.tx(|tx| {
-        let mut alloc_ptr = tx.header.alloc;
-        while !alloc_ptr.is_null() {
-            let alloc = tx.read_block(alloc_ptr)?;
-            alloc_ptr = alloc.data().prev;
-            for entry in alloc.data().entries.iter() {
-                let count = entry.count();
-                if count <= 0 {
-                    continue;
-                }
-                let end = entry.index() + count as u64;
-                if end > last_end {
-                    last_free = Some(*entry);
-                    last_end = end;
-                }
-            }
-        }
-        Ok(())
-    })
-    .map_err(|err| format!("failed to read alloc log: {}", err))?;
+fn sizes(what: &str, size: u64) -> String {
+    format!("{what}: {} ({})", format_size(size, DECIMAL), format_size(size, BINARY))
+}
 
-    let old_size = fs.header.size();
-    let min_size = if let Some(entry) = last_free {
-        entry.index() * dashfs::BLOCK_SIZE
-    } else {
-        old_size
-    };
-    let max_size = disk_size - (fs.block * dashfs::BLOCK_SIZE);
-
-    let new_size = match size_arg.to_lowercase().as_str() {
-        "min" | "minimum" => min_size,
-        "" | "max" | "maximum" => max_size,
-        _ => match parse_size::parse_size(&size_arg) {
-            Ok(new_size) => {
-                if new_size < min_size {
-                    return Err(format!(
-                        "requested size {} is smaller than {} by {}",
-                        new_size,
-                        min_size,
-                        min_size - new_size
-                    ));
-                }
-
-                if new_size > max_size {
-                    return Err(format!(
-                        "requested size {} is larger than {} by {}",
-                        new_size,
-                        max_size,
-                        new_size - max_size
-                    ));
-                }
-
-                new_size
-            }
-            Err(err) => {
-                return Err(format!(
-                    "failed to parse size argument {:?}: {}",
-                    size_arg, err
-                ));
-            }
-        },
-    };
-
-    println!(
-        "minimum size: {} ({})",
-        format_size(min_size, DECIMAL),
-        format_size(min_size, BINARY)
-    );
-    println!(
-        "maximum size: {} ({})",
-        format_size(max_size, DECIMAL),
-        format_size(max_size, BINARY)
-    );
-    println!(
-        "new size: {} ({})",
-        format_size(new_size, DECIMAL),
-        format_size(new_size, BINARY)
-    );
-
-    let old_blocks = old_size / dashfs::BLOCK_SIZE;
-    let new_blocks = new_size / dashfs::BLOCK_SIZE;
-    let (start, end, shrink) = if new_size == old_size {
-        println!("already requested size");
-        return Ok(());
-    } else if new_size < old_size {
-        println!("shrinking by {}", old_size - new_size);
-        (new_blocks, old_blocks, true)
-    } else {
-        println!("growing by {}", new_size - old_size);
-        (old_blocks, new_blocks, false)
-    };
-
-    // Allocate or deallocate blocks as needed
-    unsafe {
-        let allocator = fs.allocator_mut();
-        for index in start..end {
-            if shrink {
-                //TODO: replace assert with error?
-                let addr = BlockAddr::new(index as u64, BlockMeta::default());
-                assert_eq!(allocator.allocate_exact(addr), Some(addr));
-            } else {
-                let addr = BlockAddr::new(index as u64, BlockMeta::default());
-                allocator.deallocate(addr);
-            }
-        }
-    }
-
-    fs.tx(|tx| {
-        // Update header
-        tx.header.size = new_size.into();
-        tx.header_changed = true;
-
-        // Sync with squash
-        tx.sync(true)?;
-
-        Ok(())
-    })
-    .map_err(|err| format!("transaction failed: {}", err))
+fn fail(disk: &str, what: impl std::fmt::Display) -> ! {
+    eprintln!("dashfs-resize: {disk}: {what}");
+    process::exit(1);
 }
 
 fn main() {
     env_logger::init();
-
     let mut args = env::args().skip(1);
-
-    let disk_path = if let Some(path) = args.next() {
-        path
-    } else {
-        eprintln!("dashfs-resize: no new disk image provided");
-        eprintln!("dashfs-resize NEW-DISK [SIZE]");
-        process::exit(1);
-    };
-
-    let size_arg = args.next().unwrap_or_default();
-
-    let disk = match DiskFile::open(&disk_path) {
-        Ok(disk) => disk,
-        Err(err) => {
-            eprintln!(
-                "dashfs-resize: failed to open disk image {}: {}",
-                disk_path, err
-            );
-            process::exit(1);
+    let Some(disk_path) = args.next() else { usage() };
+    let mut size_arg = String::new();
+    let mut unlock = Vec::new();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--abrir" => unlock.push(args.next().unwrap_or_else(|| usage())),
+            _ if size_arg.is_empty() && !arg.starts_with("--") => size_arg = arg,
+            _ => usage(),
         }
-    };
+    }
 
-    let mut fs = match FileSystem::open(disk, None, None, true) {
-        Ok(fs) => fs,
-        Err(err) => {
-            eprintln!(
-                "dashfs-resize: failed to open filesystem on {}: {}",
-                disk_path, err
-            );
-            process::exit(1);
-        }
+    let open = || DiskFile::open(&disk_path).unwrap_or_else(|err| fail(&disk_path, format!("no se abre: {err}")));
+    // Una cabecera que dice más de lo que tiene el disco no se abre para usarla: solo para encogerla hasta él.
+    let (mut fs, beyond) = match FileSystem::open(open(), None, None, true) {
+        Ok(fs) => (fs, false),
+        Err(err) => match FileSystem::open_to_check(open(), None, None) {
+            Ok((fs, true)) => (fs, true),
+            _ => fail(&disk_path, format!("no hay un sistema de archivos que se pueda abrir: {err}")),
+        },
     };
-
-    match resize(&mut fs, size_arg) {
-        Ok(()) => {}
-        Err(err) => {
-            eprintln!(
-                "dashfs-resize: failed to resize filesystem on {}: {}",
-                disk_path, err
-            );
-            process::exit(1);
+    for name in &unlock {
+        let mut password = String::new();
+        if std::io::stdin().read_line(&mut password).is_err() {
+            usage();
         }
+        let password = password.trim_end_matches(['\n', '\r']);
+        let done = fs.tx(|tx| {
+            let id = tx.find_volume(name)?;
+            tx.unlock_volume(id, password.as_bytes())
+        });
+        if let Err(err) = done {
+            fail(&disk_path, format!("el volumen {name:?} no se abre: {err}"));
+        }
+    }
+
+    // Solo se cambia el tamaño de un sistema de archivos sano.
+    let report = fs
+        .tx(|tx| check::check(tx, Options::default(), true))
+        .unwrap_or_else(|err| fail(&disk_path, format!("no se puede comprobar: {err}")));
+    let problems: Vec<&Problem> =
+        report.problems.iter().filter(|p| !matches!(p, Problem::BeyondDisk { .. })).collect();
+    if !problems.is_empty() {
+        for problem in problems {
+            eprintln!("dashfs-resize: {problem}");
+        }
+        fail(&disk_path, "tiene daños: antes, dashfs-fsck");
+    }
+
+    let disk_size = fs.disk.size().unwrap_or_else(|err| fail(&disk_path, format!("tamaño del disco: {err}")));
+    let old_size = fs.header.size();
+    let max_size = (disk_size.saturating_sub(fs.block * BLOCK_SIZE)) / BLOCK_SIZE * BLOCK_SIZE;
+    let min_size = fs.min_size();
+    println!("{}", sizes("ahora", old_size));
+    println!("{}", sizes("mínimo", min_size));
+    println!("{}", sizes("máximo", max_size));
+    if beyond {
+        println!("la cabecera dice más de lo que tiene el disco: solo se puede encoger hasta él");
+    }
+
+    let start = Instant::now();
+    let done = match size_arg.to_lowercase().as_str() {
+        "min" | "minimum" | "mínimo" => fs.shrink_min().map(Some),
+        "" | "max" | "maximum" | "máximo" if max_size >= old_size => fs.grow(max_size).map(|_| None),
+        "" | "max" | "maximum" | "máximo" => fs.shrink(max_size).map(Some),
+        _ => match parse_size::parse_size(&size_arg) {
+            Ok(size) if size / BLOCK_SIZE >= old_size / BLOCK_SIZE => fs.grow(size).map(|_| None),
+            Ok(size) => fs.shrink(size).map(Some),
+            Err(err) => fail(&disk_path, format!("tamaño {size_arg:?}: {err}")),
+        },
+    };
+    match done {
+        Ok(Some(done)) => println!(
+            "encogido: {} bloques mudados en {} transacciones, {:.2} s",
+            done.moved,
+            done.transactions,
+            start.elapsed().as_secs_f64()
+        ),
+        Ok(None) => println!("crecido en {:.3} s", start.elapsed().as_secs_f64()),
+        Err(ResizeError::TooSmall { min }) => fail(&disk_path, sizes("lo usado no cabe: el mínimo es", min)),
+        Err(err) => fail(&disk_path, err),
     }
 
     let uuid = Uuid::from_bytes(fs.header.uuid());
     let size = fs.header.size();
-    let free = fs.allocator().free() * dashfs::BLOCK_SIZE;
-    let used = size - free;
-    println!("dashfs-resize: resized filesystem on {}", disk_path);
+    let free = fs.allocator().free() * BLOCK_SIZE;
+    println!("dashfs-resize: {disk_path}");
     println!("\tuuid: {}", uuid.hyphenated());
-    println!(
-        "\tsize: {} ({})",
-        format_size(size, DECIMAL),
-        format_size(size, BINARY)
-    );
-    println!(
-        "\tused: {} ({})",
-        format_size(used, DECIMAL),
-        format_size(used, BINARY)
-    );
-    println!(
-        "\tfree: {} ({})",
-        format_size(free, DECIMAL),
-        format_size(free, BINARY)
-    );
+    println!("\t{}", sizes("tamaño", size));
+    println!("\t{}", sizes("usado", size - free));
+    println!("\t{}", sizes("libre", free));
 }

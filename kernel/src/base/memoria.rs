@@ -478,7 +478,7 @@ pub struct Memoria {
     /// así que sus páginas no vuelven al repartidor ni se dan a otro mientras alguien las vea por la vista. Una vista
     /// no devuelve páginas al soltarse: lo hacen sus orígenes, cuando se suelta el último que los tiene.
     origenes: alloc::vec::Vec<alloc::sync::Arc<Memoria>>,
-    /// Si nació dispersa (llamada 56): lo que cuesta su lista de páginas, cobrado a su grupo aunque no tenga ninguna
+    /// Si nació dispersa (llamada 57): lo que cuesta su lista de páginas, cobrado a su grupo aunque no tenga ninguna
     /// puesta. Sin esto, un objeto vacío de 1 GB (2 MB de lista en el montón del kernel) saldría gratis.
     _fijo: Option<crate::cupo::Cargo>,
 }
@@ -500,7 +500,7 @@ pub fn coste_vista(paginas: usize, origenes: usize) -> u64 {
     256 + 8 * paginas as u64 + 8 * origenes as u64
 }
 
-/// Lo que cuesta un objeto de memoria disperso sin ninguna página puesta (llamada 56): lo fijo y su lista de páginas
+/// Lo que cuesta un objeto de memoria disperso sin ninguna página puesta (llamada 57): lo fijo y su lista de páginas
 /// (8 bytes cada una).
 pub fn coste_dispersa(paginas: usize) -> u64 {
     256 + 8 * paginas as u64
@@ -525,8 +525,8 @@ impl Memoria {
         Some(m)
     }
 
-    /// Un objeto disperso (llamada 56): mide `tamano` bytes (en páginas enteras) y nace sin ninguna página puesta.
-    /// Las páginas se ponen y se sueltan después, de una en una (`Espacio::paginas_de`, llamada 57), y solo las puestas
+    /// Un objeto disperso (llamada 57): mide `tamano` bytes (en páginas enteras) y nace sin ninguna página puesta.
+    /// Las páginas se ponen y se sueltan después, de una en una (`Espacio::paginas_de`, llamada 58), y solo las puestas
     /// se cobran al grupo `cupo`: es el "disco" de memoria del `RAM:` de una sesión, que crece al escribir y devuelve
     /// lo que el sistema de archivos descarta. Vacío solo cuesta su lista ([`coste_dispersa`]).
     pub fn dispersa(tamano: usize, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {

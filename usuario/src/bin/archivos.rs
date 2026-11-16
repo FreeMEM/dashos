@@ -624,7 +624,7 @@ fn clave_uso(vol: u64, id: u32) -> u64 {
     (if es_ram(vol) { 0 } else { vol } << 32) | u64::from(id)
 }
 
-/// Las páginas del disco de un `RAM:`: un objeto de memoria disperso (llamadas 56 y 57), proyectado entero, que llega
+/// Las páginas del disco de un `RAM:`: un objeto de memoria disperso (llamadas 57 y 58), proyectado entero, que llega
 /// de `sesiones` cobrado al grupo de la sesión. Al soltarse, la memoria vuelve entera al sistema.
 struct MemoriaDispersa {
     llave: u32,
@@ -947,12 +947,15 @@ struct Cliente {
 /// Las asas 0 a 15 son raíces; las demás empiezan aquí.
 const RAICES: usize = 16;
 
-/// El tope de la asa `asa` de `c`: lo más que deja hacer por ella, además de los permisos del fichero.
+/// El tope de la asa `asa` de `c`: lo más que deja hacer por ella, además de los permisos del fichero. El de una asa
+/// cedida (`CEDER`) son los derechos con que se cedió: con una cedida solo para leer no se escribe, ni se cambia el
+/// tamaño, el comentario, la protección o la fecha, aunque el fichero sea de quien la recibe (el selector cede para leer
+/// ficheros del mismo usuario que el programa).
 fn tope(c: &Cliente, asa: u32) -> u16 {
     match asa as usize {
         0 => R | W,
         k if k < RAICES => c.raices[k].map_or(0, |r| r.2),
-        _ => c.topes.get(&asa).copied().unwrap_or(R | W),
+        _ => c.cedidas.get(&asa).map(|d| d & (R | W)).unwrap_or_else(|| c.topes.get(&asa).copied().unwrap_or(R | W)),
     }
 }
 
@@ -1596,7 +1599,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
     let ficha = c.ficha;
     // Las órdenes de volúmenes, instantáneas y comprobación, solo con el derecho de administrar (A13). Pedir la raíz
     // propia (VOLUMEN sin nombre) no lo necesita.
-    let de_administrar = matches!(p.orden, COMPROBAR | SUJETAR | SOLTAR | INSTANTANEAS | TOMAR | DESCARTAR | VOLVER | VOLUMENES | HACER_VOLUMEN | QUITAR_VOLUMEN | ABRIR_VOLUMEN | CERRAR_VOLUMEN | COMPROBAR_CLAVE)
+    let de_administrar = matches!(p.orden, COMPROBAR | SUJETAR | SOLTAR | INSTANTANEAS | TOMAR | DESCARTAR | VOLVER | VOLUMENES | HACER_VOLUMEN | QUITAR_VOLUMEN | ABRIR_VOLUMEN | CERRAR_VOLUMEN | COMPROBAR_CLAVE | CRECER | CUOTA)
         || (p.orden == VOLUMEN && !p.nombre.is_empty());
     if de_administrar && ficha.derechos & D_ADMINISTRAR == 0 {
         return mal(PROTEGIDO);
@@ -1998,13 +2001,15 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
         }
         TAMANO => {
             let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            // Como `ESCRIBIR`: con una asa cedida mandan los derechos con que se cedió, no los permisos del fichero.
+            let cedida = c.cedidas.get(&p.asa).copied();
             rec.olvidar_nodo(vol, n.id());
             let r = fs.tx_in(vol, |tx| {
                 let nodo = tx.read_tree(n)?;
                 if nodo.data().is_dir() {
                     return Err(Error::new(EISDIR));
                 }
-                if sin_escritura(&ficha, nodo.data()) {
+                if cedida.map_or_else(|| sin_escritura(&ficha, nodo.data()), |d| d & W == 0) {
                     return Err(Error::new(EACCES));
                 }
                 tx.truncate_node(n, p.a, hora.0, hora.1)
@@ -2267,6 +2272,28 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
             core::hint::black_box((&clave, &llaves));
             match hecho {
                 Ok(id) => Respuesta { estado: BIEN, a: id, ..Default::default() },
+                Err(e) => mal(estado_de(e)),
+            }
+        }
+        // S32: crecer en uso. Una transacción: añade los bloques nuevos al asignador y pone el tamaño.
+        CRECER => {
+            let pedido = if p.a == 0 { fs.disk.size().map(|t| t.saturating_sub(fs.block * BLOCK_SIZE)).unwrap_or(0) } else { p.a };
+            match fs.grow(pedido) {
+                Ok(tamano) => Respuesta { estado: BIEN, a: tamano, ..Default::default() },
+                Err(e) => mal(estado_de(Error::new(e.errno()))),
+            }
+        }
+        // S32: el tope de un volumen, y lo que usa.
+        CUOTA => {
+            let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
+            match fs.tx(|tx| {
+                let id = tx.find_volume(nombre)?;
+                if p.b == 1 {
+                    tx.set_volume_quota(id, p.a / BLOCK_SIZE)?;
+                }
+                tx.volume_space(id)
+            }) {
+                Ok((usado, tope)) => Respuesta { estado: BIEN, a: usado * BLOCK_SIZE, b: tope * BLOCK_SIZE, ..Default::default() },
                 Err(e) => mal(estado_de(e)),
             }
         }
@@ -3009,7 +3036,7 @@ fn tras_guardar(clientes: &mut [Option<Cliente>], solo_lectura: &mut bool) {
 }
 
 /// Las que cambian instantáneas o volúmenes: raras, y van al disco en seguida.
-const SIEMPRE_AL_DISCO: &[u32] = &[TOMAR, DESCARTAR, VOLVER, HACER_VOLUMEN, QUITAR_VOLUMEN, ABRIR_VOLUMEN, CERRAR_VOLUMEN];
+const SIEMPRE_AL_DISCO: &[u32] = &[TOMAR, DESCARTAR, VOLVER, HACER_VOLUMEN, QUITAR_VOLUMEN, ABRIR_VOLUMEN, CERRAR_VOLUMEN, CRECER, CUOTA];
 
 /// Pone o quita el temporizador del siguiente guardado según quede algo por guardar.
 fn al_disco(fs: &Fs, plazo: &mut Option<(u64, u32)>) {

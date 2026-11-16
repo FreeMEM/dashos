@@ -113,6 +113,7 @@ S3: cupos como topes y aviso de memoria baja bien
   hola desde Rust en EL0 (DashOS, big-endian)
   memoria propia proyectada (0); primer byte de 0x11223344: 0x11
   [lanzador] hola-be: clase 0, código 5
+  [padre] tabla de llaves: el hijo encuentra las suyas por su nombre; sin nombres, vacía; nombres que no se leen, nada
   [padre] proyecciones quitadas, y revocar quita las hechas con la copia revocable
   [padre] hijos que salen, giran, se bloquean y fallan: creados, matados y esperados
   [padre] lados cerrados al morir, sin ciclos, y lados perdidos en mensajes cerrados

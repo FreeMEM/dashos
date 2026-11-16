@@ -57,9 +57,11 @@ el segundo, el otro. La lista está en `kernel/src/inicio.rs` (`PROGRAMAS`):
 | gpu | permiso DMA de la GPU, registros de la V3D, del puente ASB, del bloque PM y del cprman | "buzon" |
 | sonido | permiso de plazo (S3) | "sonido" (es quien lee) |
 | virtio-sonido | su permiso DMA, registros y configuración del aparato, permiso de plazo (S3), su interrupción (opcional) | "sonido" |
-| red (solo `virt`) | — | "red" y "red-estado" (es quien lee los dos) |
+| red (solo `virt`) | — | "archivos" (cliente: lee `Prefs/Red`), y "red", "red-estado" y "red-escuchar" (es quien lee los tres) |
+| hora (solo `virt`) | el permiso del reloj | "red" |
 | virtio-red (solo `virt`) | su permiso DMA, registros y configuración del aparato, su interrupción (opcional) | "red" |
-| red-prueba, red-gloton (pruebas, solo `virt`) | — | "red" |
+| red-prueba (prueba, solo `virt`) | — | "red" y "red-escuchar" |
+| red-gloton (prueba, solo `virt`) | — | "red" |
 
 En cada canal el primero que lo nombra es el servidor; los demás reciben una copia marcada (su número de programa más
 1) del otro extremo, y el servidor, un mensaje sin marca por cliente con su marca (8 bytes) y su nombre (16). Solo
@@ -67,6 +69,83 @@ En cada canal el primero que lo nombra es el servidor; los demás reciben una co
 aparatos llegan en el orden en que el servicio las pide, y cada aparato con DMA tiene su propio permiso (M5). Llegan
 con la restricción "una vez" (S4): el servicio no puede pasárselas a otro programa. Un servicio al que le falta algún aparato no se lanza: el kernel lo dice al arrancar
 ("inicio: gpu no se lanza: falta ..."). Es lo que pasa con la GPU en QEMU.
+
+### La tabla de llaves: qué es cada llave
+
+Quien lanza un programa dice qué es cada llave que le da: `inicio` y `sesiones` lanzan con `proceso_crear` y los
+nombres de las llaves (llamada 12 con `CON_NOMBRES`), el kernel los guarda y el programa los lee con la llamada 56
+(`dashos::llaves::Tabla::leer`, `buscar`; en C, `dash_llave` de kit-c). Un programa no cuenta sus llaves ni supone
+quién lo lanzó: busca "ventanas" o "selector" por su nombre. Un nombre mide 16 bytes, relleno con ceros; el primero
+es el de la llave 1. Los números de siempre no cambian: los programas que usan un número fijo siguen igual.
+
+| Quién lanza | Llave | Nombre |
+|---|---|---|
+| `inicio` | Un aparato | El del aparato en el paquete de arranque ("plazo", "dma-xhci0", "registro"...) |
+| `inicio` | Un canal, para quien lo sirve y para sus clientes | El del canal en `PROGRAMAS` ("ventanas", "archivos", "sesiones", "selector", "sonido"...) |
+| `inicio` | La copia para escribirse a sí mismo, de quien sirve un canal | "yo:" y el canal ("yo:ventanas") |
+| `inicio` | La copia sin marca del canal de archivos que recibe `sesiones` | "archivos.altas" |
+| `sesiones` | 1, su canal con `sesiones` | "sesiones" |
+| `sesiones` | 2, archivos | "archivos" |
+| `sesiones` | 3, el compositor | "ventanas" |
+| `sesiones` | 4, el selector de ficheros (solo los programas de la persona del selector) | "selector" |
+
+Lo que lanza un programa por su cuenta con `proceso_crear` sin nombres nace sin tabla. El programa no puede cambiar
+la suya; lo que diga de sus llaves solo lo cree él.
+
+## Selector de ficheros (U5)
+
+`usuario/src/bin/selector.rs`, protocolo en `usuario/src/protocolo/selector.rs`. La ventana de "Abrir" y "Guardar
+como": el programa pide, el usuario elige en una ventana que es del selector (el programa no la ve ni la maneja), y el
+programa recibe solo lo elegido. Es el camino por el que un programa encerrado llega a un fichero del usuario (S6b).
+Corre como una persona (en la prueba, Ana) y enseña lo suyo desde `C`.
+
+**Quién lo tiene.** Los programas que lanza `inicio` con el canal "selector", y los que lanza `sesiones` como la
+persona del selector (llave "selector" de su tabla). Los de otra persona y los del sistema, no (hasta que haya un
+selector por sesión). El selector solo atiende a quien le presentan `inicio` o `sesiones` (sin marca: 8 bytes de
+marca y 16 de nombre; con el nombre vacío, que se fue): a otro, `SIN_DERECHO`. El nombre que enseña en su ventana
+("quién pide") es ese, no lo que diga el programa.
+
+**Petición** (un mensaje con una llave: por dónde contestar):
+
+| Bytes | Qué |
+|---|---|
+| 0..4 | "SEL2" |
+| 4..8 | Orden (u32): 1 abrir, 2 guardar, 3 carpeta, 4 cancelar (sin llave ni respuesta), 5 consulta |
+| 8..10 | Largo del nombre propuesto (u16; solo al guardar) |
+| 10..12 | Largo del patrón (u16) |
+| 12..16 | Ceros |
+| 16.. | El nombre propuesto y, detrás, el patrón (UTF-8) |
+
+**Respuesta**: estado (i32), asa (u32), banderas (u32), largo del nombre (u32) y el nombre elegido (UTF-8).
+
+| Orden | Qué elige el usuario | Qué llega |
+|---|---|---|
+| abrir | Un fichero | Su asa, solo para leer (con ella no se escribe, recorta ni cambia nada, aunque el fichero sea del mismo usuario), y su nombre |
+| guardar | Un cajón y un nombre (en el campo va el propuesto) | La asa del fichero, para leer y escribir, y su nombre. Si no existía, nace vacío. Si existía, el selector pregunta ("ya existe. ¿Sustituir?", con el botón "Sustituir"; Intro no sustituye) y llega como estaba, con la bandera 1 (`EXISTIA`): quien guarda lo deja del tamaño de lo que escribe (`TAMANO`) |
+| carpeta | Un cajón | El hueco de raíz (de 15 a 8, el primero libre) en que queda cedido, para leer y escribir, y su nombre |
+| consulta | Nada (sin ventana) | `BIEN` y el nombre con que el selector conoce a quien pide |
+
+- **Solo el nombre, nunca el camino.** El programa sabe cómo se llama lo elegido (para su título, o para saber el
+  formato por la extensión: es parte de lo que el usuario le entrega), pero no en qué cajón está ni cómo se llaman
+  los cajones del usuario. Decisión tomada con S6b ("qué gana quien explota una aplicación": su cajón y los ficheros
+  que el usuario le cedió, no el resto de `Home:`); pendiente de que el usuario la confirme.
+- **Un nombre es uno solo**: sin '/', ':' ni '|', sin letras de control, ni "." ni "..", y de 107 bytes como mucho.
+  Vale para lo que teclea el usuario (el selector lo dice bajo el campo y no guarda) y para lo que propone el
+  programa (si no vale, el campo empieza vacío). El selector crea y busca por la asa del cajón y ese nombre: no hay
+  camino de texto que se pueda torcer.
+- **El patrón** solo decide qué ficheros se enseñan (los cajones, siempre): alternativas separadas por ';', con '*'
+  (o "#?") y '?', sin distinguir mayúsculas ("*.txt;*.md"). No es una barrera. Como mucho 64 bytes; si no, se
+  enseña todo.
+- **Estados**: 0 bien; -1 mal formada; -12 el selector no conoce a quien pide; -100 cancelado (el usuario canceló,
+  pasó un minuto sin que pulsara nada, o quien pidió mandó "cancelar" o se fue); -101 ocupado. Los demás negativos
+  son los del servicio de archivos al ceder.
+- **Una petición por programa**, y cuatro esperando como mucho: las demás, ocupado en el acto. Las ventanas salen de
+  una en una, por orden. Quien pidió puede retirar su petición ("cancelar"); si acaba, `sesiones` lo dice y su
+  ventana se cierra.
+
+Las peticiones de antes siguen valiendo: el texto "abrir" (o cualquier otro) y "carpeta", con respuesta de 4 bytes
+(la asa, o el hueco 3; 0 si no). Sin nombre ni patrón, y un minuto desde que sale la ventana. "raiz" (ceder `C`
+entero para leer) es solo para la prueba del `hostil` de `inicio`: a otro, 0.
 
 ## Buzón de la VideoCore (C50)
 
@@ -248,7 +327,7 @@ DashFS lo descarta. Lo maneja `sesiones` con cuatro órdenes sin marca, como el 
 
 | Orden | Mensaje | Hace |
 |---|---|---|
-| 102 crear | sesión (bytes 4-7: el usuario), uid y gid de su raíz (8-11 y 12-15); llaves: un objeto de memoria disperso (llamada 56 del kernel) que no tenga nadie más, y la respuesta | Un DashFS nuevo sobre ese objeto, que pasa a ser del servicio. Lo que mide el objeto es el tope del volumen; la memoria se cobra al grupo con el que se creó (el de la sesión). Su raíz es de ese usuario, 0700. En `a`, lo que mide; en `b`, lo que ocupa recién hecho. -9 si ya lo había, -6 con ocho a la vez, -12 si la memoria la tiene alguien más |
+| 102 crear | sesión (bytes 4-7: el usuario), uid y gid de su raíz (8-11 y 12-15); llaves: un objeto de memoria disperso (llamada 57 del kernel) que no tenga nadie más, y la respuesta | Un DashFS nuevo sobre ese objeto, que pasa a ser del servicio. Lo que mide el objeto es el tope del volumen; la memoria se cobra al grupo con el que se creó (el de la sesión). Su raíz es de ese usuario, 0700. En `a`, lo que mide; en `b`, lo que ocupa recién hecho. -9 si ya lo había, -6 con ocho a la vez, -12 si la memoria la tiene alguien más |
 | 103 quitar | sesión | Lo quita con todo: las asas y las raíces que llevan a él dejan de valer para todos (-5) y su memoria vuelve. En `a`, lo que ocupaba. -2 si no lo había |
 | 104 raíz | sesión, marca del cliente (8-15), hueco (byte 16) y tope (byte 17) | Da a ese cliente (y a su alta) la raíz del volumen en ese hueco: para el escritorio, que nace antes de que entre nadie |
 | 105 copiar | sesión, uid y gid de lo copiado, largos de volumen, origen y destino (bytes 16, 17 y 18), solo crear el cajón (byte 19 a 1); los tres textos desde el byte 32 | Crea el cajón `destino` del volumen en memoria y copia en él el árbol `origen` del volumen del disco (vacío, el principal), pisando lo que se llame igual: así se monta `ENV:` con las capas de `ENVARC:`. Sin mirar permisos del origen; si no existe, no copia nada. En `a`, ficheros; en `b`, bytes. -11 si no cabe |
@@ -330,6 +409,8 @@ del cliente; la orden 21 da la raíz de otro volumen.
 | 27 guardar | Crea el fichero `nombre` en el cajón de la asa con lo que hay al principio de la ventana, en una sola transacción, y en el disco al contestar. No lo deja abierto. No sobrescribe | asa, b cuánto (hasta la ventana), nombre | a bytes escritos, b tamaño |
 | 28 leer por nombre | Busca `nombre` desde la asa y lo lee al principio de la ventana, sin dejar asa abierta (A3): buscar, leer y cerrar en un viaje | asa, a desde, b cuánto (hasta la ventana), nombre | a bytes leídos, b fecha, c tamaño total; asa 0 |
 | 29 comprobar clave | Mira si la contraseña es la del volumen cifrado `nombre`, sin abrirlo ni tocarlo (U3: volver de un bloqueo). Solo con el derecho de administrar | b largo de la contraseña (en la ventana, como en 25), nombre | estado: 0 es la suya, -12 no |
+| 40 crecer | Crece el sistema de archivos en uso hasta `a` bytes (S32): una transacción añade los bloques nuevos. Encoger no se hace en uso (es de `dashfs-resize`, sin montar). Solo con el derecho de administrar | a tamaño nuevo en bytes (0: todo el disco; si no es múltiplo de 4096, el múltiplo de antes) | a el tamaño que queda; -1 si es menos que ahora o más que el disco |
+| 41 cuota | El tope del volumen `nombre` (S32; el principal no tiene) y lo que usa: lo suyo y lo que solo ven sus instantáneas. Pasado el tope, lo que lo haría crecer da -11 en ese volumen y en ningún otro; borrar y escribir encima valen siempre. Solo con el derecho de administrar | a tope en bytes (0: sin tope), b 1 para ponerlo (0: solo leer), nombre | a lo que usa, b su tope (bytes; a = 0 si aún no se ha contado) |
 | 31 prestar | Presta las páginas de la caché del fichero (A7): hasta 4 llaves de memoria, solo de leer, de 512 KB cada una, con los trozos seguidos desde el que tiene el byte a. Se leen sin viajes y siguen al día con lo que se escriba. Dejan de valer al cerrar la asa, cuando el cliente pasa de 8 prestadas (las suyas más viejas) y al volver a una instantánea, comprobar, o quitar o cerrar un volumen. Un fichero de menos de 512 KB no se presta (-6): con leer (2). En Rust, `dashos::prestados` | asa, a desde | a el byte donde empieza el primer trozo, b tamaño del fichero, c cuántas llaves; y las llaves |
 | 34 dueño | El dueño y el grupo de lo que tiene la asa, y el usuario de quien pregunta (S10: la Información del Workbench dice de quién es y si se puede cambiar) | asa | a dueño, b grupo, c el usuario del cliente |
 
@@ -410,7 +491,7 @@ de respuesta:
 | 3 entrar, 4 salir, 5 volver | `guardian` | Abre o cierra el volumen cifrado del usuario, o comprueba su contraseña sin tocarlo. Entrar o volver con la buena pone su sesión delante; entrar en una ya abierta es volver (U6). Salir con programas suyos vivos, -13. Tras una contraseña mala, tarda 300 ms |
 | 6 servicio, 7 dejar | cualquiera | La llave de un servicio o de un permiso (`eco`, `plazo`), marcada, revocable y de un solo viaje; o renunciar a ella. Sin permiso, se pregunta a `guardian`; desde una sesión de detrás, -2 sin preguntar (U6). S28: de la caja Amiga, también un permiso **sin llave** (`ejec:`, `icono:`, `guion:` o `disco:` y el programa 68k, con el programa entero y el fichero de detalle): se concede o se pregunta igual, sin llave; contesta el estado y cómo se decidió (`usuario/src/preguntas_ficheros.rs`). Una pregunta a la vez por programa |
 | 8 registro | `guardian` | El registro de seguridad, por páginas |
-| 9 lanzar | `guardian`; la barra y el Workbench (S10) | Un programa del disco, como quien pide o como un usuario que entró; nace con su canal con `sesiones`, su llave de archivos y sus raíces. La barra y el Workbench solo lanzan de `Programas/` (un nombre, sin cajones), siempre como la persona que está delante; sin nadie delante, -2 |
+| 9 lanzar | `guardian`; la barra y el Workbench (S10) | Un programa del disco, como quien pide o como un usuario que entró; nace con su canal con `sesiones`, su llave de archivos, la del compositor, la del selector de ficheros si es de la persona del selector, sus raíces y su tabla de llaves (ver "La tabla de llaves"). La barra y el Workbench solo lanzan de `Programas/` (un nombre, sin cajones), siempre como la persona que está delante; sin nadie delante, -2 |
 | 10 nombres | cualquiera | Su tabla de nombres (`SYS:`, `Programas:`, `Home:`, `PROGDIR:`), con la raíz de cada uno |
 | 30 asignaciones | cualquiera | Su tabla de nombres entera (paso 2, `bitacoras/asignaciones.md`), por páginas de 248 bytes desde el byte que diga (u32): cuánto mide (u32), cuántos van (u32) y el texto, que lee `dashos::asignaciones::Tabla`. Volúmenes según sus raíces (lo que lanza `sesiones`, y el Workbench y el explorador, que se ceden las mismas): `SYS:` 1, y con cuenta `Home:` 2, `RAM:` 3 y `Work:` 4; `PROGDIR:` 0 si salió del disco; y sus asignaciones: las de la sesión (S4b) o las heredadas del que lo lanzó si es de su mismo usuario |
 | 31 asignar | cualquiera | Cambia una de sus asignaciones (u32 cambio: 0 poner, 1 añadir detrás, 2 delante, 3 quitar; u32 largo; "Nombre=capa,capa"). Solo capas con nombre: ni raíces (`@n`), ni el nombre de un volumen o `PROGDIR`, ni caminos que suben, ni bucles (-30). Lo que lance después lo hereda. Contesta un i32 |
@@ -525,7 +606,7 @@ Cuando el anillo baja de la mitad, el servicio escribe 4 bytes en el canal del p
 hasta que la cabeza se mueva). Si ese canal está cerrado, el programa murió: su flujo sale con un fundido de 5 ms. Al
 `CERRAR`, el servicio suena lo que quede en el anillo y quita el flujo.
 
-## Red (S13, primera versión)
+## Red (S13)
 
 `usuario/src/bin/red.rs` es el servicio: la pila TCP/IP (smoltcp 0.14, 0BSD) en su proceso. `usuario/src/bin/virtio_red.rs`
 es el controlador de virtio-net (PCI moderno; en QEMU, `disable-legacy=on`). El protocolo está en
@@ -535,6 +616,13 @@ recibir, esperar y cerrar; `estado`).
 **El permiso.** Solo llega a la red quien tiene una llave del canal "red". Hoy la da `inicio`, por nombre, a quien la
 pide en `PROGRAMAS`; más adelante la repartirá `sesiones`. El servicio sabe de quién es cada marca por `inicio` y no
 atiende marcas que no conoce. Un programa solo toca sus conexiones.
+
+**Escuchar es otro permiso** (`red-escuchar`, S6b): la llave del canal "red-escuchar". Lo atiende otro hilo del
+servicio, que pasa al bucle principal lo que le llega (por la copia del servicio para escribirse en "red", con la marca
+de quien lo mandó delante: `REENVIADO`; un programa que mande `REENVIADO` es rechazado, porque su mensaje no trae la
+marca del servicio). Por ese canal valen `ESCUCHAR`, `UDP`, `AVISO`, `CERRAR` y `ESTADO`; lo demás se rechaza. Por el
+canal "red", `ESCUCHAR` y `UDP` con un puerto elegido dan -13 (sin permiso). Quien tiene las dos llaves es el mismo
+cliente para el servicio (la misma marca): sus topes cuentan juntos.
 
 **El estado, solo para leer** (decisión del usuario del 2026-11-13). El canal "red-estado" lo atiende un hilo aparte del
 servicio, que solo contesta `ESTADO` (las mismas palabras de `R_ESTADO`, sin `E_SUYAS` ni `E_RECHAZOS`) con una foto que
@@ -566,10 +654,72 @@ cortadas distintas se dicen en el registro ("[red] cortafuegos de la caja Linux:
 | 1 `CONECTAR` | familia (4), puerto, tamaño de cada anillo (4 KB a 64 KB, potencia de dos), dirección IPv4 | un extremo de escritura para contestar | `R_CONECTAR` (1): conexión y estado; con `BIEN`, la llave de la memoria |
 | 2 `AVISO` | conexión | | ninguna |
 | 3 `CERRAR` | conexión | | ninguna; se manda lo que quede y se cierra |
-| 4 `ESTADO` | | un extremo de escritura | `R_ESTADO` (4): dirección, puerta, DNS, conexiones, tramas y rechazos |
+| 4 `ESTADO` | | un extremo de escritura | `R_ESTADO` (4): dirección, puerta, DNS, conexiones, tramas y rechazos; la dirección IPv6, lo cortado por el cortafuegos, las cuentas del resolvedor y el servidor de hora |
+| 5 `RESOLVER` | tipo (4: A, 6: AAAA; en la mitad alta, el puerto del servidor elegido), servidor (IPv4; 0: el del sistema), largo y nombre (hasta 240 bytes) | un extremo de escritura | `R_RESOLVER` (7): estado, cuántas direcciones (hasta 8), segundos que valen, de dónde salen (0 red, 1 caché, 2 hosts) y las direcciones (16 bytes cada una) |
+| 7 `UDP` | puerto local (0: el que toque; uno elegido, solo por "red-escuchar"), tamaño de cada anillo | un extremo de escritura | `R_CONECTAR` (1) al momento, con la llave de la memoria |
+| 8 `ESCUCHAR` (solo por "red-escuchar") | puerto TCP (1 a 49151), tamaño de cada anillo | un extremo de escritura | `R_ESCUCHAR` (8) al momento: conexión y estado; `R_CONECTAR` (1), con la memoria, cuando alguien entra |
+
+`CONECTAR` admite IPv4 (familia 4) e IPv6 (familia 6, la dirección en 16 bytes).
 
 Estados: 0 bien, -1 mal formado, -2 sin dirección, -3 límite, -4 rechazada, -5 cortada, -6 no existe, -7 familia que no
-se sabe (IPv6). Como mucho 8 conexiones por programa y 32 en total; la novena da -3, las de los demás siguen.
+se sabe, -8 puerto ocupado, -9 el nombre no existe (o no tiene direcciones de ese tipo), -10 el servidor de nombres no
+contesta, -11 el servidor de nombres falla, -12 respuesta truncada, -13 sin el permiso de escuchar. Como mucho 8
+conexiones por programa (TCP, UDP y las que escuchan, juntas) y 32 en total; la novena da -3, las de los demás siguen.
+
+**UDP.** La memoria es la de una conexión; en cada anillo van los datagramas seguidos, cada uno con una cabecera de 24
+bytes: largo (u16), puerto (u16), familia (u8), tres bytes a 0 y dirección (16 bytes): a quién va o de quién viene.
+Hasta 1472 bytes por datagrama. El tope de la cola de recepción es el anillo: lo que llega con él lleno se pierde y se
+cuenta (palabra `PERDIDOS`); antes hay otras dos colas con su tope, las 16 del zócalo en la pila y las ranuras de la
+tarjeta, que tiran sin contarlo ahí. Un zócalo abierto por "red" (sin el permiso de escuchar) solo recibe de las
+direcciones y puertos a los que ha enviado en los últimos 120 s (hasta 16): lo demás se tira y se cuenta en `PERDIDOS`.
+Abierto por "red-escuchar", recibe de cualquiera. Una cabecera imposible en el anillo de envío (familia que no hay,
+puerto 0, más de 1472 bytes) deja el zócalo roto (`FASE` -1): ya no se sabe dónde empieza el siguiente. `Udp` en
+`red_cliente`.
+
+**Escuchar por TCP.** `ESCUCHAR` es un `CONECTAR` al revés: una conexión que espera a que alguien entre por ese puerto;
+cuando entra, llega `R_CONECTAR` con la memoria y la cabecera dice quién es (`REMOTO_*`). Cada uno atiende a uno: para
+varios a la vez se piden varios en el mismo puerto. Un puerto en que escucha un programa no lo puede usar otro (-8).
+Mientras espera, el servicio manda latidos: si el programa acaba, deja de escuchar. `Oido` en `red_cliente`.
+
+**Nombres.** El resolvedor va dentro del servicio (`Nombres`, con `usuario/src/dns.rs`): preguntas A y AAAA. Por este
+orden: una dirección escrita se devuelve tal cual; `localhost` y `hosts` (`Prefs/Red/hosts` del disco del sistema, con
+el formato de siempre; hasta 512 nombres; un nombre de `hosts` no se pregunta fuera); la caché (hasta 256 respuestas,
+cada una lo que diga su TTL, con un día de tope; un "no existe" se guarda 30 s); y el servidor de nombres que dio el
+DHCP, por UDP, con EDNS0 (1232 bytes). Tres intentos (esperas de 1, 2 y 4 s). Cada pregunta sale de un zócalo propio en
+un puerto al azar, con un identificador al azar que cambia en cada intento; solo vale la respuesta que viene de la
+dirección y el puerto del servidor, con ese identificador y la misma pregunta. Las demás se tiran y se cuentan
+(`E_DNS_TIRADAS`), y se sigue esperando la buena. De la respuesta solo se usa lo que habla del nombre preguntado o del
+final de su cadena de alias (hasta 8); los nombres comprimidos solo pueden apuntar hacia atrás. Hasta 16 preguntas a la
+vez a los servidores; 8 en curso por programa y 64 en total (la siguiente da -3). Un programa puede elegir servidor y
+puerto: esas respuestas se guardan aparte y no valen para quien pregunta al del sistema. Lo que falta: preguntar por
+TCP cuando la respuesta viene truncada (da -12), DNS cifrado, servidores de nombres por IPv6, dominios de búsqueda,
+nombres con letras que no son ASCII (IDN), DNSSEC y mDNS. `resolver` en `red_cliente`.
+
+**Cortafuegos de entrada**, cerrado de serie (`usuario/src/cortafuegos.rs`). Cada trama para DashOS (o de difusión) se
+mira antes de dársela a la pila: un intento de conexión TCP (SYN sin ACK) a un puerto en que nadie escucha, o un
+datagrama UDP a un puerto que nadie tiene abierto, se tira sin contestar (ni RST ni ICMP) y se cuenta (`E_CORTADOS_TCP`,
+`E_CORTADOS_UDP`; los seis primeros que venían a esta máquina se dicen en el registro). Abre un puerto TCP quien
+escucha con el permiso; los UDP abiertos son los de los zócalos de los programas, el del DHCP y los de las preguntas de
+nombres en curso. Lo demás (ARP, ICMP, segmentos de conexiones abiertas) lo mira la pila. No hay reglas configurables
+todavía (`Prefs/Red`).
+
+**IPv6.** La dirección local del enlace (fe80::/64 con la MAC) y, por SLAAC, la global del prefijo que anuncie el
+encaminador, con su ruta. `CONECTAR`, UDP y escuchar valen con IPv6. Lo que falta: comprobar que la dirección no está
+repetida (DAD), direcciones que no delaten la MAC (RFC 7217 o temporales), DHCPv6, los servidores de nombres que anuncia
+el encaminador (RDNSS) y contestar al ping.
+
+**Lo que se configura** está en `Prefs/Red` del disco del sistema (la raíz del servicio en el de archivos, solo lo lee):
+`hosts` y `hora`, una línea con el nombre o la dirección del servidor de hora (si no hay, `pool.ntp.org`). El servicio
+lo lee al arrancar; para que vea un cambio hay que relanzarlo.
+
+**La hora por la red** (`usuario/src/bin/hora.rs`, con `usuario/src/sntp.rs`). `hora` es el único programa con el
+permiso del reloj (llamada 39 con 1, `docs/referencia/kernel.md`); de la red tiene solo la llave de conectar. Pregunta
+por SNTP (UDP, puerto 123) al servidor que el servicio de red da resuelto en su estado (`E_HORA`), pone el reloj de
+golpe y vuelve a preguntar cada hora (si falla, a los 30 s y cada vez más despacio, hasta 10 minutos). La petición lleva
+un número al azar en vez de la hora; solo vale la respuesta que lo devuelve, de un servidor con hora (ni estrato 0 ni
+sin sincronizar) y posterior a 2024. La barra enseña la hora en la zona de `Prefs/zona` del disco del sistema (una
+línea, como `Europe/Madrid`; la lee al arrancar por su raíz 1; sin ella, UTC), con `usuario/src/zona.rs`: UTC, las
+zonas de Europa con la regla de la Unión Europea y unas cuantas sin cambio de hora.
 
 **La memoria de una conexión** la crea el servicio (cuenta en su cupo) y el programa recibe una copia que no puede
 pasar. Así no puede dar una memoria revocable y quitársela al servicio con él dentro. Cabecera de palabras (cabeza y
@@ -578,7 +728,6 @@ anillos desde el byte 64. Lo que mueve el servicio lo guarda él, no lo lee de l
 algo cambia, el servicio le manda `EVENTO`; cuando el servicio espera al programa, este le manda `AVISO`. Cada 2 s sin
 mensajes, un `LATIDO`: si su canal está cerrado, el programa acabó y la conexión se corta.
 
-**Cortafuegos.** Nada escucha: lo que llega sin pedirlo, la pila lo rechaza. Escuchar queda para después.
 
 ## Avisos (S10)
 

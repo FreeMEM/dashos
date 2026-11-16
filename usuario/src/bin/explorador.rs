@@ -44,6 +44,8 @@ mod ops;
 mod pintar;
 #[path = "../explorador/iconos.rs"]
 mod iconos;
+#[path = "../idiomas.rs"]
+mod idiomas;
 
 /// Lo único con `unsafe`: ver como bytes o píxeles la memoria proyectada (la ventana del servicio y los búferes).
 #[allow(unsafe_code)]
@@ -82,6 +84,21 @@ use wayland::Escritor;
 
 dashos::programa!(principal);
 dashos::monton!();
+
+/// Idiomas (paso 4): el nombre de su catálogo y su versión (`tools/catalogo.py` lo lee de aquí), y el catálogo en uso.
+const CATALOGO: (&str, u32) = ("explorador", 1);
+static TEXTOS: idiomas::Puesto = idiomas::Puesto::nuevo();
+
+/// Un texto, en el idioma del usuario (el castellano si no hay catálogo). Lo de la consola no pasa por aquí: va
+/// siempre en castellano.
+pub fn tr(numero: u32, de_siempre: &'static str) -> &'static str {
+    TEXTOS.texto(numero, de_siempre)
+}
+
+/// Un texto con huecos y sus valores.
+pub fn trf(numero: u32, de_siempre: &'static str, valores: &[&dyn core::fmt::Display]) -> String {
+    TEXTOS.con(numero, de_siempre, valores)
+}
 
 const ARCHIVOS: u32 = 2;
 const SESIONES: u32 = 3;
@@ -345,6 +362,8 @@ pub enum Icono {
 
 pub struct Sitio {
     pub nombre: &'static str,
+    /// El nombre en castellano, para la consola.
+    pub fijo: &'static str,
     pub lugar: Lugar,
     pub icono: Icono,
     /// La marca de la caja (68K), si es de una.
@@ -353,12 +372,12 @@ pub struct Sitio {
 
 pub fn sitios() -> [Sitio; 6] {
     [
-        Sitio { nombre: "Carpeta personal", lugar: Lugar::raiz(RAIZ_HOME), icono: Icono::Casa, marca: None },
-        Sitio { nombre: "Papelera", lugar: papelera_archivos(), icono: Icono::Papelera, marca: None },
-        Sitio { nombre: "SYS:", lugar: Lugar::raiz(RAIZ_SISTEMA), icono: Icono::Disco, marca: None },
-        Sitio { nombre: "RAM:", lugar: Lugar::raiz(RAIZ_RAM), icono: Icono::Disco, marca: None },
-        Sitio { nombre: "Work:", lugar: Lugar::raiz(RAIZ_WORK), icono: Icono::Disco, marca: None },
-        Sitio { nombre: "Amiga", lugar: Lugar::raiz(RAIZ_AMIGA), icono: Icono::Amiga, marca: Some("68K") },
+        Sitio { nombre: tr(1, "Carpeta personal"), fijo: "Carpeta personal", lugar: Lugar::raiz(RAIZ_HOME), icono: Icono::Casa, marca: None },
+        Sitio { nombre: tr(2, "Papelera"), fijo: "Papelera", lugar: papelera_archivos(), icono: Icono::Papelera, marca: None },
+        Sitio { nombre: "SYS:", fijo: "SYS:", lugar: Lugar::raiz(RAIZ_SISTEMA), icono: Icono::Disco, marca: None },
+        Sitio { nombre: "RAM:", fijo: "RAM:", lugar: Lugar::raiz(RAIZ_RAM), icono: Icono::Disco, marca: None },
+        Sitio { nombre: "Work:", fijo: "Work:", lugar: Lugar::raiz(RAIZ_WORK), icono: Icono::Disco, marca: None },
+        Sitio { nombre: "Amiga", fijo: "Amiga", lugar: Lugar::raiz(RAIZ_AMIGA), icono: Icono::Amiga, marca: Some("68K") },
     ]
 }
 
@@ -393,20 +412,38 @@ const RAICES_ESCRITAS: [(&str, u32); 8] = [
     ("Personal", RAIZ_HOME),
 ];
 
-/// El camino para la persona: "Home/Privado", "Papelera".
+/// El camino para la consola y para la barra donde se escribe: "Home:Privado", "Papelera". Siempre en castellano.
 pub fn texto_lugar(l: &Lugar) -> String {
+    texto_lugar_con(l, "Papelera")
+}
+
+/// El camino para enseñarlo en la ventana: como `texto_lugar`, con la papelera en el idioma del usuario.
+pub fn lugar_visible(l: &Lugar) -> String {
+    texto_lugar_con(l, tr(2, "Papelera"))
+}
+
+fn texto_lugar_con(l: &Lugar, papelera: &str) -> String {
     if l.dentro_de(&papelera_archivos()) {
-        return Lugar { raiz: 0, nombres: l.nombres[2..].to_vec() }.texto("Papelera");
+        return Lugar { raiz: 0, nombres: l.nombres[2..].to_vec() }.texto(papelera);
     }
     // Como en el Amiga (paso 2 de las asignaciones): el volumen con sus dos puntos y los cajones detrás.
     alloc::format!("{}:{}", nombre_raiz(l.raiz), l.nombres.join("/"))
 }
 
-/// Las migas del camino: (texto, lugar al que llevan).
+/// Las migas del camino: (texto, lugar al que llevan). En el idioma del usuario.
 pub fn migas(l: &Lugar) -> Vec<(String, Lugar)> {
+    migas_con(l, tr(2, "Papelera"), tr(1, "Carpeta personal"))
+}
+
+/// Las migas, para la consola: siempre en castellano.
+pub fn migas_fijas(l: &Lugar) -> Vec<(String, Lugar)> {
+    migas_con(l, "Papelera", "Carpeta personal")
+}
+
+fn migas_con(l: &Lugar, papelera: &str, personal: &str) -> Vec<(String, Lugar)> {
     let mut v = Vec::new();
-    let (desde, primera) = if l.dentro_de(&papelera_archivos()) { (2, String::from("Papelera")) } else {
-        (0, match l.raiz { RAIZ_HOME => String::from("Carpeta personal"), r => alloc::format!("{}:", nombre_raiz(r)) })
+    let (desde, primera) = if l.dentro_de(&papelera_archivos()) { (2, String::from(papelera)) } else {
+        (0, match l.raiz { RAIZ_HOME => String::from(personal), r => alloc::format!("{}:", nombre_raiz(r)) })
     };
     let mut x = Lugar { raiz: l.raiz, nombres: l.nombres[..desde].to_vec() };
     v.push((primera, x.clone()));
@@ -539,6 +576,8 @@ pub struct Pestana {
     pub ocultos: bool,
     /// Lo que no se pudo listar.
     pub error: Option<String>,
+    /// El mismo error, en castellano: para la consola.
+    pub error_fijo: Option<String>,
     /// La búsqueda (en este cajón y los de dentro), si hay.
     pub busca: Option<ops::Busqueda>,
     /// Lo que se ha escrito para saltar a un nombre sin buscar (con la hora de la última letra).
@@ -563,6 +602,7 @@ impl Pestana {
             asc: true,
             ocultos,
             error: None,
+            error_fijo: None,
             busca: None,
             salto: (String::new(), 0),
             anillo: false,
@@ -571,7 +611,7 @@ impl Pestana {
 
     pub fn titulo(&self) -> String {
         if let Some(b) = &self.busca {
-            return alloc::format!("Buscar \"{}\"", b.busca);
+            return trf(3, "Buscar \"{}\"", &[&b.busca]);
         }
         migas(&self.lugar).last().map_or_else(String::new, |m| m.0.clone())
     }
@@ -674,7 +714,9 @@ pub enum Accion {
 pub struct Menu {
     pub x: i32,
     pub y: i32,
-    pub opciones: Vec<(&'static str, Accion, bool)>,
+    /// Cada opción: su texto en el idioma del usuario, lo que hace, si se puede, y su texto en castellano (para la
+    /// consola).
+    pub opciones: Vec<(&'static str, Accion, bool, &'static str)>,
     pub encima: Option<usize>,
 }
 
@@ -778,6 +820,8 @@ pub struct Arrastre {
 pub struct EnMarcha {
     pub t: Trabajo,
     pub titulo: String,
+    /// El título en castellano, para la consola.
+    pub titulo_fijo: String,
     pub ventana: u32,
     pub id: u32,
 }
@@ -860,7 +904,7 @@ impl App {
         e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(sup).fin();
         e.empezar(XDG, xdg_wm_base::req::GET_XDG_SURFACE).uint(xsup).uint(sup).fin();
         e.empezar(xsup, xdg_surface::req::GET_TOPLEVEL).uint(top).fin();
-        e.empezar(top, xdg_toplevel::req::SET_TITLE).texto(Some("Archivos")).fin();
+        e.empezar(top, xdg_toplevel::req::SET_TITLE).texto(Some(tr(4, "Archivos"))).fin();
         e.empezar(top, xdg_toplevel::req::SET_APP_ID).texto(Some("explorador")).fin();
         e.empezar(top, xdg_toplevel::req::SET_MIN_SIZE).int(MIN_ANCHO).int(MIN_ALTO).fin();
         e.empezar(sup, wl_surface::req::COMMIT).fin();
@@ -1029,11 +1073,13 @@ impl App {
                 pe.cosas = v.into_iter().map(|e| Cosa { donde: lugar.clone(), e }).collect();
                 pe.raros = raros;
                 pe.error = None;
+                pe.error_fijo = None;
             }
             Err(e) => {
                 pe.cosas.clear();
                 pe.raros = 0;
-                pe.error = Some(String::from(if e == a::PROTEGIDO { "No tienes permiso para ver esta carpeta" } else { ops::texto_error(e) }));
+                pe.error = Some(String::from(if e == a::PROTEGIDO { tr(5, "No tienes permiso para ver esta carpeta") } else { ops::texto_error(e) }));
+                pe.error_fijo = Some(String::from(if e == a::PROTEGIDO { "No tienes permiso para ver esta carpeta" } else { ops::texto_error_fijo(e) }));
                 println!("  [explorador] no abre {}: {}", texto_lugar(&lugar), e);
             }
         }
@@ -1126,7 +1172,7 @@ impl App {
             p.vista.len(),
             if p.vista.len() == 1 { "elemento" } else { "elementos" },
             p.raros,
-            p.error.as_ref().map_or_else(String::new, |e| alloc::format!(", {}", e)),
+            p.error_fijo.as_ref().map_or_else(String::new, |e| alloc::format!(", {}", e)),
             nombres.join(" | ")
         );
         self.decir_sitios(k);
@@ -1143,7 +1189,7 @@ impl App {
                     Some(c) => c.e.nombre.clone(),
                     None => continue,
                 },
-                Zona::Lugar(i) => alloc::format!("lugar {}", sitios()[*i].nombre),
+                Zona::Lugar(i) => alloc::format!("lugar {}", sitios()[*i].fijo),
                 Zona::Atras => String::from("Atrás"),
                 Zona::Adelante => String::from("Adelante"),
                 Zona::Buscar => String::from("Buscar"),
@@ -1189,11 +1235,11 @@ impl App {
         if es_programa {
             let (estado, pid) = lanzar(&mut self.c, &c.e.nombre);
             println!("  [explorador] lanza Programas/{}: {} (proceso {})", c.e.nombre, estado, pid);
-            let t = if estado == 0 { alloc::format!("\"{}\" está en marcha", c.e.nombre) } else { alloc::format!("\"{}\" no se pudo lanzar ({})", c.e.nombre, estado) };
+            let t = if estado == 0 { trf(6, "\"{}\" está en marcha", &[&c.e.nombre]) } else { trf(7, "\"{}\" no se pudo lanzar ({})", &[&c.e.nombre, &estado]) };
             self.avisar(k, t, None);
         } else {
-            println!("  [explorador] {} no se abre: no hay programa para {}", texto_lugar(&c.donde.hijo(&c.e.nombre)), tipo_texto(&c.e));
-            self.avisar(k, alloc::format!("No hay ningún programa para abrir \"{}\" ({})", c.e.nombre, tipo_texto(&c.e)), None);
+            println!("  [explorador] {} no se abre: no hay programa para {}", texto_lugar(&c.donde.hijo(&c.e.nombre)), tipo_fijo(&c.e));
+            self.avisar(k, trf(8, "No hay ningún programa para abrir \"{}\" ({})", &[&c.e.nombre, &tipo_texto(&c.e)]), None);
         }
     }
 
@@ -1241,11 +1287,22 @@ impl App {
 
     // --- Trabajos ---
 
-    fn empezar(&mut self, k: usize, t: Trabajo, titulo: String) {
+    /// Empieza un trabajo. Su título va dos veces: en castellano (para la consola) y en el idioma del usuario (para la
+    /// ventana).
+    fn empezar(&mut self, k: usize, t: Trabajo, (titulo_fijo, titulo): (String, String)) {
         let numero = self.ventanas.get(k).map_or(0, |v| v.numero);
         self.siguiente_trabajo += 1;
-        println!("  [explorador] empieza: {}", titulo);
-        self.trabajos.push(EnMarcha { t, titulo, ventana: numero, id: self.siguiente_trabajo });
+        println!("  [explorador] empieza: {}", titulo_fijo);
+        self.trabajos.push(EnMarcha { t, titulo, titulo_fijo, ventana: numero, id: self.siguiente_trabajo });
+    }
+
+    /// El título de tirar `cosas` a la papelera: (en castellano, en el idioma del usuario).
+    fn titulo_papelera(cosas: &[Cosa]) -> (String, String) {
+        if cosas.len() == 1 {
+            (alloc::format!("Mover \"{}\" a la papelera", cosas[0].e.nombre), trf(9, "Mover \"{}\" a la papelera", &[&cosas[0].e.nombre]))
+        } else {
+            (alloc::format!("Mover {} elementos a la papelera", cosas.len()), trf(10, "Mover {} elementos a la papelera", &[&cosas.len()]))
+        }
     }
 
     /// Avanza los trabajos y búsquedas un poco. Verdad si queda algo.
@@ -1300,7 +1357,7 @@ impl App {
         let bien = t.errores.is_empty();
         println!(
             "  [explorador] acabado: {}: {} de {} elementos, {} bytes{}{}",
-            m.titulo,
+            m.titulo_fijo,
             t.resultado.len(),
             t.elementos.len(),
             t.bytes,
@@ -1312,16 +1369,16 @@ impl App {
         if let Some(k) = k {
             let n = t.resultado.len();
             let (texto, deshacer) = match t.tarea {
-                _ if !bien => (alloc::format!("{}: {}", m.titulo, t.errores[0]), None),
-                Tarea::Papelera if n == 1 => (alloc::format!("\"{}\" se ha movido a la papelera", t.elementos[0].nombre), Some(Deshacer::Restaurar(t.resultado.iter().map(|r| r.1.clone()).collect()))),
-                Tarea::Papelera => (alloc::format!("{} elementos movidos a la papelera", n), Some(Deshacer::Restaurar(t.resultado.iter().map(|r| r.1.clone()).collect()))),
-                Tarea::Restaurar => (alloc::format!("{} restaurado{}", if n == 1 { String::from("Un elemento") } else { alloc::format!("{} elementos", n) }, if n == 1 { "" } else { "s" }), None),
-                Tarea::Borrar => (alloc::format!("{} borrado{} para siempre", if n == 1 { String::from("Un elemento") } else { alloc::format!("{} elementos", n) }, if n == 1 { "" } else { "s" }), None),
+                _ if !bien => (alloc::format!("{}: {}", m.titulo, t.errores_visibles.first().map_or("", |e| e.as_str())), None),
+                Tarea::Papelera if n == 1 => (trf(11, "\"{}\" se ha movido a la papelera", &[&t.elementos[0].nombre]), Some(Deshacer::Restaurar(t.resultado.iter().map(|r| r.1.clone()).collect()))),
+                Tarea::Papelera => (trf(12, "{} elementos movidos a la papelera", &[&n]), Some(Deshacer::Restaurar(t.resultado.iter().map(|r| r.1.clone()).collect()))),
+                Tarea::Restaurar => (if n == 1 { String::from(tr(13, "Un elemento restaurado")) } else { trf(14, "{} elementos restaurados", &[&n]) }, None),
+                Tarea::Borrar => (if n == 1 { String::from(tr(15, "Un elemento borrado para siempre")) } else { trf(16, "{} elementos borrados para siempre", &[&n]) }, None),
                 Tarea::Mover => (
-                    alloc::format!("{} movido{}", if n == 1 { String::from("Un elemento") } else { alloc::format!("{} elementos", n) }, if n == 1 { "" } else { "s" }),
+                    if n == 1 { String::from(tr(17, "Un elemento movido")) } else { trf(18, "{} elementos movidos", &[&n]) },
                     t.destino.clone().zip(t.elementos.first().map(|e| e.desde.clone())).map(|(donde, origen)| Deshacer::Mover { donde, nombres: t.resultado.iter().map(|r| r.1.clone()).collect(), origen }),
                 ),
-                Tarea::Copiar => (alloc::format!("{} copiado{}", if n == 1 { String::from("Un elemento") } else { alloc::format!("{} elementos", n) }, if n == 1 { "" } else { "s" }), None),
+                Tarea::Copiar => (if n == 1 { String::from(tr(19, "Un elemento copiado")) } else { trf(20, "{} elementos copiados", &[&n]) }, None),
             };
             self.avisar(k, texto, deshacer);
         }
@@ -1357,7 +1414,7 @@ impl App {
         let r = self.fs().pedir(a::INFO, 0, 0, 0, b"");
         if r.e == a::BIEN {
             if self.disco.0 == 0 {
-                println!("  [explorador] disco: {} libres de {}", tamano(r.b), tamano(r.a));
+                println!("  [explorador] disco: {} libres de {}", tamano_fijo(r.b), tamano_fijo(r.a));
             }
             self.disco = (r.a, r.b);
         }
@@ -1380,20 +1437,24 @@ impl App {
         let en_papelera = self.ventanas[k].p().en_papelera();
         let sin_papelera = cosas.iter().any(|c| c.donde.raiz != RAIZ_HOME || c.donde.dentro_de(&papelera()));
         if para_siempre || en_papelera || sin_papelera {
-            let titulo = if cosas.len() == 1 { alloc::format!("¿Borrar \"{}\" para siempre?", cosas[0].e.nombre) } else { alloc::format!("¿Borrar {} elementos para siempre?", cosas.len()) };
-            let texto = String::from(if sin_papelera && !en_papelera && !para_siempre { "Aquí no hay papelera: no se podrá recuperar." } else { "No se podrá recuperar." });
-            self.ventanas[k].dialogo = Some(Dialogo::Confirmar { titulo, texto, boton: "Borrar", accion: Accion::Borrar, cosas });
+            let titulo = if cosas.len() == 1 { trf(21, "¿Borrar \"{}\" para siempre?", &[&cosas[0].e.nombre]) } else { trf(22, "¿Borrar {} elementos para siempre?", &[&cosas.len()]) };
+            let texto = String::from(if sin_papelera && !en_papelera && !para_siempre { tr(23, "Aquí no hay papelera: no se podrá recuperar.") } else { tr(24, "No se podrá recuperar.") });
+            self.ventanas[k].dialogo = Some(Dialogo::Confirmar { titulo, texto, boton: tr(25, "Borrar"), accion: Accion::Borrar, cosas });
             println!("  [explorador] ventana {}: pregunta antes de borrar", self.ventanas[k].numero);
             self.decir_dialogo(k);
             return;
         }
-        let titulo = if cosas.len() == 1 { alloc::format!("Mover \"{}\" a la papelera", cosas[0].e.nombre) } else { alloc::format!("Mover {} elementos a la papelera", cosas.len()) };
+        let titulo = Self::titulo_papelera(&cosas);
         let t = Trabajo::nuevo(Tarea::Papelera, Self::elementos(&cosas), None, Some(papelera()), Self::raices());
         self.empezar(k, t, titulo);
     }
 
     fn borrar_ya(&mut self, k: usize, cosas: Vec<Cosa>) {
-        let titulo = if cosas.len() == 1 { alloc::format!("Borrar \"{}\"", cosas[0].e.nombre) } else { alloc::format!("Borrar {} elementos", cosas.len()) };
+        let titulo = if cosas.len() == 1 {
+            (alloc::format!("Borrar \"{}\"", cosas[0].e.nombre), trf(26, "Borrar \"{}\"", &[&cosas[0].e.nombre]))
+        } else {
+            (alloc::format!("Borrar {} elementos", cosas.len()), trf(27, "Borrar {} elementos", &[&cosas.len()]))
+        };
         let pap = if cosas.iter().all(|c| c.donde == papelera_archivos()) { Some(papelera()) } else { None };
         let t = Trabajo::nuevo(Tarea::Borrar, Self::elementos(&cosas), None, pap, Self::raices());
         self.empezar(k, t, titulo);
@@ -1404,7 +1465,11 @@ impl App {
         if cosas.is_empty() {
             return;
         }
-        let titulo = if cosas.len() == 1 { alloc::format!("Restaurar \"{}\"", cosas[0].nombre) } else { alloc::format!("Restaurar {} elementos", cosas.len()) };
+        let titulo = if cosas.len() == 1 {
+            (alloc::format!("Restaurar \"{}\"", cosas[0].nombre), trf(28, "Restaurar \"{}\"", &[&cosas[0].nombre]))
+        } else {
+            (alloc::format!("Restaurar {} elementos", cosas.len()), trf(29, "Restaurar {} elementos", &[&cosas.len()]))
+        };
         let t = Trabajo::nuevo(Tarea::Restaurar, cosas, None, Some(papelera()), Self::raices());
         self.empezar(k, t, titulo);
     }
@@ -1420,14 +1485,14 @@ impl App {
         };
         let Ok((v, _)) = r else { return };
         if v.is_empty() {
-            self.avisar(k, String::from("La papelera ya está vacía"), None);
+            self.avisar(k, String::from(tr(30, "La papelera ya está vacía")), None);
             return;
         }
         let cosas: Vec<Cosa> = v.into_iter().map(|e| Cosa { donde: papelera_archivos(), e }).collect();
         self.ventanas[k].dialogo = Some(Dialogo::Confirmar {
-            titulo: String::from("¿Vaciar la papelera?"),
-            texto: alloc::format!("Se borrará{} para siempre {} elemento{}.", if cosas.len() == 1 { "" } else { "n" }, cosas.len(), if cosas.len() == 1 { "" } else { "s" }),
-            boton: "Vaciar",
+            titulo: String::from(tr(31, "¿Vaciar la papelera?")),
+            texto: if cosas.len() == 1 { trf(32, "Se borrará para siempre {} elemento.", &[&cosas.len()]) } else { trf(33, "Se borrarán para siempre {} elementos.", &[&cosas.len()]) },
+            boton: tr(34, "Vaciar"),
             accion: Accion::Vaciar,
             cosas,
         });
@@ -1443,7 +1508,13 @@ impl App {
         let n = cosas.len();
         println!("  [explorador] {} {} elemento{}: {}", if cortar { "corta" } else { "copia" }, n, if n == 1 { "" } else { "s" }, cosas.iter().map(|c| c.e.nombre.as_str()).collect::<Vec<_>>().join(", "));
         self.portapapeles = Some((cosas, cortar));
-        let t = if n == 1 { alloc::format!("\"{}\" listo para {}", self.portapapeles.as_ref().unwrap().0[0].e.nombre, if cortar { "mover" } else { "copiar" }) } else { alloc::format!("{} elementos listos para {}", n, if cortar { "mover" } else { "copiar" }) };
+        let uno = &self.portapapeles.as_ref().unwrap().0[0].e.nombre;
+        let t = match (n == 1, cortar) {
+            (true, true) => trf(35, "\"{}\" listo para mover", &[uno]),
+            (true, false) => trf(36, "\"{}\" listo para copiar", &[uno]),
+            (false, true) => trf(37, "{} elementos listos para mover", &[&n]),
+            (false, false) => trf(38, "{} elementos listos para copiar", &[&n]),
+        };
         self.avisar(k, t, None);
     }
 
@@ -1462,7 +1533,15 @@ impl App {
     fn mover_o_copiar(&mut self, k: usize, cosas: Vec<Cosa>, destino: Lugar, mover: bool) {
         let n = cosas.len();
         let que = if n == 1 { alloc::format!("\"{}\"", cosas[0].e.nombre) } else { alloc::format!("{} elementos", n) };
-        let titulo = alloc::format!("{} {} a {}", if mover { "Mover" } else { "Copiar" }, que, migas(&destino).last().map_or(String::new(), |m| m.0.clone()));
+        let fijo = alloc::format!("{} {} a {}", if mover { "Mover" } else { "Copiar" }, que, migas_fijas(&destino).last().map_or(String::new(), |m| m.0.clone()));
+        let a_donde = migas(&destino).last().map_or(String::new(), |m| m.0.clone());
+        let visible = match (mover, n == 1) {
+            (true, true) => trf(39, "Mover \"{}\" a {}", &[&cosas[0].e.nombre, &a_donde]),
+            (true, false) => trf(40, "Mover {} elementos a {}", &[&n, &a_donde]),
+            (false, true) => trf(41, "Copiar \"{}\" a {}", &[&cosas[0].e.nombre, &a_donde]),
+            (false, false) => trf(42, "Copiar {} elementos a {}", &[&n, &a_donde]),
+        };
+        let titulo = (fijo, visible);
         let t = Trabajo::nuevo(if mover { Tarea::Mover } else { Tarea::Copiar }, Self::elementos(&cosas), Some(destino), None, Self::raices());
         self.empezar(k, t, titulo);
     }
@@ -1508,7 +1587,7 @@ impl App {
                 }
             }
             if con_deshacer {
-                self.avisar(k, alloc::format!("\"{}\" ahora se llama \"{}\"", viejo, nuevo), Some(Deshacer::Renombrar { donde: donde.clone(), viejo: String::from(viejo), nuevo: String::from(nuevo) }));
+                self.avisar(k, trf(43, "\"{}\" ahora se llama \"{}\"", &[&viejo, &nuevo]), Some(Deshacer::Renombrar { donde: donde.clone(), viejo: String::from(viejo), nuevo: String::from(nuevo) }));
             }
             for k in 0..self.ventanas.len() {
                 self.decir_ventana(k);
@@ -1546,8 +1625,9 @@ impl App {
     }
 
     fn dialogo_nombre(&mut self, k: usize, nuevo: bool) {
-        let (titulo, boton, linea, viejo) = if nuevo {
-            ("Carpeta nueva", "Crear", Linea::con("Carpeta sin nombre"), String::new())
+        // El título, también en castellano: para la consola.
+        let (titulo, titulo_fijo, boton, linea, viejo) = if nuevo {
+            (tr(44, "Carpeta nueva"), "Carpeta nueva", tr(45, "Crear"), Linea::con(tr(46, "Carpeta sin nombre")), String::new())
         } else {
             let p = self.ventanas[k].p();
             let el = p.sel.elegidos();
@@ -1560,10 +1640,10 @@ impl App {
             let (base, _) = base_y_extension(&c.e.nombre, c.e.cajon);
             l.marca = Some(0);
             l.cursor = base.len();
-            ("Cambiar el nombre", "Cambiar", l, c.e.nombre.clone())
+            (tr(47, "Cambiar el nombre"), "Cambiar el nombre", tr(48, "Cambiar"), l, c.e.nombre.clone())
         };
         self.ventanas[k].dialogo = Some(Dialogo::Nombre { titulo, boton, linea, nuevo, viejo, error: None });
-        println!("  [explorador] ventana {}: {}", self.ventanas[k].numero, titulo);
+        println!("  [explorador] ventana {}: {}", self.ventanas[k].numero, titulo_fijo);
         self.decir_dialogo(k);
     }
 
@@ -1584,18 +1664,31 @@ impl App {
             Dialogo::Nombre { titulo, boton, linea, nuevo, viejo, .. } => {
                 let n = linea.texto.trim();
                 let n = String::from(n);
-                let error = if !nombre_valido(&n) {
-                    Some(String::from(if n.contains('/') || n.contains(':') { "El nombre no puede llevar \"/\" ni \":\"" } else if n == "." || n == ".." { "\".\" y \"..\" no valen como nombre" } else if n.is_empty() { "Escribe un nombre" } else { "Ese nombre no vale" }))
+                // El error: (en castellano, para la consola; en el idioma del usuario, para el diálogo).
+                let error: Option<(&str, &str)> = if !nombre_valido(&n) {
+                    Some(if n.contains('/') || n.contains(':') {
+                        ("El nombre no puede llevar \"/\" ni \":\"", tr(49, "El nombre no puede llevar \"/\" ni \":\""))
+                    } else if n == "." || n == ".." {
+                        ("\".\" y \"..\" no valen como nombre", tr(50, "\".\" y \"..\" no valen como nombre"))
+                    } else if n.is_empty() {
+                        ("Escribe un nombre", tr(51, "Escribe un nombre"))
+                    } else {
+                        ("Ese nombre no vale", tr(52, "Ese nombre no vale"))
+                    })
                 } else if !nuevo && n == viejo {
                     None
                 } else if self.ventanas[k].p().cosas.iter().any(|c| plano(&c.e.nombre) == plano(&n) && plano(&c.e.nombre) != plano(&viejo)) {
-                    Some(String::from(if nuevo { "Ya hay una carpeta o un fichero con ese nombre" } else { "Ya hay otro con ese nombre" }))
+                    Some(if nuevo {
+                        ("Ya hay una carpeta o un fichero con ese nombre", tr(53, "Ya hay una carpeta o un fichero con ese nombre"))
+                    } else {
+                        ("Ya hay otro con ese nombre", tr(54, "Ya hay otro con ese nombre"))
+                    })
                 } else {
                     None
                 };
-                if let Some(e) = error {
-                    println!("  [explorador] ventana {}: el nombre \"{}\" no vale: {}", self.ventanas[k].numero, n, e);
-                    self.ventanas[k].dialogo = Some(Dialogo::Nombre { titulo, boton, linea, nuevo, viejo, error: Some(e) });
+                if let Some((fijo, e)) = error {
+                    println!("  [explorador] ventana {}: el nombre \"{}\" no vale: {}", self.ventanas[k].numero, n, fijo);
+                    self.ventanas[k].dialogo = Some(Dialogo::Nombre { titulo, boton, linea, nuevo, viejo, error: Some(String::from(e)) });
                     self.presentar(k);
                     return;
                 }
@@ -1624,13 +1717,13 @@ impl App {
                         }
                         self.decir_ventana(k);
                     } else {
-                        self.avisar(k, alloc::format!("No se pudo crear \"{}\": {}", n, ops::texto_error(r)), None);
+                        self.avisar(k, trf(55, "No se pudo crear \"{}\": {}", &[&n, &ops::texto_error(r)]), None);
                         self.presentar(k);
                     }
                 } else if n != viejo {
                     let e = self.renombrar_en(k, &donde, &viejo, &n, true);
                     if e != a::BIEN {
-                        self.avisar(k, alloc::format!("No se pudo cambiar el nombre: {}", ops::texto_error(e)), None);
+                        self.avisar(k, trf(56, "No se pudo cambiar el nombre: {}", &[&ops::texto_error(e)]), None);
                         self.presentar(k);
                     }
                 } else {
@@ -1646,7 +1739,7 @@ impl App {
                 if let Some(p) = elegido.and_then(|i| programas.get(i)) {
                     let (estado, pid) = lanzar(&mut self.c, p);
                     println!("  [explorador] abre {} con Programas/{}: {} (proceso {})", fichero, p, estado, pid);
-                    let t = if estado == 0 { alloc::format!("\"{}\" está en marcha (aún no recibe el fichero)", p) } else { alloc::format!("\"{}\" no se pudo lanzar ({})", p, estado) };
+                    let t = if estado == 0 { trf(57, "\"{}\" está en marcha (aún no recibe el fichero)", &[p]) } else { trf(7, "\"{}\" no se pudo lanzar ({})", &[p, &estado]) };
                     self.avisar(k, t, None);
                 }
                 self.presentar(k);
@@ -1727,21 +1820,30 @@ impl App {
         let bits = ((d.c >> 32) & 0xffff) as i64;
         let (dueno, grupo, yo) = (du.a, du.b, du.c);
         let puede = dueno == yo && donde.raiz != RAIZ_SISTEMA;
-        let porque = if donde.raiz == RAIZ_SISTEMA { "Por SYS: solo se puede leer" } else if dueno != yo { "Solo lo puede cambiar su dueño" } else { "" };
+        let porque = if donde.raiz == RAIZ_SISTEMA { tr(58, "Por SYS: solo se puede leer") } else if dueno != yo { tr(59, "Solo lo puede cambiar su dueño") } else { "" };
         let titulo_t = nombre.clone().unwrap_or_else(|| migas(&donde).last().map_or(String::new(), |m| m.0.clone()));
-        let que = if tipo == a::CAJON { String::from("Carpeta") } else { alloc::format!("{} · {}", tipo_texto(&Entrada { nombre: titulo_t.clone(), cajon: false, tam: d.a, fecha: d.b, modo: modo as u16, bits: 0 }), tamano(d.a)) };
+        // Qué es: en castellano para la consola (`que`) y en el idioma del usuario para el diálogo (`que_visible`).
+        let como_fichero = Entrada { nombre: titulo_t.clone(), cajon: false, tam: d.a, fecha: d.b, modo: modo as u16, bits: 0 };
+        let que = if tipo == a::CAJON { String::from("Carpeta") } else { alloc::format!("{} · {}", tipo_fijo(&como_fichero), tamano_fijo(d.a)) };
+        let que_visible = if tipo == a::CAJON { String::from(tr(60, "Carpeta")) } else { alloc::format!("{} · {}", tipo_texto(&como_fichero), tamano(d.a)) };
         let mut arbol = Arbol::new();
         let titulo = texto_obj(&mut arbol, &titulo_t, 1);
-        let linea1 = texto_obj(&mut arbol, &alloc::format!("{} · cambiado: {}", que, fecha(d.b, self.ahora())), 2);
+        let linea1 = texto_obj(&mut arbol, &trf(61, "{} · cambiado: {}", &[&que_visible, &fecha(d.b, self.ahora())]), 2);
         let tu = if dueno == yo { " (tú)" } else { "" };
-        let linea2 = texto_obj(&mut arbol, &alloc::format!("Dueño: usuario {}{} · grupo {} · en {}", dueno, tu, grupo, texto_lugar(&donde)), 2);
-        let campo = arbol.crear(Campo, &[(atr::TEXTO, Valor::Texto(comentario.clone())), (atr::ETIQUETA, Valor::Texto("Comentario".into())), (atr::DESACTIVADO, Valor::Bool(!puede))]);
+        let en = lugar_visible(&donde);
+        let linea2 = if dueno == yo {
+            trf(62, "Dueño: usuario {} (tú) · grupo {} · en {}", &[&dueno, &grupo, &en])
+        } else {
+            trf(63, "Dueño: usuario {} · grupo {} · en {}", &[&dueno, &grupo, &en])
+        };
+        let linea2 = texto_obj(&mut arbol, &linea2, 2);
+        let campo = arbol.crear(Campo, &[(atr::TEXTO, Valor::Texto(comentario.clone())), (atr::ETIQUETA, Valor::Texto(tr(64, "Comentario").into())), (atr::DESACTIVADO, Valor::Bool(!puede))]);
         let valor = bits << 16 | modo;
         let rejilla = arbol.crear(permisos_kit::Permisos, &[(atr::VALOR, Valor::Int(valor)), (atr::CURSOR, Valor::Int(-1)), (atr::DESACTIVADO, Valor::Bool(!puede))]);
         let aviso = texto_obj(&mut arbol, porque, 2);
         let hueco = texto_obj(&mut arbol, "", 0);
-        let cancelar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto(String::from(if puede { "Cancelar" } else { "Cerrar" }))), (atr::ESTILO, Valor::Int(2))]);
-        let guardar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Guardar".into()))]);
+        let cancelar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto(String::from(if puede { tr(65, "Cancelar") } else { tr(66, "Cerrar") }))), (atr::ESTILO, Valor::Int(2))]);
+        let guardar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto(tr(67, "Guardar").into()))]);
         let marca = texto_obj(&mut arbol, "", 0);
         arbol.notificar(cancelar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("cancelar".into())));
         arbol.notificar(guardar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("guardar".into())));
@@ -1800,7 +1902,7 @@ impl App {
                 let e = if texto.len() > 200 { a::MAL_FORMADO } else { fs.pedir(a::COMENTAR, asa, 0, 0, texto.as_bytes()).e };
                 partes.push(alloc::format!("comentario \"{}\": {}", texto, e));
                 if e != a::BIEN {
-                    fallo = Some(if e == a::MAL_FORMADO { "El comentario es demasiado largo" } else { "No se pudo cambiar el comentario" });
+                    fallo = Some(if e == a::MAL_FORMADO { tr(68, "El comentario es demasiado largo") } else { tr(69, "No se pudo cambiar el comentario") });
                 }
             }
             if nuevo != valor_viejo {
@@ -1808,7 +1910,7 @@ impl App {
                 let e = fs.pedir(a::PROTEGER, asa, bits, modo, b"").e;
                 partes.push(alloc::format!("protección bits {:#x} modo {:o}: {}", bits, modo, e));
                 if e != a::BIEN {
-                    fallo = Some("No se pudo cambiar la protección");
+                    fallo = Some(tr(70, "No se pudo cambiar la protección"));
                 }
             }
         }
@@ -1844,37 +1946,46 @@ impl App {
         let solo_leer = p.lugar.raiz == RAIZ_SISTEMA;
         let hay_pegar = self.portapapeles.is_some() && !solo_leer && !papelera;
         let un_fichero = n == 1 && p.sel.elegidos().first().and_then(|&i| p.cosa(i)).is_some_and(|c| !c.e.cajon);
-        let opciones: Vec<(&'static str, Accion, bool)> = if sobre_cosa && papelera {
-            alloc::vec![("Restaurar", Accion::Restaurar, true), ("Borrar para siempre", Accion::Borrar, true), ("Propiedades", Accion::Propiedades, n == 1)]
+        let ocultos = if p.ocultos { (tr(71, "Esconder los ocultos"), "Esconder los ocultos") } else { (tr(72, "Mostrar los ocultos"), "Mostrar los ocultos") };
+        let opciones: Vec<(&'static str, Accion, bool, &'static str)> = if sobre_cosa && papelera {
+            alloc::vec![
+                (tr(73, "Restaurar"), Accion::Restaurar, true, "Restaurar"),
+                (tr(74, "Borrar para siempre"), Accion::Borrar, true, "Borrar para siempre"),
+                (tr(75, "Propiedades"), Accion::Propiedades, n == 1, "Propiedades"),
+            ]
         } else if sobre_cosa {
             alloc::vec![
-                ("Abrir", Accion::Abrir, n == 1),
-                ("Abrir en una pestaña nueva", Accion::AbrirPestana, n == 1 && !un_fichero),
-                ("Abrir con…", Accion::AbrirCon, un_fichero),
-                ("Cortar", Accion::Cortar, !solo_leer),
-                ("Copiar", Accion::Copiar, true),
-                ("Pegar dentro", Accion::Pegar, hay_pegar && n == 1 && !un_fichero),
-                ("Cambiar el nombre…", Accion::Renombrar, n == 1 && !solo_leer),
-                ("Mover a la papelera", Accion::Papelera, !solo_leer && p.lugar.raiz == RAIZ_HOME),
-                ("Borrar para siempre…", Accion::Borrar, !solo_leer),
-                ("Propiedades", Accion::Propiedades, n == 1),
+                (tr(76, "Abrir"), Accion::Abrir, n == 1, "Abrir"),
+                (tr(77, "Abrir en una pestaña nueva"), Accion::AbrirPestana, n == 1 && !un_fichero, "Abrir en una pestaña nueva"),
+                (tr(78, "Abrir con…"), Accion::AbrirCon, un_fichero, "Abrir con…"),
+                (tr(79, "Cortar"), Accion::Cortar, !solo_leer, "Cortar"),
+                (tr(80, "Copiar"), Accion::Copiar, true, "Copiar"),
+                (tr(81, "Pegar dentro"), Accion::Pegar, hay_pegar && n == 1 && !un_fichero, "Pegar dentro"),
+                (tr(82, "Cambiar el nombre…"), Accion::Renombrar, n == 1 && !solo_leer, "Cambiar el nombre…"),
+                (tr(83, "Mover a la papelera"), Accion::Papelera, !solo_leer && p.lugar.raiz == RAIZ_HOME, "Mover a la papelera"),
+                (tr(84, "Borrar para siempre…"), Accion::Borrar, !solo_leer, "Borrar para siempre…"),
+                (tr(75, "Propiedades"), Accion::Propiedades, n == 1, "Propiedades"),
             ]
         } else if papelera {
-            alloc::vec![("Vaciar la papelera", Accion::Vaciar, !p.vista.is_empty()), ("Elegir todo", Accion::TodoElegir, true), ("Mostrar los ocultos", Accion::Ocultos, true)]
+            alloc::vec![
+                (tr(85, "Vaciar la papelera"), Accion::Vaciar, !p.vista.is_empty(), "Vaciar la papelera"),
+                (tr(86, "Elegir todo"), Accion::TodoElegir, true, "Elegir todo"),
+                (tr(72, "Mostrar los ocultos"), Accion::Ocultos, true, "Mostrar los ocultos"),
+            ]
         } else {
             alloc::vec![
-                ("Carpeta nueva…", Accion::NuevaCarpeta, !solo_leer && p.busca.is_none()),
-                ("Pegar", Accion::Pegar, hay_pegar && p.busca.is_none()),
-                ("Elegir todo", Accion::TodoElegir, true),
-                (if p.ocultos { "Esconder los ocultos" } else { "Mostrar los ocultos" }, Accion::Ocultos, true),
-                ("Propiedades", Accion::Propiedades, p.busca.is_none()),
+                (tr(87, "Carpeta nueva…"), Accion::NuevaCarpeta, !solo_leer && p.busca.is_none(), "Carpeta nueva…"),
+                (tr(88, "Pegar"), Accion::Pegar, hay_pegar && p.busca.is_none(), "Pegar"),
+                (tr(86, "Elegir todo"), Accion::TodoElegir, true, "Elegir todo"),
+                (ocultos.0, Accion::Ocultos, true, ocultos.1),
+                (tr(75, "Propiedades"), Accion::Propiedades, p.busca.is_none(), "Propiedades"),
             ]
         };
         self.ventanas[k].menu = Some(Menu { x, y, opciones, encima: None });
         self.presentar(k);
         let v = &self.ventanas[k];
         let t: Vec<String> = v.zonas.iter().filter_map(|(r, z)| match z {
-            Zona::Opcion(i) => v.menu.as_ref().map(|m| alloc::format!("{} en ({}, {})", m.opciones[*i].0, r.x + r.w / 2, r.y + r.h / 2)),
+            Zona::Opcion(i) => v.menu.as_ref().map(|m| alloc::format!("{} en ({}, {})", m.opciones[*i].3, r.x + r.w / 2, r.y + r.h / 2)),
             _ => None,
         }).collect();
         println!("  [explorador] ventana {}, menú: {}", v.numero, t.join("; "));
@@ -1884,15 +1995,16 @@ impl App {
         let v = &self.ventanas[k];
         let (x, y) = v.zonas.iter().find(|z| z.1 == Zona::Menu).map_or((v.w - 240, 48), |(r, _)| (r.x + r.w - 232, r.y + r.h + 4));
         let p = v.p();
+        let ocultos = if p.ocultos { (tr(71, "Esconder los ocultos"), "Esconder los ocultos") } else { (tr(72, "Mostrar los ocultos"), "Mostrar los ocultos") };
         let opciones = alloc::vec![
-            ("Ventana nueva", Accion::NuevaVentana, true),
-            ("Pestaña nueva", Accion::NuevaPestana, true),
-            ("Carpeta nueva…", Accion::NuevaCarpeta, p.lugar.raiz != RAIZ_SISTEMA && !p.en_papelera() && p.busca.is_none()),
-            ("Iconos", Accion::Rejilla, p.lista),
-            ("Lista", Accion::Lista, !p.lista),
-            (if p.ocultos { "Esconder los ocultos" } else { "Mostrar los ocultos" }, Accion::Ocultos, true),
-            ("Volver a leer", Accion::Recargar, true),
-            ("Vaciar la papelera", Accion::Vaciar, true),
+            (tr(89, "Ventana nueva"), Accion::NuevaVentana, true, "Ventana nueva"),
+            (tr(90, "Pestaña nueva"), Accion::NuevaPestana, true, "Pestaña nueva"),
+            (tr(87, "Carpeta nueva…"), Accion::NuevaCarpeta, p.lugar.raiz != RAIZ_SISTEMA && !p.en_papelera() && p.busca.is_none(), "Carpeta nueva…"),
+            (tr(91, "Iconos"), Accion::Rejilla, p.lista, "Iconos"),
+            (tr(92, "Lista"), Accion::Lista, !p.lista, "Lista"),
+            (ocultos.0, Accion::Ocultos, true, ocultos.1),
+            (tr(93, "Volver a leer"), Accion::Recargar, true, "Volver a leer"),
+            (tr(85, "Vaciar la papelera"), Accion::Vaciar, true, "Vaciar la papelera"),
         ];
         self.ventanas[k].menu = Some(Menu { x: x.max(4), y, opciones, encima: None });
         self.presentar(k);
@@ -1965,7 +2077,7 @@ impl App {
         p.desplaz = 0;
         let detalle: Vec<String> = p.vista.iter().map(|&i| {
             let e = &p.cosas[i].e;
-            if e.cajon { alloc::format!("{}/", e.nombre) } else { alloc::format!("{} {} {}", e.nombre, tamano(e.tam), tipo_texto(e)) }
+            if e.cajon { alloc::format!("{}/", e.nombre) } else { alloc::format!("{} {} {}", e.nombre, tamano_fijo(e.tam), tipo_fijo(e)) }
         }).collect();
         println!("  [explorador] ventana {} como {}: {}", self.ventanas[k].numero, if lista { "lista" } else { "rejilla" }, detalle.join(" | "));
         self.decir_ventana(k);
@@ -2032,7 +2144,7 @@ impl App {
     /// El lugar de un camino con nombre ("LIBS:", "ENVARC:Sys", "Home:Viaje"), por su tabla de nombres: el de la primera
     /// capa donde exista, como en el Amiga. `None` si el nombre no está en la tabla (entonces vale lo de siempre:
     /// "Home/Privado", "Amiga:"). Un camino que intenta salir del nombre, o que lleva a una raíz que no tiene, no vale.
-    fn lugar_por_nombre(&mut self, texto: &str) -> Option<Result<Lugar, &'static str>> {
+    fn lugar_por_nombre(&mut self, texto: &str) -> Option<Result<Lugar, Porque>> {
         use dashos::asignaciones as asig;
         let (nombre, _) = texto.split_once(':')?;
         self.nombres.buscar(nombre.as_bytes())?;
@@ -2040,18 +2152,18 @@ impl App {
         let mut fs = PorNombres(self.fs());
         let capa = match asig::mirar(&mut fs, &tabla, texto.as_bytes()) {
             Ok((_, capa)) => capa,
-            Err(e) if e == a::MAL_FORMADO => return Some(Err("ese camino no vale")),
-            Err(asig::BUCLE) => return Some(Err("esa asignación lleva a sí misma")),
-            Err(asig::NO_CABE) => return Some(Err("ese camino es demasiado largo")),
-            Err(e) if e == a::PROTEGIDO => return Some(Err("sin permiso")),
-            Err(_) => return Some(Err("no existe en ninguna de sus capas")),
+            Err(e) if e == a::MAL_FORMADO => return Some(Err(("ese camino no vale", tr(94, "ese camino no vale")))),
+            Err(asig::BUCLE) => return Some(Err(("esa asignación lleva a sí misma", tr(95, "esa asignación lleva a sí misma")))),
+            Err(asig::NO_CABE) => return Some(Err(("ese camino es demasiado largo", tr(96, "ese camino es demasiado largo")))),
+            Err(e) if e == a::PROTEGIDO => return Some(Err(("sin permiso", tr(97, "sin permiso")))),
+            Err(_) => return Some(Err(("no existe en ninguna de sus capas", tr(98, "no existe en ninguna de sus capas")))),
         };
         let mut s = asig::Sitios::nuevos();
         tabla.resolver(texto.as_bytes(), &mut s).ok()?;
         let (raiz, camino) = s.sitio(capa)?;
         let nombres = core::str::from_utf8(camino).ok()?.split('/').filter(|p| !p.is_empty()).map(String::from).collect();
         let l = Lugar { raiz: raiz as u32, nombres };
-        Some(if App::raices().contains(&l.raiz) && l.valido() { Ok(l) } else { Err("lleva a donde no llega") })
+        Some(if App::raices().contains(&l.raiz) && l.valido() { Ok(l) } else { Err(("lleva a donde no llega", tr(99, "lleva a donde no llega"))) })
     }
 
     fn ir_al_camino(&mut self, k: usize) {
@@ -2078,8 +2190,8 @@ impl App {
                     }
                 }
             }
-            Err(porque) => {
-                println!("  [explorador] ventana {}: camino escrito \"{}\": no vale ({})", self.ventanas[k].numero, texto, porque);
+            Err((porque_fijo, porque)) => {
+                println!("  [explorador] ventana {}: camino escrito \"{}\": no vale ({})", self.ventanas[k].numero, texto, porque_fijo);
                 self.avisar(k, String::from(porque), None);
                 self.presentar(k);
             }
@@ -2183,12 +2295,17 @@ pub fn preparar(app: &mut App) {
 /// está deja paso a lo de siempre.
 fn comprobar_nombres(app: &mut App) {
     match dashos::asignaciones::pedir_tabla(SESIONES) {
-        Some(t) => app.nombres = t,
+        Some(t) => {
+            // Con la tabla, el idioma del usuario: antes de que se abra ninguna ventana (sin tabla, en castellano).
+            let mut fs = PorNombres(app.fs());
+            idiomas::arrancar(&mut fs, &t, &TEXTOS, CATALOGO);
+            app.nombres = t;
+        }
         None => println!("  [explorador] sin tabla de nombres"),
     }
     let mut ver = |app: &mut App, c: &str| match app.lugar_por_nombre(c) {
         Some(Ok(l)) => texto_lugar(&l),
-        Some(Err(e)) => String::from(e),
+        Some(Err(e)) => String::from(e.0),
         None => String::from("sin ese nombre"),
     };
     let casos = ["C:grande.txt", "LIBS:", "ENVARC:Sys", "T:", "Programas:hola", "Home:../DeCarla", "SYS:/Libs", "Nada:x", "Amiga:", "SYS:DeCarla"];

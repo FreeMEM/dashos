@@ -8,6 +8,19 @@
 //! Con el pedido "carpeta", la misma ventana enseña solo los cajones y un botón "Elegir esta carpeta": la carpeta
 //! elegida se cede como raíz 3, para leer y escribir (lo eligió el usuario: para guardar ahí), y nada por encima de ella.
 //!
+//! "Guardar como" (`protocolo::selector`, `GUARDAR`): la misma ventana con un campo para el nombre (quien pide propone
+//! uno) y el botón "Guardar". Si el nombre ya existe, se pregunta ("ya existe. ¿Sustituir?") y hay que pulsar
+//! "Sustituir". Se cede la asa de ese fichero, para leer y escribir, y nada más: quien pide no ve el cajón. Un nombre
+//! es uno solo: sin '/', ':' ni '|', ni "." ni "..", ni más largo de la cuenta, lo teclee el usuario o lo proponga el
+//! programa. Con un patrón ("*.txt;*.md"), solo se enseñan los ficheros que casan.
+//!
+//! A quien pide se le contesta la asa y **el nombre** de lo elegido, no su camino (S6b: un programa encerrado no tiene
+//! por qué saber cómo se llaman los cajones del usuario).
+//!
+//! Solo atiende a quien conoce: los programas que le presentan `inicio` y `sesiones` (sin marca: marca y nombre; con
+//! el nombre vacío, que se fue). Una petición por programa y `MAX_ESPERA` esperando; las demás, `OCUPADO`. Quien pide
+//! puede retirar su petición (`CANCELAR`); si se va (lo dice `sesiones`), su ventana se cierra.
+//!
 //! Llaves: 1 el canal "ventanas", 2 el canal "archivos" (con el derecho de repartir), 3 su canal "selector".
 
 #![no_std]
@@ -19,12 +32,18 @@ extern crate alloc;
 #[allow(dead_code)]
 mod ventana_cliente;
 
+#[path = "../lanzables.rs"]
+#[allow(dead_code)]
+mod lanzables;
+
+use alloc::collections::{BTreeMap, VecDeque};
 use alloc::string::String;
 use alloc::vec::Vec;
 use dashos::println;
 use dashos::protocolo::archivos as a;
+use dashos::protocolo::selector as s;
 use dashos::servicio::{cerrar_llaves, recibir, Recibido, MAX_DATOS, MAX_LLAVES};
-use kit::controles::{Boton, Hijo, Interfaz, Lista, Texto};
+use kit::controles::{Boton, Campo, Hijo, Interfaz, Lista, Texto};
 use kit::lienzo::{Lienzo, Rect};
 use kit::objetos::{atr, Arbol, Cuando, Que, Valor};
 use kit::tema::Tema;
@@ -52,7 +71,7 @@ const SUBIR: &str = "../";
 const VA_ARCHIVOS: usize = 0x50_0000_0000;
 const ANCHO: i32 = 460;
 const FILAS: usize = 5;
-/// Un minuto sin elegir: como cancelar.
+/// Un minuto sin elegir: como cancelar (en las peticiones nuevas, un minuto sin que el usuario pulse nada).
 const ESPERA_US: u64 = 60_000_000;
 
 /// Una orden al servicio de archivos: (estado, asa).
@@ -63,7 +82,11 @@ fn pedir(lectura: u32, orden: u32, asa: u32, x: u64, y: u64, nombre: &str) -> (i
 
 /// Una orden al servicio de archivos: (estado, asa, a, b, c) de la respuesta.
 fn pedir_todo(lectura: u32, orden: u32, asa: u32, x: u64, y: u64, nombre: &str) -> (i32, u32, u64, u64, u64) {
-    let mut p = [0u8; 128];
+    let mut p = [0u8; MAX_DATOS];
+    // Un nombre que no cabe en un mensaje no existe para el servicio (un disco ajeno podría listar uno así).
+    if 32 + nombre.len() > p.len() {
+        return (a::NO_EXISTE, 0, 0, 0, 0);
+    }
     p[0..4].copy_from_slice(&orden.to_le_bytes());
     p[4..8].copy_from_slice(&asa.to_le_bytes());
     p[8..16].copy_from_slice(&x.to_le_bytes());
@@ -189,16 +212,286 @@ impl Camino {
     }
 }
 
-/// La ventana de "Abrir", empezando en `RAIZ`: lo que elija el usuario (con las flechas e Intro, o con doble clic),
-/// como (asa del fichero, su camino), o nada si cancela o no elige en un minuto. Nada elegido de antemano: un Intro de
-/// quien estaba escribiendo no abre nada. Elegir un cajón entra en él, y "../" vuelve, sin pasar de `RAIZ`.
-fn elegir(lectura: u32, quien: &str, carpeta: bool) -> Option<(u32, String, bool)> {
+/// Lo que pide una petición.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Modo {
+    Abrir,
+    Guardar,
+    Carpeta,
+}
+
+/// Una petición que espera su turno (o la que tiene la ventana).
+struct Pedido {
+    marca: u64,
+    /// Por dónde se contesta.
+    respuesta: u32,
+    modo: Modo,
+    /// Si es del protocolo nuevo (`protocolo::selector`): contesta con estado y nombre. Las de antes, 4 bytes.
+    nueva: bool,
+    propuesto: String,
+    patron: String,
+}
+
+/// Lo que eligió el usuario.
+struct Elegido {
+    /// La asa (del selector) del fichero, o del cajón si se eligió carpeta.
+    asa: u32,
+    /// Por dónde se llegó: solo para el registro del selector. A quien pide solo va `nombre`.
+    camino: String,
+    nombre: String,
+    con_raton: bool,
+    /// Al guardar: el fichero ya estaba y el usuario dijo "Sustituir".
+    existia: bool,
+    /// Al guardar: la asa del cajón donde está, por si hay que deshacer (no se pudo ceder un fichero recién creado).
+    cajon: Option<u32>,
+}
+
+/// El selector: su sesión de archivos, a quién conoce y quién espera.
+struct Servicio {
+    lectura: u32,
+    /// Quién es cada marca: lo dicen `inicio` y `sesiones`, sin marca (8 bytes de marca y 16 de nombre; con el nombre
+    /// vacío, que se fue). A quien no está aquí no se le atiende.
+    quienes: BTreeMap<u64, String>,
+    espera: VecDeque<Pedido>,
+}
+
+/// Programas de `sesiones` que se recuerdan a la vez, como mucho (se olvida el más viejo).
+const MAX_DE_SESIONES: usize = 128;
+
+/// Contesta una petición y suelta su llave. Devuelve si se pudo escribir (quien pidió sigue ahí).
+fn responder(llave: u32, nueva: bool, estado: i32, asa: u32, banderas: u32, nombre: &str) -> bool {
+    let mut b = [0u8; MAX_DATOS];
+    let n = if nueva {
+        s::escribir_respuesta(&mut b, estado, asa, banderas, nombre)
+    } else {
+        b[..4].copy_from_slice(&(if estado == s::BIEN { asa } else { 0 }).to_le_bytes());
+        4
+    };
+    let bien = dashos::canal_escribir(llave, &b[..n], &[]) == 0;
+    dashos::cerrar(llave);
+    bien
+}
+
+impl Servicio {
+    fn quien(&self, marca: u64) -> &str {
+        self.quienes.get(&marca).map_or("un programa", String::as_str)
+    }
+
+    /// Atiende un mensaje del canal. Devuelve si quien tiene la ventana (`actual`) ya no la quiere: mandó `CANCELAR`
+    /// o se fue.
+    fn mensaje(&mut self, m: &[u8], ll: &[u32], marca: u64, actual: Option<u64>) -> bool {
+        let mut usadas = 0;
+        let mut fuera = false;
+        if marca == 0 {
+            if m.len() == 24 {
+                let de = u64::from_le_bytes(m[..8].try_into().unwrap());
+                let fin = m[8..24].iter().position(|&b| b == 0).unwrap_or(16);
+                if fin == 0 {
+                    // Se fue (lo dice `sesiones`): se le olvida, y lo que tuviera pedido se quita.
+                    self.quienes.remove(&de);
+                    self.quitar_de_espera(de);
+                    fuera = actual == Some(de);
+                } else {
+                    self.quienes.insert(de, String::from(core::str::from_utf8(&m[8..8 + fin]).unwrap_or("?")));
+                    let de_sesiones = |m: &u64| *m >= lanzables::PRIMER_PID_PROPIO;
+                    if self.quienes.keys().filter(|m| de_sesiones(m)).count() > MAX_DE_SESIONES {
+                        if let Some(viejo) = self.quienes.keys().copied().find(|m| de_sesiones(m) && actual != Some(*m)) {
+                            self.quienes.remove(&viejo);
+                        }
+                    }
+                }
+            }
+        } else if let Some(p) = s::leer_peticion(m) {
+            let conocido = self.quienes.contains_key(&marca);
+            match p.orden {
+                s::CANCELAR => {
+                    self.quitar_de_espera(marca);
+                    fuera = actual == Some(marca);
+                }
+                _ if ll.is_empty() => {}
+                _ if !conocido => {
+                    println!("  [selector] pide uno a quien no conoce: no se le atiende");
+                    responder(ll[0], true, s::SIN_DERECHO, 0, 0, "");
+                    usadas = 1;
+                }
+                s::CONSULTA => {
+                    responder(ll[0], true, s::BIEN, 0, 0, self.quien(marca));
+                    usadas = 1;
+                }
+                orden => {
+                    let modo = match orden {
+                        s::GUARDAR => Modo::Guardar,
+                        s::CARPETA => Modo::Carpeta,
+                        _ => Modo::Abrir,
+                    };
+                    // Lo que propone se mira como lo que se teclea: un nombre solo, sin camino. Si no vale, el campo
+                    // empieza vacío. Sin escribir aquí el nombre: puede ser larguísimo o llevar letras de control.
+                    let propuesto = match s::nombre_valido(p.propuesto) {
+                        Ok(()) if modo == Modo::Guardar => String::from(p.propuesto),
+                        Err(e) if modo == Modo::Guardar && e != s::MalNombre::Vacio => {
+                            println!("  [selector] {} propone un nombre que no vale ({:?}, {} bytes): el campo empezará vacío", self.quien(marca), e, p.propuesto.len());
+                            String::new()
+                        }
+                        _ => String::new(),
+                    };
+                    self.encolar(Pedido { marca, respuesta: ll[0], modo, nueva: true, propuesto, patron: String::from(p.patron) }, actual);
+                    usadas = 1;
+                }
+            }
+        } else if m.starts_with(&s::MAGIA) {
+            if !ll.is_empty() {
+                println!("  [selector] petición mal formada de {}: no se atiende", self.quien(marca));
+                responder(ll[0], true, s::MAL_FORMADO, 0, 0, "");
+                usadas = 1;
+            }
+        } else if !ll.is_empty() {
+            // Las peticiones de antes: el texto tal cual, y se contesta con 4 bytes.
+            usadas = 1;
+            if m.starts_with(b"raiz") {
+                // S6b, capa 2 (solo para la prueba del hostil de `inicio`): `C` como raíz 2, solo para leer. A nadie
+                // más: sería leer todo `C` sin que el usuario elija nada. Un programa del disco que se llame "hostil"
+                // tampoco (`del_sistema`).
+                let respuesta = if lanzables::del_sistema(marca, self.quien(marca), &["hostil"]) {
+                    let lectura = self.lectura;
+                    let (e, mia) = pedir(lectura, a::BUSCAR, 0, 0, 0, RAIZ);
+                    let (estado, hueco) = if e == a::BIEN { pedir(lectura, a::CEDER, mia, marca, 4 | 2 << 8, "") } else { (e, 0) };
+                    if e == a::BIEN {
+                        pedir(lectura, a::CERRAR, mia, 0, 0, "");
+                    }
+                    println!("  [selector] cede C como raíz solo para leer: {} (hueco {})", estado, hueco);
+                    if estado == a::BIEN { hueco } else { 0 }
+                } else {
+                    println!("  [selector] {} pide C entero como raíz: no (eso no lo elige el usuario)", self.quien(marca));
+                    0
+                };
+                responder(ll[0], false, s::BIEN, respuesta, 0, "");
+            } else if !self.quienes.contains_key(&marca) {
+                println!("  [selector] pide uno a quien no conoce: no se le atiende");
+                responder(ll[0], false, s::SIN_DERECHO, 0, 0, "");
+            } else {
+                let modo = if m == b"carpeta" { Modo::Carpeta } else { Modo::Abrir };
+                self.encolar(Pedido { marca, respuesta: ll[0], modo, nueva: false, propuesto: String::new(), patron: String::new() }, actual);
+            }
+        }
+        cerrar_llaves(&ll[usadas..]);
+        fuera
+    }
+
+    /// Pone una petición a la cola. Una por programa (ni otra mientras tiene la ventana), y `MAX_ESPERA` como mucho:
+    /// si no, se contesta `OCUPADO` en el acto (así nadie llena la cola, ni la pantalla de ventanas suyas).
+    fn encolar(&mut self, p: Pedido, actual: Option<u64>) {
+        if actual == Some(p.marca) || self.espera.iter().any(|x| x.marca == p.marca) || self.espera.len() >= s::MAX_ESPERA {
+            println!("  [selector] {} pide con {}: ocupado", self.quien(p.marca), if self.espera.len() >= s::MAX_ESPERA { "la cola llena" } else { "otra petición suya esperando" });
+            responder(p.respuesta, p.nueva, s::OCUPADO, 0, 0, "");
+        } else {
+            self.espera.push_back(p);
+        }
+    }
+
+    /// Quita de la cola lo que pidió `marca` y lo contesta como cancelado.
+    fn quitar_de_espera(&mut self, marca: u64) {
+        while let Some(i) = self.espera.iter().position(|x| x.marca == marca) {
+            if let Some(p) = self.espera.remove(i) {
+                println!("  [selector] {} retira su petición antes de que salga la ventana", self.quien(marca));
+                responder(p.respuesta, p.nueva, s::CANCELADO, 0, 0, "");
+            }
+        }
+    }
+
+    /// Atiende, sin esperar, lo que haya llegado al canal. Devuelve si quien tiene la ventana ya no la quiere.
+    fn sondear(&mut self, actual: Option<u64>) -> bool {
+        let mut buf = [0u8; MAX_DATOS];
+        let mut ll = [0u32; MAX_LLAVES];
+        let mut fuera = false;
+        loop {
+            let (n, k, marca) = dashos::canal_leer_plazo(CANAL, &mut buf, &mut ll, 1);
+            if n < 0 {
+                return fuera;
+            }
+            fuera |= self.mensaje(&buf[..n as usize], &ll[..k], marca, actual);
+        }
+    }
+
+    /// Enseña la ventana de una petición y cede lo que el usuario elija.
+    fn servir(&mut self, p: Pedido) {
+        let quien = String::from(self.quien(p.marca));
+        let lectura = self.lectura;
+        let elegido = elegir(self, &quien, &p);
+        let (estado, asa, banderas, nombre) = match (p.modo, elegido) {
+            (Modo::Abrir, Some(e)) => {
+                let (estado, suya) = pedir(lectura, a::CEDER, e.asa, p.marca, 4, "");
+                pedir(lectura, a::CERRAR, e.asa, 0, 0, "");
+                println!("  [selector] el usuario elige {} {}: se cede solo para leer: {} (asa {})", e.camino, if e.con_raton { "con doble clic" } else { "con Intro" }, estado, suya);
+                (estado, suya, 0, e.nombre)
+            }
+            (Modo::Carpeta, Some(e)) => {
+                // Como raíz, para leer y escribir. Las peticiones de antes, en el hueco 3; las nuevas, en el primero
+                // libre de los suyos (lo lanzado por `sesiones` ya tiene la 3: su `RAM:`).
+                let (estado, hueco) = if p.nueva {
+                    let mut r = (a::SIN_SITIO, 0);
+                    for h in s::HUECOS_CARPETA.rev() {
+                        r = pedir(lectura, a::CEDER, e.asa, p.marca, 4 | 2 | (h as u64) << 8, "");
+                        if r.0 != a::SIN_SITIO {
+                            break;
+                        }
+                    }
+                    r
+                } else {
+                    // La 3, como siempre; si la tiene ocupada (lo lanzado por `sesiones`), otra de las suyas. Quien
+                    // pide usa el hueco que se le contesta.
+                    let mut r = pedir(lectura, a::CEDER, e.asa, p.marca, 4 | 2 | 3 << 8, "");
+                    for h in s::HUECOS_CARPETA.rev() {
+                        if r.0 != a::SIN_SITIO {
+                            break;
+                        }
+                        r = pedir(lectura, a::CEDER, e.asa, p.marca, 4 | 2 | (h as u64) << 8, "");
+                    }
+                    r
+                };
+                pedir(lectura, a::CERRAR, e.asa, 0, 0, "");
+                println!("  [selector] el usuario elige la carpeta {}: se cede para leer y escribir: {} (hueco {})", e.camino, estado, hueco);
+                (estado, hueco, 0, e.nombre)
+            }
+            (Modo::Guardar, Some(e)) => {
+                let (estado, suya) = pedir(lectura, a::CEDER, e.asa, p.marca, 4 | 2, "");
+                pedir(lectura, a::CERRAR, e.asa, 0, 0, "");
+                println!("  [selector] el usuario guarda {} ({}): se cede para leer y escribir: {} (asa {})", e.camino, if e.existia { "sustituye" } else { "nuevo" }, estado, suya);
+                if let Some(cajon) = e.cajon {
+                    // Un fichero recién creado que no se pudo ceder no se queda ahí vacío.
+                    if estado != a::BIEN && !e.existia {
+                        let borrado = pedir(lectura, a::BORRAR, cajon, 0, 0, &e.nombre).0;
+                        println!("  [selector] no se pudo ceder: el fichero nuevo se borra: {}", borrado);
+                    }
+                    pedir(lectura, a::CERRAR, cajon, 0, 0, "");
+                }
+                (estado, suya, if e.existia { s::EXISTIA } else { 0 }, e.nombre)
+            }
+            (modo, None) => {
+                println!("  [selector] el usuario no {}: no se cede nada", match modo {
+                    Modo::Abrir => "elige nada",
+                    Modo::Carpeta => "elige carpeta",
+                    Modo::Guardar => "guarda nada",
+                });
+                (s::CANCELADO, 0, 0, String::new())
+            }
+        };
+        if !responder(p.respuesta, p.nueva, estado, if estado == a::BIEN { asa } else { 0 }, banderas, &nombre) && estado == a::BIEN {
+            println!("  [selector] {} ya no esperaba la respuesta", quien);
+        }
+    }
+}
+
+/// La ventana, empezando en `RAIZ`: lo que elija el usuario (con las flechas e Intro, o con doble clic), o nada si
+/// cancela, no elige a tiempo o quien pidió ya no quiere. Nada elegido de antemano: un Intro de quien estaba
+/// escribiendo no abre nada. Elegir un cajón entra en él, y "../" vuelve, sin pasar de `RAIZ`.
+fn elegir(sv: &mut Servicio, quien: &str, p: &Pedido) -> Option<Elegido> {
+    let lectura = sv.lectura;
     let (e, raiz) = pedir(lectura, a::BUSCAR, 0, 0, 0, RAIZ);
     if e != a::BIEN {
         return None;
     }
     let mut camino = Camino { asas: alloc::vec![raiz], nombres: Vec::new() };
-    let r = elegir_dentro(lectura, &mut camino, quien, carpeta);
+    let r = elegir_dentro(sv, &mut camino, quien, p);
     for &asa in &camino.asas {
         pedir(lectura, a::CERRAR, asa, 0, 0, "");
     }
@@ -217,17 +510,30 @@ fn filas(entradas: &[Entrada], en_raiz: bool) -> String {
     f.join("|")
 }
 
-/// Lo que se enseña de un cajón: todo, o solo los cajones si se elige carpeta.
-fn listar_para(lectura: u32, asa: u32, carpeta: bool) -> (Vec<Entrada>, usize) {
+/// Lo que se enseña de un cajón: los cajones siempre; los ficheros, no si se elige carpeta, y solo los que casan con
+/// el patrón de quien pide (si lo dio).
+fn listar_para(lectura: u32, asa: u32, carpeta: bool, patron: &str) -> (Vec<Entrada>, usize) {
     let (mut e, raros) = listar(lectura, asa);
-    if carpeta {
-        e.retain(|x| x.cajon);
-    }
+    e.retain(|x| x.cajon || (!carpeta && s::casa(patron, &x.nombre)));
     (e, raros)
 }
 
-fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) -> Option<(u32, String, bool)> {
-    let (mut entradas, raros) = listar_para(lectura, camino.asas[0], carpeta);
+/// Lo que se dice bajo el campo cuando el nombre no vale.
+fn por_que_no(e: s::MalNombre) -> &'static str {
+    match e {
+        s::MalNombre::Vacio => "Escribe un nombre",
+        s::MalNombre::Largo => "Ese nombre es demasiado largo",
+        s::MalNombre::Puntos => "Ese nombre no vale",
+        s::MalNombre::Letra(_) => "Un nombre no lleva / ni : ni |",
+    }
+}
+
+fn elegir_dentro(sv: &mut Servicio, camino: &mut Camino, quien: &str, p: &Pedido) -> Option<Elegido> {
+    let lectura = sv.lectura;
+    let (carpeta, guardar) = (p.modo == Modo::Carpeta, p.modo == Modo::Guardar);
+    // Un patrón desmedido no se usa (se enseña todo): solo decide qué se ve.
+    let patron = if p.patron.len() <= s::MAX_PATRON { p.patron.as_str() } else { "" };
+    let (mut entradas, raros) = listar_para(lectura, camino.asas[0], carpeta, patron);
     let mut c = Cliente::conectar()?;
     let globales = c.globales()?;
     let global = |n: &str| globales.iter().find(|g| g.1 == n).map(|g| g.0);
@@ -236,30 +542,60 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) 
     else {
         return None;
     };
-    // 24 de margen arriba y abajo, el título (32), el camino (20), la lista, los botones (40) y 8 entre cada cosa.
-    let alto = 56 * FILAS as i32 + 164;
     let mut arbol = Arbol::new();
-    let pide = if carpeta { "quiere guardar en una carpeta" } else { "quiere abrir un fichero" };
+    let pide = match p.modo {
+        Modo::Carpeta => "quiere guardar en una carpeta",
+        Modo::Guardar => "quiere guardar un fichero",
+        Modo::Abrir => "quiere abrir un fichero",
+    };
     // Material 3: el pedido como título, el camino como texto secundario; Cancelar, botón de texto.
     let texto = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(alloc::format!("\"{}\" {}", quien, pide))), (atr::ESTILO, Valor::Int(1))]);
     let donde = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(camino.texto())), (atr::ESTILO, Valor::Int(2))]);
     let lista = arbol.crear(Lista, &[(atr::OPCIONES, Valor::Texto(filas(&entradas, true))), (atr::FILAS, Valor::Int(FILAS as i64)), (atr::VALOR, Valor::Int(-1))]);
     let cancelar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cancelar".into())), (atr::ESTILO, Valor::Int(2))]);
     let esta = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Elegir esta carpeta".into()))]);
+    // Guardar: el campo del nombre, con el que propone quien pide si vale (lo que propone se mira como lo que se
+    // teclea: un nombre solo, sin camino), y su botón. Bajo el campo, por qué no vale un nombre o la pregunta de
+    // sustituir.
+    // (Ya se miró al llegar la petición: si no valía, viene vacío.)
+    let propuesto = p.propuesto.clone();
+    let campo = arbol.crear(Campo, &[
+        (atr::TEXTO, Valor::Texto(propuesto.clone())),
+        (atr::CURSOR, Valor::Int(propuesto.chars().count() as i64)),
+        (atr::ETIQUETA, Valor::Texto("Nombre".into())),
+        (atr::ERROR, Valor::Texto(String::new())),
+    ]);
+    let guarda = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Guardar".into()))]);
     let marca = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);
     arbol.notificar(esta, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("esta".into())));
     // Intro o doble clic (un clic solo marca la fila).
     arbol.notificar(lista, atr::DOBLE, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("abrir".into())));
     arbol.notificar(cancelar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("cancelar".into())));
+    // El botón guarda o, si se preguntó, sustituye; Intro en el campo solo guarda (sustituir pide el botón: dos Intro
+    // seguidos no escriben encima de nada).
+    arbol.notificar(guarda, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("boton".into())));
+    arbol.notificar(campo, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("intro".into())));
     // Un hueco delante: los botones, al final de la fila (Material 3).
     let hueco = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);
-    let botones = if carpeta { alloc::vec![Hijo::Obj(hueco), Hijo::Obj(cancelar), Hijo::Obj(esta)] } else { alloc::vec![Hijo::Obj(hueco), Hijo::Obj(cancelar)] };
-    let raiz = Hijo::Columna(alloc::vec![Hijo::Obj(texto), Hijo::Obj(donde), Hijo::Obj(lista), Hijo::Fila(botones)]);
+    let botones = match p.modo {
+        Modo::Carpeta => alloc::vec![Hijo::Obj(hueco), Hijo::Obj(cancelar), Hijo::Obj(esta)],
+        Modo::Guardar => alloc::vec![Hijo::Obj(hueco), Hijo::Obj(cancelar), Hijo::Obj(guarda)],
+        Modo::Abrir => alloc::vec![Hijo::Obj(hueco), Hijo::Obj(cancelar)],
+    };
+    let raiz = if guardar {
+        Hijo::Columna(alloc::vec![Hijo::Obj(texto), Hijo::Obj(donde), Hijo::Obj(lista), Hijo::Obj(campo), Hijo::Fila(botones)])
+    } else {
+        Hijo::Columna(alloc::vec![Hijo::Obj(texto), Hijo::Obj(donde), Hijo::Obj(lista), Hijo::Fila(botones)])
+    };
     let mut i = Interfaz::new(arbol, raiz, Tema::CLARO);
     // Material 3: esquinas redondeadas (el búfer es ARGB); maximizada, en ángulo recto.
     i.esquinas = kit::tema::RADIO_VENTANA;
     i.margen = 24;
-    i.foco = Some(lista);
+    // Al guardar se teclea el nombre; si no, se anda por la lista.
+    i.foco = Some(if guardar { campo } else { lista });
+    // 24 de margen arriba y abajo, el título (32), el camino (20), la lista, los botones (40) y 8 entre cada cosa. Al
+    // guardar, además, el campo con su línea de debajo (76) y sus 8.
+    let alto = 56 * FILAS as i32 + 164 + if guardar { 84 } else { 0 };
     i.colocar(Rect::new(0, 0, ANCHO, alto));
 
     let tamano = (ANCHO * alto * 4) as usize;
@@ -267,6 +603,8 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) 
     if (m as i32) <= 0 {
         return None;
     }
+    // Al guardar, si se preguntó "¿sustituir?": por qué nombre y la asa del fichero que hay.
+    let mut sustituir: Option<(String, u32)> = None;
     let r = (|| {
         if dashos::memoria_proyectar(m, VA, true) != 0 {
             return None;
@@ -289,7 +627,11 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) 
         e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
         e.empezar(XDG, xdg_wm_base::req::GET_XDG_SURFACE).uint(XDG_SUPERFICIE).uint(SUPERFICIE).fin();
         e.empezar(XDG_SUPERFICIE, xdg_surface::req::GET_TOPLEVEL).uint(VENTANA).fin();
-        e.empezar(VENTANA, xdg_toplevel::req::SET_TITLE).texto(Some(if carpeta { "Elegir carpeta" } else { "Abrir" })).fin();
+        e.empezar(VENTANA, xdg_toplevel::req::SET_TITLE).texto(Some(match p.modo {
+            Modo::Carpeta => "Elegir carpeta",
+            Modo::Guardar => "Guardar como",
+            Modo::Abrir => "Abrir",
+        })).fin();
         e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
         c.mandar(&e);
         let presentar = |c: &mut Cliente, i: &mut Interfaz, px: &mut [u32], adjuntar: bool| {
@@ -303,17 +645,29 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) 
             e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
             c.mandar(&e);
         };
-        let fin = dashos::ahora_us() + ESPERA_US;
+        // Las peticiones de antes: un minuto desde que sale la ventana (quien pide espera 65 s). Las nuevas: un minuto
+        // sin que el usuario pulse nada, y diez en total.
+        let empieza = dashos::ahora_us();
+        let mut fin = empieza + ESPERA_US;
         let (mut x, mut y, mut pulsado, mut configurada) = (0i32, 0i32, false, false);
         // Si lo último que llegó fue un botón del ratón (doble clic) o una tecla (Intro): para decir cómo se eligió.
         let mut con_raton = false;
+        // Al guardar: lo último que se vio en el campo y en la lista (para saber si cambian).
+        let mut campo_antes = propuesto.clone();
+        let mut fila_antes = -1i64;
         loop {
             if dashos::ahora_us() > fin {
                 println!("  [selector] nadie eligió en un minuto");
                 return None;
             }
+            // Lo que llega mientras tanto por su canal: quien espera turno, y si quien pidió esto ya no lo quiere.
+            if sv.sondear(Some(p.marca)) {
+                println!("  [selector] {} ya no quiere (canceló o se fue): se cierra su ventana", quien);
+                return None;
+            }
             let Ok(ev) = c.evento_plazo(200_000) else { return None };
-            let Some((o, orden, cuerpo)) = ev else { continue };
+            // Sin evento (objeto 0, que no es de nadie), se sigue: puede quedar algo pedido por atender.
+            let (o, orden, cuerpo) = ev.unwrap_or((0, 0, Vec::new()));
             let palabra = |k: usize| u32::from_le_bytes(cuerpo[4 * k..4 * k + 4].try_into().unwrap());
             let cambio = match (o, orden) {
                 (XDG, xdg_wm_base::ev::PING) => {
@@ -330,7 +684,7 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) 
                         configurada = true;
                         presentar(&mut c, &mut i, px, true);
                         println!("  [selector] ventana de {} en pantalla, para {}: {} ({} nombres raros sin enseñar), {} entradas",
-                            if carpeta { "elegir carpeta" } else { "abrir" }, quien, camino.texto(), raros, entradas.len());
+                            match p.modo { Modo::Carpeta => "elegir carpeta", Modo::Guardar => "guardar", Modo::Abrir => "abrir" }, quien, camino.texto(), raros, entradas.len());
                         // Dónde queda la lista en la ventana (las pruebas del ratón la buscan).
                         if let Some(r) = i.sitios.get(&lista) {
                             println!("  [selector] lista en ({}, {}), filas de 56", r.x, r.y);
@@ -338,6 +692,14 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) 
                         // El botón de elegir carpeta (con el ratón: los botones del kit no toman el teclado).
                         if let Some(r) = i.sitios.get(&esta).filter(|_| carpeta) {
                             println!("  [selector] botón Elegir en ({}, {})", r.x + r.w / 2, r.y + r.h / 2);
+                        }
+                        if guardar {
+                            if let Some(r) = i.sitios.get(&campo) {
+                                println!("  [selector] campo Nombre en ({}, {}), con {} letras", r.x + r.w / 2, r.y + 28, propuesto.chars().count());
+                            }
+                            if let Some(r) = i.sitios.get(&guarda) {
+                                println!("  [selector] botón Guardar en ({}, {})", r.x + r.w / 2, r.y + r.h / 2);
+                            }
                         }
                     }
                     false
@@ -374,8 +736,9 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) 
                     }
                     false
                 }
-                // Retroceso: al cajón de arriba, como elegir "../" (en la raíz no hay arriba).
-                (TECLADO, wl_keyboard::ev::KEY) if palabra(3) == 1 && palabra(2) == TECLA_RETROCESO && camino.asas.len() > 1 => {
+                // Retroceso: al cajón de arriba, como elegir "../" (en la raíz no hay arriba). En el campo del nombre,
+                // no: ahí borra una letra.
+                (TECLADO, wl_keyboard::ev::KEY) if palabra(3) == 1 && palabra(2) == TECLA_RETROCESO && camino.asas.len() > 1 && i.foco != Some(campo) => {
                     con_raton = false;
                     i.arbol.poner(lista, atr::VALOR, Valor::Int(0));
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto("abrir".into()));
@@ -391,16 +754,108 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) 
                 }
                 _ => false,
             };
-            match i.arbol.leer(marca, atr::TEXTO).map(Valor::texto).as_deref() {
+            // El usuario sigue ahí: otro minuto (solo las peticiones nuevas, y diez en total).
+            if p.nueva && matches!((o, orden), (TECLADO, wl_keyboard::ev::KEY) | (PUNTERO, wl_pointer::ev::BUTTON)) {
+                fin = (dashos::ahora_us() + ESPERA_US).min(empieza + 10 * ESPERA_US);
+            }
+            let mut pintar = false;
+            let pedido = i.arbol.leer(marca, atr::TEXTO).map(Valor::texto);
+            if pedido.as_deref().is_some_and(|t| !t.is_empty()) {
+                i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+            }
+            match pedido.as_deref() {
                 Some("cancelar") => return None,
                 // La carpeta en la que se está: su asa sale del camino (las demás se cierran al volver).
                 Some("esta") if carpeta => {
                     let texto = camino.texto();
+                    let nombre = camino.nombres.last().cloned().unwrap_or_else(|| String::from(RAIZ));
                     let asa = camino.asas.pop()?;
-                    return Some((asa, texto, con_raton));
+                    return Some(Elegido { asa, camino: texto, nombre, con_raton, existia: false, cajon: None });
+                }
+                // Guardar con el nombre del campo, en el cajón en que se está.
+                Some(de @ ("boton" | "intro")) if guardar => {
+                    let nombre = i.arbol.leer(campo, atr::TEXTO).map(Valor::texto).unwrap_or_default();
+                    let aqui = *camino.asas.last()?;
+                    let mut error: Option<String> = None;
+                    match (s::nombre_valido(&nombre), sustituir.take()) {
+                        (Err(e), vieja) => {
+                            if let Some((_, asa)) = vieja {
+                                pedir(lectura, a::CERRAR, asa, 0, 0, "");
+                            }
+                            println!("  [selector] el nombre del campo no vale ({:?}, {} bytes): no se guarda", e, nombre.len());
+                            error = Some(String::from(por_que_no(e)));
+                        }
+                        // Ya se preguntó por este nombre, y el usuario pulsa el botón: se sustituye.
+                        (Ok(()), Some((n, asa))) if n == nombre && de == "boton" => {
+                            let texto = alloc::format!("{}/{}", camino.texto(), nombre);
+                            let cajon = camino.asas.pop();
+                            return Some(Elegido { asa, camino: texto, nombre, con_raton, existia: true, cajon });
+                        }
+                        (Ok(()), Some((n, asa))) if n == nombre => {
+                            println!("  [selector] Intro con la pregunta de sustituir: no sustituye (hay que pulsar el botón)");
+                            sustituir = Some((n, asa));
+                            error = Some(alloc::format!("\"{}\" ya existe. ¿Sustituir?", nombre));
+                        }
+                        (Ok(()), vieja) => {
+                            if let Some((_, asa)) = vieja {
+                                pedir(lectura, a::CERRAR, asa, 0, 0, "");
+                            }
+                            // Lo que haya ahora con ese nombre (dos vueltas: si al crearlo resulta que ya está, se mira
+                            // otra vez).
+                            for _ in 0..2 {
+                                let (estado, asa, _, _, datos) = pedir_todo(lectura, a::BUSCAR, aqui, 0, 0, &nombre);
+                                let tipo = (datos >> 16) as u8;
+                                if estado == a::BIEN && tipo == a::FICHERO {
+                                    println!("  [selector] \"{}\" ya existe en {}: se pregunta si sustituir", nombre, camino.texto());
+                                    error = Some(alloc::format!("\"{}\" ya existe. ¿Sustituir?", nombre));
+                                    sustituir = Some((nombre.clone(), asa));
+                                    break;
+                                } else if estado == a::BIEN && tipo == a::CAJON && camino.asas.len() < 32 {
+                                    // Es un cajón: se entra en él, como al elegirlo en la lista.
+                                    camino.asas.push(asa);
+                                    camino.nombres.push(nombre.clone());
+                                    entradas = listar_para(lectura, asa, carpeta, patron).0;
+                                    println!("  [selector] entra en {}, {} entradas: {}", camino.texto(), entradas.len(), filas(&entradas, false).replace('|', "; "));
+                                    i.arbol.poner(campo, atr::TEXTO, Valor::Texto(String::new()));
+                                    i.arbol.poner(campo, atr::CURSOR, Valor::Int(0));
+                                    i.arbol.poner(lista, atr::OPCIONES, Valor::Texto(filas(&entradas, false)));
+                                    i.arbol.poner(lista, atr::VALOR, Valor::Int(-1));
+                                    i.arbol.poner(lista, atr::PRIMERA, Valor::Int(0));
+                                    i.arbol.poner(donde, atr::TEXTO, Valor::Texto(camino.texto()));
+                                    break;
+                                } else if estado == a::BIEN {
+                                    pedir(lectura, a::CERRAR, asa, 0, 0, "");
+                                    error = Some(String::from("Con ese nombre hay otra cosa"));
+                                    break;
+                                } else if estado != a::NO_EXISTE {
+                                    println!("  [selector] no se puede mirar ese nombre en {}: {}", camino.texto(), estado);
+                                    error = Some(String::from("Aquí no se puede guardar"));
+                                    break;
+                                }
+                                let (estado, asa) = pedir(lectura, a::CREAR, aqui, a::FICHERO as u64, 0, &nombre);
+                                if estado == a::BIEN {
+                                    let texto = alloc::format!("{}/{}", camino.texto(), nombre);
+                                    let cajon = camino.asas.pop();
+                                    return Some(Elegido { asa, camino: texto, nombre, con_raton, existia: false, cajon });
+                                } else if estado != a::YA_EXISTE {
+                                    println!("  [selector] no se puede crear en {}: {}", camino.texto(), estado);
+                                    error = Some(String::from("Aquí no se puede guardar"));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    // Bajo el campo, el porqué o la pregunta; y el botón dice lo que hará.
+                    i.arbol.poner(campo, atr::ERROR, Valor::Texto(error.unwrap_or_default()));
+                    i.arbol.poner(guarda, atr::TEXTO, Valor::Texto(if sustituir.is_some() { "Sustituir" } else { "Guardar" }.into()));
+                    i.colocar(Rect::new(0, 0, ANCHO, alto));
+                    if let Some(r) = i.sitios.get(&guarda).filter(|_| sustituir.is_some()) {
+                        println!("  [selector] botón Sustituir en ({}, {})", r.x + r.w / 2, r.y + r.h / 2);
+                    }
+                    campo_antes = i.arbol.leer(campo, atr::TEXTO).map(Valor::texto).unwrap_or_default();
+                    pintar = true;
                 }
                 Some("abrir") => {
-                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
                     let v = i.arbol.leer(lista, atr::VALOR).map_or(-1, Valor::int);
                     let en_raiz = camino.asas.len() == 1;
                     let k = v - (!en_raiz) as i64;
@@ -413,7 +868,7 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) 
                             pedir(lectura, a::CERRAR, asa, 0, 0, "");
                         }
                         camino.nombres.pop();
-                        entradas = listar_para(lectura, *camino.asas.last()?, carpeta).0;
+                        entradas = listar_para(lectura, *camino.asas.last()?, carpeta, patron).0;
                         println!("  [selector] sube a {}, {} entradas", camino.texto(), entradas.len());
                     } else if let Some(e) = entradas.get(k as usize) {
                         // Se busca por la asa del cajón y su nombre (sin '/': un solo paso), y se mira lo que es ahora
@@ -429,10 +884,17 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) 
                         } else if tipo == a::CAJON && e.cajon && camino.asas.len() < 32 {
                             camino.asas.push(asa);
                             camino.nombres.push(e.nombre.clone());
-                            entradas = listar_para(lectura, asa, carpeta).0;
+                            entradas = listar_para(lectura, asa, carpeta, patron).0;
                             println!("  [selector] entra en {}, {} entradas: {}", camino.texto(), entradas.len(), filas(&entradas, false).replace('|', "; "));
+                        } else if tipo == a::FICHERO && !e.cajon && guardar {
+                            // Al guardar, doble clic en un fichero es guardar con su nombre: se pregunta si sustituir.
+                            pedir(lectura, a::CERRAR, asa, 0, 0, "");
+                            i.arbol.poner(campo, atr::TEXTO, Valor::Texto(e.nombre.clone()));
+                            i.arbol.poner(campo, atr::CURSOR, Valor::Int(e.nombre.chars().count() as i64));
+                            i.arbol.poner(marca, atr::TEXTO, Valor::Texto("intro".into()));
+                            continue;
                         } else if tipo == a::FICHERO && !e.cajon {
-                            return Some((asa, alloc::format!("{}/{}", camino.texto(), e.nombre), con_raton));
+                            return Some(Elegido { asa, camino: alloc::format!("{}/{}", camino.texto(), e.nombre), nombre: e.nombre.clone(), con_raton, existia: false, cajon: None });
                         } else {
                             pedir(lectura, a::CERRAR, asa, 0, 0, "");
                             println!("  [selector] {} cambió de tipo: no se abre", e.nombre);
@@ -443,17 +905,46 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) 
                     i.arbol.poner(lista, atr::VALOR, Valor::Int(-1));
                     i.arbol.poner(lista, atr::PRIMERA, Valor::Int(0));
                     i.arbol.poner(donde, atr::TEXTO, Valor::Texto(camino.texto()));
-                    if configurada {
-                        presentar(&mut c, &mut i, px, false);
-                    }
+                    fila_antes = -1;
+                    pintar = true;
                 }
                 _ => {}
             }
-            if cambio && configurada {
+            if guardar {
+                // Un clic en un fichero de la lista pone su nombre en el campo.
+                let fila = i.arbol.leer(lista, atr::VALOR).map_or(-1, Valor::int);
+                if fila != fila_antes {
+                    fila_antes = fila;
+                    let k = fila - (camino.asas.len() > 1) as i64;
+                    if let Some(e) = usize::try_from(k).ok().and_then(|k| entradas.get(k)).filter(|e| !e.cajon) {
+                        i.arbol.poner(campo, atr::TEXTO, Valor::Texto(e.nombre.clone()));
+                        i.arbol.poner(campo, atr::CURSOR, Valor::Int(e.nombre.chars().count() as i64));
+                        pintar = true;
+                    }
+                }
+                // Si el nombre cambia, lo que se dijo de él ya no vale: ni el error ni la pregunta de sustituir.
+                let ahora = i.arbol.leer(campo, atr::TEXTO).map(Valor::texto).unwrap_or_default();
+                if ahora != campo_antes {
+                    campo_antes = ahora;
+                    if let Some((_, asa)) = sustituir.take() {
+                        pedir(lectura, a::CERRAR, asa, 0, 0, "");
+                        println!("  [selector] el nombre cambia: ya no se pregunta por sustituir");
+                    }
+                    i.arbol.poner(campo, atr::ERROR, Valor::Texto(String::new()));
+                    i.arbol.poner(guarda, atr::TEXTO, Valor::Texto("Guardar".into()));
+                    i.colocar(Rect::new(0, 0, ANCHO, alto));
+                    pintar = true;
+                }
+            }
+            if (cambio || pintar) && configurada {
                 presentar(&mut c, &mut i, px, false);
             }
         }
     })();
+    // Si se acaba sin elegir con la pregunta de sustituir a medias, la asa de ese fichero se suelta.
+    if let Some((_, asa)) = sustituir.take() {
+        pedir(lectura, a::CERRAR, asa, 0, 0, "");
+    }
     dashos::cerrar(m);
     r
 }
@@ -518,60 +1009,21 @@ fn principal() -> u64 {
     println!("  [selector] el registro de sesiones: abrirlo {}, listar su cajón {}: {}", registro, listar, if ajeno { "bien" } else { "MAL" });
     let mut buf = [0u8; MAX_DATOS];
     let mut ll = [0u32; MAX_LLAVES];
-    // Quién es cada marca: lo dice `inicio`, sin marca, con 8 bytes de marca y 16 de nombre.
-    let mut quienes: alloc::collections::BTreeMap<u64, String> = alloc::collections::BTreeMap::new();
+    let mut sv = Servicio { lectura, quienes: BTreeMap::new(), espera: VecDeque::new() };
     loop {
-        let (n, k, marca) = match recibir(CANAL, &mut buf, &mut ll) {
-            Recibido::Mensaje { n, k, marca } => (n, k, marca),
+        // Antes de abrir una ventana, lo que haya llegado ya: un "cancelar" que viene detrás de su petición la quita
+        // sin que la ventana llegue a salir.
+        sv.sondear(None);
+        if let Some(p) = sv.espera.pop_front() {
+            sv.servir(p);
+            continue;
+        }
+        match recibir(CANAL, &mut buf, &mut ll) {
+            Recibido::Mensaje { n, k, marca } => {
+                sv.mensaje(&buf[..n], &ll[..k], marca, None);
+            }
             Recibido::Cerrado => return 0,
             Recibido::Nada => continue,
-        };
-        if marca == 0 && n == 24 {
-            let m = u64::from_le_bytes(buf[..8].try_into().unwrap());
-            let fin = buf[8..24].iter().position(|&b| b == 0).unwrap_or(16);
-            quienes.insert(m, String::from(core::str::from_utf8(&buf[8..8 + fin]).unwrap_or("?")));
-        } else if marca != 0 && k >= 1 && buf.starts_with(b"raiz") {
-            // Ceder `C` como raíz 2, solo para leer.
-            let (e, mia) = pedir(lectura, a::BUSCAR, 0, 0, 0, "C");
-            let (estado, hueco) = if e == a::BIEN { pedir(lectura, a::CEDER, mia, marca, 4 | 2 << 8, "") } else { (e, 0) };
-            if e == a::BIEN {
-                pedir(lectura, a::CERRAR, mia, 0, 0, "");
-            }
-            println!("  [selector] cede C como raíz solo para leer: {} (hueco {})", estado, hueco);
-            dashos::canal_escribir(ll[0], &(if estado == a::BIEN { hueco } else { 0 }).to_le_bytes(), &[]);
-        } else if marca != 0 && k >= 1 && &buf[..n] == b"carpeta" {
-            // Una carpeta para guardar: la elige el usuario y se cede como raíz 3, para leer y escribir.
-            let quien = quienes.get(&marca).map_or("un programa", String::as_str);
-            let respuesta = match elegir(lectura, quien, true) {
-                Some((mia, camino, _)) => {
-                    let (estado, hueco) = pedir(lectura, a::CEDER, mia, marca, 4 | 2 | 3 << 8, "");
-                    pedir(lectura, a::CERRAR, mia, 0, 0, "");
-                    println!("  [selector] el usuario elige la carpeta {}: se cede para leer y escribir: {} (hueco {})", camino, estado, hueco);
-                    if estado == a::BIEN { hueco } else { 0 }
-                }
-                None => {
-                    println!("  [selector] el usuario no elige carpeta: no se cede nada");
-                    0
-                }
-            };
-            dashos::canal_escribir(ll[0], &respuesta.to_le_bytes(), &[]);
-        } else if marca != 0 && k >= 1 {
-            // Lo elige el usuario, no quien pide.
-            let quien = quienes.get(&marca).map_or("un programa", String::as_str);
-            let respuesta = match elegir(lectura, quien, false) {
-                Some((mia, camino, con_raton)) => {
-                    let (estado, suya) = pedir(lectura, a::CEDER, mia, marca, 4, "");
-                    pedir(lectura, a::CERRAR, mia, 0, 0, "");
-                    println!("  [selector] el usuario elige {} {}: se cede solo para leer: {} (asa {})", camino, if con_raton { "con doble clic" } else { "con Intro" }, estado, suya);
-                    if estado == a::BIEN { suya } else { 0 }
-                }
-                None => {
-                    println!("  [selector] el usuario no elige nada: no se cede nada");
-                    0
-                }
-            };
-            dashos::canal_escribir(ll[0], &respuesta.to_le_bytes(), &[]);
         }
-        cerrar_llaves(&ll[..k]);
     }
 }

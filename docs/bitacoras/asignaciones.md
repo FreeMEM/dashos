@@ -261,7 +261,7 @@ memoria disperso (sin páginas) que entrega al servicio de archivos; `archivos` 
 
 Las piezas:
 
-- **Kernel: memoria dispersa** (llamadas 56 y 57, `docs/referencia/kernel.md`). `memoria_dispersa(tamaño, grupo)` da
+- **Kernel: memoria dispersa** (llamadas 57 y 58, `docs/referencia/kernel.md`). `memoria_dispersa(tamaño, grupo)` da
   un objeto de memoria sin ninguna página puesta, cobrado al grupo que se diga (con escribir sobre su llave, como para
   crear un proceso en él). `memoria_paginas(llave, poner o soltar, primera, cuántas)` pone páginas nuevas a cero
   (cobradas a ese grupo; se para donde no cabe en su tope) o las suelta (fuera de las proyecciones, TLB vaciadas,
@@ -365,3 +365,32 @@ volumen cifrado del usuario (Argon2 con su coste normal, no el de prueba) tarda 
 - `RAM_COPIAR` salta enlaces y ficheros de más de 4 MB, y baja 16 niveles: de sobra para `ENVARC:`.
 - La caja Amiga tiene su propio `RAM:` (`caja/dos/src/memfs.rs`); no usa este.
 - `User-Startup` y `WBStartup` por usuario, que ya tienen dónde dejar sus cosas (`T:`, `ENV:`).
+
+### Unión con `union` (revision más selector-llaves, red-dns, dashfs-tamano e idiomas)
+
+- **Llamadas renumeradas**: selector-llaves ya tenía la 56 (`llaves_nombres`). `memoria_dispersa` es la **57** y
+  `memoria_paginas`, la **58**: kernel, `dashos`, la prueba de `grupos`, la referencia y esta bitácora. El modo del
+  `hijo` que lee un hueco pasa del 17 (ahora, leer su tabla de llaves) al **18**.
+- **Idiomas dependía del `RAM:` en disco en dos sitios**, y los dos van ahora por el de verdad:
+  - El `locale.prefs` de Carla estaba en `Estado/RAM/Carla/Env/Sys` del disco. Ahora está en su capa de `ENVARC:`, en
+    su volumen cifrado (`Home:Prefs/Env-Archive/Sys/locale.prefs`), y `sesiones` lo copia a su `ENV:` al entrar. Para
+    ponerlo ahí al hacer el disco de pruebas hay una herramienta nueva, `archivos/herramientas/src/poner.rs` (deja un
+    fichero en un volumen, cifrado o no, con su dueño): `dashfs-ar` solo llena el volumen principal.
+  - El centro de control tenía la raíz 3 fija en `Estado/RAM/Ana` (`RAICES_DE_MAS` de `inicio`). Ahora `inicio` no se
+    la da y `sesiones` le pone, al entrar su usuario, la raíz del `RAM:` en memoria de la sesión, solo para leer
+    (`LEEN_IDIOMA`), como al Workbench y al explorador (a esos, para leer y escribir).
+- La prueba `ram` de Carla ya no borra `Home:Prefs` entero al acabar: solo lo que puso ella (ahí vive su `locale.prefs`).
+- `union` (d0a6c517) traía marcas de conflicto sin resolver en `usuario/src/bin/inicio.rs` (`RAICES_DE_MAS`: la raíz
+  de la barra de red-dns y las del centro de idiomas): resueltas aquí, con las dos.
+- **El guion** (`tools/prueba_uefi.sh`): el paso que quita un permiso en el centro de control seguía en cuanto veía
+  "Permisos en pantalla", y a veces la línea del compositor con el sitio de la ventana aún no había llegado: quitaba con
+  Supr y no con el botón, y la prueba fallaba ("FALTA: quita a pide el permiso de eco con el botón"). Pasó dos veces en
+  esta rama, antes y después de la unión. Ahora espera a tener las tres líneas que usa. No es de `RAM:`.
+
+Pruebas sobre la unión: `make prueba`, `arranque-virt-2` y `arranque-virt-linux`, bien a la primera. `arranque-virt`,
+bien a la tercera: la primera, todas las líneas bien y mal la captura del compositor ("las ventanas no están donde
+deben", sin investigar: no se repitió); la segunda, la carrera del guion de arriba; la tercera, con el guion arreglado,
+todo bien. La prueba de idiomas de `cambio` (Carla en inglés, "de ENV:Sys/locale.prefs") pasa en las tres.
+
+Sin comprobar con una línea propia: que el centro de control lee `ENV:` por su raíz nueva (va en castellano como Ana,
+que no tiene `locale.prefs`, con raíz o sin ella).

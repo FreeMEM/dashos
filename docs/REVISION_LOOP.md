@@ -2017,6 +2017,9 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
      ahí; una herramienta que saque los textos de un programa a un catálogo (Dash ya tiene `tools/catalogo.py`); y en
      la caja, `locale.library` dando los catálogos en Latin-1 a los programas 68k. Primer idioma además del castellano:
      inglés.
+     **Hecho en lo nativo (rama `idiomas`, `docs/bitacoras/idiomas.md`)**: el crate `idioma`, `tools/catalogo.py`,
+     `locale/`, y el kit, el centro, el explorador y el Workbench por catálogo, con el inglés. Falta: el aviso de
+     cambio en `archivos`, el editor de idioma en Ajustes, los demás programas y `locale.library` en la caja.
      **Y un editor de catálogos en `SYS:Utilities`, escrito en Dash** (pedido del usuario): crear un catálogo nuevo
      desde los textos de un programa (su `.cd`), traducirlo cadena a cadena viendo el original al lado, avisar de lo
      que falta o sobra, y guardar el `.catalog` (y el `.ct` de texto, como FlexCat). Mientras no haya backend ARM de
@@ -2125,3 +2128,27 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
      memoria disperso dentro de `archivos` (páginas que se piden al escribir y se devuelven con TRIM, que DashFS ya
      manda), cobrado al grupo de la sesión, con tope; se destruye al salir de la sesión. Sobre él, `ENV:` (copiado de
      `ENVARC:` al entrar) y `T:`. En marcha (rama `ram-volumen`).
+  9. **Dominios de controladores con Linux** (S35, decidido 2026-11-15): aparatos servidos a DashOS por virtio; primero
+     medir un Linux mínimo (tope de memoria dinámico, objetivo 48 MB para red), luego prestar USB y recibir red, las seis
+     capas de seguridad, IOMMU y PCI, y las gráficas (S34). En S7: CachyOS en la caja en PC. En S8: propuesta de
+     generaciones al estilo NixOS: **aceptadas por el usuario** (2026-11-15) con la condición de que sean elegantes y
+     no le den trabajo a quien usa el sistema; quedan decididas en S8 (rutas sin versión, "Deshacer la última
+     actualización", limpieza sola). Sin código todavía.
+- **Principio nuevo y repaso de los diseños** (usuario, 2026-11-15 y 16): S0 lleva "amigable de 2026, con fondo para
+  informáticos" (sencillo por delante, todo a la vista por detrás). Se repasaron 39 diseños contra él: 162 hallazgos
+  (`docs/revisiones/repaso-s0/`), diez reglas comunes en S36, y 145 hallazgos aplicados a los documentos (rama
+  `repaso-s0`, unida). Es solo diseño: ningún código cumple aún las reglas nuevas (órdenes `Ajuste`, `Registro`,
+  `Permiso`, `Instantanea`, `Caja`; `Estado:Registros/`; modo de desarrollo). Sin aplicar, 17, con su motivo en S36.
+  Pendiente del usuario: las cuatro recomendaciones de S36 y los nombres provisionales (`Estado:Prefs`, `Estado:Devs`,
+  `Home:Instantáneas/`, el volumen `Linux:`). Generaciones de `Paq` decididas (S8).
+- **Las cuatro decisiones de S36, aceptadas por el usuario (2026-11-16)** y aplicadas a los diseños: contraseña de
+  administrador por tanda; modo de desarrollo por aplicación; la guardia del Amiga espera y siempre se puede deshacer;
+  controladores de Linux en máquinas virtuales (LKL retirado); monitor, espacio de trabajo y pantalla; ROM de AROS en
+  la imagen de `SYS:`, nunca en git. Solo diseño.
+- **Red (rama `red-dns`, por unir)**: el usuario acepta (2026-11-16) que la zona horaria sea del sistema por ahora
+  (por usuario, cuando estén unidas las ramas del escritorio) y `pool.ntp.org` de serie, con ajuste para cambiarlo o
+  apagarlo. Pendiente al unir: que ninguna prueba salga a Internet (en `arranque-virt-linux` el servicio de red
+  preguntó por `pool.ntp.org`).
+- **`RAM:` (rama `ram-volumen`, por unir)**: el usuario acepta (2026-11-16) el tope (la 32.ª parte de la memoria,
+  entre 16 y 256 MB) como ajuste, que `ENV:` no se guarde al salir (como en el Amiga), y dejar para después el tope de
+  memoria de la sesión entera. La orden de S9 se llama `ModoMonitor`; `AGENTS.md` nombra la ROM de AROS en su regla 2.

@@ -41,8 +41,12 @@
 //! | 47 | maquina_memoria(máquina, memoria, dirección física del invitado): más RAM para el invitado |
 //! | 48 | maquina_estado(máquina, operación, argumento, a, b): registros, aborto, GICV, otra vCPU, reiniciarla, patearla, parar |
 //! | 51 | apagar(permiso, modo): 0 apaga la máquina, 1 la reinicia; no vuelve si se pudo |
+//! | 39 | hora(0): la hora del calendario; hora(1, permiso, ns): ponerla, con el permiso del reloj (S13) |
 //!
-//! `proceso_crear` lleva en x4 una llave de grupo donde crear el proceso, o 0 para el propio (C42).
+//! | 56 | llaves_nombres(búfer, capacidad) -> cuántas llaves de nacimiento tienen nombre; los copia al búfer |
+//!
+//! `proceso_crear` lleva en x4 una llave de grupo donde crear el proceso, o 0 para el propio (C42). Con el bit 16 de
+//! x3 (`CON_NOMBRES`), tras los números de llave van sus nombres, 16 bytes por llave: lo que es cada una.
 
 use crate::excepciones::Marco;
 use crate::objetos::{self, Canal, Mensaje, Objeto, MAX_DATOS, MAX_LLAVES};
@@ -76,7 +80,7 @@ const E_NO_HAY: u64 = -10i64 as u64;
 /// Un objeto de memoria, hasta 16 MB (una pantalla de 2560 × 1440 a 32 bits): crearlo tiene puntos de corte cada
 /// 256 KB (S2), así que el tamaño no alarga lo que se pasa con las IRQ enmascaradas. La de DMA, 4 MB seguidos.
 const MAX_MEMORIA: u64 = 16 << 20;
-/// Lo más que mide un objeto de memoria disperso (llamada 56): 1 GB (2 MB de lista de páginas).
+/// Lo más que mide un objeto de memoria disperso (llamada 57): 1 GB (2 MB de lista de páginas).
 const MAX_DISPERSA: u64 = 1 << 30;
 const MAX_DMA: u64 = 4 << 20;
 const MAX_ESCRIBIR: u64 = 256;
@@ -179,10 +183,11 @@ pub fn atender(marco: &mut Marco) {
         // justa con capacidad 0. Desde S3 pide una llave de permiso de plazo en a[0] (para volver a la justa, no).
         // E_LIMITE si su núcleo ya tiene prometido demasiado o los números no valen.
         28 => plazo(a[0] as u32, a[1], a[2]),
-        // A14: la hora del calendario en nanosegundos desde 1970 (UTC); 0 si no se sabe. a[0] = 0; los demás valores,
-        // reservados (ponerla pedirá una llave de permiso).
+        // A14: la hora del calendario en nanosegundos desde 1970 (UTC); 0 si no se sabe. a[0] = 0.
+        // S13: con a[0] = 1, ponerla: el permiso del reloj en a[1] y la hora (ns desde 1970, UTC) en a[2].
         39 => match a[0] {
             0 => crate::reloj::hora(),
+            1 => poner_hora(a[1] as u32, a[2]),
             _ => E_ARGUMENTO,
         },
         // R10 (S5): hasta 256 bytes al azar en a[0], a[1] bytes; x1 = 1 si vienen de una semilla de verdad.
@@ -212,10 +217,13 @@ pub fn atender(marco: &mut Marco) {
         // Aviso a las cajas: el globo de una máquina (a[0] una vCPU con escribir; a[1] 0 soltar, 1 reponer; a[2] tabla
         // de direcciones del invitado en u64; a[3] cuántas, hasta 256).
         55 => maquina_globo(a[0] as u32, a[1], a[2], a[3]),
+        // Qué es cada llave con que nació quien llama: sus nombres (16 bytes cada uno, en el orden de las llaves) a
+        // a[0], hasta a[1] bytes. Devuelve cuántas tienen nombre (0 si quien lo lanzó no los dio).
+        56 => llaves_nombres(a[0], a[1]),
         // El `RAM:` de una sesión (docs/bitacoras/asignaciones.md): un objeto de memoria disperso (a[0] bytes), cobrado
         // al grupo de la llave a[1] (0: el propio), y poner (a[1] = 1) o soltar (0) a[3] páginas suyas desde la a[2].
-        56 => memoria_dispersa(a[0], a[1] as u32),
-        57 => memoria_paginas(a[0] as u32, a[1], a[2], a[3]),
+        57 => memoria_dispersa(a[0], a[1] as u32),
+        58 => memoria_paginas(a[0] as u32, a[1], a[2], a[3]),
         // M2b (docs/MULTITAREA_LOOP.md): dormir a[0] microsegundos (como mucho una hora), sin canal ni temporizador.
         30 => {
             planificador::dormir_us(a[0].min(3_600_000_000));
@@ -448,9 +456,9 @@ fn memoria_crear(tamano: u64) -> u64 {
     }
 }
 
-/// Llamada 56: un objeto de memoria disperso de `tamano` bytes (hasta `MAX_DISPERSA`), sin ninguna página puesta, que
+/// Llamada 57: un objeto de memoria disperso de `tamano` bytes (hasta `MAX_DISPERSA`), sin ninguna página puesta, que
 /// se cobra al grupo de la llave `grupo` (con escribir, como para crear un proceso en él; 0, el propio). Vacío solo
-/// cuesta su lista de páginas. Las páginas se ponen y se sueltan con la llamada 57.
+/// cuesta su lista de páginas. Las páginas se ponen y se sueltan con la llamada 58.
 fn memoria_dispersa(tamano: u64, grupo: u32) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     if tamano == 0 || tamano > MAX_DISPERSA {
@@ -477,7 +485,7 @@ fn memoria_dispersa(tamano: u64, grupo: u32) -> u64 {
     }
 }
 
-/// Llamada 57: pone (`op` 1) o suelta (0) `n` páginas (de 1 a 256) del objeto de memoria `h` (con escribir) desde la
+/// Llamada 58: pone (`op` 1) o suelta (0) `n` páginas (de 1 a 256) del objeto de memoria `h` (con escribir) desde la
 /// `primera`, en las proyecciones de quien llama (`Espacio::paginas_de`). Devuelve cuántas quedaron como se pedía,
 /// en orden desde la primera: menos de `n` si al poner no cupo más en el tope del grupo del objeto o no queda memoria.
 fn memoria_paginas(h: u32, op: u64, primera: u64, n: u64) -> u64 {
@@ -590,6 +598,23 @@ fn pagina_cero(permiso: u32, h: u32) -> u64 {
         Ok(()) => 0,
         Err(e) => error_espacio(e),
     }
+}
+
+/// La llamada 39 con `x0` = 1 (S13): pone la hora del calendario (nanosegundos desde 1970, UTC). Solo con el permiso
+/// del reloj, que da el kernel a `inicio` y este a `hora`, el servicio que la toma de la red. `E_ARGUMENTO` si la hora no
+/// es creíble (anterior a 2024); entonces no cambia nada. El contador de la máquina (`ahora_us`, los plazos, los
+/// temporizadores) no se toca: solo cambia la hora del calendario.
+fn poner_hora(permiso: u32, ns: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    {
+        let t = proc_.llaves.tomar();
+        let Some(p) = t.ver(permiso) else { return E_LLAVE };
+        let Objeto::PermisoReloj = p.objeto else { return E_TIPO };
+        if p.derechos & objetos::ESCRIBIR == 0 {
+            return E_DERECHOS;
+        }
+    }
+    if crate::reloj::poner_hora_ns(ns) { 0 } else { E_ARGUMENTO }
 }
 
 /// La llamada 51 (decisión del usuario del 2026-11-13): apaga (`modo` 0) o reinicia (1) la máquina. Solo con el
@@ -784,8 +809,25 @@ fn sacar_llaves(proc_: &objetos::Proceso, numeros: &[u32]) -> Result<Vec<objetos
     Ok(numeros.iter().filter_map(|&n| t.quitar(n)).collect())
 }
 
+/// En `n_llaves` de `proceso_crear`: tras la tabla de llaves van sus nombres (`NOMBRE_LLAVE` bytes cada uno).
+const CON_NOMBRES: u64 = 1 << 16;
+
+/// Los nombres de las llaves con que nació quien llama (los que dio quien lo lanzó): copia los que quepan enteros en
+/// `capacidad` bytes y devuelve cuántos hay. El programa no los puede cambiar.
+fn llaves_nombres(bufer: u64, capacidad: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let datos = proc_.nombres.datos();
+    let caben = (capacidad as usize).min(datos.len()) / objetos::NOMBRE_LLAVE * objetos::NOMBRE_LLAVE;
+    if caben > 0 && !escribir_usuario(bufer, &datos[..caben]) {
+        return E_ARGUMENTO;
+    }
+    proc_.nombres.cuantos as u64
+}
+
 fn proceso_crear(h: u32, tamano: u64, llaves: u64, n_llaves: u64, grupo: u32) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let con_nombres = n_llaves & CON_NOMBRES != 0;
+    let n_llaves = n_llaves & !CON_NOMBRES;
     // El grupo del proceso nuevo: el propio, o el de una llave de grupo con derecho de escribir (C42).
     let cupo = if grupo == 0 {
         proc_.cupo.clone()
@@ -801,6 +843,13 @@ fn proceso_crear(h: u32, tamano: u64, llaves: u64, n_llaves: u64, grupo: u32) ->
         return E_TAMANO;
     }
     let Some(tabla) = leer_usuario(llaves, 4 * n_llaves as usize) else { return E_ARGUMENTO };
+    // Los nombres, antes de tocar nada: si no se pueden leer, no se crea nada y las llaves no se mueven.
+    let nombres = if con_nombres {
+        let Some(b) = llaves.checked_add(4 * n_llaves).and_then(|p| leer_usuario(p, objetos::NOMBRE_LLAVE * n_llaves as usize)) else { return E_ARGUMENTO };
+        objetos::NombresLlaves::de(&b)
+    } else {
+        objetos::NombresLlaves::NINGUNO
+    };
     let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
     let Objeto::Memoria(m) = l.objeto else { return E_TIPO };
     if l.derechos & objetos::LEER == 0 {
@@ -826,7 +875,7 @@ fn proceso_crear(h: u32, tamano: u64, llaves: u64, n_llaves: u64, grupo: u32) ->
         Ok(v) => v,
         Err(e) => return e,
     };
-    match crate::procesos::lanzar_en_llamada(&binario, viajan, None, cupo) {
+    match crate::procesos::lanzar_en_llamada(&binario, viajan, None, cupo, nombres) {
         Ok((control, _)) => {
             let llave = objetos::Llave::nueva(Objeto::Proceso(control.clone()), objetos::TODOS);
             let instalada = proc_.llaves.tomar().instalar(llave);

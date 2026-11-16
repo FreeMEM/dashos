@@ -55,8 +55,16 @@ $(PRUEBAS): usuario FORCE
 	cargo build $(CARGO_PERFIL) --features pruebas
 	$(OBJCOPY) -O binary $(ELF) $(PRUEBAS)
 
+# Idiomas (paso 4 de docs/REVISION_LOOP.md): el árbol de `LOCALE:` (../build/Locale: catálogos, idiomas y países) que
+# sale de ../locale con `tools/catalogo.py`. Falla si un .cd no está al día con los tr() del código, o si una traducción
+# no cuadra con su original; entonces: python3 tools/catalogo.py todo -o build/Locale, y revisar los .ct.
+catalogos: FORCE
+	python3 ../tools/catalogo.py todo --comprobar -o ../build/Locale
+
 # Antes de QEMU, las pruebas de PC de las bibliotecas de los servicios (B6): Wayland y la mezcla del sonido.
-prueba: $(PRUEBAS)
+prueba: $(PRUEBAS) catalogos
+	@# Idiomas y catálogos: el crate (catálogos rotos, locale.prefs roto, formatos) y lo que hace tools/catalogo.py.
+	cd ../idioma && cargo test --quiet
 	cd ../wayland && cargo test --quiet
 	cd ../sonido && cargo test --quiet
 	cd ../amigados && cargo test --quiet --release
@@ -74,12 +82,21 @@ prueba: $(PRUEBAS)
 	cd ../usuario && rustc --edition 2024 --test src/volumen_osd.rs -o target/volumen_osd_pruebas && ./target/volumen_osd_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/lanzador_lista.rs -o target/lanzador_lista_pruebas && ./target/lanzador_lista_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/reloj.rs -o target/reloj_pruebas && ./target/reloj_pruebas -q
+	@# S13, segunda parte: DNS (respuestas falsas, nombres en bucle, cortadas), SNTP, las zonas horarias y el cortafuegos de entrada.
+	cd ../usuario && rustc --edition 2024 --test src/dns.rs -o target/dns_pruebas && ./target/dns_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/sntp.rs -o target/sntp_pruebas && ./target/sntp_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/zona.rs -o target/zona_pruebas && ./target/zona_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/cortafuegos.rs -o target/cortafuegos_pruebas && ./target/cortafuegos_pruebas -q
 	@# Trasfondo nativo: las cuentas del monitor (contadores raros, procesos que nacen y mueren) y sus ajustes.
 	cd ../usuario && rustc --edition 2024 --test src/monitor.rs -o target/monitor_pruebas && ./target/monitor_pruebas -q
 	@# El explorador de archivos: la lógica y los trabajos largos contra un servicio de archivos falso (hostiles incluidos).
 	cd ../usuario && rustc --edition 2024 --test src/explorador/pruebas.rs -o target/explorador_pruebas && ./target/explorador_pruebas -q
 	@# Paso 2 de las asignaciones: la tabla de nombres, resolver, capas, heredar y lo hostil, contra un servicio falso.
 	cd ../usuario && rustc --edition 2024 --test src/asignaciones.rs -o target/asignaciones_pruebas && ./target/asignaciones_pruebas -q
+	@# La tabla de llaves: buscar por nombre, y lo hostil (truncada, nombres raros, sin tabla).
+	cd ../usuario && rustc --edition 2024 --test src/llaves.rs -o target/llaves_pruebas && ./target/llaves_pruebas -q
+	@# El selector de ficheros: peticiones y respuestas (malas incluidas), nombres que no valen y patrones.
+	cd ../usuario && rustc --edition 2024 --test src/protocolo/selector.rs -o target/selector_pruebas && ./target/selector_pruebas -q
 	@# S28: la pregunta de la guardia de ficheros de la caja Amiga (permisos sin llave, detalle, nombres raros).
 	cd ../usuario && rustc --edition 2024 --test src/preguntas_ficheros.rs -o target/preguntas_ficheros_pruebas && ./target/preguntas_ficheros_pruebas -q
 	../puente/pruebas/g0.sh
@@ -103,7 +120,7 @@ virt: usuario FORCE
 DISCO_NVME := target/nvme.img
 DASHFS_AR := ../archivos/dashfs/target/release/dashfs-ar
 VER := ../archivos/herramientas/target/release/ver
-$(DISCO_NVME): FORCE
+$(DISCO_NVME): catalogos FORCE
 	cd ../archivos/dashfs && cargo build --release --bin dashfs-ar --bin dashfs-volume
 	cd ../archivos/herramientas && cargo build --release
 	python3 ../tools/disco_archivos.py $@ $(DASHFS_AR)
@@ -113,17 +130,22 @@ $(DISCO_NVME): FORCE
 # tramas malas por un socket Unix durante 20 s desde el primer TCP de DashOS (se para también al acabar la prueba).
 RED := $(abspath target/red)
 RED_MAC := 52:54:00:12:34:56
-RED_QEMU := -netdev user,id=red0,guestfwd=tcp:10.0.2.100:7-cmd:$(abspath ../tools/red_eco.py) -netdev dgram,id=red1,local.type=unix,local.path=$(RED)/qemu.sock,remote.type=unix,remote.path=$(RED)/pc.sock -netdev hubport,id=red2,hubid=0,netdev=red0 -netdev hubport,id=red3,hubid=0,netdev=red1 -netdev hubport,id=red4,hubid=0 -device virtio-net-pci,netdev=red4,disable-legacy=on,mac=$(RED_MAC),romfile=
+# S13, segunda parte. En el mismo concentrador, `tools/red_vecino.py`: otro aparato (10.0.2.53) con un servidor de
+# nombres de mentira, la hora (SNTP) y un eco por UDP, para probar sin Internet. Y un puerto libre del PC (se busca
+# antes de arrancar QEMU), que QEMU reenvía al 7777 de DashOS (`hostfwd`): por él entra `tools/red_entra.py`.
+RED_ANTES := RED_PUERTO=$$(python3 -I -c "import socket; s = socket.socket(); s.bind(('127.0.0.1', 0)); print(s.getsockname()[1])"); python3 -I ../tools/red_vecino.py $(RED) $(RED_MAC) 900 & VECINO=$$!; python3 -I ../tools/red_entra.py $$RED_PUERTO 900 & ENTRA=$$!
+RED_DESPUES := kill $$BASURA $$VECINO $$ENTRA 2>/dev/null
+RED_QEMU := -netdev user,id=red0,hostfwd=tcp:127.0.0.1:$$RED_PUERTO-10.0.2.15:7777,guestfwd=tcp:10.0.2.100:7-cmd:$(abspath ../tools/red_eco.py) -netdev dgram,id=red5,local.type=unix,local.path=$(RED)/qemu2.sock,remote.type=unix,remote.path=$(RED)/vecino.sock -netdev hubport,id=red6,hubid=0,netdev=red5 -netdev dgram,id=red1,local.type=unix,local.path=$(RED)/qemu.sock,remote.type=unix,remote.path=$(RED)/pc.sock -netdev hubport,id=red2,hubid=0,netdev=red0 -netdev hubport,id=red3,hubid=0,netdev=red1 -netdev hubport,id=red4,hubid=0 -device virtio-net-pci,netdev=red4,disable-legacy=on,mac=$(RED_MAC),romfile=
 
 # Al final, el guion pulsa Reiniciar en el menú de apagado del panel y se espera al segundo arranque (REINICIO,
 # pruebas/arranque_virt_reinicio.txt; decisión del usuario del 2026-11-13).
 arranque-virt: virt $(DISCO_NVME)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT)) cargo build --release
-	rm -f target/explorador*.ppm target/captura.ppm target/amiga.ppm target/dash.ppm target/dash-nativo.ppm target/dash-nativo-pregunta.ppm target/gadtools.ppm target/gadtools-menu.ppm target/gadtools-dash.ppm target/requester.ppm target/reaction.ppm target/reaction.orig.ppm target/sonido.wav $(RED)/qemu.sock $(RED)/pc.sock target/u6.ana.ppm target/u6.carla.ppm
+	rm -f target/explorador*.ppm target/captura.ppm target/amiga.ppm target/dash.ppm target/dash-nativo.ppm target/dash-nativo-pregunta.ppm target/gadtools.ppm target/gadtools-menu.ppm target/gadtools-dash.ppm target/requester.ppm target/reaction.ppm target/reaction.orig.ppm target/sonido.wav $(RED)/qemu.sock $(RED)/pc.sock $(RED)/qemu2.sock $(RED)/vecino.sock target/u6.ana.ppm target/u6.carla.ppm
 	mkdir -p $(RED)
-	python3 -I ../tools/red_basura.py $(RED) $(RED_MAC) 300 & BASURA=$$!; \
+	python3 -I ../tools/red_basura.py $(RED) $(RED_MAC) 300 & BASURA=$$!; $(RED_ANTES); \
 	GUARDAR=$(abspath target/salida_virt.txt) CAPTURA=$(abspath target/captura.ppm) CAPTURA_AMIGA=$(abspath target/amiga.ppm) CAPTURA_DASH=$(abspath target/dash.ppm) CAPTURA_DASHOS=$(abspath target/dash-nativo.ppm) CAPTURA_GT=$(abspath target/gadtools.ppm) CAPTURA_GT_MENU=$(abspath target/gadtools-menu.ppm) CAPTURA_GT_DASH=$(abspath target/gadtools-dash.ppm) CAPTURA_REQ=$(abspath target/requester.ppm) CAPTURA_RA=$(abspath target/reaction) CAPTURA_EXPLORADOR=$(abspath target/explorador) CAPTURA_U6=$(abspath target/u6) CAPTURA_MONITOR=$(abspath target/monitor) REINICIO=$(abspath pruebas/arranque_virt_reinicio.txt) TECLAS=1 MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv -audiodev wav,id=snd0,path=$(abspath target/sonido.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0 $(RED_QEMU)" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt.txt $(or $(TIEMPO_VIRT),600); \
-	R=$$?; kill $$BASURA 2>/dev/null; exit $$R
+	R=$$?; $(RED_DESPUES); exit $$R
 	python3 ../tools/disco_archivos.py --comprobar $(DISCO_NVME) $(VER)
 	python3 ../tools/captura_ventanas.py target/captura.ppm
 	python3 ../tools/sonido_wav.py target/sonido.wav
@@ -256,7 +278,7 @@ arranque-virt-wayland: usuario $(DISCO_NVME) FORCE
 # en capturas-agente/aspecto-$(ASPECTO_NOMBRE)-{gtk4,foot}.png. Para Full HD: DASHOS_PANTALLA=1920x1080.
 ASPECTO_PREFS ?= fondo=ondas.png;apariencia=claro fondo;cajas=general dashos
 ASPECTO_NOMBRE ?= dashos-ondas
-arranque-virt-aspecto: usuario FORCE
+arranque-virt-aspecto: usuario catalogos FORCE
 	@test -f "$(ARCH_IMAGE)" || { echo "Falta el kernel (ARCH_IMAGE=$(ARCH_IMAGE)): tools/aspecto_caja_linux.py preparar"; exit 1; }
 	@test -f "$(ARCH_DISCO)" || { echo "Falta el disco de Arch (ARCH_DISCO=$(ARCH_DISCO)): tools/aspecto_caja_linux.py preparar"; exit 1; }
 	cd ../archivos/dashfs && cargo build --release --bin dashfs-ar --bin dashfs-volume
@@ -304,11 +326,11 @@ arranque-virt-gpu: usuario $(DISCO_NVME) FORCE
 # `tools/captura_multimonitor.py` las mira. Para en cuanto salen las líneas de `pruebas/arranque_virt_2.txt`.
 arranque-virt-2: virt $(DISCO_NVME)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT)) cargo build --release
-	rm -f target/multi.*.ppm $(RED)/qemu.sock $(RED)/pc.sock
+	rm -f target/multi.*.ppm $(RED)/qemu.sock $(RED)/pc.sock $(RED)/qemu2.sock $(RED)/vecino.sock
 	mkdir -p $(RED)
-	python3 -I ../tools/red_basura.py $(RED) $(RED_MAC) 300 & BASURA=$$!; \
+	python3 -I ../tools/red_basura.py $(RED) $(RED_MAC) 300 & BASURA=$$!; $(RED_ANTES); \
 	GUARDAR=$(abspath target/salida_virt_2.txt) MULTI=$(abspath target/multi) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -device virtio-gpu-pci,id=vgpu,max_outputs=2,xres=800,yres=600 -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv -audiodev none,id=snd0 -device virtio-sound-pci,audiodev=snd0 $(RED_QEMU)" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_2.txt 200; \
-	R=$$?; kill $$BASURA 2>/dev/null; exit $$R
+	R=$$?; $(RED_DESPUES); exit $$R
 	python3 ../tools/captura_multimonitor.py target/multi
 	grep "en 10 s" target/salida_virt_2.txt | tail -5
 
