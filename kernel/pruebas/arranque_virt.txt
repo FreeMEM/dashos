@@ -525,7 +525,9 @@ DashOS en marcha con 4 núcleos.
 ~│   [shell] 3 paneles en 2 pestañas
 ~│   [shell] ENVARC:Shell/Indicador: línea 2: no se entiende "color cajon fucsia"
 ~│   [shell] 4 paneles en 2 pestañas
-# Complementos, en otro Shell: el que falla se dice y se salta; el alias del primero y la plantilla del tercero valen.
+# Complementos: los alias del de serie (SYS:S/Shell-Complementos/alias), cargado al abrirse el Shell.
+~│   [shell] ll               List
+# Y en otro Shell: el que falla se dice y se salta; el alias del primero y la plantilla del tercero valen.
 ~│   [shell] El complemento S:Shell-Complementos/20-roto ha fallado (código 10): se salta lo que le quedaba
 ~│   [shell] hola desde un alias
 ~│   [shell] GRITANDO

@@ -72,7 +72,7 @@ SYS_CAJONES = [
     "Fonts", "L", "Libs",
     "Locale/Catalogs", "Locale/Countries", "Locale/Help", "Locale/Languages",
     "Prefs/Env-Archive/Sys", "Prefs/Presets",
-    "Rexx", "S",
+    "Rexx", "S", "S/Shell-Complementos",
     "Storage/DOSDrivers", "Storage/Keymaps", "Storage/Monitors", "Storage/Printers",
     "System", "Tools/Commodities", "Utilities", "WBStartup",
 ]
@@ -216,7 +216,9 @@ PRUEBA_SHELL = "\n".join([
     'Echo >ENVARC:Shell/Indicador "tema sobrio"',
     'Echo >>ENVARC:Shell/Indicador "color cajon fucsia"',
     "Panel",
-    "; Complementos: uno que pone un alias, uno que falla (se salta) y uno que da una plantilla; en otro Shell.",
+    "; Complementos: el de serie (SYS:S/Shell-Complementos/alias) ya está cargado en este Shell.",
+    "Alias",
+    "; Y en otro Shell: uno que pone un alias, uno que falla (se salta) y uno que da una plantilla.",
     "If NOT EXISTS Home:S",
     "  MakeDir Home:S",
     "  Set hice_s si",
@@ -296,6 +298,8 @@ SYS_FICHEROS = [
     ("S/Startup-Sequence", b"; El arranque de la maquina (S14): lo hace el sistema antes de que entre nadie.\n"),
     ("S/Shell-Startup", b"; Lo que hace cada Shell al abrirse.\n"),
     ("S/User-Startup", b""),
+    # Un complemento de serie del Shell: unos alias. Los de cada usuario van en su `Home:S/Shell-Complementos`.
+    ("S/Shell-Complementos/alias", "; Alias de serie del Shell. Los tuyos, en Home:S/Shell-Complementos.\nAlias ll List\nAlias la Dir ALL\nAlias md MakeDir\n".encode()),
     ("S/Prueba-Shell", PRUEBA_SHELL),
 ]
 

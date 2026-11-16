@@ -896,6 +896,9 @@ struct Shell {
     medido_escribir: u64,
     medido_cuadros: u64,
     medido_pintar: u64,
+    /// Las teclas y los eventos del ratón que han llegado del compositor (para saber, en una prueba, si llegan).
+    teclas_reales: u32,
+    raton_real: u32,
 }
 
 /// El intérprete necesita el mundo mientras el Shell lo tiene prestado: esto le da lo justo.
@@ -2887,7 +2890,10 @@ impl Shell {
                 self.entrar(activo);
                 match entrada {
                     Entrada::Nada => {}
-                    Entrada::Tecla { t, codigo } => self.tecla(t, codigo),
+                    Entrada::Tecla { t, codigo } => {
+                        self.teclas_reales += 1;
+                        self.tecla(t, codigo)
+                    }
                     Entrada::Medida => {
                         let primera = self.p.rect.w == 0;
                         self.colocar();
@@ -2904,7 +2910,10 @@ impl Shell {
                         }
                     }
                     Entrada::Cerrar => return self.p.int.rc,
-                    e => self.raton(e),
+                    e => {
+                        self.raton_real += 1;
+                        self.raton(e)
+                    }
                 }
             }
             if self.ventana.is_some() && self.buzon.cerrado {
@@ -3135,6 +3144,8 @@ fn principal() -> u64 {
         medido_escribir: 0,
         medido_cuadros: 0,
         medido_pintar: 0,
+        teclas_reales: 0,
+        raton_real: 0,
     };
     let (mut orden_pendiente, mut mal) = (None, None);
     match plantilla::leer("FROM/K,REGISTRO/S,SINARRANQUE/S,ORDEN/K/F", &args) {
@@ -3168,6 +3179,7 @@ fn principal() -> u64 {
     }
     let rc = sh.bucle();
     if sh.registro {
+        println!("  [shell] del compositor llegaron {} teclas y {} eventos del ratón", sh.teclas_reales, sh.raton_real);
         println!("  [shell] acaba con el código {}", rc);
     }
     if let Some(c) = &sh.padre {

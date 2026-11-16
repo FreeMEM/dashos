@@ -142,6 +142,7 @@ Del Shell potente:
 13. **Las asignaciones las comparten los paneles de una ventana**; cada panel tiene su cajón actual y sus variables.
 14. **Los ajustes del Shell están en `ENVARC:Shell/`** (`Historial`, `Indicador`, `Perfil`) y los complementos en
     `S:Shell-Complementos/`.
+15. **Tres alias de serie**: `ll`, `la` y `md` (`SYS:S/Shell-Complementos/alias`).
 
 ## Bitácora
 
@@ -225,6 +226,12 @@ Lo que salió por el camino:
   `Medidas CALLA` y `Medidas HABLA` paran y reanudan la copia.
 - Leer de un tubo línea a línea era lento (25.000 viajes): ahora el Shell manda las líneas enteras que caben en una
   respuesta y la orden las reparte.
+
+Lo que la prueba no comprueba: el teclado y el ratón de verdad sobre la ventana del Shell. Las teclas se prueban con
+`Teclea`, que pasa por el mismo camino que una tecla del compositor (`tecla_con`) pero no por el mapa de teclado ni
+por los modificadores. En la pasada de `make arranque-virt` llegaron al Shell 3 teclas y 8 eventos del ratón (los
+del guion, pensados para otras ventanas). Tampoco se ha mirado en una captura cómo se ven los paneles, la barra de
+pestañas, el menú de completar ni la translucidez.
 
 ### Lo medido
 
@@ -360,6 +367,7 @@ Lo que se puede probar en el PC va al crate `shell/`; el programa solo lo conect
   `SYS:S`). Se cargan al abrir, por orden alfabético, tras `S:Shell-Startup`.
 - Un complemento define alias, variables y plantillas de completado (`Completa orden plantilla`). Uno que falla se
   dice y se salta (lo que le quedaba); los demás siguen.
+- De serie hay uno, `SYS:S/Shell-Complementos/alias`: `ll` (`List`), `la` (`Dir ALL`) y `md` (`MakeDir`).
 - Lo que no hay: funciones. Un complemento que quiera una orden nueva pone un guion con el bit de guion en un cajón
   y lo añade a `Path`, o un alias. Tampoco define segmentos del indicador.
 
