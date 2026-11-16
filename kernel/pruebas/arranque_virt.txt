@@ -1058,3 +1058,18 @@ DashOS en marcha con 4 núcleos.
 ~│   [fondo] panel: gasta 
 ~│   [hostil] monitor: solo lo suyo con nombre, lo ajeno sumado, sin cerrar lo ajeno y sin dejarse pedir muy deprisa: bien
 ~│   [barra] CPU y memoria: 
+# S10, Commodities (docs/bitacoras/commodities.md): sin permiso el compositor no anuncia el protocolo y enlazarlo corta;
+# con los permisos (de `sesiones`, por PERMISOS), los atajos: reservados y "escribir" negados, el mismo ocupado por la
+# primera, 32 de cien; Exchange las ve; Ctrl+Alt+K (lo pulsa el guion, tras guarda) le llega; desactivada, se entera.
+~│   [commodity-prueba] sin permiso: no se anuncia: sí; enlazarlo igual da error: sí
+~│   [commodity-prueba] permisos atajos, fondo y commodities: [0, 0, 0]
+~│   [commodity-prueba] Ctrl+Alt+K para Prueba; la misma para Otra: ocupada por Prueba: sí; reservados negados: 3 de 3; sin Ctrl y Alt: 1 de 1
+~│   [commodity-prueba] cien atajos más: 68 negados por demasiados
+~│   [commodity-prueba] Exchange ve 2 commodities con 32 atajos puestos; listo: sí
+~│   [commodity-prueba] Ctrl+Alt+K llegó a su commodity: sí
+~│   [commodity-prueba] Exchange la desactiva y se entera: sí; acaba con sus atajos puestos
+~│   [compositor] commodities: commodity Prueba se va con 32 atajos
+# S10, Commodities: Exchange como orden en la prueba del Shell, como Ana (no tiene ninguna en marcha).
+~│   [shell] No hay commodities en marcha.
+~│   [shell] ClickToFront: clic. AutoPoint: no.
+~│   [shell] Exchange: no hay ninguna commodity en marcha que se llame NoExiste
