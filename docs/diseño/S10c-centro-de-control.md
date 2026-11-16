@@ -11,12 +11,12 @@ todo se hace con el kit (Material 3) sobre los servicios de DashOS.
 
 - **Dos piezas.** Un panel rápido que sale de la barra (lo de cada momento: volumen, brillo, red, modo noche) y una
   ventana de Ajustes con todo lo demás, por categorías en una barra lateral.
-- **Enlaces directos.** Cada categoría tiene nombre (`sonido`, `pantallas`, `permisos`...) y se abre directamente
+- **Enlaces directos.** Cada categoría tiene nombre (`sonido`, `monitores`, `permisos`...) y se abre directamente
   desde cualquier sitio: un clic en el reloj abre la de fecha y hora; uno en el icono del sonido, la de sonido. En DMS
   es `dms ipc call settings openWith <pestaña>`.
 - **Aparatos fijados.** El brillo se lleva por aparato (pantalla interna, monitor externo por DDC, por software); los
   fijados se mueven juntos con el control del panel. Lo mismo para salidas de sonido.
-- **Por pantalla.** El panel se abre en la pantalla donde está el ratón, y lo fijado es de cada pantalla.
+- **Por monitor.** El panel se abre en el monitor donde está el ratón, y lo fijado es de cada monitor.
 - **Colores del fondo.** El tema sale del fondo de escritorio (en DMS, con matugen: color dominante, el más vivo, el
   más oscuro...), con claro, oscuro o automático, y se lleva a los programas (en DashOS: el kit, el puente de Linux y
   las pantallas del Amiga, S23).
@@ -50,7 +50,7 @@ todo se hace con el kit (Material 3) sobre los servicios de DashOS.
 | C1 | Ventana de Ajustes con barra lateral y búsqueda. Primera categoría, **Permisos** (Prefs de U6): lo concedido a cada programa, y quitarlo (se revoca en el acto). Después **Seguridad** (el registro de `sesiones`, que es el de `Estado:Registros/` y se lee también con la orden `Registro`, S6) y **Discos** (comprobar, instantáneas, volúmenes; lo mismo que la orden `Instantanea`, S5) | Un programa encerrado no puede listar los permisos de otros ni dar o quitar ninguno sin la confirmación de `guardian`; el usuario lista los suyos con `Permiso`; quitar uno revoca la llave del programa abierto. (Hoy la prueba hecha es la de antes: solo Ajustes lista y quita; se cambia al hacer la orden) |
 | C2 | Panel rápido desde la barra: volumen, brillo, modo noche, no molestar, bloquear, salir. Mosaicos que se añaden, quitan y ordenan (modo de edición) | El panel no se lleva el teclado de otra ventana sin un clic (S8) |
 | C3 | Apariencia: claro, oscuro o automático; colores sacados del fondo (esquema de Material 3 hecho aquí, desde la especificación); letras; movimiento | Los colores salen con contraste suficiente en claro y oscuro |
-| C4 | Sonido y pantallas con aparatos fijados; entrada (teclado, ratón, distribución) | |
+| C4 | Sonido y monitores con aparatos fijados; entrada (teclado, ratón, distribución) | |
 | C5 | Red, Bluetooth y energía, cuando existan sus servicios (S12, S13, S22) | |
 | C6 | Complementos: categorías de terceros, con los permisos de su paquete (S8) | Un complemento no ve las otras categorías ni los permisos |
 

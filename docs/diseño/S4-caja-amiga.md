@@ -127,7 +127,7 @@ Newbench quería que cada programa Amiga fuera una ventana del escritorio, pero 
 En DashOS sale de forma natural, porque Intuition es nativa:
 
 - **La pantalla de Workbench es el escritorio de DashOS.** Cada ventana que abre un programa en ella es una ventana
-  del compositor, con su borde, su sitio en el mosaico o flotante, y su escritorio virtual (S10).
+  del compositor, con su borde, su sitio en el mosaico o flotante, y su espacio de trabajo (S10).
 - **Los adornos de Intuition** (barra de título, gadgets de cerrar y de profundidad) los puede dibujar el programa
   como en el Amiga o el compositor como en DashOS. Recomiendo el estilo Amiga por dentro y el borde de DashOS por
   fuera.

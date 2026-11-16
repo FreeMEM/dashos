@@ -95,7 +95,7 @@ Wayland son capacidades.
 La alternativa sería un protocolo propio de DashOS y un traductor de Wayland aparte, como Exo en ChromeOS. Da más
 libertad, pero duplica el trabajo de todos los kits de interfaz.
 
-### Pantallas y monitores
+### Monitores
 
 - **`DEVS:Monitors`** tiene un fichero por salida: `HDMI-0` y `HDMI-1` (S4b). Son de texto: el icono con sus
   tooltypes, como dice S4b. Lo que cambia la máquina va en la capa de la máquina de `DEVS:` (`Estado:Devs`, S4b).
