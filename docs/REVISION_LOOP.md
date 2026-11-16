@@ -2229,3 +2229,13 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   Sin ver en pantalla la ventana de la tanda ni la marca. Por decidir: parar en la primera que falla, plazos y topes
   de la ventana (2 min, un intento, 16 acciones, 4 KB), modo de desarrollo sin contraseña de administrador, el
   magenta, los nombres, el doble clic sin encierro, sin `RAM:`/`T:` en lo encerrado.
+- **Unida `menus` (2026-11-16)**: de serie, una fila de menús dentro de cada ventana; con `Ajuste menus barra` (o
+  Ajustes > Escritorio) los del programa activo van a la barra de arriba, al momento y sin reiniciar programas.
+  Protocolo `dashos_menus_v1` (el kit da siempre su menú en texto; la barra solo ve el de la ventana con el teclado y
+  lo elegido solo vuelve a ese programa), componente de menús en el kit nativo y en kit-c, la barra con clic y botón
+  derecho, `ENV:Escritorio/menus` (clave `sitio`: `dentro`/`barra`) solo lo pone el centro; menús del Shell. Prueba
+  nueva `make arranque-virt-menus` (13 capturas en `~/recuperar/geosian-7d/menus-capturas/`). Unida sin conflictos
+  sobre admin-desarrollo; tanda completa 12 de 12, `arranque-virt-shell` y `arranque-virt-menus`: bien a la primera.
+  Avisada la sesión de Dash de lo que falta en su runtime (casillas, opciones, submenús). Por decidir: aspecto, atajos
+  con Ctrl, botón derecho al pulsar, "Escritorio" en Ajustes, nombres del ajuste, ventanas que crecen, letra del Shell,
+  el reloj tras los títulos. Queda: el sitio por persona, el clic que cierra el menú y además llega a la ventana.
