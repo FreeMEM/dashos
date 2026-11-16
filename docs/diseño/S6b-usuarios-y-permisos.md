@@ -110,6 +110,11 @@ cambia. Hay que añadirlo a la tabla de S4b.
 - Al crear la cuenta se da un **código de recuperación** para apuntar en papel (la ranura ya existe en RedoxFS).
 - **Un administrador no puede leer el cajón de otro usuario.** Sin la contraseña o el código, el volumen no se abre.
   Lo que sí puede: borrar la cuenta, o poner contraseña nueva con el código de recuperación.
+- **Borrar una cuenta se puede deshacer unos días.** La cuenta queda "retirada" (el campo `estado`) y su volumen se
+  guarda cerrado y cifrado, sin que nadie lo abra. Pasado el plazo se borra solo. Mientras, un administrador puede
+  devolver la cuenta. El plazo, por decidir.
+- **Las cuentas también se llevan desde el Shell**: la orden `Usuario` (crear, borrar, devolver, grupos) pide la
+  misma acción de administrador que el programa `Usuarios` de `SYS:System` (S4b).
 
 ### Entrar, bloquear y salir
 
@@ -180,7 +185,7 @@ contestar.
 |---|---|
 | Una aplicación | Su cajón `Home:Datos/<paquete>` (escribir), su paquete (leer), `SYS:` y los cajones `Libs`, `Fonts` y `Locale` de los demás paquetes (leer), `RAM:T/<número>` |
 | El escritorio y el selector | `Home:` entero, `Work:` y los demás volúmenes, `Paquetes:` y `SYS:` (leer) |
-| El Shell y la caja Amiga principal | Como el escritorio |
+| El Shell y la caja Amiga principal | Como el escritorio. El cajón propio de la caja es `Home:Amiga` (S4b) |
 | Un servicio | Su cajón `Estado:Servicios/<nombre>` y `SYS:` (leer) |
 | El gestor de paquetes | `Paquetes:` (escribir) |
 | Nadie | `SYS:` para escribir. Solo la actualización del sistema |
@@ -209,32 +214,49 @@ que su padre les pase, y mueren con su grupo.
 
 Cuando la biblioteca necesita un servicio que el programa no tiene:
 
-1. ¿Lo declara el paquete (S8)? Si no, se niega sin preguntar.
+1. ¿Lo declara el paquete (S8)? Si no, se niega sin preguntar. Queda una línea en el registro ("Editor pidió la red
+   y su paquete no la declara") y, si el programa enseña el error, sale en llano con ese detalle a un clic.
 2. ¿Ya lo decidió el usuario? Se cumple lo que dijo.
 3. Si no, `guardian` pregunta: "Editor quiere usar la red". La respuesta se guarda.
 4. Concedido: `sesiones` da de alta al cliente en el servicio y le entrega una llave marcada y **revocable**. La
    copia revocable conserva la marca (mirado en `kernel/src/llamadas.rs`, `llave_revocable`).
 
-Quitar un permiso en `Prefs` revoca esa llave en el acto: el programa se queda sin el servicio aunque esté abierto.
+Quitar un permiso revoca esa llave en el acto: el programa se queda sin el servicio aunque esté abierto.
 
-Lo concedido se guarda por usuario en `Home:Prefs/Permisos/`, con `sesiones` de dueño y modo `0700`: ni el Shell lo
-puede tocar.
+### Dónde está lo concedido y cómo se mira (2026-11-15, S36)
+
+Lo concedido se guarda por usuario en `Home:Prefs/Permisos/`, en texto. El dueño es `sesiones` y solo él escribe.
+El usuario lo puede leer (antes era modo `0700` y no lo leía ni su dueño): ni el Shell ni ningún programa lo pueden
+cambiar. **Este es el único sitio**: es de cada usuario y viaja con su volumen (S4b); `Estado:` es para lo que no
+es de ningún usuario. S28 y S10c citan este apartado. Hoy el código guarda los de la guardia de la caja Amiga en el
+cajón de `sesiones` (S28); su sitio es este.
+
+- **Con el ratón**: Ajustes, categoría Permisos (S10c, S27). Lista lo concedido a cada programa y lo quita.
+- **Desde el Shell**: la orden `Permiso`: listar, dar y quitar.
+- **Ver los propios es libre.** Dar o quitar desde el Shell pide la confirmación de `guardian`, igual que la
+  pregunta del primer uso: así un guion no se concede nada a escondidas.
+- Lo que se da, se quita y se niega queda en el registro de seguridad.
+
+El formato del fichero, por diseñar al hacerlo.
 
 ### Lista de permisos
 
-| Permiso | Qué da |
-|---|---|
-| `red` | Llave del servicio de red, para conectar |
-| `red-escuchar` | Abrir puertos |
-| `camara`, `microfono`, `ubicacion` | La llave de cada servicio |
-| `ficheros` | `Home:` entero como raíz, sin pasar por el selector |
-| `volumenes` | `Work:` y los discos que se enchufan |
-| `plazo` | La llave de la clase de plazo del planificador |
-| `ventanas` | Capturar la pantalla y mandar teclas a otras ventanas |
-| `arexx:<puerto>` | Hablar con el puerto ARexx de otro programa |
-| `inicio` | Arrancar solo al entrar en la sesión |
+| Permiso | Qué da | Lo que lee el usuario ("Editor quiere...") |
+|---|---|---|
+| `red` | Llave del servicio de red, para conectar | "usar la red" |
+| `red-escuchar` | Abrir puertos | "que otros equipos se conecten a este ordenador" |
+| `camara`, `microfono`, `ubicacion` | La llave de cada servicio | "usar la cámara", "el micrófono", "saber dónde estás" |
+| `ficheros` | `Home:` entero como raíz, sin pasar por el selector | "ver y cambiar todos tus ficheros" |
+| `volumenes` | `Work:` y los discos que se enchufan | "usar Work: y los discos que enchufes" |
+| `plazo` | La llave de la clase de plazo del planificador | "tener prioridad para que el sonido no se corte" |
+| `ventanas` | Capturar la pantalla y mandar teclas a otras ventanas | "ver tu pantalla y escribir en otras ventanas" |
+| `arexx:<puerto>` | Hablar con el puerto ARexx de otro programa | "dar órdenes a Tachyon" (el nombre del otro programa) |
+| `inicio` | Arrancar solo al entrar en la sesión | "abrirse solo cuando entras" |
 
 Sin pedir nada: su cajón, su paquete, ventanas propias, sonido de salida y lo que el usuario le entregue.
+
+La pregunta nunca enseña el nombre interno del permiso: va en "Detalles", con el puerto o el volumen. Los textos de
+la tabla son provisionales; lo que se fija es que cada permiso tiene su frase en llano.
 
 ### Perfiles
 
@@ -244,7 +266,7 @@ Sin pedir nada: su cajón, su paquete, ventanas propias, sonido de salida y lo q
 | escritorio | Workbench, `selector`, `Prefs` | El usuario entero. Vienen en `SYS:` |
 | aplicación | Lo instalado como paquete | Lo de arriba: su cajón y lo que declare |
 | caja | La caja Amiga y la de Linux | Una sola aplicación por caja (S6). La principal: `Home:`, `Work:` y red |
-| suelto | Un programa sin paquete abierto con doble clic | Como una aplicación sin nada declarado: pregunta todo, con aviso de que no está firmado |
+| suelto | Un programa sin paquete abierto con doble clic | Como una aplicación sin nada declarado: pregunta todo, con un aviso en llano ("Este programa no viene del catálogo. Se abre encerrado: solo ve lo que tú le des"); que no está firmado va en "Detalles" |
 
 **El Shell es como la caja**: una aplicación con `Home:`, `Work:` y red, y lo que se lanza desde él hereda su ficha.
 Quien compila un programa en Dash y lo prueba desde el Shell no se encuentra ninguna pregunta.
@@ -260,7 +282,7 @@ Quien compila un programa en Dash y lo prueba desde el Shell no se encuentra nin
 - **La acción la hace el servicio que la tiene a su cargo** (el gestor de paquetes instala, `archivos` repara). El
   programa que la pidió no recibe ningún poder general.
 - Cada acción se confirma. Sin "vale durante 5 minutos".
-- Queda apuntada en el registro de seguridad.
+- Queda apuntada en el registro de seguridad (`Estado:Registros/seguridad`, S6).
 
 ### Que la ventana sea de verdad la del sistema
 
@@ -274,6 +296,9 @@ Un programa puede dibujar una ventana igual que la de `guardian` para robar la c
 
 - El PID es el número de ficha. `sesiones` contesta la lista: PID, usuario, aplicación, nombre y consumo (el del
   grupo de recursos, con `grupo_uso`).
+- **La ficha de un proceso propio se puede mirar entera**: perfil, permisos, raíces y tabla de nombres, además de
+  lo de la lista. Con las órdenes de procesos (`Status` y `Break`, S6) y en el Monitor del sistema. La de un proceso
+  de otro usuario, solo un administrador.
 - **Matar**: `sesiones` mata el grupo del proceso si quien pide es del mismo usuario. Si no, es acción de
   administrador. Como el grupo se mata entero, también caen los hijos sin ficha.
 - Más adelante, para ver uno a uno los hijos sin ficha: un número de proceso en el kernel y una llamada que liste los
@@ -293,7 +318,7 @@ kernel.
 | Pieza que cae | Qué gana | Qué no gana |
 |---|---|---|
 | Una aplicación | Su cajón, los permisos que tenga concedidos y los ficheros que el usuario le cedió | El resto de `Home:`, las demás aplicaciones, contraseñas |
-| Un programa del Shell o de la caja Amiga principal | `Home:` y `Work:` del usuario, y la red | Otros usuarios, `SYS:`, `Paquetes:`, los permisos guardados, acciones de administrador |
+| Un programa del Shell o de la caja Amiga principal | `Home:` y `Work:` del usuario, y la red. Leer la lista de permisos guardados | Otros usuarios, `SYS:`, `Paquetes:`, cambiar los permisos guardados, acciones de administrador |
 | El escritorio o `selector` | Todo lo del usuario, y ceder sus ficheros a cualquier programa suyo | Otros usuarios, el sistema |
 | Un servicio corriente (sonido, red) | Lo que pasa por él, de todos los usuarios: el sonido, o el tráfico sin cifrar | Ficheros, llaves de otros servicios |
 | El lector de un disco ajeno | Lo que hay en ese disco | Los demás volúmenes |
@@ -383,7 +408,7 @@ Cada una acaba con pruebas en `make prueba` y deja el sistema arrancando.
 | U3 | Entrada, bloqueo y salida, con el volumen cifrado por usuario | Con la sesión cerrada, el volumen no se lee; contraseña mala, no entra |
 | U4 | Permisos por aplicación: declarar, preguntar, guardar, revocar. Llave de plazo | Sin permiso no hay llave; al revocar, el servicio deja de contestar |
 | U5 | `guardian` y `selector`: acciones de administrador, selector, doble clic y arrastrar | Un programa solo abre el fichero elegido; una acción sin contraseña no se hace |
-| U6 | `Prefs` de usuarios y permisos, registro de seguridad, PID en el kernel, cambio rápido de usuario. El lector de discos ajenos en proceso aparte (se puede adelantar: no depende de lo demás) | Un disco ajeno roto a propósito no tumba `archivos` |
+| U6 | `Prefs` de usuarios y permisos con sus órdenes (`Usuario`, `Permiso`), registro de seguridad, PID en el kernel, cambio rápido de usuario. El lector de discos ajenos en proceso aparte (se puede adelantar: no depende de lo demás) | Un disco ajeno roto a propósito no tumba `archivos` |
 
 U1 se puede hacer ya: no depende del azar ni del escritorio.
 
@@ -407,7 +432,8 @@ Fran aprobó las nueve el 2026-11-10:
 - Con S2: matar es matar el grupo; la clase de plazo es una llave.
 - Con S4 y S7: cada caja es una ficha. Dentro de la de Linux, el usuario de la sesión es el suyo y los demás
   aparecen como "nadie".
-- Con S4b: el espacio de nombres de la sesión es la tabla de nombres más las raíces. Añade `Estado:`.
+- Con S4b: el espacio de nombres de la sesión es la tabla de nombres más las raíces. Añade `Estado:`. Lo concedido
+  vive en `Home:Prefs/Permisos/`; el cajón de la caja Amiga es `Home:Amiga`.
 - Con S5: usa dueño, grupo y modo, y los volúmenes cifrados con sus ranuras.
 - Con S6: lo concreta. Cambia una cosa: la identidad no la guarda el kernel.
 - Con S8: los paquetes declaran permisos; el nombre del paquete es la identidad de la aplicación.
