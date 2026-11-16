@@ -83,6 +83,48 @@ pub fn respuesta(m: &[u8], numero: u64) -> Result<Hora, Error> {
     Ok(Hora { recibe_ns, envia_ns })
 }
 
+/// El servidor de hora si `Prefs/Red/hora` no dice otro (pendiente del usuario: uno propio o una zona de pool.ntp.org).
+pub const DE_SERIE: &[u8] = b"pool.ntp.org";
+/// Lo que se escribe en `Prefs/Red/hora` para no preguntar la hora a nadie.
+pub const NINGUNO: &str = "ninguno";
+
+/// Cómo se leyó `Prefs/Red/hora`.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Fichero<'a> {
+    /// No está: vale el de serie.
+    NoEsta,
+    /// No se pudo leer (no es un fichero, es enorme, el servicio de archivos falló o no da los ajustes del sistema).
+    Ilegible,
+    Texto(&'a [u8]),
+}
+
+/// A quién se pregunta la hora.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Servidor<'a> {
+    /// `pool.ntp.org`.
+    DeSerie,
+    /// A nadie: el ajuste lo apaga, o no se sabe qué dice.
+    Apagado,
+    /// El nombre o la dirección que dice el ajuste (sin espacios alrededor; aún sin mirar si vale).
+    Este(&'a [u8]),
+}
+
+/// Lo que dice `Prefs/Red/hora`: la primera línea que no está vacía ni empieza por `#`. `ninguno` (sin distinguir
+/// mayúsculas) lo apaga; sin línea (vacío o solo comentarios), o sin fichero, el de serie. Si el fichero está pero no
+/// se puede leer, apagado: no se habla con un tercero sin saber si el ajuste lo prohíbe.
+pub fn servidor(f: Fichero<'_>) -> Servidor<'_> {
+    let texto = match f {
+        Fichero::NoEsta => return Servidor::DeSerie,
+        Fichero::Ilegible => return Servidor::Apagado,
+        Fichero::Texto(t) => t,
+    };
+    match texto.split(|&b| b == b'\n').map(|l| l.trim_ascii()).find(|l| !l.is_empty() && l[0] != b'#') {
+        None => Servidor::DeSerie,
+        Some(l) if l.eq_ignore_ascii_case(NINGUNO.as_bytes()) => Servidor::Apagado,
+        Some(l) => Servidor::Este(l),
+    }
+}
+
 /// La hora al recibir la respuesta: la de envío del servidor más la mitad de lo que tardó el viaje (lo que tardó todo,
 /// medido aquí, menos lo que el servidor la tuvo).
 pub fn al_recibir(h: &Hora, ida_y_vuelta_ns: u64) -> u64 {
@@ -122,6 +164,26 @@ mod pruebas {
         // Tras 2036 (la cuenta de segundos da la vuelta): 2040-01-01.
         let r = hacer(1, (2_208_988_800, 0), (2_208_988_800, 0));
         assert_eq!(respuesta(&r, 1).map(|h| h.envia_ns / 1_000_000_000), Ok(2_208_988_800));
+    }
+
+    #[test]
+    fn el_ajuste() {
+        use Servidor::*;
+        let t = |s: &'static str| servidor(Fichero::Texto(s.as_bytes()));
+        assert_eq!((servidor(Fichero::NoEsta), servidor(Fichero::Ilegible)), (DeSerie, Apagado));
+        assert_eq!(t("hora.prueba\n"), Este(b"hora.prueba"));
+        assert_eq!(t("  10.0.2.53 \r\notra\n"), Este(b"10.0.2.53"));
+        assert_eq!(t("# El servidor de hora\n\n  \nes.pool.ntp.org"), Este(b"es.pool.ntp.org"));
+        for apagado in ["ninguno", "NINGUNO\n", "# apagado\n  Ninguno  \nhora.prueba\n"] {
+            assert_eq!(t(apagado), Apagado, "{apagado:?}");
+        }
+        for de_serie in ["", "\n\n", "# nada\n#\n", "   \t\n"] {
+            assert_eq!(t(de_serie), DeSerie, "{de_serie:?}");
+        }
+        // Hostil: lo que no es texto pasa tal cual, para que quien lo use diga que no se entiende (no el de serie).
+        assert_eq!(servidor(Fichero::Texto(&[0xff, 0xfe, b'\n'])), Este(&[0xff, 0xfe]));
+        assert_eq!(servidor(Fichero::Texto(&[0; 300])), Este(&[0; 300]));
+        assert_eq!(t("ningunos"), Este(b"ningunos"));
     }
 
     /// Hostil: lo que no es la respuesta de un servidor con hora a nuestra petición no vale.

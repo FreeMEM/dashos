@@ -22,7 +22,8 @@
 //!   viene de ese servidor, a ese puerto, con ese identificador y esa pregunta.
 //! - IPv6: dirección local del enlace y, por SLAAC, la global del prefijo que anuncie el encaminador.
 //! - Lo que se configura está en `Prefs/Red` del disco del sistema (su raíz en el servicio de archivos): `hosts` y
-//!   `hora` (el servidor de hora, que este servicio resuelve y `hora` usa).
+//!   `hora` (el servidor de hora, que este servicio resuelve y `hora` usa; `pool.ntp.org` sin fichero, `ninguno` lo
+//!   apaga, y sin poder leer los ajustes también se apaga: `dashos::sntp::servidor`).
 //! - S29: el puerto de la caja Linux pasa por su cortafuegos (`dashos::cortafuegos_caja`): Internet sí, la red local
 //!   no (salvo la puerta de enlace y el DNS para lo justo), ni hacerse pasar por la puerta por ARP. Las primeras
 //!   `AVISOS_CORTAFUEGOS` tramas cortadas se dicen en el registro.
@@ -52,6 +53,7 @@ use dashos::cortafuegos_caja;
 use dashos::dns;
 use dashos::protocolo::archivos as a;
 use dashos::protocolo::red as p;
+use dashos::sntp;
 use smoltcp::iface::{Config, Interface, SocketHandle, SocketSet};
 use smoltcp::phy::{self, Device, DeviceCapabilities, Medium};
 use smoltcp::socket::{dhcpv4, tcp, udp};
@@ -931,6 +933,7 @@ impl Servicio {
                 // El servidor de hora solo se da con la red configurada: antes no se llega a él.
                 e[p::E_HORA] = self.nombres.hora_ip;
             }
+            e[p::E_HORA_APAGADA] = self.nombres.hora_apagada as u32;
             if let Some(ip6) = r.ip6 {
                 e[p::E_IP6] = 1;
                 for (i, w) in ip6.octets().chunks(4).enumerate() {
@@ -1617,8 +1620,6 @@ const ESPERA_US: u64 = 1_000_000;
 const MAX_CACHE: usize = 256;
 const MAX_HOSTS: usize = 512;
 const TTL_NEGATIVO_S: u32 = 30;
-/// El servidor de hora si `Prefs/Red/hora` no dice otro (pendiente del usuario: uno propio o una zona de pool.ntp.org).
-const HORA_DE_SERIE: &[u8] = b"pool.ntp.org";
 
 /// El resolvedor de nombres.
 struct Nombres {
@@ -1635,6 +1636,8 @@ struct Nombres {
     hora_nombre: Option<Vec<u8>>,
     hora_ip: u32,
     hora_proxima: u64,
+    /// Sin servidor de hora a propósito (`Prefs/Red/hora` dice `ninguno`, no se entiende o no se pudo leer).
+    hora_apagada: bool,
 }
 
 /// La respuesta a `RESOLVER` por `aviso`, que se cierra (0: nadie espera).
@@ -1668,15 +1671,15 @@ impl Nombres {
             hora_nombre: None,
             hora_ip: 0,
             hora_proxima: 0,
+            hora_apagada: false,
         };
-        let mut hora: Vec<u8> = HORA_DE_SERIE.to_vec();
-        let mut de_serie = true;
         let ajustes = Ajustes::abrir();
         let hay = ajustes.is_some();
+        let mut fichero_hora: Result<Vec<u8>, i32> = Err(-1);
         match ajustes {
             None => {}
             Some(aj) => {
-                if let Some(texto) = aj.leer("hosts", 64 * 1024) {
+                if let Ok(texto) = aj.leer("hosts", 64 * 1024) {
                     for linea in texto.split(|&b| b == b'\n') {
                         dns::linea_hosts(linea, |nombre, dir, v4| {
                             if n.hosts.len() < MAX_HOSTS {
@@ -1685,29 +1688,44 @@ impl Nombres {
                         });
                     }
                 }
-                if let Some(texto) = aj.leer("hora", 256) {
-                    let linea = texto.split(|&b| b == b'\n').next().unwrap_or(&[]).trim_ascii();
-                    if !linea.is_empty() {
-                        hora = linea.to_vec();
-                        de_serie = false;
-                    }
-                }
+                fichero_hora = aj.leer("hora", 256);
             }
         }
+        // El servidor de hora: el de serie, el del ajuste, o ninguno (apagado, o sin saber qué dice el ajuste: así una
+        // prueba o una máquina sin sus ajustes no habla con un tercero).
+        let servidor = sntp::servidor(match &fichero_hora {
+            Ok(t) => sntp::Fichero::Texto(t),
+            Err(e) if hay && *e == a::NO_EXISTE => sntp::Fichero::NoEsta,
+            Err(_) => sntp::Fichero::Ilegible,
+        });
+        let (hora, como): (&[u8], &str) = match servidor {
+            sntp::Servidor::DeSerie => (sntp::DE_SERIE, " (el de serie)"),
+            sntp::Servidor::Este(s) => (s, ""),
+            sntp::Servidor::Apagado => (b"", ""),
+        };
         let mut normal = [0u8; dns::MAX_NOMBRE];
-        if let Some(a) = dns::ipv4_escrita(&hora) {
+        if servidor == sntp::Servidor::Apagado {
+            n.hora_apagada = true;
+        } else if let Some(a) = dns::ipv4_escrita(hora) {
             n.hora_ip = u32::from_le_bytes(a);
-        } else if let Some(k) = dns::normalizar(&hora, &mut normal) {
+        } else if let Some(k) = dns::normalizar(hora, &mut normal) {
             n.hora_nombre = Some(normal[..k].to_vec());
         } else {
+            n.hora_apagada = true;
             println!("  [red] Prefs/Red/hora no se entiende: sin servidor de hora");
         }
+        let de_hora = match (&fichero_hora, servidor) {
+            (_, sntp::Servidor::Apagado) if !hay => "ninguno (sin los ajustes no se pregunta la hora a nadie)",
+            (Err(e), sntp::Servidor::Apagado) if *e != a::NO_EXISTE => "ninguno (Prefs/Red/hora no se deja leer)",
+            (_, sntp::Servidor::Apagado) => "ninguno (apagado en Prefs/Red/hora)",
+            _ => core::str::from_utf8(hora).unwrap_or("?"),
+        };
         println!(
             "  [red] {}: {} nombres en hosts; servidor de hora {}{}",
             if hay { "Prefs/Red" } else { "sin Prefs/Red (el servicio de archivos no da sesión)" },
             n.hosts.len(),
-            core::str::from_utf8(&hora).unwrap_or("?"),
-            if de_serie { " (el de serie)" } else { "" }
+            de_hora,
+            como
         );
         n
     }
@@ -1995,11 +2013,12 @@ impl Ajustes {
         (i32::from_le_bytes(r[0..4].try_into().unwrap()), u32::from_le_bytes(r[4..8].try_into().unwrap()), u64_en(8), u64_en(16), u64_en(24))
     }
 
-    /// El fichero `nombre` entero, si lo hay y mide `max` bytes como mucho.
-    fn leer(&self, nombre: &str, max: u64) -> Option<Vec<u8>> {
+    /// El fichero `nombre` entero, si lo hay y mide `max` bytes como mucho. Si no, el error del servicio de archivos
+    /// (`NO_EXISTE` si no está) o -1 (no es un fichero, mide más, no se leyó entero).
+    fn leer(&self, nombre: &str, max: u64) -> Result<Vec<u8>, i32> {
         let (e, asa, tam, _, c) = self.pedir(a::BUSCAR, 0, 0, 0, nombre);
         if e != a::BIEN {
-            return None;
+            return Err(e);
         }
         let mut datos = Vec::new();
         let vale = (c >> 16) as u8 == a::FICHERO && tam <= max;
@@ -2014,7 +2033,7 @@ impl Ajustes {
             datos.extend_from_slice(&ventana[..leidos.min(cuanto) as usize]);
         }
         self.pedir(a::CERRAR, asa, 0, 0, "");
-        (vale && datos.len() as u64 == tam).then_some(datos)
+        if vale && datos.len() as u64 == tam { Ok(datos) } else { Err(-1) }
     }
 }
 
