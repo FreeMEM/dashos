@@ -40,14 +40,18 @@ extern crate alloc;
 #[path = "../ventana_cliente.rs"]
 #[allow(dead_code)]
 mod ventana_cliente;
-#[path = "../panel_mosaicos.rs"]
-#[allow(dead_code)]
-mod panel_mosaicos;
 #[path = "../monitor.rs"]
 #[allow(dead_code)]
 mod monitor;
 #[path = "../idiomas.rs"]
 mod idiomas;
+// S27, oleada 3: el centro de control configurable (`controlCenterWidgets` de DMS) y los ajustes de los avisos.
+#[path = "../cc_rejilla.rs"]
+#[allow(dead_code)]
+mod cc_rejilla;
+#[path = "../avisos_ajustes.rs"]
+#[allow(dead_code)]
+mod avisos_ajustes;
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -59,7 +63,6 @@ use kit::controles::{Boton, Hijo, Interfaz, Lista, Texto};
 use kit::lienzo::{Lienzo, Rect};
 use kit::objetos::{atr, Arbol, Cuando, Que, Valor};
 use kit::tema::Tema;
-use panel_mosaicos::Orden;
 use ventana_cliente::*;
 use wayland::tablas::{
     dashos_tema_v1, wl_buffer, wl_compositor, wl_display, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
@@ -109,6 +112,8 @@ const CATEGORIAS: &[(&str, &str)] = &[
     ("monitor", "Monitor del sistema"),
     ("escritorio", "Escritorio"),
     ("acerca", "Acerca de"),
+    ("avisos", "Avisos"),
+    ("panel", "Centro de control"),
 ];
 /// El nombre que se ve de la categoría `k` de `CATEGORIAS`, en el idioma del usuario (el de la tabla es el de la
 /// consola, siempre en castellano).
@@ -122,10 +127,15 @@ fn nombre_categoria(k: usize) -> &'static str {
         5 => tr(6, "Monitor del sistema"),
         6 => tr(7, "Escritorio"),
         7 => tr(8, "Acerca de"),
+        8 => tr(200, "Avisos"),
+        9 => tr(201, "Centro de control"),
         _ => "",
     }
 }
 const MONITOR_SIS: usize = 5;
+/// S27, oleada 3: los avisos y el centro de control (el panel rápido).
+const AVISOS_CAT: usize = 8;
+const PANEL_CC: usize = 9;
 const PANEL_FONDO: usize = 6;
 const FICHERO_MONITOR: &str = "monitor";
 /// Cada cuánto se vuelve a medir con el monitor a la vista.
@@ -377,8 +387,6 @@ fn comprobar_disco() -> (i32, u64) {
 const VA_ARCHIVOS: usize = 0x50_0000_0000;
 /// Dónde se guarda la apariencia, desde su raíz (`C`, lo del usuario): un cajón 0700 y un fichero 0600.
 const PREFS: &str = "Prefs";
-/// C2: los mosaicos del panel rápido (cuáles y en qué orden), al lado.
-const FICHERO_PANEL: &str = "panel";
 /// C3: el fondo de escritorio que se ve (su nombre en `Fondos/`), al lado.
 const FICHERO_FONDO: &str = "fondo";
 /// S26: el aspecto de los programas de las cajas (el texto de `wayland::aspecto`), al lado.
@@ -987,13 +995,6 @@ fn leer_cajas() -> Result<Ajuste, &'static str> {
     Ajuste::entender(&bytes).map_err(|_| "no se entiende")
 }
 
-/// C2: los mosaicos del panel rápido guardados en `Prefs/panel`. `Err` con el porqué si no hay o no se entiende (y
-/// entonces, los de serie). Lo que vale lo dice `panel_mosaicos`, el mismo que usa el panel.
-fn leer_panel() -> Result<Orden, &'static str> {
-    // Uno más de lo que vale: si llega a tanto, `entender` dice que es largo (y no se lee un fichero enorme).
-    let bytes = leer_prefs(FICHERO_PANEL, panel_mosaicos::MAX_TEXTO as u64 + 1).map_err(|e| if e == "no se entiende" { "demasiado largo" } else { e })?;
-    Orden::entender(&bytes)
-}
 
 /// Las filas de Apariencia: los dos modos, los colores y el del fondo, con una marca en lo elegido; y los fondos de
 /// `Fondos/`, con una marca en el que se ve (C3). También los nombres de los fondos, en el orden de las filas.
@@ -1337,12 +1338,285 @@ fn filas(lista: &[(String, String)]) -> String {
 }
 
 /// La ventana, abierta en la categoría `categoria`, hasta que el usuario la cierra.
+// ---------------------------------------------------------------------------------------------------------------
+// S27, oleada 3: los ajustes de los avisos y el centro de control, en texto (`ENV:Escritorio/avisos` y
+// `ENV:Escritorio/centro-control`; S36, regla 1). El centro los lee (de `ENV:` o, sin él, de `ENVARC:`), los aplica en
+// marcha y se los da a quien los usa: los de los avisos al servicio de avisos (que se los pasa a la barra), y el del
+// centro de control al panel, por la puerta que este le dio ("cc vigilar"). Así el panel y la barra no leen ficheros.
+
+const FICHERO_AVISOS: &str = "Escritorio/avisos";
+const FICHERO_CC: &str = "Escritorio/centro-control";
+const CABECERA_CC: &str = "El centro de control (Ajustes > Centro de control, o Editar en el propio panel). Este fichero manda.\ncolumnas: de 4 a 12. mosaicos: separados por comas, cada uno \"nombre ancho\" (en columnas, de media en media), con \"x alto\" si no es 1,\n\"pequeño\" para una fila de 48 y \"@columna:fila\" para fijar su sitio. Los nombres de DMS (volumeSlider, wifi...) también valen.\nNombres: usuario, ajustes, bloquear, apagar, editar, volumen, brillo, red, bluetooth, salida, entrada, noche, oscuro, no_molestar,\ndespierto, bateria, disco, programas.";
+/// La puerta del panel (una copia de su canal con el compositor), para darle el centro de control; 0 sin ella.
+static PUERTA_PANEL: AtomicU32 = AtomicU32::new(0);
+/// Lo que manda el centro por esa puerta, delante de la rejilla en bytes.
+const CCFG: &[u8; 4] = b"CCFG";
+
+/// El centro de control en uso (`ENV:`, o `ENVARC:`, o lo de serie). `Err` con el porqué si el fichero no vale (y
+/// entonces, lo de serie).
+fn leer_cc() -> Result<cc_rejilla::Rejilla, String> {
+    let bytes = match leer_ajuste(FICHERO_CC) {
+        Ok(b) => b,
+        Err(e) if e == "no hay" => return Ok(cc_rejilla::Rejilla::de_serie()),
+        Err(e) => return Err(e),
+    };
+    let x = kit::idioma::texto::Ajustes::leer(&bytes).map_err(|_| String::from("no es texto"))?;
+    cc_rejilla::Rejilla::leer(x.valor("columnas"), x.valor("mosaicos")).map_err(|e| alloc::format!("no se entiende ({:?})", e))
+}
+
+/// El texto del centro de control, sobre el que había (sus comentarios y lo demás se quedan).
+fn texto_de_cc(r: &cc_rejilla::Rejilla) -> Vec<u8> {
+    use kit::idioma::texto::Ajustes;
+    let antes = leer_ajuste(FICHERO_CC).ok();
+    let mut x = antes.as_deref().and_then(|b| Ajustes::leer(b).ok()).unwrap_or_else(|| {
+        let mut x = Ajustes::nuevo();
+        x.comentar(CABECERA_CC);
+        x
+    });
+    let mut m = [0u8; 1024];
+    let n = r.escribir(&mut m).unwrap_or(0);
+    let _ = x.poner("columnas", &alloc::format!("{}", r.columnas));
+    let _ = x.poner("mosaicos", core::str::from_utf8(&m[..n]).unwrap_or(""));
+    x.texto().into_bytes()
+}
+
+/// Da el centro de control al panel por su puerta (si la dio). El estado de escribir.
+fn dar_cc_al_panel(r: &cc_rejilla::Rejilla) -> i64 {
+    let puerta = PUERTA_PANEL.load(Ordering::Relaxed);
+    if puerta == 0 {
+        return -1;
+    }
+    let mut m = [0u8; 4 + 3 + 6 * cc_rejilla::MAX];
+    m[..4].copy_from_slice(CCFG);
+    let n = r.escribir_bytes(&mut m[4..]);
+    let e = dashos::canal_escribir(puerta, &m[..4 + n], &[]);
+    if e == dashos::E_CERRADO {
+        dashos::cerrar(puerta);
+        PUERTA_PANEL.store(0, Ordering::Relaxed);
+    }
+    e
+}
+
+/// Pone el centro de control en `ENV:` (se ve ya: se lo da al panel) y, con `guardar`, también en `ENVARC:`. Lo que
+/// pasó, para decirlo.
+fn usar_cc(r: &cc_rejilla::Rejilla, guardar: bool) -> String {
+    let usado = escribir_env(FICHERO_CC, &texto_de_cc(r));
+    let guardado = if guardar && usado.is_ok() { Some(guardar_en_envarc(FICHERO_CC)) } else { None };
+    let panel = dar_cc_al_panel(r);
+    alloc::format!("en uso: {}; guardado: {}; al panel: {}", match usado {
+        Ok(b) => alloc::format!("{} bytes", b),
+        Err(e) => e,
+    }, guardado.map_or(String::from("no"), |g| alloc::format!("{}", g)), panel)
+}
+
+/// Los ajustes de los avisos en uso. `Err` con el porqué si no valen (y entonces, los de serie).
+fn leer_ajustes_avisos() -> Result<avisos_ajustes::Ajustes, String> {
+    let bytes = match leer_ajuste(FICHERO_AVISOS) {
+        Ok(b) => b,
+        Err(e) if e == "no hay" => return Ok(avisos_ajustes::Ajustes::DE_SERIE),
+        Err(e) => return Err(e),
+    };
+    let x = kit::idioma::texto::Ajustes::leer(&bytes).map_err(|_| String::from("no es texto"))?;
+    let mut a = avisos_ajustes::Ajustes::DE_SERIE;
+    // Una clave que no vale no tira las demás: se dice y se queda la de serie.
+    let mut malas = Vec::new();
+    for c in avisos_ajustes::CLAVES {
+        if let Some(v) = x.valor(c)
+            && let Err(e) = a.poner(c, v)
+        {
+            malas.push(alloc::format!("{} ({})", c, e));
+        }
+    }
+    if !malas.is_empty() {
+        println!("  [centro] {}: no valen {}; se quedan las de serie", FICHERO_AVISOS, malas.join(", "));
+    }
+    Ok(a)
+}
+
+fn texto_de_avisos(a: &avisos_ajustes::Ajustes) -> Vec<u8> {
+    use kit::idioma::texto::Ajustes;
+    let antes = leer_ajuste(FICHERO_AVISOS).ok();
+    let mut x = antes.as_deref().and_then(|b| Ajustes::leer(b).ok()).unwrap_or_else(|| {
+        let mut x = Ajustes::nuevo();
+        x.comentar(avisos_ajustes::CABECERA);
+        x
+    });
+    for c in avisos_ajustes::CLAVES {
+        let mut b = [0u8; 40];
+        let n = a.valor(c, &mut b);
+        let _ = x.poner(c, core::str::from_utf8(&b[..n]).unwrap_or(""));
+    }
+    x.texto().into_bytes()
+}
+
+/// La puerta de la barra (una copia de su canal con el compositor) para darle los ajustes de los avisos; 0 sin ella.
+static PUERTA_BARRA: AtomicU32 = AtomicU32::new(0);
+const AVAJ: &[u8; 4] = b"AVAJ";
+
+/// Da los ajustes de los avisos a la barra por su puerta (la barra se los pasa al servicio de avisos). El estado.
+fn dar_ajustes_a_avisos(a: &avisos_ajustes::Ajustes) -> i64 {
+    let puerta = PUERTA_BARRA.load(Ordering::Relaxed);
+    if puerta == 0 {
+        return -1;
+    }
+    let mut m = [0u8; 4 + avisos_ajustes::LARGO];
+    m[..4].copy_from_slice(AVAJ);
+    let n = a.escribir(&mut m[4..]);
+    let e = dashos::canal_escribir(puerta, &m[..4 + n], &[]);
+    if e == dashos::E_CERRADO {
+        dashos::cerrar(puerta);
+        PUERTA_BARRA.store(0, Ordering::Relaxed);
+    }
+    e
+}
+
+fn usar_avisos(a: &avisos_ajustes::Ajustes, guardar: bool) -> String {
+    let usado = escribir_env(FICHERO_AVISOS, &texto_de_avisos(a));
+    let guardado = if guardar && usado.is_ok() { Some(guardar_en_envarc(FICHERO_AVISOS)) } else { None };
+    let barra = dar_ajustes_a_avisos(a);
+    alloc::format!("en uso: {}; guardado: {}; a la barra: {}", match usado {
+        Ok(b) => alloc::format!("{} bytes", b),
+        Err(e) => e,
+    }, guardado.map_or(String::from("no"), |g| alloc::format!("{}", g)), barra)
+}
+
+/// Lo de `ENV:` cambió (o se arranca): se leen los dos y se dan a quien los usa, si son otros que los que se dieron.
+fn aplicar_avisos_y_cc(dados: &mut (Option<avisos_ajustes::Ajustes>, Option<cc_rejilla::Rejilla>)) {
+    match leer_ajustes_avisos() {
+        Ok(a) if dados.0 != Some(a) => {
+            println!("  [centro] avisos en marcha: emergentes {}, animación {} ms; a la barra: {}", a.posicion.nombre(), a.animacion_ms, dar_ajustes_a_avisos(&a));
+            dados.0 = Some(a);
+        }
+        Ok(_) => {}
+        Err(e) => println!("  [centro] {}: {}; se quedan los que había", FICHERO_AVISOS, e),
+    }
+    match leer_cc() {
+        Ok(r) if dados.1.map(|d| (d.columnas, d.puestos().to_vec())) != Some((r.columnas, r.puestos().to_vec())) => {
+            println!("  [centro] centro de control en marcha: {} mosaicos en {} columnas; al panel: {}", r.n, r.columnas, dar_cc_al_panel(&r));
+            dados.1 = Some(r);
+        }
+        Ok(_) => {}
+        Err(e) => println!("  [centro] {}: {}; se queda el que había", FICHERO_CC, e),
+    }
+}
+
+/// Las filas de Ajustes > Avisos (Intro cambia una a la siguiente opción).
+fn lineas_avisos(a: &avisos_ajustes::Ajustes) -> Vec<String> {
+    let tiempo = |ms: u32| if ms == 0 { String::from(tr(210, "hasta cerrarlo")) } else { alloc::format!("{} s", ms / 1000) };
+    let horario = match a.horario {
+        Some(h) => alloc::format!("{:02}:{:02} a {:02}:{:02}", h.desde / 60, h.desde % 60, h.hasta / 60, h.hasta % 60),
+        None => String::from(tr(211, "sin horario")),
+    };
+    alloc::vec![
+        trf(212, "Dónde salen: {}", &[&a.posicion.nombre()]),
+        trf(213, "Animación: {} ms", &[&a.animacion_ms]),
+        trf(214, "Tiempo de los avisos normales: {}", &[&tiempo(a.tiempos_ms[1])]),
+        trf(215, "Tiempo de los urgentes: {}", &[&tiempo(a.tiempos_ms[2])]),
+        trf(216, "Barra de tiempo: {}", &[&si_no(a.barra_tiempo)]),
+        trf(217, "Los urgentes salen con no molestar: {}", &[&si_no(a.urgentes_pasan)]),
+        trf(218, "No molestar programado: {}", &[&horario]),
+        trf(219, "Sin el texto en los emergentes: {}", &[&si_no(a.privado)]),
+        trf(220, "Un clic en el aviso hace su acción: {}", &[&si_no(a.cuerpo_hace_accion)]),
+        trf(221, "Días en el historial: {}", &[&if a.dias_historial == 0 { String::from(tr(222, "siempre")) } else { alloc::format!("{}", a.dias_historial) }]),
+    ]
+}
+
+/// Cambia la fila `k` de Avisos a la siguiente opción. `false` si no hay tal fila.
+fn cambiar_avisos(a: &mut avisos_ajustes::Ajustes, k: usize) -> bool {
+    use avisos_ajustes::Posicion as P;
+    let siguiente = |v: u32, opciones: &[u32]| opciones[(opciones.iter().position(|&x| x == v).map_or(0, |i| i + 1)) % opciones.len()];
+    match k {
+        0 => {
+            let orden = [P::ArribaCentro, P::ArribaDerecha, P::ArribaIzquierda, P::AbajoCentro, P::AbajoDerecha, P::AbajoIzquierda];
+            a.posicion = orden[(orden.iter().position(|&p| p == a.posicion).unwrap_or(0) + 1) % orden.len()];
+        }
+        1 => a.animacion_ms = siguiente(a.animacion_ms as u32, &[0, 200, 400, 800]) as u16,
+        2 => a.tiempos_ms[1] = siguiente(a.tiempos_ms[1], &[3000, 5000, 8000, 10000, 0]),
+        3 => a.tiempos_ms[2] = siguiente(a.tiempos_ms[2], &[0, 10000, 30000]),
+        4 => a.barra_tiempo = !a.barra_tiempo,
+        5 => a.urgentes_pasan = !a.urgentes_pasan,
+        6 => {
+            a.horario = match a.horario.map(|h| h.desde) {
+                None => Some(avisos_ajustes::Horario { desde: 22 * 60, hasta: 7 * 60, dias: avisos_ajustes::TODOS_LOS_DIAS }),
+                Some(d) if d == 22 * 60 => Some(avisos_ajustes::Horario { desde: 23 * 60, hasta: 8 * 60, dias: avisos_ajustes::TODOS_LOS_DIAS }),
+                _ => None,
+            }
+        }
+        7 => a.privado = !a.privado,
+        8 => a.cuerpo_hace_accion = !a.cuerpo_hace_accion,
+        9 => a.dias_historial = siguiente(a.dias_historial as u32, &[1, 3, 7, 14, 30, 0]) as u16,
+        _ => return false,
+    }
+    true
+}
+
+/// Las filas de Ajustes > Centro de control: cada mosaico con su ancho (Intro lo cambia; Quitar lo quita; Subir y Bajar
+/// lo mueven), los que se pueden añadir (Intro lo añade) y volver a lo de serie.
+fn lineas_cc(r: &cc_rejilla::Rejilla) -> Vec<String> {
+    let mut l: Vec<String> = r.puestos().iter().enumerate().map(|(k, p)| {
+        let d = p.def();
+        let ancho = if p.w2 % 2 == 0 { alloc::format!("{}", p.w2 / 2) } else { alloc::format!("{},5", p.w2 / 2) };
+        let mut t = trf(230, "{}. {} · {} columnas", &[&(k + 1), &d.nombre, &ancho]);
+        if p.pequeno {
+            t.push_str(tr(231, " · pequeño"));
+        }
+        if !d.disponible {
+            t.push_str(tr(232, " · aún no disponible"));
+        }
+        t
+    }).collect();
+    for d in cc_rejilla::CATALOGO.iter().filter(|d| !r.puestos().iter().any(|p| p.def().id == d.id)) {
+        l.push(trf(233, "Añadir: {}", &[&d.nombre]));
+    }
+    l.push(trf(234, "Columnas: {}", &[&r.columnas]));
+    l.push(String::from(tr(235, "Volver a lo de serie")));
+    l
+}
+
+/// Intro en la fila `k` de Centro de control. Lo que se hizo, si algo.
+fn cambiar_cc(r: &mut cc_rejilla::Rejilla, k: usize) -> Option<String> {
+    if k < r.n {
+        // El ancho: 1, 2, 4, 8 columnas (o lo que quepa) y vuelta.
+        let p = r.puestos[k];
+        let anchos = [2u8, 4, 8, 10, 16];
+        let siguiente = anchos.iter().copied().find(|&w| w > p.w2).unwrap_or(2);
+        r.ancho(k, siguiente);
+        return Some(alloc::format!("{}: {} columnas", p.def().id, r.puestos[k].w2 as f32 / 2.0));
+    }
+    let faltan: Vec<usize> = (0..cc_rejilla::CATALOGO.len()).filter(|&d| !r.puestos().iter().any(|p| p.def as usize == d)).collect();
+    let i = k - r.n;
+    if let Some(&d) = faltan.get(i) {
+        return r.anadir(d).then(|| alloc::format!("añadido {}", cc_rejilla::CATALOGO[d].id));
+    }
+    match i - faltan.len() {
+        0 => {
+            r.columnas = if r.columnas >= cc_rejilla::MAX_COLUMNAS { cc_rejilla::MIN_COLUMNAS } else { r.columnas + 1 };
+            Some(alloc::format!("{} columnas", r.columnas))
+        }
+        1 => {
+            *r = cc_rejilla::Rejilla::de_serie();
+            Some(String::from("lo de serie"))
+        }
+        _ => None,
+    }
+}
+
+/// S27, oleada 3: si en la ventana se cambiaron los avisos o el centro de control (están en `ENV:`; al cerrar, se guardan).
+static CAMBIO_AVISOS: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static CAMBIO_CC: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 fn ventana(categoria: usize, uso: &mut Apariencia) {
     // S27: cerrar es Guardar. Lo que se cambió en Apariencia y no se guardó ni se dejó en uso (Usar), al cerrar se guarda.
     let mut pendiente = false;
     ventana_dentro(categoria, uso, &mut pendiente);
     if pendiente {
         println!("  [centro] al cerrar, la apariencia se guarda en ENVARC:: {}", guardar_en_envarc(FICHERO_TEMA));
+    }
+    if CAMBIO_AVISOS.swap(false, Ordering::Relaxed) {
+        println!("  [centro] al cerrar, los avisos se guardan en ENVARC:: {}", guardar_en_envarc(FICHERO_AVISOS));
+    }
+    if CAMBIO_CC.swap(false, Ordering::Relaxed) {
+        println!("  [centro] al cerrar, el centro de control se guarda en ENVARC:: {}", guardar_en_envarc(FICHERO_CC));
     }
     adios_al_compositor();
     dashos::memoria_quitar(VA);
@@ -1434,6 +1708,9 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
     // Trasfondo: el monitor del sistema y los ajustes del panel del escritorio.
     let mut vm = VistaMonitor { med: monitor::Medidor::default(), orden: 0, filas: Vec::new(), medido: 0, sin_datos: false, nombres: nombres_de_cuentas() };
     let mut aj_panel = leer_ajustes_monitor();
+    // S27, oleada 3: los avisos y el centro de control, como estén en uso.
+    let mut aj_avisos = leer_ajustes_avisos().unwrap_or(avisos_ajustes::Ajustes::DE_SERIE);
+    let mut cc = leer_cc().unwrap_or_else(|_| cc_rejilla::Rejilla::de_serie());
     let poner = |i: &mut Interfaz, cat: usize, lista: &[(String, String)], reg: &[String]| {
         let (explicacion, contenido) = if cat == PERMISOS {
             (tr(87, "Lo que cada programa puede usar. Quitarlo lo revoca ya."), filas(lista))
@@ -1449,6 +1726,10 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
             (tr(92, "Lo tuyo con detalle; lo demás, sumado."), reg.join("|"))
         } else if cat == PANEL_FONDO {
             (tr(93, "Los menús y el monitor del fondo. Intro cambia una fila."), reg.join("|"))
+        } else if cat == AVISOS_CAT {
+            (tr(236, "Los emergentes y el no molestar, como en DMS. Intro cambia una fila; se ve ya."), reg.join("|"))
+        } else if cat == PANEL_CC {
+            (tr(237, "Qué sale en el panel rápido y en qué orden. Intro cambia el ancho o añade; se ve ya."), reg.join("|"))
         } else {
             (tr(94, "El sistema."), reg.join("|"))
         };
@@ -1457,15 +1738,18 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
         i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(contenido));
         i.arbol.poner(permisos, atr::VALOR, Valor::Int(-1));
         i.arbol.poner(permisos, atr::PRIMERA, Valor::Int(0));
-        i.arbol.poner(quitar, atr::DESACTIVADO, Valor::Bool(cat != PERMISOS && cat != MONITOR_SIS && cat != APARIENCIA));
+        i.arbol.poner(quitar, atr::DESACTIVADO, Valor::Bool(cat != PERMISOS && cat != MONITOR_SIS && cat != APARIENCIA && cat != PANEL_CC));
         let texto_quitar = match cat {
             MONITOR_SIS => tr(95, "Cerrar proceso"),
             APARIENCIA => tr(99, "Guardar"),
             _ => tr(85, "Quitar"),
         };
         i.arbol.poner(quitar, atr::TEXTO, Valor::Texto(texto_quitar.into()));
-        i.arbol.poner(usar, atr::DESACTIVADO, Valor::Bool(cat != APARIENCIA));
-        i.arbol.poner(cancelar, atr::DESACTIVADO, Valor::Bool(cat != APARIENCIA));
+        i.arbol.poner(usar, atr::DESACTIVADO, Valor::Bool(cat != APARIENCIA && cat != PANEL_CC));
+        i.arbol.poner(cancelar, atr::DESACTIVADO, Valor::Bool(cat != APARIENCIA && cat != PANEL_CC));
+        // En Centro de control, Usar y Cancelar mueven el mosaico elegido.
+        i.arbol.poner(usar, atr::TEXTO, Valor::Texto(if cat == PANEL_CC { tr(238, "Subir") } else { tr(97, "Usar") }.into()));
+        i.arbol.poner(cancelar, atr::TEXTO, Valor::Texto(if cat == PANEL_CC { tr(239, "Bajar") } else { tr(98, "Cancelar") }.into()));
     };
     if cat == SEGURIDAD {
         lineas_registro = registro();
@@ -1482,6 +1766,10 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
         lineas_registro = lineas_monitor(&vm);
     } else if cat == PANEL_FONDO {
         lineas_registro = lineas_panel(&aj_panel);
+    } else if cat == AVISOS_CAT {
+        lineas_registro = lineas_avisos(&aj_avisos);
+    } else if cat == PANEL_CC {
+        lineas_registro = lineas_cc(&cc);
     } else if cat != PERMISOS {
         lineas_registro = acerca();
     }
@@ -1710,6 +1998,14 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                             aj_panel = leer_ajustes_monitor();
                             lineas_panel(&aj_panel)
                         }
+                        AVISOS_CAT => {
+                            aj_avisos = leer_ajustes_avisos().unwrap_or(aj_avisos);
+                            lineas_avisos(&aj_avisos)
+                        }
+                        PANEL_CC => {
+                            cc = leer_cc().unwrap_or(cc);
+                            lineas_cc(&cc)
+                        }
                         _ => acerca(),
                     };
                     println!("  [centro] {}: {}", CATEGORIAS[cat].1, lineas_registro.join("; "));
@@ -1744,6 +2040,53 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                     println!("  [centro] Escritorio: {}; {}", lineas_registro[0], r);
                     i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
                     cambio = true;
+                }
+                Some("elegir") if cat == AVISOS_CAT => {
+                    // S27: la siguiente opción, en `ENV:` (se ve ya: el servicio de avisos se la da a la barra).
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                    let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
+                    if let Ok(k) = usize::try_from(v) && cambiar_avisos(&mut aj_avisos, k) {
+                        let r = usar_avisos(&aj_avisos, false);
+                        CAMBIO_AVISOS.store(true, Ordering::Relaxed);
+                        lineas_registro = lineas_avisos(&aj_avisos);
+                        println!("  [centro] Avisos: {}; {}", lineas_registro[k], r);
+                        i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                        cambio = true;
+                    }
+                }
+                Some("elegir") if cat == PANEL_CC => {
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                    let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
+                    if let Some(hecho) = usize::try_from(v).ok().and_then(|k| cambiar_cc(&mut cc, k)) {
+                        let r = usar_cc(&cc, false);
+                        CAMBIO_CC.store(true, Ordering::Relaxed);
+                        lineas_registro = lineas_cc(&cc);
+                        println!("  [centro] Centro de control: {}; {}", hecho, r);
+                        i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                        cambio = true;
+                    }
+                }
+                Some(como @ ("quitar" | "quitar-supr" | "usar" | "cancelar")) if cat == PANEL_CC => {
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                    let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
+                    let k = usize::try_from(v).unwrap_or(usize::MAX);
+                    let hecho = match como {
+                        "usar" => k.checked_sub(1).is_some_and(|a| cc.mover(k, a)).then(|| (alloc::format!("sube {}", cc.puestos[k - 1].def().id), k - 1)),
+                        "cancelar" => cc.mover(k, k + 1).then(|| (alloc::format!("baja {}", cc.puestos[k + 1].def().id), k + 1)),
+                        _ => {
+                            let id = cc.puestos().get(k).map(|p| p.def().id);
+                            cc.quitar(k).then(|| (alloc::format!("quita {}", id.unwrap_or("?")), k.min(cc.n.saturating_sub(1))))
+                        }
+                    };
+                    if let Some((que, fila)) = hecho {
+                        let r = usar_cc(&cc, false);
+                        CAMBIO_CC.store(true, Ordering::Relaxed);
+                        lineas_registro = lineas_cc(&cc);
+                        println!("  [centro] Centro de control: {}; {}", que, r);
+                        i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                        i.arbol.poner(permisos, atr::VALOR, Valor::Int(fila as i64));
+                        cambio = true;
+                    }
                 }
                 Some("elegir") if cat == PANEL_FONDO => {
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
@@ -2013,43 +2356,6 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
 /// C2: quién puede pedir "modo oscuro" o "modo claro" por el canal del centro, y leer o guardar los mosaicos del panel
 /// ("panel leer", "panel guardar ..."): el panel rápido.
 const PIDEN_MODO: &[&str] = &["panel"];
-
-/// C2: "panel leer". La respuesta: el estado (0 guardado; 1 no hay y 2 no se entiende, y van los de serie; -2 sin
-/// servicio de archivos, y también van los de serie) y la línea de los mosaicos.
-fn contestar_panel_leer(llave: u32) {
-    let (estado, orden) = match leer_panel() {
-        Ok(o) => (0, o),
-        Err(porque) => {
-            println!("  [centro] panel guardado: {}; se queda el de serie", porque);
-            (match porque { "no hay" => 1, "sin servicio de archivos" => -2, _ => 2 }, Orden::de_serie())
-        }
-    };
-    let mut r = [0u8; 4 + panel_mosaicos::MAX_TEXTO];
-    r[..4].copy_from_slice(&(estado as i32).to_le_bytes());
-    let mut linea = [0u8; panel_mosaicos::MAX_TEXTO];
-    let n = orden.escribir(&mut linea);
-    r[4..4 + n].copy_from_slice(&linea[..n]);
-    dashos::canal_escribir(llave, &r[..4 + n], &[]);
-}
-
-/// C2: "panel guardar <línea>". Si la línea no vale, -1 y el disco no se toca. Si vale, se guarda y se relee; el
-/// estado de guardar (0 si bien), o -3 si al releer no sale lo mismo.
-fn panel_guardar(linea: &[u8]) -> i32 {
-    let o = match Orden::entender(linea) {
-        Ok(o) => o,
-        Err(porque) => {
-            println!("  [centro] panel: {} (lo pide el panel): nada", porque);
-            return -1;
-        }
-    };
-    let mut texto = [0u8; panel_mosaicos::MAX_TEXTO];
-    let n = o.escribir(&mut texto);
-    let (guardado, _) = guardar_prefs(FICHERO_PANEL, &texto[..n]);
-    let releido = leer_panel() == Ok(o);
-    let vistos: Vec<&str> = o.vistos().map(|m| panel_mosaicos::MOSAICOS[m].0).collect();
-    println!("  [centro] panel: {} (lo pide el panel), guardado: {}; releído: {}", vistos.join(" "), guardado, if releido { "sí" } else { "no" });
-    if guardado != 0 { guardado } else if releido { 0 } else { -3 }
-}
 
 /// C2: el modo pedido por el panel, aunque la ventana esté cerrada: con el color guardado, se pone en el compositor
 /// (una conexión de un momento) y, si se pudo, se guarda; si no, el disco no cambia (no dice algo que no se ve). El
@@ -2348,6 +2654,9 @@ fn principal() -> u64 {
     // Ajustes en texto: vigilar `ENV:` (sin sesión aún, se reintenta con un temporizador).
     let mut vigila = Vigila::nueva();
     vigila.armar();
+    // S27, oleada 3: los avisos y el centro de control que se dieron (al servicio y al panel).
+    let mut dados = (None, None);
+    aplicar_avisos_y_cc(&mut dados);
     loop {
         let (n, k, marca) = match recibir(CANAL, &mut buf, &mut ll) {
             Recibido::Mensaje { n, k, marca } => (n, k, marca),
@@ -2358,6 +2667,7 @@ fn principal() -> u64 {
         if marca == MARCA_PROPIA {
             cerrar_llaves(&ll[..k]);
             al_cambiar_env(&mut vigila, &mut idioma, &mut uso);
+            aplicar_avisos_y_cc(&mut dados);
             continue;
         }
         // Sin marca: las entradas del directorio de `inicio` (8 bytes de marca y 16 de nombre), para saber quién es quién.
@@ -2379,15 +2689,50 @@ fn principal() -> u64 {
             .filter(|_| nombres.get(&marca).is_some_and(|n| PIDEN_MODO.contains(&n.as_str())));
             // C2: los mosaicos del panel, también solo del panel rápido. A otro, lo de un pedido que no vale (-1).
             let del_panel = nombres.get(&marca).is_some_and(|n| PIDEN_MODO.contains(&n.as_str()));
-            if del_panel && &buf[..n] == b"panel leer" {
-                if k >= 1 {
-                    contestar_panel_leer(ll[0]);
+            // S27, oleada 3: el panel da su puerta ("cc vigilar"): por ella le llega el centro de control cada vez que
+            // cambie. Se le contesta con el que hay.
+            if del_panel && &buf[..n] == b"cc vigilar" && k >= 2 {
+                let antes = PUERTA_PANEL.swap(ll[1], Ordering::Relaxed);
+                if antes != 0 {
+                    dashos::cerrar(antes);
                 }
-                cerrar_llaves(&ll[..k]);
+                let r = leer_cc().unwrap_or_else(|e| {
+                    println!("  [centro] {}: {}; se queda el de serie", FICHERO_CC, e);
+                    cc_rejilla::Rejilla::de_serie()
+                });
+                println!("  [centro] el panel vigila el centro de control: {} mosaicos; se lo da: {}", r.n, dar_cc_al_panel(&r));
+                dashos::canal_escribir(ll[0], &0i32.to_le_bytes(), &[]);
+                dados.1 = Some(r);
+                cerrar_llaves(&ll[2..k]);
                 continue;
             }
-            if del_panel && let Some(linea) = buf[..n].strip_prefix(b"panel guardar ") {
-                let estado = panel_guardar(linea);
+            // La barra da su puerta ("avisos vigilar"): por ella le llegan los ajustes de los avisos.
+            if nombres.get(&marca).is_some_and(|n| n == "barra") && &buf[..n] == b"avisos vigilar" && k >= 2 {
+                let antes = PUERTA_BARRA.swap(ll[1], Ordering::Relaxed);
+                if antes != 0 {
+                    dashos::cerrar(antes);
+                }
+                let a = leer_ajustes_avisos().unwrap_or(avisos_ajustes::Ajustes::DE_SERIE);
+                println!("  [centro] la barra vigila los avisos: emergentes {}; se los da: {}", a.posicion.nombre(), dar_ajustes_a_avisos(&a));
+                dashos::canal_escribir(ll[0], &0i32.to_le_bytes(), &[]);
+                dados.0 = Some(a);
+                cerrar_llaves(&ll[2..k]);
+                continue;
+            }
+            // El panel guarda lo que se editó en él (en bytes): en `ENV:` y en `ENVARC:`. Lo que no vale, -1 y nada.
+            if del_panel && let Some(bytes) = buf[..n].strip_prefix(b"cc guardar ") {
+                let estado: i32 = match cc_rejilla::Rejilla::leer_bytes(bytes) {
+                    Some(r) => {
+                        let hecho = usar_cc(&r, true);
+                        println!("  [centro] centro de control (lo pide el panel): {} mosaicos; {}", r.n, hecho);
+                        dados.1 = Some(r);
+                        if hecho.contains("guardado: 0") { 0 } else { -3 }
+                    }
+                    None => {
+                        println!("  [centro] centro de control (lo pide el panel): no se entiende; nada");
+                        -1
+                    }
+                };
                 if k >= 1 {
                     dashos::canal_escribir(ll[0], &estado.to_le_bytes(), &[]);
                 }
@@ -2408,6 +2753,8 @@ fn principal() -> u64 {
                     println!("  [centro] abre {}", CATEGORIAS[cat].1);
                     idioma = poner_idioma(idioma);
                     ventana(cat, &mut uso);
+                    // Lo que se cambió en la ventana ya se dio; lo de `ENV:` que cambió mientras, se da ahora.
+                    aplicar_avisos_y_cc(&mut dados);
                 }
                 None => {
                     // Los tres primeros se dicen; los demás (una inundación) solo se cuentan.

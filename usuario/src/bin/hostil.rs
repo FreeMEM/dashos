@@ -1383,13 +1383,33 @@ fn centro(memoria: u32) -> bool {
     if !bien {
         println!("  [hostil] centro: rechazos {:?}, tras la inundación {}", rechazos, despues);
     }
-    // C2: los mosaicos del panel rápido, tampoco: ni leerlos ni guardarlos (con uno que vale, con uno que no existe,
-    // repetidos o vacío). A todo, -1, y el centro no toca el disco (la comprobación del disco tras la prueba mira que
-    // `C/Prefs/panel` acaba como lo dejó el panel).
-    let panel: [&[u8]; 6] = [b"panel leer", b"panel guardar volumen", b"panel guardar ", b"panel guardar nube", b"panel guardar oscuro oscuro", b"panel guardar"];
-    let rechazos_panel: [i32; 6] = core::array::from_fn(|k| pedir(panel[k]));
-    let panel_bien = rechazos_panel.iter().all(|&e| e == -1);
-    println!("  [hostil] centro: los mosaicos del panel sin ser el panel: {}", if panel_bien { "-1 y nada" } else { "MAL" });
+    // C2 y S27 (oleada 3): el centro de control del panel, tampoco: ni vigilarlo (dando una puerta suya), ni guardarlo
+    // (con uno que vale, roto o vacío), ni vigilar los ajustes de los avisos como la barra. A todo, -1, y por la puerta
+    // que dio no le llega nada.
+    let (oigo, puerta) = dashos::canal_crear();
+    let vigilar = |p: &[u8], puerta: u32| -> i32 {
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 4];
+        let otra = dashos::llave_duplicar(puerta, dashos::ESCRIBIR | dashos::TRANSFERIR, 0).max(0) as u32;
+        let e = if escribir(CENTRO, p, &[suyo, otra]) && dashos::canal_leer_plazo(lectura, &mut r, &mut [], 3_000_000).0 == 4 { i32::from_le_bytes(r) } else { i32::MIN };
+        dashos::cerrar(lectura);
+        e
+    };
+    let mut bueno = alloc::vec::Vec::from(&b"cc guardar "[..]);
+    bueno.extend_from_slice(&[1, 8, 1, 0, 2, 2, 1, 0, 0]);
+    let panel: [&[u8]; 6] = [b"panel leer", &bueno, b"cc guardar ", b"cc guardar \x01\x08\x05", b"cc vigilar", b"avisos vigilar"];
+    let mut rechazos_panel: [i32; 8] = [0; 8];
+    for (k, p) in panel.iter().enumerate() {
+        rechazos_panel[k] = pedir(p);
+    }
+    rechazos_panel[6] = vigilar(b"cc vigilar", puerta);
+    rechazos_panel[7] = vigilar(b"avisos vigilar", puerta);
+    let mut nada = [0u8; 64];
+    let llega = dashos::canal_leer_plazo(oigo, &mut nada, &mut [], 500_000).0;
+    dashos::cerrar(oigo);
+    dashos::cerrar(puerta);
+    let panel_bien = rechazos_panel.iter().all(|&e| e == -1) && llega < 0;
+    println!("  [hostil] centro: el centro de control del panel y los ajustes de los avisos sin ser el panel ni la barra: {}", if panel_bien { "-1 y nada" } else { "MAL" });
     if !panel_bien {
         println!("  [hostil] centro: a los mosaicos del panel, {:?}", rechazos_panel);
     }

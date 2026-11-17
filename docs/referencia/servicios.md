@@ -791,6 +791,28 @@ El servicio de notificaciones, solo en `virt` por ahora. Canal "avisos"; el prot
   10 por minuto).
 - Guarda 50, como mucho 8 de cada programa. Lo de una persona con su sesión detrás no sale hasta que vuelve.
 - Leer, marcar como leídos y borrar: solo la barra.
+- S27 (oleada 3, el modelo de DMS): `AVISAR_CON` añade el número de un aviso propio que sustituye (0 si es nuevo) y
+  hasta 4 acciones (identificador de hasta 16 bytes, `a-z A-Z 0-9 _ - .`, sin repetir, y etiqueta de hasta 24); la de
+  identificador `default` es la del clic en el cuerpo. Con una segunda llave (un canal suyo), el programa oye las que se
+  pulsen (`ACCION_PULSADA`: número e identificador); en Rust, `avisos_cliente::avisar_con` y `oir_accion`. Sustituir
+  un aviso de otro programa: -2. Acciones mal hechas: -1.
+- Un aviso es "actual" hasta que se descarta (`DESCARTAR`, `DESCARTAR_TODO`) y sigue en el historial hasta que se quita
+  (`QUITAR`, `BORRAR_TODO`) o caduca (los días de `ENV:Escritorio/avisos`, 7 de serie). `LEER` con un tercer u32 a 1
+  da solo los actuales. `ACCION`, `LEER_ACCIONES`: solo la barra.
+- "No molestar" (`NO_MOLESTAR`: puesto y minutos, 0 sin plazo; `ESTADO`): la barra y el panel. Es estado de la sesión,
+  como en DMS; el horario va en los ajustes.
+- `AJUSTES` (los de `ENV:Escritorio/avisos` en bytes, `avisos_ajustes.rs`): solo la barra, que se los da el centro de
+  control por una puerta suya ("avisos vigilar"). La cabecera de las respuestas lleva la versión de los ajustes y del
+  "no molestar": si cambia, la barra los vuelve a pedir (`LEER_AJUSTES`, `ESTADO`).
+
+## Centro de control configurable (S27)
+
+`ENV:Escritorio/centro-control`, en texto (`cc_rejilla.rs`): `columnas` (4 a 12, 8 de serie) y `mosaicos` (como
+`controlCenterWidgets` de DMS: "nombre ancho[xalto] [pequeño] [@columna:fila]", separados por comas; también con los
+nombres de DMS). Lo lee y lo guarda el centro (`centro`); el panel le da una puerta ("cc vigilar", solo el panel) y
+recibe por ella `CCFG` y la rejilla en bytes cada vez que cambia; lo editado en el panel se guarda con "cc guardar" y
+los bytes (solo el panel; el centro lo escribe en `ENV:` y, por `sesiones`, en `ENVARC:`). Los ajustes de los avisos
+van igual a la barra ("avisos vigilar", `AVAJ`).
 
 ## Caja Linux (H9)
 

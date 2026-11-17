@@ -311,3 +311,78 @@ in the window
 MSG_103
 in the top bar
 ; en la barra de arriba
+MSG_200
+Notifications
+; Avisos
+MSG_201
+Control center
+; Centro de control
+MSG_210
+until closed
+; hasta cerrarlo
+MSG_211
+no schedule
+; sin horario
+MSG_212
+Where they appear: {}
+; Dónde salen: {}
+MSG_213
+Animation: {} ms
+; Animación: {} ms
+MSG_214
+Time for normal notifications: {}
+; Tiempo de los avisos normales: {}
+MSG_215
+Time for urgent ones: {}
+; Tiempo de los urgentes: {}
+MSG_216
+Time bar: {}
+; Barra de tiempo: {}
+MSG_217
+Urgent ones show in do not disturb: {}
+; Los urgentes salen con no molestar: {}
+MSG_218
+Scheduled do not disturb: {}
+; No molestar programado: {}
+MSG_219
+No text in popups: {}
+; Sin el texto en los emergentes: {}
+MSG_220
+A click on the notification runs its action: {}
+; Un clic en el aviso hace su acción: {}
+MSG_221
+Days in the history: {}
+; Días en el historial: {}
+MSG_222
+always
+; siempre
+MSG_230
+{}. {} · {} columns
+; {}. {} · {} columnas
+MSG_231
+ · small
+;  · pequeño
+MSG_232
+ · not available yet
+;  · aún no disponible
+MSG_233
+Add: {}
+; Añadir: {}
+MSG_234
+Columns: {}
+; Columnas: {}
+MSG_235
+Back to defaults
+; Volver a lo de serie
+MSG_236
+Popups and do not disturb, as in DMS. Enter changes a row; it shows at once.
+; Los emergentes y el no molestar, como en DMS. Intro cambia una fila; se ve ya.
+MSG_237
+What the quick panel shows and in what order. Enter changes the width or adds; it shows at once.
+; Qué sale en el panel rápido y en qué orden. Intro cambia el ancho o añade; se ve ya.
+MSG_238
+Up
+; Subir
+MSG_239
+Down
+; Bajar

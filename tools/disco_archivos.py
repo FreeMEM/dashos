@@ -371,6 +371,14 @@ PRUEBA_SHELL = "\n".join([
     "Wait 1",
     "Ajuste idioma español",
     "Wait 1",
+    "; S27, oleada 3: los avisos y el centro de control, a mano: el centro los aplica en marcha (a la barra y al panel).",
+    "Ajuste Escritorio/avisos.posicion abajo-derecha",
+    "Wait 1",
+    'Ajuste Escritorio/centro-control.mosaicos "usuario 8, volumen 4, red 4, editar 1 pequeño"',
+    "Wait 1",
+    "Ajuste Escritorio/avisos.posicion arriba-centro",
+    "Delete ENV:Escritorio/centro-control QUIET",
+    "Wait 1",
     "; S10, los menús de los programas (docs/bitacoras/menus.md): Ajuste menus, que el centro aplica en marcha (el",
     "; compositor lo dice a todos). Lo hostil: un sitio que no existe, y cien cambios seguidos a mano: queda el último.",
     "Ajuste menus arriba",
@@ -537,6 +545,10 @@ SYS_FICHEROS = [
     # usuario (`Home:Prefs/Env-Archive`). Lo mira la prueba `ram`.
     ("Prefs/Env-Archive/Sys/idioma", b"es\n"),
     ("Prefs/Env-Archive/Sys/teclado", b"es\n"),
+    # S27, oleada 3: el centro de control de fábrica, roto (un mosaico repetido y otro que no existe; la basura, en las
+    # pruebas de PC): el centro se queda el de serie (el del escritorio de shiva) hasta que el panel o Ajustes guarden
+    # uno en el `ENVARC:` de Ana.
+    ("Prefs/Env-Archive/Escritorio/centro-control", b"# Roto a proposito (la prueba): se queda el de serie.\nmosaicos = volumen 4, volumen 4, nube 2\n"),
     # Un complemento de serie del Shell: unos alias. Los de cada usuario van en su `Home:S/Shell-Complementos`.
     ("S/Shell-Complementos/alias", "; Alias de serie del Shell. Los tuyos, en Home:S/Shell-Complementos.\nAlias ll List\nAlias la Dir ALL\nAlias md MakeDir\nAlias Exchange SYS:Tools/Commodities/Exchange\n".encode()),
     ("S/Prueba-Shell", PRUEBA_SHELL),
@@ -633,16 +645,15 @@ if sys.argv[1] == "--comprobar":
         # C3: los fondos de escritorio de prueba (`tools/fondos_prueba.py`).
         "C/Fondos/ cajón",
         *[f"C/Fondos/{n} {os.path.getsize(os.path.join(FONDOS, n))}" for n in sorted(fondos_prueba.FONDOS)],
+        *([f"C/Fondos/{os.path.basename(os.environ['DASHOS_FONDO_EXTRA'])} {os.path.getsize(os.environ['DASHOS_FONDO_EXTRA'])}"] if os.environ.get("DASHOS_FONDO_EXTRA") else []),
         "C/Prefs/ cajón",
         # Ajustes en texto: la apariencia ya no va aquí, sino en ENV:/ENVARC:Escritorio/apariencia (un solo sitio): en
         # C/Prefs no tiene que estar.
         # La escala de las ventanas Amiga, que pone el guion con la fila de Apariencia: "general dashos" y
         # "escala amiga 1".
         "C/Prefs/cajas 48",
-        # C2: los mosaicos del panel rápido, como los dejó el panel (los de serie).
         # C3: el fondo que se quedó, el último que se puso desde el centro.
         "C/Prefs/fondo 14",
-        "C/Prefs/panel 24",
         "C/Privado/ cajón",
         # S10: el comentario y el bit de archivado que puso el Workbench (Información, como Ana).
         "C/Privado/datos.bin 614400",
@@ -722,15 +733,11 @@ if sys.argv[1] == "--comprobar":
     ]
     hola = subprocess.run([ver, disco, desde, "Escrito/hola.txt"], check=True, capture_output=True).stdout
     grande = subprocess.run([ver, disco, desde, "C/grande.txt"], check=True, capture_output=True).stdout
-    panel = subprocess.run([ver, disco, desde, "C/Prefs/panel"], check=True, capture_output=True).stdout
     # FS8: y nada roto, ni un bloque perdido.
     comprobado = subprocess.run([ver, disco, desde, "--comprobar"], capture_output=True, text=True).stdout
     fallos = []
     if fondo != b"atardecer.png\n":
         fallos.append(f"C/Prefs/fondo: {fondo!r}")
-    # C2: los mosaicos del panel. Rotos al empezar; el panel quitó Bloquear y lo volvió a poner en su sitio: los de serie.
-    if panel != b"oscuro bloquear volumen\n":
-        fallos.append(f"C/Prefs/panel: {panel!r}")
     # A14: lo que DashOS escribió lleva la hora del reloj de la placa (en QEMU, la de este PC, en UTC): de esta prueba,
     # no de 1970 ni del futuro.
     fecha = subprocess.run([ver, disco, desde, "--fecha", "Escrito/hola.txt"], capture_output=True, text=True).stdout.split()
@@ -991,11 +998,6 @@ with tempfile.TemporaryDirectory() as t:
     # 0700 y ficheros 0600, que el hostil no ve.
     prefs = os.path.join(raiz, "C", "Prefs")
     os.makedirs(prefs)
-    # C2: los mosaicos del panel rápido, rotos: uno repetido y uno que no existe (la basura, en las pruebas de PC). El centro y el
-    # panel se quedan los de serie; al guardar, el centro lo reescribe.
-    with open(os.path.join(prefs, "panel"), "wb") as f:
-        f.write(b"volumen volumen nube\n")
-    os.chmod(os.path.join(prefs, "panel"), 0o600)
     os.chmod(prefs, 0o700)
     # C3: los fondos de escritorio de prueba, hechos aquí (`tools/fondos_prueba.py`, guardados junto al disco para no
     # rehacerlos): ondas.png y atardecer.png, que se ven; rota.png (un byte cambiado: su CRC no cuadra) y enorme.png
@@ -1007,6 +1009,11 @@ with tempfile.TemporaryDirectory() as t:
     for n in fondos_prueba.FONDOS:
         with open(os.path.join(raiz, "C", "Fondos", n), "wb") as f:
             f.write(open(os.path.join(hechos, n), "rb").read())
+    # S27: con DASHOS_FONDO_EXTRA=imagen.png, un fondo más (para las capturas con el fondo del usuario: nunca en git).
+    extra = os.environ.get("DASHOS_FONDO_EXTRA")
+    if extra:
+        with open(os.path.join(raiz, "C", "Fondos", os.path.basename(extra)), "wb") as f:
+            f.write(open(extra, "rb").read())
     with open(os.path.join(prefs, "fondo"), "w") as f:
         f.write("enorme.png\n")
     os.chmod(os.path.join(prefs, "fondo"), 0o600)

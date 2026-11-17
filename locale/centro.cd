@@ -207,3 +207,53 @@ MSG_102 (102//)
 en la ventana
 MSG_103 (103//)
 en la barra de arriba
+MSG_200 (200//)
+Avisos
+MSG_201 (201//)
+Centro de control
+MSG_210 (210//)
+hasta cerrarlo
+MSG_211 (211//)
+sin horario
+MSG_212 (212//)
+Dónde salen: {}
+MSG_213 (213//)
+Animación: {} ms
+MSG_214 (214//)
+Tiempo de los avisos normales: {}
+MSG_215 (215//)
+Tiempo de los urgentes: {}
+MSG_216 (216//)
+Barra de tiempo: {}
+MSG_217 (217//)
+Los urgentes salen con no molestar: {}
+MSG_218 (218//)
+No molestar programado: {}
+MSG_219 (219//)
+Sin el texto en los emergentes: {}
+MSG_220 (220//)
+Un clic en el aviso hace su acción: {}
+MSG_221 (221//)
+Días en el historial: {}
+MSG_222 (222//)
+siempre
+MSG_230 (230//)
+{}. {} · {} columnas
+MSG_231 (231//)
+ · pequeño
+MSG_232 (232//)
+ · aún no disponible
+MSG_233 (233//)
+Añadir: {}
+MSG_234 (234//)
+Columnas: {}
+MSG_235 (235//)
+Volver a lo de serie
+MSG_236 (236//)
+Los emergentes y el no molestar, como en DMS. Intro cambia una fila; se ve ya.
+MSG_237 (237//)
+Qué sale en el panel rápido y en qué orden. Intro cambia el ancho o añade; se ve ya.
+MSG_238 (238//)
+Subir
+MSG_239 (239//)
+Bajar
