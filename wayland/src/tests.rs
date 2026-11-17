@@ -581,6 +581,105 @@ mod composicion {
         assert_eq!(px(350, 300), mezclar(0x8000_0080, 0xFF33_6699));
     }
 
+    /// S37 (la GPU en el escritorio): lo que cuesta componer por CPU a 1920 x 1080 en los casos que importan para un
+    /// fondo animado: la pantalla entera (un fondo que cambia entero cada cuadro), con y sin sombras; solo una zona del
+    /// fondo; una letra; y una ventana que se arrastra. Un fondo XRGB a pantalla completa y cuatro ventanas: dos XRGB,
+    /// una ARGB opaca con esquinas redondeadas (como las del kit) y una ARGB a medias. Se mide en el PC:
+    /// `cargo test --release -- --ignored medir_componer_1080 --nocapture`.
+    #[test]
+    #[ignore]
+    fn medir_componer_1080() {
+        extern crate std;
+        let (w, h) = (1920i32, 1080i32);
+        let mut escena = Escena::new(Compartida::default(), 0xFF20_4060);
+        let mut cons: Vec<Conexion> = (0..5).map(|_| Conexion::new()).collect();
+        cliente(&mut escena, &mut cons[0], 1, 70, w, h, 0xFF30_5070, XRGB8888);
+        cliente(&mut escena, &mut cons[1], 2, 71, 800, 600, 0xFFFF_0000, XRGB8888);
+        cliente(&mut escena, &mut cons[2], 3, 72, 700, 500, 0xFF00_8040, XRGB8888);
+        cliente(&mut escena, &mut cons[3], 4, 73, 900, 650, 0xFF33_6699, ARGB8888);
+        cliente(&mut escena, &mut cons[4], 5, 74, 500, 350, 0x8000_0080, ARGB8888);
+        // Las esquinas de la ARGB opaca, transparentes en un radio de 16 (como el kit).
+        {
+            let mut m = escena.memorias.0.borrow_mut();
+            let v = m.get_mut(&73).unwrap();
+            let (vw, vh, r) = (900i32, 650i32, 16i32);
+            for y in 0..vh {
+                for x in 0..vw {
+                    let cx = if x < r { r - x } else if x >= vw - r { x - (vw - r) + 1 } else { 0 };
+                    let cy = if y < r { r - y } else if y >= vh - r { y - (vh - r) + 1 } else { 0 };
+                    if cx * cx + cy * cy > r * r {
+                        let i = ((y * vw + x) * 4) as usize;
+                        v[i..i + 4].copy_from_slice(&0u32.to_le_bytes());
+                    }
+                }
+            }
+        }
+        escena.colocar(1, 7, 0, 0);
+        escena.colocar(2, 7, 100, 80);
+        escena.colocar(3, 7, 1100, 120);
+        escena.colocar(4, 7, 500, 350);
+        escena.colocar(5, 7, 1300, 650);
+        let mut pantalla = vec![0u32; (w * h) as usize];
+        let mut medir = |escena: &mut Escena<Compartida>, nombre: &str, vueltas: u32, danar: &mut dyn FnMut(&mut Escena<Compartida>, u32)| {
+            // Una vuelta de calentamiento, y la mediana de las vueltas.
+            danar(escena, 0);
+            escena.componer(&mut pantalla, w, h, w as usize, 0, &mut |_, _, _| {});
+            let mut t: Vec<u128> = Vec::new();
+            for i in 0..vueltas {
+                danar(escena, i + 1);
+                let t0 = std::time::Instant::now();
+                escena.componer(&mut pantalla, w, h, w as usize, 0, &mut |_, _, _| {});
+                t.push(t0.elapsed().as_micros());
+            }
+            t.sort_unstable();
+            let med = t[t.len() / 2];
+            std::println!(
+                "S37 componer 1920x1080, {nombre}: mediana {med} µs, mejor {} µs, peor {} µs; a 60 cuadros, {:.0} % de un núcleo",
+                t[0],
+                t[t.len() - 1],
+                med as f64 * 60.0 / 10_000.0
+            );
+        };
+        let todo = Rect { x: 0, y: 0, w, h };
+        escena.sombras = true;
+        medir(&mut escena, "pantalla entera, 4 ventanas, con sombras", 60, &mut |e, _| e.danos.push(todo));
+        escena.sombras = false;
+        medir(&mut escena, "pantalla entera, 4 ventanas, sin sombras", 60, &mut |e, _| e.danos.push(todo));
+        escena.sombras = true;
+        medir(&mut escena, "una zona del fondo de 256x256 (sin ventanas encima)", 300, &mut |e, _| {
+            e.danos.push(Rect { x: 1500, y: 200, w: 256, h: 256 })
+        });
+        medir(&mut escena, "cuatro zonas del fondo de 256x256", 300, &mut |e, _| {
+            for (x, y) in [(20, 700), (1500, 200), (950, 20), (40, 950)] {
+                e.danos.push(Rect { x, y, w: 256, h: 256 })
+            }
+        });
+        medir(&mut escena, "una letra (10x20) en la ventana ARGB", 1000, &mut |e, _| {
+            e.danos.push(Rect { x: 700, y: 500, w: 10, h: 20 })
+        });
+        // Arrastrar la ventana roja: 8 píxeles a la derecha por cuadro; se daña donde estaba y donde está, con su sombra.
+        medir(&mut escena, "arrastrar una ventana de 800x600", 60, &mut |e, i| {
+            let x = 100 + 8 * (i as i32 % 50);
+            let de = |x: i32| Rect { x: x - 14, y: 80 - 14, w: 800 + 28, h: 600 + 32 };
+            e.danos.push(de(x - 8));
+            e.colocar(2, 7, x, 80);
+            e.danos.push(de(x));
+        });
+        // Sin ventanas: solo el fondo, entero, cada cuadro (un fondo animado a pantalla completa con todo minimizado).
+        for c in 2..=5 {
+            escena.adios(c);
+        }
+        medir(&mut escena, "solo el fondo, pantalla entera", 60, &mut |e, _| e.danos.push(todo));
+        // Lo mínimo que cuesta tocar la pantalla entera: copiar 8 MB.
+        let origen = vec![0x1234_5678u32; (w * h) as usize];
+        let t0 = std::time::Instant::now();
+        for _ in 0..60 {
+            pantalla.copy_from_slice(&origen);
+            core::hint::black_box(&pantalla);
+        }
+        std::println!("S37 copiar 1920x1080 (8 MB) de un búfer a otro: {} µs", t0.elapsed().as_micros() / 60);
+    }
+
     #[test]
     fn adjuntar_algo_que_no_es_un_bufer() {
         let mut escena = Escena::new(Compartida::default(), 0);
