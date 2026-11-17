@@ -1169,6 +1169,10 @@ impl<M: Memorias> Escena<M> {
             return None;
         }
         let palabra = |i: usize| u32::from_le_bytes(m[i..i + 4].try_into().unwrap());
+        // x86-gpu: quién no se ve, antes del aviso. `sesiones` avisa de cada programa que lanza; si con eso no se oculta
+        // ni aparece nada, no hay por qué recomponer la pantalla entera (en x86 era una copia entera de la pantalla del
+        // GOP por cada programa que se abría).
+        let ocultos_antes = self.ocultos();
         let aviso = match (palabra(0), m.len()) {
             (AVISO_PERSONA, LARGO_AVISO_PERSONA) => {
                 let (uid, cliente) = (palabra(4), u64::from_le_bytes(m[8..16].try_into().unwrap()));
@@ -1207,14 +1211,29 @@ impl<M: Memorias> Escena<M> {
             }
             _ => return None,
         };
-        self.tras_cambio_de_sesion();
+        if self.ocultos() == ocultos_antes {
+            self.salir_de_lo_que_no_se_ve();
+        } else {
+            self.tras_cambio_de_sesion();
+        }
         Some(aviso)
+    }
+
+    /// Los clientes de una sesión de detrás (U6), en orden.
+    fn ocultos(&self) -> Vec<Cliente> {
+        self.clientes.keys().copied().filter(|&c| self.oculto(c)).collect()
     }
 
     /// U6: tras cambiar quién está detrás, se recompone todo; quien se oculta pierde el teclado y el puntero, y el
     /// teclado pasa a la ventana de arriba que se ve.
     fn tras_cambio_de_sesion(&mut self) {
         self.danos.push(Rect { x: 0, y: 0, w: i32::MAX / 2, h: i32::MAX / 2 });
+        self.salir_de_lo_que_no_se_ve();
+    }
+
+    /// Quien no se ve (de una sesión de detrás o de otro espacio) pierde el teclado y el puntero, y el teclado pasa a la
+    /// ventana de arriba que se ve.
+    fn salir_de_lo_que_no_se_ve(&mut self) {
         if let Some((c, s)) = self.teclado.filter(|t| self.oculto(t.0) || self.fuera_raiz(*t)) {
             self.pendientes.push((c, Entrada::TecladoSale { superficie: s }));
             self.teclado = None;
