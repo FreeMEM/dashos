@@ -97,7 +97,9 @@ const SIGUEN_SESIONES: &[&str] = &["compositor", "sonido", "avisos"];
 /// Otros servicios de cuyo canal recibe `sesiones` una copia sin marca, igual que de los de arriba: el selector de
 /// ficheros, para dar su llave a los programas que lanza y presentárselos (S6b: el selector es el camino por el que un
 /// programa encerrado llega a un fichero que el usuario elige).
-const A_SESIONES: &[&str] = &["selector"];
+/// S32: y el instalador (solo en vivo): `sesiones` da su llave a la orden `Instalar` y le autoriza el plan que confirma
+/// un administrador (la acción "instalar" de una tanda).
+const A_SESIONES: &[&str] = &["selector", "instalador"];
 /// Si `sesiones` recibe una copia sin marca del canal que sirve `programa`.
 fn va_a_sesiones(programa: &str) -> bool {
     SIGUEN_SESIONES.contains(&programa) || A_SESIONES.contains(&programa)
@@ -498,6 +500,9 @@ fn principal() -> u64 {
             // le den (trozos de 16 MB hasta `E_MEMORIA`).
             "caja-linux" if tiene_aparato(cab, aparatos, n, "linux") => dashos::maquina::memoria_invitado_con(ram, pedida) + dashos::maquina::MARGEN_SERVICIO,
             "caja-linux" => dashos::maquina::MARGEN_SERVICIO,
+            // S35, paso 2: el dominio de red: los 24 MB de RAM del dominio, los 2 de la DMA de su tarjeta, las tablas de la
+            // etapa 2, su montón y la pila de su hilo.
+            "dominio" => 40 << 20,
             // H4 y H5: la caja Amiga, con su ejecutable (2 MB y 2 de datos), 4 MB de código traducido, 4 de montón de
             // Emu68, 8 del de Rust (las bibliotecas nativas y los lienzos: el del Workbench, de hasta 1024 x 768, son 3
             // MB), 4 del 68k, 1 de pilas y los búferes de sus ventanas: 32 MB. Y lo que crezca el 68k según sus
@@ -508,6 +513,9 @@ fn principal() -> u64 {
             "caja-amiga" => (32 << 20) + MEMORIA_AMIGA_DE_SERIE,
             // aviso-cajas: la prueba del aviso de memoria baja llena la memoria de verdad (solo en las imágenes de prueba).
             "presion" => 1 << 40,
+            // S32: el instalador (solo en vivo): copias del sistema y del cargador que instala, y el DashFS de la
+            // partición nueva abierto para crecerlo (su asignador, para decenas de GB).
+            "instalador" => 128 << 20,
             _ => 16 << 20,
         };
         // De un servicio, inicio guarda una copia de cada llave, con los mismos derechos, para relanzarlo (E6).

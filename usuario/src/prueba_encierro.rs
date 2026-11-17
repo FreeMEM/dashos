@@ -419,6 +419,36 @@ pub fn tanda(arch: &Archivos, t: &Tabla) -> u64 {
     // 5. La contraseña mala.
     let r = pedir_tanda(alloc::format!("matar {}", pc).as_bytes());
     paso(format_args!("con la contraseña mala no se hace ({}; vivo: {})", e_de(r), vivo(pc)), r.is_some_and(|r| r.estado == s::PROTEGIDO && r.hechas == 0) && vivo(pc));
+    // 6. Rama `cuentas`: las cuentas, sin pasar por `Usuario` (que mira la lista antes): `sesiones` las prueba antes de
+    // preguntar, y nada de esto llega a la ventana. Y hacer el volumen de una cuenta o quitar el de otra directamente al
+    // servicio de archivos: solo con el derecho de administrar, que no tiene.
+    use dashos::cuentas::Fallo;
+    let mut cuentas = true;
+    for (lista, fallo) in [
+        (&b"crear Ana 0"[..], Fallo::YaExiste),
+        (b"crear ANA 0", Fallo::YaExiste),
+        (b"crear Eva 1001", Fallo::UidUsado),
+        (b"crear Eva 70000", Fallo::UidMalo),
+        (b"crear Home 0", Fallo::Reservado),
+        (b"borrar Ana", Fallo::Propia),
+        (b"sacar Ana admin", Fallo::UltimoAdmin),
+        (b"devolver Carla", Fallo::NoRetirada),
+        (b"registro\ncrear Eva 0\nmeter Eva admin\nborrar Ana", Fallo::Propia),
+    ] {
+        let r = pedir_tanda(lista);
+        let bien = r.is_some_and(|r| r.estado == fallo.estado() && r.hechas == 0);
+        cuentas &= bien;
+        if !bien {
+            println!("  [tanda] {:?}: {} (se esperaba {:?})", core::str::from_utf8(lista).unwrap_or("?"), e_de(r), fallo);
+        }
+    }
+    let r = pedir_tanda(b"crear a:b 0");
+    cuentas &= r.is_some_and(|r| r.estado == mal_formado);
+    paso(format_args!("cuentas: repetidas, números usados o malos, reservadas, la propia, la última administradora: no se preguntan"), cuentas);
+    arch.ventana()[..14].copy_from_slice(b"clave de Intru");
+    let hacer = arch.orden(a::HACER_VOLUMEN, 0, 2 | a::CON_RECUPERACION, 14, b"Intrusa").e;
+    let quitar = arch.orden(a::QUITAR_VOLUMEN, 0, 0, 0, b"Carla").e;
+    paso(format_args!("hacer un volumen o quitar el de Carla sin administrar: {} y {}", hacer, quitar), hacer == a::PROTEGIDO && quitar == a::PROTEGIDO);
     // Lo suyo, fuera (sin administrador: es de su persona).
     let mut m = [0u8; 12];
     m[0..4].copy_from_slice(&s::MATAR.to_le_bytes());

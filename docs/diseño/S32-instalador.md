@@ -118,9 +118,44 @@ apagado, y el usuario solo vería que no hay Wi-Fi. Por eso el instalador lo mir
 botón (S36, regla 8): "Para usar el Wi-Fi hay que encender una opción de la placa. Te digo cómo". El detalle (VT-d,
 AMD-Vi), a un clic.
 
+## Decidido el 2026-11-16
+
+El usuario: "hay que crear un instalador en disco que respete otros sistemas operativos y que permita usarse live
+desde un pendrive". Queda decidido el punto 2 de abajo: **el instalador es DashOS de verdad arrancado de un pendrive**,
+que se puede usar en vivo (sin instalar) y desde ahí instalar. Para probar sin riesgo, el banco de AmiCachy
+(`~/Projects/AmiCachy/dev/dualboot-vm/`: discos base de Windows 11 con NTFS limpio y de Debian con GRUB-EFI, y
+`verify-untouched.sh`, que compara las particiones antes y después); los discos base no se tocan nunca: cada prueba
+en una capa qcow2 propia.
+
+**Punto 1, decidido el 2026-11-16 (usuario):** la primera versión **sí encoge Windows (NTFS) desde el instalador**,
+no solo hueco libre o disco entero. Con criterio de seguridad:
+
+1. Antes de nada, comprobaciones que paran y lo explican en llano: NTFS hibernado o con el inicio rápido de Windows,
+   sucio (comprobación de disco pendiente), BitLocker sin suspender, y sitio insuficiente (a Windows se le deja un
+   margen sobre lo que usa).
+2. Copia de las tablas de particiones y del principio de la partición antes de tocar.
+3. Encoge una herramienta probada, no un NTFS escrito de cero: `ntfsresize` (ntfs-3g) ejecutado dentro de un dominio
+   Linux pequeño (S35: Linux en una máquina virtual con el tramo del disco prestado; sala limpia: se ejecuta, no se
+   copia). En x86 ese dominio aún no existe: el instalador hace todo lo demás y el encogido va detrás de esa pieza
+   (`docs/bitacoras/instalador.md`, "Encoger Windows: el dominio de x86").
+4. Tras encoger, Windows tiene que arrancar y pasar su comprobación (en la capa de prueba del banco, nunca en el disco
+   base). Hostiles: NTFS sucio, hibernado, BitLocker, casi lleno, corte a media operación.
+
+**Hecho (2026-11-17, rama `instalador`, `docs/bitacoras/instalador.md`)**: el pendrive en vivo de x86
+(`make -C kernel pendrive-x86`: GPT, ESP con `BOOTX64.EFI` y el sistema en `EFI/DashOS/VIVO.IMG`, que se lee a la memoria;
+los discos del PC no se tocan) y el instalador (servicio `instalador`, con la biblioteca `usuario/src/instalador/`
+probada en el PC): reconoce GPT (las dos copias), MBR, ESP, NTFS (hibernado, sucio, lo usado), BitLocker, ext2/3/4,
+btrfs, swap, LUKS, LVM, APFS, HFS+, FAT y exFAT; plan en texto con dibujo antes y después; instala en un hueco, en un
+disco entero o encima de DashOS; `EFI/DashOS/` en la ESP que hay; su entrada en la NVRAM (llamada 64, por los servicios
+de ejecución del firmware) al final del orden y como próximo arranque. Probado en el banco de AmiCachy con Windows 11,
+Debian 13 y un disco vacío (`tools/prueba_instalador.py`). La ventana "Instalar DashOS" y la orden `Instalar` del Shell
+hacen lo mismo, con una sola confirmación de administrador (la tanda "instalar <plan>"). Falta: encoger NTFS (el dominio
+Linux de x86) y el pendrive de la Pi 5.
+
 ## Lo que queda abierto
 
-1. ¿Primera versión solo con hueco libre o disco entero (recomendado), o también encoger particiones ajenas?
+1. ~~¿Primera versión solo con hueco libre o disco entero, o también encoger particiones ajenas?~~ Decidido arriba:
+   también encoger NTFS.
 2. ¿El instalador corre desde DashOS arrancado de un USB (recomendado: es DashOS de verdad, con su escritorio), o es
    un programa aparte?
 3. ¿Particiones aparte para `SYS:`, `Usuarios:`, `Work:`? Recomendado: una sola partición de DashFS con volúmenes

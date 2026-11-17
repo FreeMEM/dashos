@@ -29,10 +29,20 @@ pub struct InfoArranque {
     pub pantalla_alto: u32,
     pub pantalla_por_linea: u32,
     pub pantalla_formato: u32,
+    /// Desde la versión 2 (S32): la tabla de los servicios de ejecución de UEFI (física), o 0.
+    pub ejecucion: u64,
+    /// El pendrive en vivo: la zona con el sistema (física, con su cabecera "DashVivo") y su tamaño; 0 si no.
+    pub vivo: u64,
+    pub vivo_tamano: u64,
+    /// El GUID de la partición desde la que arrancó el cargador, en el orden del disco (ceros si no se sabe).
+    pub arranque_particion: [u8; 16],
 }
 
 const MARCA: u64 = u64::from_le_bytes(*b"DashOS64");
-const VERSION: u32 = 1;
+/// La 1 (sin lo de S32) también vale: lo nuevo queda a cero.
+const VERSION: u32 = 2;
+/// Lo que mide la `InfoArranque` de la versión 1.
+const TAMANO_V1: usize = 88;
 
 static INFO: AtomicUsize = AtomicUsize::new(0);
 
@@ -46,8 +56,58 @@ pub fn info() -> Option<InfoArranque> {
     if p == 0 || p % 8 != 0 {
         return None;
     }
-    let i = unsafe { core::ptr::read_volatile(super::mmu::virt(p) as *const InfoArranque) };
-    (i.marca == MARCA && i.version == VERSION).then_some(i)
+    // Primero lo de la versión 1 (lo que hay seguro); lo de la 2, solo si lo es.
+    let mut i = InfoArranque { marca: 0, version: 0, _relleno: 0, rsdp: 0, mapa: 0, mapa_tamano: 0, mapa_descriptor: 0, mapa_version: 0, _relleno2: 0, pantalla_base: 0, pantalla_tamano: 0, pantalla_ancho: 0, pantalla_alto: 0, pantalla_por_linea: 0, pantalla_formato: 0, ejecucion: 0, vivo: 0, vivo_tamano: 0, arranque_particion: [0; 16] };
+    let origen = super::mmu::virt(p) as *const u8;
+    let destino = &mut i as *mut InfoArranque as *mut u8;
+    unsafe { core::ptr::copy_nonoverlapping(origen, destino, TAMANO_V1) };
+    if i.marca != MARCA || !(1..=VERSION).contains(&i.version) {
+        return None;
+    }
+    if i.version >= 2 {
+        unsafe { core::ptr::copy_nonoverlapping(origen, destino, core::mem::size_of::<InfoArranque>()) };
+    }
+    Some(i)
+}
+
+/// La tabla de los servicios de ejecución de UEFI (física), si el cargador la dio (S32).
+pub fn ejecucion() -> Option<u64> {
+    info().map(|i| i.ejecucion).filter(|&e| e != 0 && e % 8 == 0)
+}
+
+/// La zona del pendrive en vivo (física y tamaño), si se arrancó de uno (S32).
+pub fn vivo() -> Option<(u64, u64)> {
+    info().filter(|i| i.vivo != 0 && i.vivo_tamano >= 4096 && i.vivo % 4096 == 0).map(|i| (i.vivo, i.vivo_tamano))
+}
+
+/// Un tramo del mapa de UEFI con sus atributos (EFI_MEMORY_RUNTIME, las de caché).
+#[derive(Clone, Copy, Debug)]
+pub struct TramoAtr {
+    pub tipo: u32,
+    pub inicio: u64,
+    pub paginas: u64,
+    pub atributos: u64,
+}
+
+/// Los tramos del mapa de UEFI con sus atributos (para los servicios de ejecución, `uefi.rs`).
+pub fn mapa_con_atributos() -> impl Iterator<Item = TramoAtr> {
+    let (base, n, paso) = match info() {
+        Some(i) if i.mapa_descriptor >= 40 && i.mapa != 0 && i.mapa_tamano / i.mapa_descriptor <= 4096 => {
+            (super::mmu::virt(i.mapa as usize), (i.mapa_tamano / i.mapa_descriptor) as usize, i.mapa_descriptor as usize)
+        }
+        _ => (0, 0, 0),
+    };
+    (0..n).map(move |k| {
+        let d = base + k * paso;
+        unsafe {
+            TramoAtr {
+                tipo: core::ptr::read_unaligned(d as *const u32),
+                inicio: core::ptr::read_unaligned((d + 8) as *const u64),
+                paginas: core::ptr::read_unaligned((d + 24) as *const u64),
+                atributos: core::ptr::read_unaligned((d + 32) as *const u64),
+            }
+        }
+    })
 }
 
 /// Un tramo del mapa de memoria de UEFI: su tipo (UEFI 2.10, 7.2: 7 es memoria convencional), inicio físico y
@@ -104,4 +164,17 @@ pub fn es_ram(tipo: u32) -> bool {
 /// tampoco, que se leen en X3.
 pub fn es_libre(tipo: u32) -> bool {
     matches!(tipo, 3 | 4 | 7)
+}
+
+/// Copia `destino.len()` bytes de la zona del pendrive en vivo, desde `desde` (S32). Falso si se sale de la zona o el
+/// mapa lineal no la ve.
+pub fn vivo_leer(desde: u64, destino: &mut [u8]) -> bool {
+    let Some((zona, tam)) = vivo() else { return false };
+    let Some(fin) = desde.checked_add(destino.len() as u64) else { return false };
+    if fin > tam || !super::mapa::se_ve(zona + desde, destino.len() as u64) {
+        return false;
+    }
+    // La zona es memoria de datos del cargador: el repartidor no la da a nadie, y aquí solo se lee.
+    unsafe { core::ptr::copy_nonoverlapping(super::mmu::virt((zona + desde) as usize) as *const u8, destino.as_mut_ptr(), destino.len()) };
+    true
 }

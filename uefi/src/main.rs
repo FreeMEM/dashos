@@ -79,7 +79,8 @@ struct ServiciosArranque {
     _pool: [Reservado; 2],
     _eventos: [Reservado; 6],
     _protocolos: [Reservado; 3],
-    _handle_protocol: Reservado,
+    /// HandleProtocol (S32: el pendrive en vivo de x86 lee sus ficheros con él).
+    handle_protocol: extern "efiapi" fn(*const c_void, *const [u8; 16], *mut *const c_void) -> Estado,
     _reservado: Reservado,
     _registrar: Reservado,
     _localizar: [Reservado; 2],

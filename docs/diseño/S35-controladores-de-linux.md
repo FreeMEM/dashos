@@ -276,6 +276,9 @@ Amiga) y generar toda la configuración como enlaces.
 1. ~~Medir un Linux mínimo con un controlador (memoria y tiempo de arranque) en QEMU.~~ **Hecho el 2026-11-16**: 15
    a 17 MB y medio segundo para red y Wi-Fi juntos; el objetivo de 48 MB se cumple (ver "Memoria", "Medido").
 2. Prestar un aparato USB a un dominio y recibir de él red por virtio (vale en todas las máquinas, se prueba en QEMU).
+   **En parte, el 2026-11-16** (`docs/bitacoras/dominio-red.md`): la red por virtio hecha y probada (DHCP y TCP de
+   DashOS por un dominio, con hostiles), pero con una tarjeta PCI pasada sin IOMMU, solo en QEMU, como paso
+   intermedio. Falta el USB (plan en la bitácora: el xHCI de DashOS presta el aparato por USB/IP sobre vsock).
 3. Las seis capas de seguridad, con pruebas hostiles (un dominio que intenta escribir su kernel, cargar un módulo,
    salirse de su memoria, mentir por el canal virtio).
 4. IOMMU y aparatos PCI (con la rama `x86`).

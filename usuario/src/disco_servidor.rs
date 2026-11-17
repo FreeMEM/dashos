@@ -66,7 +66,11 @@ const MAX_CLIENTES: usize = 5;
 
 /// Los programas con tramo, por el nombre que les da `inicio` (A13), como en el NVMe, y `disco-sata`, la prueba del
 /// AHCI (X5c), que ve lo mismo que `disco`: el primer MB sin llegar a la primera partición (con GPT, nada).
-const NOMBRES: [&str; 5] = ["disco", "archivos", "comprobador", "caja-linux", "disco-sata"];
+/// S32: y el instalador (solo en vivo, arrancado del pendrive), con cada disco entero: lee las tablas de todos, aunque
+/// no valgan, y escribe solo lo que dice su plan.
+const NOMBRES: [&str; 6] = ["disco", "archivos", "comprobador", "caja-linux", "disco-sata", "instalador"];
+/// El del instalador, por su número en `NOMBRES`.
+const INSTALADOR: usize = 5;
 /// El de solo lectura, por su número en `NOMBRES`.
 const SOLO_LEER: usize = 2;
 /// Los tramos de un disco, por el número en `NOMBRES` (sin el último, que es como el primero).
@@ -378,7 +382,10 @@ pub fn servir<C: Controlador>(ctl: &mut C, permiso: u32, canal: u32, nombre: &st
         } else if orden_ == PEDIR_ABRIR {
             // El disco, en el campo del primer sector.
             let d = primero as usize;
-            let tramo = quien.and_then(|q| tramos.get(d).and_then(|t| t[q])).filter(|_| d < ctl.discos());
+            let tramo = match quien {
+                Some(INSTALADOR) => (d < ctl.discos()).then(|| (0, ctl.sectores(d))),
+                _ => quien.and_then(|q| tramos.get(d).and_then(|t| t[q])).filter(|_| d < ctl.discos()),
+            };
             match tramo {
                 None if d >= ctl.discos() && quien.is_some() => FUERA_DEL_DISCO,
                 None => SIN_PERMISO,

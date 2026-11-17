@@ -116,6 +116,19 @@ cambia. Hay que añadirlo a la tabla de S4b.
 - **Las cuentas también se llevan desde el Shell**: la orden `Usuario` (crear, borrar, devolver, grupos) pide la
   misma acción de administrador que el programa `Usuarios` de `SYS:System` (S4b).
 
+**Hecho** (rama `cuentas`, 2026-11-16; bitácora `docs/bitacoras/cuentas.md`). Las cuentas ya no están en el código:
+`sesiones` lee `Estado:Cuentas/usuarios` y `grupos` al arrancar (`usuario/src/cuentas.rs`). Una línea que no vale (o
+la última, cortada) se salta y queda en el registro de seguridad; las buenas se quedan. Crear, borrar, devolver y
+cambiar grupos son acciones de la tanda de administrador (`crear`, `borrar`, `devolver`, `meter`, `sacar`), que
+`sesiones` prueba sobre una copia antes de preguntar: ni un nombre repetido o con letras raras, ni un número usado, ni
+la cuenta propia ni la del último administrador llegan a la ventana. Crear hace el volumen cifrado con la contraseña
+que el administrador teclea en la misma ventana de `guardian` y un código de recuperación, que solo enseña `guardian`
+(el programa que la pide no ve ni la contraseña ni el código). Borrar la deja retirada 30 días, con su volumen cerrado;
+al arrancar, las vencidas se borran del todo. Cada cambio, en `Estado:Registros/seguridad`. Desde el Shell, la orden
+`Usuario` (`LISTA`, `CREAR`, `BORRAR`, `DEVOLVER`, `GRUPOS`). Pendiente del usuario: el plazo (30 días), la contraseña
+de una cuenta nueva (8 letras o más, sin repetirla), que el código salga solo en `guardian` y el programa `Usuarios`
+de `SYS:System`.
+
 ### Entrar, bloquear y salir
 
 1. `guardian` enseña la pantalla de entrada y manda nombre y contraseña a `sesiones`.
@@ -336,7 +349,8 @@ contraseña una vez; `sesiones` hace solo esas, en orden, cada una por quien la 
 pidió sabe cuál falló y qué pasó con las demás. Una acción suelta (`ADMINISTRAR`) sale con la misma ventana, como una
 tanda de una. Cada acción hecha o fallida, una línea en `Estado:Registros/seguridad`. Desde el Shell, la orden
 `Administrar` (`Administrar comprobar "matar 65540" registro`, o `DESDE plan.txt`). Las acciones de hoy son las tres
-que existen (comprobar, matar, registro): instalar paquetes y crear usuarios entrarán en la lista cuando existan.
+que existen (comprobar, matar, registro) y, desde la rama `cuentas`, las de las cuentas (crear, borrar, devolver,
+meter y sacar de un grupo; ver "Dónde se guardan las cuentas"): instalar paquetes entrará cuando exista.
 
 ### Que la ventana sea de verdad la del sistema
 

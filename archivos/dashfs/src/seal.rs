@@ -204,6 +204,14 @@ impl Cost {
         passes: 3,
         lanes: 1,
     };
+    /// DashOS: what fits in the file service, which makes and opens the volumes of the accounts: its group has a
+    /// 64 MB cap and NORMAL's 64 MiB made it run out of memory and fall (branch `cuentas`, 2026-11-16). 16 MiB and 3
+    /// passes: more than OWASP's minimum for Argon2id (12 MiB, 3 passes).
+    pub const SERVICE: Cost = Cost {
+        memory: 16 * 1024,
+        passes: 3,
+        lanes: 1,
+    };
     /// For tests only: guessing passwords would be cheap.
     pub const CHEAP: Cost = Cost {
         memory: 64,

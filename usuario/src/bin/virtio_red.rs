@@ -10,6 +10,14 @@
 //! compartida (`protocolo::red`, `T_*`): el controlador copia cada trama entre esa memoria y la DMA, así el servicio
 //! nunca toca los descriptores. Lo que llega mal (corto, largo, con un descriptor que no es nuestro) se cuenta y se
 //! tira; el aparato no se fía del servicio ni el servicio del aparato.
+//!
+//! **Con un dominio** (S35, paso 2; `docs/bitacoras/dominio-red.md`): si nace con la llave "dominio-red", el aparato lo
+//! pone un dominio de controladores y el transporte es por mensajes (`protocolo::virtio_msg`) con su servicio
+//! (`dominio`): en vez de los registros de la BAR, `INFO`, `FUNCIONES`, `MEMORIA`, `COLA` y `ESTADO`; los avisos, `AVISO`
+//! y `USADOS`. Las colas y los búferes van en un objeto de memoria normal que el servicio pone en el dominio (la
+//! ventana): su "dirección de bus" es la que contesta el servicio. Si el dominio se cae (`APARATO` falso), se deja todo
+//! y se vuelve a empezar cuando haya otro; el servicio de red no se entera más que de que no pasan tramas. Llaves: la
+//! 1, "red"; la 2, "dominio-red" (solo para recibir el `HOLA` del servicio del dominio).
 
 #![no_std]
 #![no_main]
@@ -17,6 +25,7 @@
 use core::ptr::{read_volatile, write_volatile};
 use dashos::println;
 use dashos::protocolo::red as p;
+use dashos::protocolo::virtio_msg as vm;
 
 dashos::programa!(principal);
 
@@ -175,9 +184,12 @@ struct Cola {
     n: u16,
     disp_off: usize,
     usados_off: usize,
+    /// El registro de aviso (PCI) o el número de la cola (un dominio).
     aviso: usize,
     disp: u16,
     usados: u16,
+    /// La dirección de bus del principio de la memoria de las colas (la DMA, o la ventana en el dominio).
+    bus: u64,
 }
 
 impl Cola {
@@ -189,22 +201,21 @@ impl Cola {
         poner16(d + 14, 0);
     }
 
-    fn largo(&self, i: u16, largo: u32) {
-        poner32(self.m + 16 * i as usize + 8, largo);
-    }
-
     /// Pone la cadena `cabeza` en el anillo del conductor, sin avisar todavía.
     fn poner(&mut self, cabeza: u16) {
         poner16(self.m + self.disp_off + 4 + 2 * (self.disp % self.n) as usize, cabeza);
         self.disp = self.disp.wrapping_add(1);
     }
 
-    /// Publica lo puesto y avisa al aparato.
-    fn avisar(&self, numero: u16) {
+    /// Publica lo puesto y avisa al aparato: por su registro de aviso (PCI) o con un mensaje (un dominio).
+    fn avisar(&self, bus: &Bus, numero: u16) {
         barrera();
         poner16(self.m + self.disp_off + 2, self.disp);
         barrera();
-        poner_reg16(self.aviso, numero);
+        match bus {
+            Bus::Pci => poner_reg16(self.aviso, numero),
+            Bus::Dominio(d) => d.avisar(1 << numero),
+        }
     }
 
     /// La siguiente cadena que devolvió el aparato: (cabeza, largo escrito).
@@ -236,10 +247,21 @@ fn montar(b: &Bloques, bus: u64, numero: u16, m: usize, n: u16, disp_off: usize,
     // `virtio-sonido`). Con INTx (ARM) no cuenta.
     poner_reg16(b.comun + C_COLA_MSIX, 0);
     poner_reg16(b.comun + C_COLA_ENCENDER, 1);
-    Some(Cola { m, n, disp_off, usados_off, aviso, disp: 0, usados: 0 })
+    Some(Cola { m, n, disp_off, usados_off, aviso, disp: 0, usados: 0, bus })
+}
+
+/// Cómo se habla con el aparato.
+enum Bus {
+    /// virtio-pci: registros en la BAR 4.
+    Pci,
+    /// Un dominio de controladores, por mensajes.
+    Dominio(Dominio),
 }
 
 fn principal() -> u64 {
+    if let Some(llave) = dashos::llaves::buscar("dominio-red") {
+        return con_dominio(llave);
+    }
     // Con llave 5, la 4 es la interrupción y la 5 el canal "red"; si no, el canal es la 4.
     let existe = |k: u32| {
         let copia = dashos::llave_duplicar(k, dashos::LEER, 0);
@@ -292,7 +314,7 @@ fn principal() -> u64 {
     for i in (0..TAM_DMA).step_by(4) {
         poner32(i, 0);
     }
-    let (Some(mut rx), Some(mut tx)) = (
+    let (Some(mut rx), Some(tx)) = (
         montar(&b, bus, COLA_RX, M_RX, N_RX, 0x800, 0x1000),
         montar(&b, bus, COLA_TX, M_TX, N_TX, 0x400, 0x800),
     ) else {
@@ -319,7 +341,7 @@ fn principal() -> u64 {
         println!("  [virtio-red] el aparato falla al arrancar");
         return 7;
     }
-    rx.avisar(COLA_RX);
+    rx.avisar(&Bus::Pci, COLA_RX);
     // La memoria de las tramas, para el servicio.
     let mem = dashos::memoria_crear(TAM_TRAMAS);
     if (mem as i32) <= 0 || dashos::memoria_proyectar(mem, VA_TRAMAS, true) != 0 {
@@ -349,13 +371,9 @@ fn principal() -> u64 {
         mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], N_RX, N_TX,
         if irq.is_some() { "por su interrupción" } else { "con un temporizador" }
     );
-    // Qué descriptores de enviar están en el aparato (bit i), y cuáles libres.
-    let mut en_vuelo: u64 = 0;
-    // Y qué búferes de recibir tiene el aparato: todos al empezar.
-    let mut rx_dentro: u128 = u128::MAX >> (128 - N_RX as u32);
+    let mut red = Red::nueva(rx, tx);
     let mut buf = [0u8; 16];
     let mut ll = [0u32; 8];
-    let mut raros = 0u64;
     loop {
         let plazo = if irq.is_some() { 100_000 } else { 2_000 };
         let (n, k, marca) = dashos::canal_leer_plazo(lee, &mut buf, &mut ll, plazo);
@@ -370,23 +388,53 @@ fn principal() -> u64 {
                 dashos::interrupcion_terminar(i);
             }
         }
+        red.mover(&Bus::Pci, servicio);
+    }
+}
+
+/// Las dos colas montadas y lo que se sabe de ellas. Lo mismo con los dos transportes.
+struct Red {
+    rx: Cola,
+    tx: Cola,
+    /// Qué descriptores de enviar están en el aparato (bit i), y cuáles libres.
+    en_vuelo: u64,
+    /// Y qué búferes de recibir tiene el aparato: todos al empezar.
+    rx_dentro: u128,
+    /// Devoluciones que no eran nuestras (un id que no existe o que el aparato no tenía): se cuentan y se ignoran.
+    raros: u64,
+    /// Devoluciones con un largo imposible.
+    largos_malos: u64,
+    /// Cuántas devoluciones ajenas hacen falta para volver a decirlo en el registro.
+    umbral: u64,
+}
+
+impl Red {
+    fn nueva(rx: Cola, tx: Cola) -> Self {
+        Self { rx, tx, en_vuelo: 0, rx_dentro: u128::MAX >> (128 - N_RX as u32), raros: 0, largos_malos: 0, umbral: 1 }
+    }
+
+    /// Mueve las tramas entre las colas del aparato y la memoria del servicio de red, y le avisa si hubo algo.
+    fn mover(&mut self, bus: &Bus, servicio: u32) {
+        let (rx, tx) = (&mut self.rx, &mut self.tx);
         let mut movido = false;
         // Lo recibido: al anillo del servicio, si cabe y tiene buena medida.
         let mut repuestos = false;
         while let Some((id, largo)) = rx.devuelta() {
             // Un id que no es nuestro caería fuera de los búferes, y uno que ya volvió se daría dos veces: se cuenta y
             // no se toca.
-            if id >= N_RX as u32 || rx_dentro & (1u128 << id) == 0 {
-                raros += 1;
+            if id >= N_RX as u32 || self.rx_dentro & (1u128 << id) == 0 {
+                self.raros += 1;
                 continue;
             }
-            rx_dentro &= !(1u128 << id);
+            self.rx_dentro &= !(1u128 << id);
             sumar(p::T_RECIBIDAS);
             let largo = largo as usize;
             if largo < CAB + p::MIN_TRAMA {
                 sumar(p::T_CORTAS);
+                self.largos_malos += 1;
             } else if largo - CAB > p::MAX_TRAMA || largo > BUFER {
                 sumar(p::T_LARGAS);
+                self.largos_malos += 1;
             } else {
                 let (escritas, leidas) = (tramas(p::T_RX_ESCRITAS), tramas(p::T_RX_LEIDAS));
                 if escritas.wrapping_sub(leidas) as usize >= RANURAS_RX {
@@ -394,7 +442,9 @@ fn principal() -> u64 {
                 } else {
                     let r = VA_TRAMAS + 64 + (escritas as usize % RANURAS_RX) * p::RANURA;
                     let desde = VA_DMA + M_RX_BUF + id as usize * BUFER + CAB;
-                    // De la DMA (sin caché) a la memoria compartida: bytes, sin interpretarlos.
+                    // De la DMA (o la ventana del dominio) a la memoria compartida: bytes, sin interpretarlos. El largo
+                    // ya está comprobado y se leyó una vez: lo que cambie el aparato mientras tanto solo cambia bytes
+                    // dentro del búfer.
                     unsafe { core::ptr::copy_nonoverlapping(desde as *const u8, (r + p::RANURA_DATOS) as *mut u8, largo - CAB) };
                     unsafe { write_volatile(r as *mut u32, (largo - CAB) as u32) };
                     barrera();
@@ -402,20 +452,22 @@ fn principal() -> u64 {
                     movido = true;
                 }
             }
+            // El descriptor lo vuelve a escribir el conductor: el aparato pudo cambiarlo (en la ventana de un dominio).
+            rx.descriptor(id as u16, rx.bus + (M_RX_BUF + id as usize * BUFER) as u64, BUFER as u32, D_ESCRIBE);
             rx.poner(id as u16);
-            rx_dentro |= 1u128 << id;
+            self.rx_dentro |= 1u128 << id;
             repuestos = true;
         }
         if repuestos {
-            rx.avisar(COLA_RX);
+            rx.avisar(bus, COLA_RX);
         }
         // Lo enviado que vuelve: el descriptor queda libre.
         while let Some((id, _)) = tx.devuelta() {
-            if id >= N_TX as u32 || en_vuelo & (1u64 << id) == 0 {
-                raros += 1;
+            if id >= N_TX as u32 || self.en_vuelo & (1u64 << id) == 0 {
+                self.raros += 1;
                 continue;
             }
-            en_vuelo &= !(1u64 << id);
+            self.en_vuelo &= !(1u64 << id);
         }
         // Lo que el servicio quiere enviar, mientras haya descriptores libres.
         let mut puestos = false;
@@ -431,7 +483,7 @@ fn principal() -> u64 {
                 movido = true;
                 break;
             }
-            let libre = (!en_vuelo).trailing_zeros();
+            let libre = (!self.en_vuelo).trailing_zeros();
             if libre >= N_TX as u32 {
                 break;
             }
@@ -444,9 +496,9 @@ fn principal() -> u64 {
                     poner32(dest + i, 0);
                 }
                 unsafe { core::ptr::copy_nonoverlapping((r + p::RANURA_DATOS) as *const u8, (VA_DMA + dest + CAB) as *mut u8, largo) };
-                tx.largo(libre as u16, (CAB + largo) as u32);
+                tx.descriptor(libre as u16, tx.bus + dest as u64, (CAB + largo) as u32, 0);
                 tx.poner(libre as u16);
-                en_vuelo |= 1u64 << libre;
+                self.en_vuelo |= 1u64 << libre;
                 sumar(p::T_ENVIADAS);
                 puestos = true;
             } else {
@@ -456,15 +508,283 @@ fn principal() -> u64 {
             movido = true;
         }
         if puestos {
-            tx.avisar(COLA_TX);
+            tx.avisar(bus, COLA_TX);
         }
         if movido {
             // Si la cola del servicio está llena, se pierde: el servicio mira las ranuras en cada vuelta.
             dashos::canal_escribir(servicio, &p::TRAMAS.to_le_bytes(), &[]);
         }
-        if raros == 1 {
-            println!("  [virtio-red] el aparato devuelve un descriptor que no es suyo; se ignora");
-            raros += 1;
+        if self.raros >= self.umbral {
+            if self.umbral == 1 {
+                println!("  [virtio-red] el aparato devuelve un descriptor que no es suyo; se ignora");
+            } else {
+                println!("  [virtio-red] el aparato devuelve descriptores que no son suyos ({} ya); se ignoran", self.raros);
+            }
+            self.umbral = self.raros.saturating_mul(8);
+        }
+    }
+}
+
+/// El dominio que pone el aparato (S35): la llave para escribir a su servicio y la generación del aparato.
+struct Dominio {
+    bus: u32,
+    generacion: u32,
+}
+
+/// Lo que puede pasar mientras se espera una respuesta.
+enum Respuesta {
+    Es(vm::Mensaje, u32),
+    /// El aparato se cayó (o llegó otro de otra generación): hay que volver a empezar.
+    Caido,
+    /// Sin respuesta en el plazo.
+    Nada,
+}
+
+impl Dominio {
+    fn enviar(&self, m: vm::Mensaje, llaves: &[u32]) -> bool {
+        let mut b = [0u8; vm::MAX_MENSAJE];
+        let n = m.escribir(self.generacion, &mut b);
+        dashos::canal_escribir(self.bus, &b[..n], llaves) == 0
+    }
+
+    fn avisar(&self, colas: u32) {
+        // Si la cola del servicio está llena, el aviso se pierde: el dominio mira sus colas cada poco igual.
+        self.enviar(vm::Mensaje::Aviso(colas), &[]);
+    }
+
+    /// Manda `m` y espera su respuesta por `lee` (2 s). Lo demás que llega mientras tanto (avisos, el servicio de red)
+    /// se deja: se mira todo en la siguiente vuelta.
+    fn pedir(&self, lee: u32, m: vm::Mensaje, llaves: &[u32]) -> Respuesta {
+        if !self.enviar(m, llaves) {
+            return Respuesta::Nada;
+        }
+        let fin = dashos::ahora_us() + 2_000_000;
+        loop {
+            let ahora = dashos::ahora_us();
+            if ahora >= fin {
+                return Respuesta::Nada;
+            }
+            let mut b = [0u8; vm::MAX_MENSAJE];
+            let mut ll = [0u32; 4];
+            let (n, k, marca) = dashos::canal_leer_plazo(lee, &mut b, &mut ll, fin - ahora);
+            if n < 0 {
+                continue;
+            }
+            let k = k.min(ll.len());
+            if marca != M_BUS {
+                ll[..k].iter().for_each(|&l| {
+                    dashos::cerrar(l);
+                });
+                continue;
+            }
+            match vm::Mensaje::leer(&b[..(n as usize).min(b.len())]) {
+                Some((_, vm::Mensaje::Aparato(_))) => return Respuesta::Caido,
+                Some((g, r)) if r.tipo() == m.tipo() | vm::RESPUESTA && g == self.generacion => {
+                    let llave = if k > 0 { ll[0] } else { 0 };
+                    return Respuesta::Es(r, llave);
+                }
+                _ => ll[..k].iter().for_each(|&l| {
+                    dashos::cerrar(l);
+                }),
+            }
+        }
+    }
+}
+
+/// Marca de lo que llega del servicio del dominio por el canal propio.
+const M_BUS: u64 = 3;
+
+/// Monta el aparato del dominio, de cero: INFO, funciones, la ventana, las colas y LISTO (virtio 1.2, §3.1.1, con el
+/// transporte por mensajes). Devuelve las colas montadas y la MAC, o nada si el dominio se cayó o algo no valió.
+fn montar_dominio(d: &Dominio, lee: u32) -> Option<(Red, [u8; 6])> {
+    let pedir = |m, ll: &[u32]| match d.pedir(lee, m, ll) {
+        Respuesta::Es(r, l) => Some((r, l)),
+        _ => None,
+    };
+    let estado = |s: u8| matches!(pedir(vm::Mensaje::Estado(s), &[]), Some((vm::Mensaje::REstado(vm::BIEN, e), _)) if e == s);
+    if !estado(0) || !estado(S_ENTERADO | S_CONDUCTOR) {
+        return None;
+    }
+    let Some((vm::Mensaje::RInfo(vm::BIEN, info), _)) = pedir(vm::Mensaje::Info, &[]) else { return None };
+    if info.tipo != 1 || info.colas < 2 || info.tam_cola < N_RX as u32 || info.funciones & (1 << 32) == 0 {
+        println!("  [virtio-red] el dominio ofrece algo que no es una red que sepa llevar (tipo {}, {} colas de {})", info.tipo, info.colas, info.tam_cola);
+        return None;
+    }
+    let con_mac = info.funciones & F_MAC as u64 != 0;
+    let funciones = 1u64 << 32 | if con_mac { F_MAC as u64 } else { 0 };
+    if !matches!(pedir(vm::Mensaje::Funciones(funciones), &[]), Some((vm::Mensaje::RFunciones(vm::BIEN), _))) || !estado(S_ENTERADO | S_CONDUCTOR | S_FUNC_OK) {
+        println!("  [virtio-red] el dominio no acepta las funciones");
+        return None;
+    }
+    // La ventana: un objeto de memoria normal (no DMA: el "aparato" es otra CPU), a cero; el servicio la pone en el
+    // dominio y dice dónde la ve él.
+    dashos::memoria_quitar(VA_DMA);
+    let m = dashos::memoria_crear(TAM_DMA);
+    if (m as i32) <= 0 || dashos::memoria_proyectar(m, VA_DMA, true) != 0 {
+        println!("  [virtio-red] sin memoria para la ventana");
+        return None;
+    }
+    for i in (0..TAM_DMA).step_by(4) {
+        poner32(i, 0);
+    }
+    let copia = dashos::llave_duplicar(m, dashos::LEER | dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
+    dashos::cerrar(m);
+    if copia <= 0 {
+        return None;
+    }
+    let Some((vm::Mensaje::RMemoria(vm::BIEN, bus, tam), _)) = pedir(vm::Mensaje::Memoria, &[copia as u32]) else {
+        println!("  [virtio-red] el dominio no acepta la ventana");
+        return None;
+    };
+    if (tam as usize) < TAM_DMA {
+        return None;
+    }
+    let cola = |numero: u16, mm: usize, n: u16, disp_off: usize, usados_off: usize| {
+        let base = bus + mm as u64;
+        let c = vm::Cola { indice: numero as u32, tam: n as u32, desc: base, disp: base + disp_off as u64, usados: base + usados_off as u64 };
+        matches!(pedir(vm::Mensaje::Cola(c), &[]), Some((vm::Mensaje::RCola(vm::BIEN), _)))
+            .then_some(Cola { m: mm, n, disp_off, usados_off, aviso: numero as usize, disp: 0, usados: 0, bus })
+    };
+    let (Some(mut rx), Some(tx)) = (cola(COLA_RX, M_RX, N_RX, 0x800, 0x1000), cola(COLA_TX, M_TX, N_TX, 0x400, 0x800)) else {
+        println!("  [virtio-red] el dominio no acepta las colas");
+        return None;
+    };
+    for i in 0..N_RX {
+        rx.descriptor(i, bus + (M_RX_BUF + i as usize * BUFER) as u64, BUFER as u32, D_ESCRIBE);
+        rx.poner(i);
+    }
+    for i in 0..N_TX {
+        tx.descriptor(i, bus + (M_TX_BUF + i as usize * BUFER) as u64, 0, 0);
+    }
+    if !estado(S_ENTERADO | S_CONDUCTOR | S_FUNC_OK | S_LISTO) {
+        println!("  [virtio-red] el dominio no se pone en marcha");
+        return None;
+    }
+    let mut mac = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
+    if con_mac {
+        mac.copy_from_slice(&info.config[..6]);
+    }
+    rx.avisar(&Bus::Dominio(Dominio { bus: d.bus, generacion: d.generacion }), COLA_RX);
+    Some((Red::nueva(rx, tx), mac))
+}
+
+/// El conductor con un dominio (S35, paso 2): espera el `HOLA` de su servicio, contesta con su canal y, cada vez que
+/// hay aparato, lo monta y mueve tramas hasta que se cae.
+fn con_dominio(hola_de: u32) -> u64 {
+    let Some(servicio) = dashos::llaves::buscar("red") else {
+        println!("  [virtio-red] sin el canal del servicio de red");
+        return 1;
+    };
+    let (lee, escribe) = dashos::canal_crear();
+    // El HOLA del servicio del dominio: con la llave para escribirle.
+    let bus = loop {
+        // Por ese canal puede llegar también lo que diga `inicio` de sus clientes: se ignora.
+        let mut b = [0u8; 256];
+        let mut ll = [0u32; 4];
+        let (n, k) = dashos::canal_leer(hola_de, &mut b, &mut ll);
+        if n < 0 {
+            println!("  [virtio-red] el canal del dominio se cerró sin HOLA");
+            return 1;
+        }
+        let k = k.min(ll.len());
+        if matches!(vm::Mensaje::leer(&b[..(n as usize).min(b.len())]), Some((_, vm::Mensaje::Hola))) && k == 1 {
+            break ll[0];
+        }
+        ll[..k].iter().for_each(|&l| {
+            dashos::cerrar(l);
+        });
+    };
+    let para_bus = dashos::llave_duplicar(escribe, dashos::ESCRIBIR | dashos::TRANSFERIR, M_BUS);
+    let mut d = Dominio { bus, generacion: 0 };
+    if para_bus <= 0 || !d.enviar(vm::Mensaje::Hola, &[para_bus as u32]) {
+        println!("  [virtio-red] no se puede contestar al dominio");
+        return 2;
+    }
+    println!("  [virtio-red] con un dominio de controladores: virtio por mensajes");
+    // La memoria de las tramas para el servicio de red, una vez: dura lo que este programa, caiga lo que caiga el
+    // dominio.
+    let mem = dashos::memoria_crear(TAM_TRAMAS);
+    if (mem as i32) <= 0 || dashos::memoria_proyectar(mem, VA_TRAMAS, true) != 0 {
+        println!("  [virtio-red] sin memoria para las tramas");
+        return 8;
+    }
+    poner_tramas(p::T_RANURAS_RX, RANURAS_RX as u32);
+    poner_tramas(p::T_RANURAS_TX, RANURAS_TX as u32);
+    let mut tarjeta: Option<[u8; 6]> = None;
+    let mut generacion_lista: Option<u32> = None;
+    let mut red: Option<Red> = None;
+    loop {
+        // Hay aparato nuevo y aún no está montado: se monta.
+        if let (Some(g), None) = (generacion_lista, red.as_ref()) {
+            d.generacion = g;
+            match montar_dominio(&d, lee) {
+                Some((r, mac)) => {
+                    println!(
+                        "  [virtio-red] aparato del dominio (generación {}) montado: MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}; colas de {} y {}",
+                        g, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], N_RX, N_TX
+                    );
+                    match tarjeta {
+                        None => {
+                            // Ahora que se sabe la MAC, la tarjeta para el servicio de red.
+                            let para_servicio = dashos::llave_duplicar(escribe, dashos::ESCRIBIR | dashos::TRANSFERIR, M_SERVICIO);
+                            let copia = dashos::llave_duplicar(mem, dashos::LEER | dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
+                            let mut hola = [0u8; 12];
+                            hola[..4].copy_from_slice(&p::TARJETA.to_le_bytes());
+                            hola[4..10].copy_from_slice(&mac);
+                            if para_servicio <= 0 || copia <= 0 || dashos::canal_escribir(servicio, &hola, &[copia as u32, para_servicio as u32]) != 0 {
+                                println!("  [virtio-red] el servicio no recibe la tarjeta");
+                                return 9;
+                            }
+                            tarjeta = Some(mac);
+                        }
+                        Some(antes) if antes != mac => {
+                            println!("  [virtio-red] el dominio cambió de MAC; la red sigue con la primera");
+                        }
+                        _ => {}
+                    }
+                    red = Some(r);
+                }
+                None => {
+                    println!("  [virtio-red] no se pudo montar el aparato del dominio (generación {}); se espera otro", g);
+                    generacion_lista = None;
+                }
+            }
+        }
+        let mut b = [0u8; vm::MAX_MENSAJE];
+        let mut ll = [0u32; 4];
+        // Sin aparato, se espera sin prisa; con él, se miran las colas al menos cada 100 ms (por si se perdió un aviso).
+        let (n, k, marca) = dashos::canal_leer_plazo(lee, &mut b, &mut ll, 100_000);
+        let k = if n >= 0 { k.min(ll.len()) } else { 0 };
+        ll[..k].iter().for_each(|&l| {
+            dashos::cerrar(l);
+        });
+        if n >= 0 && marca == M_BUS {
+            match vm::Mensaje::leer(&b[..(n as usize).min(b.len())]) {
+                Some((g, vm::Mensaje::Aparato(true))) if Some(g) != generacion_lista => {
+                    if let Some(r) = red.take() {
+                        println!("  [virtio-red] otro aparato del dominio sin que cayera el anterior ({} devoluciones ajenas)", r.raros);
+                    }
+                    generacion_lista = Some(g);
+                    continue;
+                }
+                Some((g, vm::Mensaje::Aparato(false))) if Some(g) == generacion_lista || generacion_lista.is_none() => {
+                    if let Some(r) = red.take() {
+                        println!(
+                            "  [virtio-red] el dominio se cayó (generación {}): sin red hasta que vuelva; {} devoluciones ajenas y {} de largo imposible, ignoradas",
+                            g, r.raros, r.largos_malos
+                        );
+                    }
+                    generacion_lista = None;
+                    // Las tramas que estaban en la ventana se pierden; la memoria se suelta (el servicio del dominio
+                    // ya la quitó del dominio muerto).
+                    dashos::memoria_quitar(VA_DMA);
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        if let Some(r) = red.as_mut() {
+            r.mover(&Bus::Dominio(Dominio { bus: d.bus, generacion: d.generacion }), servicio);
         }
     }
 }

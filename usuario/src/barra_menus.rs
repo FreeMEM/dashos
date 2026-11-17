@@ -5,8 +5,9 @@
 //! el de la ventana; un clic en uno abre su menú en una capa suya bajo la barra, del tamaño justo (con el teclado
 //! mientras se ve; su submenú, en otra), y lo que se elige vuelve al compositor (`elegir`, con la generación), que lo
 //! pasa al programa. Lo que mide la pantalla (para que lo desplegado no se salga) lo dice su `wl_output`. El botón derecho sobre una
-//! ventana con menú lo dice el compositor (`abrir`); sobre la barra, la barra misma. Si el teclado se va de la capa (un
-//! clic en una ventana), el menú se cierra.
+//! ventana con menú lo dice el compositor (`abrir`); sobre la barra, la barra misma. Mientras lo desplegado se ve, se
+//! lo dice al compositor (`desplegado`): un clic fuera de la barra no llega a la ventana, solo lo cierra (`cerrar`). Si
+//! aun así el teclado se va de la capa, el menú se cierra también.
 //!
 //! Lo que se pinta y lo que hace el ratón y el teclado es el componente del kit (`kit::menus`), el mismo de la fila
 //! dentro de las ventanas: aquí, en el espacio de la pantalla (la barra está en su esquina), con lo desplegado en una
@@ -93,12 +94,16 @@ pub struct MenusBarra {
     dicha: Cell<u32>,
     capa: Option<Capa>,
     sub: Option<Capa>,
-    /// El menú cuyas entradas ya se dijeron por la consola.
-    dicho: Option<usize>,
+    /// El menú (y su submenú) cuyas entradas ya se dijeron por la consola.
+    dicho: Option<(usize, Option<usize>)>,
     /// El alto de la pantalla (de su `wl_output`).
     alto_pantalla: i32,
     /// Los botones pulsados sobre la barra o lo desplegado.
     botones: u32,
+    /// Lo último dicho al compositor con `desplegado`.
+    desplegado_dicho: bool,
+    /// Lo último dicho por la consola de lo que se ve de lo desplegado (`Menus::lo_que_se_ve`).
+    visto: String,
 }
 
 impl Default for MenusBarra {
@@ -116,6 +121,8 @@ impl Default for MenusBarra {
             dicho: None,
             alto_pantalla: ALTO_SUPUESTO,
             botones: 0,
+            desplegado_dicho: false,
+            visto: String::new(),
         }
     }
 }
@@ -210,6 +217,15 @@ impl MenusBarra {
                     self.recolocar(fuente, medio);
                     let ok = self.m.borrow_mut().abrir_primero(false);
                     println!("  [barra] abre los menús (botón derecho): {}", if ok { "sí" } else { "no hay ninguno que abrir" });
+                }
+                self.sincronizar(c, t, fuente, medio);
+                Some(true)
+            }
+            (MENUS_B, dashos_menus_barra_v1::ev::CERRAR) => {
+                // Un clic fuera de la barra con lo desplegado abierto: no llegó a nadie; solo cierra.
+                if self.m.borrow().abierto() {
+                    self.m.borrow_mut().cerrar();
+                    println!("  [barra] menús cerrados: un clic fuera");
                 }
                 self.sincronizar(c, t, fuente, medio);
                 Some(true)
@@ -309,9 +325,12 @@ impl MenusBarra {
         mio.then_some(repintar)
     }
 
-    /// La rueda sobre lo desplegado.
-    pub fn rueda(&mut self, c: &mut Cliente, x: i32, y: i32, pasos: i32, t: &Tema, fuente: &mut Fuente, medio: &mut Fuente) {
-        let Some(capa) = self.capa.as_ref() else { return };
+    /// La rueda sobre lo desplegado: (x, y) en la superficie `sup` (la del menú o la del submenú, cada una con su
+    /// sitio en la pantalla).
+    #[allow(clippy::too_many_arguments)]
+    pub fn rueda(&mut self, c: &mut Cliente, sup: u32, x: i32, y: i32, pasos: i32, t: &Tema, fuente: &mut Fuente, medio: &mut Fuente) {
+        let capa = if sup == SUP_SUB { self.sub.as_ref() } else { self.capa.as_ref() };
+        let Some(capa) = capa else { return };
         let r = self.m.borrow_mut().rueda(x + capa.rect.x, y + capa.rect.y, pasos);
         self.atender(c, r, t, fuente, medio);
     }
@@ -358,6 +377,11 @@ impl MenusBarra {
         let mut e = Escritor::new();
         poner_capa(&mut e, &mut self.capa, OBJ_MENU, menu);
         poner_capa(&mut e, &mut self.sub, OBJ_SUB, sub);
+        // Al compositor, si lo desplegado se ve: así el clic de fuera solo lo cierra.
+        if self.capa.is_some() != self.desplegado_dicho {
+            self.desplegado_dicho = self.capa.is_some();
+            e.empezar(MENUS_B, dashos_menus_barra_v1::req::DESPLEGADO).uint(self.desplegado_dicho as u32).fin();
+        }
         if !e.bytes.is_empty() {
             c.mandar(&e);
         }
@@ -365,6 +389,14 @@ impl MenusBarra {
             self.dicho = None;
         }
         self.pintar_capas(c, t, fuente, medio);
+        // Lo que se ve (con el teclado y la rueda cambia), para las pruebas: solo si cambió.
+        let visto = self.m.borrow().lo_que_se_ve();
+        if visto != self.visto {
+            if !visto.is_empty() {
+                println!("  [barra] se ve: {}", visto);
+            }
+            self.visto = visto;
+        }
     }
 
     /// Pinta lo desplegado en sus capas (las que ya tienen búfer de su tamaño) y, la primera vez de cada menú, dice
@@ -388,8 +420,15 @@ impl MenusBarra {
         if !e.bytes.is_empty() {
             c.mandar(&e);
         }
-        let k = m.menu_abierto();
-        if k.is_some() && self.dicho != k && self.capa.as_ref().is_some_and(|c| c.lista) {
+        // La primera vez que se ve cada menú, y cada submenú (menus-pulido), dónde está cada entrada que se ve y cada
+        // submenú: para las pruebas.
+        let k = m.menu_abierto().map(|k| (k, m.sub_abierto_en()));
+        let sub_lista = k.is_none_or(|(_, s)| s.is_none()) || self.sub.as_ref().is_some_and(|c| c.lista);
+        if let Some((km, ks)) = k
+            && self.dicho != k
+            && self.capa.as_ref().is_some_and(|c| c.lista)
+            && sub_lista
+        {
             self.dicho = k;
             let mut sitios = Vec::new();
             for (e, ok) in m.datos.entradas() {
@@ -397,7 +436,17 @@ impl MenusBarra {
                     sitios.push(alloc::format!("\"{}\" en ({}, {})", e.titulo, r.x + r.w / 2, r.y + r.h / 2));
                 }
             }
-            let titulo = m.datos.menus.get(k.unwrap()).map_or("", |x| x.titulo.as_str());
+            let menu = m.datos.menus.get(km);
+            for (i, c) in menu.map_or(&[][..], |x| x.cosas.as_slice()).iter().enumerate() {
+                if let (kit::menus::Cosa::Sub(s), Some(r)) = (c, m.sitio_cosa(i)) {
+                    sitios.push(alloc::format!("\"{}\" en ({}, {})", s.titulo, r.x + r.w / 2, r.y + r.h / 2));
+                }
+            }
+            let mut titulo = String::from(menu.map_or("", |x| x.titulo.as_str()));
+            if let Some(kit::menus::Cosa::Sub(s)) = ks.and_then(|i| menu.and_then(|x| x.cosas.get(i))) {
+                titulo.push_str(" > ");
+                titulo.push_str(&s.titulo);
+            }
             println!("  [barra] menú abierto: {}; {}", titulo, sitios.join("; "));
         }
     }

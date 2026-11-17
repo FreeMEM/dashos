@@ -20,6 +20,8 @@
 //! - X5b: las IOMMU (`iommu.rs`: VT-d y AMD-Vi), con sus tablas de ACPI (DMAR e IVRS, `acpi.rs`). Qué aparato va a qué
 //!   unidad y a qué dominio lo decide `crate::iommu`.
 //!
+//! - S32: las variables de la NVRAM por los servicios de ejecución de UEFI (`uefi.rs`), para el instalador.
+//!
 //! - X10: el hipervisor (`hiper.rs`, `hiper.s`): AMD-V con NPT o VT-x con EPT. Qué se hace con cada salida lo decide
 //!   `crate::maquinas` (`maquinas_x86.rs`).
 
@@ -48,6 +50,8 @@ pub mod nucleos;
 pub mod planificador;
 pub mod serie;
 pub mod tiempo;
+/// S32: las variables del firmware (NVRAM) con los servicios de ejecución de UEFI.
+pub mod uefi;
 pub mod usuario;
 
 core::arch::global_asm!(include_str!("arranque.s"));

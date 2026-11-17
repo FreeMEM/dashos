@@ -701,7 +701,45 @@ while time.time() - inicio < total:
         if tandas_en > globals().get("tandas_vistas", 0):
             globals()["tandas_vistas"] = globals().get("tandas_vistas", 0) + 1
             time.sleep(1.3)
-            teclear("no es esta" if tandas_vistas == 4 else "clave de Ana")
+            # S6b, rama cuentas: la que crea una cuenta pide además su contraseña (Intro en una caja vacía pasa a la
+            # siguiente). A Berta, la de Ana y la suya; a Dora, primero una mala de administrador, luego la buena de
+            # Carla (que no lo es) y luego la de Ana con una corta para Dora: ninguna se crea.
+            import re
+            linea_t = [l for l in texto.splitlines() if "[guardian] tanda en pantalla: " in l][tandas_vistas - 1]
+            nueva = re.search(r"\(y la contraseña de la cuenta nueva (\w+)\)", linea_t)
+            if nueva and nueva.group(1) == "Dora":
+                globals()["doras"] = globals().get("doras", 0) + 1
+                if doras == 1:
+                    teclear("no es esta")
+                    teclear("clave de Dora")
+                elif doras == 2:
+                    mandar("sendkey shift-tab", "sendkey backspace", "sendkey backspace", "sendkey backspace", pausa=0.15)
+                    teclear("Carla")
+                    teclear("clave de Carla")
+                    teclear("clave de Dora")
+                else:
+                    teclear("clave de Ana")
+                    teclear("corta")
+            elif nueva:
+                if os.environ.get("CAPTURA_CUENTAS"):
+                    mandar("screendump " + os.environ["CAPTURA_CUENTAS"] + ".tanda.ppm")
+                    time.sleep(0.5)
+                teclear("clave de Ana")
+                teclear("clave de " + nueva.group(1))
+            else:
+                teclear("no es esta" if tandas_vistas == 4 else "clave de Ana")
+            time.sleep(0.5)
+            continue
+        # S6b, rama cuentas: el código de recuperación de la cuenta nueva, en la ventana del sistema: Intro (con
+        # CAPTURA_CUENTAS, antes, su captura).
+        codigos_en = texto.count("[guardian] código de recuperación en pantalla: ")
+        if codigos_en > globals().get("codigos_vistos", 0):
+            globals()["codigos_vistos"] = globals().get("codigos_vistos", 0) + 1
+            time.sleep(1.3)
+            if os.environ.get("CAPTURA_CUENTAS"):
+                mandar("screendump " + os.environ["CAPTURA_CUENTAS"] + ".codigo.ppm")
+                time.sleep(0.5)
+            mandar("sendkey ret")
             time.sleep(0.5)
             continue
         # U4: las preguntas de permisos de `guardian`. A `pide`, que sí; a los demás, una "s" enseguida (en el primer

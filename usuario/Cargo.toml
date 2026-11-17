@@ -363,6 +363,19 @@ path = "src/bin/caja_linux.rs"
 test = false
 required-features = ["caja", "ventanas"]
 
+# S35, paso 2 (docs/bitacoras/dominio-red.md): un dominio de controladores que presta una tarjeta a un Linux mínimo y
+# recibe de él una red virtio, y su prueba.
+[[bin]]
+name = "dominio"
+path = "src/bin/dominio.rs"
+test = false
+required-features = ["caja"]
+
+[[bin]]
+name = "dominio-prueba"
+path = "src/bin/dominio_prueba.rs"
+test = false
+
 [[bin]]
 name = "sin-maquina"
 path = "src/bin/sin_maquina.rs"
@@ -450,6 +463,23 @@ path = "src/bin/xhci1.rs"
 test = false
 
 [[bin]]
+name = "disco-vivo"
+path = "src/bin/disco_vivo.rs"
+test = false
+
+[[bin]]
+name = "instalador"
+path = "src/bin/instalador.rs"
+test = false
+required-features = ["archivos"]
+
+[[bin]]
+name = "instalar"
+path = "src/bin/instalar.rs"
+test = false
+required-features = ["ventanas"]
+
+[[bin]]
 name = "archivos"
 path = "src/bin/archivos.rs"
 test = false
@@ -522,5 +552,13 @@ required-features = ["ventanas"]
 [[bin]]
 name = "nocapslock"
 path = "src/bin/nocapslock.rs"
+test = false
+required-features = ["ventanas"]
+
+# S10, los menús (docs/bitacoras/menus-pulido.md): un programa del kit nativo con un submenú y menús que no caben, para
+# `make arranque-virt-menus`.
+[[bin]]
+name = "menus-prueba"
+path = "src/bin/menus_prueba.rs"
 test = false
 required-features = ["ventanas"]

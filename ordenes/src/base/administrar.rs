@@ -56,7 +56,11 @@ fn que_paso(e: i32) -> &'static str {
         s::PROTEGIDO => "no se confirmó con la contraseña de un administrador",
         s::OCUPADO => "ya tiene otra tanda esperando",
         tanda::NO_HECHA => "no se hizo",
-        e => crate::texto_error(e),
+        // Rama `cuentas`: lo que dice `cuentas::Fallo` (una cuenta repetida, la propia, el último administrador...).
+        e => match dashos::cuentas::Fallo::de_estado(e) {
+            Some(f) => f.texto(),
+            None => crate::texto_error(e),
+        },
     }
 }
 
