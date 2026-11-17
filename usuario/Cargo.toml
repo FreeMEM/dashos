@@ -463,6 +463,17 @@ path = "src/bin/xhci1.rs"
 test = false
 
 [[bin]]
+name = "disco-vivo"
+path = "src/bin/disco_vivo.rs"
+test = false
+
+[[bin]]
+name = "instalador"
+path = "src/bin/instalador.rs"
+test = false
+required-features = ["archivos"]
+
+[[bin]]
 name = "archivos"
 path = "src/bin/archivos.rs"
 test = false

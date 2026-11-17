@@ -47,6 +47,7 @@
 //! En x86 (X10) las llamadas de máquinas son las mismas, con AMD-V o VT-x (`maquinas_x86.rs`).
 //! | 51 | apagar(permiso, modo): 0 apaga la máquina, 1 la reinicia; no vuelve si se pudo |
 //! | 39 | hora(0): la hora del calendario; hora(1, permiso, ns): ponerla, con el permiso del reloj (S13) |
+//! | 64 | firmware_variable(permiso de variables, operación, búfer, capacidad) -> estado de UEFI; x1 = bytes: solo x86 (S32) |
 //! | 59 | puertos_permitir(llave de puertos): en x86, el proceso puede usar esos puertos de E/S (X6; fue la 29 y la 56, que en `revision` son `medir` y `llaves_nombres`) |
 //!
 //! | 56 | llaves_nombres(búfer, capacidad) -> cuántas llaves de nacimiento tienen nombre; los copia al búfer |
@@ -256,6 +257,12 @@ pub fn atender(marco: &mut Marco) {
         60 => maquina_aparato(marco, a[0] as u32, a[1] as u32, a[2], a[3], a[4]),
         #[cfg(not(target_arch = "x86_64"))]
         60 => E_NO_HAY,
+        // S32 (solo x86): una variable del firmware (NVRAM), con el permiso de variables (a[0]), la operación (a[1]: 0
+        // leer, 1 escribir, 2 la siguiente), el búfer (a[2]) y su capacidad (a[3]). Ver `firmware_variable`.
+        #[cfg(target_arch = "x86_64")]
+        64 => firmware_variable(marco, a[0] as u32, a[1], a[2], a[3]),
+        #[cfg(not(target_arch = "x86_64"))]
+        64 => E_NO_HAY,
         n => {
             kprintln!("  [hilo {}] llamada desconocida {}", planificador::actual_id(), n);
             E_ARGUMENTO
@@ -1811,3 +1818,80 @@ fn error_hiper(e: crate::base::hiper::Error) -> u64 {
     }
 }
 
+/// La llamada 64 (S32, solo x86): una variable de la NVRAM de UEFI, por los servicios de ejecución del firmware
+/// (`base::uefi`). Solo con el permiso de variables, que da el kernel a `inicio` y este al servicio `instalador` (solo
+/// en vivo, desde el pendrive) y a nadie más.
+///
+/// El búfer: GUID (16 bytes), atributos (u32), largo del nombre en bytes (u32, UTF-16 con su 0 final), largo de los
+/// datos (u32), 4 bytes sin usar, el nombre y los datos. Operaciones:
+/// - 0, leer: los datos se escriben detrás del nombre (hasta la capacidad); x1 = sus bytes, y los atributos en su sitio.
+/// - 1, escribir: solo las de arranque (`Boot####`, `BootOrder`, `BootNext`, del GUID global de EFI): es lo único que
+///   necesita el instalador, y una variable cualquiera puede romper el firmware.
+/// - 2, la siguiente tras (nombre, GUID): su nombre detrás del de antes (x1 = sus bytes) y su GUID en su sitio.
+///
+/// Devuelve el estado de UEFI (0 bien; con el bit 63, un error del firmware) o un `E_` del kernel.
+#[cfg(target_arch = "x86_64")]
+fn firmware_variable(marco: &mut Marco, permiso: u32, op: u64, buf: u64, capacidad: u64) -> u64 {
+    use crate::base::uefi;
+    const GLOBAL: [u8; 16] = [0x61, 0xDF, 0xE4, 0x8B, 0xCA, 0x93, 0xD2, 0x11, 0xAA, 0x0D, 0x00, 0xE0, 0x98, 0x03, 0x2B, 0x8C];
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    {
+        let t = proc_.llaves.tomar();
+        let Some(p) = t.ver(permiso) else { return E_LLAVE };
+        let Objeto::PermisoVariables = p.objeto else { return E_TIPO };
+        if p.derechos & objetos::ESCRIBIR == 0 {
+            return E_DERECHOS;
+        }
+    }
+    if !(32..=64 * 1024).contains(&capacidad) || op > 2 {
+        return E_ARGUMENTO;
+    }
+    let Some(cab) = leer_usuario(buf, 32) else { return E_ARGUMENTO };
+    let mut guid = [0u8; 16];
+    guid.copy_from_slice(&cab[..16]);
+    let atr = u32::from_le_bytes(cab[16..20].try_into().unwrap());
+    let (ln, ld) = (u32::from_le_bytes(cab[20..24].try_into().unwrap()) as u64, u32::from_le_bytes(cab[24..28].try_into().unwrap()) as u64);
+    if ln < 2 || ln % 2 != 0 || ln > 1024 || 32 + ln + ld > capacidad {
+        return E_TAMANO;
+    }
+    let Some(n) = leer_usuario(buf + 32, ln as usize) else { return E_ARGUMENTO };
+    let nombre: Vec<u16> = n.chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    if *nombre.last().unwrap() != 0 {
+        return E_ARGUMENTO;
+    }
+    let sitio = (capacidad - 32 - ln) as usize;
+    let (r, atr_leidos, bytes) = match op {
+        0 => {
+            let mut datos = alloc::vec![0u8; sitio];
+            let r = uefi::variable(uefi::Operacion::Leer, &nombre, &mut guid, &mut datos);
+            if r.0 == uefi::BIEN && !escribir_usuario(buf + 32 + ln, &datos[..r.2.min(sitio)]) {
+                return E_ARGUMENTO;
+            }
+            r
+        }
+        1 => {
+            let texto: alloc::string::String = char::decode_utf16(nombre[..nombre.len() - 1].iter().copied()).map(|c| c.unwrap_or('?')).collect();
+            let de_arranque = texto == "BootOrder" || texto == "BootNext" || (texto.len() == 8 && texto.starts_with("Boot") && texto[4..].bytes().all(|b| b.is_ascii_digit() || (b'A'..=b'F').contains(&b)));
+            if guid != GLOBAL || !de_arranque || ld > 4096 {
+                return E_DERECHOS;
+            }
+            let Some(datos) = leer_usuario(buf + 32 + ln, ld as usize) else { return E_ARGUMENTO };
+            kprintln!("uefi: el instalador escribe la variable {} ({} bytes)", texto, ld);
+            uefi::variable(uefi::Operacion::Escribir(atr, &datos), &nombre, &mut guid, &mut [])
+        }
+        _ => {
+            let mut datos = alloc::vec![0u8; sitio.min(1024)];
+            let r = uefi::variable(uefi::Operacion::Siguiente, &nombre, &mut guid, &mut datos);
+            if r.0 == uefi::BIEN && (!escribir_usuario(buf + 32 + ln, &datos[..r.2.min(datos.len())]) || !escribir_usuario(buf, &guid)) {
+                return E_ARGUMENTO;
+            }
+            r
+        }
+    };
+    if op == 0 && r == uefi::BIEN {
+        let _ = escribir_usuario(buf + 16, &atr_leidos.to_le_bytes());
+    }
+    let _ = atr;
+    marco.poner_x1(bytes as u64);
+    r
+}

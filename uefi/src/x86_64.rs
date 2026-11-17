@@ -12,6 +12,8 @@
 
 use crate::*;
 
+mod vivo;
+
 /// El kernel, como ELF de x86-64 (lo da el Makefile del kernel en `DASHOS_NUCLEO`).
 static NUCLEO: &[u8] = include_bytes!(env!("DASHOS_NUCLEO"));
 
@@ -47,10 +49,20 @@ struct InfoArranque {
     pantalla_alto: u32,
     pantalla_por_linea: u32,
     pantalla_formato: u32,
+    /// Desde la versión 2 (S32). La tabla de los servicios de ejecución del firmware (física; las variables de la
+    /// NVRAM para el instalador), o 0.
+    ejecucion: u64,
+    /// El pendrive en vivo: la zona que dejó el cargador con el sistema, su propio fichero y el plan sin manos
+    /// (cabecera `Vivo`), física y su tamaño; 0 si no arrancó de un pendrive en vivo.
+    vivo: u64,
+    vivo_tamano: u64,
+    /// El GUID de la partición desde la que arrancó el cargador (la ESP del pendrive o del disco), en el orden del disco;
+    /// ceros si no se sabe.
+    arranque_particion: [u8; 16],
 }
 
 const MARCA: u64 = u64::from_le_bytes(*b"DashOS64");
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 static mut INFO: InfoArranque = InfoArranque {
     marca: 0,
@@ -68,6 +80,10 @@ static mut INFO: InfoArranque = InfoArranque {
     pantalla_alto: 0,
     pantalla_por_linea: 0,
     pantalla_formato: 0,
+    ejecucion: 0,
+    vivo: 0,
+    vivo_tamano: 0,
+    arranque_particion: [0; 16],
 };
 
 fn u16_en(b: &[u8], i: usize) -> Option<u16> {
@@ -199,6 +215,8 @@ extern "efiapi" fn principal(imagen: *const c_void, st: *const TablaSistema) -> 
             let _ = writeln!(c, "DashOS: el firmware no da pantalla");
         }
     }
+    info.ejecucion = st.servicios_ejecucion as u64;
+    vivo::buscar(imagen, bs, info, &mut c);
     let elf = match leer_elf(NUCLEO) {
         Ok(e) => e,
         Err(motivo) => {

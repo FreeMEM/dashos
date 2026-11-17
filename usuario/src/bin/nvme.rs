@@ -89,7 +89,9 @@ const SIN_PERMISO: i32 = -6;
 /// DashOS de la tabla de particiones (`dashos::particiones`); sin ella, nada. El comprobador (A15): la misma partición,
 /// solo para leer (escribir y descartar dan -6). La caja Linux (H9): la partición de la caja (GPT, su tipo propio), que
 /// es el disco de su invitado. Nadie más.
-const NOMBRES: [&str; 4] = ["disco", "archivos", "comprobador", "caja-linux"];
+/// S32: y el instalador (solo en vivo, arrancado del pendrive), con el disco entero: lee las tablas de todos, aunque no
+/// valgan, y escribe solo lo que dice su plan.
+const NOMBRES: [&str; 5] = ["disco", "archivos", "comprobador", "caja-linux", "instalador"];
 /// El de solo lectura, por su número en `NOMBRES`.
 const SOLO_LEER: usize = 2;
 const PEDIR_ANILLO: u32 = 3;
@@ -438,12 +440,12 @@ fn principal() -> u64 {
                 println!("  [nvme] la caja Linux: sectores {} a {} ({} MB)", a, b - 1, (b - a) * tam_sector as u64 >> 20);
             }
             let disco = (t.clase != Clase::Gpt).then_some((0, mb.min(t.primera).min(sectores)));
-            [disco, t.dashos, t.dashos, t.linux]
+            [disco, t.dashos, t.dashos, t.linux, Some((0, sectores))]
         }
         Err(e) => {
             // Una tabla que no cuadra: no se adivina dónde está nada (ni siquiera la prueba en bruto, que escribe).
             println!("  [nvme] la tabla de particiones no vale ({:?}): no se abre a nadie", e);
-            [None, None, None, None]
+            [None, None, None, None, Some((0, sectores))]
         }
     };
     servir(&n, &mut es, tramos, tam_sector, disco)
@@ -672,7 +674,7 @@ fn nombre_de(nombres: &[(u64, [u8; 16])], marca: u64) -> Option<usize> {
 }
 
 /// El tramo, en sectores, del cliente de la marca `marca`, por su nombre en el directorio (A13).
-fn tramo_de(nombres: &[(u64, [u8; 16])], tramos: &[Option<(u64, u64)>; 4], marca: u64) -> Option<(u64, u64)> {
+fn tramo_de(nombres: &[(u64, [u8; 16])], tramos: &[Option<(u64, u64)>; 5], marca: u64) -> Option<(u64, u64)> {
     let (_, n) = nombres.iter().find(|e| e.0 == marca && marca != 0)?;
     let nombre = &n[..n.iter().position(|&c| c == 0).unwrap_or(16)];
     tramos[NOMBRES.iter().position(|t| t.as_bytes() == nombre)?]
@@ -682,7 +684,7 @@ fn tramo_de(nombres: &[(u64, [u8; 16])], tramos: &[Option<(u64, u64)>; 4], marca
 /// desplazamiento en la ventana) con una llave para la respuesta; la respuesta, 24 bytes (estado, sectores de su tramo,
 /// tamaño del sector y de la ventana) y, al abrir, la ventana; al pedir el anillo, su memoria. Un mensaje de 24 bytes
 /// con la orden 4 y sin llave solo despierta al servicio para que mire los anillos.
-fn servir(n: &Nvme, es: &mut Cola, tramos: [Option<(u64, u64)>; 4], tam_sector: usize, disco: u32) -> u64 {
+fn servir(n: &Nvme, es: &mut Cola, tramos: [Option<(u64, u64)>; 5], tam_sector: usize, disco: u32) -> u64 {
     let mut clientes: [Option<Cliente>; MAX_CLIENTES] = [None; MAX_CLIENTES];
     // El directorio de `inicio` (marca y nombre de cada cliente): de él sale su tramo (A13).
     let mut nombres: [(u64, [u8; 16]); 8] = [(0, [0; 16]); 8];

@@ -121,6 +121,9 @@ prueba: $(PRUEBAS) catalogos
 	cd ../usuario && rustc --edition 2024 --test src/tanda.rs -o target/tanda_pruebas && ./target/tanda_pruebas -q
 	@# S6b, rama cuentas: las cuentas de usuario (ficheros dañados y truncados, nombres hostiles, el último administrador).
 	cd ../usuario && rustc --edition 2024 --test src/cuentas.rs -o target/cuentas_pruebas && ./target/cuentas_pruebas -q
+	@# S32: el instalador (GPT con sus dos copias rotas o distintas, MBR híbrido, FAT con nombres largos, planes hostiles,
+	@# y cortes de luz en cada sector de la tabla, de la ESP y de la instalación entera junto a un Windows).
+	cd ../usuario && rustc --edition 2024 -O --test src/instalador/pruebas.rs -o target/instalador_pruebas && ./target/instalador_pruebas -q
 	@# S28: la pregunta de la guardia de ficheros de la caja Amiga (permisos sin llave, detalle, nombres raros).
 	cd ../usuario && rustc --edition 2024 --test src/preguntas_ficheros.rs -o target/preguntas_ficheros_pruebas && ./target/preguntas_ficheros_pruebas -q
 	../puente/pruebas/g0.sh
@@ -774,7 +777,7 @@ prueba-x86: usuario-x86 firmware-x86 FORCE
 # serie (compilado para x86: DASHOS_ARQ=x86_64), la red de usuario de QEMU y el sonido. Lo arranca
 # `tools/qemu_x86_a_mano.sh` (PANTALLA=ANCHOxALTO, SONIDO_X86=hda|virtio, VENTANA=gtk|sdl|none). No es una prueba: nada
 # la comprueba. Sin la caja Linux ni la caja Amiga (aún no van en x86).
-SERVICIOS_X86_USO := inicio consola compositor xhci nvme ahci archivos comprobador eco sesiones red virtio-red fondo centro guardian imagen sonido avisos barra virtio-sonido hda selector panel explorador workbench hora
+SERVICIOS_X86_USO := inicio consola compositor xhci nvme ahci disco-vivo instalador archivos comprobador eco sesiones red virtio-red fondo centro guardian imagen sonido avisos barra virtio-sonido hda selector panel explorador workbench hora
 # Los programas que van en el disco (`tools/disco_archivos.py`), también de x86.
 DISCO_PROGRAMAS_X86 := hola pide cambio ram avisa guarda espera blanker nocapslock
 FUNCIONES_X86_USO := archivos,ventanas,sonido,red,imagenes,ordenes
@@ -792,6 +795,33 @@ $(DISCO_X86): catalogos usuario-x86-uso FORCE
 	DASHOS_ARQ=x86_64 python3 ../tools/disco_archivos.py $@ $(DASHFS_AR)
 x86-uso: x86-uso-imagen $(DISCO_X86)
 	ACCEL=$(ACCEL_USO) ../tools/qemu_x86_a_mano.sh
+
+# S32: el pendrive en vivo de x86 (`target/pendrive-x86.img`, para grabarlo en un USB con dd): GPT con una ESP que
+# lleva el cargador (con la imagen de usar dentro) como EFI/BOOT/BOOTX64.EFI y el sistema (el DashFS del disco de
+# serie) como EFI/DashOS/VIVO.IMG, que el cargador lee entero a la memoria. DashOS arranca en vivo, sin tocar los
+# discos del PC, y desde él se instala (`docs/bitacoras/instalador.md`). SIN_MANOS=<plan> pone ese plan en
+# EFI/DashOS/SINMANOS.TXT (las pruebas del banco). La de la Pi 5, pendiente (S32).
+PENDRIVE_X86 := target/pendrive-x86.img
+pendrive-x86: x86-uso-imagen $(DISCO_X86)
+	cd ../uefi && DASHOS_PANTALLA=$(or $(PANTALLA),1280x800) DASHOS_NUCLEO=$(abspath $(NUCLEO_X86_USO)) cargo build --release --target x86_64-unknown-uefi
+	python3 ../tools/pendrive_x86.py $(PENDRIVE_X86) ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi $(DISCO_X86) $(if $(SIN_MANOS),--sin-manos $(SIN_MANOS))
+
+# S32: el pendrive en vivo en QEMU (q35 con OVMF, KVM si hay), como USB, con un disco NVMe vacío de 64 GB al lado para
+# instalar (`target/vivo-destino.img`, nuevo cada vez). Para usarlo a mano; las pruebas, `prueba-instalar-x86`.
+vivo-x86: pendrive-x86
+	rm -f target/vivo-destino.img && truncate -s 64G target/vivo-destino.img
+	cp /usr/share/edk2/x64/OVMF_VARS.4m.fd target/vivo-vars.fd
+	qemu-system-x86_64 -name "DashOS en vivo" -M q35 $(if $(ACCEL_USO),-accel kvm -cpu host,-cpu max) -smp 4 -m 2G \
+	    -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd -drive if=pflash,format=raw,file=target/vivo-vars.fd \
+	    -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-tablet,bus=xhci.0 \
+	    -drive file=$(PENDRIVE_X86),format=raw,if=none,id=usb0,readonly=on -device usb-storage,bus=xhci.0,drive=usb0,bootindex=1 \
+	    -drive file=target/vivo-destino.img,format=raw,if=none,id=nv -device nvme,serial=destino,drive=nv \
+	    -serial file:target/vivo-serie.txt -display gtk,zoom-to-fit=on -audiodev none,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0
+
+# S32: la prueba del instalador en el banco de AmiCachy (`tools/banco_instalador.py`, los discos base no se tocan):
+# disco vacío, Windows con hueco, Debian con hueco, el pendrive como destino y la GPT rota, y un corte de luz.
+prueba-instalar-x86: pendrive-x86
+	python3 ../tools/prueba_instalador.py
 
 clean:
 	cargo clean

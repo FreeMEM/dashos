@@ -10,6 +10,8 @@ fn main() {
     println!("cargo:rustc-link-arg-bin=comprobador=-zstack-size=1048576");
     // Paso 2 de las asignaciones: `sesiones` lleva la tabla de nombres de cada ficha (64 de 1 KB) en la pila.
     println!("cargo:rustc-link-arg-bin=sesiones=-zstack-size=524288");
+    // S32: el instalador abre y crece el DashFS de la partición nueva con la misma biblioteca.
+    println!("cargo:rustc-link-arg-bin=instalador=-zstack-size=1048576");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=enlace.ld");
     println!("cargo:rerun-if-changed=enlace_x86.ld");

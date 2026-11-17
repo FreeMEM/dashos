@@ -10,7 +10,7 @@
 //! Los programas van comprimidos con LZ4, como en ARM (`build.rs`): el kernel de x86 se carga en 1 MB y, con todos sin
 //! comprimir (más de 6 MB), pisaba lo que OVMF tiene ocupado desde 8 MB.
 
-use super::{DATOS, FIRMWARE, INTERRUPCION, MAQUINAS, OPCIONAL, PERMISO_DMA, PLAZO, REGISTRO, REGISTROS, RELOJ, PUERTOS};
+use super::{DATOS, FIRMWARE, INTERRUPCION, MAQUINAS, OPCIONAL, PERMISO_DMA, PLAZO, REGISTRO, REGISTROS, RELOJ, PUERTOS, VARIABLES};
 
 /// Los servicios que lanza `inicio`, en orden, con los aparatos (por nombre y tipo) y los canales (por nombre) que le
 /// pasa a cada uno. El orden de los canales es el de `inicio.rs` (el primero que nombra un canal lo sirve), con los
@@ -23,6 +23,9 @@ pub(super) static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("nvme", programa!("nvme"), &[("dma-nvme", PERMISO_DMA), ("nvme", REGISTROS), ("nvme", INTERRUPCION | OPCIONAL)], &["disco"]),
     // X5c: sin NVMe, el AHCI sirve el canal "disco" (`inicio_x86.rs`, `canal`); con NVMe, "sata", sin clientes.
     ("ahci", programa!("ahci"), &[("dma-ahci", PERMISO_DMA), ("ahci", REGISTROS), ("ahci", INTERRUPCION | OPCIONAL)], &["sata"]),
+    // S32: en vivo (arrancado del pendrive), el sistema en memoria, servido como el disco de `archivos`; el NVMe y el
+    // AHCI pasan a "nvme" y "sata" (`inicio_x86.rs`, `canal`). Sin pendrive no se lanza (le falta "vivo").
+    ("disco-vivo", programa!("disco-vivo"), &[("vivo", DATOS)], &["disco"]),
     ("archivos", programa!("archivos"), &[], &["disco", "archivos"]),
     ("comprobador", programa!("comprobador"), &[], &["disco", "archivos", "comprobar"]),
     ("eco", programa!("eco"), &[], &["eco"]),
@@ -46,4 +49,7 @@ pub(super) static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("workbench", programa!("workbench"), &[], &["ventanas", "archivos", "sesiones", "explorador"]),
     // S13: la hora por la red (SNTP), con el permiso del reloj.
     ("hora", programa!("hora"), &[("reloj", RELOJ)], &["red"]),
+    // S32: el instalador, solo en vivo: los discos del PC enteros (por "nvme" y "sata"), el sistema que se copia, y
+    // las variables de arranque de la NVRAM. Sirve "instalador" (la ventana y la orden del Shell).
+    ("instalador", programa!("instalador"), &[("vivo-original", DATOS), ("variables", VARIABLES | OPCIONAL)], &["instalador", "nvme", "sata"]),
 ];

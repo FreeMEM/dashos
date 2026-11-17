@@ -100,6 +100,9 @@ const AVISO_MEMORIA: u32 = 11;
 const RELOJ: u32 = 12;
 /// Puertos de E/S (X6): los de COM1, para la consola. Era el 12 antes de unir `revision`, donde el 12 es el del reloj.
 const PUERTOS: u32 = 13;
+/// S32: el permiso de las variables de arranque de la NVRAM (llamada 64), para el instalador. El 20, lejos de los que
+/// vayan añadiendo otras ramas.
+const VARIABLES: u32 = 20;
 /// COM1: la UART 16550 de un PC, ocho puertos desde 0x3F8.
 const COM1: (u32, u32) = (0x3f8, 8);
 const OPCIONAL: u32 = 0x100;
@@ -288,6 +291,19 @@ pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
     apuntar(&mut llaves, "apagar", APAGAR, Llave::nueva(Objeto::PermisoApagar, DERECHOS));
     apuntar(&mut llaves, "memoria", AVISO_MEMORIA, Llave::nueva(Objeto::PermisoMemoria, DERECHOS));
     apuntar(&mut llaves, "reloj", RELOJ, Llave::nueva(Objeto::PermisoReloj, DERECHOS));
+    // S32: arrancado de un pendrive en vivo. El sistema, en memoria ("vivo", para `disco-vivo`, que lo sirve como disco:
+    // lo que se cambie se pierde al apagar), la zona entera tal como la dejó el cargador ("vivo-original", de solo
+    // lectura, para el instalador: el sistema sin tocar, el cargador y el plan sin manos) y el permiso de las variables
+    // de la NVRAM. Sin pendrive, nada de esto: ni `disco-vivo` ni el instalador se lanzan.
+    let vivo = vivo_en_memoria();
+    let en_vivo = vivo.is_some();
+    if let Some((sistema, original)) = vivo {
+        apuntar(&mut llaves, "vivo", DATOS, Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(sistema)), DERECHOS));
+        apuntar(&mut llaves, "vivo-original", DATOS, Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(original)), LEER | crate::objetos::TRANSFERIR));
+        if crate::base::arranque::ejecucion().is_some() {
+            apuntar(&mut llaves, "variables", VARIABLES, Llave::nueva(Objeto::PermisoVariables, DERECHOS));
+        }
+    }
     // Un servicio al que le falta algún aparato no se lanza.
     let lanzables: Vec<_> = PROGRAMAS
         .iter()
@@ -309,8 +325,15 @@ pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
     }
     paquete.extend_from_slice(&(lanzables.len() as u32).to_le_bytes());
     // X5c: sin NVMe, el AHCI sirve el canal "disco" (y los de "sata" van a él).
+    // S32: en vivo, el canal "disco" es el de `disco-vivo` (el sistema en memoria); el NVMe sirve "nvme" y el AHCI
+    // "sata", y solo los usa el instalador: los discos del PC no se tocan.
     let hay_nvme = manifiesto.iter().any(|(n, t, _)| *n == nombre16("nvme") && *t == REGISTROS);
-    let canal = |c: &'static str| if c == "sata" && !hay_nvme { "disco" } else { c };
+    let canal = |c: &'static str, programa: &str| match (c, programa) {
+        ("disco", "nvme") if en_vivo => "nvme",
+        ("sata", _) if en_vivo => "sata",
+        ("sata", _) if !hay_nvme => "disco",
+        _ => c,
+    };
     let mut canales: Vec<&str> = Vec::new();
     for (nombre, elf, aparatos, suyos) in lanzables.iter() {
         let mut suyos_aparatos = [0xFFu8; 8];
@@ -320,7 +343,8 @@ pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
             }
         }
         let mut de_canales = 0u32;
-        for c in suyos.iter().map(|c| canal(c)) {
+        // Sin NVMe nadie sirve "nvme": quien solo lo usa (el instalador) no lo recibe (si no, lo serviría él).
+        for c in suyos.iter().map(|c| canal(c, nombre)).filter(|c| *c != "nvme" || hay_nvme) {
             let i = canales.iter().position(|x| *x == c).unwrap_or_else(|| {
                 canales.push(c);
                 canales.len() - 1
@@ -358,4 +382,41 @@ pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
             false
         }
     }
+}
+
+/// S32: la zona del pendrive en vivo en dos objetos de memoria: el sistema solo (de la cabecera "DashVivo", para
+/// `disco-vivo`) y la zona entera (para el instalador). `None` si no se arrancó de un pendrive o no cuadra.
+fn vivo_en_memoria() -> Option<(memoria::Memoria, memoria::Memoria)> {
+    let (_, tam) = crate::base::arranque::vivo()?;
+    let mut cab = [0u8; 80];
+    if !crate::base::arranque::vivo_leer(0, &mut cab) || &cab[..8] != b"DashVivo" {
+        kprintln!("vivo: la zona del pendrive no tiene su cabecera");
+        return None;
+    }
+    let u = |o: usize| u64::from_le_bytes(cab[o..o + 8].try_into().unwrap());
+    let (desde, largo) = (u(16), u(24));
+    if largo < 4096 || desde.checked_add(largo).is_none_or(|f| f > tam) {
+        kprintln!("vivo: el sistema se sale de la zona");
+        return None;
+    }
+    let raiz = crate::cupo::Cupo::raiz();
+    let sistema = memoria::Memoria::nueva(largo as usize, &raiz)?;
+    let original = memoria::Memoria::nueva(tam as usize, &raiz)?;
+    let mut b = alloc::vec![0u8; 1 << 20];
+    let mut o = 0u64;
+    while o < tam {
+        let n = (tam - o).min(b.len() as u64) as usize;
+        if !crate::base::arranque::vivo_leer(o, &mut b[..n]) {
+            return None;
+        }
+        original.escribir(o as usize, &b[..n]);
+        // Lo del sistema, también a su objeto.
+        let (a, z) = (o.max(desde), (o + n as u64).min(desde + largo));
+        if a < z {
+            sistema.escribir((a - desde) as usize, &b[(a - o) as usize..(z - o) as usize]);
+        }
+        o += n as u64;
+    }
+    kprintln!("vivo: arrancado del pendrive; el sistema ({} KB) en memoria", largo / 1024);
+    Some((sistema, original))
 }

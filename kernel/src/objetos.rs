@@ -68,6 +68,9 @@ pub enum Objeto {
     /// Permiso para poner la hora del calendario (S13): con escribir, la llamada 39 con `x0` = 1. Solo lo da el kernel,
     /// y `inicio` lo da a `hora` (el servicio que la toma de la red) y a nadie más.
     PermisoReloj,
+    /// Permiso para leer y escribir las variables de arranque de la NVRAM de UEFI (S32, solo x86): con escribir, la
+    /// llamada 64. Solo lo da el kernel, a `inicio`, que lo da al servicio `instalador` (en vivo) y a nadie más.
+    PermisoVariables,
     /// Un grupo de procesos con su cupo (C42): con escribir se crean procesos en él y se mata; con leer se mira el uso.
     Grupo(Arc<crate::cupo::Cupo>),
     /// Permiso para crear máquinas virtuales (caja Linux, H9): con escribir, la llamada 45. Solo lo da el kernel, a
