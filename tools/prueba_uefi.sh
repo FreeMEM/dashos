@@ -115,6 +115,8 @@ selector = 0
 entradas_antes = 0
 menu_intentos = 0
 menu_desde = 0
+ajustes_intentos = 0
+ajustes_desde = 0
 menus_antes = 0
 espera_carpeta = 0
 centro = 0
@@ -741,9 +743,25 @@ while time.time() - inicio < total:
             if "[centro] quita a " not in texto:
                 if time.time() > reintento:
                     reintento = time.time() + 4
-                    mandar("sendkey down")
-                    time.sleep(0.3)
-                    mandar("sendkey delete")
+                    # firefox-firme: con el PC cargado, las ventanas de la caja Amiga (Ajustes, ReAction) salen a esta
+                    # hora encima del centro y se llevan el teclado; vuelven a soltarlo al cerrarse, pero ni el clic ni
+                    # las flechas le habían llegado. Otra vez con el ratón (el clic en la fila lo trae delante y le da
+                    # el teclado); con teclas solo si no se sabe dónde está.
+                    import re
+                    v = re.search(r"\[compositor\] ventana de centro en \((\d+), (\d+)\)", texto)
+                    l = re.search(r"\[centro\] lista en \((\d+), (\d+)\)", texto)
+                    b = re.search(r"\[centro\] botón Quitar en \((\d+), (\d+)\)", texto)
+                    if v and l and b and libre_caja and not bloqueado_ahora:
+                        vx, vy = int(v.group(1)), int(v.group(2))
+                        ir_a(vx + int(l.group(1)) + 60, vy + int(l.group(2)) + 28)
+                        mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+                        time.sleep(0.6)
+                        ir_a(vx + int(b.group(1)), vy + int(b.group(2)))
+                        mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+                    else:
+                        mandar("sendkey down")
+                        time.sleep(0.3)
+                        mandar("sendkey delete")
                 time.sleep(0.25)
                 continue
             centro = 5
@@ -1991,6 +2009,11 @@ while time.time() - inicio < total:
         # bloqueada: se llevarían el teclado, también Super+Arriba. Si sale una pregunta mientras, se repite.
         # Con el sitio que le dio el compositor ya dicho (con más programas al arrancar, como el explorador, esa línea
         # puede salir después que la de Ajustes, y el clic iba al sitio de siempre: encima de su campo).
+        # firefox-firme: si Super+Arriba no maximizó Ajustes (con el PC cargado, una ventana de la caja Amiga sale a esta
+        # hora y se lleva el teclado, y con él el atajo), otra vez, hasta tres.
+        if ajustes and ajustes_desde and "[ajustes] el compositor pide 800x560" not in texto \
+                and time.time() - ajustes_desde > 8 and ajustes_intentos < 3:
+            ajustes, ajustes_intentos = False, ajustes_intentos + 1
         if not ajustes and "[ajustes] ventana del kit en pantalla" in texto and "[compositor] ventana de ajustes en (" in texto and selector not in (1, 2, 4, 5, 17, 18) and libre_caja and not bloqueado_ahora:
             ajustes = True
             preguntas_antes = texto.count("[guardian] pregunta en pantalla: ")
@@ -2016,6 +2039,7 @@ while time.time() - inicio < total:
             mandar("sendkey meta_l-up")
             time.sleep(2)
             mandar("sendkey meta_l-down")
+            ajustes_desde = time.time()
             time.sleep(1)
             if open(serie, errors="replace").read().count("[guardian] pregunta en pantalla: ") > preguntas_antes:
                 ajustes = False
@@ -2029,7 +2053,9 @@ while time.time() - inicio < total:
         sin_centro = "[guardian] el centro de control abrirá" not in texto or "[centro] cerrado" in texto
         # Sin esperar dentro de la vuelta (antes se esperaba hasta 10 s aquí, y con reintentos 30: el guion no atendía
         # nada más y, con el PC lento, Super+L llegaba tarde): menu 1 = clic dado, esperando el menú; 2 = elegida.
-        if ajustes and menu == 0 and sin_centro and not bloqueado_ahora and not selector_espera and "[ajustes] el campo dice: DashOSa" in texto:
+        # Ni con una pregunta de `guardian` en pantalla (`libre_caja`): sale encima y se lleva el teclado, y el menú se
+        # cierra (firefox-firme: con el PC cargado, las de la caja Amiga salían justo entre abrir el menú y elegir).
+        if ajustes and menu == 0 and sin_centro and libre_caja and not bloqueado_ahora and not selector_espera and "[ajustes] el campo dice: DashOSa" in texto:
             import re
             v = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
             d = re.search(r"\[ajustes\] desplegable en \((\d+), (\d+)\)", texto)
@@ -2043,7 +2069,11 @@ while time.time() - inicio < total:
         elif menu == 1 and not bloqueado_ahora:
             import re
             abiertos = re.findall(r"\[ajustes\] menú abierto; la segunda opción en \((\d+), (\d+)\)", texto)
-            if len(abiertos) > menus_antes:
+            if len(abiertos) > menus_antes and not libre_caja:
+                # Una pregunta salió con el menú abierto: se cierra; otra vez cuando se conteste.
+                menu_intentos += 1
+                menu = 0
+            elif len(abiertos) > menus_antes:
                 v = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
                 o = abiertos[-1]
                 if os.environ.get("CAPTURA_MENU"):
@@ -2052,6 +2082,7 @@ while time.time() - inicio < total:
                 mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
                 ir_a(790, 590)
                 menu = 2
+                menu_desde = time.time()
             elif time.time() - menu_desde > 6 and menu_intentos < 3:
                 # No se abrió (algo lo tapaba, o el PC va lento): otra vez, hasta tres.
                 menu_intentos += 1
@@ -2060,6 +2091,10 @@ while time.time() - inicio < total:
                 # Con el menú abierto o por abrirse, nada de lo de siempre: un clic fuera lo cierra sin elegir.
                 time.sleep(0.25)
                 continue
+        elif menu == 2 and "[ajustes] el desplegable dice: " not in texto and time.time() - menu_desde > 6 and menu_intentos < 3:
+            # El clic en la segunda opción no la eligió (otra ventana o una pregunta lo tapó): otra vez, desde abrirlo.
+            menu_intentos += 1
+            menu = 0
         paso += 1
         ordenes = ["mouse_move 10 5"]
         if paso >= 15:
@@ -2081,6 +2116,7 @@ fi
 # La terminal de la caja Linux (H9): con CAJA_LINUX=prefijo, `tools/guion_caja_linux.py` teclea en ella (y la captura
 # en prefijo.ppm y prefijo.png). CAJA_MODO=arch: el guion de Arch Linux ARM (systemd, red por DHCP, pacman).
 if [ -n "${CAJA_LINUX:-}" ]; then
+    rm -f "$CAJA_LINUX.fallo"
     python3 -I "$(dirname "$0")/guion_caja_linux.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$CAJA_LINUX" "${CAJA_MODO:-busybox}" >/dev/null 2>&1 &
     CAJA_PID=$!
 fi
@@ -2117,7 +2153,23 @@ reiniciada() {
     done
 }
 CAPTURADA=
+# Con el guion de la caja Linux (CAJA_LINUX): cuando acaba, lo que falta ya no va a salir. Se espera un poco por las
+# últimas líneas (las del apagado de la caja) y se para, en vez de seguir hasta el tope (con el de Wayland, 75 minutos):
+# GRACIA_GUION segundos (300 de serie), o 30 si el guion dejó dicho que algo falló (PREFIJO.fallo, con el motivo).
+GUION_ACABO=
 while kill -0 "$QEMU" 2>/dev/null; do
+    if [ -n "${CAJA_PID:-}" ] && [ -z "$GUION_ACABO" ] && ! kill -0 "$CAJA_PID" 2>/dev/null; then
+        GUION_ACABO=$SECONDS
+    fi
+    if [ -n "$GUION_ACABO" ]; then
+        GRACIA=${GRACIA_GUION:-300}
+        [ -s "$CAJA_LINUX.fallo" ] && GRACIA=30
+        if [ $((SECONDS - GUION_ACABO)) -ge "$GRACIA" ] && ! todas; then
+            echo "El guion de la caja Linux acabó hace $GRACIA s y faltan líneas: se para la prueba (a los $SECONDS s)"
+            kill "$QEMU" 2>/dev/null
+            break
+        fi
+    fi
     # Con REINICIO, tras la captura se da la señal al guion y se espera al segundo arranque (`todas` ya no se mira).
     if [ -n "$CAPTURADA" ] && [ -n "${REINICIO:-}" ]; then
         [ -e "$REINICIO_SENAL" ] || touch "$REINICIO_SENAL"
@@ -2189,6 +2241,10 @@ if [ "$FALLO" = 0 ] && [ -n "${REINICIO:-}" ]; then
         FALLO=1
     fi
     [ "$FALLO" = 0 ] && echo "BIEN: $(basename "$REINICIO")"
+fi
+if [ -n "${CAJA_LINUX:-}" ] && [ -s "$CAJA_LINUX.fallo" ]; then
+    echo "--- lo que dice el guion de la caja Linux que falló ---"
+    cat "$CAJA_LINUX.fallo"
 fi
 if [ "$FALLO" = 0 ]; then
     echo "BIEN: $(basename "$ESPERADOS")"
