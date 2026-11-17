@@ -1,0 +1,154 @@
+{
+    "configVersion": 42,
+    "radiusStrength": 38,
+    "niriLayoutRadiusOverride": 3,
+    "clockDateFormat": "dddd, MMMM d",
+    "barElevationEnabled": false,
+    "blurEnabled": true,
+    "barConfigs": [
+        {
+            "id": "default",
+            "name": "Main Bar",
+            "enabled": true,
+            "position": 0,
+            "screenPreferences": [
+                "all"
+            ],
+            "showOnLastDisplay": true,
+            "leftWidgets": [
+                {
+                    "id": "launcherButton",
+                    "enabled": true,
+                    "launcherLogoMode": "os"
+                },
+                {
+                    "id": "workspaceSwitcher",
+                    "enabled": true,
+                    "showWorkspaceIndex": true,
+                    "showWorkspaceName": true,
+                    "showWorkspacePadding": true,
+                    "showWorkspaceApps": true,
+                    "workspaceAppIconSizeOffset": 1,
+                    "workspaceFollowFocus": true,
+                    "showOccupiedWorkspacesOnly": true,
+                    "workspaceFocusedBorderEnabled": true
+                },
+                "focusedWindow",
+                {
+                    "id": "mpvpaperWallpaper",
+                    "enabled": true
+                }
+            ],
+            "centerWidgets": [
+                "music",
+                "clock",
+                "weather",
+                {
+                    "id": "notificationButton",
+                    "enabled": true
+                },
+                {
+                    "id": "dockerManager",
+                    "enabled": true
+                },
+                {
+                    "id": "kubernetes",
+                    "enabled": true
+                },
+                {
+                    "id": "qcalCalendar",
+                    "enabled": true
+                }
+            ],
+            "rightWidgets": [
+                {
+                    "id": "systemTray",
+                    "enabled": true
+                },
+                {
+                    "id": "clipboard",
+                    "enabled": true
+                },
+                {
+                    "id": "cpuUsage",
+                    "enabled": true
+                },
+                {
+                    "id": "memUsage",
+                    "enabled": true
+                },
+                {
+                    "id": "amdGpuMonitor",
+                    "enabled": true
+                },
+                {
+                    "id": "cpuTemp",
+                    "enabled": true,
+                    "minimumWidth": true
+                },
+                {
+                    "id": "gpuTemp",
+                    "enabled": true,
+                    "selectedGpuIndex": 0,
+                    "pciId": "1002:13c0"
+                },
+                {
+                    "id": "battery",
+                    "enabled": true
+                },
+                {
+                    "id": "controlCenterButton",
+                    "enabled": true,
+                    "showMicPercent": true
+                },
+                {
+                    "id": "systemUpdate",
+                    "enabled": true
+                },
+                {
+                    "id": "powerMenuButton",
+                    "enabled": true
+                }
+            ],
+            "spacing": 4,
+            "innerPadding": 4,
+            "bottomGap": 0,
+            "transparency": 1,
+            "widgetTransparency": 1,
+            "squareCorners": false,
+            "noBackground": false,
+            "gothCornersEnabled": false,
+            "gothCornerRadiusOverride": false,
+            "gothCornerRadiusValue": 12,
+            "borderEnabled": false,
+            "borderColor": "surfaceText",
+            "borderOpacity": 1,
+            "borderThickness": 1,
+            "widgetOutlineEnabled": false,
+            "widgetOutlineColor": "primary",
+            "widgetOutlineOpacity": 1,
+            "widgetOutlineThickness": 1,
+            "fontScale": 1,
+            "autoHide": false,
+            "autoHideDelay": 250,
+            "showOnWindowsOpen": false,
+            "openOnOverview": false,
+            "visible": true,
+            "popupGapsAuto": true,
+            "popupGapsManual": 4,
+            "maximizeDetection": true,
+            "scrollEnabled": true,
+            "scrollXBehavior": "focusWindow",
+            "scrollYBehavior": "workspace",
+            "shadowIntensity": 0,
+            "shadowOpacity": 60,
+            "shadowColorMode": "text",
+            "shadowCustomColor": "#000000",
+            "attachToScreenEdge": false,
+            "maximizeWidgetIcons": false,
+            "followInterfaceStyle": true,
+            "widgetFollowInterfaceStyle": true,
+            "hoverPopouts": false
+        }
+    ]
+}

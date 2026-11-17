@@ -87,6 +87,9 @@ prueba: $(PRUEBAS) catalogos
 	cd ../usuario && rustc --edition 2024 --test src/volumen_osd.rs -o target/volumen_osd_pruebas && ./target/volumen_osd_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/lanzador_lista.rs -o target/lanzador_lista_pruebas && ./target/lanzador_lista_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/reloj.rs -o target/reloj_pruebas && ./target/reloj_pruebas -q
+	@# S27, la barra de DMS: el modelo de las barras, el importador de settings.json y su lector de JSON (hostiles incluidos).
+	cd ../usuario && rustc --edition 2024 --test src/json_mini.rs -o target/json_mini_pruebas && ./target/json_mini_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/barra_config.rs -o target/barra_config_pruebas && ./target/barra_config_pruebas -q
 	@# S13, segunda parte: DNS (respuestas falsas, nombres en bucle, cortadas), SNTP, las zonas horarias y el cortafuegos de entrada.
 	cd ../usuario && rustc --edition 2024 --test src/dns.rs -o target/dns_pruebas && ./target/dns_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/sntp.rs -o target/sntp_pruebas && ./target/sntp_pruebas -q
