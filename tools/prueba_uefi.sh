@@ -85,7 +85,51 @@ def teclear(texto):
 
 TRAZA = os.environ.get("GUION_TRAZA")
 
+# guion-panel: mientras `guardian` pregunta algo (una pregunta de permisos, una tanda de administrador, el código de
+# recuperación, el cambio de contraseña), ningún paso del guion teclea ni pulsa: su ventana va encima y tiene el teclado,
+# y lo que mandara otro paso le llegaría a ella (una "s" de "avisa" contestaría que sí) o abriría algo encima (el panel
+# con Super+A se llevó el teclado y la tanda se contestó que no). Solo los pasos que le contestan (`contestando`), y esos,
+# cuando su ventana ya tiene el teclado. Con la sesión bloqueada no cuenta: lo de guardian que haya queda detrás.
+contestando = False
+
+def bloqueada(t):
+    b = max(t.rfind("[guardian] sesión bloqueada"), t.rfind("pantalla de bloqueo pintada"), t.rfind("pantalla de entrada pintada"))
+    return b > max(t.rfind("[guardian] desbloqueado"), t.rfind("[guardian] entra "))
+
+def guardian_pendiente(t):
+    return not bloqueada(t) and (t.count("[guardian] pregunta en pantalla: ") > t.count("El usuario dice ") or ventana_de_guardian(t))
+
+GUARDIAN_EN_PANTALLA = ("[guardian] pregunta en pantalla: ", "[guardian] tanda en pantalla: ", "[guardian] confirmación en pantalla: ",
+                        "[guardian] código de recuperación en pantalla: ", "[guardian] cambio de contraseña en pantalla: ")
+
+def guardian_con_teclado(t):
+    # Lo último que dijo `guardian` del teclado tras sacar su última ventana (lo dice siempre detrás de esa línea).
+    desde = max(t.rfind(x) for x in GUARDIAN_EN_PANTALLA)
+    if desde < 0:
+        return False
+    return t.rfind("[guardian] ventana del sistema: tiene el teclado") > max(desde, t.rfind("[guardian] ventana del sistema: pierde el teclado"))
+
+def esperar_teclado_guardian(plazo=10):
+    fin = time.time() + plazo
+    while time.time() < fin:
+        if guardian_con_teclado(open(serie, errors="replace").read()):
+            return True
+        time.sleep(0.1)
+    return False
+
 def mandar(*ordenes, pausa=0.0):
+    if not contestando and any(o.startswith("sendkey ") or (o.startswith("mouse_button ") and o != "mouse_button 0") for o in ordenes) \
+            and guardian_pendiente(open(serie, errors="replace").read()):
+        retenidas = [o for o in ordenes if o.startswith("sendkey ") or o.startswith("mouse_button ")]
+        ordenes = tuple(o for o in ordenes if o not in retenidas)
+        if TRAZA:
+            try:
+                with open(TRAZA, "a") as f:
+                    f.write("%.2f %d RETENIDO (guardian pregunta): %s\n" % (time.time(), os.path.getsize(serie), " | ".join(retenidas)))
+            except OSError:
+                pass
+        if not ordenes:
+            return False
     if TRAZA:
         # Con GUION_TRAZA=fichero: cada envío, con la hora y el largo de la salida serie en ese momento (para ponerlo
         # junto a lo que dijo el sistema).
@@ -100,6 +144,7 @@ def mandar(*ordenes, pausa=0.0):
         s.sendall(o.encode() + b"\n")
         time.sleep(pausa)
     s.close()
+    return True
 
 def ir_a(x, y):
     # El cursor a (x, y) de la pantalla: primero a la esquina, y de ahí en pasos de 100 como mucho.
@@ -201,6 +246,7 @@ reinicio_menus = 0
 
 while time.time() - inicio < total:
     try:
+        contestando = False
         texto = open(serie, errors="replace").read()
         # Con ESTADO_GUION=fichero: el estado del guion cada 2 s (para ver en qué paso se queda).
         if os.environ.get("ESTADO_GUION") and time.time() - globals().get("estado_dicho", 0) > 2:
@@ -245,8 +291,10 @@ while time.time() - inicio < total:
                     time.sleep(1)
                     reinicio = 0
             elif reinicio == 3 and "[guardian] confirmación en pantalla: ¿reiniciar?" in texto:
-                # Sí pide Mayúsculas y S, como los permisos.
+                # Sí pide Mayúsculas y S, como los permisos (cuando su ventana tenga el teclado).
                 time.sleep(1.3)
+                contestando = True
+                esperar_teclado_guardian()
                 mandar("sendkey shift-s")
                 reinicio = 4
             time.sleep(0.25)
@@ -360,7 +408,7 @@ while time.time() - inicio < total:
         # código de recuperación, el cambio de contraseña) ni hasta 4 s después de la última: salen en ráfaga y van
         # encima, con el teclado; el clic en la ventana de Dash les llegaba a ellas (los tres intentos caían en la
         # tanda de cuentas del Shell y el paso se rendía: "FALTA: [dash-ventana] pulsado").
-        ventana_guardian = ventana_de_guardian(texto)
+        ventana_guardian = guardian_pendiente(texto)
         if ventana_guardian:
             guardian_visto = time.time()
         # Si el clic no llegó (una pregunta de `guardian` salió encima mientras), otra vez, hasta tres; si fue una
@@ -679,6 +727,8 @@ while time.time() - inicio < total:
         if tandas_en > globals().get("tandas_vistas", 0):
             globals()["tandas_vistas"] = globals().get("tandas_vistas", 0) + 1
             time.sleep(1.3)
+            contestando = True
+            esperar_teclado_guardian()
             # S6b, rama cuentas: la que crea una cuenta pide además su contraseña (Intro en una caja vacía pasa a la
             # siguiente). A Berta, la de Ana y la suya; a Dora, primero una mala de administrador, luego la buena de
             # Carla (que no lo es) y luego la de Ana con una corta para Dora: ninguna se crea.
@@ -715,6 +765,8 @@ while time.time() - inicio < total:
         if codigos_en > globals().get("codigos_vistos", 0):
             globals()["codigos_vistos"] = globals().get("codigos_vistos", 0) + 1
             time.sleep(1.3)
+            contestando = True
+            esperar_teclado_guardian()
             if os.environ.get("CAPTURA_CUENTAS"):
                 mandar("screendump " + os.environ["CAPTURA_CUENTAS"] + ".codigo.ppm")
                 time.sleep(0.5)
@@ -729,6 +781,8 @@ while time.time() - inicio < total:
         if claves_en > globals().get("claves_vistas", 0):
             globals()["claves_vistas"] = globals().get("claves_vistas", 0) + 1
             time.sleep(1.3)
+            contestando = True
+            esperar_teclado_guardian()
             if claves_vistas == 1:
                 for t in ("no es esta", "otra de Ana", "otra de Ana"):
                     teclear(t)
@@ -755,6 +809,10 @@ while time.time() - inicio < total:
         if len(vistas) > preguntas:
             linea = vistas[preguntas]
             preguntas += 1
+            contestando = True
+            # A la ventana de la pregunta, no a la que tenga el teclado (guion-panel); la "s" a destiempo de abajo, también
+            # ya con el teclado: así cae en su primer segundo, que es lo que se prueba.
+            esperar_teclado_guardian()
             # Con CAPTURA_PREGUNTA=fichero.ppm, la pantalla con la primera pregunta.
             if preguntas == 1 and captura_pregunta:
                 time.sleep(0.3)
@@ -1137,16 +1195,19 @@ while time.time() - inicio < total:
         # arriba a la derecha. Con CAPTURA_CENTRO, también fichero.panel.ppm (abierto, en oscuro), fichero.panel-claro.ppm,
         # fichero.panel-edicion.ppm (en edición, Bloquear quitado), fichero.panel-sin.ppm (sin Bloquear) y
         # fichero.panel-anadir.ppm (la lista para añadir).
-        if panel == 0 and "[guardian] bloqueo con la tecla: " in texto and dash_nativo not in (1, 2, 3, 31, 4, 5):
-            panel = 1
+        # (Ni con guardian preguntando: el panel saldría encima de su ventana y se llevaría el teclado; `mandar` no deja
+        # pasar Super+A entonces, y el paso espera.)
+        if panel == 0 and "[guardian] bloqueo con la tecla: " in texto and dash_nativo not in (1, 2, 3, 31, 4, 5) \
+                and not guardian_pendiente(texto) and time.time() - guardian_visto > 4:
             time.sleep(0.5)
-            mandar("sendkey meta_l-a")
-            reintento = time.time() + 6
+            if mandar("sendkey meta_l-a"):
+                panel = 1
+                reintento = time.time() + 6
         if 1 <= panel <= 14:
             import re
             # tecla-pegada: como el paso de Dash, nada con una ventana de `guardian` delante ni hasta 4 s después (sus
             # tandas del Shell salen a la vez que esto y se llevan el clic del mosaico).
-            if ventana_de_guardian(texto):
+            if guardian_pendiente(texto):
                 guardian_visto = time.time()
             if time.time() - guardian_visto < 4:
                 reintento = max(reintento, time.time() + 6)

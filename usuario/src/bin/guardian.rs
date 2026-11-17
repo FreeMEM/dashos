@@ -1195,6 +1195,9 @@ fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u
     let mut teclado = Teclado::new();
     // Desde cuándo se ve (con el sync de su primer cuadro).
     let mut vista: Option<u64> = None;
+    // guion-panel: si la ventana tiene el teclado, y se dice (tras "en pantalla", para que en la salida vaya siempre detrás
+    // de la línea de su ventana): quien la conteste (el guion de las pruebas) espera a tenerlo, y no teclea en otra.
+    let mut con_teclado = false;
     // Teclear una contraseña lleva más que una tecla: la de una tanda espera dos minutos.
     let fin = dashos::ahora_us() + if tanda { 120_000_000 } else { 30_000_000 };
     loop {
@@ -1256,6 +1259,21 @@ fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u
                         let a = aviso.borrow();
                         println!("  [guardian] cambio de contraseña en pantalla: {} (lo pide {}){}", cuenta, programa, if a.is_empty() { String::new() } else { alloc::format!("; {}", a) })
                     }
+                }
+                if con_teclado {
+                    println!("  [guardian] ventana del sistema: tiene el teclado");
+                }
+            }
+            (TECLADO, wl_keyboard::ev::ENTER) => {
+                con_teclado = true;
+                if vista.is_some() {
+                    println!("  [guardian] ventana del sistema: tiene el teclado");
+                }
+            }
+            (TECLADO, wl_keyboard::ev::LEAVE) => {
+                con_teclado = false;
+                if vista.is_some() {
+                    println!("  [guardian] ventana del sistema: pierde el teclado");
                 }
             }
             (TECLADO, wl_keyboard::ev::KEYMAP) => {
