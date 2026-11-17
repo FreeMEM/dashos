@@ -95,14 +95,14 @@ fn pedir_8(m: &[u8]) -> (i32, u32) {
     }
 }
 
-/// La imagen para usar (llave 4, "uso"): sin las cuentas de la prueba (cuántos intentos malos espera el guion).
+/// La imagen para usar (la llave "uso"): sin las cuentas de la prueba (cuántos intentos malos espera el guion).
 static USO: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 fn uso() -> bool {
     USO.load(core::sync::atomic::Ordering::Relaxed)
 }
 
-/// Rama `cuentas-2`: con la llave 5 ("codigos", la imagen de `make arranque-virt-cuentas`), la de usar escribe también los
+/// Rama `cuentas-2`: con la llave "codigos" (la imagen de `make arranque-virt-cuentas`), la de usar escribe también los
 /// códigos de recuperación en la consola, como la de las pruebas: su guion los teclea.
 static CODIGOS: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
@@ -119,17 +119,15 @@ unsafe impl Sync for Ultimo {}
 static ULTIMO_CODIGO: Ultimo = Ultimo(core::cell::UnsafeCell::new(([0; 16], [0; dashos::cuentas::LARGO_CODIGO])));
 
 fn principal() -> u64 {
-    // Antes de crear nada (cada llave nueva toma el siguiente número libre, y la 4 sería una suya): ¿hay llave 4?
-    let copia = dashos::llave_duplicar(4, u64::MAX, 0);
-    if copia > 0 {
-        dashos::cerrar(copia as u32);
+    // La imagen se sabe por el nombre de las llaves (su tabla), no por cuántas trae: `guardian` es el primero que
+    // nombra "uso" (y "codigos"), así que los lee y nace también con "yo:uso" (y "yo:codigos"), las copias para
+    // escribirse. En la imagen de usar, la llave 5 era "yo:uso", y mirar si había llave 5 daba por buena "codigos":
+    // los códigos de recuperación salían por la consola y Ajustes se abría en Cuentas al entrar.
+    let tabla = dashos::llaves::Tabla::leer();
+    if tabla.buscar("uso").is_some() {
         USO.store(true, core::sync::atomic::Ordering::Relaxed);
-        // Y la 5 (rama `cuentas-2`), antes de crear nada también.
-        let copia = dashos::llave_duplicar(5, u64::MAX, 0);
-        if copia > 0 {
-            dashos::cerrar(copia as u32);
-            CODIGOS.store(true, core::sync::atomic::Ordering::Relaxed);
-        }
+        // Rama `cuentas-2`: solo en la imagen de `make arranque-virt-cuentas`.
+        CODIGOS.store(tabla.buscar("codigos").is_some(), core::sync::atomic::Ordering::Relaxed);
     }
     dashos::monton::con_nombre(&"guardian");
     let (preguntas, para_sesiones) = dashos::canal_crear();
@@ -155,7 +153,9 @@ fn principal() -> u64 {
     // pruebas: la pantalla de entrada hasta que alguien entre, y luego atender (preguntas, "*bloquear" del panel,
     // apagar y cerrar sesión, que vuelve a la entrada).
     if uso() {
-        println!("  [guardian] modo de uso: pantalla de entrada");
+        // Lo dice: en la imagen de usar, los códigos de recuperación no salen de su pantalla.
+        let codigos = if CODIGOS.load(core::sync::atomic::Ordering::Relaxed) { "también en la consola (prueba)" } else { "solo en su pantalla" };
+        println!("  [guardian] modo de uso: pantalla de entrada; los códigos de recuperación, {}", codigos);
         loop {
             if let Some(quien) = pantalla(None) {
                 println!("  [guardian] entra {}", quien);

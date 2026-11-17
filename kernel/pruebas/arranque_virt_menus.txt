@@ -3,7 +3,7 @@
 # sus ventanas; `Ajuste menus barra` los pasa a la barra (el centro lo aplica y el compositor lo dice a todos); allí se
 # abren con un clic y con el botón derecho, y se elige; y vuelven dentro con `Ajuste menus dentro`.
 DashOS en marcha con 4 núcleos
-~[guardian] modo de uso: pantalla de entrada
+~[guardian] modo de uso: pantalla de entrada; los códigos de recuperación, solo en su pantalla
 ~[guardian] entra Ana
 ~[dash-ui] ventana "Dash en DashOS" en pantalla (
 ~[shell] menús de la ventana: "Shell" en (

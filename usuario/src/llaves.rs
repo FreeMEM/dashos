@@ -164,6 +164,32 @@ mod pruebas {
         assert_eq!(t.buscar("red"), Some(5));
     }
 
+    /// Las tablas con que nace `guardian` en cada imagen (lo que reparte `inicio`): la imagen se sabe por los nombres.
+    /// En la de usar trae 5 llaves, y la 5 es "yo:uso", su copia para escribirse en el canal que lee: mirar si hay llave 5
+    /// la tomaba por "codigos" (la de `make arranque-virt-cuentas`), y escribía en la consola los códigos de
+    /// recuperación.
+    #[test]
+    fn la_imagen_por_el_nombre_no_por_cuantas() {
+        let (b, n) = tabla(&["ventanas", "sesiones", "centro"]);
+        let pruebas = Tabla::de_bytes(&b, n);
+        assert_eq!(pruebas.buscar("uso"), None);
+        assert_eq!(pruebas.buscar("codigos"), None);
+        let (b, n) = tabla(&["ventanas", "sesiones", "centro", "uso", "yo:uso"]);
+        let usar = Tabla::de_bytes(&b, n);
+        assert_eq!(usar.cuantas(), 5);
+        assert_eq!(usar.buscar("uso"), Some(4));
+        assert_eq!(usar.buscar("codigos"), None);
+        assert_eq!(usar.nombre(5), Some(&b"yo:uso"[..]));
+        let (b, n) = tabla(&["ventanas", "sesiones", "centro", "uso", "codigos", "yo:uso", "yo:codigos"]);
+        let cuentas = Tabla::de_bytes(&b, n);
+        assert_eq!(cuentas.buscar("uso"), Some(4));
+        assert_eq!(cuentas.buscar("codigos"), Some(5));
+        // Una copia "yo:" no pasa por el canal que nombra.
+        assert_eq!(cuentas.buscar("yo:codigos"), Some(7));
+        let (b, n) = tabla(&["yo:codigos", "yo:uso"]);
+        assert_eq!(Tabla::de_bytes(&b, n).buscar("codigos"), None);
+    }
+
     #[test]
     fn nombre16_corta() {
         assert_eq!(&nombre16("ventanas")[..9], b"ventanas\0");

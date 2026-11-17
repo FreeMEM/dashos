@@ -2,6 +2,8 @@
 # (primer arranque), el asistente, Ajustes > Cuentas, cambiar la contraseña, y la pantalla de entrada con la lista y el
 # código de recuperación. En orden.
 DashOS en marcha con 4 núcleos
+# La imagen se sabe por el nombre de las llaves de `guardian`: aquí, la de "codigos".
+~[guardian] modo de uso: pantalla de entrada; los códigos de recuperación, también en la consola (prueba)
 [sesiones] cuentas: no hay ninguna: primer arranque, guardian puede crear la primera
 [guardian] pantalla de entrada: 0 cuentas en la lista; primer arranque: el asistente
 [guardian] primer arranque: crear admin: no

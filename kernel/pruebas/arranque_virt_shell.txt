@@ -1,7 +1,7 @@
 # El Shell nativo en pantalla (`make arranque-virt-shell`, tools/guion_shell.py): la imagen de usar, con la pantalla
 # de entrada de verdad. Entra Ana, abre el Shell desde el lanzador de la barra y teclea en él con el teclado de QEMU.
 DashOS en marcha con 4 núcleos
-~[guardian] modo de uso: pantalla de entrada
+~[guardian] modo de uso: pantalla de entrada; los códigos de recuperación, solo en su pantalla
 ~[guardian] entra Ana
 ~[barra] busca "shell": Shell
 ~[shell] ventana en pantalla: 
