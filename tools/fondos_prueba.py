@@ -4,7 +4,8 @@ de nadie: degradados y ondas calculados.
 
 - `ondas()`: 960 × 600, color (tipo 2): azul marino a verde azulado en diagonal, con tres ondas claras.
 - `atardecer()`: 640 × 480, color con alfa (tipo 6, opaco): violeta a rosa y naranja, con un sol.
-- `rota()`: `ondas` con un byte cambiado en sus datos (el CRC no cuadra).
+- `rota()`: `atardecer` con un byte cambiado en sus datos (el CRC no cuadra). Antes era `ondas` (153 KB); el
+  disco de pruebas va justo (A15) y con `atardecer` (23 KB) la prueba es la misma.
 - `enorme()`: una cabecera de 40000 × 40000 con datos de nada.
 
 Uso: fondos_prueba.py --pruebas DIR   escribe en DIR los PNG de las pruebas del kit (`kit/src/png.rs`)
@@ -183,7 +184,7 @@ def atardecer():
 
 
 def rota():
-    datos = bytearray(ondas())
+    datos = bytearray(atardecer())
     datos[len(datos) // 2] ^= 0x55
     return bytes(datos)
 
