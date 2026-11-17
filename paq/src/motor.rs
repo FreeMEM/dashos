@@ -502,7 +502,7 @@ pub fn cargar_repos(d: &mut dyn Disco, vistas: &[(String, u64)]) -> Result<Repos
 
 fn cargar_indice(d: &mut dyn Disco, r: &Repo, claves: &[Clave], vistas: &[(String, u64)], hora: Option<u64>) -> Result<Fuente, String> {
     if r.url.contains("://") {
-        return Err("es de la red, y Paq aún solo lee repositorios en un disco".into());
+        return Err(RED.into());
     }
     let base = unir(&r.url, ARQUITECTURA);
     let ruta = unir(&base, "index.gz");
@@ -923,22 +923,73 @@ fn dentro_de(ruta: &str, cajon: &str) -> bool {
     tar::ruta_valida(ruta) && (ruta == cajon || ruta.strip_prefix(cajon).is_some_and(|r| r.starts_with('/')))
 }
 
+/// La ruta en el disco de la dirección `url` de un paquete de `f`: relativa a `<url del repositorio>/<arquitectura>` o,
+/// entera, dentro de ahí (como las escribe la referencia, `repositorio.py`). Si no, por qué no: es de la red, o no es
+/// del repositorio (otro esquema, otro volumen, una ruta que se sale).
+fn ruta_de_copia(f: &Fuente, url: &str) -> Result<String, &'static str> {
+    let rel = match url.get(..f.base.len()) {
+        Some(p) if p.eq_ignore_ascii_case(&f.base) && url[f.base.len()..].starts_with('/') => &url[f.base.len() + 1..],
+        _ => url,
+    };
+    if rel.starts_with("http://") || rel.starts_with("https://") {
+        return Err(RED);
+    }
+    // `tar::ruta_valida` no deja `:` (ni esquemas ni volúmenes), `..`, `.`, partes vacías ni bytes de control.
+    if !tar::ruta_valida(rel) {
+        return Err("se sale del repositorio");
+    }
+    Ok(unir(&f.base, rel))
+}
+
+/// Lo que se dice de un repositorio o de una dirección de la red (el mismo texto: se guarda una vez en `C:Paq`).
+const RED: &str = "es de la red, y Paq aún solo lee repositorios en un disco";
+
+/// Prueba una dirección de `x`: la lee (sin pasar de su `Size` ni de `MAX_PAQUETE`) y mira su tamaño y su SHA-256. `Err` con por qué no
+/// vale y si es que dio otra cosa (`true`: otro tamaño, más grande incluido, u otra suma) o que no se pudo bajar.
+fn probar_copia(d: &mut dyn Disco, f: &Fuente, x: &Entrada, url: &str) -> Result<Vec<u8>, (&'static str, bool)> {
+    let ruta = ruta_de_copia(f, url).map_err(|por| (por, false))?;
+    // Nunca más de `MAX_PAQUETE`: con un `Size` mayor, lo leído no lo alcanza y es "otro tamaño".
+    match d.leer(&ruta, (x.tamano as usize).min(MAX_PAQUETE)) {
+        Ok(b) if b.len() as u64 != x.tamano => Err(("da otro tamaño", true)),
+        Ok(b) if huella::sha256(&b) != x.sha256 => Err(("da otra suma", true)),
+        Ok(b) => Ok(b),
+        Err(disco::LLENO) => Err(("da otro tamaño", true)),
+        Err(_) => Err(("no se puede leer", false)),
+    }
+}
+
+/// Baja el paquete de `x` probando sus direcciones en orden (formato 2: el original y sus copias) hasta que una da el
+/// `Size` y el `Sha256` del índice; lo que da otra cosa se tira y se prueba la siguiente. Si ninguna vale: `Huella` si
+/// alguna dio un paquete cambiado (con lo que dio cada una, si son varias); si no, `Paquete` (no se pudo bajar).
+///
+/// Los textos, cortos a propósito: `C:Paq` va justo de páginas y el disco de pruebas, de sitio (bitácora `paq-formato`).
+#[inline(never)]
+fn bajar(d: &mut dyn Disco, f: &Fuente, x: &Entrada) -> Result<Vec<u8>, Fallo> {
+    let mut lista = String::new();
+    let mut alguna_mala = false;
+    for url in &x.urls {
+        match probar_copia(d, f, x, url) {
+            Ok(b) => return Ok(b),
+            Err((por, mala)) => {
+                alguna_mala |= mala;
+                lista += &format!("{}{url}: {por}", if lista.is_empty() { "" } else { "; " });
+            }
+        }
+    }
+    Err(if !alguna_mala {
+        Fallo::Paquete(x.nombre.clone(), lista)
+    } else if x.urls.len() == 1 {
+        Fallo::Huella(format!("{} {}", x.nombre, bonita(&x.version)))
+    } else {
+        Fallo::Huella(format!("{} {} ({lista})", x.nombre, bonita(&x.version)))
+    })
+}
+
 /// Baja un paquete, lo comprueba entero y lo deja en el almacén (sin tocar nada de lo que se ve).
 fn traer(d: &mut dyn Disco, nivel: &Nivel, f: &Fuente, x: &Entrada) -> Result<Guardada, Fallo> {
     let n = x.nombre.clone();
     let malo = |por: String| Fallo::Paquete(n.clone(), por);
-    if x.url.contains(':') || x.url.split('/').any(|p| p == ".." || p == "." || p.is_empty()) {
-        return Err(malo(format!("su dirección se sale del repositorio ({})", x.url)));
-    }
-    let ruta = unir(&f.base, &x.url);
-    let datos = match d.leer(&ruta, x.tamano as usize) {
-        Ok(b) => b,
-        Err(disco::LLENO) => return Err(Fallo::Huella(format!("{n} {}", bonita(&x.version)))),
-        Err(e) => return Err(de_disco(e, &ruta)),
-    };
-    if datos.len() as u64 != x.tamano || huella::sha256(&datos) != x.sha256 {
-        return Err(Fallo::Huella(format!("{n} {}", bonita(&x.version))));
-    }
+    let datos = bajar(d, f, x)?;
     let tope = if x.instalado > 0 { (x.instalado as usize).saturating_add(1 << 20).min(MAX_PAQUETE) } else { MAX_PAQUETE };
     let t = gz::descomprimir(&datos, tope.saturating_mul(2).min(MAX_PAQUETE)).map_err(|_| malo("su gzip está estropeado o es demasiado grande".into()))?;
     let es = tar::leer(&t, tope as u64).map_err(|m| malo(m.to_string()))?;
@@ -1154,4 +1205,4 @@ pub fn limpiar(d: &mut dyn Disco, nivel: &Nivel, e: &mut Estado, que: Conservar)
 
 #[cfg(test)]
 #[path = "pruebas_motor.rs"]
-mod pruebas;
+pub(crate) mod pruebas;

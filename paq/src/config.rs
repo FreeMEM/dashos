@@ -55,7 +55,7 @@ pub struct Clave {
     /// El nombre de su fichero en `Claves/`.
     pub fichero: String,
     pub repo: String,
-    /// `index` (la que firma el índice) o `response` (la de las respuestas, que Paq aún no usa).
+    /// `index` (la que firma el índice) o `response` (la de las respuestas del servicio: `reconocer`).
     pub uso: String,
     pub publica: [u8; 32],
     pub id: String,
@@ -105,6 +105,11 @@ pub fn leer_clave(fichero: &str, t: &str) -> Result<Clave, String> {
 /// Las públicas de las claves de índice de `repo`.
 pub fn de_indice(claves: &[Clave], repo: &str) -> Vec<[u8; 32]> {
     claves.iter().filter(|c| c.repo == repo && c.uso == "index").map(|c| c.publica).collect()
+}
+
+/// Las públicas de las claves de respuestas de `repo` (las que firman lo que contesta su servicio).
+pub fn de_respuestas(claves: &[Clave], repo: &str) -> Vec<[u8; 32]> {
+    claves.iter().filter(|c| c.repo == repo && c.uso == "response").map(|c| c.publica).collect()
 }
 
 #[cfg(test)]

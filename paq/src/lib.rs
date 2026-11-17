@@ -25,6 +25,7 @@ pub mod gz;
 pub mod huella;
 pub mod indice;
 pub mod motor;
+pub mod reconocer;
 pub mod tar;
 pub mod texto;
 

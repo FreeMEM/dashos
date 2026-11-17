@@ -1,5 +1,6 @@
 //! Las firmas del formato 2 (sección 5, "Firmas"): Ed25519 sobre una etiqueta, un byte 0 y los datos, con la etiqueta
-//! de lo que se firma (`PKG-INDEX-2` el índice, `PKG-FILE-2` un paquete suelto, `PKG-KEYS-2` el fichero de claves): así
+//! de lo que se firma (`PKG-INDEX-2` el índice, `PKG-FILE-2` un paquete suelto, `PKG-KEYS-2` el fichero de claves,
+//! `PKG-RESPONSE-2` una respuesta del servicio): así
 //! la firma de una cosa nunca vale para otra. Un `.sig` lleva una línea por firma: `ed25519 <id> <firma en hex>`, con
 //! el id de la clave (los 8 primeros bytes del SHA-256 de la pública, en hexadecimal).
 
@@ -12,6 +13,8 @@ use crate::huella;
 pub const INDICE: &str = "PKG-INDEX-2";
 pub const FICHERO: &str = "PKG-FILE-2";
 pub const CLAVES: &str = "PKG-KEYS-2";
+/// Las respuestas firmadas del servicio (`PKG-RESPONSE 2`), con la clave de respuestas del repositorio.
+pub const RESPUESTA: &str = "PKG-RESPONSE-2";
 
 /// Lo más que se mira de un `.sig`: unas pocas líneas.
 pub const MAX_SIG: usize = 4096;
