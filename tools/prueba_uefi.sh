@@ -120,8 +120,11 @@ espera_carpeta = 0
 centro = 0
 panel = 0
 barra = 0
+dock_paso = 0
 avisos_paso = 0
 reintento_avisos = 0
+reintento_dock = 0
+pos_dock = (0, 0)
 wb = 0
 wb_ventana = {}
 ex = 0
@@ -1140,8 +1143,8 @@ while time.time() - inicio < total:
                       # en ráfaga: un solo OSD que las junta.
                       8: "[barra] espacios: se ve el 2" in texto,
                       9: "[barra] espacios: se ve el 1" in texto[texto.find("[barra] espacios: se ve el 2"):],
-                      10: "[panel] OSD cerrado: " in texto}[barra]
-            if barra == 10 and captura_barra and "[panel] OSD abierto" in texto and not globals().get("osd_capturado"):
+                      10: "[dock] OSD cerrado: " in texto}[barra]
+            if barra == 10 and captura_barra and "[dock] OSD volumen" in texto and not globals().get("osd_capturado"):
                 globals()["osd_capturado"] = True
                 mandar("screendump " + captura_barra[:-4] + ".osd.ppm")
             if not espera:
@@ -1191,7 +1194,86 @@ while time.time() - inicio < total:
         # cierra. Con la sesión bloqueada, se espera. Los sitios los dicen la barra y el compositor (dónde sale cada capa).
         # Con CAPTURA_AVISOS=fichero.ppm: el toast (fichero.ppm), el historial (fichero.hist.ppm) y vacío
         # (fichero.vacio.ppm).
-        if avisos_paso == 0 and barra == 11 and "[barra] campana en (" in texto and "[avisador] inundar" in texto:
+        # S27: el dock (escondido, abajo en el centro): el ratón en el borde de abajo lo saca; un clic en el primer
+        # programa trae su ventana; el botón derecho abre su menú y "Fijar en el dock" lo fija (y lo guarda); el ratón
+        # fuera lo esconde. Bloq Mayús dos veces: su OSD (y se queda como estaba). Los sitios los dice el dock. Con
+        # CAPTURA_BARRA=fichero.ppm: fichero.dock.ppm (visto), .dock-menu.ppm y .osd-mayus.ppm.
+        if dock_paso == 0 and barra == 11 and "[dock] en " in texto:
+            import re
+            # Hasta el borde de abajo desde la esquina; después, solo movimientos relativos desde donde está (salir del
+            # dock lo escondería a los 250 ms).
+            def ir_dock(x, y, boton=None):
+                global pos_dock
+                mandar(*["mouse_move -100 -100"] * 20, pausa=0.05)
+                pasos = []
+                x0, y0 = x, y
+                while x > 0 or y > 0:
+                    dx, dy = min(x, 100), min(y, 100)
+                    pasos.append(f"mouse_move {dx} {dy}")
+                    x, y = x - dx, y - dy
+                mandar(*pasos, pausa=0.05)
+                pos_dock = (x0, y0)
+                time.sleep(0.3)
+                if boton:
+                    mandar(f"mouse_button {boton}", "mouse_button 0", pausa=0.08)
+            def mover_dock(x, y, boton=None):
+                global pos_dock
+                mandar(f"mouse_move {x - pos_dock[0]} {y - pos_dock[1]}")
+                pos_dock = (x, y)
+                time.sleep(0.3)
+                if boton:
+                    mandar(f"mouse_button {boton}", "mouse_button 0", pausa=0.08)
+            ancho_dock = int(re.search(r"\[dock\] en [^ ]+ \((\d+)x(\d+)\)", texto).group(1))
+            alto_dock = int(re.search(r"\[dock\] en [^ ]+ \((\d+)x(\d+)\)", texto).group(2))
+            ir_dock(ancho_dock // 2, alto_dock + 50)
+            pos_dock = (ancho_dock // 2, alto_dock - 1)
+            dock_paso = 1
+            reintento_dock = time.time() + 8
+        if 1 <= dock_paso <= 6:
+            captura_barra = os.environ.get("CAPTURA_BARRA")
+            desde_mayus = texto.find("[dock] OSD mayusculas")
+            espera = {1: "[dock] se ve: " in texto,
+                      2: "[dock] trae la ventana" in texto,
+                      3: "[dock] menú de " in texto,
+                      4: "[dock] fija " in texto,
+                      5: "[dock] se esconde" in texto[texto.find("[dock] fija "):],
+                      6: desde_mayus >= 0 and "[dock] OSD cerrado" in texto[desde_mayus:]}[dock_paso]
+            if dock_paso == 6 and captura_barra and desde_mayus >= 0 and not globals().get("mayus_capturado"):
+                globals()["mayus_capturado"] = True
+                mandar("screendump " + captura_barra[:-4] + ".osd-mayus.ppm")
+                mandar("sendkey caps_lock")
+            if not espera:
+                if time.time() > reintento_dock:
+                    dock_paso = 7
+                time.sleep(0.25)
+                continue
+            time.sleep(0.6)
+            primero = re.search(r"\[dock\] se ve: lanzador en \((\d+), (\d+)\), [^,]+ en \((\d+), (\d+)\)", texto)
+            if dock_paso == 1:
+                if captura_barra:
+                    mandar("screendump " + captura_barra[:-4] + ".dock.ppm")
+                    time.sleep(0.5)
+                if primero:
+                    mover_dock(int(primero.group(3)), int(primero.group(4)), 1)
+            elif dock_paso == 2:
+                # El botón derecho en el mismo (el dock va por encima de las ventanas).
+                if primero:
+                    mover_dock(int(primero.group(3)), int(primero.group(4)), 2)
+            elif dock_paso == 3:
+                if captura_barra:
+                    mandar("screendump " + captura_barra[:-4] + ".dock-menu.ppm")
+                    time.sleep(0.5)
+                fijar = re.search(r"\[dock\] menú de .*; fijar en \((\d+), (\d+)\)", texto)
+                if fijar:
+                    mover_dock(int(fijar.group(1)), int(fijar.group(2)), 1)
+            elif dock_paso == 4:
+                mover_dock(ancho_dock // 2, alto_dock // 2)
+            elif dock_paso == 5:
+                mandar("sendkey caps_lock")
+            dock_paso += 1
+            reintento_dock = time.time() + 10
+            continue
+        if avisos_paso == 0 and barra == 11 and dock_paso >= 7 and "[barra] campana en (" in texto and "[avisador] inundar" in texto:
             avisos_paso = 1
             reintento_avisos = time.time() + 10
         if 1 <= avisos_paso <= 8:
