@@ -90,6 +90,16 @@ pub const CRECER: u32 = 40;
 /// contar). Cuenta lo del volumen y lo que solo ven sus instantáneas. Pasado el tope, lo que lo haría crecer da
 /// `LLENO` en ese volumen y en ningún otro; borrar y escribir encima siguen valiendo. Solo con el derecho de administrar.
 pub const CUOTA: u32 = 41;
+/// S6b, rama `cuentas-2`: cambiar la contraseña de un volumen cifrado sin reescribir sus datos (su nombre en el
+/// mensaje; abierto o cerrado, da igual). En la ventana, la de ahora y la nueva, seguidas; en b, lo que mide la de ahora
+/// (los 32 bits de abajo) y la nueva (los de arriba). Solo cambia la ranura que abre la de ahora: la misma llave del
+/// volumen, envuelta otra vez con la nueva, con una sal nueva y el mismo coste. `PROTEGIDO` si la de ahora no es una
+/// contraseña suya (el código de recuperación no vale aquí). Con `CON_CODIGO` en a, lo de ahora es el **código de
+/// recuperación**: todas las contraseñas se van, la nueva es la única y el código se gasta: el servicio saca otro de su
+/// azar y lo deja en la ventana (en b de la respuesta, lo que mide), para apuntarlo otra vez. Solo con el derecho de
+/// administrar (lo pide `sesiones`). Lo de la ventana se borra al copiarlo.
+pub const CAMBIAR_CLAVE: u32 = 42;
+pub const CON_CODIGO: u64 = 1;
 /// Avisos de cambio (ajustes en texto, `docs/bitacoras/ajustes-texto.md`; como `StartNotify` del Amiga): vigilar lo que
 /// tiene la asa, un fichero o un cajón. El mensaje lleva una llave: la puerta (un extremo de escritura, normalmente una
 /// copia marcada del canal donde espera el cliente) por la que el servicio toca el timbre: `LARGO_TIMBRE` bytes, con

@@ -677,6 +677,34 @@ while time.time() - inicio < total:
             mandar("sendkey ret")
             time.sleep(0.5)
             continue
+        # Rama cuentas-2: cambiar la propia contraseña desde el Shell (`Usuario CLAVE`), en la ventana del sistema (la de
+        # ahora, la nueva y repítela). La 1.ª, con la de ahora mal (vuelve a salir con el aviso, y las nuevas, "otra de
+        # Ana", siguen puestas); la 2.ª, solo la de ahora, bien; la 3.ª, de vuelta a "clave de Ana"; la 4.ª, dos nuevas
+        # distintas y, cuando guardian lo dice, Esc.
+        claves_en = texto.count("[guardian] cambio de contraseña en pantalla: ")
+        if claves_en > globals().get("claves_vistas", 0):
+            globals()["claves_vistas"] = globals().get("claves_vistas", 0) + 1
+            time.sleep(1.3)
+            if claves_vistas == 1:
+                for t in ("no es esta", "otra de Ana", "otra de Ana"):
+                    teclear(t)
+            elif claves_vistas == 2:
+                teclear("clave de Ana")
+            elif claves_vistas == 3:
+                for t in ("otra de Ana", "clave de Ana", "clave de Ana"):
+                    teclear(t)
+            else:
+                antes = texto.count("las dos nuevas no son iguales")
+                for t in ("clave de Ana", "una nueva", "otra nueva"):
+                    teclear(t)
+                for _ in range(40):
+                    time.sleep(0.25)
+                    if open(serie, errors="replace").read().count("las dos nuevas no son iguales") > antes:
+                        break
+                time.sleep(1.3)
+                mandar("sendkey esc")
+            time.sleep(0.5)
+            continue
         # U4: las preguntas de permisos de `guardian`. A `pide`, que sí; a los demás, una "s" enseguida (en el primer
         # segundo no cuenta) y luego que no.
         vistas = [l for l in texto.splitlines() if "[guardian] pregunta en pantalla: " in l]
@@ -736,6 +764,19 @@ while time.time() - inicio < total:
         # la ventana con la fila marcada, y en fichero.ppm.seg.ppm, la de Seguridad.
         if not selector_espera and centro == 0 and "[guardian] el centro de control abrirá Permisos" in texto:
             centro = 1
+        # Rama cuentas-2: en medio del tramo del centro, si otra ventana se llevó el teclado (con la máquina cargada, la de
+        # Dash o las de la caja Amiga salen a esta hora), Ajustes vuelve delante con un clic dentro, en su borde derecho
+        # (donde no la tapa ninguna, y no hay nada que pulsar), antes de seguir con sus teclas. Solo con su tamaño de siempre (luego se maximiza) y sin bloqueo.
+        if not selector_espera and 2 <= centro and centro != 12 and "[centro] cerrado" not in texto and not bloqueado_ahora \
+                and time.time() > globals().get("centro_foco", 0):
+            import re
+            titulos = re.findall(r"\[barra\] título: ([^\n]*)", texto)
+            vc = re.findall(r"\[compositor\] ventana de centro en \((\d+), (\d+)\) de 560x420", texto)
+            if titulos and vc and titulos[-1].strip() != "Centro de control" and "[centro] el compositor pide " not in texto:
+                globals()["centro_foco"] = time.time() + 3
+                ir_a(int(vc[-1][0]) + 546, int(vc[-1][1]) + 40)
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+                time.sleep(0.4)
         if not selector_espera and centro == 1:
             # Con todo lo que hace falta para el clic ya leído: el centro dice dónde están la lista y el botón, y el
             # compositor, dónde está la ventana, cada uno por su lado. Si se seguía con solo lo primero, a veces la línea
@@ -762,6 +803,12 @@ while time.time() - inicio < total:
                 time.sleep(0.3)
             if v and l and b:
                 vx, vy = int(v.group(1)), int(v.group(2))
+                # Rama cuentas-2: antes, delante de todo, con un clic dentro, en su borde derecho (donde no la tapa ninguna
+                # y no hay nada que pulsar): si a esta hora sale otra ventana encima (las de la caja Amiga, o la de Dash),
+                # los clics de abajo le llegaban a ella y la prueba se quedaba aquí.
+                ir(vx + 546, vy + 40)
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+                time.sleep(0.4)
                 ir(vx + int(l.group(1)) + 60, vy + int(l.group(2)) + 28)
                 mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
                 if captura_centro:
@@ -779,6 +826,21 @@ while time.time() - inicio < total:
             if "[centro] quita a " not in texto:
                 if time.time() > reintento:
                     reintento = time.time() + 4
+                    # Rama cuentas-2: otra ventana pudo salir encima y llevarse los clics: Ajustes delante con un clic en
+                    # su borde derecho, y otra vez la fila y el botón.
+                    import re
+                    v = re.search(r"\[compositor\] ventana de centro en \((\d+), (\d+)\)", texto)
+                    l = re.search(r"\[centro\] lista en \((\d+), (\d+)\)", texto)
+                    b = re.search(r"\[centro\] botón Quitar en \((\d+), (\d+)\)", texto)
+                    if v and l and b:
+                        vx, vy = int(v.group(1)), int(v.group(2))
+                        for x, y in ((vx + 546, vy + 40), (vx + int(l.group(1)) + 60, vy + int(l.group(2)) + 28), (vx + int(b.group(1)), vy + int(b.group(2)))):
+                            ir_a(x, y)
+                            time.sleep(0.3)
+                            mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+                            time.sleep(0.5)
+                        time.sleep(0.25)
+                        continue
                     mandar("sendkey down")
                     time.sleep(0.3)
                     mandar("sendkey delete")
@@ -966,6 +1028,14 @@ while time.time() - inicio < total:
             if "[centro] Acerca de: " not in texto:
                 if time.time() > reintento:
                     reintento = time.time() + 4
+                    # Rama cuentas-2: la flecha, a Ajustes: delante antes (una ventana de la caja Amiga o la de Dash pudo
+                    # salir encima y llevarse el teclado), con un clic en su borde derecho.
+                    import re
+                    v = re.search(r"\[compositor\] ventana de centro en \((\d+), (\d+)\)", texto)
+                    if v:
+                        ir_a(int(v.group(1)) + 546, int(v.group(2)) + 40)
+                        mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+                        time.sleep(0.3)
                     mandar("sendkey down")
                 time.sleep(0.25)
                 continue
@@ -2133,6 +2203,11 @@ if [ -n "${MENUS_CAPTURAS:-}" ]; then
     python3 -I "$(dirname "$0")/guion_menus.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$MENUS_CAPTURAS" >/dev/null 2>&1 &
     MENUS_PID=$!
 fi
+# Rama cuentas-2: con CUENTAS_CAPTURAS=prefijo, `tools/guion_cuentas.py` (`make arranque-virt-cuentas`).
+if [ -n "${CUENTAS_CAPTURAS:-}" ]; then
+    python3 -I "$(dirname "$0")/guion_cuentas.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$CUENTAS_CAPTURAS" >/dev/null 2>&1 &
+    CUENTAS_PID=$!
+fi
 # Se para en cuanto han salido todas las líneas esperadas, en cualquier orden (o al acabar el tiempo); el orden se
 # mira después. Antes se paraba en la última del fichero, y con procesos que acaban a su ritmo (W8, K7) la última en
 # el fichero no siempre es la última en salir. Con CAPTURA=fichero.ppm, antes guarda la pantalla (U4).
@@ -2184,6 +2259,7 @@ wait "$QEMU" 2>/dev/null
 [ -n "${CAJA_PID:-}" ] && kill "$CAJA_PID" 2>/dev/null
 [ -n "${SHELL_PID:-}" ] && kill "$SHELL_PID" 2>/dev/null
 [ -n "${MENUS_PID:-}" ] && kill "$MENUS_PID" 2>/dev/null
+[ -n "${CUENTAS_PID:-}" ] && kill "$CUENTAS_PID" 2>/dev/null
 # Lo que escribe EDK2 lleva secuencias de escape de terminal: fuera, para comparar el texto.
 sed -e 's/\x1b\[[0-9;]*[A-Za-z]//g' -e 's/\r//g' "$SALIDA" > "$SALIDA.txt"
 

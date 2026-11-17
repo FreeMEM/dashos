@@ -250,6 +250,85 @@ fn made_with_a_recovery_code() {
     assert_clean(&mut fs, "recovery");
 }
 
+/// DashOS (branch `cuentas-2`): changing a password and recovering with the code rewrite only the key block: the
+/// contents stay and open with the new key; the old password and the spent code no longer open it.
+#[test]
+fn change_and_recover() {
+    let mut fs = new_fs(16);
+    let id = fs
+        .tx(|tx| {
+            tx.create_encrypted_volume_with_recovery(
+                "Berta",
+                1,
+                0,
+                b"clave de Berta",
+                b"ABCD-EFGH-JKLM-NPQR-STUV-WXYZ",
+                &[0x42; 32],
+                [[7; 16], [8; 16]],
+                Cost::CHEAP,
+                (1002, 1002),
+            )
+        })
+        .unwrap();
+    fill(&mut fs, id, b"hola");
+    fs.tx(|tx| tx.lock_volume(id)).unwrap();
+    // With a wrong password, or with the code (that is recovering), it does not change; empty, neither.
+    for (old, errno) in [(&b"otra"[..], EACCES), (b"ABCD-EFGH-JKLM-NPQR-STUV-WXYZ", EACCES)] {
+        assert_eq!(fs.tx(|tx| tx.change_volume_password(id, old, b"nueva", [1; 16])).err().unwrap().errno, errno);
+    }
+    assert_eq!(fs.tx(|tx| tx.change_volume_password(id, b"clave de Berta", b"", [1; 16])).err().unwrap().errno, EINVAL);
+    // Locked: it changes; the old one no longer opens, the new one and the code do.
+    fs.tx(|tx| tx.change_volume_password(id, b"clave de Berta", b"nueva de Berta", [1; 16])).unwrap();
+    let mut fs = reopen(fs);
+    assert_eq!(fs.tx(|tx| tx.unlock_volume(id, b"clave de Berta")).err().unwrap().errno, EACCES);
+    fs.tx(|tx| tx.unlock_volume(id, b"nueva de Berta")).unwrap();
+    assert_eq!(fs.tx_in(id, |tx| Ok(read_all(tx))).unwrap()["texto"].len(), 8000);
+    // Unlocked (her session open): it changes too, and what is open keeps working.
+    fs.tx(|tx| tx.change_volume_password(id, b"nueva de Berta", b"tercera", [2; 16])).unwrap();
+    assert_eq!(fs.tx_in(id, |tx| Ok(read_all(tx))).unwrap()["nota"].len(), 23);
+    fs.tx(|tx| tx.lock_volume(id)).unwrap();
+    assert_eq!(fs.tx(|tx| tx.check_volume_password(id, b"nueva de Berta")).err().unwrap().errno, EACCES);
+    fs.tx(|tx| tx.check_volume_password(id, b"tercera")).unwrap();
+    assert_eq!(fs.tx(|tx| tx.volume_slots(id)).unwrap()[..3], [SlotKind::Password, SlotKind::Recovery, SlotKind::Empty]);
+    // Recovering: not with a password nor a wrong code.
+    for code in [&b"tercera"[..], b"ABCD-EFGH-JKLM-NPQR-STUV-WXYA", b"abcd-efgh-jklm-npqr-stuv-wxyz"] {
+        assert_eq!(
+            fs.tx(|tx| tx.recover_volume(id, code, b"cuarta", b"2222-3333", [[3; 16], [4; 16]])).err().unwrap().errno,
+            EACCES
+        );
+    }
+    // A second password, to see that all go.
+    fs.tx(|tx| tx.unlock_volume(id, b"tercera")).unwrap();
+    fs.tx(|tx| tx.add_volume_password(id, SlotKind::Password, b"otra mas", [5; 16], Cost::CHEAP)).unwrap();
+    fs.tx(|tx| tx.lock_volume(id)).unwrap();
+    fs.tx(|tx| tx.recover_volume(id, b"ABCD-EFGH-JKLM-NPQR-STUV-WXYZ", b"cuarta", b"2222-3333", [[3; 16], [4; 16]])).unwrap();
+    let mut fs = reopen(fs);
+    for gone in [&b"tercera"[..], b"otra mas", b"ABCD-EFGH-JKLM-NPQR-STUV-WXYZ", b"clave de Berta"] {
+        assert_eq!(fs.tx(|tx| tx.check_volume_password(id, gone)).err().unwrap().errno, EACCES, "{:?}", gone);
+    }
+    // The spent code does not recover again; the new one does.
+    assert_eq!(
+        fs.tx(|tx| tx.recover_volume(id, b"ABCD-EFGH-JKLM-NPQR-STUV-WXYZ", b"quinta", b"4444", [[3; 16], [4; 16]]))
+            .err()
+            .unwrap()
+            .errno,
+        EACCES
+    );
+    fs.tx(|tx| tx.check_volume_password(id, b"2222-3333")).unwrap();
+    fs.tx(|tx| tx.unlock_volume(id, b"cuarta")).unwrap();
+    assert_eq!(fs.tx_in(id, |tx| Ok(read_all(tx))).unwrap()["texto"].len(), 8000);
+    let kinds = fs.tx(|tx| tx.volume_slots(id)).unwrap();
+    assert_eq!(kinds.iter().filter(|k| **k == SlotKind::Password).count(), 1);
+    assert_eq!(kinds.iter().filter(|k| **k == SlotKind::Recovery).count(), 1);
+    // A volume without a code cannot be recovered.
+    let other = encrypted(&mut fs, "Ana", "primera");
+    assert_eq!(
+        fs.tx(|tx| tx.recover_volume(other, b"primera", b"x", b"y", [[3; 16], [4; 16]])).err().unwrap().errno,
+        EACCES
+    );
+    assert_clean(&mut fs, "change and recover");
+}
+
 #[test]
 fn snapshots_and_removal_of_an_encrypted_volume() {
     let mut fs = new_fs(16);

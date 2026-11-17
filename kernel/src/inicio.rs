@@ -151,8 +151,12 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "centro"]),
     // Con `uso` (la imagen para usar a mano, `make virt-uso`), un canal más, "uso", que solo dice eso: `guardian`
     // pone la pantalla de entrada y atiende, sin el guion de las pruebas. Es el último suyo: no mueve los demás.
-    #[cfg(feature = "uso")]
+    #[cfg(all(feature = "uso", not(feature = "cuentas")))]
     ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "centro", "uso"]),
+    // Rama cuentas-2: con `cuentas` (`make arranque-virt-cuentas`), otro más, "codigos": escribe los códigos de
+    // recuperación en la consola, para su guion.
+    #[cfg(feature = "cuentas")]
+    ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "centro", "uso", "codigos"]),
     #[cfg(all(feature = "virt", not(feature = "linux"), not(feature = "uso")))]
     ("pide", programa!("pide"), &[], &["sesiones"]),
     #[cfg(all(feature = "virt", not(feature = "linux"), not(feature = "uso")))]

@@ -1,0 +1,26 @@
+# Rama cuentas-2, las cuentas en pantalla (`make arranque-virt-cuentas`, tools/guion_cuentas.py): un disco sin cuentas
+# (primer arranque), el asistente, Ajustes > Cuentas, cambiar la contraseña, y la pantalla de entrada con la lista y el
+# código de recuperación. En orden.
+DashOS en marcha con 4 núcleos
+[sesiones] cuentas: no hay ninguna: primer arranque, guardian puede crear la primera
+[guardian] pantalla de entrada: 0 cuentas en la lista; primer arranque: el asistente
+[guardian] primer arranque: crear admin: no
+[sesiones] primer arranque: crea Eva (usuario 1000), administradora, con su volumen cifrado y su código de recuperación
+[guardian] entra Eva
+[centro] Cuentas, sitios: 
+[sesiones] cuentas: crea Fran (usuario 1001)
+[centro] Cuentas: "crear Fran 0": 0
+[centro] Cuentas: "meter Fran fotos": 0
+[centro] Cuentas: "borrar Fran": 0
+[centro] Cuentas: "devolver Fran": 0
+[sesiones] Eva cambia su contraseña (lo pidió centro)
+[guardian] cambio de contraseña de Eva: cambiada
+[guardian] cerrar la sesión de Eva: 0
+[guardian] pantalla de entrada: 2 cuentas en la lista
+[guardian] lista: elige a Fran
+[guardian] recuperar Fran: no
+[sesiones] Fran pone contraseña nueva con su código de recuperación
+[guardian] entra Fran
+[guardian] cerrar la sesión de Fran: 0
+[guardian] lista: elige a Eva
+[guardian] entra Eva (tras cerrar la sesión de Fran)

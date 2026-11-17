@@ -311,3 +311,63 @@ in the window
 MSG_103
 in the top bar
 ; en la barra de arriba
+MSG_104
+Accounts
+; Cuentas
+MSG_105
+The accounts cannot be read
+; No se pueden leer las cuentas
+MSG_106
+number {}
+; número {}
+MSG_107
+deleted: can be restored until {}
+; borrada: se puede devolver hasta el {}
+MSG_108
+Done
+; Hecho
+MSG_109
+Not done: it was not confirmed in the system window
+; No se hizo: no se confirmó en la ventana del sistema
+MSG_110
+Another one is already waiting in the system window
+; Ya hay otra esperando en la ventana del sistema
+MSG_111
+It does not exist
+; No existe
+MSG_112
+sesiones does not answer
+; sesiones no contesta
+MSG_113
+Not done ({})
+; No se hizo ({})
+MSG_114
+Name (new account or group)
+; Nombre (cuenta nueva o grupo)
+MSG_115
+Group
+; Grupo
+MSG_116
+Who uses this computer; changes, with an administrator.
+; Quién usa el equipo; los cambios, con un administrador.
+MSG_117
+Delete
+; Borrar
+MSG_118
+My password
+; Mi contraseña
+MSG_119
+Create
+; Crear
+MSG_120
+Restore
+; Devolver
+MSG_121
+Type above the name of the new account
+; Escribe arriba el nombre de la cuenta nueva
+MSG_122
+Choose an account in the list
+; Elige una cuenta en la lista
+MSG_123
+Type above the name of the group
+; Escribe arriba el nombre del grupo

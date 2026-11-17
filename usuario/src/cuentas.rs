@@ -212,13 +212,17 @@ pub enum Fallo {
     SinHora,
     /// La persona tiene su sesión abierta.
     SesionAbierta,
+    /// Rama `cuentas-2`: la contraseña nueva (al cambiarla, al recuperar la cuenta o en el primer arranque) es corta.
+    NuevaCorta,
+    /// Rama `cuentas-2`: ya hay cuentas: el asistente del primer arranque no se abre.
+    HayCuentas,
 }
 
 /// Lo más corta que puede ser la contraseña de una cuenta nueva. Pendiente del usuario.
 pub const MIN_CLAVE: usize = 8;
 
 /// Los fallos como estados de una respuesta (los de `sesiones` y los de archivos son de -1 a -20).
-const FALLOS: [Fallo; 18] = [
+const FALLOS: [Fallo; 20] = [
     Fallo::NombreMalo,
     Fallo::Reservado,
     Fallo::CompletoMalo,
@@ -237,6 +241,8 @@ const FALLOS: [Fallo; 18] = [
     Fallo::ClaveCorta,
     Fallo::SinHora,
     Fallo::SesionAbierta,
+    Fallo::NuevaCorta,
+    Fallo::HayCuentas,
 ];
 
 impl Fallo {
@@ -279,6 +285,8 @@ impl Fallo {
             Fallo::ClaveCorta => "la contraseña de la cuenta nueva es corta: 8 letras o más",
             Fallo::SinHora => "el sistema no sabe la hora: el plazo para devolverla no se podría contar",
             Fallo::SesionAbierta => "tiene su sesión abierta",
+            Fallo::NuevaCorta => "la contraseña nueva es corta: 8 letras o más",
+            Fallo::HayCuentas => "ya hay cuentas: el primer arranque ya se hizo",
         }
     }
 }
@@ -735,6 +743,80 @@ pub fn codigo_recuperacion(azar: &[u8; 15]) -> [u8; LARGO_CODIGO] {
     c
 }
 
+/// Lo que alguien teclea como código de recuperación, en su forma de siempre (`ABCD-EFGH-...`): se aceptan minúsculas,
+/// espacios y guiones donde sea (en el papel puede estar escrito de cualquier manera), pero tienen que ser 24 letras del
+/// código. `None` si no lo es (una letra que no está, como la O o el 1, o de más o de menos).
+pub fn normalizar_codigo(t: &[u8]) -> Option<[u8; LARGO_CODIGO]> {
+    let mut c = [b'-'; LARGO_CODIGO];
+    let mut n = 0;
+    for &b in t.iter().filter(|&&b| b != b' ' && b != b'-') {
+        let b = b.to_ascii_uppercase();
+        if n == 24 || !LETRAS_CODIGO.contains(&b) {
+            return None;
+        }
+        c[n + n / 4] = b;
+        n += 1;
+    }
+    (n == 24).then_some(c)
+}
+
+/// Contra probar contraseñas a ciegas (rama `cuentas-2`): tras `FALLOS_SIN_ESPERA` intentos malos seguidos con una
+/// cuenta (entrar, volver de un bloqueo, la contraseña de administrador, la actual al cambiarla o el código de
+/// recuperación), hay que esperar antes del siguiente: `PRIMERA_ESPERA_US` y el doble con cada fallo más, hasta
+/// `MAX_ESPERA_US`. Mientras, no se prueba nada (ni la buena): se contesta cuánto falta. Uno bueno lo deja a cero. Los
+/// nombres que no son de nadie van todos a la cuenta 0. Solo en memoria: al reiniciar, de cero.
+pub const FALLOS_SIN_ESPERA: u32 = 3;
+pub const PRIMERA_ESPERA_US: u64 = 5_000_000;
+pub const MAX_ESPERA_US: u64 = 300_000_000;
+
+/// Los intentos malos de cada cuenta: (usuario, malos seguidos, hasta cuándo espera en µs). Una por cuenta y la 0.
+#[derive(Clone, Copy)]
+pub struct Esperas {
+    e: [(u32, u32, u64); MAX_CUENTAS + 1],
+}
+
+impl Esperas {
+    pub const fn nuevas() -> Esperas {
+        Esperas { e: [(u32::MAX, 0, 0); MAX_CUENTAS + 1] }
+    }
+
+    /// Los µs que le quedan de espera a la cuenta `uid` en `ahora`; `None` si puede probar.
+    pub fn falta(&self, uid: u32, ahora: u64) -> Option<u64> {
+        self.e.iter().find(|x| x.0 == uid).map(|x| x.2.saturating_sub(ahora)).filter(|&f| f > 0)
+    }
+
+    /// La espera tras `malos` intentos malos seguidos.
+    pub fn espera(malos: u32) -> u64 {
+        if malos < FALLOS_SIN_ESPERA {
+            return 0;
+        }
+        PRIMERA_ESPERA_US.saturating_mul(1u64 << (malos - FALLOS_SIN_ESPERA).min(20)).min(MAX_ESPERA_US)
+    }
+
+    /// Un intento malo de `uid` en `ahora`: cuántos lleva seguidos y la espera que empieza (0 si aún ninguna).
+    pub fn mala(&mut self, uid: u32, ahora: u64) -> (u32, u64) {
+        let i = match self.e.iter().position(|x| x.0 == uid) {
+            Some(i) => i,
+            // Sin sitio (más cuentas de las que caben, no debería pasar): se reusa la que lleva menos.
+            None => match self.e.iter().position(|x| x.0 == u32::MAX) {
+                Some(i) => i,
+                None => (0..self.e.len()).min_by_key(|&i| self.e[i].1).unwrap_or(0),
+            },
+        };
+        let malos = if self.e[i].0 == uid { self.e[i].1.saturating_add(1) } else { 1 };
+        let espera = Self::espera(malos);
+        self.e[i] = (uid, malos, ahora.saturating_add(espera));
+        (malos, espera)
+    }
+
+    /// Un intento bueno: a cero.
+    pub fn buena(&mut self, uid: u32) {
+        for x in self.e.iter_mut().filter(|x| x.0 == uid) {
+            *x = (u32::MAX, 0, 0);
+        }
+    }
+}
+
 #[cfg(test)]
 mod pruebas {
     use super::*;
@@ -992,5 +1074,69 @@ mod pruebas {
         let c = codigo_recuperacion(&core::array::from_fn(|i| (i * 37 + 11) as u8));
         assert!(c.iter().all(|&b| b == b'-' || LETRAS_CODIGO.contains(&b)) && !c.iter().any(|b| b"IO01".contains(b)));
         assert_ne!(c, codigo_recuperacion(&core::array::from_fn(|i| (i * 37 + 12) as u8)));
+    }
+
+    #[test]
+    fn codigos_tecleados() {
+        let c = *b"ABCD-EFGH-JKLM-NPQR-STUV-WX23";
+        assert_eq!(normalizar_codigo(&c), Some(c));
+        assert_eq!(normalizar_codigo(b"abcdefghjklmnpqrstuvwx23"), Some(c));
+        assert_eq!(normalizar_codigo(b" abcd efgh-jklm  npqr-stuv wx23 "), Some(c));
+        assert_eq!(normalizar_codigo(b"--ABCDEFGHJKLM----NPQRSTUVWX23-"), Some(c));
+        // Letras que no están (O, I, 0, 1), de más, de menos, vacío, otras cosas.
+        assert_eq!(normalizar_codigo(b"OBCD-EFGH-JKLM-NPQR-STUV-WX23"), None);
+        assert_eq!(normalizar_codigo(b"1BCD-EFGH-JKLM-NPQR-STUV-WX23"), None);
+        assert_eq!(normalizar_codigo(b"ABCD-EFGH-JKLM-NPQR-STUV-WX2"), None);
+        assert_eq!(normalizar_codigo(b"ABCD-EFGH-JKLM-NPQR-STUV-WX233"), None);
+        assert_eq!(normalizar_codigo(b""), None);
+        assert_eq!(normalizar_codigo(b"ABCD:EFGH-JKLM-NPQR-STUV-WX23"), None);
+        assert_eq!(normalizar_codigo("ÁBCD-EFGH-JKLM-NPQR-STUV-WX23".as_bytes()), None);
+        assert_eq!(normalizar_codigo(&[b'A'; 5000]), None);
+        // El de cualquier azar se lee igual.
+        for k in 0..50u8 {
+            let c = codigo_recuperacion(&core::array::from_fn(|i| (i as u8).wrapping_mul(k).wrapping_add(k)));
+            assert_eq!(normalizar_codigo(&c), Some(c));
+        }
+    }
+
+    #[test]
+    fn esperas_crecientes() {
+        let mut e = Esperas::nuevas();
+        let s = 1_000_000;
+        assert_eq!(e.falta(1000, 0), None);
+        // Dos malas, sin espera; la tercera, 5 s; luego el doble, hasta 5 minutos.
+        assert_eq!(e.mala(1000, 0), (1, 0));
+        assert_eq!(e.mala(1000, 0), (2, 0));
+        assert_eq!(e.falta(1000, 0), None);
+        assert_eq!(e.mala(1000, 10 * s), (3, 5 * s));
+        assert_eq!(e.falta(1000, 10 * s), Some(5 * s));
+        assert_eq!(e.falta(1000, 14 * s), Some(s));
+        assert_eq!(e.falta(1000, 15 * s), None);
+        assert_eq!(e.mala(1000, 20 * s), (4, 10 * s));
+        assert_eq!(e.mala(1000, 40 * s), (5, 20 * s));
+        for _ in 0..40 {
+            e.mala(1000, 100 * s);
+        }
+        assert_eq!(e.falta(1000, 100 * s), Some(300 * s));
+        // Otra cuenta no espera por esta; una buena lo deja a cero.
+        assert_eq!(e.falta(1001, 100 * s), None);
+        e.buena(1000);
+        assert_eq!(e.falta(1000, 100 * s), None);
+        assert_eq!(e.mala(1000, 100 * s), (1, 0));
+        // Muchas cuentas (más de las que caben): no se pierde la cuenta de nadie que ya estaba.
+        let mut e = Esperas::nuevas();
+        for _ in 0..3 {
+            e.mala(1000, 0);
+        }
+        for u in 2000..2100 {
+            e.mala(u, 0);
+        }
+        assert!(e.falta(1000, 0).is_some());
+        // Números enormes de tiempo, sin desbordar.
+        let mut e = Esperas::nuevas();
+        for _ in 0..10 {
+            e.mala(7, u64::MAX - 1);
+        }
+        assert_eq!(e.falta(7, u64::MAX - 1), Some(1));
     }
 }
