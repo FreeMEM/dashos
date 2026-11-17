@@ -10,6 +10,8 @@
 //! respuesta:
 //! - "poner <nombre>": pone `Fondos/<nombre>` (no lo guarda: eso lo hace el centro si sale bien);
 //! - "semilla": el color del fondo de ahora;
+//! - "bloqueo" (S27, oleada 6), solo de `guardian`: el fondo de su pantalla de bloqueo, pequeño y desenfocado (como el
+//!   de DMS): el estado, ancho y alto (12 bytes) y una llave de su memoria, solo para leer;
 //! - "guardado" (rama `centro-vivo`): pone el de `Prefs/fondo` (si no hay, el de serie), si no es ya el que se ve. Lo
 //!   pide el centro al entrar alguien: el fondo arranca antes que el servicio de archivos, y entonces no puede leerlo.
 //!
@@ -46,6 +48,9 @@ mod monitor;
 mod reloj;
 #[path = "../fondo_panel.rs"]
 mod fondo_panel;
+#[path = "../desenfoque.rs"]
+#[allow(dead_code)]
+mod desenfoque;
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -77,6 +82,8 @@ const COLOR_LISO: u32 = 0xff20_4060;
 const MAX_MEMORIA: usize = 4 << 20;
 /// Donde se proyectan la ventana de `archivos` y las franjas (una cada 8 MB, de dos juegos: el que se ve y el nuevo).
 const VA_ARCHIVOS: usize = 0x50_0000_0000;
+/// S27, oleada 6: donde se escribe un momento el fondo pequeño y desenfocado de la pantalla de bloqueo.
+const VA_BLOQUEO: usize = 0x52_0000_0000;
 const VA_FRANJAS: usize = 0x48_0000_0000;
 const MAX_FRANJAS: usize = 16;
 /// Los objetos propios: la pantalla, layer-shell y, desde aquí, superficies, capas, pools y búferes (sin repetir).
@@ -230,6 +237,9 @@ struct Pantalla {
     /// Qué juego de direcciones usa lo que se ve (0 o 1).
     juego: usize,
     siguiente: u32,
+    /// S27, oleada 6: el fondo de la pantalla de bloqueo (un octavo de la pantalla, desenfocado, como el de DMS): su
+    /// memoria, ancho y alto. Se hace al pintar cada fondo y se le da a `guardian` (solo para leer) cuando lo pide.
+    bloqueo: Option<(u32, usize, usize)>,
 }
 
 impl Pantalla {
@@ -272,7 +282,7 @@ impl Pantalla {
             println!("  [fondo] la pantalla no dice lo que mide");
             return None;
         }
-        Some(Pantalla { c, pendientes, ancho, alto, capas: Vec::new(), buferes: Vec::new(), juego: 0, siguiente: PRIMER_OBJETO })
+        Some(Pantalla { c, pendientes, ancho, alto, capas: Vec::new(), buferes: Vec::new(), juego: 0, siguiente: PRIMER_OBJETO, bloqueo: None })
     }
 
     /// Las franjas de la pantalla: (y, alto), cada una de 4 MB como mucho.
@@ -370,6 +380,7 @@ impl Pantalla {
         e.empezar(1, wl_display::req::SYNC).uint(SYNC).fin();
         self.c.mandar(&e);
         self.juego = juego;
+        self.hacer_bloqueo(img);
         // Hasta que conteste al sync: así se sabe que lo tomó (o el error, si no).
         loop {
             match self.c.evento_plazo(5_000_000) {
@@ -382,6 +393,34 @@ impl Pantalla {
                 _ => return false,
             }
         }
+    }
+}
+
+impl Pantalla {
+    /// S27, oleada 6: el fondo de la pantalla de bloqueo, de `img`: cubriendo un octavo de la pantalla y desenfocado
+    /// (`desenfoque`), en una memoria propia. Si no se puede, se queda el de antes.
+    fn hacer_bloqueo(&mut self, img: &Imagen) {
+        let t0 = dashos::ahora_us();
+        let (w, h) = desenfoque::medida_pequena(self.ancho as usize, self.alto as usize);
+        let mut px = alloc::vec![0u32; w * h];
+        img.cubrir_filas(w, h, COLOR_LISO, 0, &mut px);
+        let mut linea = alloc::vec![0u32; w.max(h)];
+        desenfoque::desenfocar(&mut px, w, h, desenfoque::RADIO, desenfoque::PASADAS, &mut linea);
+        let m = dashos::memoria_crear(w * h * 4);
+        if (m as i32) <= 0 || dashos::memoria_proyectar(m, VA_BLOQUEO, true) != 0 {
+            if (m as i32) > 0 {
+                dashos::cerrar(m);
+            }
+            println!("  [fondo] sin memoria para el fondo de la pantalla de bloqueo");
+            return;
+        }
+        // SAFETY: recién proyectada aquí con `w × h` píxeles; se quita en la línea siguiente.
+        unsafe { core::slice::from_raw_parts_mut(VA_BLOQUEO as *mut u32, w * h) }.copy_from_slice(&px);
+        dashos::memoria_quitar(VA_BLOQUEO);
+        if let Some((vieja, _, _)) = self.bloqueo.replace((m, w, h)) {
+            dashos::cerrar(vieja);
+        }
+        println!("  [fondo] fondo de la pantalla de bloqueo: {} × {}, desenfocado en {} ms", w, h, (dashos::ahora_us() - t0) / 1000);
     }
 }
 
@@ -575,6 +614,41 @@ fn atender(m: Mensaje, pantalla: &mut Option<Pantalla>, actual: &mut Option<(Str
     }
     let del_centro = nombres.get(&marca).is_some_and(|n| n == "centro");
     let pedido = core::str::from_utf8(buf).unwrap_or("");
+    // S27, oleada 6: `guardian` (por el nombre que da `inicio`) pide el fondo de la pantalla de bloqueo. Se le da una
+    // llave solo para leer, con el estado, el ancho y el alto. A otro, o sin fondo, el estado y nada más.
+    if pedido == "bloqueo" {
+        let de_guardian = nombres.get(&marca).is_some_and(|n| n == "guardian");
+        let hay = pantalla.as_ref().and_then(|p| p.bloqueo);
+        if k >= 1 {
+            let mut r = [0u8; 12];
+            let estado = match (de_guardian, hay) {
+                (true, Some((m, w, h))) => {
+                    r[4..8].copy_from_slice(&(w as u32).to_le_bytes());
+                    r[8..12].copy_from_slice(&(h as u32).to_le_bytes());
+                    // Solo para leer; TRANSFERIR para que viaje, y UNA_VEZ: `guardian` no puede pasarla a nadie.
+                    let copia = dashos::llave_duplicar(m, dashos::LEER | dashos::TRANSFERIR | dashos::UNA_VEZ, 0);
+                    if copia > 0 {
+                        r[0..4].copy_from_slice(&BIEN.to_le_bytes());
+                        if dashos::canal_escribir(ll[0], &r, &[copia as u32]) != 0 {
+                            dashos::cerrar(copia as u32);
+                        }
+                        cerrar_llaves(ll);
+                        return;
+                    }
+                    SIN_MEMORIA
+                }
+                (true, None) => SIN_FONDO,
+                (false, _) => {
+                    println!("  [fondo] pide el fondo de la pantalla de bloqueo quien no es guardian: no");
+                    PEDIDO_MALO
+                }
+            };
+            r[0..4].copy_from_slice(&estado.to_le_bytes());
+            dashos::canal_escribir(ll[0], &r[..4], &[]);
+        }
+        cerrar_llaves(ll);
+        return;
+    }
     // Trasfondo: el centro guardó `Prefs/monitor`: que el panel lo relea.
     if del_centro && pedido == "monitor" {
         panel.releer();

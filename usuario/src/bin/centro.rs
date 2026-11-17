@@ -29,6 +29,7 @@
 //!   sistema. Lo mismo que la orden `Usuario` del Shell.
 //!
 //! Por su canal "centro" solo se le pide que abra una categoría ("abrir permisos"): nadie cambia un ajuste desde fuera.
+//! Y "zona" (S27, oleada 6): el nombre de la zona horaria del sistema, para el reloj de la pantalla de bloqueo.
 //! Si el mensaje trae una llave, cuando se cierra la ventana se contesta por ella (4 bytes a cero). Ver y quitar lo
 //! concedido solo se lo deja `sesiones` a quien se llama "centro" (o `guardian`), y ese nombre lo da `inicio`.
 //!
@@ -794,6 +795,20 @@ fn leer_ajuste(fichero: &str) -> Result<Vec<u8>, String> {
 /// (sin servicio o sin tabla), `true`: quien pregunta se queda con lo que había.
 fn ajuste_en_env(fichero: &str) -> bool {
     !matches!(leer_ajuste_de(fichero, &["ENV"]).as_deref().map_err(String::as_str), Err("no hay"))
+}
+
+/// S27, oleada 6: el nombre de la zona horaria de `Prefs/zona` del disco del sistema (la primera línea, como la lee la
+/// barra), o nada si no hay, no se lee o no parece un nombre de zona.
+fn zona_del_sistema() -> String {
+    use dashos::protocolo::archivos as a;
+    let Some(ses) = Sesion::abrir() else { return String::new() };
+    let (e, _, leidos, _, _) = ses.pedir_bytes(a::LEER_NOMBRE, 1, 0, 64, b"Prefs/zona");
+    if e != a::BIEN {
+        return String::new();
+    }
+    let v = &ses.ventana()[..(leidos as usize).min(64)];
+    let linea = core::str::from_utf8(v).ok().and_then(|t| t.lines().next()).map(str::trim).unwrap_or("");
+    if linea.len() <= 32 && linea.bytes().all(|c| c.is_ascii_graphic()) { String::from(linea) } else { String::new() }
 }
 
 /// `leer_ajuste` mirando solo en las asignaciones de `capas`, en su orden.
@@ -3643,6 +3658,14 @@ fn atender(m: Mensaje, ce: &mut Centro, via: &mut Option<ConVentana>) -> Option<
             let nombre = core::str::from_utf8(&nombre[..nombre.iter().position(|&c| c == 0).unwrap_or(16)]).unwrap_or("");
             ce.nombres.insert(de, nombre.into());
         }
+        cerrar_llaves(ll);
+        return None;
+    }
+    // S27, oleada 6: la zona horaria del sistema (`SYS:Prefs/zona`), para el reloj de la pantalla de bloqueo de
+    // `guardian`, que no lee ficheros. Solo eso, y a quien la pida: no es nada que guardar ni cambia nada.
+    if buf == b"zona" && k >= 1 {
+        let zona = zona_del_sistema();
+        dashos::canal_escribir(ll[0], zona.as_bytes(), &[]);
         cerrar_llaves(ll);
         return None;
     }
