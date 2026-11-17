@@ -270,3 +270,13 @@ el hueco; en el PC, `ntfsresize --info` (10,9 GB, lo que mide la partición nuev
 Para que valga en otra máquina: `tools/dominio_x86.py preparar` baja también el código de Linux de kernel.org (con su
 suma) si no está; el banco usa los OVMF_VARS del sistema si no está el de AmiCachy (`OVMF_CODE` y `OVMF_VARS` se
 pueden dar), crea su carpeta y no mira los discos base si no están.
+
+### Sin FUSE (pegaso: el AppArmor de Ubuntu no deja a fusermount3 montar sobre un fichero)
+
+`tools/banco_instalador.py`: con `BANCO_SIN_FUSE=1`, o si montar falla (se dice: "sin FUSE: ... se copia a un crudo
+disperso"), mirar una capa o una partición es una copia cruda dispersa (`qemu-img convert -O raw -S 4k`, con
+`--image-opts` y `offset`/`size` para la partición), que `soltar` borra; escribir en una capa (`Editar`, para preparar
+las hostiles) es escribir en esa copia y volver a hacer la capa encima de su misma base (`qemu-img convert -B`; queda
+más grande que lo cambiado, 133 MB por un sector en la prueba, pero con su base). `tools/prueba_instalador.py` ya no
+llama a qemu-storage-daemon por su cuenta: todo por el banco. `encoger-sintetico` en shiva: 8 de 8 con FUSE y 8 de 8
+con `BANCO_SIN_FUSE=1`; `Editar` probado de las dos formas.

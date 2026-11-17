@@ -300,24 +300,78 @@ def elegir_en_menu(png, patron):
     return None
 
 
-def exportar(nombre, fichero):
-    """La capa entera como fichero crudo de solo lectura, por FUSE (qemu-storage-daemon). Devuelve el proceso."""
-    fichero = mio(fichero)
-    open(fichero, "a").close()
+# Sin FUSE (BANCO_SIN_FUSE=1, o si montar falla, como con el AppArmor de fusermount3 en Ubuntu): en vez de exportar la
+# capa, se pasa a un fichero crudo disperso (`qemu-img convert -O raw -S 4k`) y se lee de ahí; para escribir, se
+# escribe en el crudo y se vuelve a hacer la capa encima de su base con lo que cambió (`qemu-img convert -B`).
+SIN_FUSE = os.environ.get("BANCO_SIN_FUSE") == "1"
+
+
+class Copia:
+    """Lo que devuelve `exportar` sin FUSE: el fichero es una copia, que `soltar` borra."""
+
+
+def ruta_de(nombre):
     base = os.path.join(BASES, nombre + ".qcow2")
-    ruta = base if os.path.exists(base) else capa_ruta(nombre)
-    p = subprocess.Popen(["qemu-storage-daemon", "--blockdev", f"driver=file,node-name=f,filename={ruta},read-only=on",
-                          "--blockdev", "driver=qcow2,node-name=q,file=f,read-only=on",
-                          "--export", f"type=fuse,id=e,node-name=q,mountpoint={fichero},writable=off,allow-other=off"], stderr=subprocess.DEVNULL)
+    return base if os.path.exists(base) else capa_ruta(nombre)
+
+
+def _fuse(blockdevs, nodo, fichero, escribir):
+    """Monta por FUSE el nodo `nodo` en `fichero`. El proceso, o None si no se pudo (y no queda nada montado)."""
+    if SIN_FUSE:
+        return None
+    open(fichero, "a").close()
+    p = subprocess.Popen(["qemu-storage-daemon", *blockdevs,
+                          "--export", f"type=fuse,id=e,node-name={nodo},mountpoint={fichero},writable={'on' if escribir else 'off'},allow-other=off"],
+                         stderr=subprocess.DEVNULL)
     for _ in range(100):
+        if p.poll() is not None:
+            break
         if os.path.getsize(fichero) > 0:
             return p
         time.sleep(0.1)
     p.kill()
-    sys.exit(f"no se exporta {nombre}")
+    p.wait()
+    subprocess.run(["fusermount3", "-u", fichero], stderr=subprocess.DEVNULL)
+    print(f"(sin FUSE: {os.path.basename(fichero)} se copia a un crudo disperso)")
+    return None
+
+
+def _crudo(origen_opts, fichero):
+    """Copia a `fichero` (crudo disperso) lo que dice `origen_opts` (opciones de imagen de qemu-img)."""
+    if os.path.exists(fichero):
+        os.unlink(fichero)
+    subprocess.run([QEMU_IMG, "convert", "-q", "--image-opts", origen_opts, "-O", "raw", "-S", "4k", fichero], check=True)
+
+
+def exportar(nombre, fichero):
+    """La capa entera como fichero crudo de solo lectura: por FUSE (qemu-storage-daemon) o, sin él, una copia. Lo que
+    se le pasa a `soltar`."""
+    fichero = mio(fichero)
+    ruta = ruta_de(nombre)
+    p = _fuse(["--blockdev", f"driver=file,node-name=f,filename={ruta},read-only=on", "--blockdev", "driver=qcow2,node-name=q,file=f,read-only=on"], "q", fichero, False)
+    if p:
+        return p
+    _crudo(f"driver=qcow2,file.driver=file,file.filename={ruta}", fichero)
+    return Copia()
+
+
+def exportar_particion(nombre, desde, hasta, fichero):
+    """La partición [desde, hasta) (sectores) de la capa como fichero de solo lectura (FUSE o copia)."""
+    fichero = mio(fichero)
+    ruta = ruta_de(nombre)
+    tramo = f"offset={desde * 512},size={(hasta - desde) * 512}"
+    p = _fuse(["--blockdev", f"driver=file,node-name=f,filename={ruta},read-only=on", "--blockdev", "driver=qcow2,node-name=q,file=f,read-only=on",
+               "--blockdev", f"driver=raw,node-name=p,file=q,{tramo},read-only=on"], "p", fichero, False)
+    if p:
+        return p
+    _crudo(f"driver=raw,{tramo},file.driver=qcow2,file.file.driver=file,file.file.filename={ruta}", fichero)
+    return Copia()
 
 
 def soltar(fichero, p=None):
+    if isinstance(p, Copia):
+        os.unlink(mio(fichero))
+        return
     subprocess.run(["fusermount3", "-u", mio(fichero)], stderr=subprocess.DEVNULL)
     if p:
         p.terminate()
@@ -325,6 +379,58 @@ def soltar(fichero, p=None):
             p.wait(10)
         except subprocess.TimeoutExpired:
             p.kill()
+
+
+class Editar:
+    """Escribir en una capa (para preparar las hostiles): `with Editar(capa, desde, hasta) as f:` da un fichero de
+    lectura y escritura con la capa entera (o la partición [desde, hasta)). Por FUSE escribe en el acto; sin él, en una
+    copia cruda que al salir vuelve a ser la capa (encima de la misma base, con lo cambiado)."""
+
+    def __init__(self, nombre, desde=None, hasta=None):
+        self.nombre, self.tramo = nombre, (desde, hasta)
+        self.fichero = mio(os.path.join(BANCO, f"{nombre}.editar"))
+        self.disco = mio(os.path.join(BANCO, f"{nombre}.editar-disco"))
+
+    def __enter__(self):
+        ruta = capa_ruta(self.nombre)
+        desde, hasta = self.tramo
+        dev = ["--blockdev", f"driver=file,node-name=f,filename={ruta}", "--blockdev", "driver=qcow2,node-name=q,file=f"]
+        nodo = "q"
+        if desde is not None:
+            dev += ["--blockdev", f"driver=raw,node-name=p,file=q,offset={desde * 512},size={(hasta - desde) * 512}"]
+            nodo = "p"
+        self.p = _fuse(dev, nodo, self.fichero, True)
+        if self.p:
+            return self.fichero
+        _crudo(f"driver=qcow2,file.driver=file,file.filename={ruta}", self.disco)
+        if desde is None:
+            return self.disco
+        _crudo(f"driver=raw,offset={desde * 512},size={(hasta - desde) * 512},file.driver=file,file.filename={self.disco}", self.fichero)
+        return self.fichero
+
+    def __exit__(self, *_):
+        if self.p:
+            soltar(self.fichero, self.p)
+            return
+        desde, _ = self.tramo
+        if desde is not None:
+            # La partición, de vuelta a su sitio en el disco crudo (solo lo que no es cero, y los ceros sobre datos).
+            with open(self.fichero, "rb") as a, open(self.disco, "r+b") as d:
+                d.seek(desde * 512)
+                while True:
+                    b = a.read(16 << 20)
+                    if not b:
+                        break
+                    d.write(b)
+            os.unlink(self.fichero)
+        ruta = capa_ruta(self.nombre)
+        respaldo = subprocess.run([QEMU_IMG, "info", "--output=json", ruta], capture_output=True, text=True, check=True).stdout
+        base = json.loads(respaldo).get("full-backing-filename") or json.loads(respaldo).get("backing-filename")
+        nueva = ruta + ".nueva"
+        opts = ["-B", base, "-F", "qcow2"] if base else []
+        subprocess.run([QEMU_IMG, "convert", "-q", "-f", "raw", "-O", "qcow2", *opts, self.disco, nueva], check=True)
+        os.replace(nueva, ruta)
+        os.unlink(self.disco)
 
 
 def particiones(fichero):

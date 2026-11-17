@@ -166,9 +166,7 @@ def escenario_hostiles():
     # Las dos copias de la GPT buenas pero distintas (en la del final, otro nombre a la ESP, con sus CRC rehechos): no
     # se escribe. Una copia rota sin más no sirve en QEMU: el firmware (EDK2) la rehace desde la otra al arrancar.
     banco.capa("hostil-gpt", "vacio-1")
-    f = os.path.join(B, "hostil-gpt.rw")
-    p = exportar_rw("hostil-gpt", f)
-    try:
+    with banco.Editar("hostil-gpt") as f:
         with open(f, "r+b") as d:
             d.seek(-512, 2)
             cab = bytearray(d.read(512))
@@ -183,8 +181,6 @@ def escenario_hostiles():
             d.write(lista)
             d.seek(-512, 2)
             d.write(cab)
-    finally:
-        banco.soltar(f, p)
     motivo, t = en_vivo("hostil-gpt", "hostil-gpt", pendrive("hostil-gpt", "disco nvme0\npedido reinstalar\n"), vars_limpias=True)
     apuntar("copias Distintas" in t and "SIN MANOS: no instalado" in t, f"hostil: GPT con sus dos copias distintas: se dice y no se escribe ({motivo})")
     # Sin hueco: el Windows de serie (todo el disco ocupado).
@@ -200,22 +196,16 @@ def escenario_hostiles():
     hiber = banco.mio(os.path.join(B, "hiberfil.sys"))
     with open(hiber, "wb") as f:
         f.write(b"HIBR" + bytes(64 * 1024 - 4))
-    f, p = exportar_particion_rw("hostil-hiber", 1083392, 103223296)
-    try:
+    with banco.Editar("hostil-hiber", 1083392, 103223296) as f:
         subprocess.run(["ntfscp", "-f", "-q", f, hiber, "hiberfil.sys"], check=True)
-    finally:
-        banco.soltar(f, p)
     motivo, t = en_vivo("hostil-hiber", "hostil-hiber", pendrive("hostil-hiber", "disco nvme0\npedido encoger 3\n"))
     apuntar("hibernado" in t and "SIN MANOS: no instalado" in t, f"hostil: Windows hibernado, no se encoge y se dice ({motivo})")
     # BitLocker: la firma "-FVE-FS-" en el arranque de la partición de Windows (en la capa).
     banco.capa("hostil-bitlocker", "win11-ntfs")
-    f, p = exportar_particion_rw("hostil-bitlocker", 1083392, 103223296)
-    try:
+    with banco.Editar("hostil-bitlocker", 1083392, 103223296) as f:
         with open(f, "r+b") as d:
             d.seek(3)
             d.write(b"-FVE-FS-")
-    finally:
-        banco.soltar(f, p)
     motivo, t = en_vivo("hostil-bitlocker", "hostil-bitlocker", pendrive("hostil-bitlocker", "disco nvme0\npedido encoger 3\n"))
     apuntar("BitLocker (cifrada)" in t and "cifrada con BitLocker" in t and "SIN MANOS: no instalado" in t, f"hostil: BitLocker, no se toca y se dice ({motivo})")
     # Corte de luz a media instalación (al copiar el sistema), sobre Windows con hueco.
@@ -232,46 +222,10 @@ def escenario_hostiles():
         apuntar(instalado(t), f"hostil: tras el corte, se repite ({pedido}) y acaba ({motivo})")
 
 
-def exportar_rw(capa, fichero):
-    fichero = banco.mio(fichero)
-    open(fichero, "a").close()
-    p = subprocess.Popen(["qemu-storage-daemon", "--blockdev", f"driver=file,node-name=f,filename={banco.capa_ruta(capa)}",
-                          "--blockdev", "driver=qcow2,node-name=q,file=f",
-                          "--export", f"type=fuse,id=e,node-name=q,mountpoint={fichero},writable=on,allow-other=off"], stderr=subprocess.DEVNULL)
-    for _ in range(100):
-        if os.path.getsize(fichero) > 0:
-            return p
-        time.sleep(0.1)
-    sys.exit("no se exporta")
-
-
-def exportar_particion_rw(capa, desde, hasta):
-    """El tramo [desde, hasta) (sectores) de la capa como fichero de lectura y escritura (FUSE)."""
-    fichero = banco.mio(os.path.join(B, f"{capa}.part"))
-    open(fichero, "a").close()
-    p = subprocess.Popen(["qemu-storage-daemon", "--blockdev", f"driver=file,node-name=f,filename={banco.capa_ruta(capa)}",
-                          "--blockdev", "driver=qcow2,node-name=q,file=f",
-                          "--blockdev", f"driver=raw,node-name=p,file=q,offset={desde * 512},size={(hasta - desde) * 512}",
-                          "--export", f"type=fuse,id=e,node-name=p,mountpoint={fichero},writable=on,allow-other=off"], stderr=subprocess.DEVNULL)
-    for _ in range(100):
-        if os.path.getsize(fichero) > 0:
-            return fichero, p
-        time.sleep(0.1)
-    sys.exit("no se exporta la partición")
-
-
 def ntfs_en_el_pc(capa, desde, hasta):
     """`ntfsresize --info` y `ntfsfix -n` en el PC sobre la partición [desde, hasta) de la capa (solo leer): (bien, texto)."""
-    f = banco.mio(os.path.join(B, f"{capa}.ntfs"))
-    open(f, "a").close()
-    p = subprocess.Popen(["qemu-storage-daemon", "--blockdev", f"driver=file,node-name=f,filename={banco.capa_ruta(capa)},read-only=on",
-                          "--blockdev", "driver=qcow2,node-name=q,file=f,read-only=on",
-                          "--blockdev", f"driver=raw,node-name=p,file=q,offset={desde * 512},size={(hasta - desde) * 512},read-only=on",
-                          "--export", f"type=fuse,id=e,node-name=p,mountpoint={f},writable=off,allow-other=off"], stderr=subprocess.DEVNULL)
-    for _ in range(100):
-        if os.path.getsize(f) > 0:
-            break
-        time.sleep(0.1)
+    f = os.path.join(B, f"{capa}.ntfs")
+    p = banco.exportar_particion(capa, desde, hasta, f)
     try:
         r = subprocess.run(["ntfsresize", "--info", "--no-progress-bar", "-f", f], capture_output=True, text=True)
         tam = re.findall(r"Current volume size: (\d+) bytes", r.stdout)
@@ -385,16 +339,8 @@ def disco_sintetico(nombre):
 def ficheros_ntfs(capa, desde, hasta, huellas):
     """Los ficheros del NTFS (con `ntfscat` en el PC, solo leer), comparados con sus huellas: lista de lo que no casa."""
     import hashlib
-    f = banco.mio(os.path.join(B, f"{capa}.ntfs"))
-    open(f, "a").close()
-    p = subprocess.Popen(["qemu-storage-daemon", "--blockdev", f"driver=file,node-name=f,filename={banco.capa_ruta(capa)},read-only=on",
-                          "--blockdev", "driver=qcow2,node-name=q,file=f,read-only=on",
-                          "--blockdev", f"driver=raw,node-name=p,file=q,offset={desde * 512},size={(hasta - desde) * 512},read-only=on",
-                          "--export", f"type=fuse,id=e,node-name=p,mountpoint={f},writable=off,allow-other=off"], stderr=subprocess.DEVNULL)
-    for _ in range(100):
-        if os.path.getsize(f) > 0:
-            break
-        time.sleep(0.1)
+    f = os.path.join(B, f"{capa}.ntfs")
+    p = banco.exportar_particion(capa, desde, hasta, f)
     try:
         malas = []
         for n, h in huellas.items():
