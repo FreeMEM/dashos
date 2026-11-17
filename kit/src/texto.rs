@@ -5,16 +5,18 @@
 //! momento (kit-memoria). Antes lo hacía `fontdue`, que al cargar una fuente convierte en líneas los contornos de todas
 //! sus letras: 1 MB de montón por fuente con las 378 de Roboto recortada, y cada programa del kit lleva dos.
 //!
-//! El rasterizador acumula el área con signo, como el de `fontdue`: cada tramo del contorno deja en las celdas que cruza
-//! lo que sube o baja, repartido entre su celda y la de la derecha según dónde cae su punto medio; al sumar cada fila de
-//! izquierda a derecha, lo acumulado es la parte de cada píxel que cae dentro de la letra.
+//! El rasterizador (en `trazos`, compartido con los iconos) acumula el área con signo, como el de `fontdue`: cada tramo
+//! del contorno deja en las celdas que cruza lo que sube o baja, repartido entre su celda y la de la derecha según dónde
+//! cae su punto medio; al sumar cada fila de izquierda a derecha, lo acumulado es la parte de cada píxel que cae dentro
+//! de la letra.
 
 use alloc::collections::BTreeMap;
 use alloc::vec;
 use alloc::vec::Vec;
-use ttf_parser::{Face, GlyphId, OutlineBuilder};
+use ttf_parser::{Face, GlyphId};
 
 use crate::lienzo::{Color, Lienzo};
+use crate::trazos::{acumular, Contorno};
 
 static REGULAR: &[u8] = include_bytes!("../fuentes/Roboto-Regular.ttf");
 static MEDIUM: &[u8] = include_bytes!("../fuentes/Roboto-Medium.ttf");
@@ -50,130 +52,6 @@ struct Glifo {
 pub struct Fuente {
     cara: Face<'static>,
     glifos: BTreeMap<(char, u32), Glifo>,
-}
-
-/// Cuánto se aparta como mucho una curva de los tramos rectos que la sustituyen, en píxeles.
-const TOLERANCIA: f32 = 0.05;
-
-/// Junta los tramos rectos del contorno, ya a la escala de los píxeles (con `y` hacia arriba), y su caja.
-struct Contorno {
-    escala: f32,
-    tramos: Vec<[f32; 4]>,
-    inicio: (f32, f32),
-    pluma: (f32, f32),
-    caja: [f32; 4],
-}
-
-impl Contorno {
-    fn tramo(&mut self, x: f32, y: f32) {
-        let (x0, y0) = self.pluma;
-        if y0 != y {
-            self.tramos.push([x0, y0, x, y]);
-        }
-        self.pluma = (x, y);
-        self.caja = [self.caja[0].min(x), self.caja[1].min(y), self.caja[2].max(x), self.caja[3].max(y)];
-    }
-
-    /// `n` tramos para una curva cuya segunda derivada mide como mucho `dd` (con el factor de su grado).
-    fn partes(dd: f32) -> usize {
-        (libm::ceilf(libm::sqrtf(dd / TOLERANCIA)) as usize).clamp(1, 64)
-    }
-}
-
-impl OutlineBuilder for Contorno {
-    fn move_to(&mut self, x: f32, y: f32) {
-        let p = (x * self.escala, y * self.escala);
-        self.inicio = p;
-        self.pluma = p;
-        self.caja = [self.caja[0].min(p.0), self.caja[1].min(p.1), self.caja[2].max(p.0), self.caja[3].max(p.1)];
-    }
-
-    fn line_to(&mut self, x: f32, y: f32) {
-        self.tramo(x * self.escala, y * self.escala);
-    }
-
-    fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
-        let (p0, p1, p2) = (self.pluma, (x1 * self.escala, y1 * self.escala), (x * self.escala, y * self.escala));
-        // El error de n tramos iguales es |p0 - 2 p1 + p2| / (4 n²).
-        let dd = libm::hypotf(p0.0 - 2.0 * p1.0 + p2.0, p0.1 - 2.0 * p1.1 + p2.1) / 4.0;
-        let n = Self::partes(dd);
-        for i in 1..=n {
-            let t = i as f32 / n as f32;
-            let u = 1.0 - t;
-            self.tramo(u * u * p0.0 + 2.0 * u * t * p1.0 + t * t * p2.0, u * u * p0.1 + 2.0 * u * t * p1.1 + t * t * p2.1);
-        }
-    }
-
-    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
-        let e = self.escala;
-        let (p0, p1, p2, p3) = (self.pluma, (x1 * e, y1 * e), (x2 * e, y2 * e), (x * e, y * e));
-        // El de una cúbica, 3/4 de la mayor de |p0 - 2 p1 + p2| y |p1 - 2 p2 + p3| entre n².
-        let dd = libm::hypotf(p0.0 - 2.0 * p1.0 + p2.0, p0.1 - 2.0 * p1.1 + p2.1)
-            .max(libm::hypotf(p1.0 - 2.0 * p2.0 + p3.0, p1.1 - 2.0 * p2.1 + p3.1))
-            * 0.75;
-        let n = Self::partes(dd);
-        for i in 1..=n {
-            let t = i as f32 / n as f32;
-            let u = 1.0 - t;
-            let (a, b, c, d) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
-            self.tramo(a * p0.0 + b * p1.0 + c * p2.0 + d * p3.0, a * p0.1 + b * p1.1 + c * p2.1 + d * p3.1);
-        }
-    }
-
-    fn close(&mut self) {
-        let (x, y) = self.inicio;
-        self.tramo(x, y);
-    }
-}
-
-/// Deja en `a` (filas de `paso` celdas) lo que aporta el tramo de (x0, y0) a (x1, y1), con `y` hacia abajo.
-fn acumular(a: &mut [f32], paso: usize, ancho: usize, alto: usize, x0: f32, y0: f32, x1: f32, y1: f32) {
-    if y0 == y1 {
-        return;
-    }
-    let dxdy = (x1 - x0) / (y1 - y0);
-    // Por filas: el trozo del tramo dentro de cada una.
-    let (ya, yb) = if y0 < y1 { (y0, y1) } else { (y1, y0) };
-    let mut fila = libm::floorf(ya).max(0.0) as usize;
-    while fila < alto && (fila as f32) < yb {
-        let (f0, f1) = ((fila as f32).max(ya), ((fila + 1) as f32).min(yb));
-        if f1 > f0 {
-            // En el sentido del tramo, para que el área lleve su signo.
-            let (sa, sb) = if y0 < y1 { (f0, f1) } else { (f1, f0) };
-            let (xa, xb) = (x0 + (sa - y0) * dxdy, x0 + (sb - y0) * dxdy);
-            celdas(&mut a[fila * paso..(fila + 1) * paso], ancho, xa, sa, xb, sb);
-        }
-        fila += 1;
-    }
-}
-
-/// El trozo de un tramo dentro de una fila, partido por las columnas que cruza.
-fn celdas(fila: &mut [f32], ancho: usize, xa: f32, ya: f32, xb: f32, yb: f32) {
-    let mut sumar = |x0: f32, y0: f32, x1: f32, y1: f32| {
-        let dy = y1 - y0;
-        let medio = (x0 + x1) * 0.5;
-        let col = (libm::floorf(medio).max(0.0) as usize).min(ancho - 1);
-        let parte = (medio - col as f32).clamp(0.0, 1.0);
-        fila[col] += dy * (1.0 - parte);
-        fila[col + 1] += dy * parte;
-    };
-    let (c0, c1) = (libm::floorf(xa), libm::floorf(xb));
-    if c0 == c1 || xa == xb {
-        sumar(xa, ya, xb, yb);
-        return;
-    }
-    // Cada vez que cruza una columna entera, un trozo.
-    let paso = if xb > xa { 1.0 } else { -1.0 };
-    let mut x = if xb > xa { c0 + 1.0 } else { c0 };
-    let (mut px, mut py) = (xa, ya);
-    while (xb - x) * paso > 0.0 {
-        let y = ya + (x - xa) / (xb - xa) * (yb - ya);
-        sumar(px, py, x, y);
-        px = x;
-        py = y;
-        x += paso;
-    }
-    sumar(px, py, xb, yb);
 }
 
 impl Fuente {
@@ -278,7 +156,7 @@ impl Fuente {
 fn rasterizar(cara: &Face<'static>, id: GlyphId, tam: u32) -> Glifo {
     let escala = tam as f32 / cara.units_per_em() as f32;
     let avance = cara.glyph_hor_advance(id).unwrap_or(0) as f32 * escala;
-    let mut c = Contorno { escala, tramos: Vec::new(), inicio: (0.0, 0.0), pluma: (0.0, 0.0), caja: [f32::MAX, f32::MAX, f32::MIN, f32::MIN] };
+    let mut c = Contorno::nuevo(escala);
     if cara.outline_glyph(id, &mut c).is_none() || c.tramos.is_empty() {
         return Glifo { xmin: 0, ymin: 0, ancho: 0, alto: 0, avance, bits: Vec::new() };
     }

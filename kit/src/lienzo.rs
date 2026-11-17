@@ -46,7 +46,7 @@ pub type Color = u32;
 
 /// Mezcla `color` con cobertura `cob` (0 a 255) encima del píxel `d` (premultiplicado).
 #[inline]
-fn mezclar(d: u32, color: Color, cob: u32) -> u32 {
+pub(crate) fn mezclar(d: u32, color: Color, cob: u32) -> u32 {
     let a = ((color >> 24) * cob + 127) / 255;
     if a == 0 {
         return d;

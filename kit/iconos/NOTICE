@@ -1,0 +1,12 @@
+Material Symbols Rounded (los trazados de kit/src/iconos/simbolos_datos.rs)
+==========================================================================
+
+Procedencia: https://github.com/google/material-design-icons, commit 10ecc14790612ca8fd164e3f4ffe9c16fc50d5b7
+(master del 2026-10-23), ficheros symbols/web/<nombre>/materialsymbolsrounded/<nombre>[_fill1]_24px.svg.
+Copyright Google LLC. Licencia: Apache License 2.0, texto completo en LICENCIA-material-symbols.txt (el LICENSE del
+repositorio en ese commit).
+
+Cambios: de cada SVG solo se guarda el trazado (el atributo `d` de su único <path>), sin tocar; solo los símbolos de
+simbolos.lista y los emblemas de dashos.iconos. Los saca tools/iconos_material.py.
+
+La colección de DashOS (dashos.iconos) está dibujada en DashOS (MPL-2.0); sus emblemas son Material Symbols.
