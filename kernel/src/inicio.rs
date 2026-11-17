@@ -153,19 +153,21 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // primero que nombra un canal es su servidor.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     ("centro", programa!("centro"), &[], &["ventanas", "sesiones", "fondo", "centro", "archivos"]),
+    // S27, oleada 6: `guardian` tiene también "fondo" (el de su pantalla de bloqueo, desenfocado): va tras el fondo, que
+    // lo nombra antes (es su servidor). Busca sus llaves por el nombre.
     // Con `linux` (`make arranque-virt-linux`), sin `guardian` ni las pruebas que lo necesitan (pide, entrada, el hostil
     // y su presa, el selector): sus preguntas y sus pantallas de bloqueo se llevarían el teclado de la terminal de la
     // caja Linux.
     #[cfg(all(feature = "virt", not(feature = "linux"), not(feature = "uso")))]
-    ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "centro"]),
+    ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "fondo", "centro"]),
     // Con `uso` (la imagen para usar a mano, `make virt-uso`), un canal más, "uso", que solo dice eso: `guardian`
     // pone la pantalla de entrada y atiende, sin el guion de las pruebas. Es el último suyo: no mueve los demás.
     #[cfg(all(feature = "uso", not(feature = "cuentas")))]
-    ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "centro", "uso"]),
+    ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "fondo", "centro", "uso"]),
     // Rama cuentas-2: con `cuentas` (`make arranque-virt-cuentas`), otro más, "codigos": escribe los códigos de
     // recuperación en la consola, para su guion.
     #[cfg(feature = "cuentas")]
-    ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "centro", "uso", "codigos"]),
+    ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "fondo", "centro", "uso", "codigos"]),
     #[cfg(all(feature = "virt", not(feature = "linux"), not(feature = "uso")))]
     ("pide", programa!("pide"), &[], &["sesiones"]),
     #[cfg(all(feature = "virt", not(feature = "linux"), not(feature = "uso")))]
