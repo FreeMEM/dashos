@@ -1121,7 +1121,7 @@ while time.time() - inicio < total:
         # al empezar (fichero.sola.ppm) y Ajustes > Barra, que abre el botón derecho sobre la barra (fichero.ppm); Esc la
         # cierra. Pronto (antes de lo demás): la prueba no sale bien así, es solo para ver.
         if os.environ.get("CAPTURA_AJUSTES_BARRA") and not globals().get("ajustes_barra_hecho") and "[barra] botones: " in texto \
-                and "[guardian] entra " in texto:
+                and "[barra] CPU y memoria: " in texto:
             import re
             globals()["ajustes_barra_hecho"] = True
             cab = os.environ["CAPTURA_AJUSTES_BARRA"]
