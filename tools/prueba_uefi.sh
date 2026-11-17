@@ -1399,13 +1399,14 @@ while time.time() - inicio < total:
             bb = re.search(r"\[barra\] botones: lanzador en \((\d+), (\d+)\)", texto)
             ca = re.search(r"\[barra\] campana en \((\d+), (\d+)\)", texto)
             rl = re.search(r"\[barra\] reloj en \((\d+), (\d+)\)", texto)
-            capa_dash = capa_tras("[barra] Dash abierto")
-            dash_sitios = re.findall(r"\[barra\] Dash: tarjeta de .*siguiente \((\d+), (\d+)\)", texto)
             # El compositor dice dónde sale cada capa con el nombre de su cliente (la barra): la del emergente es la primera
-            # tras su línea, y la del centro, igual.
+            # tras su línea, y la del centro, igual. (Unión de union-dms: definida antes de usarla; si no, la primera
+            # vuelta de este paso paraba el guion con un NameError y no se llegaba ni a los avisos ni al explorador.)
             def capa_tras(marca):
                 i = texto.rfind(marca)
                 return re.findall(r"\[compositor\] capa de barra en \((-?\d+), (-?\d+)\)", texto[i:]) if i >= 0 else []
+            capa_dash = capa_tras("[barra] Dash abierto")
+            dash_sitios = re.findall(r"\[barra\] Dash: tarjeta de .*siguiente \((\d+), (\d+)\)", texto)
             emergente = re.findall(r'\[barra\] emergente \d+ de avisa: "Copia terminada".*Deshacer \((\d+), (\d+)\)', texto)
             capa_aviso = capa_tras('de avisa: "Copia terminada"')
             capa_centro = capa_tras("[barra] centro de avisos abierto")
