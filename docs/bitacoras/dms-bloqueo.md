@@ -54,7 +54,9 @@ ya da `sesiones` (`MONITOR`), y cerrar lo ajeno pasa por la tanda de administrad
   `ENV:Escritorio/avisos` (ya existía, de serie "contador"): nada, cuántos actuales (un chip con la campana, "3 avisos
   nuevos") o también de quién (un chip por programa, como los de DMS). El título y el texto no salen del servicio con
   la sesión bloqueada; "todo" va como "nombres".
-- **Bloq Mayús**: `guardian` lee los modificadores del teclado (`modifiers`) y lo dice bajo el campo.
+- **Bloq Mayús**: lo dice bajo el campo (tras un error, junto a él), como lo lleva el teclado del kit de `guardian`
+  (`Teclado::bloq_mayus`, nuevo). El compositor no manda los modificadores bloqueados (`modifiers` va siempre con 0):
+  si Bloq Mayús ya estaba puesto antes de bloquear, la pantalla no lo sabe hasta que se pulsa (ver "Lo que queda").
 - **Super+L en la imagen de usar**: antes, en `make virt-uso` (y en `arranque-virt-dms`), nadie bloqueaba: `guardian`
   solo escuchaba los avisos de inactividad durante su prueba. Ahora, tras entrar, un hilo recoge las preguntas de
   `sesiones` y el bucle principal espera a la vez al compositor (Super+L, el candado del panel o 30 minutos sin tocar
@@ -78,6 +80,13 @@ ya da `sesiones` (`MONITOR`), y cerrar lo ajeno pasa por la tanda de administrad
 - Lo que DMS pone en el menú del botón derecho (terminar, forzar, el árbol) va en el pie; el enlace "Abrir el monitor
   del sistema" (Ajustes) se queda.
 
+### Una carrera de la prueba de `cuentas-2` (en `guardian`)
+
+En una vuelta de `make arranque-virt` faltó "recuperar a Berta con su código": `guardian` no tenía el código de Berta
+porque, en su prueba, deja de atender las preguntas en cuanto acaba el Shell, y "*codigo" (que `sesiones` manda tras
+crear la cuenta en la tanda) llega a veces justo después. Ahora `esperar_atendiendo` atiende lo que quede en la cola
+antes de volver.
+
 ### Arreglo de seguridad que salió al probar: el teclado con la sesión bloqueada
 
 La prueba hostil nueva del compositor (`bloqueado_nadie_pinta_encima_ni_oye_las_teclas`) pilló un fallo de G5: una capa
@@ -86,13 +95,42 @@ pintan las pantallas de bloqueo), pero oía lo que se tecleaba en la contraseña
 da el teclado a nadie que no sea una pantalla de bloqueo mientras la sesión está bloqueada (valía para las capas, los
 emergentes con agarre y cualquier otro camino).
 
-## Pruebas
+## Pruebas (2026-11-17)
 
-(se completa al final)
+- En el PC: `desenfoque.rs` 5 (liso, un punto, agrandar con el velo, hostiles: búferes cortos, zonas fuera, medidas
+  absurdas), `bloqueo_vista.rs` 4 (las medidas de DMS a 1920, nada se pisa de 640 × 480 a 3840 × 2160, textos, la letra
+  del reloj cabe), `procesos_lista.rs` 4 (orden de serie, ordenar, filtrar, buscar por nombre, usuario o número, letras
+  de control y búsquedas largas, elegir y desplazar, el elegido que desaparece, cómo se cierra cada uno),
+  `protocolo/avisos.rs` 14 (nuevo: el resumen según el ajuste, sin títulos ni lo de una sesión de detrás, un ajuste de
+  más), `avisos_ajustes` 5, `monitor` 8, `reloj` 2, `dms_medidas` 4, `zona` 4. `cargo test` de `wayland`: 148 (dos
+  nuevas: la hostil del bloqueo y el estado a `guardian`).
+- Hostiles en marcha: `hostil` pide los avisos del bloqueo sin ser `guardian` (-2 y nada); `avisador` manda el
+  `AVISO_RESUMEN` con su marca (no lo da); la ventana del sistema dice que no a la tanda de cerrar el Workbench y no
+  se cierra.
+- `make prueba`, `make arranque-virt` (entero, con el disco, la captura, el sonido y U6), `-cuentas`, `-escritorio`,
+  `-shell`, `-2` y `-linux`: BIEN a la primera, en una tanda seguida.
+- `make arranque-virt-dms`: BIEN a 800 × 600 (lo de siempre) y a 1920 × 1080. Antes de que saliera bien se arreglaron
+  tres cosas que solo se ven en marcha: la llave del fondo y la del resumen de avisos no llevaban el derecho de viajar
+  (`TRANSFERIR`) y no llegaban; tras una contraseña mala, el error no se pintaba hasta la siguiente tecla (se miraba si
+  había que repintar antes de leer la respuesta de `sesiones`); y la barra no podía cerrar lo de la persona de delante
+  (`MATAN_POR_DELANTE` solo tenía el centro).
+- Capturas (fuera de git, `~/recuperar/geosian-7d/dms-bloqueo-capturas/`), a 1920 × 1080 con el fondo del usuario
+  (Fuji-Dark de shiva, en PNG de 256 colores, solo en el disco de la prueba), el tema oscuro y la barra de shiva
+  (`DMS_SHIVA=1`): `shiva-0-entrada`, `shiva-10-bloqueo` (con un aviso: "1 aviso nuevo"), `shiva-11-bloqueo-mala`,
+  `shiva-12-bloqueo-mayus`, `shiva-13-procesos`, `shiva-14-procesos-busca`, `shiva-15-procesos-cerrado`,
+  `shiva-16-procesos-tanda` (la ventana del sistema pide la contraseña para cerrar el Workbench) y
+  `shiva-17-procesos-admin`; y `800-*` de la prueba de siempre (atardecer, tema claro). Con `DMS_SHIVA=1` la barra
+  cambia a la de shiva y el paso de la campana del guion (de la oleada 3) no la encuentra: esa vuelta no pasa entera;
+  es solo para las capturas.
 
 ## Medido
 
-(se completa al final)
+- Pintar la pantalla de bloqueo entera (el fondo agrandado, el reloj, todo): 11 a 18 ms a 800 × 600 en QEMU (TCG). Lo
+  de al teclear sigue siendo solo la franja del medio.
+- El fondo desenfocado en `fondo`: 2 a 5 ms a 800 × 600 (100 × 75) y 14 ms a 1920 × 1080 (240 × 135, 127 KB).
+- Programas (ELF): `guardian` 409.952 → 455.088 bytes (+44 KB), `barra` 639.328 → 668.000 (+28 KB), `avisos` 127.888 →
+  136.080 (+8 KB); `fondo`, `sesiones`, `centro` y el compositor, igual (caben en las mismas páginas). El disco de
+  pruebas no cambia: todo va en la imagen del kernel.
 
 ## Pendiente del usuario
 
@@ -114,4 +152,22 @@ emergentes con agarre y cualquier otro camino).
 
 ## Lo que queda
 
-(se completa al final)
+- Las animaciones de DMS en el bloqueo (sacudir el campo, los puntos, el fundido al bloquear): oleada 7.
+- El reloj de DMS colocado según el contraste del fondo (`autoPosition`) y sus otros estilos (apilado, analógico):
+  aquí, el de serie, arriba en el centro.
+- La música y el tiempo en la fila de estado, y la batería: DashOS no tiene quien los dé.
+- El menú de apagado del bloqueo (`lockPower`, apagado de serie en DMS).
+- Que el compositor mande en `modifiers` los modificadores bloqueados (Bloq Mayús, como lleva ya para el OSD del dock):
+  así la pantalla de bloqueo, y los programas de Linux, sabrían el estado desde el principio. No se tocó aquí: cambia
+  lo que reciben todos los clientes.
+- En el monitor: el detalle de un proceso (la tira que DMS despliega), forzar el cierre, el árbol de procesos y las
+  pestañas de rendimiento y discos del modal grande de DMS.
+
+## Lo que no se ha comprobado
+
+- La pantalla de bloqueo con dos monitores a la vista (`arranque-virt-2` pasa, pero no hace capturas del bloqueo): el
+  fondo desenfocado en la otra salida se agranda a su tamaño, sin verlo.
+- Los avisos en modo "nombres" (los chips por programa) en marcha: solo en el PC; en las pruebas va el de serie.
+- Que `fondo` niegue el fondo del bloqueo a quien no es `guardian`: el código lo mira por el nombre que da `inicio`,
+  pero ninguna prueba lo pide (el único otro con la llave de "fondo" es el centro).
+- En la Pi.
