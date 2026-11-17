@@ -91,7 +91,28 @@ ESPECIALES = {" ": "spc", "-": "slash", ".": "dot", ",": "comma", "/": "shift-7"
               "_": "shift-slash", "&": "shift-6", ";": "shift-comma", "<": "less", ">": "shift-less"}
 
 
-def teclear(orden):
+# La terminal de la caja (su ventana nativa), por su título en la barra de DashOS.
+TERMINAL = r"^Linux · Linux \(caja\)$"
+
+
+def a_la_terminal_si_no_la_tiene():
+    """firefox-firme: antes de teclear una orden, que la terminal tenga el teclado. Entre una orden y otra (esperando su
+    respuesta) pasan más de 2 s sin teclas, y una ventana nueva de otro programa puede llevárselo (S8): con la máquina
+    cargada, las de la caja Amiga salen a cualquier hora, y la orden se tecleaba en ellas. Si la última ventana que
+    nombró la barra no es la terminal, un clic en ella y se espera a que la barra la nombre."""
+    t = titulos()
+    if not t or re.search(TERMINAL, t[-1]):
+        return
+    clic_en_ventana()
+    if not con_teclado(TERMINAL, 15):
+        t = titulos()
+        apuntar(f"la terminal no tiene el teclado tras el clic (lo tiene «{t[-1] if t else '?'}»)")
+
+
+def teclear(orden, terminal=True):
+    """Teclea la orden e Intro; en la terminal de la caja, salvo `terminal=False` (en otra ventana, como Firefox)."""
+    if terminal:
+        a_la_terminal_si_no_la_tiene()
     teclas = []
     for c in orden:
         if c in ESPECIALES:
@@ -183,7 +204,60 @@ def apuntar(texto_medida):
         f.write(texto_medida + "\n")
 
 
+def fallo(motivo):
+    """Algo que la prueba espera no pasó: se apunta como medida y en PREFIJO.fallo. Con ese fichero, `prueba_uefi.sh`
+    para la prueba poco después de que acabe el guion (y lo enseña), en vez de esperar hasta su tope."""
+    apuntar(motivo)
+    with open(prefijo + ".fallo", "a") as f:
+        f.write(motivo + "\n")
+
+
+def titulos():
+    """Los títulos que dijo la barra de DashOS, en orden: cada uno es el de la ventana que acaba de llevarse el teclado
+    (o el nuevo de la que lo tiene)."""
+    return re.findall(r"\[barra\] título: ([^\r\n]*)", texto())
+
+
+def con_teclado(ventana, segundos):
+    """Espera la señal de que la ventana (su título, `ventana`) tiene el teclado: es la última que nombró la barra."""
+    hasta = time.time() + segundos
+    while time.time() < hasta and time.time() - inicio < total:
+        t = titulos()
+        if t and re.search(ventana, t[-1]):
+            return True
+        time.sleep(0.25)
+    return False
+
+
+def teclear_en(ventana, pulsar, teclas, hecho, plazo, que):
+    """Teclear en una ventana de Linux sin que lo tecleado se vaya a otra (firefox-firme). `pulsar()` le da el teclado
+    (un clic); antes de `teclas()` se espera la señal de que lo tiene (la barra dice su título, `ventana`), y después, la
+    línea que dice que llegó (`hecho`, una vez más que antes). Si no llega y entre medias la barra nombró otra ventana,
+    otra se llevó el teclado (una ventana nueva de otro programa puede, pasados `SIN_ROBAR_MS` sin tecla ni clic: con
+    la máquina cargada, las de la caja Amiga salen cuando quieren): se apunta y se repite, hasta tres veces. Si no la
+    nombró, lo tecleado sí iba a la ventana: no se repite (es un fallo de verdad)."""
+    for vez in range(3):
+        antes = len(re.findall(hecho, texto()))
+        pulsar()
+        if not con_teclado(ventana, 30):
+            t = titulos()
+            apuntar(f"{que}: tras el clic, el teclado lo tiene «{t[-1] if t else '?'}», no la ventana; otra vez")
+            continue
+        n = len(titulos())
+        teclas()
+        if esperar_n(hecho, antes + 1, plazo):
+            if vez > 0:
+                apuntar(f"{que}: bien al intento {vez + 1}")
+            return True
+        otras = [t for t in titulos()[n:] if not re.search(ventana, t)]
+        if not otras:
+            return False
+        apuntar(f"{que}: mientras se tecleaba, el teclado se fue a «{otras[0]}»; otra vez")
+    return False
+
+
 def teclear_sin_intro(orden):
+    a_la_terminal_si_no_la_tiene()
     teclas = []
     for c in orden:
         if c in ESPECIALES:
@@ -278,10 +352,12 @@ if modo == "wayland":
         v = esperar_ventana(n, 10)
         if v:
             x, y, _ = v
-            clic(x + 160, y + 120)
-            esperar(r"ventana_wayland: clic del botón", 30)
-            mandar("sendkey a")
-            esperar(r"ventana_wayland: tecla 30 pulsada", 30)
+            # La tecla, justo tras el clic (sin esperar a que el programa diga que le llegó: con la máquina lenta, eso
+            # tardaba más de los 2 s en que una ventana nueva de otro programa puede llevarse el teclado, S8).
+            def pulsar():
+                clic(x + 160, y + 120)
+            if not teclear_en(r"^Linux · Hola desde Linux", pulsar, lambda: mandar("sendkey a"), r"ventana_wayland: tecla 30 pulsada", 30, "ventana_wayland"):
+                fallo("ventana_wayland: no le llegó la tecla \"a\"")
             esperar(r"ventana_wayland: en marcha", 60)
             time.sleep(1.0)
             capturar(prefijo)
@@ -529,6 +605,12 @@ if modo == "wayland":
         if esperar(r"firefox: empieza", 120):
             t0 = time.time()
             f = esperar_ventana(n, 600)
+            # `prueba-firefox-guion` cierra la primera a los 150 s y abre la segunda (example.org): si al salir una
+            # ventana ya van dos "empieza", la primera no salió a tiempo y esta es la segunda.
+            tarde = bool(f) and len(re.findall(r"firefox: empieza", texto())) > 1
+            if tarde:
+                fallo("firefox: la primera ventana no salió en los 150 s de prueba-firefox-guion (la máquina, muy lenta)")
+                f = None
             if f:
                 apuntar(f"firefox: primera ventana a los {time.time() - t0:.1f} s (desde que empieza, en el reloj del PC)")
                 esperar(r"título: Linux · Firefox en DashOS", 60)
@@ -537,14 +619,20 @@ if modo == "wayland":
                 # Un clic en su barra de direcciones (la segunda fila, bajo las pestañas: Firefox se pinta su barra),
                 # una dirección del disco tecleada e Intro. Si le llegan el ratón y el teclado, su título cambia (lo
                 # dice la barra de DashOS).
-                clic(fx + 400, fy + 64)
-                time.sleep(2.0)
-                mandar("sendkey ctrl-a")
-                teclear("file:///usr/local/share/dashos/")
-                if esperar(r"título: Linux · Index of file:///usr/local/share/dashos/", 60):
+                # Antes de teclear, la señal de que Firefox tiene el teclado (la barra lo nombra); si otra ventana se lo
+                # lleva por medio, se repite (`teclear_en`). El segundo tras el clic no es para Firefox (lo tecleado le
+                # llega en orden tras el clic): con más, una ventana nueva podría llevarse el teclado (S8).
+                def pulsar():
+                    clic(fx + 400, fy + 64)
+                    time.sleep(1.0)
+
+                def teclas():
+                    mandar("sendkey ctrl-a")
+                    teclear("file:///usr/local/share/dashos/", terminal=False)
+                if teclear_en(r"Mozilla Firefox$", pulsar, teclas, r"título: Linux · Index of file:///usr/local/share/dashos/", 60, "firefox"):
                     apuntar(f"firefox: clic en su barra de direcciones y dirección tecleada, bien (a los {time.time() - t0:.1f} s)")
                 else:
-                    apuntar("firefox: no hizo caso al clic ni a lo tecleado")
+                    fallo("firefox: no hizo caso al clic ni a lo tecleado (título: " + (titulos() or ["?"])[-1] + ")")
                 time.sleep(5.0)
                 capturar(prefijo + ".firefox")
                 if esperar(r"memoria: RAM", 240):
@@ -560,14 +648,17 @@ if modo == "wayland":
                     if esperar_n(r"memoria: RAM", 2, 300):
                         m = re.findall(r"linux: (memoria: RAM[^\n]*)", texto())
                         apuntar("firefox con example.org: " + m[-1])
-            else:
-                apuntar("firefox: sin ventana en 10 minutos")
+            elif not tarde:
+                fallo("firefox: sin ventana en 10 minutos")
             esperar(r"firefox: hecho", 600)
             time.sleep(3.0)
             if depurar_ff:
                 a_la_terminal()
-                teclear("clear; grep -c . /tmp/ff.log; grep -m400 -e subsurface -e input_region -e wl_pointer -e wl_keyboard -e wl_seat /tmp/ff.log")
-                time.sleep(30.0)
+                # Sin el movimiento del ratón (lo llena todo): los botones, el teclado y el foco, de la primera ventana.
+                teclear("clear; grep -c . /tmp/ff.log; grep -v -e motion -e frame -e axis /tmp/ff.log > /tmp/ff2; "
+                        "grep -e button -e wl_keyboard -e enter -e leave -e activated -e input_region /tmp/ff2 > /tmp/ff3; "
+                        "grep -c . /tmp/ff3; head -n 260 /tmp/ff3")
+                time.sleep(45.0)
     time.sleep(2.0)
     a_la_terminal()
     teclear("poweroff")
