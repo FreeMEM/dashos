@@ -620,6 +620,9 @@ pub struct Escena<M: Memorias> {
     /// S10: la barra de la pantalla, por el nombre que le da `inicio` (lo pone quien atiende). Pide el panel rápido, y
     /// a ella van Super sola (el lanzador) y el título de la ventana con el teclado.
     pub barras: Vec<Cliente>,
+    /// S27, oleada 6: quien recibe también el estado de la red y del volumen (`estado`), además de las barras: la pantalla
+    /// de bloqueo (`guardian`), por el nombre que le da `inicio`. Solo lo recibe: no pide nada de las barras.
+    pub ven_estado: Vec<Cliente>,
     /// Super sola (S10): a qué suscritos del tema que son barra hay que mandar `lanzador`.
     pub avisos_lanzador: Vec<(Cliente, u32)>,
     /// El título por decir a cada barra (S10): barra, objeto y título. Quien atiende lo manda con `avisar_titulo`.
@@ -881,6 +884,7 @@ impl<M: Memorias> Escena<M> {
             avisos_inactividad: Vec::new(),
             del_sistema: Vec::new(),
             barras: Vec::new(),
+            ven_estado: Vec::new(),
             avisos_lanzador: Vec::new(),
             avisos_titulo: Vec::new(),
             titulo_dicho: alloc::string::String::new(),
@@ -1452,6 +1456,7 @@ impl<M: Memorias> Escena<M> {
         self.abren_panel.retain(|&c| c != cliente);
         self.ponen_tema.retain(|&c| c != cliente);
         self.barras.retain(|&c| c != cliente);
+        self.ven_estado.retain(|&c| c != cliente);
         self.de_caja.retain(|&c| c != cliente);
         self.de_caja_amiga.retain(|&c| c != cliente);
         self.de_desarrollo.retain(|&c| c != cliente);
@@ -2355,8 +2360,8 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 escena.dock_volumen(nuevo.1, nuevo.2 != 0);
                 if escena.estado_escritorio != Some(nuevo) {
                     escena.estado_escritorio = Some(nuevo);
-                    let barras = &escena.barras;
-                    let suyos: Vec<(Cliente, u32)> = escena.temas.iter().filter(|t| barras.contains(&t.0)).copied().collect();
+                    let (barras, ven) = (&escena.barras, &escena.ven_estado);
+                    let suyos: Vec<(Cliente, u32)> = escena.temas.iter().filter(|t| barras.contains(&t.0) || ven.contains(&t.0)).copied().collect();
                     escena.avisos_estado.extend(suyos);
                 }
             }
@@ -3030,6 +3035,11 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                     if let Some(est) = self.escena.estado_escritorio {
                         avisar_estado(con, id, est);
                     }
+                } else if self.escena.ven_estado.contains(&self.cliente)
+                    && let Some(est) = self.escena.estado_escritorio
+                {
+                    // S27, oleada 6: a la pantalla de bloqueo, solo el estado.
+                    avisar_estado(con, id, est);
                 }
             }
         }
@@ -3406,6 +3416,12 @@ impl<M: Memorias> Escena<M> {
     pub fn dar_teclado(&mut self, ventana: (Cliente, u32), out: &mut Vec<(Cliente, Entrada)>) {
         // U6: nunca a una sesión de detrás; S27, ni a una ventana de otro espacio.
         if self.oculto(ventana.0) || self.fuera_raiz(ventana) {
+            return;
+        }
+        // G5 (arreglo de la oleada 6 de S27): con la sesión bloqueada, solo a una pantalla de bloqueo. Antes, una capa de
+        // arriba con el teclado exclusivo que se ponía después de bloquear se lo llevaba (no se veía, pero oía lo que se
+        // tecleaba en la contraseña).
+        if self.bloqueo.as_ref().is_some_and(|b| !(b.cliente == ventana.0 && b.superficies.contains(&ventana.1))) {
             return;
         }
         if self.teclado != Some(ventana) {

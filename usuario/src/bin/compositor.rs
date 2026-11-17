@@ -219,6 +219,8 @@ const ABREN_PANEL: &[&str] = &["panel"];
 /// La barra de la pantalla (S10): pide el panel con su botón, y recibe Super sola (el lanzador) y el título de la
 /// ventana con el teclado.
 const BARRAS: &[&str] = &["barra"];
+/// S27, oleada 6: quien recibe también el estado de la red y del volumen (como las barras): la pantalla de bloqueo.
+const VEN_ESTADO: &[&str] = &["guardian"];
 /// Los clientes que son parte del sistema: se les espera más (E8) y su ventana nueva se lleva el teclado aunque se esté
 /// escribiendo (U5: el selector de ficheros sale porque el usuario pidió abrir algo).
 const SISTEMA: &[&str] = &["guardian", "selector"];
@@ -1098,6 +1100,9 @@ fn principal() -> u64 {
                 }
                 if nombres.get(&marca).is_some_and(|n| BARRAS.contains(&n.as_str())) && !escena.barras.contains(&marca) {
                     escena.barras.push(marca);
+                }
+                if nombres.get(&marca).is_some_and(|n| VEN_ESTADO.contains(&n.as_str())) && !escena.ven_estado.contains(&marca) {
+                    escena.ven_estado.push(marca);
                 }
                 if nombres.get(&marca).is_some_and(|n| DOCKS.contains(&n.as_str())) && !escena.dk.permitidos.contains(&marca) {
                     escena.dk.permitidos.push(marca);

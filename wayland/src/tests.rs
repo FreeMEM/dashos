@@ -792,6 +792,50 @@ mod ventanas {
         assert_eq!(pantalla[5 * 100 + 5], 0xFF12_3456);
     }
 
+    /// S27, oleada 6 (la pantalla de bloqueo de DMS), hostil: con la sesión bloqueada, nadie pinta encima de la pantalla
+    /// de bloqueo ni oye lo que se teclea en ella. Ni una capa de arriba con el teclado que ya estaba antes de bloquear,
+    /// ni una ventana y una capa de arriba con el teclado (exclusivo) abiertas después, del tamaño de la pantalla y con
+    /// otro color: no se ven, no toman el teclado, y las teclas y el ratón van solo a la pantalla de bloqueo.
+    #[test]
+    fn bloqueado_nadie_pinta_encima_ni_oye_las_teclas() {
+        let mut escena = Escena::new(Mem::default(), 0);
+        let mut pantalla = vec![0u32; 100 * 60];
+        escena.componer(&mut pantalla, 100, 60, 100, 0, &mut |_, _, _| {});
+        // Lo de los malos, en otro color (la pantalla de bloqueo es 0x11).
+        for llave in [70, 83, 84] {
+            escena.memorias.0.insert(llave, vec![0x77; 1 << 16]);
+        }
+        let mut antes = Conexion::new();
+        capa_con_teclado(&mut escena, &mut antes, 3, (100, 60), ARRIBA | IZQUIERDA, -1, [0; 4], 1);
+        assert_eq!(escena.teclado, Some((3, 31)), "la capa de antes tenía el teclado");
+        let mut b = Conexion::new();
+        bloquear(&mut escena, &mut b, 9);
+        pantalla_de_bloqueo(&mut escena, &mut b, 9, 80);
+        let mut ventana = Conexion::new();
+        abrir(&mut escena, &mut ventana, 1, 70);
+        let mut encima = Conexion::new();
+        capa_con_teclado(&mut escena, &mut encima, 4, (100, 60), ARRIBA | IZQUIERDA, -1, [0; 4], 1);
+        assert!(ventana.roto.is_none() && encima.roto.is_none());
+        assert_eq!(escena.raices(), [(9, 42)], "solo la pantalla de bloqueo");
+        assert_eq!(escena.teclado, Some((9, 42)), "el teclado, de la pantalla de bloqueo");
+        assert!(!escena.puede_tomar_teclado(1) && !escena.puede_tomar_teclado(3) && !escena.puede_tomar_teclado(4));
+        escena.componer(&mut pantalla, 100, 60, 100, 0, &mut |_, _, _| {});
+        assert!(pantalla.iter().all(|&p| p == 0xFF11_1111), "algo de otro se ve encima de la pantalla de bloqueo");
+        // Una contraseña tecleada (las letras y el Intro) y el ratón: solo a la pantalla de bloqueo.
+        escena.pendientes.clear();
+        let mut a_quien = Vec::new();
+        for uso in [0x04u8, 0x05, 0x06, 0x28] {
+            for pulsada in [true, false] {
+                a_quien.extend(escena.tecla(uso, pulsada).into_iter().map(|x| x.0));
+            }
+        }
+        a_quien.extend(escena.raton(10, 10, 1).into_iter().map(|x| x.0));
+        a_quien.extend(escena.raton(0, 0, 0).into_iter().map(|x| x.0));
+        a_quien.extend(escena.pendientes.drain(..).map(|x| x.0));
+        assert!(!a_quien.is_empty(), "las teclas no llegaron a nadie");
+        assert!(a_quien.iter().all(|&c| c == 9), "le llegó entrada a otro: {:?}", a_quien);
+    }
+
     /// G6: dmabuf (ya enlazado). Objetos: 50 linux_dmabuf, 51 feedback, 52 params, 53 búfer (16 x 16, lineal, llave 90).
     fn dmabuf(e: &mut Escritor, modificador: u64, inmediato: bool) {
         use crate::tablas::{zwp_linux_buffer_params_v1 as par, zwp_linux_dmabuf_v1 as dma};
@@ -2258,6 +2302,18 @@ mod entrada {
         let ev = suscribir(&mut escena, &mut tarde, 6);
         let est = ev.iter().find(|x| x.1 == dashos_tema_v1::ev::ESTADO).expect("al suscribirse");
         assert_eq!(est.2, [2u32.to_le_bytes(), 100u32.to_le_bytes(), 1u32.to_le_bytes()].concat());
+        // S27, oleada 6: la pantalla de bloqueo (`ven_estado`) lo recibe también, al suscribirse y cuando cambia; pero
+        // no es una barra: ni el título ni los espacios. Un programa cualquiera suscrito no recibe nada.
+        escena.ven_estado.push(8);
+        let mut bloqueo = Conexion::new();
+        let ev = suscribir(&mut escena, &mut bloqueo, 8);
+        assert!(ev.iter().any(|x| x.1 == dashos_tema_v1::ev::ESTADO), "la pantalla de bloqueo, al suscribirse");
+        assert!(!ev.iter().any(|x| x.1 == dashos_tema_v1::ev::TITULO || x.1 == dashos_tema_v1::ev::ESPACIOS));
+        let mut e = Escritor::new();
+        e.empezar(60, dashos_tema_v1::req::ESTADO).uint(0).uint(30).uint(0).fin();
+        mandar(&mut escena, &mut panel, 3, &e);
+        let a_quien: Vec<Cliente> = core::mem::take(&mut escena.avisos_estado).into_iter().map(|x| x.0).collect();
+        assert!(a_quien.contains(&8) && a_quien.contains(&5) && !a_quien.contains(&2), "{:?}", a_quien);
     }
 
     /// S27: al cerrar la ventana que tiene el teclado, el teclado pasa a la de arriba que queda (antes se quedaba sin
