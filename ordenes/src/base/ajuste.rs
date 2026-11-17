@@ -58,14 +58,14 @@ const CONOCIDOS: &[Conocido] = &[
     Conocido { nombre: "idioma", fichero: "Sys/locale", clave: prefs::CLAVE_IDIOMAS, explica: "los idiomas, por orden (english, español)", clase: Clase::Idiomas },
     Conocido { nombre: "pais", fichero: "Sys/locale", clave: prefs::CLAVE_PAIS, explica: "el país: fechas, números y dinero", clase: Clase::Pais },
     Conocido { nombre: "tema", fichero: "Escritorio/apariencia", clave: "modo", explica: "claro u oscuro", clase: Clase::Uno(&["claro", "oscuro"]) },
-    Conocido { nombre: "acento", fichero: "Escritorio/apariencia", clave: "acento", explica: "el color: violeta, azul, verde, naranja o fondo", clase: Clase::Acento },
+    Conocido { nombre: "acento", fichero: "Escritorio/apariencia", clave: "acento", explica: "el color: violeta, azul, verde, naranja, monocromo o fondo", clase: Clase::Acento },
     // S10: dónde van los menús de los programas (`docs/bitacoras/menus.md`); lo aplica el centro en marcha.
     Conocido { nombre: "menus", fichero: "Escritorio/menus", clave: "sitio", explica: "dónde van los menús: dentro (en cada ventana) o barra (arriba, como en el Amiga)", clase: Clase::Uno(&["dentro", "barra"]) },
     Conocido { nombre: "zona", fichero: "", clave: "", explica: "la zona horaria (de la máquina)", clase: Clase::Maquina(crate::ZONA) },
 ];
 
 /// Lo que lleva encima un `Escritorio/apariencia` nuevo.
-const CABECERA_TEMA: &str = "El tema (Ajustes > Apariencia; la orden `Ajuste tema` y `Ajuste acento`). Este fichero manda.\nmodo: claro u oscuro. acento: violeta, azul, verde, naranja o fondo (la paleta del fondo de escritorio).";
+const CABECERA_TEMA: &str = "El tema (Ajustes > Apariencia; la orden `Ajuste tema` y `Ajuste acento`). Este fichero manda.\nmodo: claro u oscuro. acento: violeta, azul, verde, naranja, monocromo o fondo (la paleta del fondo de escritorio).";
 
 /// Lo que lleva encima un `Escritorio/menus` nuevo (lo mismo que escribe el centro de control).
 const CABECERA_MENUS: &str = "Dónde van los menús de los programas (Ajustes > Escritorio; la orden `Ajuste menus`). Este fichero manda.\nsitio: dentro (una fila en cada ventana) o barra (los del programa activo en la barra de arriba, como en el Amiga).";
@@ -184,11 +184,14 @@ fn comprobar(o: &mut Orden, c: &Conocido, valor: &str) -> Result<String, String>
             if v.eq_ignore_ascii_case("fondo") {
                 return Ok("fondo".into());
             }
+            if v.eq_ignore_ascii_case("monocromo") {
+                return Ok("monocromo".into());
+            }
             kit::tema::ACENTOS
                 .iter()
                 .find(|x| x.0.eq_ignore_ascii_case(v))
                 .map(|x| x.0.to_lowercase())
-                .ok_or_else(|| alloc::format!("{:?} no vale: violeta, azul, verde, naranja o fondo", v))
+                .ok_or_else(|| alloc::format!("{:?} no vale: violeta, azul, verde, naranja, monocromo o fondo", v))
         }
         Clase::Maquina(_) => Err(String::new()),
     }
@@ -408,6 +411,39 @@ fn importar_dms(o: &mut Orden, desde: &str, guardar: bool) -> u64 {
             Err(porque) => {
                 o.error(format_args!("{}", porque));
                 return o.fin(shell::RC_FALLO);
+            }
+        }
+    }
+    // El color (DMS dinámico con scheme-monochrome: el monocromo), en `Escritorio/apariencia`, solo su clave.
+    let mut dice = dice;
+    if let Some((acento, que)) = barra_config::acento_dms(&bytes) {
+        dice.push(que);
+        if !acento.is_empty() {
+            for asignacion in if guardar { &["ENV", "ENVARC"][..] } else { &["ENV"][..] } {
+                let camino = alloc::format!("{}:Escritorio/apariencia", asignacion);
+                let mut x = match leer(o, &camino) {
+                    Ok(Some(b)) => match Ajustes::leer(&b) {
+                        Ok(x) => x,
+                        Err(_) => {
+                            dice.push(alloc::format!("{} no se lee: el color no se toca", camino));
+                            continue;
+                        }
+                    },
+                    Ok(None) => {
+                        let mut x = Ajustes::nuevo();
+                        x.comentar(CABECERA_TEMA);
+                        x
+                    }
+                    Err(e) => {
+                        dice.push(alloc::format!("{}: {}: el color no se toca", camino, crate::texto_error(e)));
+                        continue;
+                    }
+                };
+                if x.poner("acento", acento).is_ok()
+                    && let Err(porque) = escribir(o, asignacion, "Escritorio/apariencia", x.texto().as_bytes())
+                {
+                    dice.push(porque);
+                }
             }
         }
     }

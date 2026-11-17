@@ -1,5 +1,7 @@
 {
     "configVersion": 42,
+    "currentThemeName": "dynamic",
+    "matugenScheme": "scheme-monochrome",
     "radiusStrength": 38,
     "niriLayoutRadiusOverride": 3,
     "clockDateFormat": "dddd, MMMM d",

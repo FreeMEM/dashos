@@ -1234,6 +1234,20 @@ pub fn importar_dms(bytes: &[u8]) -> Result<(Config, Vec<String>), String> {
     Ok((c, dice))
 }
 
+/// El color de DMS en `settings.json`, como el acento de DashOS (`ENV:Escritorio/apariencia`): con el tema "dynamic"
+/// (los colores del fondo, con matugen), `scheme-monochrome` es el monocromo y los demás esquemas, la paleta del fondo.
+/// Un tema de DMS con nombre (los de su catálogo) no lo tiene DashOS: `None`, y se dice. El acento y lo que se dice.
+pub fn acento_dms(bytes: &[u8]) -> Option<(&'static str, String)> {
+    let raiz = json::leer(bytes).ok()?;
+    let tema = raiz.campo("currentThemeName").and_then(Json::texto)?;
+    let esquema = raiz.campo("matugenScheme").and_then(Json::texto).unwrap_or("scheme-tonal-spot");
+    match (tema, esquema) {
+        ("dynamic", "scheme-monochrome") => Some(("monocromo", String::from("el color: monocromo (DMS: dinámico con el esquema scheme-monochrome de matugen)"))),
+        ("dynamic", e) => Some(("fondo", format!("el color: la paleta del fondo (DMS: dinámico con {}; DashOS la saca a su manera)", e))),
+        (t, _) => Some(("", format!("el tema de DMS \"{}\" no lo tiene DashOS: el color se queda como está", t.chars().filter(|c| !c.is_control()).take(40).collect::<String>()))),
+    }
+}
+
 /// Redondea sin `f64::round` (que no está sin `std`); los valores enormes se quedan en el tope de `i64`.
 fn redondo(x: f64) -> i64 {
     if x.is_nan() { 0 } else if x >= 0.0 { (x + 0.5) as i64 } else { (x - 0.5) as i64 }
@@ -1541,6 +1555,11 @@ mod pruebas {
     fn importar_shiva() {
         let (c, dice) = importar_dms(SHIVA.as_bytes()).unwrap();
         assert_eq!((c.radios, c.radio_ventanas, c.clasico, c.formato_fecha.as_str()), (38, 3, false, "dddd, MMMM d"));
+        // Su color: dinámico con scheme-monochrome, el monocromo.
+        assert_eq!(acento_dms(SHIVA.as_bytes()).map(|x| x.0), Some("monocromo"));
+        assert_eq!(acento_dms(b"{\"currentThemeName\": \"dynamic\"}").map(|x| x.0), Some("fondo"));
+        assert_eq!(acento_dms(b"{\"currentThemeName\": \"catppuccin\"}").map(|x| x.0), Some(""));
+        assert_eq!(acento_dms(b"{}"), None);
         assert_eq!(c.barras.len(), 1);
         let b = &c.barras[0];
         assert_eq!((b.id.as_str(), b.nombre.as_str(), b.posicion, b.espaciado, b.relleno, b.opacidad, b.sombra), ("principal", "Main Bar", Posicion::Arriba, 4, 4, 100, 0));

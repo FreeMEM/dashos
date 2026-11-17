@@ -154,7 +154,8 @@ const MAX_PANTALLAS: usize = 8;
 /// El objeto del tema del sistema (`dashos_tema_v1`).
 const TEMA_OBJ: u32 = 43;
 /// Los colores de acento que se ofrecen (el primero, el violeta de referencia de Material 3).
-const COLORES: &[(&str, u32)] = &kit::tema::ACENTOS;
+// Los acentos y, detrás, el monocromo (dms-barra: el `scheme-monochrome` de matugen que usa DMS en shiva).
+const COLORES: &[(&str, u32)] = &[kit::tema::ACENTOS[0], kit::tema::ACENTOS[1], kit::tema::ACENTOS[2], kit::tema::ACENTOS[3], ("Monocromo", kit::tema::MONOCROMO)];
 /// C3: el color "del fondo", tras los de la tabla.
 const DEL_FONDO: usize = COLORES.len();
 /// Las filas de Apariencia: los dos modos, los colores fijos, la paleta del fondo, (S26) el aspecto de los programas de
@@ -621,7 +622,7 @@ fn hex6(t: &str) -> Option<u32> {
 /// calcularlos otra vez; se pueden borrar). La misma que escribe la orden `Ajuste`. Antes de entrar nadie no hay `ENV:`:
 /// vale la de fábrica (`SYS:Prefs/Env-Archive`, por `ENVARC:`) y lo que se elija queda en uso sin guardarse.
 const FICHERO_TEMA: &str = "Escritorio/apariencia";
-const CABECERA_TEMA: &str = "El tema (Ajustes > Apariencia; la orden `Ajuste tema` y `Ajuste acento`). Este fichero manda.\nmodo: claro u oscuro. acento: violeta, azul, verde, naranja o fondo (la paleta del fondo de escritorio).\nsemilla y esquemas: los colores del fondo, calculados por el centro de control; se pueden borrar.";
+const CABECERA_TEMA: &str = "El tema (Ajustes > Apariencia; la orden `Ajuste tema` y `Ajuste acento`). Este fichero manda.\nmodo: claro u oscuro. acento: violeta, azul, verde, naranja, monocromo o fondo (la paleta del fondo de escritorio).\nsemilla y esquemas: los colores del fondo, calculados por el centro de control; se pueden borrar.";
 
 /// El fichero de ajustes `fichero` de `ENV:` o, si no está, de `ENVARC:`. `Err` con el porqué ("no hay" si en ninguno).
 fn leer_ajuste(fichero: &str) -> Result<Vec<u8>, String> {
