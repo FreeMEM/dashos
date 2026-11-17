@@ -2124,8 +2124,12 @@ mod entrada {
         // Super+2: el 2 se ve, la ventana del 1 ya no (ni tiene el teclado), y el 2 no llega a nadie.
         escena.tecla(0xE3, true);
         let ev = escena.tecla(0x1F, true);
-        assert!(!ev.iter().any(|x| matches!(x.1, Entrada::Tecla { .. })), "{ev:?}");
-        assert!(ev.contains(&(1, Entrada::TecladoSale { superficie: 7 })), "{ev:?}");
+        assert!(!ev.iter().any(|x| matches!(x.1, Entrada::Tecla { codigo: 3, .. })), "{ev:?}");
+        // tecla-pegada: la ventana que se va recibe el soltar de Super (que le llegó pulsada) antes de perder el teclado.
+        assert!(
+            ev.ends_with(&[(1, Entrada::Tecla { codigo: 125, pulsada: false }), (1, Entrada::Mods { pulsados: 0 }), (1, Entrada::TecladoSale { superficie: 7 })]),
+            "{ev:?}"
+        );
         escena.tecla(0x1F, false);
         escena.tecla(0xE3, false);
         assert_eq!(escena.espacio, 2);

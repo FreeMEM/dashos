@@ -585,6 +585,11 @@ pub struct Escena<M: Memorias> {
     pub puntero: Option<(Cliente, u32)>,
     pub teclado: Option<(Cliente, u32)>,
     pub mods: u32,
+    /// Las teclas cuya pulsación llegó a quien tiene el teclado y que aún no se han soltado (tecla-pegada), y a quién
+    /// llegaron. Al quitarle el teclado se le sueltan (nunca se queda con una pulsada: ni repite ni deja un modificador
+    /// puesto); una tecla soltada solo llega a quien recibió su pulsación.
+    entregadas: Vec<u32>,
+    entregadas_a: Option<(Cliente, u32)>,
     /// El cursor se ve desde el primer movimiento del ratón.
     pub con_cursor: bool,
     /// Eventos de entrada que salen de peticiones (el teclado a una ventana nueva): quien atiende los manda.
@@ -758,6 +763,10 @@ pub fn avisar_inactividad(con: &mut Conexion, objeto: u32, ocioso: bool) {
 /// abre una ventana justo cuando se escribe una contraseña para quedarse con lo que se teclea.
 pub const SIN_ROBAR_MS: u32 = 2_000;
 
+/// Teclas pulsadas a la vez que se siguen (tecla-pegada): seis por teclado de arranque y los ocho modificadores, con
+/// sitio para un segundo teclado. Las de más no llegan (llegaría su pulsación y no su soltar).
+pub const MAX_ENTREGADAS: usize = 32;
+
 /// El color de serie del tema: el violeta de referencia de Material 3.
 pub const TEMA_DE_SERIE: u32 = 0xff67_50a4;
 /// Suscripciones al tema, entre todos: más, y enlazar es un error.
@@ -857,6 +866,8 @@ impl<M: Memorias> Escena<M> {
             puntero: None,
             teclado: None,
             mods: 0,
+            entregadas: Vec::new(),
+            entregadas_a: None,
             con_cursor: false,
             pendientes: Vec::new(),
             medidas: (i32::MAX / 2, i32::MAX / 2),
@@ -1221,9 +1232,10 @@ impl<M: Memorias> Escena<M> {
     /// teclado pasa a la ventana de arriba que se ve.
     fn tras_cambio_de_sesion(&mut self) {
         self.danos.push(Rect { x: 0, y: 0, w: i32::MAX / 2, h: i32::MAX / 2 });
-        if let Some((c, s)) = self.teclado.filter(|t| self.oculto(t.0) || self.fuera_raiz(*t)) {
-            self.pendientes.push((c, Entrada::TecladoSale { superficie: s }));
-            self.teclado = None;
+        if self.teclado.is_some_and(|t| self.oculto(t.0) || self.fuera_raiz(t)) {
+            let mut ev = Vec::new();
+            self.soltar_teclado(&mut ev);
+            self.pendientes.extend(ev);
             self.devolver_teclado();
         }
         if let Some((c, s)) = self.puntero.filter(|p| self.oculto(p.0) || self.fuera_raiz(*p)) {
@@ -1582,7 +1594,10 @@ impl<M: Memorias> Escena<M> {
                 s.sitio = None;
                 self.capas.retain(|x| *x != (cliente, sup));
                 if self.teclado == Some((cliente, sup)) {
-                    self.teclado = None;
+                    // La capa se va de la pantalla pero sigue: se le dice que pierde el teclado (antes, nada).
+                    let mut ev = Vec::new();
+                    self.soltar_teclado(&mut ev);
+                    self.pendientes.extend(ev);
                     self.devolver_teclado();
                 }
             }
@@ -1609,9 +1624,9 @@ impl<M: Memorias> Escena<M> {
     fn bloquear(&mut self, cliente: Cliente, objeto: u32) {
         self.bloqueo = Some(Bloqueo { cliente, objeto, vivo: true, superficies: Vec::new() });
         self.arrastre = None;
-        if let Some((c, s)) = self.teclado.take() {
-            self.pendientes.push((c, Entrada::TecladoSale { superficie: s }));
-        }
+        let mut ev = Vec::new();
+        self.soltar_teclado(&mut ev);
+        self.pendientes.extend(ev);
         if let Some((c, s)) = self.puntero.take() {
             self.pendientes.push((c, Entrada::Sale { superficie: s }));
         }
@@ -3394,13 +3409,45 @@ impl<M: Memorias> Escena<M> {
             return;
         }
         if self.teclado != Some(ventana) {
-            if let Some((c, s)) = self.teclado {
-                out.push((c, Entrada::TecladoSale { superficie: s }));
-            }
+            self.soltar_teclado(out);
             self.teclado = Some(ventana);
+            self.entregadas_a = Some(ventana);
             // H9: la selección del portapapeles, justo antes del teclado (como pide `wl_data_device`).
             self.ofrecer(ventana.0, out);
             out.push((ventana.0, Entrada::TecladoEntra { superficie: ventana.1 }));
+            // Los modificadores que ya están pulsados (Wayland los manda tras `enter`): sin ellos, Mayúsculas pulsada
+            // antes del clic no contaría en la ventana nueva. Las teclas pulsadas no se le dan (`enter` va sin ellas):
+            // su soltar tampoco le llegará.
+            if self.mods != 0 {
+                out.push((ventana.0, Entrada::Mods { pulsados: self.mods }));
+            }
+        }
+    }
+
+    /// Quita el teclado a quien lo tiene (tecla-pegada), como cualquier escritorio: antes de decirle que lo pierde, se
+    /// le sueltan las teclas que recibió pulsadas y los modificadores. Sin esto, la tecla que se tenía pulsada al
+    /// cambiar de ventana (o al salir otra encima, o al bloquear) se quedaba pulsada para ella: un cliente que repite
+    /// por su cuenta (los programas de Linux, con su `wl_keyboard`) la repetía sin fin, y en los de DashOS Mayúsculas o
+    /// Control seguían puestos (`kit::teclado` cuenta las Mayúsculas por sus pulsar y soltar).
+    pub fn soltar_teclado(&mut self, out: &mut Vec<(Cliente, Entrada)>) {
+        self.revisar_entregadas();
+        let Some((c, s)) = self.teclado.take() else { return };
+        for codigo in self.entregadas.drain(..) {
+            out.push((c, Entrada::Tecla { codigo, pulsada: false }));
+        }
+        self.entregadas_a = None;
+        if self.mods != 0 {
+            out.push((c, Entrada::Mods { pulsados: 0 }));
+        }
+        out.push((c, Entrada::TecladoSale { superficie: s }));
+    }
+
+    /// Las teclas entregadas son de quien tiene el teclado: si cambió sin pasar por `soltar_teclado` (su superficie o su
+    /// cliente ya no están, y no hay a quién soltárselas), se olvidan.
+    fn revisar_entregadas(&mut self) {
+        if self.entregadas_a != self.teclado {
+            self.entregadas.clear();
+            self.entregadas_a = self.teclado;
         }
     }
 
@@ -3610,9 +3657,13 @@ impl<M: Memorias> Escena<M> {
         if pulsada {
             self.ultima_tecla_ms = Some(self.reloj_ms);
         }
+        // tecla-pegada: si quien tiene el teclado recibió esta tecla pulsada, su soltar le llega pase lo que pase
+        // (aunque entre medias se haya pulsado Super o una commodity se haya puesto a tragar esa tecla).
+        self.revisar_entregadas();
+        let entregada = !pulsada && self.entregadas.contains(&codigo);
         // S10: los atajos de las commodities, Bloq Mayús (NoCapsLock) y la tecla que despierta la pantalla: no llegan a
         // la ventana.
-        if self.commodities_tecla(uso, codigo, pulsada) {
+        if self.commodities_tecla(uso, codigo, pulsada) && !entregada {
             return out;
         }
         // S27: Bloq Mayús, para el OSD del dock (sigue llegando a la ventana).
@@ -3632,6 +3683,25 @@ impl<M: Memorias> Escena<M> {
             self.super_sola = mascara == 64 && self.mods & !64 == 0;
         } else if mascara == 64 && core::mem::take(&mut self.super_sola) && self.bloqueo.is_none() {
             self.pedir_lanzador();
+        }
+        // tecla-pegada: soltar una tecla no hace nada en el compositor (los atajos van al pulsar), y solo llega a quien
+        // recibió su pulsación. Si no la recibió (la tragó un atajo, o se pulsó con el teclado en otra ventana, que ya
+        // tuvo su soltar al perderlo), no le llega: una tecla que nunca vio pulsada no le dice nada. Los modificadores,
+        // siempre: quien tiene el teclado sabe en cada momento cuáles hay pulsados.
+        if !pulsada {
+            if mascara != 0 {
+                self.mods &= !mascara;
+            }
+            if let Some((c, _)) = self.teclado {
+                if entregada {
+                    self.entregadas.retain(|&e| e != codigo);
+                    out.push((c, Entrada::Tecla { codigo, pulsada: false }));
+                }
+                if mascara != 0 {
+                    out.push((c, Entrada::Mods { pulsados: self.mods }));
+                }
+            }
+            return out;
         }
         // S27: las teclas del volumen van al panel rápido (si lo hay; si no, a la ventana, como antes), y Super con un
         // número cambia de espacio de trabajo (con Mayúsculas, lleva allí la ventana con el teclado). Ninguna de estas
@@ -3665,7 +3735,7 @@ impl<M: Memorias> Escena<M> {
         let Some((c, _)) = self.teclado else {
             // Sin ventana con el teclado los modificadores se siguen llevando, y Super+L (U3) bloquea igual.
             if mascara != 0 {
-                if pulsada { self.mods |= mascara } else { self.mods &= !mascara }
+                self.mods |= mascara;
             }
             if pulsada && codigo == KEY_L && self.mods & 64 != 0 && self.bloqueo.is_none() {
                 self.bloquear_ya();
@@ -3708,13 +3778,17 @@ impl<M: Memorias> Escena<M> {
             }
             return out;
         }
-        out.push((c, Entrada::Tecla { codigo, pulsada }));
         if mascara != 0 {
-            if pulsada {
-                self.mods |= mascara;
-            } else {
-                self.mods &= !mascara;
-            }
+            self.mods |= mascara;
+        }
+        // tecla-pegada: la que ya tiene pulsada (la misma tecla en otro teclado) no le llega otra vez, y sin sitio para
+        // seguirla no le llega (su soltar no podría llegarle: se quedaría pulsada).
+        if self.entregadas.contains(&codigo) || self.entregadas.len() >= MAX_ENTREGADAS {
+            return out;
+        }
+        self.entregadas.push(codigo);
+        out.push((c, Entrada::Tecla { codigo, pulsada: true }));
+        if mascara != 0 {
             out.push((c, Entrada::Mods { pulsados: self.mods }));
         }
         out

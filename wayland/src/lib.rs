@@ -331,3 +331,6 @@ mod tests_menus;
 
 #[cfg(test)]
 mod tests_dock;
+
+#[cfg(test)]
+mod tests_teclas;
