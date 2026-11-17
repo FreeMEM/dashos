@@ -9,7 +9,7 @@ license = "MPL-2.0"
 archivos = ["monton", "dep:dashfs", "dep:syscall"]
 monton = ["dep:linked_list_allocator"]
 # El compositor que habla Wayland y sus clientes de prueba (W7).
-ventanas = ["monton", "dep:wayland", "dep:kit"]
+ventanas = ["monton", "dep:wayland", "dep:kit", "dep:iconos-cajas"]
 # El servicio de sonido (S19, A4).
 sonido = ["monton", "dep:sonido", "dep:audiodevice"]
 # Las imágenes de disco del Amiga (S20): el servicio que monta un ADF.
@@ -28,6 +28,8 @@ dashfs = { path = "../archivos/dashfs", default-features = false, optional = tru
 syscall = { package = "redox_syscall", version = "0.9.5", default-features = false, optional = true }
 wayland = { package = "dashos-wayland", path = "../wayland", optional = true }
 kit = { package = "dashos-kit", path = "../kit", optional = true }
+# Los iconos de las cajas (los `.info` del Amiga y los de los programas de Linux), para el explorador.
+iconos-cajas = { package = "dashos-iconos-cajas", path = "../iconos-cajas", optional = true }
 sonido = { package = "dashos-sonido", path = "../sonido", optional = true }
 audiodevice = { package = "dashos-audiodevice", path = "../audiodevice", optional = true }
 amigados = { package = "dashos-amigados", path = "../amigados", optional = true }
@@ -80,6 +82,9 @@ strip = "symbols"
 # en DashOS cuatro veces lo que el mismo RedoxFS bajo QEMU en modo usuario (paso F10 de docs/MULTITAREA_LOOP.md).
 [profile.release.package."*"]
 opt-level = 3
+# Los iconos de las cajas: se leen pocos y a ratos; mejor pequeños que rápidos (el disco de pruebas va justo).
+[profile.release.package.dashos-iconos-cajas]
+opt-level = "s"
 [profile.dev]
 panic = "abort"
 

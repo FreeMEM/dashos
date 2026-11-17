@@ -75,6 +75,8 @@ prueba: $(PRUEBAS) catalogos
 	cd ../shell && cargo test --quiet
 	cd ../archivos/herramientas && cargo test --quiet --release
 	cd ../kit && cargo test --quiet
+	@# Los iconos de las cajas: los .info de cada formato, hostiles y mil mutados; los .desktop y los temas.
+	cd ../iconos-cajas && cargo test --quiet
 	cd ../caja-linux/vmm && cargo test --quiet
 	$(MAKE) -C ../caja/pruebas_hunk
 	mkdir -p target && rustc --edition 2024 --test src/rp1.rs -o target/rp1_pruebas && ./target/rp1_pruebas -q
@@ -217,6 +219,21 @@ arranque-virt-shell: virt-uso $(DISCO_NVME)
 	@cat target/shell/shell.guion.txt
 	for c in $(SHELL_CAPTURAS); do test -s target/shell/shell.$$c.png || { echo "FALTA la captura $$c"; exit 1; }; done
 	mkdir -p ../capturas-agente && for c in $(SHELL_CAPTURAS); do cp target/shell/shell.$$c.png ../capturas-agente/shell-$$c.png; done
+
+# Plan de iconos, parte 3 (docs/bitacoras/iconos-cajas.md): la imagen de usar con una copia del disco de pruebas.
+# `tools/guion_iconos.py` entra como Ana, abre el explorador y mira los .info de la caja Amiga (uno de cada formato, el
+# volumen, los escondidos y la lista), con capturas (target/iconos/iconos.*.png y, fuera de git,
+# ~/recuperar/geosian-7d/iconos-cajas-capturas/).
+ICONOS_CAPTURAS := 01-iconos 02-elegido 03-volumen 04-ocultos 05-lista
+ICONOS_FUERA ?= $(HOME)/recuperar/geosian-7d/iconos-cajas-capturas
+arranque-virt-iconos: virt-uso $(DISCO_NVME)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_USO)) cargo build --release
+	rm -rf target/iconos && mkdir -p target/iconos
+	cp --reflink=auto $(DISCO_NVME) target/iconos/disco.img
+	GUARDAR=$(abspath target/salida_virt_iconos.txt) ICONOS_CAPTURAS=$(abspath target/iconos/iconos) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU) -drive file=$(abspath target/iconos/disco.img),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_iconos.txt 400
+	@cat target/iconos/iconos.guion.txt
+	for c in $(ICONOS_CAPTURAS); do test -s target/iconos/iconos.$$c.png || { echo "FALTA la captura $$c"; exit 1; }; done
+	mkdir -p $(ICONOS_FUERA) && for c in $(ICONOS_CAPTURAS); do cp target/iconos/iconos.$$c.png $(ICONOS_FUERA)/explorador-$$c.png; done
 
 # S10, los menús de los programas (docs/bitacoras/menus.md): la imagen de usar con la prueba de kit-c (`dash-ventana`)
 # y una copia del disco de pruebas. `tools/guion_menus.py` entra como Ana y mira los menús del Shell (el kit nativo) y

@@ -2,7 +2,8 @@
 //! si es un programa, el volumen y la caja de la que es), `nombre_de` el icono de la colección de DashOS
 //! (`kit::iconos::coleccion`, que toma los tonos del tema) y `icono` lo pinta. Una imagen con miniatura enseña la
 //! miniatura; con un tema de Linux elegido en Ajustes (S37, `tema_linux`), el suyo si lo tiene (por los nombres de
-//! freedesktop de cada icono de la colección). Cuando lleguen los `.info` de la caja Amiga, se cambia solo aquí.
+//! freedesktop de cada icono de la colección). Un fichero de la caja Amiga con su `.info` (rama `iconos-cajas`,
+//! `iconos_amiga`), ese, antes que nada.
 
 use crate::logica::{clase_de, Clase, Entrada, Lugar};
 use alloc::collections::BTreeMap;
@@ -21,12 +22,19 @@ pub struct Fichero<'a> {
     pub raiz: u32,
     /// La caja de la que es, si es de una ("amiga", "linux").
     pub caja: Option<&'static str>,
+    /// Su icono `.info`, si es de la caja Amiga y lo tiene (`iconos_amiga`).
+    pub info: Option<&'a kit::imagen::Imagen>,
 }
 
 impl<'a> Fichero<'a> {
     pub fn de(e: &'a Entrada, donde: &Lugar) -> Self {
         let caja = if donde.raiz == crate::RAIZ_AMIGA { Some("amiga") } else { None };
-        Fichero { e, raiz: donde.raiz, caja }
+        Fichero { e, raiz: donde.raiz, caja, info: None }
+    }
+
+    pub fn con_info(mut self, info: Option<&'a kit::imagen::Imagen>) -> Self {
+        self.info = info;
+        self
     }
 }
 
@@ -121,6 +129,10 @@ fn carpeta(nombre: &str) -> &'static str {
 /// miniatura si la hay.
 #[allow(clippy::too_many_arguments)]
 pub fn icono(ico: &mut Iconos, linux: &DelTema, l: &mut Lienzo, x: i32, y: i32, s: i32, f: &Fichero, t: &Tema, mini: Option<&kit::imagen::Imagen>) {
+    if let Some(img) = f.info {
+        iconos_cajas::dibujo::pintar(l, x, y, s, img);
+        return;
+    }
     let k = |v: i32| v * s / 64;
     if let (QueIcono::Imagen, Some(img)) = (icono_de(f), mini) {
         crate::pintar::miniatura(l, img, Rect::new(x + k(2), y + k(4), k(60), k(56)), t);

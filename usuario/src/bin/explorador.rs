@@ -46,6 +46,8 @@ mod pintar;
 mod iconos;
 #[path = "../explorador/tema_linux.rs"]
 mod tema_linux;
+#[path = "../explorador/iconos_amiga.rs"]
+mod iconos_amiga;
 #[path = "../idiomas.rs"]
 mod idiomas;
 
@@ -628,7 +630,9 @@ impl Pestana {
         let cosas = &self.cosas;
         let elegidos: Vec<(Lugar, String)> = self.sel.elegidos().iter().filter_map(|&i| self.vista.get(i)).filter_map(|&k| cosas.get(k)).map(|c| (c.donde.clone(), c.e.nombre.clone())).collect();
         let cursor = self.sel.cursor.and_then(|i| self.vista.get(i)).and_then(|&k| cosas.get(k)).map(|c| c.e.nombre.clone());
-        let mut v: Vec<usize> = (0..self.cosas.len()).filter(|&i| self.ocultos || !es_oculto(&self.cosas[i].e.nombre)).collect();
+        // En la caja Amiga, los `.info` de otra cosa se esconden como los ocultos (son su icono).
+        let de_otro = if self.ocultos { Vec::new() } else { iconos_amiga::escondidas(&self.cosas) };
+        let mut v: Vec<usize> = (0..self.cosas.len()).filter(|&i| self.ocultos || !(es_oculto(&self.cosas[i].e.nombre) || de_otro[i])).collect();
         if self.busca.is_none() {
             let entradas: Vec<Entrada> = self.cosas.iter().map(|c| c.e.clone()).collect();
             ordenar(&entradas, &mut v, self.orden, self.asc);
@@ -864,6 +868,8 @@ pub struct App {
     pub arrastre: Option<Arrastre>,
     /// Las miniaturas de los PNG (por lugar y nombre): `None` si no se pudo.
     pub miniaturas: BTreeMap<(Lugar, String), Option<kit::imagen::Imagen>>,
+    /// Los iconos `.info` de la caja Amiga (`explorador/iconos_amiga.rs`).
+    pub iconos_amiga: iconos_amiga::IconosAmiga,
     /// Cuánto ocupa el disco: (tamaño, libre).
     pub disco: (u64, u64),
     contexto: Option<Contexto>,
@@ -2492,6 +2498,7 @@ fn principal() -> u64 {
         siguiente_trabajo: 0,
         arrastre: None,
         miniaturas: BTreeMap::new(),
+        iconos_amiga: Default::default(),
         disco: (0, 0),
         contexto: None,
         quienes: BTreeMap::new(),
