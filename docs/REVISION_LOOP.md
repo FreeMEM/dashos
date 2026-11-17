@@ -2321,3 +2321,30 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
     pulsada (la búsqueda se llena de "a"): familia distinta del robo de teclado, por investigar. Sin ver: el resto
     de `arranque-virt` tras el explorador.
   - Pendiente: el fondo del usuario no sale al arrancar (el fondo arranca antes que el disco; ya pasaba antes).
+- **Unidas `tecla-pegada`, `centro-vivo`, `paq-formato` y `a15-carrera`, con dos arreglos del guion (`union-tres`
+  13a80479 y `guion-panel` cc787a16) (2026-11-17)**.
+  - `tecla-pegada`: no había tecla pegada (las "a" las mete el guion cuando un paso falla); sí estaba mal: al quitar el
+    teclado a una ventana no se le soltaba lo pulsado (ahora el compositor suelta teclas y modificadores, y un soltar
+    solo llega a quien vio la pulsación); con dos teclados uno soltaba lo del otro; un teclado que se va no soltaba;
+    la cola llena tiraba un soltar. El dock se repintaba ~500 veces por segundo (compositor al 95 %): ahora solo si
+    algo se mueve. El selector ignoraba una conexión nueva si la vieja no se cerró: conectar otra vez cierra la
+    anterior. Guion: pasos de Dash y del panel esperan a que no haya ventanas de contraseña; contraseña de Ana la que
+    vale en ese momento; comprobación del disco al día.
+  - `centro-vivo`: el centro atiende su canal con Ajustes abierta (hilo lector y cola común `dashos::hilos::Cola`,
+    `usuario/src/anillo.rs`); el fondo guardado sale al entrar; kit-c: submenú dentro de otro = error, y
+    `ventana.dash` con casilla, opciones y submenú (pedido de la sesión de Dash).
+  - `paq-formato`: varias `Url` por entrada probadas en orden (tope 16), `identify` (inventario de lo puesto a mano,
+    Query firmada con Nonce, respuesta comprobada) detrás del rasgo `Red`; `traer_pkg2.sh` trae la especificación.
+    Siete notas pasadas a la sesión de Hangar (dos fallos de su servicio: `identify` filtra siempre 68k; `Serial` de
+    respuestas por delante del índice).
+  - `a15-carrera`: el comprobador sujetaba el disco mientras `ficheros` escribía (2 bloques de margen); ahora
+    `ficheros` espera si el disco está sujeto y lo escrito no cabe con margen (164 bloques de sobra); el aviso de
+    "soltado por falta de sitio" va con cada cliente (antes uno para todos); `INFO` dice si el disco está sujeto.
+  - Guion: Dash y panel de uno en uno (`union-tres`); una sola puerta: con una pregunta de `guardian` pendiente no
+    pasan teclas ni clics salvo los que le contestan, y contestar espera a que su capa tenga el teclado
+    (`guion-panel`; `guardian` dice cuándo tiene o pierde el teclado).
+  - Pruebas: tanda completa de las tres primeras (todo bien salvo `arranque-virt`, luego arreglado), más shell,
+    menus, dms, cuentas, iconos y dominio bien; tras los arreglos, `arranque-virt` bien 3 de 3 y una con carga 18,
+    `prueba` bien, `-2` y `-linux` bien. Una vez el firmware de QEMU se colgó al reiniciar (antes de DashOS), no
+    repetido.
+  - Por decidir: que `guardian` conserve el teclado frente al panel (va con el permiso de un solo uso).
