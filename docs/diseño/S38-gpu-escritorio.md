@@ -5,8 +5,7 @@ bajo consumo de CPU, que si lo calcula la GPU sería lo suyo. Supongo que el esc
 GPU si tiene la máquina, para no cargar la CPU". La herramienta de fondos va en la rama `fondos`; aquí, el camino de la
 GPU y lo que cuesta cada cosa. Rama `gpu-diseno`. Sala limpia: Mesa y virglrenderer se ejecutan, no se leen.
 
-> Ojo con el número: ya hay un `S37-iconos.md`. Este se llama así porque lo pidió el encargo; renumerarlo es cosa del
-> usuario.
+> Se escribió como S37 y pasó a S38 el 2026-11-17 (ya había un `S37-iconos.md`).
 
 ## 1. Qué hace hoy el compositor y cuánto cuesta
 
