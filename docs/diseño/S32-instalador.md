@@ -149,8 +149,13 @@ btrfs, swap, LUKS, LVM, APFS, HFS+, FAT y exFAT; plan en texto con dibujo antes 
 disco entero o encima de DashOS; `EFI/DashOS/` en la ESP que hay; su entrada en la NVRAM (llamada 64, por los servicios
 de ejecución del firmware) al final del orden y como próximo arranque. Probado en el banco de AmiCachy con Windows 11,
 Debian 13 y un disco vacío (`tools/prueba_instalador.py`). La ventana "Instalar DashOS" y la orden `Instalar` del Shell
-hacen lo mismo, con una sola confirmación de administrador (la tanda "instalar <plan>"). Falta: encoger NTFS (el dominio
-Linux de x86) y el pendrive de la Pi 5.
+hacen lo mismo, con una sola confirmación de administrador (la tanda "instalar <plan>"). Falta el pendrive de la Pi 5.
+
+**Hecho (2026-11-17, rama `x86-dominio`, `docs/bitacoras/x86-dominio.md`)**: encoger Windows. `ntfsresize` (ntfs-3g,
+estático) en un dominio Linux mínimo de x86 (S35: Linux en una máquina virtual del hipervisor de DashOS, con solo la
+partición de Windows prestada como virtio-blk); antes, `--info` (si no lo deja, no se toca nada) y la prueba en seco.
+Probado en el banco con el Windows 11 de serie: encogido de 48,7 a 22,9 GB, sus demás particiones iguales, el NTFS
+bien en el PC, Windows arranca después.
 
 ## Lo que queda abierto
 

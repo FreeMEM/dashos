@@ -282,7 +282,12 @@ def ntfs_en_el_pc(capa, desde, hasta):
 
 def escenario_encoger():
     """Encoger Windows 11 (el de serie, sin hueco) con ntfsresize en el dominio Linux de x86, e instalar en lo que queda."""
-    banco.capa("encoger-1", "win11-ntfs")
+    # Windows arrancado una vez en su capa (`win-arrancada`), para que su "Windows Boot Manager" esté en la NVRAM como
+    # en un PC de verdad (los VARS de serie del banco no lo traen y el firmware elegiría otra cosa).
+    if not os.path.exists(banco.capa_ruta("win-arrancada")):
+        banco.capa("win-arrancada", "win11-ntfs")
+        otro_arranca("win-arrancada", "win-arrancada", None, segundos=150)
+    banco.capa("encoger-1", "win-arrancada")
     c, plan, err = instalar_pc("encoger-1", "plan", "nvme0", "encoger:3")
     apuntar(c == 0, f"encoger: plan de encoger Windows ({err.strip() or 'hecho en el PC'})")
     if c != 0:
@@ -291,7 +296,7 @@ def escenario_encoger():
     motivo, t = en_vivo("encoger-1", "encoger-instala", pendrive("encoger-1", plan), segundos=900)
     apuntar(instalado(t), f"encoger: Windows encogido por ntfsresize en el dominio e instalado en el hueco ({motivo})")
     apuntar("dominio: fin encoger 0" in t, "encoger: el dominio dice que ntfsresize acabó bien")
-    malas = banco.comparar("win11-ntfs", "encoger-1", (1,))
+    malas = banco.comparar("win-arrancada", "encoger-1", (1,))
     malas = [m for m in malas if "partición 3" not in m]
     apuntar(not malas, f"encoger: las demás particiones de Windows, iguales byte a byte {malas}")
     ok, texto = ntfs_en_el_pc("encoger-1", 1083392, nuevo)
@@ -306,7 +311,7 @@ def escenario_encoger():
     ok, _ = dashos_arranca("encoger-1", "encoger-dashos-menu", por_menu=True)
     apuntar(ok, "encoger: DashOS arranca eligiéndolo en el menú del firmware")
     # Corte de luz en mitad de ntfsresize (en otra capa): Windows puede quedar a medias; se mira qué queda.
-    banco.capa("encoger-corte", "win11-ntfs")
+    banco.capa("encoger-corte", "win-arrancada")
     motivo, t = en_vivo("encoger-corte", "encoger-corte", pendrive("encoger-corte", plan), matar_en="Are you sure you want to proceed", segundos=900)
     ok, texto = ntfs_en_el_pc("encoger-corte", 1083392, 103223296)
     _, ver, _ = instalar_pc("encoger-corte", "ver", "nvme0")

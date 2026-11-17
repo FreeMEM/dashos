@@ -192,3 +192,68 @@ complemento de TCG propio que apunta cada RDMSR/WRMSR. El resultado queda en `ob
 - Sala limpia: para saber qué toca el kernel invitado se leyó su código (Linux: `tsc.c`, `i8253.c`, `i8259.c`,
   `apic.c`, `rtc-mc146818-lib.c`) y el de ntfsresize. No se copió nada a DashOS; lo que pasa al monitor son hechos
   (puertos, registros, valores).
+
+## 2026-11-17: el monitor y el instalador
+
+### El monitor (la pieza común)
+
+- `caja-linux/vmm/src/x86/` (sin DashOS, sin `unsafe`, `cargo test`): `arranque.rs` (el bzImage por el protocolo de 32
+  bits: parte protegida en 1 MB, página cero con la cabecera del propio bzImage, e820, línea e initramfs arriba; y la
+  tabla MP con una CPU, el bus ISA y el IOAPIC 1, las 16 de ISA a sus pines), `apic.rs` (APIC local con ISR/IRR, EOI,
+  LVT, ICR para la IPI a sí mismo; IOAPIC con 24 entradas, nivel con IRR remoto y flanco) y `maquina.rs` (MMIO al
+  APIC, al IOAPIC y a los virtio-mmio con su pin; puertos: COM1 por líneas, PIT, puerto B y CMOS a cero, lo demás
+  todo unos; MSR: la base del APIC, lo demás #GP). Reúsa el virtio-mmio y el virtio-blk de la caja Linux de ARM.
+  Pruebas: el bzImage hostil (corto, sin "HdrS", protocolo viejo, que no cabe), las sumas de la tabla MP, una línea
+  por nivel con EOI, máscaras, el temporizador, vectores reservados, registros a todo unos, la consola sin fin.
+- `usuario/src/dominio_x86.rs` (DashOS): la máquina (llamadas 45 a 48 del hipervisor de x86), la RAM en trozos de
+  16 MB (lo más que mide un objeto de memoria) seguidos en el invitado y en el servicio, el disco que da quien llama, y
+  el bucle de la vCPU: entrega por los huecos del kernel lo que dice el APIC, el vector del temporizador (el plazo del
+  TSC lo lleva el kernel), y atiende LECTURA, ESCRITURA, PUERTO y REGISTRO; acaba con "dominio: fin", la muerte de la
+  máquina o el plazo.
+- El kernel de DashOS no cambia. Lo único fuera de mi zona: el permiso "hipervisor" también al instalador
+  (`inicio_x86_uso.rs`) y su tope de memoria a 320 MB (`inicio.rs`).
+- **Medido** (Windows 11 de 50 GB, NTFS con 13,9 GB usados, KVM en shiva): `info` tardaba 7,7 a 10 s porque el kernel
+  del invitado lee el 0x42 del PIT unas 100.000 veces (cada una, una salida) cuando lee todo unos; con el PIT a cero,
+  3,6 s. `encoger` a 22,9 GB (35.092 clusters que mover, 144 MB): 22,5 s (30,7 s antes del arreglo del PIT).
+  ntfsresize usa 1,8 MB.
+  El primer arranque de un Linux en el hipervisor de x86 de DashOS salió a la primera.
+
+### El instalador
+
+- `Entorno::encoger` (servicio `instalador`): dos vueltas del dominio con solo la partición de Windows prestada
+  (`Prestada`: los accesos fuera de ella dan error al invitado): `info` (si ntfsresize no lo deja, se para sin tocar
+  nada) y `encoger:<bytes>` (en seco y, si sale, de verdad). Los bytes son exactamente el tamaño nuevo de la partición
+  (ntfsresize deja la copia del sector de arranque en su último sector).
+- La entrada de Windows encogida va en la misma escritura de la GPT que la de DashOS (`gpt::con_encogida`), y una GPT
+  cortada a medias con la partición encogida en una copia se reconoce como instalación nuestra (prueba con cortes en
+  cada sector).
+- El pendrive lleva el dominio (`EFI/DashOS/DOMINIO.BZI` y `DOMINIO.CPI`, `make pendrive-x86` si están en
+  `DOMINIO_X86`); el cargador los pasa en la zona en vivo.
+
+### Pendiente
+
+- La CPUID 6 con ARAT (lo pide el kernel del invitado para fiarse del temporizador del APIC sin PIT): funciona igual;
+  si hiciera falta, es del kernel de DashOS (filtro de CPUID), que no toco.
+- Un NTFS de varios TB lleno: ntfsresize guarda 32 MB por TB; con 128 MB de RAM del dominio no cabría uno de ~3 TB.
+- Un corte de luz en mitad de ntfsresize puede dejar Windows a medias: es el riesgo propio de encoger NTFS. El
+  instalador hace antes la copia de las tablas y del primer MiB de la partición, y lo dice en el plan.
+
+### El banco (`tools/prueba_instalador.py encoger`, en capas sobre el Windows 11 del banco de AmiCachy)
+
+12 de 12:
+- Plan de encoger hecho en el PC; en el pendrive, encogido por ntfsresize en el dominio e instalado en el hueco
+  ("dominio: fin encoger 0"); las demás particiones de Windows iguales byte a byte; el NTFS encogido bien según
+  `ntfsresize --info` en el PC (24,6 GB).
+- DashOS arranca por su entrada de la NVRAM y por el menú del firmware; Windows arranca después (captura de su pantalla
+  de bloqueo, `encoger-windows-NN.png`) y se apaga limpio, y su NTFS sigue bien (lo que se podría encoger pasa de
+  13,8 a 13,4 GB: Windows hizo su comprobación).
+- Corte de luz en mitad de ntfsresize (QEMU con `kill -9` al empezar la de verdad): el NTFS se sigue leyendo en el PC;
+  al repetir, el instalador se para y dice "Windows tiene una comprobación de disco pendiente: arranca Windows, deja
+  que la haga y vuelve" (ntfsresize ya lo marcó para chkdsk): no se toca nada más.
+- Los discos base, sin cambios.
+- Lo que enseñó: con los VARS de serie del banco (sin la entrada "Windows Boot Manager") el firmware arrancaba DashOS
+  en vez de Windows; la prueba parte de una capa con Windows arrancado una vez (`win-arrancada`), como un PC de verdad.
+
+### Pruebas de make (tras unir origin/x86)
+
+`make prueba`, `make prueba-x86` (KVM), `make arranque-x86` con KVM y sin él (TCG) y `make arranque-virt`: todas bien.
