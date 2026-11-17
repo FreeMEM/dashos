@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 pub const ABRIR: &str = "PROGRAMA/A,ESPERAR/S";
 pub const ADMINISTRAR: &str = "ACCION/M,DESDE/K";
 /// Ajustes en texto (`docs/bitacoras/ajustes-texto.md`): leer y poner un ajuste suelto.
-pub const AJUSTE: &str = "NOMBRE,VALOR,GUARDAR/S,LISTA/S";
+pub const AJUSTE: &str = "NOMBRE,VALOR,GUARDAR/S,LISTA/S,DMS/K";
 pub const ASK: &str = "PROMPT/A";
 pub const ASSIGN: &str = "NAME,TARGET/M,LIST/S,ADD/S,PREPEND/S,REMOVE/S";
 pub const CD: &str = "DIR";

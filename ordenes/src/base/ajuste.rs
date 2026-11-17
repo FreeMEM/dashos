@@ -10,6 +10,10 @@
 //! conoce, vale cualquier `fichero.clave` (`Ajuste Escritorio/barra.segundos sí`), sin más comprobación que la del
 //! formato.
 //!
+//! - `Ajuste DMS <settings.json>`: importa las barras de DankMaterialShell (`barConfigs`) a `ENV:Escritorio/barra`
+//!   (con `GUARDAR`, también a `ENVARC:`), sobre lo que hubiera, y dice lo que DashOS no tiene y se dejó fuera
+//!   (`docs/bitacoras/dms-barra.md`). `SYS:Prefs/Presets/DMS/shiva.json` es la barra del escritorio del usuario.
+//!
 //! Lo que es de la máquina (la zona horaria) o de seguridad (permisos, cuentas) no se cambia por aquí sin la
 //! confirmación de `guardian`, que esta orden aún no sabe pedir: se niega y lo dice. Leerlo, sí.
 
@@ -20,6 +24,11 @@ use dashos::protocolo::archivos as a;
 use kit::idioma::prefs::{self, Prefs};
 use kit::idioma::texto::{self, Ajustes};
 use kit::idioma::Pais;
+
+// Las barras de DMS: el modelo y el importador, los mismos que usan la barra y el centro.
+#[path = "../../../usuario/src/barra_config.rs"]
+#[allow(dead_code)]
+mod barra_config;
 
 /// Lo que se comprueba de un valor.
 #[derive(Clone, Copy)]
@@ -224,6 +233,9 @@ pub fn principal(o: &mut Orden) -> u64 {
     let nombre = args.texto("NOMBRE").map(String::from);
     let valor = args.texto("VALOR").map(String::from);
     let guardar = args.si("GUARDAR");
+    if let Some(desde) = args.texto("DMS").map(String::from) {
+        return importar_dms(o, &desde, guardar);
+    }
     let Some(nombre) = nombre.filter(|_| !args.si("LISTA")) else {
         listar(o);
         return o.fin(shell::RC_BIEN);
@@ -350,5 +362,62 @@ pub fn principal(o: &mut Orden) -> u64 {
         }
     }
     di!(o, "{}: {} (en {})\n", nombre, valor, escritos.join(" y "));
+    o.fin(shell::RC_BIEN)
+}
+
+/// `Ajuste DMS <settings.json> [GUARDAR]`: las barras de DMS a `ENV:Escritorio/barra` (y a `ENVARC:`), sobre lo que hubiera
+/// (sus comentarios se quedan). Si algo no vale, no se escribe nada.
+fn importar_dms(o: &mut Orden, desde: &str, guardar: bool) -> u64 {
+    let bytes = match o.s.leer_entero(desde, 4 << 20) {
+        Ok(b) => b,
+        Err(e) => {
+            o.error_de(e, desde);
+            return o.fin(shell::RC_FALLO);
+        }
+    };
+    let (cfg, dice) = match barra_config::importar_dms(&bytes) {
+        Ok(x) => x,
+        Err(porque) => {
+            o.error(format_args!("{}: {}. No se ha cambiado nada", desde, porque));
+            return o.fin(shell::RC_FALLO);
+        }
+    };
+    let fichero = barra_config::FICHERO;
+    let mut por_escribir: Vec<(&str, Vec<u8>)> = Vec::new();
+    for asignacion in if guardar { &["ENV", "ENVARC"][..] } else { &["ENV"][..] } {
+        let camino = alloc::format!("{}:{}", asignacion, fichero);
+        let antes = match leer(o, &camino) {
+            Ok(b) => b.filter(|b| Ajustes::leer(b).is_ok()),
+            Err(e) => {
+                o.error(format_args!("{}: {}. No se ha cambiado nada", camino, crate::texto_error(e)));
+                return o.fin(shell::RC_FALLO);
+            }
+        };
+        match cfg.escribir(antes.as_deref()) {
+            Ok(b) => por_escribir.push((asignacion, b)),
+            Err(porque) => {
+                o.error(format_args!("{}: {}. No se ha cambiado nada", camino, porque));
+                return o.fin(shell::RC_FALLO);
+            }
+        }
+    }
+    let mut escritos = Vec::new();
+    for (asignacion, bytes) in &por_escribir {
+        match escribir(o, asignacion, fichero, bytes) {
+            Ok(c) => escritos.push(c),
+            Err(porque) => {
+                o.error(format_args!("{}", porque));
+                return o.fin(shell::RC_FALLO);
+            }
+        }
+    }
+    let barras: Vec<String> = cfg.barras.iter().map(|b| alloc::format!("{} ({}, {} widgets)", b.id, b.posicion.nombre(), b.zonas.iter().map(Vec::len).sum::<usize>())).collect();
+    di!(o, "Barras de DMS importadas de {}: {} (en {})\n", desde, barras.join(", "), escritos.join(" y "));
+    if !dice.is_empty() {
+        di!(o, "Lo que DashOS no tiene o cambió:\n");
+        for d in &dice {
+            di!(o, "  {}\n", d);
+        }
+    }
     o.fin(shell::RC_BIEN)
 }

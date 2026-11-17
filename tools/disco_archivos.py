@@ -380,6 +380,15 @@ PRUEBA_SHELL = "\n".join([
     *['Echo >ENV:Escritorio/menus "sitio = ' + ("barra" if k % 2 == 0 else "dentro") + '"' for k in range(100)],
     "Wait 2",
     "Ajuste menus",
+    "; La barra de DMS (docs/bitacoras/dms-barra.md): un cambio que no mueve nada (el reloj, con la fecha delante), que la",
+    "; barra aplica en marcha por el centro; y el importador de settings.json, con un fichero que no es JSON y otro que",
+    "; no es de DMS (no se cambia nada). Al acabar, sin el fichero: la barra de serie otra vez.",
+    'Ajuste Escritorio/barra.principal-centro "reloj(orden=fecha)"',
+    "Wait 1",
+    "Ajuste DMS SYS:C/frio.bin",
+    "Ajuste DMS LOCALE:Countries/españa.country",
+    "Delete ENV:Escritorio/barra QUIET",
+    "Wait 1",
     "Delete ENVARC:Escritorio ALL QUIET",
     "; S10, Commodities: Exchange como orden (el alias de serie, a SYS:Tools/Commodities/Exchange). Ana no tiene ninguna",
     "; en marcha (la de la prueba es del sistema): la lista vacía, los ajustes, y una que no existe.",
@@ -540,6 +549,9 @@ SYS_FICHEROS = [
     # Un complemento de serie del Shell: unos alias. Los de cada usuario van en su `Home:S/Shell-Complementos`.
     ("S/Shell-Complementos/alias", "; Alias de serie del Shell. Los tuyos, en Home:S/Shell-Complementos.\nAlias ll List\nAlias la Dir ALL\nAlias md MakeDir\nAlias Exchange SYS:Tools/Commodities/Exchange\n".encode()),
     ("S/Prueba-Shell", PRUEBA_SHELL),
+    # La barra de DMS (docs/bitacoras/dms-barra.md): la barra del escritorio del usuario en shiva (sus barConfigs de
+    # DMS, sin nada que no sea de la barra), para `Ajuste DMS SYS:Prefs/Presets/DMS/shiva.json`.
+    ("Prefs/Presets/DMS/shiva.json", open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "usuario", "pruebas", "dms-barra-shiva.json"), "rb").read()),
 ]
 
 
@@ -1014,6 +1026,24 @@ with tempfile.TemporaryDirectory() as t:
     # la apariencia, el aspecto de las cajas) para las capturas del aspecto. "\n" en el contenido es un salto de línea.
     for par in filter(None, os.environ.get("DASHOS_PREFS", "").split(";")):
         nombre, _, contenido = par.partition("=")
+        if nombre == "barra":
+            # La barra de DMS: un perfil de `usuario/pruebas` (perfil-barra-<nombre>.txt) como la de fábrica
+            # (`SYS:Prefs/Env-Archive/Escritorio/barra`), para las capturas.
+            escritorio = os.path.join(raiz, "Prefs", "Env-Archive", "Escritorio")
+            os.makedirs(escritorio, exist_ok=True)
+            perfil = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "usuario", "pruebas", f"perfil-barra-{contenido}.txt")
+            with open(os.path.join(escritorio, "barra"), "wb") as f:
+                f.write(open(perfil, "rb").read())
+            continue
+        if nombre == "fondo_de":
+            # Un fondo de fuera (para las capturas; nunca en git): se copia a C/Fondos y se pone.
+            os.makedirs(os.path.join(raiz, "C", "Fondos"), exist_ok=True)
+            destino = os.path.basename(contenido)
+            with open(os.path.join(raiz, "C", "Fondos", destino), "wb") as f:
+                f.write(open(contenido, "rb").read())
+            with open(os.path.join(prefs, "fondo"), "w") as f:
+                f.write(destino + "\n")
+            continue
         if nombre not in ("apariencia", "fondo", "cajas", "panel"):
             raise SystemExit(f"DASHOS_PREFS: {nombre} no es un Prefs del centro")
         if nombre == "apariencia":
