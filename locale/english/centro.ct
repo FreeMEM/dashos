@@ -311,3 +311,75 @@ in the window
 MSG_103
 in the top bar
 ; en la barra de arriba
+MSG_104
+Dock
+; Dock
+MSG_105
+bottom
+; abajo
+MSG_106
+top
+; arriba
+MSG_107
+top centre
+; arriba en el centro
+MSG_108
+bottom centre
+; abajo en el centro
+MSG_109
+on the left, vertical
+; a la izquierda, en vertical
+MSG_110
+on the right, vertical
+; a la derecha, en vertical
+MSG_111
+a dot
+; un punto
+MSG_112
+a line
+; una raya
+MSG_113
+none
+; ninguno
+MSG_114
+none (pin them with the right button on the dock)
+; ninguno (se fijan con el botón derecho en el dock)
+MSG_115
+Show the dock: {}
+; Enseñar el dock: {}
+MSG_116
+Where: {}
+; Dónde: {}
+MSG_117
+Icon size: {} px
+; Tamaño de los iconos: {} px
+MSG_118
+Hide by itself: {}
+; Esconderse solo: {}
+MSG_119
+Group each program's windows: {}
+; Juntar las ventanas de cada programa: {}
+MSG_120
+Mark for open programs: {}
+; Marca de los abiertos: {}
+MSG_121
+Opacity: {} %
+; Opacidad: {} %
+MSG_122
+Pinned: {}
+; Fijados: {}
+MSG_123
+On-screen notices: {}
+; Avisos en pantalla: {}
+MSG_124
+Always show the value: {}
+; Enseñar siempre el valor: {}
+MSG_125
+Notice when switching workspace: {}
+; Aviso al cambiar de espacio de trabajo: {}
+MSG_126
+Caps Lock notice: {}
+; Aviso de Bloq Mayús: {}
+MSG_127
+The dock and the on-screen notices, as in DMS. Enter changes a row.
+; El dock y los avisos en pantalla, como en DMS. Intro cambia una fila.
