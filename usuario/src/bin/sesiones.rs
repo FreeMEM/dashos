@@ -52,6 +52,11 @@ use dashos::cuentas as cu;
 use dashos::tanda;
 use sesiones_disco as sd;
 
+// S8 (rama `paq`): las tandas de paquetes, por el servicio `paq`, y las asignaciones de los paquetes de todos.
+#[path = "../sesiones_paq.rs"]
+mod sesiones_paq;
+use sesiones_paq as sp;
+
 dashos::programa!(principal);
 
 /// Llave 1: el permiso de la clase de plazo (S3), para repartirlo (U4: la "llave de plazo"); llave 2: el de máquinas
@@ -791,6 +796,7 @@ fn asignaciones_de(uid: u32) -> Tabla {
     let mut t = Tabla::vacia();
     if uid >= PRIMERA_PERSONA && tiene_cuenta(uid) {
         let _ = asig::de_sesion(&mut t, false);
+        sp::poner(&mut t);
     }
     t
 }
@@ -801,6 +807,7 @@ fn asignaciones_de(uid: u32) -> Tabla {
 fn asignaciones_encerrado(desarrollo: bool) -> Tabla {
     let mut t = Tabla::vacia();
     let _ = asig::de_sesion(&mut t, true);
+    sp::poner(&mut t);
     if desarrollo {
         for &(_, volumen, _, asignacion) in RAICES_DESARROLLO {
             let mut l = [0u8; 40];
@@ -931,6 +938,27 @@ const RONDA_US: u64 = 2_000_000;
 /// S6, S36: la de lo que manda el hilo del aviso de memoria baja, para que lo apunte el hilo principal (el registro es
 /// suyo).
 const MARCA_MEMORIA: u64 = MARCA_COMPROBADOR | 3;
+/// S8: la respuesta del servicio `paq` a una tanda de paquetes (va al hueco del comprobador: o uno o el otro).
+const MARCA_PAQ: u64 = MARCA_COMPROBADOR | 4;
+
+/// S8: lee las asignaciones de los paquetes de todos (`sp::CAMINO`), al arrancar y tras cada tanda de paquetes.
+fn cargar_paquetes(a: &Archivos) {
+    use dashos::protocolo::archivos as x;
+    let (e, asa, tam) = a.orden(x::BUSCAR, 0, 0, 0, sp::CAMINO);
+    if e != x::BIEN {
+        sp::cargar(b"");
+        return;
+    }
+    let (e, _, n) = a.orden(x::LEER, asa, 0, tam.min(sp::MAX as u64), b"");
+    a.orden(x::CERRAR, asa, 0, 0, b"");
+    if e != x::BIEN {
+        return;
+    }
+    // SAFETY: la ventana de su cliente, recién llena por LEER con `n` bytes (como en `leer_permisos`).
+    let texto = unsafe { core::slice::from_raw_parts(VA_VENTANA as *const u8, n as usize) };
+    let (bien, mal) = sp::cargar(texto);
+    println!("  [sesiones] asignaciones de los paquetes de todos: {} (y {} que no valen)", bien, mal);
+}
 /// La copia de su canal con esa marca, para el hilo del aviso (0 hasta que se cree).
 static AVISO_A_SESIONES: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 /// Si `sesiones` tiene el servicio de archivos: sin él (sin disco, `arranque-virt-vm`), lo concedido no se lee ni se
@@ -1283,6 +1311,29 @@ fn seguir_tanda(
             }
             "matar" => matar_admin(fichas, a.objetivo, &t.programa, selector, registro),
             "comprobar" if comprobando.is_some() => (dashos::protocolo::archivos::EN_USO, 0),
+            // S8: las de Paq, seguidas, al servicio `paq`, que las hace juntas; su respuesta llega luego (`MARCA_PAQ`).
+            x if tanda::es_de_paq(x) && comprobando.is_some() => (dashos::protocolo::archivos::EN_USO, 0),
+            x if tanda::es_de_paq(x) => {
+                let vuelta = u32::try_from(dashos::llave_duplicar(PROPIO, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, MARCA_PAQ)).unwrap_or(0);
+                match (vuelta != 0).then(|| sp::pedir(&t.acciones[..t.n], i, &t.programa, t.uid, vuelta)).flatten() {
+                    Some(cuantas) => {
+                        let aviso = u32::try_from(dashos::llave_duplicar(PROPIO, dashos::ESCRIBIR, MARCA_PLAZO_COMPROBAR)).unwrap_or(0);
+                        let temporizador = if aviso != 0 { u32::try_from(dashos::temporizador_crear(aviso, sp::PLAZO_US + 50_000, 0)).unwrap_or(0) } else { 0 };
+                        if aviso != 0 {
+                            dashos::cerrar(aviso);
+                        }
+                        *comprobando = Some((0, t.programa, t.quien, dashos::ahora_us(), temporizador));
+                        println!("  [sesiones] tanda de {}: {} a {} de {}, se espera al servicio de paquetes", nombre(&t.programa), i + 1, i + cuantas, t.n);
+                        return false;
+                    }
+                    None => {
+                        if vuelta != 0 {
+                            dashos::cerrar(vuelta);
+                        }
+                        (NO_EXISTE, 0)
+                    }
+                }
+            }
             // A15: el comprobador aparte, sin esperar: su respuesta llega luego, y entonces se sigue.
             "comprobar" => match pedir_comprobar() {
                 Some(temporizador) => {
@@ -1986,6 +2037,8 @@ fn principal() -> u64 {
         registro.linea(rg::SISTEMA, b"sesiones", 0, "servicio", format_args!("en marcha"), "");
         // S6b, rama `cuentas`: las cuentas, de `Estado:Cuentas/`, antes que nada que las mire.
         cargar_cuentas(&mut registro);
+        // S8: las asignaciones de los paquetes de todos.
+        cargar_paquetes(a);
         // S6b, S36: lo concedido a los programas del sistema, en `Estado:Prefs/Permisos/`; y lo de antes, en el cajón
         // de `sesiones`, se pasa a su sitio (el de cada persona, cuando entre).
         cargar_permisos(None, &mut concedidos, &mut registro);
@@ -2049,9 +2102,11 @@ fn principal() -> u64 {
             continue;
         }
         // A15: la respuesta del comprobador, a quien la pidió; o, pasado el plazo, EN_USO (lo que conteste luego se tira).
-        let vencido = comprobando.is_some_and(|c| dashos::ahora_us().saturating_sub(c.3) > PLAZO_COMPROBAR_US);
-        if marca == MARCA_COMPROBADOR || marca == MARCA_PLAZO_COMPROBAR || vencido {
-            let llego = marca == MARCA_COMPROBADOR && n == 24;
+        let paq = sp::ESPERANDO.load(core::sync::atomic::Ordering::Relaxed);
+        let plazo = if paq { sp::PLAZO_US } else { PLAZO_COMPROBAR_US };
+        let vencido = comprobando.is_some_and(|c| dashos::ahora_us().saturating_sub(c.3) > plazo);
+        if marca == MARCA_COMPROBADOR || marca == MARCA_PLAZO_COMPROBAR || marca == MARCA_PAQ || vencido {
+            let llego = (marca == MARCA_COMPROBADOR && n == 24 && !paq) || (marca == MARCA_PAQ && n >= 24 && paq);
             if let Some((a_quien, programa, quien, _, temporizador)) = comprobando.filter(|_| llego || vencido) {
                 comprobando = None;
                 if temporizador != 0 {
@@ -2059,13 +2114,35 @@ fn principal() -> u64 {
                 }
                 let (estado, dato) = if llego { (u32_en(0) as i32, u64_en(8)) } else { (dashos::protocolo::archivos::EN_USO, 0) };
                 if !llego {
-                    println!("  [sesiones] el comprobador no contesta en {} s", PLAZO_COMPROBAR_US / 1_000_000);
+                    println!("  [sesiones] {} no contesta en {} s", if paq { "el servicio de paquetes" } else { "el comprobador" }, plazo / 1_000_000);
+                }
+                // S8: el servicio `paq` hace las de Paq juntas: si fue bien, todas (las que dice); si no, se para en la
+                // primera, con su porqué en el registro.
+                let mut juntas = 1;
+                if paq {
+                    sp::ESPERANDO.store(false, core::sync::atomic::Ordering::Relaxed);
+                    let por = core::str::from_utf8(m.get(24..).unwrap_or(b"")).unwrap_or("?");
+                    if llego && estado == BIEN {
+                        juntas = (u32_en(4) as usize).max(1);
+                        if let Some(a) = &archivos {
+                            cargar_paquetes(a);
+                        }
+                    } else if !por.is_empty() {
+                        println!("  [sesiones] el servicio de paquetes no lo hace: {}", por);
+                        registro.linea(rg::SEGURIDAD, &programa, registro.uid, "paquetes", format_args!("no se hace la tanda de paquetes"), por);
+                    }
                 }
                 let largo = quien.iter().position(|&c| c == 0).unwrap_or(16);
                 // S36, decisión 1: la de una tanda sigue con las demás (o se para ahí si falló).
                 match tanda_comprobando.take() {
                     Some(h) if let Some(t) = tandas[h].as_mut() => {
-                        let sigue = apuntar_en_tanda(t, estado, dato, &mut registro);
+                        let mut sigue = apuntar_en_tanda(t, estado, dato, &mut registro);
+                        for _ in 1..juntas {
+                            if !sigue || t.resultado.hechas >= t.n || !tanda::es_de_paq(t.acciones[t.resultado.hechas].nombre()) {
+                                break;
+                            }
+                            sigue = apuntar_en_tanda(t, estado, dato, &mut registro);
+                        }
                         if !sigue || seguir_tanda(t, &mut fichas, &mut lee_todo, selector, &mut comprobando, &mut registro, &mut clave_nueva, &abiertas, canal_guardian) {
                             acabar_tanda(t, &mut registro);
                             clave_nueva.borrar();
@@ -2077,7 +2154,7 @@ fn principal() -> u64 {
                     _ => acabar_admin(&mut registro, a_quien, &programa, "comprobar", &quien[..largo], estado, dato),
                 }
             }
-            if marca == MARCA_COMPROBADOR || marca == MARCA_PLAZO_COMPROBAR {
+            if marca == MARCA_COMPROBADOR || marca == MARCA_PLAZO_COMPROBAR || marca == MARCA_PAQ {
                 for &l in &ll[..k] {
                     dashos::cerrar(l);
                 }
@@ -2191,6 +2268,12 @@ fn principal() -> u64 {
                 // U6: la llave sin marca de uno que sigue las sesiones; se le dice lo que haya ya.
                 let mut quien = [0u8; 16];
                 quien.copy_from_slice(&m[4..20]);
+                // S8: el canal del servicio `paq`, para las tandas de paquetes.
+                if nombre(&quien) == "paq" && sp::CANAL.load(core::sync::atomic::Ordering::Relaxed) == 0 {
+                    sp::CANAL.store(ll[0], core::sync::atomic::Ordering::Relaxed);
+                    usadas = 1;
+                    println!("  [sesiones] pasará las tandas de paquetes al servicio paq");
+                }
                 if nombre(&quien) == "selector" && selector == 0 {
                     selector = ll[0];
                     usadas = 1;
@@ -3025,6 +3108,12 @@ fn principal() -> u64 {
                                 let mut prueba = con_cuentas(|c| *c);
                                 let ahora = hora_s();
                                 for (i, a) in acciones[..n].iter_mut().enumerate() {
+                                    // S8: las de Paq las comprueba el servicio `paq`; aquí, solo que esté.
+                                    if tanda::es_de_paq(a.nombre()) && sp::CANAL.load(core::sync::atomic::Ordering::Relaxed) == 0 {
+                                        e = NO_EXISTE;
+                                        por = Texto16::de(format_args!("la línea {}: no está el servicio de paquetes", i + 1));
+                                        break;
+                                    }
                                     if !matches!(a.nombre(), "crear" | "borrar" | "devolver" | "meter" | "sacar") {
                                         continue;
                                     }

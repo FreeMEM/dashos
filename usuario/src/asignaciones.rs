@@ -565,6 +565,8 @@ pub const DE_SESION: &[&[u8]] = &[
     b"ENV=RAM:Env",
     b"T=RAM:T",
     b"Programas=SYS:Programas",
+    // S8 (rama `paq`): lo instalado con Paq para todos; solo lo escribe el servicio `paq`.
+    b"Paquetes=SYS:Paquetes",
 ];
 
 /// Las asignaciones en las que un programa encerrado no tiene la capa del usuario (S4b, S6b regla 6).

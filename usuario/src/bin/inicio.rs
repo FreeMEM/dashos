@@ -69,6 +69,9 @@ const FICHAS: &[(&str, u32, u32, u32, &str)] = &[
     // S13: el servicio de red, para leer lo que se configura en `Prefs/Red` del disco del sistema (`hosts` y `hora`):
     // del sistema, sin derechos y encerrado ahí.
     ("red", 1, 1, 0, "Prefs/Red"),
+    // S8 (rama `paq`): el servicio de paquetes, del sistema (usuario 2, el dueño de `Paquetes`), con su raíz 0 en
+    // `Paquetes` para leer y escribir: es el único que escribe ahí.
+    ("paq", 2, 2, 0, "Paquetes"),
 ];
 /// Raíces de más en el alta de archivos (U2, S6b capa 2): programa, hueco (1 a 15), tope (4 leer, 6 leer y escribir) y
 /// camino desde la raíz del disco.
@@ -85,6 +88,8 @@ const RAICES_DE_MAS: &[(&str, u8, u8, &str)] = &[
     // porque `RAM:` es un volumen en memoria que no existe hasta que entra su usuario: se la pone `sesiones` entonces
     // (`LEEN_IDIOMA`), como al Workbench. `sesiones` le pone los dos volúmenes en su tabla de nombres.
     ("centro", 1, 4, ""),
+    // S8: y el disco, solo para leer (su `SYS:`): los repositorios y `SYS:Estado/Paq` (la lista y las claves).
+    ("paq", 1, 4, ""),
 ];
 /// Los servicios cuyas llaves reparte `sesiones` (U4): de ellos recibe una copia sin marca, para hacer copias marcadas
 /// con el número de cada programa al que se las da. Del resto (archivos), una con la suya, como cualquier cliente.
@@ -97,7 +102,8 @@ const SIGUEN_SESIONES: &[&str] = &["compositor", "sonido", "avisos"];
 /// Otros servicios de cuyo canal recibe `sesiones` una copia sin marca, igual que de los de arriba: el selector de
 /// ficheros, para dar su llave a los programas que lanza y presentárselos (S6b: el selector es el camino por el que un
 /// programa encerrado llega a un fichero que el usuario elige).
-const A_SESIONES: &[&str] = &["selector"];
+/// S8: y el servicio `paq`: solo `sesiones` le manda las tandas de paquetes ya confirmadas.
+const A_SESIONES: &[&str] = &["selector", "paq"];
 /// Si `sesiones` recibe una copia sin marca del canal que sirve `programa`.
 fn va_a_sesiones(programa: &str) -> bool {
     SIGUEN_SESIONES.contains(&programa) || A_SESIONES.contains(&programa)

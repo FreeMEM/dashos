@@ -18,6 +18,9 @@ dashos = { package = "dashos-usuario", path = "../usuario", features = ["monton"
 shell = { package = "dashos-shell", path = "../shell" }
 wayland = { package = "dashos-wayland", path = "../wayland" }
 kit = { package = "dashos-kit", path = "../kit" }
+# S8: Paq, el gestor de paquetes (la orden `C:Paq` y el servicio `paq`), y el formato de paquetes 2 de Hangar.
+paq = { package = "dashos-paq", path = "../paq" }
+pkg2 = { path = "../third_party/pkg2" }
 
 [profile.release]
 panic = "abort"
@@ -107,6 +110,18 @@ test = false
 [[bin]]
 name = "orden-makedir"
 path = "src/bin/sueltas/makedir.rs"
+test = false
+
+# S8: Paq, siempre suelto (`SYS:C/Paq`): lleva las firmas y el gzip, que no hacen falta a las demás.
+[[bin]]
+name = "orden-paq"
+path = "src/bin/sueltas/paq.rs"
+test = false
+
+# S8: el servicio `paq`, que lanza `inicio`: el único que escribe en `Paquetes:`.
+[[bin]]
+name = "paq"
+path = "src/bin/paq.rs"
 test = false
 
 [[bin]]

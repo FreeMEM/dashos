@@ -250,6 +250,13 @@ El usuario: "Paq está bien, sistema base como imagen y hangar como catálogo en
 3. **Hangar es el catálogo encima de `Paq`**: en DashOS, Hangar enseña y pide; `Paq` resuelve, baja, verifica e
    instala. Lo que toque al catálogo y al servicio se lleva en el proyecto Hangar.
 
+**Hecho, la primera versión** (rama `paq`, 2026-11-17; `docs/bitacoras/paq.md`). La orden `Paq` (`SYS:C/Paq`) y el
+servicio `paq`, el único que escribe en `Paquetes:`. Repositorios en un disco con índice firmado (Ed25519, etiqueta
+`PKG-INDEX-2`), la lista y las claves en `SYS:Estado/Paq/`. Paquetes `tar.gz` con su manifiesto, cada uno en su cajón
+y con sus asignaciones (las de todos, en la tabla de nombres de cada proceso). Generaciones en texto en `<raíz>/Paq/`,
+un almacén con cada versión y el cambio de vista por nombres; lo de todos, con una tanda de `guardian`; lo de cada uno
+en `Home:Paquetes`, sin administrador. Lo que queda, en la bitácora.
+
 ## Cómo encaja
 
 - Con S0: principio 3 (todo o nada) y principio 4 (un solo sistema).

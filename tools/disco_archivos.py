@@ -36,6 +36,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fondos_prueba  # noqa: E402
+import repo_paq  # noqa: E402
 
 # U2: un programa en el disco, para que `sesiones` lo lance desde ahí (el mismo `hola` que se construye).
 HOLA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "usuario", "target", "aarch64-unknown-none-softfloat", "release", "hola")
@@ -145,6 +146,14 @@ SHELL = os.path.join(ORDENES_BIN, "shell")
 ORDENES = os.path.join(ORDENES_BIN, "ordenes")
 SUELTAS = ["Abrir", "Administrar", "Ask", "Assign", "Cd", "Copy", "Date", "Delete", "Dir", "Echo", "Filenote", "Info", "List", "MakeDir", "Permiso",
            "Protect", "Registro", "Rename", "Type", "Usuario", "Version", "Wait"] if os.environ.get("DASHOS_ORDENES_SUELTAS") else []
+
+
+# S8 (rama `paq`): la orden `Paq`, siempre suelta (`C/Paq`): lleva las firmas y el gzip, que no van en `C/Ordenes`.
+PAQ = os.path.join(ORDENES_BIN, "orden-paq")
+# El cajón de los paquetes de todos (`Paquetes:`), del servicio `paq` (usuario 2): lo demás solo lo lee. Trae lo que
+# deja una transacción cortada (un cajón a medio desempaquetar y el cerrojo), que el servicio barre al arrancar.
+PAQUETES_UID = "2:2"
+PAQUETES_CORTADO = "Paquetes/Paq/Almacen/letras/0-0.9-1.nuevo"
 
 
 def orden(nombre):
@@ -526,6 +535,53 @@ PRUEBA_SHELL = "\n".join([
     "Usuario CLAVE Ana",
     "Usuario CLAVE",
     "Usuario CLAVE Carla",
+    "; S8 (rama paq): Paq. Los repositorios y las claves (texto en SYS:Estado/Paq), buscar e instalar para todos: el",
+    "; plan es una tanda de acciones de administrador (la ventana del sistema lo enseña entero y pide la contraseña una",
+    "; vez; la teclea el guion) y lo hace el servicio paq. Actualizar (el repositorio publica saludo 1.1: se copia su",
+    "; índice nuevo), volver a la generación de antes, quitar (se lleva letras, que ya no hace falta) y limpiar.",
+    "Paq Repos",
+    "Paq Claves",
+    "Paq Buscar salu",
+    "Paq Instalar saludo",
+    "Execute Paquetes:Saludo/Saludo",
+    "Paq Info saludo",
+    "Copy SYS:Work/Repos/prueba-2/#? Work:Repos/prueba/aarch64-dashos QUIET",
+    "Paq Actualizar",
+    "Execute Paquetes:Saludo/Saludo",
+    "Paq Volver",
+    "Execute Paquetes:Saludo/Saludo",
+    "Paq Quitar saludo",
+    "If EXISTS Paquetes:Saludo",
+    '  Echo "MAL: queda Paquetes:Saludo"',
+    "Else",
+    '  Echo "Paquetes:Saludo quitado"',
+    "EndIf",
+    "Paq Generaciones",
+    "Paq Limpiar",
+    "Paq Generaciones",
+    "; Lo de cada uno (Home:Paquetes), sin administrador: lo hace la orden, con los permisos de Ana. Con alias en inglés.",
+    "Paq install saludo HOME",
+    "Execute Home:Paquetes/Saludo/Saludo",
+    "Paq in circulo-a HOME",
+    "Paq gen HOME",
+    "Paq rm saludo circulo-a HOME",
+    "; Lo hostil: rutas que se salen (.. y /), un enlace, escribir en el cajón de otro paquete, un paquete cambiado",
+    "; tras firmar el índice, uno que pide lo que no hay, uno de un repositorio mal firmado; nada se instala.",
+    "Paq Instalar fuera HOME",
+    "Paq Instalar absoluto HOME",
+    "Paq Instalar enlace HOME",
+    "Paq Instalar vecino HOME",
+    "Paq Instalar cambiado HOME",
+    "Paq Instalar imposible HOME",
+    "Paq Instalar ajeno HOME",
+    "Paq Instalar noexiste",
+    "Paq gen HOME",
+    "Delete Home:Paquetes ALL QUIET",
+    "; Un programa sin permiso (el Shell de Ana) no escribe en Paquetes: ni en lo de Paq; y con la contraseña mala, nada.",
+    "Echo >Paquetes:intruso hola",
+    "Delete Paquetes:Paq/Generaciones/4",
+    "Paq Instalar letras",
+    "Paq Generaciones",
     "; Se deja todo como estaba.",
     "Cd Home:",
     "Assign Prueba: REMOVE",
@@ -634,6 +690,7 @@ if sys.argv[1] == "--comprobar":
         "C/ cajón",
         # El Shell nativo: sus órdenes, en SYS:C, y el programa, en SYS:System.
         f"C/Ordenes {os.path.getsize(ORDENES)}",
+        f"C/Paq {os.path.getsize(PAQ)}",
         *[f"C/{n} {os.path.getsize(orden(n))}" for n in SUELTAS],
         f"System/Shell {os.path.getsize(SHELL)}",
         # El explorador de archivos: su papelera en Home (vacía al acabar: lo tirado se restauró), la carpeta que crea
@@ -776,6 +833,9 @@ if sys.argv[1] == "--comprobar":
             fallos.append(f"{secreto!r} en claro en el disco")
     if comprobado != "sin problemas\n":
         fallos.append(f"comprobación: {comprobado.strip()}")
+    # S8 (rama `paq`): lo de Paq se mira aparte (abajo): `Paquetes/`, el repositorio de pruebas y `Estado/Paq`.
+    arbol_paq = [l for l in arbol if l.startswith(("Paquetes/", "Work/Repos/", "Estado/Paq/"))]
+    arbol = [l for l in arbol if l not in arbol_paq]
     # Paso 2 de la caja Amiga: el AmigaOS del usuario (con DASHOS_AMIGAOS) no es parte de lo que se compara.
     arbol = [l for l in arbol if not l.startswith("Amiga/") and not l.startswith(("C/Prefs/amigaos ", "C/Prefs/programas-amiga "))]
     # Paso 2 de las asignaciones: los cajones de SYS:, en su sitio del orden de `ver` (el de los nombres).
@@ -842,6 +902,32 @@ if sys.argv[1] == "--comprobar":
                 r = subprocess.run([duenos, copia, str(1 << 20), "1002:1002", "Berta"], input=(clave + "\n").encode(), capture_output=True)
                 if (r.returncode == 0) != abre:
                     fallos.append(f"el volumen de Berta con {clave!r}: {r.returncode}")
+
+    # S8 (rama `paq`): Paquetes: como lo deja la prueba del Shell. Lo barrido al arrancar (el cajón a medias y el
+    # cerrojo), fuera; ningún cajón a la vista (saludo se quitó, con letras); las generaciones 3 (volver: saludo 1.0 y
+    # letras) y 4 (vacía), que es la que manda, tras Limpiar; en el almacén, solo lo de la 3 (saludo 1.1 se limpió).
+    # Nada fuera de su sitio (el intruso del Shell no está). Y el índice del repositorio, el de la serie 2.
+    nombres_paq = sorted(l.split(" ")[0] for l in arbol_paq if l.startswith("Paquetes/"))
+    quiere_paq = sorted([
+        "Paquetes/", "Paquetes/Paq/", "Paquetes/Paq/Almacen/", "Paquetes/Paq/Almacen/letras/", "Paquetes/Paq/Almacen/letras/0-1.0-1/",
+        "Paquetes/Paq/Almacen/letras/0-1.0-1/abc", "Paquetes/Paq/Almacen/letras/0-1.0-1.pkg", "Paquetes/Paq/Almacen/letras/0-1.0-1.readme",
+        "Paquetes/Paq/Almacen/saludo/", "Paquetes/Paq/Almacen/saludo/0-1.0-1/", "Paquetes/Paq/Almacen/saludo/0-1.0-1/LEEME",
+        "Paquetes/Paq/Almacen/saludo/0-1.0-1/Saludo", "Paquetes/Paq/Almacen/saludo/0-1.0-1.pkg", "Paquetes/Paq/Almacen/saludo/0-1.0-1.readme",
+        "Paquetes/Paq/Asignaciones", "Paquetes/Paq/Generaciones/", "Paquetes/Paq/Generaciones/3", "Paquetes/Paq/Generaciones/4",
+        "Paquetes/Paq/Series",
+    ])
+    if nombres_paq != quiere_paq:
+        fallos.append(f"Paquetes: {nombres_paq}")
+    gen4 = subprocess.run([ver, disco, desde, "Paquetes/Paq/Generaciones/4"], capture_output=True).stdout.decode(errors="replace")
+    if not gen4.startswith("PKG-GENERATION 1\nGeneration: 4\n") or "Package:" in gen4:
+        fallos.append(f"Paquetes/Paq/Generaciones/4: {gen4!r}")
+    gen3 = subprocess.run([ver, disco, desde, "Paquetes/Paq/Generaciones/3"], capture_output=True).stdout.decode(errors="replace")
+    if "Package: saludo 1.0-1 prueba explicit\n" not in gen3 or "Package: letras 1.0-1 prueba dependency\n" not in gen3:
+        fallos.append(f"Paquetes/Paq/Generaciones/3: {gen3!r}")
+    ix = subprocess.run([ver, disco, desde, "Work/Repos/prueba/aarch64-dashos/index.gz"], capture_output=True).stdout
+    ix2 = subprocess.run([ver, disco, desde, "Work/Repos/prueba-2/index.gz"], capture_output=True).stdout
+    if not ix or ix != ix2:
+        fallos.append("Work/Repos/prueba: el índice no es el de la serie 2")
 
     informe = subprocess.run([ver, disco, desde, "C/informe.txt"], capture_output=True).stdout
     if informe != "segunda versión\n".encode():
@@ -970,8 +1056,17 @@ with tempfile.TemporaryDirectory() as t:
         with open(os.path.join(caja, sub, nombre), "wb") as f:
             f.write(datos)
     os.chmod(caja, 0o700)
+    # S8 (rama `paq`): el repositorio de pruebas (`tools/repo_paq.py`, en `Work/Repos`), la lista y la clave
+    # (`Estado/Paq`), y `Paquetes/` con lo que deja una transacción cortada.
+    repo_paq.hacer(raiz)
+    os.makedirs(os.path.join(raiz, *PAQUETES_CORTADO.split("/")))
+    with open(os.path.join(raiz, *PAQUETES_CORTADO.split("/"), "abc"), "wb") as f:
+        f.write(b"a medias\n")
+    os.makedirs(os.path.join(raiz, "Paquetes", "Paq", "Generaciones"))
+    with open(os.path.join(raiz, "Paquetes", "Paq", "Cerrojo"), "wb") as f:
+        f.write(b"tanda de antes de apagar; arranque 0; desde 0\n")
     # El Shell nativo y sus órdenes.
-    for destino, origen in [(("System", "Shell"), SHELL), (("C", "Ordenes"), ORDENES)] + [(("C", n), orden(n)) for n in SUELTAS]:
+    for destino, origen in [(("System", "Shell"), SHELL), (("C", "Ordenes"), ORDENES), (("C", "Paq"), PAQ)] + [(("C", n), orden(n)) for n in SUELTAS]:
         with open(os.path.join(raiz, *destino), "wb") as f:
             f.write(open(origen, "rb").read())
         os.chmod(os.path.join(raiz, *destino), 0o755)
@@ -1122,6 +1217,7 @@ with tempfile.TemporaryDirectory() as t:
     subprocess.run([duenos, fs, "0", "1:1", "camino=" + REGISTROS], check=True)
     subprocess.run([duenos, fs, "0", "1:1", "camino=" + CUENTAS], check=True)
     subprocess.run([duenos, fs, "0", "1001:1001", "camino=DeCarla"], check=True)
+    subprocess.run([duenos, fs, "0", PAQUETES_UID, "camino=Paquetes"], check=True)
     # A10: un daño que la comprobación encuentra y la reparación arregla (los enlaces de LEEME.txt, 7 en vez de 1).
     # El servicio de archivos repara al arrancar; al final, la comprobación desde Linux tiene que salir limpia.
     estropear = os.path.join(os.path.dirname(duenos), "estropear")

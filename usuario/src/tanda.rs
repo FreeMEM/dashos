@@ -17,6 +17,11 @@
 //! `borrar <nombre>` (la retira: se puede devolver unos días), `devolver <nombre>`, `meter <nombre> <grupo>` y
 //! `sacar <nombre> <grupo>`. Una cuenta nueva por tanda como mucho: `guardian` pide su contraseña en la misma ventana.
 //!
+//! Los paquetes de todos (S8, "un plan, una contraseña"; rama `paq`): `instalar`, `actualizar`, `volver` y `quitar`, con
+//! las palabras de un cambio de Paq (`paq/src/cambio.rs`: nombre, versiones, repositorio, motivo), y `limpiar` (`todo` o
+//! `anterior`). Aquí solo se mira su forma (palabras de letras, cifras y `. _ - + ~ : @`); lo demás lo comprueba el
+//! servicio `paq`, que hace solo las líneas enseñadas, todas juntas en una generación.
+//!
 //! Sin `alloc` ni nada del sistema: se prueba en el PC con `rustc --edition 2024 --test usuario/src/tanda.rs` (con
 //! `cuentas.rs` al lado).
 
@@ -52,7 +57,12 @@ pub enum Argumento {
     /// Una cuenta nueva: su nombre, su número (0, el siguiente libre) y, si lo lleva, su nombre completo (el resto de la
     /// línea).
     Crear,
+    /// Un cambio de Paq: de una a cuatro palabras (el resto de la línea), que se guardan tal cual.
+    Paquete,
 }
+
+/// Lo más que mide lo que lleva un cambio de Paq detrás de su acción.
+pub const MAX_PAQ: usize = 112;
 
 /// Las acciones de administrador que pueden ir en una tanda: la lista cerrada de S6b que existe hoy (las de
 /// `dashos::protocolo::sesiones::ACCIONES`, con lo que lleva cada una). Lo que no esté aquí no es de administrador.
@@ -66,7 +76,22 @@ pub const ACCIONES: &[(&str, Argumento)] = &[
     ("devolver", Argumento::Cuenta),
     ("meter", Argumento::CuentaYGrupo),
     ("sacar", Argumento::CuentaYGrupo),
+    ("instalar", Argumento::Paquete),
+    ("actualizar", Argumento::Paquete),
+    ("volver", Argumento::Paquete),
+    ("quitar", Argumento::Paquete),
+    ("limpiar", Argumento::Paquete),
 ];
+
+/// Si la acción `n` es de Paq (la hace el servicio `paq`).
+pub fn es_de_paq(n: &str) -> bool {
+    ACCIONES.iter().any(|a| a.0 == n && a.1 == Argumento::Paquete)
+}
+
+/// Si `p` vale como palabra de un cambio de Paq.
+fn palabra_de_paq(p: &str) -> bool {
+    !p.is_empty() && p.len() <= 64 && p.bytes().all(|c| c.is_ascii_alphanumeric() || b"._-+~:@".contains(&c))
+}
 
 /// Una acción ya leída: cuál (su sitio en `ACCIONES`) y su argumento: el número (de `matar`, o el de la cuenta de
 /// `crear`; 0 si no lleva), la cuenta y lo otro (el grupo de `meter` y `sacar`, o el nombre completo de `crear`).
@@ -78,11 +103,13 @@ pub struct Accion {
     lc: u8,
     otro: [u8; cuentas::MAX_COMPLETO],
     lo: u8,
+    paq: [u8; MAX_PAQ],
+    lp: u8,
 }
 
 impl Default for Accion {
     fn default() -> Self {
-        Accion { cual: 0, objetivo: 0, cuenta: [0; cuentas::MAX_NOMBRE], lc: 0, otro: [0; cuentas::MAX_COMPLETO], lo: 0 }
+        Accion { cual: 0, objetivo: 0, cuenta: [0; cuentas::MAX_NOMBRE], lc: 0, otro: [0; cuentas::MAX_COMPLETO], lo: 0, paq: [0; MAX_PAQ], lp: 0 }
     }
 }
 
@@ -104,6 +131,11 @@ impl Accion {
     /// El grupo (`meter`, `sacar`) o el nombre completo (`crear`).
     pub fn otro(&self) -> &[u8] {
         &self.otro[..self.lo as usize]
+    }
+
+    /// Lo que lleva un cambio de Paq detrás de su acción (`saludo 1.0-1 prueba explicit`).
+    pub fn paq(&self) -> &[u8] {
+        &self.paq[..self.lp as usize]
     }
 
     fn poner(&mut self, cuenta: &[u8], otro: &[u8]) {
@@ -182,9 +214,27 @@ pub fn leer(texto: &[u8], sal: &mut [Accion; MAX_ACCIONES]) -> Result<usize, Mal
             Argumento::Numero | Argumento::Cuenta => 2,
             Argumento::CuentaYGrupo => 3,
             Argumento::Crear => 4,
+            Argumento::Paquete => 5,
         };
         // Las partes: la de `crear`, hasta cuatro (el resto de la línea es el nombre completo); las demás, todas, y si
         // sobra alguna la línea no vale.
+        if ACCIONES[cual].1 == Argumento::Paquete {
+            let resto = &linea[nombre.len()..];
+            let resto = resto.strip_prefix(' ').unwrap_or("");
+            let palabras = resto.split(' ').count();
+            if resto.is_empty() || resto.len() > MAX_PAQ || palabras > 4 || !resto.split(' ').all(palabra_de_paq) {
+                return Err(if resto.split(' ').any(str::is_empty) && !resto.is_empty() { Mala::Linea(numero) } else { Mala::Argumento(numero) });
+            }
+            let mut accion = Accion::de(cual, 0);
+            accion.paq[..resto.len()].copy_from_slice(resto.as_bytes());
+            accion.lp = resto.len() as u8;
+            if n == MAX_ACCIONES {
+                return Err(Mala::Demasiadas(n + 1));
+            }
+            sal[n] = accion;
+            n += 1;
+            continue;
+        }
         let crea = ACCIONES[cual].1 == Argumento::Crear;
         let partes: [Option<&str>; 4] = {
             let it: &mut dyn Iterator<Item = &str> = if crea { &mut linea.splitn(4, ' ') } else { &mut linea.split(' ') };
@@ -261,6 +311,7 @@ impl core::fmt::Display for Frase<'_> {
             "meter" => write!(f, "Poner a \"{}\" en el grupo \"{}\"", cuenta, otro),
             "sacar" if otro == cuentas::ADMIN => write!(f, "Quitar a \"{}\" de administradora (grupo admin)", cuenta),
             "sacar" => write!(f, "Quitar a \"{}\" del grupo \"{}\"", cuenta, otro),
+            x if es_de_paq(x) => frase_de_paq(f, x, core::str::from_utf8(a.paq()).unwrap_or("?")),
             "comprobar" => f.write_str("Comprobar el disco"),
             "registro" => f.write_str("Leer el registro de todos los usuarios"),
             // Sin el nombre (quien lo escribe no lo sabe: la orden `Administrar`), por su número.
@@ -277,6 +328,26 @@ impl core::fmt::Display for Frase<'_> {
             }
             x => write!(f, "\"{}\"", x),
         }
+    }
+}
+
+/// Una versión de Paq (`[epoch:]versión-release`) para la gente: sin el epoch 0 ni el release 1.
+fn version_bonita(v: &str) -> &str {
+    v.strip_suffix("-1").unwrap_or(v)
+}
+
+/// La frase de un cambio de Paq: lo de todos (`Paquetes:`), con sus palabras (las de `paq/src/cambio.rs`).
+fn frase_de_paq(f: &mut core::fmt::Formatter<'_>, accion: &str, resto: &str) -> core::fmt::Result {
+    let mut p = resto.split(' ');
+    let (a, b, c, d) = (p.next().unwrap_or("?"), p.next().unwrap_or("?"), p.next().unwrap_or("?"), p.next().unwrap_or(""));
+    match accion {
+        "instalar" if d == "dependency" => write!(f, "Instalar para todos {} {} (de {}; lo necesita otro)", a, version_bonita(b), c),
+        "instalar" => write!(f, "Instalar para todos {} {} (de {})", a, version_bonita(b), c),
+        "actualizar" => write!(f, "Actualizar para todos {} de {} a {} (de {})", a, version_bonita(b), version_bonita(c), d),
+        "volver" => write!(f, "Volver para todos {} de {} a {}", a, version_bonita(b), version_bonita(c)),
+        "quitar" => write!(f, "Quitar para todos {} {}", a, version_bonita(b)),
+        "limpiar" if a == "todo" => f.write_str("Borrar las versiones viejas de los paquetes de todos (todas las generaciones menos la de ahora)"),
+        _ => f.write_str("Borrar las versiones viejas de los paquetes de todos (menos la de ahora y la de antes)"),
     }
 }
 
@@ -340,7 +411,7 @@ mod pruebas {
 
     #[test]
     fn las_acciones_son_las_de_sesiones() {
-        let nombres: [&str; 8] = ["comprobar", "matar", "registro", "crear", "borrar", "devolver", "meter", "sacar"];
+        let nombres: [&str; 13] = ["comprobar", "matar", "registro", "crear", "borrar", "devolver", "meter", "sacar", "instalar", "actualizar", "volver", "quitar", "limpiar"];
         assert_eq!(ACCIONES.iter().map(|a| a.0).collect::<std::vec::Vec<_>>(), nombres);
     }
 
@@ -432,6 +503,33 @@ mod pruebas {
         assert_eq!(f("meter Carla fotos"), "Poner a \"Carla\" en el grupo \"fotos\"");
         assert_eq!(f("sacar Carla admin"), "Quitar a \"Carla\" de administradora (grupo admin)");
         assert_eq!(f("sacar Carla fotos"), "Quitar a \"Carla\" del grupo \"fotos\"");
+    }
+
+    #[test]
+    fn cambios_de_paq() {
+        let (a, n) = lee("instalar saludo 1.0-1 prueba explicit\ninstalar letras 1.0-1 prueba dependency\nactualizar saludo 1.0-1 1.1-1 prueba\nvolver saludo 1.1-1 1.0-1 prueba\nquitar saludo 1.0-1\nlimpiar anterior").unwrap();
+        assert_eq!(n, 6);
+        assert_eq!((a[0].nombre(), a[0].paq()), ("instalar", &b"saludo 1.0-1 prueba explicit"[..]));
+        let f = |a: Accion| std::format!("{}", Frase { accion: a, programa: "", persona: "" });
+        assert_eq!(f(a[0]), "Instalar para todos saludo 1.0 (de prueba)");
+        assert_eq!(f(a[1]), "Instalar para todos letras 1.0 (de prueba; lo necesita otro)");
+        assert_eq!(f(a[2]), "Actualizar para todos saludo de 1.0 a 1.1 (de prueba)");
+        assert_eq!(f(a[3]), "Volver para todos saludo de 1.1 a 1.0");
+        assert_eq!(f(a[4]), "Quitar para todos saludo 1.0");
+        assert!(es_de_paq("quitar") && !es_de_paq("matar"));
+        // Lo hostil: sin nada, con letras de fuera, con cinco palabras, espacios de más, largo.
+        for (malo, mala) in [
+            ("instalar", Mala::Argumento(1)),
+            ("instalar saludo/../x 1.0-1", Mala::Argumento(1)),
+            ("instalar a b c d e", Mala::Argumento(1)),
+            ("instalar a\"b", Mala::Argumento(1)),
+            ("quitar  saludo", Mala::Linea(1)),
+            ("quitar saludo ", Mala::Linea(1)),
+        ] {
+            assert_eq!(lee(malo).unwrap_err(), mala, "{:?}", malo);
+        }
+        let largo = std::format!("instalar {} 1-1", "a".repeat(65));
+        assert!(lee(&largo).is_err());
     }
 
     #[test]
