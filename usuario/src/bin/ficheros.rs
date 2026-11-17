@@ -33,10 +33,26 @@ struct R {
 
 /// Si ya se dijo que el servicio no admitía una petición (una vez basta).
 static AVISADO_LLENO: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+/// Si ya se dijo que se espera a que otro suelte el disco (una vez basta).
+static AVISADO_SUJETO: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// A15: lo que se deja libre, además del 1/16 del disco con el que el servicio suelta lo sujetado, para lo que escriben
+/// los demás programas mientras este sujeta el disco (la prueba "A15 sujetar").
+const RESERVA: u64 = 256 * 1024;
+/// A15: lo mismo mientras lo sujeta otro (ver `Cliente::dejar_sitio`), que puede durar mucho más: lo que gastan los
+/// demás va con el tiempo (cada guardado de cualquiera reescribe unos bloques de cajones, y con el disco sujeto los
+/// viejos no se reusan). Medido (rama a15-carrera): con el PC cargado, la foto del comprobador duró 29 s y, con este
+/// programa ya parado, los demás gastaron 104 bloques (416 KB); sin carga, 46 en 3 s. 1 MB es el doble y algo más. En
+/// el disco de pruebas (unos 1,5 MB libres) quiere decir que mientras el comprobador sujeta, aquí no se escribe.
+const RESERVA_AJENA: u64 = 1024 * 1024;
+/// A15: lo más que se espera a que otro suelte el disco (el comprobador, con el PC cargado, ha tardado 31 s).
+const ESPERA_SUJETO_US: u64 = 120_000_000;
 
 struct Cliente {
     lectura: u32,
     ventana: usize,
+    /// A15: este programa tiene el disco sujeto (`SUJETAR` le dio 0 y aún no ha pedido `SOLTAR`).
+    sujeto: core::cell::Cell<bool>,
 }
 
 impl Cliente {
@@ -52,6 +68,40 @@ impl Cliente {
     }
 
     fn pedir(&self, orden: u32, asa: u32, a: u64, b: u64, nombre: &str) -> R {
+        if orden == ESCRIBIR && !self.sujeto.get() {
+            self.dejar_sitio(b);
+        }
+        let r = self.pedir_ya(orden, asa, a, b, nombre);
+        match orden {
+            SUJETAR if r.estado == 0 => self.sujeto.set(true),
+            SOLTAR => self.sujeto.set(false),
+            _ => {}
+        }
+        r
+    }
+
+    /// A15: el comprobador (otro proceso) recorre una foto del disco sujeta mientras este programa escribe. Mientras
+    /// está sujeto, lo que se borra no se reusa; si el sitio libre baja de 1/16 del disco, el servicio lo suelta y la
+    /// prueba del comprobador se queda a medias. Así que, antes de escribir `n` bytes: si no caben dejando ese 1/16 y
+    /// `RESERVA_AJENA`, y es porque otro tiene el disco sujeto (`INFO` lo dice), se espera a que lo suelte. Sin nadie
+    /// que lo sujete, se escribe (lo borrado se reusa). Así no importa en qué prueba de este programa empiece a sujetar el otro, ni
+    /// cuánto ocupe el disco: lo que se escribe mientras tanto se para antes de quitarle el sitio.
+    fn dejar_sitio(&self, n: u64) {
+        let desde = dashos::ahora_us();
+        while dashos::ahora_us() - desde < ESPERA_SUJETO_US {
+            let info = self.pedir_ya(INFO, 0, 0, 0, "");
+            if info.estado != 0 || info.asa == 0 || info.b >= n + info.a / 16 + RESERVA_AJENA {
+                return;
+            }
+            if !AVISADO_SUJETO.swap(true, core::sync::atomic::Ordering::Relaxed) {
+                println!("  [ficheros] A15: otro tiene el disco sujeto y quedan {} KB libres: se espera a que lo suelte para escribir", info.b / 1024);
+            }
+            dashos::dormir_us(10_000);
+        }
+        println!("  [ficheros] A15: otro tiene el disco sujeto más de {} s: se escribe igual", ESPERA_SUJETO_US / 1_000_000);
+    }
+
+    fn pedir_ya(&self, orden: u32, asa: u32, a: u64, b: u64, nombre: &str) -> R {
         let mut p = [0u8; 256];
         p[0..4].copy_from_slice(&orden.to_le_bytes());
         p[4..8].copy_from_slice(&asa.to_le_bytes());
@@ -187,7 +237,7 @@ fn prestadas(c: &Cliente, dir: u32) -> bool {
 
 fn principal() -> u64 {
     let (lectura, vuelta) = dashos::canal_crear();
-    let mut c = Cliente { lectura, ventana: 0 };
+    let mut c = Cliente { lectura, ventana: 0, sujeto: core::cell::Cell::new(false) };
     // La sesión: el extremo de escritura del canal de respuesta va con el mensaje.
     let mut p = [0u8; 32];
     p[0..4].copy_from_slice(&SESION.to_le_bytes());
@@ -303,11 +353,13 @@ fn principal() -> u64 {
     let desde = c.pedir(BUSCAR, cajon.asa, 0, 0, "grande.txt");
     println!("  [ficheros] rechazos: {}; desde un cajón: {}", si(rechazos), si(desde.estado == 0 && desde.a == g.a));
 
-    // FS4: escribir. Un cajón y un fichero de 200 KB, por trozos de 64 KB.
-    let libre_antes = info.b;
+    // FS4: escribir. Un cajón y un fichero de 200 KB, por trozos de 64 KB. Lo libre se mide tras esperar, si hace
+    // falta, a que el comprobador suelte el disco (al soltarlo vuelve lo que retenía: si no, lo libre podría subir).
+    const TAM: u64 = 200 * 1024;
+    c.dejar_sitio(TAM);
+    let libre_antes = c.pedir(INFO, 0, 0, 0, "").b;
     let dir = c.pedir(CREAR, 0, 2, 0, "Escrito");
     let f = c.pedir(CREAR, dir.asa, 1, 0, "datos.bin");
-    const TAM: u64 = 200 * 1024;
     let mut escrito = dir.estado == 0 && f.estado == 0;
     let mut off = 0;
     while escrito && off < TAM {
@@ -499,14 +551,12 @@ fn principal() -> u64 {
     println!("  [ficheros] FS8 comprobación: {}{}", si(k.estado == 0 && k.a == 0 && k.c > 0), texto.trim_end());
     // A15: sujetar el disco, escribir y borrar mientras tanto (lo borrado espera sin reusarse; comprobar lo cuenta como
     // libre pendiente) y soltar. Dos veces no se sujeta, ni se suelta lo que no se sujeta.
-    // Si lo tiene sujeto el comprobador (otro proceso), se espera a que suelte (hasta 30 s: con el PC cargado, su
-    // prueba del arranque pasó de 3 a 31 s).
+    // Si lo tiene sujeto el comprobador (otro proceso), se espera a que suelte (hasta `ESPERA_SUJETO_US`: con el PC
+    // cargado, su prueba del arranque pasó de 3 a 31 s).
     let sujetar = || {
+        let desde = dashos::ahora_us();
         let mut e = c.pedir(SUJETAR, 0, 0, 0, "").estado;
-        for _ in 0..3000 {
-            if e != EN_USO {
-                break;
-            }
+        while e == EN_USO && dashos::ahora_us() - desde < ESPERA_SUJETO_US {
             dashos::dormir_us(10_000);
             e = c.pedir(SUJETAR, 0, 0, 0, "").estado;
         }
@@ -514,11 +564,17 @@ fn principal() -> u64 {
     };
     let primero = sujetar();
     let segundo = c.pedir(SUJETAR, 0, 0, 0, "").estado;
-    let mut sujeto = primero == 0 && segundo == EN_USO;
+    // Lo que se escribe en cada vuelta, medido con el disco ya sujeto: lo de las tres tiene que caber sin bajar del 1/16
+    // con el que el servicio lo soltaría, con `RESERVA` para los demás (y para lo que se reescribe de los cajones al
+    // guardar: los datos se comprimen, y 3 × 200 KB retienen unos 64 bloques, no 150). Hasta 200 KB; con menos de 64 KB
+    // por vuelta no hay sitio para la prueba.
+    let info = c.pedir(INFO, 0, 0, 0, "");
+    let tam = (info.b.saturating_sub(info.a / 16 + RESERVA) / 3 & !4095).min(200 * 1024);
+    let mut sujeto = primero == 0 && segundo == EN_USO && tam >= 64 * 1024;
     let mut escribir_bien = true;
     let escrito = c.pedir(BUSCAR, 0, 0, 0, "Escrito");
     for vuelta in 0..3 {
-        if let Some(a) = hacer(&c, escrito.asa, "a15.bin", 200 * 1024, vuelta) {
+        if let Some(a) = hacer(&c, escrito.asa, "a15.bin", tam, vuelta) {
             // Guardado antes de borrar, para que lo borrado quede sujeto.
             escribir_bien &= c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
             c.pedir(CERRAR, a, 0, 0, "");
@@ -535,8 +591,8 @@ fn principal() -> u64 {
     sujeto = sujeto && escribir_bien && comprobar_1.a == 0 && soltar_1 == 0 && soltar_2 == NO_EXISTE && comprobar_2.a == 0;
     if !sujeto {
         // Para saber cuál falla (sale a veces con el PC cargado).
-        println!("  [ficheros] A15 sujetar: sujetar {} y {}, escribir {}, comprobar {} ({} problemas), soltar {} y {}, comprobar {} ({})",
-            primero, segundo, escribir_bien, comprobar_1.estado, comprobar_1.a, soltar_1, soltar_2, comprobar_2.estado, comprobar_2.a);
+        println!("  [ficheros] A15 sujetar: sujetar {} y {}, {} KB libres ({} KB por vuelta), escribir {}, comprobar {} ({} problemas), soltar {} y {}, comprobar {} ({})",
+            primero, segundo, info.b / 1024, tam / 1024, escribir_bien, comprobar_1.estado, comprobar_1.a, soltar_1, soltar_2, comprobar_2.estado, comprobar_2.a);
     }
     println!("  [ficheros] A15 sujetar: {}", si(sujeto));
     // A15, hostil: sujetar y no soltar mientras se escribe, guarda y borra mucho más de lo que cabe. El servicio suelta solo al
@@ -583,9 +639,11 @@ fn principal() -> u64 {
     }
     c.pedir(CERRAR, escrito.asa, 0, 0, "");
     let soltar = c.pedir(SOLTAR, 0, 0, 0, "").estado;
-    let lleno = lleno && soltar == LLENO && c.pedir(COMPROBAR, 0, 0, 0, "").a == 0;
+    // El aviso de LLENO se da una vez: otro SOLTAR ya no tiene nada que soltar.
+    let otra_vez = c.pedir(SOLTAR, 0, 0, 0, "").estado;
+    let lleno = lleno && soltar == LLENO && otra_vez == NO_EXISTE && c.pedir(COMPROBAR, 0, 0, 0, "").a == 0;
     if !lleno {
-        println!("  [ficheros] A15 sujetar sin soltar: {} rondas, soltar {}, primer fallo {:?}", rondas, soltar, fallo);
+        println!("  [ficheros] A15 sujetar sin soltar: {} rondas, soltar {} y {}, primer fallo {:?}", rondas, soltar, otra_vez, fallo);
     }
     println!("  [ficheros] A15 sujetar sin soltar: {}", si(lleno));
 

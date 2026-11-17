@@ -962,6 +962,9 @@ struct Cliente {
     /// Ajustes en texto (avisos de cambio): el cajón de cada asa que dio al buscar o crear, para avisar a quien vigila
     /// el cajón cuando cambia un fichero de dentro.
     padres: BTreeMap<u32, u32>,
+    /// A15: sujetaba el disco y el servicio lo soltó por falta de sitio: su `SOLTAR` dará `LLENO`. Va con cada cliente
+    /// (no en un solo sitio para todos): si después sujeta otro y también se le suelta, cada uno se entera de lo suyo.
+    soltado_por_sitio: bool,
 }
 
 /// Las asas 0 a 15 son raíces; las demás empiezan aquí.
@@ -1064,7 +1067,7 @@ static FALLO_GUARDADO: AtomicI32 = AtomicI32::new(0);
 /// Hubo un guardado bueno: lo de todos los clientes está en el disco.
 static GUARDADO: AtomicBool = AtomicBool::new(false);
 /// A15: la marca de quien sujeta el disco (`SUJETAR`), 0 si nadie; y la de quien lo tenía cuando se soltó por falta
-/// de sitio, para decírselo en su `SOLTAR`.
+/// de sitio, hasta que el bucle principal se lo apunta a ese cliente (`tras_guardar`), que lo sabrá en su `SOLTAR`.
 static SUJETA: AtomicU64 = AtomicU64::new(0);
 static SOLTADA_POR_SITIO: AtomicU64 = AtomicU64::new(0);
 
@@ -2190,9 +2193,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
             match fs.hold() {
                 Ok(()) => {
                     SUJETA.store(c.marca, Ordering::Relaxed);
-                    if SOLTADA_POR_SITIO.load(Ordering::Relaxed) == c.marca {
-                        SOLTADA_POR_SITIO.store(0, Ordering::Relaxed);
-                    }
+                    c.soltado_por_sitio = false;
                     Respuesta { estado: BIEN, ..Default::default() }
                 }
                 Err(e) => mal(estado_de(e)),
@@ -2203,8 +2204,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 fs.release();
                 SUJETA.store(0, Ordering::Relaxed);
                 Respuesta { estado: BIEN, ..Default::default() }
-            } else if SOLTADA_POR_SITIO.load(Ordering::Relaxed) == c.marca {
-                SOLTADA_POR_SITIO.store(0, Ordering::Relaxed);
+            } else if core::mem::take(&mut c.soltado_por_sitio) {
                 mal(LLENO)
             } else {
                 mal(NO_EXISTE)
@@ -2524,7 +2524,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
         // Del sistema de archivos de la asa: el disco o, por una asa de `RAM:`, el volumen en memoria de su sesión.
         INFO => {
             let (mide, libre) = fs.medidas(nodo_de(c, p.asa).map_or(0, |(vol, _)| vol));
-            Respuesta { estado: BIEN, a: mide, b: libre, c: BLOCK_SIZE, ..Default::default() }
+            Respuesta { estado: BIEN, asa: fs.holding() as u32, a: mide, b: libre, c: BLOCK_SIZE, ..Default::default() }
         }
         _ => mal(MAL_FORMADO),
     }
@@ -3173,7 +3173,7 @@ fn sesion(fs: &mut Fs, clientes: &mut [Option<Cliente>], altas: &BTreeMap<u64, F
                 }
                 return (SIN_SITIO, None, 0);
             }
-            clientes[i] = Some(Cliente { marca, ficha, respuesta, ventana: m, va, asas: BTreeMap::new(), cambiadas: alloc::collections::BTreeSet::new(), siguiente: RAICES as u32, pendiente: false, fallo: None, tam, cedidas: BTreeMap::new(), raices: ficha.raices, topes: BTreeMap::new(), padres: BTreeMap::new() });
+            clientes[i] = Some(Cliente { marca, ficha, respuesta, ventana: m, va, asas: BTreeMap::new(), cambiadas: alloc::collections::BTreeSet::new(), siguiente: RAICES as u32, pendiente: false, fallo: None, tam, cedidas: BTreeMap::new(), raices: ficha.raices, topes: BTreeMap::new(), padres: BTreeMap::new(), soltado_por_sitio: false });
             // Las raíces de su alta cuentan como abiertas mientras dure la sesión (se cierran al soltarlo).
             for (vol, n, _) in ficha.raices.into_iter().flatten() {
                 fs.contar_uso(vol, n.id());
@@ -3570,6 +3570,11 @@ fn tocar_timbres(vig: &mut Vigilancias, reintento: &mut Option<(u64, u32)>) {
 /// Lo que dejaron los guardados (A2): uno bueno pone al día a todos; uno que falló avisa a quien tenía algo pendiente
 /// y deja el disco en solo lectura hasta comprobarlo.
 fn tras_guardar(clientes: &mut [Option<Cliente>], solo_lectura: &mut bool) {
+    // A15: a quién se le soltó el disco por falta de sitio (en esta orden o en el guardado de antes): se le apunta a él.
+    let soltado = SOLTADA_POR_SITIO.swap(0, Ordering::Relaxed);
+    if let Some(c) = clientes.iter_mut().flatten().find(|c| soltado != 0 && c.marca == soltado) {
+        c.soltado_por_sitio = true;
+    }
     let fallo = FALLO_GUARDADO.swap(0, Ordering::Relaxed);
     if fallo != 0 {
         *solo_lectura = true;

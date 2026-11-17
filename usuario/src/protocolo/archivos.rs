@@ -20,6 +20,8 @@ pub const BORRAR: u32 = 8;
 pub const RENOMBRAR: u32 = 9;
 pub const TAMANO: u32 = 10;
 pub const VACIAR: u32 = 11;
+/// Lo que mide el volumen de la asa (a, bytes), lo libre (b, bytes) y el bloque (c). A15: en `asa`, 1 si alguien
+/// tiene el disco sujeto (`SUJETAR`): mientras tanto, lo que se borra no vuelve a quedar libre.
 pub const INFO: u32 = 12;
 pub const COMENTARIO: u32 = 13;
 pub const COMENTAR: u32 = 14;
