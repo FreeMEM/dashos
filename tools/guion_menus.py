@@ -37,8 +37,17 @@ Lo de la rama `menus-pulido` (docs/bitacoras/menus-pulido.md):
 10. `Ajuste menus dentro`: en la ventana de `menus-prueba`, F10 y las teclas hasta la 10.ª de "Muchas", que no cabe
    en la ventana (22), e Intro; y la rueda en "Largo" (23).
 11. `Ajuste menus barra` otra vez: `menus-prueba` cierra su ventana con "Largo" desplegado en la barra; la barra lo
-   quita y un clic en el título del Shell le llega (24). `Ajuste menus dentro` y `Assign MenusHechos: RAM:`, que dice
-   `sesiones`: el guion llegó al final.
+   quita y un clic en el título del Shell le llega (24). `Ajuste menus dentro`.
+
+Lo de la rama `centro-vivo` (docs/bitacoras/centro-vivo.md):
+
+12. El menú "Ver" de la ventana de Dash (kit-c), dentro: una casilla, opciones y un submenú (25, 26); con el teclado,
+   la casilla se desmarca, se elige la tercera opción y, en el submenú, la tercera entrada (la del submenú de dentro,
+   que no vale, no está).
+13. Ajustes > Barra (el botón derecho sobre la barra) y, con Ajustes abierta y delante, `Ajuste menus barra` desde el
+   Shell (un guion de fondo, con `Run`): el centro lo aplica al momento (27); `Ajuste menus dentro`, igual; Esc la cierra. Lo hostil: una ráfaga de 16 cambios (un guion en
+   `RAM:`, con `Run`) mientras Ajustes se abre y se cierra a ráfagas; queda el último (dentro), y Ajustes se abre y se
+   cierra después como siempre. `Assign MenusHechos: RAM:`, que dice `sesiones`: el guion llegó al final.
 
 Cada comprobación que no sale para el guion (lo apunta): sin `MenusHechos`, la prueba falla.
 
@@ -92,7 +101,7 @@ def largo():
 
 # Teclado español: lo que hay que pulsar (nombres de `sendkey` de QEMU, posición de EE. UU.) para cada letra.
 ESPECIALES = {" ": "spc", "-": "slash", ".": "dot", ",": "comma", "/": "shift-7", "=": "shift-0", ":": "shift-dot",
-              "_": "shift-slash", '"': "shift-2"}
+              "_": "shift-slash", '"': "shift-2", ">": "shift-less"}
 
 
 def teclear(orden, intro=True):
@@ -616,8 +625,136 @@ def pulido(dx, dy, ancho_dash, menu_dash, sx, sy):
     desde = largo()
     teclear("Ajuste menus dentro")
     debe(r"\[shell\] menús: dentro de la ventana", 30, desde, "los menús no vuelven dentro")
+    ver_kitc(dx, dy)
+    centro_vivo(sx, sy, titulo_shell)
     teclear("Assign MenusHechos: RAM:")
     apuntar("acabado")
+
+
+def ver_kitc(dx, dy):
+    """12. El menú "Ver" de la ventana de Dash (kit-c): una casilla, opciones y un submenú."""
+    debe(r"\[dash-ventana\] submenú dentro de otro: 0", 5, 0, "kit-c no da error con un submenú dentro de otro")
+    clic(dx + 12, dy + 300)
+    time.sleep(1)
+    desde = largo()
+    teclas("f10", "right", "right")
+    debe(r'\[dash-ui\] se ve: Ver: [^\n]*foco en "Rejilla"', 15, desde, "F10 y dos veces Derecha no abren Ver (kit-c)")
+    capturar("25-kitc-ver", 1)
+    desde = largo()
+    teclas("ret")
+    debe(r"\[dash-ventana\] Rejilla: 0", 15, desde, "Intro en la casilla Rejilla (kit-c) no la desmarca")
+    desde = largo()
+    teclas("f10", "right", "right", "down", "down", "down", "ret")
+    debe(r"\[dash-ventana\] tamaño: pequeño 0, mediano 0, grande 1", 15, desde, "la opción Grande (kit-c) no desmarca las otras")
+    desde = largo()
+    teclas("f10", "right", "right", "down", "down", "down", "down", "right")
+    debe(r'\[dash-ui\] se ve: Ver: [^\n]*; Orden: de "Por nombre" a "Por tamaño", foco en "Por nombre"', 15, desde,
+         "Derecha en Orden (kit-c) no abre el submenú")
+    capturar("26-kitc-submenu", 1)
+    desde = largo()
+    # Si lo del submenú de dentro se hubiera puesto en este, la tercera sería "No sale".
+    teclas("down", "down")
+    debe(r'\[dash-ui\] se ve: Ver: [^\n]*; Orden: [^\n]*foco en "Por tamaño"', 15, desde,
+         "la tercera del submenú (kit-c) no es Por tamaño: lo del submenú de dentro se puso")
+    desde = largo()
+    teclas("ret")
+    debe(r"\[dash-ventana\] orden: 27", 15, desde, "Intro en Por tamaño (kit-c) no la elige")
+    apuntar("kit-c: casilla, opciones y submenú")
+
+
+def centro_vivo(sx, sy, titulo_shell):
+    """13. Con Ajustes abierta, el centro atiende su canal: `Ajuste menus` se aplica al momento."""
+    bb = debe(r"\[barra\] botones: lanzador en \((\d+), (\d+)\)", 5, 0, "la barra no dice dónde está")
+    barra = (500, int(bb[-1][1]))
+    clic(*titulo_shell)
+    time.sleep(0.5)
+    # Las órdenes, de un guion del Shell lanzado de fondo (`Run`): así Ajustes se queda delante y con el teclado (un
+    # programa no puede traerse delante: con el Shell delante, Ajustes queda tapada y Esc no le llega).
+    for linea in ['Echo >RAM:m "Wait 5"', 'Echo >>RAM:m "Ajuste menus barra"', 'Echo >>RAM:m "Wait 4"',
+                  'Echo >>RAM:m "Ajuste menus dentro"']:
+        teclear(linea)
+        time.sleep(0.3)
+    desde = abierta = largo()
+    teclear("Run Execute RAM:m")
+    time.sleep(0.5)
+    clic(*barra, boton=2)
+    debe(r"\[centro\] Barra en pantalla", 30, desde, "el botón derecho sobre la barra no abre Ajustes > Barra")
+    a = debe(r"\[compositor\] ventana de centro en \((\d+), (\d+)\)", 10, desde, "el compositor no dice dónde va Ajustes")
+    # Un clic en el título de la categoría (un texto: no hace nada): Ajustes, con el teclado (una ventana nueva no
+    # siempre se lo lleva).
+    en_ajustes = (int(a[-1][0]) + 300, int(a[-1][1]) + 40)
+    t0 = time.time()
+    debe(r"\[centro\] menús en marcha: en la barra, de ENV:Escritorio/menus; en el compositor: sí", 30, desde,
+         "con Ajustes abierta, el centro no aplica `Ajuste menus barra`")
+    apuntar(f"con Ajustes abierta, los menús a la barra a los {time.time() - t0:.1f} s de abrirse Ajustes (el guion espera 5)")
+    debe(r"\[shell\] menús: en la barra", 10, desde, "con Ajustes abierta, el Shell no se entera de la barra")
+    capturar("27-ajustes-abierta-menus-barra", 0.5)
+    debe(r"\[centro\] menús en marcha: dentro de las ventanas", 20, desde, "con Ajustes abierta, el centro no aplica `Ajuste menus dentro`")
+    debe(r"\[shell\] menús: dentro de la ventana", 10, desde, "con Ajustes abierta, el Shell no vuelve dentro")
+    if "[centro] cerrado" in texto()[abierta:]:
+        raise Fallo("Ajustes se cerró antes de tiempo")
+    apuntar("con Ajustes abierta, los dos cambios aplicados")
+    clic(*en_ajustes)
+    time.sleep(0.5)
+    desde = largo()
+    mandar("sendkey esc")
+    debe(r"\[centro\] cerrado", 15, desde, "Esc no cierra Ajustes")
+    clic(*titulo_shell)
+    time.sleep(0.5)
+    # Hostil: 16 cambios seguidos (r1, dos; r2, r1 dos veces...), de fondo, mientras Ajustes se abre y se cierra a
+    # ráfagas (el botón derecho sobre la barra, Esc). Queda el último: dentro.
+    for linea in ['Echo >RAM:r1 "Ajuste menus barra"', 'Echo >>RAM:r1 "Ajuste menus dentro"',
+                  'Echo >RAM:r2 "Execute RAM:r1"', 'Echo >>RAM:r2 "Execute RAM:r1"',
+                  'Echo >RAM:r3 "Execute RAM:r2"', 'Echo >>RAM:r3 "Execute RAM:r2"',
+                  'Echo >RAM:r4 "Execute RAM:r3"', 'Echo >>RAM:r4 "Execute RAM:r3"']:
+        teclear(linea)
+        time.sleep(0.3)
+    time.sleep(1)
+    desde = largo()
+    teclear("Run Execute RAM:r4")
+    time.sleep(1)
+    for _ in range(8):
+        clic(*barra, boton=2)
+        time.sleep(0.4)
+        clic(*en_ajustes)
+        mandar("sendkey esc")
+        time.sleep(0.3)
+    # Hasta que no cambie nada en 8 s (como mucho 120).
+    hasta, antes, quieto = time.time() + 120, -1, time.time()
+    while time.time() < hasta:
+        n = len(re.findall(r"\[centro\] menús en marcha", texto()[desde:]))
+        if n != antes:
+            antes, quieto = n, time.time()
+        elif time.time() - quieto > 8:
+            break
+        time.sleep(0.5)
+    hechos = re.findall(r"\[centro\] menús en marcha: ([^,]+),", texto()[desde:])
+    shell = re.findall(r"\[shell\] menús: ([^\n]+)", texto()[desde:])
+    abiertas = len(re.findall(r"\[centro\] Barra en pantalla", texto()[desde:]))
+    cerradas = texto()[desde:].count("[centro] cerrado")
+    apuntar(f"ráfaga: {len(hechos)} cambios aplicados, Ajustes abierta {abiertas} veces y cerrada {cerradas}")
+    if not hechos or hechos[-1] != "dentro de las ventanas" or not shell or not shell[-1].startswith("dentro"):
+        raise Fallo(f"tras la ráfaga no queda el último: centro {hechos[-3:]}, Shell {shell[-3:]}")
+    if re.search(r"\[centro\] error de protocolo|número de objeto nuevo malo", texto()[desde:]):
+        raise Fallo("tras la ráfaga, error de protocolo")
+    # Y después, como siempre: se abre y se cierra.
+    for _ in range(2):
+        clic(*en_ajustes)
+        mandar("sendkey esc")
+        time.sleep(0.5)
+    if texto()[abierta:].count("[centro] Barra en pantalla") > texto()[abierta:].count("[centro] cerrado"):
+        raise Fallo("tras la ráfaga, Ajustes sigue abierta y Esc no la cierra")
+    desde = largo()
+    clic(*barra, boton=2)
+    debe(r"\[centro\] Barra en pantalla", 30, desde, "tras la ráfaga, el botón derecho no abre Ajustes")
+    time.sleep(1)
+    clic(*en_ajustes)
+    time.sleep(0.5)
+    mandar("sendkey esc")
+    debe(r"\[centro\] cerrado", 15, desde, "tras la ráfaga, Esc no cierra Ajustes")
+    clic(*titulo_shell)
+    time.sleep(0.5)
+    apuntar("centro: con Ajustes abierta atiende su canal; la ráfaga no lo rompe")
 
 
 try:

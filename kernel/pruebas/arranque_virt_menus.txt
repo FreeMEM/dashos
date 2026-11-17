@@ -47,4 +47,16 @@ DashOS en marcha con 4 núcleos
 # desplegado en la barra.
 ~[menus-prueba] elegido: 110 (Opción 10)
 ~[menus-prueba] cierra su ventana (
+# centro-vivo (docs/bitacoras/centro-vivo.md): el menú "Ver" de la ventana de Dash (kit-c), con una casilla, opciones y un
+# submenú; un submenú dentro de otro da error, como en el Amiga, y lo suyo no se pone.
+~[dash-ui] submenú "Más" dentro de otro: no hay segundo nivel (como en el Amiga); lo suyo no se pone
+~[dash-ventana] submenú dentro de otro: 0
+~[dash-ventana] Rejilla: 0
+~[dash-ventana] tamaño: pequeño 0, mediano 0, grande 1
+~[dash-ventana] orden: 27
+# Con Ajustes abierta (el botón derecho sobre la barra), el centro sigue atendiendo su canal: `Ajuste menus barra` y
+# `Ajuste menus dentro` en el Shell se aplican al momento; y una ráfaga de cambios con Ajustes abriéndose y cerrándose
+# (el guion lo comprueba antes de llegar al final).
+~[barra] abre Ajustes > Barra: 0
+~[centro] Barra en pantalla
 ~[sesiones] Shell asigna "MenusHechos=RAM:" (0): 0
