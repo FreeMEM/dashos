@@ -278,7 +278,10 @@ Amiga) y generar toda la configuración como enlaces.
 2. Prestar un aparato USB a un dominio y recibir de él red por virtio (vale en todas las máquinas, se prueba en QEMU).
    **En parte, el 2026-11-16** (`docs/bitacoras/dominio-red.md`): la red por virtio hecha y probada (DHCP y TCP de
    DashOS por un dominio, con hostiles), pero con una tarjeta PCI pasada sin IOMMU, solo en QEMU, como paso
-   intermedio. Falta el USB (plan en la bitácora: el xHCI de DashOS presta el aparato por USB/IP sobre vsock).
+   intermedio. **Con USB, el 2026-11-16** (`docs/bitacoras/dominio-usb.md`): el xHCI de DashOS presta el aparato
+   (un adaptador de red USB) y el dominio lo engancha por USB/IP con `vhci-hcd`, por un par de sockets y una memoria
+   compartida en vez de vsock. Sin IOMMU y en cualquier máquina; probado en QEMU con hostiles. La e1000 por PCI se
+   retiró de la prueba.
 3. Las seis capas de seguridad, con pruebas hostiles (un dominio que intenta escribir su kernel, cargar un módulo,
    salirse de su memoria, mentir por el canal virtio).
 4. IOMMU y aparatos PCI (con la rama `x86`).
