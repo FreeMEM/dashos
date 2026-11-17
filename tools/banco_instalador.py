@@ -46,11 +46,16 @@ BASES = os.path.join(AMICACHY, "baselines")
 BANCO = os.path.realpath(os.path.expanduser(os.environ.get("BANCO", "~/recuperar/geosian-7d/instalador-vm")))
 CAPTURAS = os.path.realpath(os.path.expanduser(os.environ.get("CAPTURAS", "~/recuperar/geosian-7d/instalador-capturas")))
 QEMU_IMG = "/usr/bin/qemu-img"
-OVMF_CODE = os.environ.get("OVMF_CODE", "/usr/share/edk2/x64/OVMF_CODE.4m.fd")
-# Los VARS de partida: los del banco de AmiCachy si está; si no (otra máquina), los del sistema.
-OVMF_VARS = os.environ.get("OVMF_VARS", os.path.join(AMICACHY, "ovmf", "OVMF_VARS-template.4m.fd"))
-if not os.path.exists(OVMF_VARS):
-    OVMF_VARS = "/usr/share/edk2/x64/OVMF_VARS.4m.fd"
+def _primero(*rutas):
+    """La primera ruta que existe (o la primera, para que el error diga cuál se buscó)."""
+    return next((r for r in rutas if r and os.path.exists(r)), rutas[0])
+
+
+# El firmware: el de `OVMF_CODE`/`OVMF_VARS` si se dan; si no, el de Arch (/usr/share/edk2/x64/) o el de Ubuntu
+# (/usr/share/OVMF/). Los VARS de partida, los del banco de AmiCachy si está.
+OVMF_CODE = os.environ.get("OVMF_CODE") or _primero("/usr/share/edk2/x64/OVMF_CODE.4m.fd", "/usr/share/OVMF/OVMF_CODE_4M.fd")
+OVMF_VARS = os.environ.get("OVMF_VARS") or _primero(os.path.join(AMICACHY, "ovmf", "OVMF_VARS-template.4m.fd"), "/usr/share/edk2/x64/OVMF_VARS.4m.fd",
+                                                    "/usr/share/OVMF/OVMF_VARS_4M.fd")
 os.makedirs(BANCO, exist_ok=True)
 
 

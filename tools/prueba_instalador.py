@@ -39,6 +39,12 @@ SISTEMA = os.path.join(RAIZ, "kernel", "target", "nvme-x86.img")
 PENDRIVE = os.path.join(RAIZ, "kernel", "target", "pendrive-x86.img")
 # El dominio Linux de x86 con ntfsresize (`tools/dominio_x86.py preparar`), para encoger.
 DOMINIO_X86 = os.path.expanduser(os.environ.get("DASHOS_DOMINIO_X86", "~/recuperar/geosian-7d/dominio-x86"))
+DOMINIO_FICHEROS = [os.path.join(DOMINIO_X86, f) for f in ("bzImage", "initramfs.cpio")]
+COMO_PREPARAR = f"python3 tools/dominio_x86.py preparar (o DASHOS_DOMINIO_X86=<carpeta> con bzImage e initramfs.cpio)"
+
+
+def hay_dominio():
+    return all(os.path.exists(f) for f in DOMINIO_FICHEROS)
 B = banco.BANCO
 resumen = []
 
@@ -72,8 +78,7 @@ def pendrive(nombre, plan_texto):
     with open(banco.mio(plan), "w") as f:
         f.write(plan_texto)
     salida = banco.mio(os.path.join(B, f"pendrive-{nombre}.img"))
-    dominio = [os.path.join(DOMINIO_X86, f) for f in ("bzImage", "initramfs.cpio")]
-    extra = ["--dominio", *dominio] if all(os.path.exists(f) for f in dominio) else []
+    extra = ["--dominio", *DOMINIO_FICHEROS] if hay_dominio() else []
     subprocess.run([sys.executable, os.path.join(AQUI, "pendrive_x86.py"), salida, CARGADOR, SISTEMA, "--sin-manos", plan, *extra], check=True, capture_output=True)
     return salida
 
@@ -388,7 +393,16 @@ def main():
     if os.path.exists(CARGADOR):
         os.unlink(CARGADOR)
     subprocess.run(["mcopy", "-i", f"{PENDRIVE}@@{2048 * 512}", "::EFI/BOOT/BOOTX64.EFI", banco.mio(CARGADOR)], check=True)
-    for n in sys.argv[1:] or list(ESCENARIOS):
+    pedidos = sys.argv[1:] or list(ESCENARIOS)
+    malos = [n for n in pedidos if n not in ESCENARIOS]
+    if malos:
+        sys.exit(f"escenarios que no hay: {malos}; los que hay: {list(ESCENARIOS)}")
+    if not hay_dominio():
+        encoger = [n for n in pedidos if n.startswith("encoger")]
+        if encoger:
+            sys.exit(f"NO: {encoger} necesitan el dominio Linux de x86 con ntfsresize, y no está en {DOMINIO_X86}. Prepáralo: {COMO_PREPARAR}")
+        print(f"AVISO: sin el dominio Linux de x86 en {DOMINIO_X86}: los pendrives van sin él (encoger Windows no se podría). Para tenerlo: {COMO_PREPARAR}")
+    for n in pedidos:
         ESCENARIOS[n]()
     bases_bien = banco.bases()
     apuntar(bases_bien, "los discos base del banco de AmiCachy, sin cambios")
