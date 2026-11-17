@@ -1,0 +1,16 @@
+# S27, oleada 3 (`make arranque-virt-dms`, `tools/guion_dms.py`): con la imagen de usar, entra Ana, avisa con acciones
+# (el emergente; su botón le llega al programa), el centro de avisos y su historial, el Dash del reloj y el centro de
+# control (su detalle y su modo de edición).
+~│   [guardian] entra Ana
+~│   [centro] la barra vigila los avisos: emergentes arriba-centro
+~│   [centro] el panel vigila el centro de control: 14 mosaicos
+~│   [barra] emergente
+~de avisa: "Copia terminada", arriba-centro, 5000 ms; en su capa: tarjeta
+~│   [avisa] acción pulsada: deshacer (aviso
+~│   [barra] centro de avisos abierto:
+~│   [barra] centro de avisos: pestaña Historial
+~│   [barra] Dash abierto: hoy 
+~│   [barra] Dash: el calendario va al 
+~│   [panel] se ven: usuario ajustes bloquear apagar volumen brillo red bluetooth salida entrada noche oscuro editar programas; editar a
+~│   [panel] detalle de red abierto
+~│   [panel] a editar

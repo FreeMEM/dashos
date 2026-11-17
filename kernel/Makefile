@@ -78,10 +78,13 @@ prueba: $(PRUEBAS) catalogos
 	cd ../caja-linux/vmm && cargo test --quiet
 	$(MAKE) -C ../caja/pruebas_hunk
 	mkdir -p target && rustc --edition 2024 --test src/rp1.rs -o target/rp1_pruebas && ./target/rp1_pruebas -q
-	cd ../usuario && mkdir -p target && rustc --edition 2024 --test src/panel_mosaicos.rs -o target/panel_mosaicos_pruebas && ./target/panel_mosaicos_pruebas -q
+	cd ../usuario && mkdir -p target && rustc --edition 2024 --test src/cc_rejilla.rs -o target/cc_rejilla_pruebas && ./target/cc_rejilla_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/lanzables.rs -o target/lanzables_pruebas && ./target/lanzables_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/terminal.rs -o target/terminal_pruebas && ./target/terminal_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/protocolo/avisos.rs -o target/avisos_pruebas && ./target/avisos_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/avisos_ajustes.rs -o target/avisos_ajustes_pruebas && ./target/avisos_ajustes_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/dms_medidas.rs -o target/dms_medidas_pruebas && ./target/dms_medidas_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/calendario.rs -o target/calendario_pruebas && ./target/calendario_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/cortafuegos_caja.rs -o target/cortafuegos_caja_pruebas && ./target/cortafuegos_caja_pruebas -q
 	@# S27: el volumen y el OSD del panel, la lista del lanzador y la fecha de la barra.
 	cd ../usuario && rustc --edition 2024 --test src/volumen_osd.rs -o target/volumen_osd_pruebas && ./target/volumen_osd_pruebas -q
@@ -174,6 +177,17 @@ arranque-virt: virt $(DISCO_NVME)
 	python3 ../tools/captura_ventanas.py target/captura.ppm
 	python3 ../tools/sonido_wav.py target/sonido.wav
 	python3 ../tools/captura_cambio.py target/u6.ana.ppm target/u6.carla.ppm
+
+# S27, oleada 3 (docs/bitacoras/dms-avisos.md): las capturas de los avisos, el Dash del reloj y el centro de control,
+# con la imagen de usar y `tools/guion_dms.py` (entra Ana, avisa, abre cada cosa). A 1920 × 1080 y con el aspecto del
+# usuario: DASHOS_PANTALLA=1920x1080 DASHOS_FONDO_EXTRA=fondo.png DASHOS_PREFS="apariencia=oscuro fondo;fondo=fondo.png"
+# (el fondo, fuera de git). Las capturas, en target/dms/ (PNG).
+arranque-virt-dms: virt-uso $(DISCO_NVME)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_USO)) cargo build --release
+	rm -rf target/dms && mkdir -p target/dms
+	cp --reflink=auto $(DISCO_NVME) target/dms/disco.img
+	GUARDAR=$(abspath target/salida_virt_dms.txt) DMS_CAPTURAS=$(abspath target/dms/dms) DMS_ANCHO=$(firstword $(subst x, ,$(or $(DASHOS_PANTALLA),800x600))) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU) -drive file=$(abspath target/dms/disco.img),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_dms.txt 400
+	@cat target/dms/dms.guion.txt
 
 # La imagen para usar a mano (`tools/qemu_a_mano.sh`): `virt` con `uso`, sin los programas de prueba y con la pantalla
 # de entrada de verdad. No es una prueba: nada la comprueba.

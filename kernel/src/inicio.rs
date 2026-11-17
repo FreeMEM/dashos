@@ -250,7 +250,8 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // leen esos canales. Llaves: 1 ventanas, 2 sesiones, 3 red-estado (desde trasfondo, la red va antes del fondo), 4
     // centro y 5 sonido.
     #[cfg(feature = "virt")]
-    ("panel", programa!("panel"), &[], &["ventanas", "sesiones", "centro", "sonido", "red-estado"]),
+    // S27, oleada 3: también "avisos", para el "no molestar" de su mosaico (el servicio solo le deja eso y mirarlo).
+    ("panel", programa!("panel"), &[], &["ventanas", "sesiones", "centro", "sonido", "red-estado", "avisos"]),
     // Un servicio que se cae a propósito (E6), solo en `virt`: `inicio` lo relanza tres veces y lo deja.
     #[cfg(all(feature = "virt", not(feature = "uso")))]
     ("caida", programa!("caida"), &[], &["caida"]),

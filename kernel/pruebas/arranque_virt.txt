@@ -202,7 +202,7 @@ DashOS en marcha con 4 núcleos.
 # S10c: el centro de control rechaza lo que no sea abrir una categoría, también tras una inundación.
 ~│   [hostil] centro: pedidos malos rechazados sin abrir nada, y sigue contestando tras la inundación: bien
 # C2: los mosaicos del panel rápido solo los lee y los guarda el panel: al hostil, -1 a todo.
-~│   [hostil] centro: los mosaicos del panel sin ser el panel: -1 y nada
+~│   [hostil] centro: el centro de control del panel y los ajustes de los avisos sin ser el panel ni la barra: -1 y nada
 ~│   [hostil] centro: suscribirse a las barras sin ser la barra: -1
 # U2: sesiones, primera parte. Un programa del usuario 1001 no mata a uno del 1000, y sí a uno suyo.
 ~│   [sesiones] en marcha, con el servicio de archivos
@@ -243,12 +243,15 @@ DashOS en marcha con 4 núcleos.
 ~│   [guardian] centro pide comprobar: contesta como Ana
 # S10c: la pantalla de bloqueo y la de entrada siguen el tema del sistema (el del centro: oscuro, del fondo, C3).
 ~│   [guardian] tema del sistema: oscuro, color c44e68
-# C2: los mosaicos guardados del panel están rotos en el disco (uno repetido y otro que no existe): el centro y el
-# panel se quedan los de serie.
-~│   [centro] panel guardado: un mosaico repetido; se queda el de serie
-~│   [panel] mosaicos: oscuro bloquear volumen (el centro: 2)
-# C2: el panel rápido. Super+A lo abre; un clic en el mosaico apaga el modo oscuro y otro lo enciende (lo pone y lo
-# guarda el centro, que solo se lo acepta al panel); Super+A lo cierra.
+# S27, oleada 3: el centro de control de fábrica está roto en el disco (un mosaico repetido y otro que no existe): el
+# centro se queda el de serie (el del escritorio de shiva) y se lo da al panel por la puerta que este le dio.
+~│   [panel] pide el centro de control al centro: 0
+~│   [centro] Escritorio/centro-control: no se entiende (Repetido); se queda el de serie
+~│   [centro] el panel vigila el centro de control: 14 mosaicos; se lo da: 0
+# C2: el panel rápido. Super+A lo abre (la rejilla de DMS: 600 de ancho, 496 de alto); un clic en el mosaico del modo
+# oscuro lo apaga y otro lo enciende (lo pone y lo guarda el centro, que solo se lo acepta al panel); Super+A lo cierra.
+~│   [panel] se ven: usuario ajustes bloquear apagar volumen brillo red bluetooth salida entrada noche oscuro editar programas; editar a
+~8 columnas, 496 de alto
 ~│   [panel] abierto; mosaico a
 ~│   [centro] modo claro (lo pide el panel), guardado: 0
 ~│   [centro] modo oscuro (lo pide el panel), guardado: 0
@@ -257,14 +260,16 @@ DashOS en marcha con 4 núcleos.
 ~│   [sesiones] centro guarda ENV:Escritorio/apariencia en ENVARC: de Ana: 
 ~│   [sonido] volumen general: 90 % (lo pide panel)
 ~│   [sonido] volumen general: 100 % (lo pide panel)
-# C2, el modo de edición del panel: quitar Bloquear y Hecho (lo guarda el centro, que lo relee; el panel ya no lo
-# enseña); otra vez Editar, ponerlo (va al final), subirlo y Hecho: como estaba. El disco acaba con los de serie.
+# C2 y S27: el modo de edición del panel (como el de DMS): quitar Bloquear y Terminar (el centro lo guarda en ENV: y,
+# por `sesiones`, en el ENVARC: de Ana; el panel ya no lo enseña); otra vez Editar, Añadir, Bloquear (va al final),
+# moverlo uno antes y Terminar.
 ~│   [panel] quita bloquear
-~│   [centro] panel: oscuro volumen (lo pide el panel), guardado: 0; releído: sí
-~│   [panel] se ven: oscuro volumen;
+~│   [centro] centro de control (lo pide el panel): 13 mosaicos; en uso:
+~│   [sesiones] centro guarda ENV:Escritorio/centro-control en ENVARC: de Ana: 
+~│   [panel] se ven: usuario ajustes apagar volumen
 ~│   [panel] pone bloquear
 ~│   [panel] sube bloquear
-~│   [centro] panel: oscuro bloquear volumen (lo pide el panel), guardado: 0; releído: sí
+~│   [centro] centro de control (lo pide el panel): 14 mosaicos; en uso:
 ~│   [sonido] hostil pide el volumen general: no le toca
 ~│   [panel] cerrado
 # S10: la barra de la pantalla, arriba a todo lo ancho con su zona exclusiva (las ventanas, debajo). La hora se mueve
@@ -371,23 +376,39 @@ DashOS en marcha con 4 núcleos.
 ~│   [avisos] avisador: demasiados avisos seguidos; los siguientes no se guardan
 ~│   [avisador] inundar: 100 mandados,
 ~demasiados: bien
+# S27, oleada 3: avisos con acciones. Uno bueno y su sustituto (el suyo, sí); acciones falsas a mano, un mensaje de 300
+# bytes, y lo que solo pueden la barra, el panel o el centro (pulsar acciones, descartar, "no molestar", los ajustes).
+~│   [avisador] aviso con acciones: 0 (número
+~sustituir el suyo: bien
+~│   [avisador] acciones falsas rechazadas 9 de 9; 300 bytes no llegan: sí; lo de la barra, el panel y el centro: 12 de 12 negadas: bien
 # U6: el `cambio` de Ana avisa con su sesión detrás: se guarda sin salir a Carla, y vuelve con ella.
 ~│   [cambio] Ana, detrás: avisa 0
 ~│   [avisos] cambio avisa con su sesión detrás (usuario
 ~│   [avisos] vuelve delante el usuario
-# Un programa del disco, lanzado desde la barra como Ana, con permiso fijo para avisar: sale el toast, con punto en la
-# campana, y un clic lo cierra. La campana abre el historial (lo de avisa, lo de cambio guardado y lo del avisador, que
-# no tapa a los demás); "Borrar todo" lo vacía y la campana lo cierra.
+# Un programa del disco, lanzado desde la barra como Ana, con permiso fijo para avisar, con acciones: sale el emergente
+# (arriba en el centro), con punto en la campana, y su botón "Deshacer" le llega a `avisa`, que antes no pudo sustituir
+# el aviso de otro. La campana abre el centro de avisos (los actuales, agrupados); en Historial, "Borrar todo" lo vacía
+# y la campana lo cierra.
 ~│   [sesiones] barra lanza Programas/avisa: 0
 ~│   [avisa] avisa: 0 (número
-~sale como avisa)
+~sale como avisa, 3 acciones)
+~(de otro): no se deja: bien
 ~│   [barra] aviso de avisa: "Copia terminada" (urgencia 1); campana con punto
-~│   [barra] aviso cerrado: con un clic
-~sin leer; de avisa, cambio, avisador; Borrar todo en
-# La rueda del ratón (USB, por el compositor como `wl_pointer.axis`) mueve la lista del historial.
-~│   [barra] historial: la rueda lo lleva a la fila 3 de
-~│   [barra] borrar todo: 0, quedan 0
-~│   [barra] historial cerrado
+~de avisa: "Copia terminada", arriba-centro, 5000 ms; en su capa: tarjeta
+~│   [avisos] acción "deshacer" del aviso
+~a avisa: dada
+~│   [avisa] acción pulsada: deshacer (aviso
+~cerrado: con una acción
+~│   [barra] centro de avisos abierto:
+~│   [barra] centro de avisos: pestaña Historial
+~│   [barra] centro de avisos: Borrar todo (historial): 0
+~│   [barra] centro de avisos cerrado
+# S27, oleada 3: el reloj de la barra abre el Dash (el calendario del mes, con la zona horaria del sistema); el mes
+# siguiente, y Esc lo cierra.
+~│   [barra] Dash abierto: hoy 
+~│   [barra] Dash: tarjeta de 768 × 
+~│   [barra] Dash: el calendario va al 
+~│   [barra] Dash cerrado
 ~│   [centro] Comprobar el disco: 0, 0 problemas
 # Pantallas: lo que dice el compositor de la de virt (ramfb, 800x600).
 ~│   [centro] Pantallas: Pantalla DASHOS-1: 800 × 600; Frecuencia: 60,000 Hz; Escala: 1
@@ -672,6 +693,14 @@ DashOS en marcha con 4 núcleos.
 ~│   [barra] tema del sistema: oscuro, color c44e68
 ~│   [shell] idioma: español (en RAM:Env/Sys/locale)
 ~│   [centro] idioma en marcha: español (España), de ENV:Sys/locale
+# S27, oleada 3: los avisos y el centro de control con la orden `Ajuste`: el centro los aplica en marcha (los avisos, a
+# la barra; el centro de control, al panel), y vuelven al quitar el fichero.
+~│   [centro] avisos en marcha: emergentes abajo-derecha
+~│   [barra] avisos: ajustes del centro (emergentes abajo-derecha
+~│   [centro] centro de control en marcha: 4 mosaicos en 8 columnas; al panel: 0
+~│   [panel] centro de control del centro: usuario volumen red editar; 8 columnas
+~│   [centro] avisos en marcha: emergentes arriba-centro
+~│   [centro] centro de control en marcha: 14 mosaicos en 8 columnas; al panel: 0
 # S10, los menús de los programas (docs/bitacoras/menus.md): Ajuste menus, que el centro aplica en marcha y el
 # compositor dice a todos. Lo hostil: un sitio que no existe; y cien cambios seguidos a mano, del que queda el último.
 ~│   [shell] Ajuste: menus: "arriba" no vale: dentro, barra. No se ha cambiado nada

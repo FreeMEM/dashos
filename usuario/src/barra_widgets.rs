@@ -62,6 +62,8 @@ pub enum Accion {
     Panel,
     Avisos,
     Procesos,
+    /// S27 (dms-avisos): el reloj abre el Dash.
+    Reloj,
     Nada,
 }
 
@@ -150,6 +152,7 @@ pub fn accion(d: &Disposicion, s: Sitio) -> Accion {
         Some("estado") => Accion::Panel,
         Some("avisos") => Accion::Avisos,
         Some("cpu" | "memoria" | "disco") => Accion::Procesos,
+        Some("reloj") => Accion::Reloj,
         _ => Accion::Nada,
     }
 }
