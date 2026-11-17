@@ -977,6 +977,8 @@ arranque-x86 RED_X86=vfio PCI_RED=0000:03:00.0 ACCEL=kvm MAC_RED=38:05:25:34:d8:
 PHY 001cc840, MSI-X, enlace a 100 Mb/s (el cable solo tiene dos pares), DHCP de dnsmasq, eco de 4 MB igual, 9,98 MB/s
 (lo que da el enlace), ida y vuelta mediana 245 µs. Aviso en el arranque: "las FIFO no se vacían al salir de OOB; se
 sigue" (sin efecto visible; pregunta 1). Sin probar: 1 y 2,5 Gb/s (falta un cable de cuatro pares) y la parada.
+Segunda vuelta (2026-11-17, con las respuestas del analista, 0b22237f, y ya unidas x86-uso, x86-gpu, instalador y
+x86-dominio): sin y con `IOMMU=intel`, BIEN a la primera, y ya sin el aviso de las FIFO.
 Sin hacer: el paso 17 de §8 (latencia de L0s y L1; ASPM va apagado), el bucle de la MAC o del PHY
 (§14), la multidifusión exacta, el parche de las tramas PTP cortas (§7.2; la pila no hace PTP) y el estado del enlace
 hacia `red-estado` (solo en el registro).
