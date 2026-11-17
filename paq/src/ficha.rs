@@ -117,4 +117,15 @@ mod pruebas {
         assert!(Ficha::leer(&t.replace("1.0", "1.1")).is_err());
         assert!(Ficha::leer(&t[..t.len() / 2]).is_err());
     }
+
+    /// Formato 2, sección 6: los campos y las líneas que no se conocen se ignoran (de otro gestor o de uno más nuevo),
+    /// y las rutas de `F` son las de DashOS, desde la raíz del nivel.
+    #[test]
+    fn campos_de_mas() {
+        let t = "PKG-DB 2\nName: saludo\nVersion: 1.0\nRelease: 1\nRepository: prueba\nId: 1\nReason: explicit\nHold: no\n\
+Target: Paquetes:\nSha256: 0707070707070707070707070707070707070707070707070707070707070707\nDrawer: Saludo\nManifest: 0123456789abcdef\n\
+Otro-Gestor: lo que sea\nF deadbeef 4 Saludo/LEEME\nC Saludo/LEEME\nA LIBS:x.library\nS saludo\n";
+        let f = Ficha::leer(&con_suma(t)).unwrap();
+        assert_eq!((f.nombre.as_str(), f.cajon.as_str(), f.ficheros.len(), f.ficheros[0].ruta.as_str()), ("saludo", "Saludo", 1, "Saludo/LEEME"));
+    }
 }

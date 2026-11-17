@@ -52,6 +52,11 @@ fn archivo(h: &Hecho) -> Vec<u8> {
 
 /// Pone el repositorio en `m`: los paquetes, su índice firmado con `k` y la lista y la clave en `SYS:Estado/Paq`.
 fn repositorio(m: &mut Memoria, k: &SigningKey, serie: u64, ps: &[Hecho]) {
+    repositorio_con(m, k, serie, ps, &|fichero, _| vec![fichero.to_string()]);
+}
+
+/// Como `repositorio`, con las `Url` de cada paquete que diga `urls` (de su fichero en el repositorio y su nombre).
+fn repositorio_con(m: &mut Memoria, k: &SigningKey, serie: u64, ps: &[Hecho], urls: &dyn Fn(&str, &str) -> Vec<String>) {
     let mut ix = format!("PKG-INDEX 2\nRepository: prueba\nArchitecture: aarch64-dashos\nSerial: {serie}\nExpires: 2030-01-01T00:00:00Z\n");
     for (i, h) in ps.iter().enumerate() {
         let a = archivo(h);
@@ -60,10 +65,11 @@ fn repositorio(m: &mut Memoria, k: &SigningKey, serie: u64, ps: &[Hecho]) {
         // Los campos del manifiesto que van al índice (los de dependencias y asignaciones), y los del índice.
         let de_mas: String = h.campos.lines().filter(|l| !l.starts_with("Permissions")).map(|l| format!("{l}\n")).collect();
         ix += &format!(
-            "\nName: {}\nVersion: {}\nId: {}\nUrl: {fichero}\nSize: {}\nSha256: {}\nInstall: drawer {}\n{de_mas}",
+            "\nName: {}\nVersion: {}\nId: {}\n{}Size: {}\nSha256: {}\nInstall: drawer {}\n{de_mas}",
             h.nombre,
             h.version,
             i + 1,
+            urls(&fichero, h.nombre).iter().map(|u| format!("Url: {u}\n")).collect::<String>(),
             a.len(),
             huella::hex(&huella::sha256(&a)),
             h.cajon
@@ -89,19 +95,19 @@ fn normales() -> Vec<Hecho> {
     ]
 }
 
-fn disco() -> Memoria {
+pub(crate) fn disco() -> Memoria {
     let mut m = Memoria::nueva(&["SYS:", "Paquetes:"]);
     m.solo_leer.push("SYS:".into());
     repositorio(&mut m, &clave(1), 5, &normales());
     m
 }
 
-struct Paq {
-    nivel: Nivel,
+pub(crate) struct Paq {
+    pub(crate) nivel: Nivel,
 }
 
 impl Paq {
-    fn nuevo() -> Paq {
+    pub(crate) fn nuevo() -> Paq {
         Paq { nivel: Nivel::de_todos() }
     }
 
@@ -122,7 +128,7 @@ impl Paq {
         r
     }
 
-    fn instalar(&self, m: &mut Memoria, nombres: &[&str]) -> Result<u32, Fallo> {
+    pub(crate) fn instalar(&self, m: &mut Memoria, nombres: &[&str]) -> Result<u32, Fallo> {
         let nivel = self.nivel.clone();
         let pedidos: Vec<String> = nombres.iter().map(|x| x.to_string()).collect();
         self.hacer(m, |e, rs| Ok((plan_instalar(e, rs, &Maquina::default(), &nivel, &pedidos)?, format!("Instalar {}", pedidos.join(", ")))))
@@ -462,4 +468,105 @@ fn repositorio_de_python() {
     p.hacer(&mut m, |e, rs| Ok((plan_actualizar(e, rs, &Maquina::default(), &nivel)?, "Actualizar".into()))).unwrap();
     assert_eq!(leeme(&m, "Saludo"), "saludo 1.1\n");
     assert_eq!(p.instalar(&mut m, &["circulo-a"]), Ok(3));
+}
+
+/// `Url` repetida (formato 2, sección 5): se prueban en orden hasta que una da el `Size` y el `Sha256` del índice. Las
+/// copias malas (otro tamaño, otra suma, una enorme, de la red, con un esquema raro, de un volumen, que se sale, que no
+/// está) se tiran sin tocar nada, y se instala la buena, que va la última y escrita entera (como `repositorio.py`).
+const LETRAS_MALAS: [&str; 7] = ["malas/tamano.tar.gz", "malas/suma.tar.gz", "malas/otra.tar.gz", "malas/enorme.tar.gz", "https://espejo.example/letras.tar.gz", "ftp://espejo.example/letras.tar.gz", "noesta.tar.gz"];
+
+/// Las copias malas de `letras`: la buena cortada, la buena con un bit cambiado, otro paquete que también vale (letras
+/// 6.6, con su LEEME y algo más grande) y uno enorme. Si se instalase una por error, se vería en su LEEME.
+fn poner_copias_malas(m: &mut Memoria) {
+    let buena = m.ver(&format!("{REPO}/aarch64-dashos/letras-1.0.tar.gz")).unwrap().datos.clone();
+    let mut h = paquete("letras", "6.6", "Letras", "");
+    h.ficheros.push(("Letras/Relleno".into(), vec![b'x'; 2000]));
+    let otra = archivo(&h);
+    assert_ne!(otra.len(), buena.len());
+    let mut suma = buena.clone();
+    let i = suma.len() / 2;
+    suma[i] ^= 1;
+    let enorme: Vec<u8> = otra.iter().cycle().take(otra.len() * 1000).copied().collect();
+    m.poner(&format!("{REPO}/aarch64-dashos/malas/tamano.tar.gz"), Some(&buena[..buena.len() - 512]));
+    m.poner(&format!("{REPO}/aarch64-dashos/malas/otra.tar.gz"), Some(&otra));
+    m.poner(&format!("{REPO}/aarch64-dashos/malas/suma.tar.gz"), Some(&suma));
+    m.poner(&format!("{REPO}/aarch64-dashos/malas/enorme.tar.gz"), Some(&enorme));
+}
+
+fn disco_con_copias(letras: &dyn Fn(&str) -> Vec<String>) -> Memoria {
+    let mut m = Memoria::nueva(&["SYS:", "Paquetes:"]);
+    m.solo_leer.push("SYS:".into());
+    repositorio_con(&mut m, &clave(1), 5, &normales(), &|f, n| if n == "letras" { letras(f) } else { vec![f.to_string()] });
+    poner_copias_malas(&mut m);
+    m
+}
+
+fn nada_de_letras(m: &mut Memoria) {
+    assert!(a_la_vista(m).is_empty());
+    assert_eq!(cargar(m, &Nivel::de_todos()).unwrap().generaciones.len(), 0);
+    assert!(m.listar("Paquetes:Paq/Almacen/letras").map_or(true, |v| v.is_empty()), "{:?}", m.listar("Paquetes:Paq/Almacen/letras"));
+}
+
+#[test]
+fn copias_en_orden_hasta_la_buena() {
+    let mut m = disco_con_copias(&|f| {
+        let mut v: Vec<String> = LETRAS_MALAS.iter().map(|x| x.to_string()).collect();
+        v.extend(["SYS:Estado/Paq/Repositorios", "../prueba/aarch64-dashos/letras-1.0.tar.gz", "javascript:alert(1)", "file:///etc/passwd", "ñññññññññññññññññ://x"].map(String::from));
+        v.push(format!("{REPO}/aarch64-dashos/{f}"));
+        v
+    });
+    assert_eq!(Paq::nuevo().instalar(&mut m, &["letras"]), Ok(1));
+    assert_eq!(leeme(&m, "Letras"), "letras 1.0\n");
+    let e = cargar(&mut m, &Nivel::de_todos()).unwrap();
+    assert_eq!(e.almacen.len(), 1);
+    assert_eq!(e.almacen[0].ficha.sha256, huella::sha256(&m.ver(&format!("{REPO}/aarch64-dashos/letras-1.0.tar.gz")).unwrap().datos));
+    // La primera buena gana: con la buena delante, las malas de detrás ni se miran (y da lo mismo que estén).
+    let mut m = disco_con_copias(&|f| core::iter::once(f.to_string()).chain(LETRAS_MALAS.iter().map(|x| x.to_string())).collect());
+    assert_eq!(Paq::nuevo().instalar(&mut m, &["letras"]), Ok(1));
+    assert_eq!(leeme(&m, "Letras"), "letras 1.0\n");
+}
+
+#[test]
+fn todas_las_copias_malas() {
+    let mut m = disco_con_copias(&|_| LETRAS_MALAS.iter().map(|x| x.to_string()).collect());
+    let r = Paq::nuevo().instalar(&mut m, &["letras"]);
+    let Err(Fallo::Huella(q)) = &r else { panic!("{r:?}") };
+    for x in ["letras 1.0 (malas/tamano.tar.gz: da otro tamaño; ", "malas/suma.tar.gz: da otra suma", "malas/otra.tar.gz: da otro tamaño",
+        "malas/enorme.tar.gz: da otro tamaño", "https://espejo.example/letras.tar.gz: es de la red", "ftp://espejo.example/letras.tar.gz: se sale del repositorio",
+        "noesta.tar.gz: no se puede leer)"]
+    {
+        assert!(q.contains(x), "falta «{x}» en: {q}");
+    }
+    nada_de_letras(&mut m);
+    // Una sola dirección mala: lo de siempre, sin la lista.
+    let mut m = disco_con_copias(&|_| vec!["malas/suma.tar.gz".into()]);
+    assert_eq!(Paq::nuevo().instalar(&mut m, &["letras"]), Err(Fallo::Huella("letras 1.0".into())));
+    nada_de_letras(&mut m);
+}
+
+#[test]
+fn ninguna_copia_se_puede_bajar() {
+    let mut m = disco_con_copias(&|_| vec!["https://espejo.example/l.tar.gz".into(), "SYS:Estado/Paq/Repositorios".into(), "noesta.tar.gz".into()]);
+    let r = Paq::nuevo().instalar(&mut m, &["letras"]);
+    assert!(matches!(&r, Err(Fallo::Paquete(n, por)) if n == "letras" && por.starts_with("https://espejo.example/l.tar.gz: es de la red") && por.contains("se sale del repositorio")), "{r:?}");
+    nada_de_letras(&mut m);
+}
+
+#[test]
+fn mil_copias_o_un_tamano_enorme() {
+    // Mil direcciones: la entrada no se usa (las demás del índice, sí).
+    let mut m = disco_con_copias(&|f| (0..1000).map(|i| if i == 999 { f.to_string() } else { format!("c{i}.tar.gz") }).collect());
+    let rs = cargar_repos(&mut m, &[]).unwrap();
+    assert_eq!(rs.fuentes[0].indice.malas, 1);
+    assert!(rs.fuentes[0].indice.entradas.iter().all(|e| e.nombre != "letras"));
+    assert_eq!(Paq::nuevo().instalar(&mut m, &["letras"]), Err(Fallo::NoEsta("letras".into())));
+    nada_de_letras(&mut m);
+    // Un `Size` más grande de lo que cabe: no se lee más de `MAX_PAQUETE`, y lo leído es "otro tamaño".
+    let mut m = disco();
+    let mut rs = cargar_repos(&mut m, &[]).unwrap();
+    let x = rs.fuentes[0].indice.entradas.iter_mut().find(|e| e.nombre == "letras").unwrap();
+    x.tamano = 1 << 40;
+    let x = x.clone();
+    let r = traer(&mut m, &Nivel::de_todos(), &rs.fuentes[0], &x);
+    assert!(matches!(&r, Err(Fallo::Huella(q)) if q == "letras 1.0"), "{:?}", r.map(|_| ()));
 }

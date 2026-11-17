@@ -3,6 +3,9 @@
 //! `Id` y `Rank`. Las dependencias, en la gramática estricta: una entrada con algo que no se entiende no se usa (se
 //! cuenta en `malas`), porque instalarla sin lo que pide podría dejar un programa roto.
 //!
+//! `Url` es el único campo que se repite: el sitio original y sus copias, por orden (formato 2, sección 5). Se guardan
+//! todas, en ese orden, y al bajar se prueban una tras otra (`motor::traer`).
+//!
 //! `pkg2` aún no lee índices (para la sesión de Hangar, en la bitácora): esto lo hace aquí con sus piezas.
 
 use alloc::string::{String, ToString};
@@ -13,6 +16,11 @@ use crate::huella;
 use crate::texto::{bloques, campo, campos, leer_fecha};
 
 pub const CABECERA: &str = "PKG-INDEX 2";
+/// Las direcciones de una entrada, como mucho: el original y unas pocas copias. Una entrada con más no se usa (cuenta en
+/// `malas`): probarlas todas sería leer el paquete cientos de veces, y ningún repositorio de verdad tiene tantas.
+pub const MAX_URLS: usize = 16;
+/// Lo más que mide una dirección.
+pub const MAX_URL: usize = 1024;
 
 #[derive(Clone, Debug, Default)]
 pub struct Entrada {
@@ -20,7 +28,8 @@ pub struct Entrada {
     pub version: Version,
     pub id: String,
     pub rank: i64,
-    pub url: String,
+    /// De dónde bajarlo: el original y sus copias, en el orden del índice (al menos una).
+    pub urls: Vec<String>,
     pub tamano: u64,
     pub sha256: [u8; 32],
     /// Lo que ocupa descomprimido (`Installed-Size`), si lo dice.
@@ -74,6 +83,13 @@ pub fn leer_asignaciones(t: &str) -> Option<Vec<(String, String)>> {
         .collect()
 }
 
+/// Las `Url` de una entrada, en orden. `None` si no hay ninguna, si una está vacía o es demasiado larga, o si son más
+/// de `MAX_URLS`.
+fn urls(cs: &[(String, String)]) -> Option<Vec<String>> {
+    let v: Vec<String> = cs.iter().filter(|x| x.0 == "url").map(|x| x.1.clone()).collect();
+    (!v.is_empty() && v.len() <= MAX_URLS && v.iter().all(|u| !u.is_empty() && u.len() <= MAX_URL)).then_some(v)
+}
+
 fn entrada(cs: &[(String, String)]) -> Option<Entrada> {
     let nombre = campo(cs, "name")?;
     let version = campo(cs, "version")?;
@@ -100,7 +116,7 @@ fn entrada(cs: &[(String, String)]) -> Option<Entrada> {
         version: Version { epoch, version: version.to_string(), release },
         id: id.to_string(),
         rank: n("rank", u32::MAX as u64, 0)? as i64,
-        url: campo(cs, "url").filter(|u| !u.is_empty())?.to_string(),
+        urls: urls(cs)?,
         tamano: numero(campo(cs, "size")?, i64::MAX as u64)?,
         sha256: huella::de_hex::<32>(campo(cs, "sha256")?)?,
         instalado: n("installed-size", i64::MAX as u64, 0)?,
@@ -150,6 +166,7 @@ pub fn leer(t: &str) -> Result<Indice, String> {
 #[cfg(test)]
 mod pruebas {
     use super::*;
+    use alloc::format;
 
     pub const EJEMPLO: &str = "PKG-INDEX 2\nRepository: prueba\nArchitecture: aarch64-dashos\nSerial: 7\nExpires: 2030-01-01T00:00:00Z\n\n\
 Name: saludo\nVersion: 1.0\nRelease: 1\nId: 1\nUrl: saludo-1.0-1.tar.gz\nSize: 300\n\
@@ -171,6 +188,28 @@ Sha256: ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\n";
         assert_eq!((s.nombre.as_str(), s.version.release, s.install.as_str()), ("saludo", 1, "drawer Saludo"));
         assert_eq!(s.requires.len(), 1);
         assert_eq!(s.asignaciones, [("SALUDO".to_string(), "Saludo".to_string())]);
+    }
+
+    /// `Url` repetida: todas, en orden (una repetida se prueba dos veces: no hace daño). Sin ninguna, una vacía o más de `MAX_URLS`, la entrada no se usa.
+    #[test]
+    fn varias_url() {
+        let base = "PKG-INDEX 2\nRepository: prueba\nArchitecture: aarch64-dashos\nSerial: 7\n\nName: saludo\nVersion: 1.0\nId: 1\nSize: 3\n\
+Sha256: ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\nInstall: drawer Saludo\n";
+        let con = |urls: &str| leer(&format!("{base}{urls}")).unwrap();
+        let ix = con("Url: a.tar.gz\nUrl: https://copia.example/a.tar.gz\nUrl: a.tar.gz\nUrl: b.tar.gz\n");
+        assert_eq!(ix.entradas[0].urls, ["a.tar.gz", "https://copia.example/a.tar.gz", "a.tar.gz", "b.tar.gz"]);
+        assert_eq!(con("").malas, 1);
+        assert_eq!(con("Url: a\nUrl:\n").malas, 1);
+        let muchas: String = (0..=MAX_URLS).map(|i| format!("Url: c{i}.tar.gz\n")).collect();
+        assert_eq!(con(&muchas).malas, 1);
+        let justas: String = (0..MAX_URLS).map(|i| format!("Url: c{i}.tar.gz\n")).collect();
+        assert_eq!(con(&justas).entradas[0].urls.len(), MAX_URLS);
+        // Mil: la entrada no se usa, y el índice sí (las demás valen).
+        let mil: String = (0..1000).map(|i| format!("Url: c{i}.tar.gz\n")).collect();
+        let ix = con(&mil);
+        assert_eq!((ix.entradas.len(), ix.malas), (0, 1));
+        let larga = format!("Url: {}\n", "x".repeat(MAX_URL + 1));
+        assert_eq!(con(&larga).malas, 1);
     }
 
     #[test]
