@@ -311,3 +311,9 @@ in the window
 MSG_103
 in the top bar
 ; en la barra de arriba
+MSG_104
+Bar
+; Barra
+MSG_105
+The bars and their widgets, as in DMS. Changes show at once.
+; Las barras y sus widgets, como en DMS. Lo que se cambia se ve ya.

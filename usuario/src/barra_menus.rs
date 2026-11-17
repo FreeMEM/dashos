@@ -139,6 +139,13 @@ impl MenusBarra {
         self.activo = true;
     }
 
+    /// Lo que mide la barra en la que van (dms-barra: depende de su configuración): lo de su fila de títulos, que va de
+    /// arriba de la tira a abajo; sin fila aún, los 40 de siempre.
+    fn alto_barra(&self) -> i32 {
+        let f = self.fila.get();
+        if f.h > 0 { f.y + f.h } else { ALTO_BARRA }
+    }
+
     /// Lo que miden los títulos (para dejarles sitio).
     pub fn ancho_fila(&self, medio: &mut Fuente) -> i32 {
         if self.en_barra() { self.m.borrow().ancho_fila(medio) } else { 0 }
@@ -150,7 +157,7 @@ impl MenusBarra {
     }
 
     fn area(&self) -> Rect {
-        Rect::new(0, ALTO_BARRA, self.ancho.get(), self.alto_pantalla - ALTO_BARRA)
+        Rect::new(0, self.alto_barra(), self.ancho.get(), self.alto_pantalla - self.alto_barra())
     }
 
     /// Coloca y pinta los títulos en `fila` (dentro de la barra de `ancho`).
@@ -232,7 +239,7 @@ impl MenusBarra {
             }
             (SALIDA, wl_output::ev::MODE) => {
                 let alto = palabra(2) as i32;
-                if alto > ALTO_BARRA {
+                if alto > self.alto_barra() {
                     self.alto_pantalla = alto;
                     self.recolocar(fuente, medio);
                 }
@@ -375,8 +382,9 @@ impl MenusBarra {
     fn sincronizar(&mut self, c: &mut Cliente, t: &Tema, fuente: &mut Fuente, medio: &mut Fuente) {
         let (menu, sub) = self.m.borrow().cajas_abiertas();
         let mut e = Escritor::new();
-        poner_capa(&mut e, &mut self.capa, OBJ_MENU, menu);
-        poner_capa(&mut e, &mut self.sub, OBJ_SUB, sub);
+        let alto = self.alto_barra();
+        poner_capa(&mut e, &mut self.capa, OBJ_MENU, menu, alto);
+        poner_capa(&mut e, &mut self.sub, OBJ_SUB, sub, alto);
         // Al compositor, si lo desplegado se ve: así el clic de fuera solo lo cierra.
         if self.capa.is_some() != self.desplegado_dicho {
             self.desplegado_dicho = self.capa.is_some();
@@ -454,7 +462,7 @@ impl MenusBarra {
 
 /// La capa `capa` para lo que ocupa `r` (o ninguna): la crea, la quita o le cambia el sitio y el tamaño. Anclada
 /// arriba a la izquierda, en lo que deja la barra (por eso `y` va desde debajo de ella).
-fn poner_capa(e: &mut Escritor, capa: &mut Option<Capa>, o: Objs, r: Option<Rect>) {
+fn poner_capa(e: &mut Escritor, capa: &mut Option<Capa>, o: Objs, r: Option<Rect>, alto_barra: i32) {
     match (r, capa.as_ref()) {
         (None, None) => {}
         (None, Some(_)) => {
@@ -478,7 +486,7 @@ fn poner_capa(e: &mut Escritor, capa: &mut Option<Capa>, o: Objs, r: Option<Rect
             let c = capa.as_mut().unwrap();
             c.rect = r;
             e.empezar(o.capa, zwlr_layer_surface_v1::req::SET_SIZE).uint(r.w.max(1) as u32).uint(r.h.max(1) as u32).fin();
-            e.empezar(o.capa, zwlr_layer_surface_v1::req::SET_MARGIN).int((r.y - ALTO_BARRA).max(0)).int(0).int(0).int(r.x.max(0)).fin();
+            e.empezar(o.capa, zwlr_layer_surface_v1::req::SET_MARGIN).int((r.y - alto_barra).max(0)).int(0).int(0).int(r.x.max(0)).fin();
             e.empezar(o.sup, wl_surface::req::COMMIT).fin();
         }
     }
