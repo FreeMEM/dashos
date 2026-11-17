@@ -14,11 +14,13 @@ pub struct Entrada {
     /// Los eventos que no cupieron, en orden (E4): una tecla soltada que se perdiera quedaría pulsada para siempre.
     pendientes: [[u8; 8]; PENDIENTES],
     n: usize,
+    /// Teclas y botones tirados por falta de sitio (se dice cada uno: perder uno no debe pasar callado).
+    tirados: u32,
 }
 
 impl Entrada {
     pub fn nueva(canal: Option<u32>, nombre: &'static str) -> Self {
-        Self { canal, previo: [0; 8], nombre, pendientes: [[0; 8]; PENDIENTES], n: 0 }
+        Self { canal, previo: [0; 8], nombre, pendientes: [[0; 8]; PENDIENTES], n: 0, tirados: 0 }
     }
 
     /// Si quedan eventos sin entregar: quien llame tiene que volver a llamar a `reintentar` dentro de poco.
@@ -52,6 +54,11 @@ impl Entrada {
             let fuera = self.pendientes[..self.n].iter().position(movimiento).unwrap_or(0);
             if movimiento(&ev) && !self.pendientes[..self.n].iter().any(movimiento) {
                 return;
+            }
+            if !movimiento(&self.pendientes[fuera]) {
+                self.tirados += 1;
+                let e = self.pendientes[fuera];
+                crate::println!("  [{}] el compositor no recoge la entrada: se tira un evento ({}, {:#04x}; {} en total)", self.nombre, if e[0] == 1 { "tecla" } else { "tableta" }, e[1], self.tirados);
             }
             self.pendientes.copy_within(fuera + 1..self.n, fuera);
             self.n -= 1;
