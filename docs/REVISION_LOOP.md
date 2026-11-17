@@ -2348,3 +2348,11 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
     `prueba` bien, `-2` y `-linux` bien. Una vez el firmware de QEMU se colgó al reiniciar (antes de DashOS), no
     repetido.
   - Por decidir: que `guardian` conserve el teclado frente al panel (va con el permiso de un solo uso).
+- **Unida `dms-bloqueo` (2026-11-17)**: pantalla de bloqueo y de entrada como DMS (reloj grande, fecha, inicial,
+  campo con contorno de Material 3, fondo del usuario desenfocado, Bloq Mayús, red y volumen, avisos según la
+  privacidad: de serie solo cuántos), pintada por `guardian`, que recibe lo de alrededor solo para leer; Super+L
+  bloquea en la imagen de usar; monitor de procesos como DMS en la barra (gráficas, buscar, filtros, ordenar; cerrar
+  lo ajeno con la tanda de administrador). **Seguridad**: una capa abierta tras bloquear se quedaba con el teclado
+  (oía la contraseña sin verse): con la sesión bloqueada el teclado solo va a la pantalla de bloqueo (prueba hostil
+  del compositor). Tanda completa 12 de 12 y `-shell`, `-menus`, `-dms`, `-cuentas`, `-iconos` y `-dominio`: todo
+  bien a la primera, por primera vez sin repetir nada. Por decidir: los siete puntos de su bitácora.
