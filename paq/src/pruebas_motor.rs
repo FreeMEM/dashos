@@ -406,3 +406,60 @@ fn cajon_ajeno_en_el_sitio() {
     assert!(matches!(&r, Err(Fallo::Danado(x)) if x.contains("no es de Paq")), "{r:?}");
     assert_eq!(m.ver("Paquetes:Letras/mio.txt").unwrap().datos, b"mio".to_owned());
 }
+
+/// El repositorio de pruebas de verdad (el que va al disco de QEMU, `tools/repo_paq.py`, con el `tarfile` de Python
+/// y la firma de `cryptography`), leído con lo de aquí: el contrato entre los dos, no un remedo. Sin Python con
+/// `cryptography`, no se prueba (lo dice).
+#[test]
+fn repositorio_de_python() {
+    use std::path::Path;
+    let dir = std::env::temp_dir().join(format!("paq-repo-{}", std::process::id()));
+    let guion = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tools/repo_paq.py");
+    let Ok(s) = std::process::Command::new("python3").arg(&guion).arg(&dir).status() else {
+        std::eprintln!("sin python3: no se prueba el repositorio de Python");
+        return;
+    };
+    if !s.success() {
+        std::eprintln!("tools/repo_paq.py no salió (¿falta cryptography?): no se prueba");
+        return;
+    }
+    let mut m = Memoria::nueva(&["SYS:", "Paquetes:"]);
+    m.solo_leer.push("SYS:".into());
+    fn meter(m: &mut Memoria, base: &Path, rel: &str) {
+        for e in std::fs::read_dir(base.join(rel)).unwrap() {
+            let e = e.unwrap();
+            let r = if rel.is_empty() { e.file_name().into_string().unwrap() } else { format!("{rel}/{}", e.file_name().into_string().unwrap()) };
+            if e.file_type().unwrap().is_dir() {
+                meter(m, base, &r);
+            } else {
+                m.poner(&format!("SYS:{r}"), Some(&std::fs::read(e.path()).unwrap()));
+            }
+        }
+    }
+    meter(&mut m, &dir, "");
+    let _ = std::fs::remove_dir_all(&dir);
+    let rs = cargar_repos(&mut m, &[]).unwrap();
+    assert_eq!(rs.fuentes.len(), 1, "{:?}", rs.malos);
+    assert!(rs.malos.iter().any(|(r, por)| r == "firmamal" && por.contains("firma")), "{:?}", rs.malos);
+    let p = Paq::nuevo();
+    for (n, que) in [("fuera", "se sale"), ("absoluto", "se sale"), ("enlace", "enlace simbólico"), ("vecino", "fuera de su cajón")] {
+        let r = p.instalar(&mut m, &[n]);
+        assert!(matches!(&r, Err(Fallo::Paquete(_, por)) if por.contains(que)), "{n}: {r:?}");
+    }
+    assert!(matches!(p.instalar(&mut m, &["cambiado"]), Err(Fallo::Huella(_))));
+    assert!(matches!(p.instalar(&mut m, &["ajeno"]), Err(Fallo::NoEsta(_))));
+    assert!(matches!(p.instalar(&mut m, &["imposible"]), Err(Fallo::Plan(_))));
+    assert!(a_la_vista(&mut m).is_empty());
+    assert_eq!(p.instalar(&mut m, &["saludo"]), Ok(1));
+    assert_eq!(leeme(&m, "Saludo"), "saludo 1.0\n");
+    assert_eq!(m.ver("Paquetes:Saludo/Saludo").unwrap().modo, 0o755);
+    // La serie 2, copiada encima (como hace la prueba del Shell): Actualizar sube a la 1.1.
+    for f in ["index.gz", "index.gz.sig"] {
+        let d = m.ver(&format!("SYS:Work/Repos/prueba-2/{f}")).unwrap().datos.clone();
+        m.poner(&format!("SYS:Work/Repos/prueba/aarch64-dashos/{f}"), Some(&d));
+    }
+    let nivel = p.nivel.clone();
+    p.hacer(&mut m, |e, rs| Ok((plan_actualizar(e, rs, &Maquina::default(), &nivel)?, "Actualizar".into()))).unwrap();
+    assert_eq!(leeme(&m, "Saludo"), "saludo 1.1\n");
+    assert_eq!(p.instalar(&mut m, &["circulo-a"]), Ok(3));
+}

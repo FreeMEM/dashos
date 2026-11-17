@@ -119,6 +119,10 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // eco y 6 su canal.
     #[cfg(feature = "virt")]
     ("sesiones", programa!("sesiones"), &[("plazo", PLAZO), ("hipervisor", MAQUINAS)], &["archivos", "eco", "sesiones", "comprobar"]),
+    // S8 (rama `paq`): el servicio de paquetes, el único que escribe en `Paquetes:`. Nombra "paq" antes que nadie (lo
+    // sirve); `sesiones` recibe de `inicio` una copia sin marca, y nadie más. Sus llaves: 1 archivos y 2 su canal.
+    #[cfg(feature = "virt")]
+    ("paq", programa!("paq"), &[], &["archivos", "paq"]),
     // Quien hace de `guardian` en la prueba de U3: pide entrar con una contraseña mala y con la buena, y salir.
     // Un programa con permiso para `eco` (U4): lo pide a `sesiones`, lo usa, renuncia y comprueba que ya no sirve.
     // Quien atiende las preguntas al usuario (U4): `sesiones` le pregunta si un programa puede usar un servicio.

@@ -662,7 +662,8 @@ while time.time() - inicio < total:
                 teclear("clave de Ana")
                 teclear("clave de " + nueva.group(1))
             else:
-                teclear("no es esta" if tandas_vistas == 4 else "clave de Ana")
+                # S8 (rama paq): a la de instalar letras para todos sola, una mala (Paq no hace nada).
+                teclear("no es esta" if tandas_vistas == 4 or "letras 1.0 (de prueba)" in linea_t else "clave de Ana")
             time.sleep(0.5)
             continue
         # S6b, rama cuentas: el código de recuperación de la cuenta nueva, en la ventana del sistema: Intro (con

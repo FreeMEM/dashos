@@ -48,7 +48,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [archivos] comprobado al arrancar: 1 problemas; reparado, quedan 0
 # A7: la memoria de la caché de páginas, creada al arrancar (24 MB).
 ~│   [archivos] caché de páginas: 48 trozos de 512 KB creados
-~│   [ficheros] raíz (21 entradas, fin bien): C/ Classes/ DeCarla/ Devs/ Estado/ Fonts/ Imagenes/ L/ LEEME.txt Libs/ Locale/ Prefs/ Programas/ Rexx/ S/ Storage/ System/ Tools/ Utilities/ WBStartup/ Work/
+# S8 (rama paq): con `Paquetes/`, el cajón de lo instalado con Paq para todos.
+~│   [ficheros] raíz (22 entradas, fin bien): C/ Classes/ DeCarla/ Devs/ Estado/ Fonts/ Imagenes/ L/ LEEME.txt Libs/ Locale/ Paquetes/ Prefs/ Programas/ Rexx/ S/ Storage/ System/ Tools/ Utilities/ WBStartup/ Work/
 ~│   [ficheros] LEEME.txt (19 bytes): "DashOS lee RedoxFS"
 # A3 (docs/REVISION_LOOP.md): buscar, leer y cerrar en un viaje.
 ~│   [ficheros] A3 leer por nombre: bien
@@ -201,9 +202,13 @@ DashOS en marcha con 4 núcleos.
 ~│   [hostil] centro: los mosaicos del panel sin ser el panel: -1 y nada
 # U2: sesiones, primera parte. Un programa del usuario 1001 no mata a uno del 1000, y sí a uno suyo.
 ~│   [sesiones] en marcha, con el servicio de archivos
+# S8 (rama paq): el servicio paq, al arrancar, quita el cerrojo que quedó de antes (el disco de pruebas lo trae).
+~│   [paq] el cerrojo de antes de arrancar (tanda de antes de apagar; arranque 0; desde 0) se quita
 # S6, S36: el registro común, con su cliente propio de archivos (cajón suyo, 0700).
 ~│   [sesiones] registro común en Estado:Registros/: seguridad, sistema y programas
 ~│   [sesiones] permisos concedidos (sistema): 0 leídos de su Prefs/Permisos
+# Y barre lo que dejó a medias una transacción cortada (el disco trae un cajón a medio desempaquetar).
+~│   [paq] Paquetes: en orden: generación 0, 0 paquetes; de una transacción cortada, 1 restos borrados y 0 cajones movidos
 # U3: entrar abre el volumen cifrado del usuario y salir lo cierra; solo puede pedirlo `guardian` (aquí, `entrada`).
 ~│   [entrada] Carla: contraseña mala -12, buena 0, volver con mala -12 y con buena 0, salir 0: bien
 ~│   [sesiones] hostil pide entrar como Carla: -12
@@ -791,6 +796,64 @@ DashOS en marcha con 4 núcleos.
 ~│   [shell] Usuario: no se hace nada: no se confirmó con la contraseña de un administrador
 ~│   [shell] Usuario: se paró en la 1: la contraseña de la cuenta nueva es corta: 8 letras o más
 ~│   [shell] Berta             1002  Berta Gil                -
+# S8 (rama paq): Paq. Lo de todos, por una tanda: guardian enseña el plan entero y pide la contraseña una vez; el
+# servicio paq hace solo esas líneas, juntas, en una generación. El repositorio mal firmado no se usa.
+~│   [shell] prueba  SYS:Work/Repos/prueba  prioridad 20: índice bien firmado, serie 1, 10 paquetes
+~│   [shell] firmamal  SYS:Work/Repos/firmamal  prioridad 10: su índice no se usa
+~  index para prueba (prueba): La clave de pruebas de DashOS para el repositorio prueba
+~│   [shell] saludo 1.0 (prueba): saludo 1.0, de las pruebas de Paq
+~│   [guardian] tanda en pantalla: Shell pide 2 (administrador propuesto: Ana): 1. Instalar para todos letras 1.0 (de prueba; lo necesita otro) | 2. Instalar para todos saludo 1.0 (de prueba)
+~│   [sesiones] tanda de Shell: 1 a 2 de 2, se espera al servicio de paquetes
+~│   [paq] el repositorio firmamal no se usa: su índice está firmado con una clave que no es de confianza
+~│   [paq] tanda de Shell (usuario 1000): hecha, generación 1
+~│   [sesiones] asignaciones de los paquetes de todos: 1 (y 0 que no valen)
+~│   [sesiones] tanda de Shell: 2 de 2 hechas; estado 0
+~│   [shell] Hecho: generación 1 de Paquetes:.
+~│   [shell] Saludo 1.0, instalado con Paq
+~│   [shell]   Instalado para todos: 1.0 (de prueba), en el cajón Saludo
+~│   [shell]   Asignaciones: SALUDO: Saludo
+~│   [shell]     Saludo/LEEME (11 bytes)
+# Actualizar (el repositorio publica la serie 2, con saludo 1.1), volver a la de antes (del almacén, sin bajar nada) y
+# quitar (se lleva letras, que ya no necesita nadie). Lo que se ve es lo de cada generación.
+~│   [guardian] tanda en pantalla: Shell pide 1 (administrador propuesto: Ana): 1. Actualizar para todos saludo de 1.0 a 1.1 (de prueba)
+~│   [shell] Hecho: generación 2 de Paquetes:.
+~│   [shell] Saludo 1.1, instalado con Paq
+~│   [guardian] tanda en pantalla: Shell pide 1 (administrador propuesto: Ana): 1. Volver para todos saludo de 1.1 a 1.0
+~│   [shell] Hecho: generación 3 de Paquetes:.
+~│   [shell] Saludo 1.0, instalado con Paq
+~│   [guardian] tanda en pantalla: Shell pide 2 (administrador propuesto: Ana): 1. Quitar para todos letras 1.0 | 2. Quitar para todos saludo 1.0
+~│   [sesiones] asignaciones de los paquetes de todos: 0 (y 0 que no valen)
+~│   [shell] Hecho: generación 4 de Paquetes:.
+~│   [shell] Paquetes:Saludo quitado
+~  Volver saludo de 1.1 a 1.0: 2 paquetes
+~  Quitar letras 1.0; Quitar saludo 1.0: 0 paquetes (en uso)
+~│   [guardian] tanda en pantalla: Shell pide 1 (administrador propuesto: Ana): 1. Borrar las versiones viejas de los paquetes de todos (menos la de ahora y la de antes)
+~│   [paq] limpio: 2 generaciones y 1 versiones fuera (0 KB)
+~│   [shell] Hecho: limpio.
+# Lo de cada uno (Home:Paquetes): sin administrador, lo hace la orden (con los alias en inglés).
+~│   [shell] Plan para ti (Home:Paquetes):
+~│   [shell]   2. Instalar saludo 1.1 (de prueba)
+~│   [shell] Hecho: generación 1 de Home:Paquetes.
+~│   [shell] Saludo 1.1, instalado con Paq
+~│   [shell]   2. Instalar circulo-b 1.0 (de prueba; lo necesita otro)
+~│   [shell] Hecho: generación 2 de Home:Paquetes.
+~│   [shell]   4. Quitar saludo 1.1
+~│   [shell] Hecho: generación 3 de Home:Paquetes.
+# Lo hostil: nada se instala.
+~│   [shell] Paq: el paquete fuera no se instala: la ruta "../Fuera.txt" se sale del paquete
+~│   [shell] Paq: el paquete absoluto no se instala: la ruta "/C/Absoluto" se sale del paquete
+~│   [shell] Paq: el paquete enlace no se instala: Enlace/arranque es un enlace simbólico
+~│   [shell] Paq: el paquete vecino no se instala: Saludo/LEEME está fuera de su cajón (Vecino)
+~│   [shell] Paq: cambiado 1.0 no es el paquete que dice el índice (está cambiado): no se toca nada
+~│   [shell] Paq: no se puede: no hay ningún paquete noexiste en los repositorios
+~│   [shell] Paq: no hay ningún paquete ajeno en los repositorios
+~  Quitar circulo-a 1.0; Quitar circulo-b 1.0; Quitar letras 1.0; Quitar saludo 1.1: 0 paquetes (en uso)
+~│   [shell] No se puede escribir en Paquetes:intruso: está protegido
+~│   [shell] Delete: Paquetes:Paq/Generaciones/4: está protegido
+~│   [guardian] tanda en pantalla: Shell pide 1 (administrador propuesto: Ana): 1. Instalar para todos letras 1.0 (de prueba)
+~│   [sesiones] tanda de Shell: no es la contraseña de un administrador; no se hace nada
+~│   [shell] Paq: no se hace nada: no se confirmó con la contraseña de un administrador (el detalle, en Registro)
+~  Quitar letras 1.0; Quitar saludo 1.0: 0 paquetes (en uso)
 ~│   [shell] Home:PruebaShell borrado
 ~│   [shell] Fin de la prueba del Shell
 ~│   [shell] acaba con el código 0
