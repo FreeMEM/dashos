@@ -743,25 +743,9 @@ while time.time() - inicio < total:
             if "[centro] quita a " not in texto:
                 if time.time() > reintento:
                     reintento = time.time() + 4
-                    # firefox-firme: con el PC cargado, las ventanas de la caja Amiga (Ajustes, ReAction) salen a esta
-                    # hora encima del centro y se llevan el teclado; vuelven a soltarlo al cerrarse, pero ni el clic ni
-                    # las flechas le habían llegado. Otra vez con el ratón (el clic en la fila lo trae delante y le da
-                    # el teclado); con teclas solo si no se sabe dónde está.
-                    import re
-                    v = re.search(r"\[compositor\] ventana de centro en \((\d+), (\d+)\)", texto)
-                    l = re.search(r"\[centro\] lista en \((\d+), (\d+)\)", texto)
-                    b = re.search(r"\[centro\] botón Quitar en \((\d+), (\d+)\)", texto)
-                    if v and l and b and libre_caja and not bloqueado_ahora:
-                        vx, vy = int(v.group(1)), int(v.group(2))
-                        ir_a(vx + int(l.group(1)) + 60, vy + int(l.group(2)) + 28)
-                        mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
-                        time.sleep(0.6)
-                        ir_a(vx + int(b.group(1)), vy + int(b.group(2)))
-                        mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
-                    else:
-                        mandar("sendkey down")
-                        time.sleep(0.3)
-                        mandar("sendkey delete")
+                    mandar("sendkey down")
+                    time.sleep(0.3)
+                    mandar("sendkey delete")
                 time.sleep(0.25)
                 continue
             centro = 5
