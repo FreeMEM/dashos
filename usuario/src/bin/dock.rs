@@ -1481,7 +1481,7 @@ fn principal() -> u64 {
         }
         // El plazo: un cuadro si algo se mueve; si no, lo siguiente que toque.
         let mut plazo = 1_000_000u64;
-        let animando = est.muelles.iter().any(|m| m.vista.desliz.en_marcha || !m.vista.saltos.is_empty() || m.vista.se_ve(&est.aj, ahora) != m.visto) || est.osd.escala.en_marcha || est.osd.que.as_ref().is_some_and(|_| !est.osd.opacidad.acabado(ahora));
+        let animando = est.muelles.iter().any(|m| m.vista.desliz.en_marcha || m.vista.saltando(ahora) || m.vista.se_ve(&est.aj, ahora) != m.visto) || est.osd.escala.en_marcha || est.osd.que.as_ref().is_some_and(|_| !est.osd.opacidad.acabado(ahora));
         if animando {
             plazo = CUADRO_US;
         }
@@ -1524,12 +1524,21 @@ fn principal() -> u64 {
             let ve = m.vista.apuntar(&aj, &m.disp, ahora);
             let antes = m.vista.desliz.entero();
             let saltos_antes = m.vista.saltos.len();
-            let sigue = m.vista.avanzar(ahora, paso, aj.iconos);
+            // Un salto que se movía en el cuadro de antes (también si acabó entre medias: falta pintarlo donde quedó).
+            let saltaba = m.vista.saltando(ahora.saturating_sub(paso));
+            m.vista.avanzar(ahora, paso, aj.iconos);
             let cambia_vista = ve != m.visto;
             if cambia_vista {
                 m.visto = ve;
             }
-            let repintar = cambia_vista || m.vista.desliz.entero() != antes || saltos_antes > 0 || (sigue && !m.vista.saltos.is_empty());
+            // tecla-pegada: solo si algo se movió. Antes, con cualquier salto en la lista (un icono arriba, quieto, con
+            // el ratón encima o tras esconderse), se repintaba a cada vuelta; y cada commit trae un aviso del
+            // compositor que despierta otra vuelta: unos 500 commits por segundo, el compositor al 95 % solo con eso.
+            let repintar = cambia_vista
+                || m.vista.desliz.entero() != antes
+                || saltaba
+                || m.vista.saltando(ahora)
+                || m.vista.saltos.len() != saltos_antes;
             if cambia_vista {
                 if ve {
                     // Dónde queda cada cosa (para las pruebas: el guion pulsa ahí).
@@ -1546,6 +1555,12 @@ fn principal() -> u64 {
                     println!("  [dock] se ve: {}", sitios.join(", "));
                 } else {
                     println!("  [dock] se esconde");
+                    // Escondido, ningún icono está bajo el ratón: el que estaba arriba baja (si no, al volver a
+                    // salir lo haría subido, sin el ratón encima).
+                    let m = &mut est.muelles[i];
+                    if m.encima.take().is_some() {
+                        m.vista.encima_de(None, aj.iconos, ahora, muelle::BASE_MS > 0);
+                    }
                 }
             }
             if repintar {

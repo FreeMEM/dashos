@@ -593,6 +593,13 @@ impl Vista {
         sigue || self.gracia_hasta.is_some_and(|h| ahora_us < h)
     }
 
+    /// Si algún icono está subiendo o bajando. Uno que ya está arriba y quieto (el ratón sigue encima) no se mueve: no
+    /// hay que repintarlo (tecla-pegada: el dock contaba cualquier salto como animación y, con un icono arriba, se
+    /// repintaba sin parar, a cada aviso del compositor).
+    pub fn saltando(&self, ahora_us: u64) -> bool {
+        self.saltos.iter().any(|(_, s)| !s.tramo.acabado(ahora_us) || s.falta_segundo)
+    }
+
     /// Lo que ha subido el icono de `clave` (en píxeles, hacia dentro de la pantalla).
     pub fn salto(&self, clave: &str, ahora_us: u64) -> i32 {
         self.saltos.iter().find(|(k, _)| k == clave).map_or(0, |(_, s)| ((s.tramo.valor(ahora_us) + UNO / 2) / UNO) as i32)
@@ -908,7 +915,11 @@ mod pruebas {
         }
         assert_eq!(maximo, 10, "un cuarto del icono");
         assert_eq!(vista.salto("a", t), 8, "y se queda en un quinto");
+        // Arriba y quieto: no es una animación (no hay que repintar), aunque siga ahí.
+        assert!(!vista.saltando(t) && !vista.saltos.is_empty());
+        assert!(!vista.saltando(t + 10_000_000));
         vista.encima_de(None, 40, t, true);
+        assert!(vista.saltando(t), "baja");
         while vista.avanzar(t, 16_667, 40) && t < 2_000_000 {
             t += 16_667;
         }
