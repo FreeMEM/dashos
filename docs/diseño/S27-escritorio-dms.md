@@ -349,3 +349,17 @@ del usuario en shiva (`notificationPopupPosition = -1`, `notificationAnimationDu
   pequeñas de 48, detalle bajo la fila), con su modo de edición.
 
 Lo que DMS no tiene y DashOS sí: pestañas en el centro de avisos (las pidió el usuario) y "no molestar" con horario.
+
+## 9. La sexta oleada: la pantalla de bloqueo y el monitor de procesos (2026-11-17)
+
+Portado de DMS v2.1.2 (MIT; sección 0). Detalle en `docs/bitacoras/dms-bloqueo.md`.
+
+- **La pantalla de bloqueo** (y la de entrada) la sigue pintando `guardian`, con la disposición de serie de DMS: el
+  reloj grande y la fecha arriba, el avatar y el campo con contorno en medio, los avisos debajo y la red y el volumen
+  arriba a la derecha, sobre el fondo del usuario desenfocado con el velo de DMS. Encima del campo siguen el nombre y la
+  frase de la persona (S6b). Lo de alrededor le llega solo para leer: el fondo de `fondo`, la zona horaria del centro,
+  el estado del compositor y los avisos por `sesiones`, según el ajuste `bloqueo` de `ENV:Escritorio/avisos` (de serie,
+  cuántos; nunca el texto). Super+L bloquea también en la imagen de usar.
+- **El monitor de procesos** es el desplegable de las píldoras de CPU y memoria de la barra, como el de DMS: tarjetas con
+  gráfica, buscador, filtros, columnas que ordenan y cerrar el elegido (lo de quien está delante con `MATAR`; un
+  programa del escritorio o una caja del sistema, con la tanda de administrador).
