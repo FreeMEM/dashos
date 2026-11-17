@@ -27,6 +27,8 @@ pub mod protocolo {
     pub mod sesiones;
     /// S35: virtio por mensajes, entre un conductor de DashOS y el servicio de un dominio de controladores.
     pub mod virtio_msg;
+    /// S35: prestar un aparato USB, entre el xHCI de DashOS y el servicio de un dominio de controladores.
+    pub mod usb_prestado;
 }
 #[cfg(feature = "monton")]
 pub mod monton;

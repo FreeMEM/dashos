@@ -2198,6 +2198,12 @@ if [ -n "${SHELL_CAPTURAS:-}" ]; then
     python3 -I "$(dirname "$0")/guion_shell.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$SHELL_CAPTURAS" >/dev/null 2>&1 &
     SHELL_PID=$!
 fi
+# S35, el dominio con un aparato USB: con DOMINIO_USB=<el -device del adaptador>, `tools/guion_dominio_usb.py` lo
+# desenchufa y lo enchufa cuando lo pide la prueba (`make arranque-virt-dominio`).
+if [ -n "${DOMINIO_USB:-}" ]; then
+    python3 -I "$(dirname "$0")/guion_dominio_usb.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$DOMINIO_USB" >/dev/null 2>"${GUION_ERRORES:-/dev/null}" &
+    DOMINIO_USB_PID=$!
+fi
 # S10, los menús: con MENUS_CAPTURAS=prefijo, `tools/guion_menus.py` (`make arranque-virt-menus`).
 if [ -n "${MENUS_CAPTURAS:-}" ]; then
     python3 -I "$(dirname "$0")/guion_menus.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$MENUS_CAPTURAS" >/dev/null 2>&1 &
@@ -2255,6 +2261,7 @@ while kill -0 "$QEMU" 2>/dev/null; do
 done
 wait "$QEMU" 2>/dev/null
 [ -n "${TECLAS_PID:-}" ] && kill "$TECLAS_PID" 2>/dev/null
+[ -n "${DOMINIO_USB_PID:-}" ] && kill "$DOMINIO_USB_PID" 2>/dev/null
 [ -n "${MULTI_PID:-}" ] && kill "$MULTI_PID" 2>/dev/null
 [ -n "${CAJA_PID:-}" ] && kill "$CAJA_PID" 2>/dev/null
 [ -n "${SHELL_PID:-}" ] && kill "$SHELL_PID" 2>/dev/null

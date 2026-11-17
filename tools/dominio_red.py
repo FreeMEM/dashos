@@ -1,17 +1,26 @@
 #!/usr/bin/env python3
-"""El dominio de red de S35, paso 2 (docs/bitacoras/dominio-red.md): su kernel, su /init y la medida en QEMU solo.
+"""El dominio de red de S35, paso 2 (docs/bitacoras/dominio-red.md y dominio-usb.md): su kernel, su /init y la medida
+en QEMU solo.
 
-Nada de lo que se compila va a git: se queda en $DASHOS_DOMINIO_RED (por defecto ~/recuperar/geosian-7d/dominio-red).
+Dos variantes, cada una en su carpeta (fuera de git, como todo lo que se compila aquí):
+
+  usb   (la de `make arranque-virt-dominio`): el aparato es USB, lo lleva el xHCI de DashOS y el dominio lo engancha por
+        USB/IP con vhci-hcd. Sin PCI. Configuración usb.config. Carpeta $DASHOS_DOMINIO_USB (por defecto
+        ~/recuperar/geosian-7d/dominio-usb).
+  pci   (el paso intermedio, retirado de DashOS): la e1000 de QEMU por PCI. Configuración paso.config. Carpeta
+        $DASHOS_DOMINIO_RED (por defecto ~/recuperar/geosian-7d/dominio-red). Sirve para medir en QEMU solo.
+
 El código de Linux es el del paso 1 ($DASHOS_MEDIR_LINUX/linux-<versión>, de kernel.org, comprobado allí).
 
-    tools/dominio_red.py preparar        el kernel (tinyconfig + comun, arm64 y paso.config) y el initramfs con
-                                         caja-linux/dominios/dominio_red.c como /init: Image e initramfs.cpio
-    tools/dominio_red.py qemu [MB] [N]   N arranques en qemu-system-aarch64 -M virt (1 CPU, Cortex-A72 emulado), con la
-                                         e1000 y el mismo árbol de zonas reservadas que en DashOS, con "solo=1": el
-                                         tiempo hasta "listo" y la memoria usada (medianas)
-    tools/dominio_red.py minimo          la menor memoria (MB) con la que llega a "listo" en QEMU solo
+    tools/dominio_red.py preparar [usb|pci]  el kernel (tinyconfig + comun, arm64 y la de la variante) y el initramfs
+                                             con caja-linux/dominios/dominio_red.c como /init: Image e initramfs.cpio
+    tools/dominio_red.py init [usb|pci]      solo el /init y el initramfs (el kernel, el que haya)
+    tools/dominio_red.py qemu [MB] [N]       (pci) N arranques en qemu-system-aarch64 -M virt (1 CPU, Cortex-A72
+                                             emulado), con la e1000 y el mismo árbol de zonas reservadas que tenía en
+                                             DashOS, con "solo=1": el tiempo hasta "listo" y la memoria usada (medianas)
+    tools/dominio_red.py minimo              (pci) la menor memoria (MB) con la que llega a "listo" en QEMU solo
 
-Para `make arranque-virt-dominio`: DOMINIO_IMAGE y DOMINIO_INITRD (por defecto, los de aquí).
+Para `make arranque-virt-dominio`: DOMINIO_IMAGE y DOMINIO_INITRD (por defecto, los de la variante usb).
 """
 
 import os
@@ -28,38 +37,46 @@ from medir_dominios import FUENTE, TOOLCHAIN_ARM64, cpio_newc, leer_config, pedi
 
 RAIZ = Path(__file__).resolve().parent.parent
 DOMINIOS = RAIZ / "caja-linux" / "dominios"
-TRABAJO = Path(os.environ.get("DASHOS_DOMINIO_RED", Path.home() / "recuperar" / "geosian-7d" / "dominio-red"))
-OBJ = TRABAJO / "obj" / "kernel"
+VARIANTES = {
+    "usb": ("usb.config", Path(os.environ.get("DASHOS_DOMINIO_USB", Path.home() / "recuperar" / "geosian-7d" / "dominio-usb"))),
+    "pci": ("paso.config", Path(os.environ.get("DASHOS_DOMINIO_RED", Path.home() / "recuperar" / "geosian-7d" / "dominio-red"))),
+}
+# Lo de QEMU solo (`qemu`, `minimo`, `ver`) es de la variante pci: la e1000 en QEMU, sin DashOS.
+TRABAJO = VARIANTES["pci"][1]
 IMAGEN = TRABAJO / "Image"
 INITRD = TRABAJO / "initramfs.cpio"
 NUCLEOS = os.cpu_count() or 8
 CC = f"{TOOLCHAIN_ARM64}gcc"
 
 
-def preparar():
-    OBJ.mkdir(parents=True, exist_ok=True)
-    mk = ["make", "-C", FUENTE, f"O={OBJ}", "ARCH=arm64", f"-j{NUCLEOS}", f"CROSS_COMPILE={TOOLCHAIN_ARM64}"]
-    run(*mk, "tinyconfig", stdout=subprocess.DEVNULL)
-    texto = "\n".join((DOMINIOS / f).read_text() for f in ("comun.config", "arm64.config", "paso.config"))
-    (OBJ / "dominio.config").write_text(texto)
-    run(FUENTE / "scripts/kconfig/merge_config.sh", "-m", "-O", OBJ, OBJ / ".config", OBJ / "dominio.config",
-        cwd=FUENTE, env={**os.environ, "ARCH": "arm64"}, stdout=subprocess.DEVNULL)
-    run(*mk, "olddefconfig", stdout=subprocess.DEVNULL)
-    hay = leer_config(OBJ / ".config")
-    malas = [f"{k}={v} (queda {hay.get(k, 'n')})" for k, v in pedido(texto).items()
-             if hay.get(k, "n") != v and not (v == "n" and k not in hay)]
-    if malas:
-        print("AVISO, opciones que no quedaron como se pidió:", *malas, sep="\n  ", flush=True)
-    run(*mk, "Image", stdout=subprocess.DEVNULL)
-    IMAGEN.write_bytes((OBJ / "arch/arm64/boot/Image").read_bytes())
-    binario = TRABAJO / "obj" / "dominio_red"
+def preparar(variante="usb", kernel=True):
+    fragmento, trabajo = VARIANTES[variante]
+    obj = trabajo / "obj" / "kernel"
+    obj.mkdir(parents=True, exist_ok=True)
+    mk = ["make", "-C", FUENTE, f"O={obj}", "ARCH=arm64", f"-j{NUCLEOS}", f"CROSS_COMPILE={TOOLCHAIN_ARM64}"]
+    imagen, initrd = trabajo / "Image", trabajo / "initramfs.cpio"
+    if kernel:
+        run(*mk, "tinyconfig", stdout=subprocess.DEVNULL)
+        texto = "\n".join((DOMINIOS / f).read_text() for f in ("comun.config", "arm64.config", fragmento))
+        (obj / "dominio.config").write_text(texto)
+        run(FUENTE / "scripts/kconfig/merge_config.sh", "-m", "-O", obj, obj / ".config", obj / "dominio.config",
+            cwd=FUENTE, env={**os.environ, "ARCH": "arm64"}, stdout=subprocess.DEVNULL)
+        run(*mk, "olddefconfig", stdout=subprocess.DEVNULL)
+        hay = leer_config(obj / ".config")
+        malas = [f"{k}={v} (queda {hay.get(k, 'n')})" for k, v in pedido(texto).items()
+                 if hay.get(k, "n") != v and not (v == "n" and k not in hay)]
+        if malas:
+            print("AVISO, opciones que no quedaron como se pidió:", *malas, sep="\n  ", flush=True)
+        run(*mk, "Image", stdout=subprocess.DEVNULL)
+        imagen.write_bytes((obj / "arch/arm64/boot/Image").read_bytes())
+    binario = trabajo / "obj" / "dominio_red"
     run(CC, "-Os", "-static", "-nostdlib", "-ffreestanding", "-fno-stack-protector", "-fno-builtin", "-Wall",
         "-Wl,--gc-sections", "-s", "-o", binario, DOMINIOS / "dominio_red.c")
     entradas = [(d, 0o040755, b"", (0, 0)) for d in ("dev", "proc", "sys")]
     entradas.append(("dev/console", 0o020600, b"", (5, 1)))
     entradas.append(("init", 0o100755, binario.read_bytes(), (0, 0)))
-    INITRD.write_bytes(cpio_newc(entradas))
-    print(f"kernel: {IMAGEN} ({IMAGEN.stat().st_size} bytes); initramfs: {INITRD} ({INITRD.stat().st_size} bytes); "
+    initrd.write_bytes(cpio_newc(entradas))
+    print(f"kernel: {imagen} ({imagen.stat().st_size} bytes); initramfs: {initrd} ({initrd.stat().st_size} bytes); "
           f"/init: {binario.stat().st_size} bytes", flush=True)
 
 
@@ -159,8 +176,11 @@ def main():
     a = sys.argv[1:]
     if not a:
         print(__doc__)
-    elif a[0] == "preparar":
-        preparar()
+    elif a[0] in ("preparar", "init"):
+        variante = a[1] if len(a) > 1 else "usb"
+        if variante not in VARIANTES:
+            raise SystemExit(f"variante desconocida: {variante} (usb o pci)")
+        preparar(variante, kernel=a[0] == "preparar")
     elif a[0] == "qemu":
         qemu(int(a[1]) if len(a) > 1 else 32, int(a[2]) if len(a) > 2 else 5)
     elif a[0] == "ver":

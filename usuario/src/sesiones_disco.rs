@@ -205,14 +205,14 @@ pub struct Registro {
     c: Option<Cliente>,
     /// La llave sin marca del servicio de archivos, para volver a dar de alta al cliente.
     altas: u32,
-    f: [(u32, u64, u32); 3],
+    f: [(u32, u64, u32); r::FICHEROS.len()],
     /// Líneas que no llegaron al disco (sin cliente o con un fallo), para decirlo.
     pub perdidas: u64,
 }
 
 impl Registro {
     pub const fn sin_disco() -> Registro {
-        Registro { c: None, altas: 0, f: [(0, 0, 0); 3], perdidas: 0 }
+        Registro { c: None, altas: 0, f: [(0, 0, 0); r::FICHEROS.len()], perdidas: 0 }
     }
 
     /// Abre (o crea) el cajón y sus ficheros. `altas`: la llave sin marca del servicio de archivos.
@@ -227,7 +227,7 @@ impl Registro {
             return Err(e);
         }
         self.c = Some(c);
-        for i in 0..3 {
+        for i in 0..r::FICHEROS.len() {
             self.abrir_fichero(i)?;
         }
         Ok(())
@@ -269,7 +269,7 @@ impl Registro {
     /// Añade una línea ya hecha (`dashos::registro::linea`) al fichero `i`: al final, y si pasa del tope, el de ahora
     /// pasa a `.1` y se empieza otro.
     pub fn anadir(&mut self, i: usize, linea: &[u8]) {
-        if i >= 3 || linea.is_empty() {
+        if i >= r::FICHEROS.len() || linea.is_empty() {
             return;
         }
         for intento in 0..2 {
@@ -338,7 +338,7 @@ impl Registro {
 
     fn leer_una_vez(&mut self, i: usize, parte: u32, desde: u64, lector: &str, todo: bool) -> (i32, u64, u32, u32, usize) {
         let Some(c) = self.c.as_ref() else { return (a::NO_EXISTE, 0, 0, 0, 0) };
-        if i >= 3 || parte > 1 {
+        if i >= r::FICHEROS.len() || parte > 1 {
             return (a::MAL_FORMADO, 0, 0, 0, 0);
         }
         let generacion = self.f[i].2;

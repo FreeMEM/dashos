@@ -93,7 +93,12 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // El USB por xHCI (U6): el de los portátiles y el de QEMU `virt` (y, en la Pi 4, el VL805, por el PCIe).
     // Su interrupción (INTx) es opcional: con ACPI no se sabe cuál es (va en el AML) y mira los eventos con un
     // temporizador.
+    #[cfg(not(feature = "dominio"))]
     ("xhci", programa!("xhci"), &[("dma-xhci", PERMISO_DMA), ("xhci", REGISTROS), ("xhci", INTERRUPCION | OPCIONAL)], &["ventanas"]),
+    // S35, paso 2 con USB (`docs/bitacoras/dominio-usb.md`): el xHCI presta aparatos a un dominio de controladores por
+    // "usb-dominio" (lo nombra él antes que nadie: lo lee él).
+    #[cfg(feature = "dominio")]
+    ("xhci", programa!("xhci"), &[("dma-xhci", PERMISO_DMA), ("xhci", REGISTROS), ("xhci", INTERRUPCION | OPCIONAL)], &["ventanas", "usb-dominio"]),
     // El disco NVMe (U6d), que sirve el disco por el canal "disco" (U6f).
     ("nvme", programa!("nvme"), &[("dma-nvme", PERMISO_DMA), ("nvme", REGISTROS), ("nvme", INTERRUPCION | OPCIONAL)], &["disco"]),
     // Una prueba del servicio de disco (U6f), solo en `virt`: la Pi aún no tiene servicio de disco.
@@ -330,19 +335,21 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Al final, para no cambiar las marcas de los de antes.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux"), not(feature = "uso")))]
     ("commodity-prueba", programa!("commodity-prueba"), &[], &["ventanas", "sesiones"]),
-    // S35, paso 2 (`docs/bitacoras/dominio-red.md`): el dominio de red. El conductor de siempre, `virtio-red`, sin aparato
-    // PCI: con "dominio-red" usa el transporte por mensajes (nombra ese canal antes que nadie: lo lee él). Su prueba, que
-    // lee "dominio-control" (y con "sesiones" lee el registro común al acabar). Y el servicio del dominio, con la Image y
-    // el initramfs del dominio y la e1000 que se le presta (sus registros, su configuración, su INTx y un permiso DMA; sin
-    // IOMMU, solo en QEMU). El permiso de máquinas virtuales lo pide a `sesiones`, como la caja Linux (decisión del
-    // usuario del 2026-11-12), que se lo da sin preguntar por ser del sistema; y por `sesiones` apunta en el registro
-    // común cada vez que el dominio cae. Al final, para no cambiar las marcas de los de antes.
+    // S35, paso 2 (`docs/bitacoras/dominio-red.md`, `dominio-usb.md`): el dominio de red. El conductor de siempre,
+    // `virtio-red`, sin aparato PCI: con "dominio-red" usa el transporte por mensajes (nombra ese canal antes que nadie:
+    // lo lee él). Su prueba, que lee "dominio-control" (y con "sesiones" lee el registro común y mata al conductor para
+    // ver que vuelve). Y el servicio del dominio, con la Image y el initramfs del dominio; el aparato se lo presta el
+    // xHCI por "usb-dominio" (USB/IP: sin IOMMU, en cualquier máquina). Con "avisos", el aviso al usuario cuando el
+    // dominio cae tres veces seguidas. El permiso de máquinas virtuales lo pide a `sesiones`, como la caja Linux
+    // (decisión del usuario del 2026-11-12), que se lo da sin preguntar por ser del sistema; y por `sesiones` apunta en
+    // el registro común cada vez que el dominio cae, y su consola en el fichero del dominio. Al final, para no cambiar
+    // las marcas de los de antes.
     #[cfg(feature = "dominio")]
     ("virtio-red", programa!("virtio-red"), &[], &["red", "dominio-red"]),
     #[cfg(feature = "dominio")]
     ("dominio-prueba", programa!("dominio-prueba"), &[], &["red", "dominio-control", "sesiones"]),
     #[cfg(feature = "dominio")]
-    ("dominio", programa!("dominio"), &[("dominio-linux", DATOS), ("dred-bar", REGISTROS), ("dred-cfg", REGISTROS), ("dred-irq", INTERRUPCION), ("dma-dred", PERMISO_DMA)], &["sesiones", "dominio-red", "dominio-control"]),
+    ("dominio", programa!("dominio"), &[("dominio-linux", DATOS)], &["sesiones", "dominio-red", "dominio-control", "usb-dominio", "avisos"]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", programa!("medir-fs"), &[], &["archivos"]),
     #[cfg(feature = "medir")]
@@ -784,20 +791,10 @@ pub fn lanzar() -> bool {
         let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, 0)));
         apuntar(&mut llaves, "dma-vred", PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
     }
-    // S35, paso 2: la e1000 de QEMU (Intel 82540EM), para prestarla al dominio de red sin IOMMU (solo en QEMU, solo en
-    // esta imagen). Su BAR 0, su espacio de configuración (el servicio del dominio lo emula para el dominio y le pone el
-    // maestro de bus), su INTx y un permiso DMA (la zona de DMA del dominio). Y el kernel y el initramfs del dominio.
+    // S35, paso 2: el kernel y el initramfs del dominio de red. Su aparato es USB y lo presta el xHCI: la e1000 por PCI
+    // sin IOMMU (el paso intermedio) se retiró (`docs/bitacoras/dominio-usb.md`).
     #[cfg(feature = "dominio")]
     {
-        if let Some((fisica, tamano, irq, cfg)) = aparato_pci(&d, Pci::Id(0x8086, 0x100e), 0x10, "dominio-red") {
-            apuntar(&mut llaves, "dred-bar", REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano }, DERECHOS));
-            apuntar(&mut llaves, "dred-cfg", REGISTROS, Llave::nueva(Objeto::Registros { fisica: cfg, tamano: memoria::PAGINA }, DERECHOS));
-            if let Some(irq) = irq.and_then(interrupciones::Interrupcion::nueva) {
-                apuntar(&mut llaves, "dred-irq", INTERRUPCION, Llave::nueva(Objeto::Interrupcion(irq), DERECHOS));
-            }
-            let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, 0)));
-            apuntar(&mut llaves, "dma-dred", PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
-        }
         // Los dos en un objeto (un programa nace con 8 llaves como mucho): el largo de cada uno (u64) y detrás, seguidos.
         static IMAGEN: &[u8] = include_bytes!("../target/dominio/Image");
         static INITRD: &[u8] = include_bytes!("../target/dominio/initrd");
