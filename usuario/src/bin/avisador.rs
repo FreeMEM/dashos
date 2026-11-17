@@ -40,6 +40,14 @@ fn principal() -> u64 {
         && otro.as_ref().is_some_and(|r| r.estado == BIEN && r.de() == "avisador");
     println!("  [avisador] hacerse pasar por guardian o Sistema: sale como {}: {}", otro.as_ref().map_or("?", |r| r.de()),
         if impostor { "bien" } else { "MAL" });
+    // S27, oleada 6: el resumen de la pantalla de bloqueo como si fuera `sesiones` (con su marca, no vale): no es un
+    // resumen (el servicio no lo entiende), ni cuántos ni de quién.
+    let mut resumen = [0u8; s::LARGO_AVISO_RESUMEN];
+    resumen[0..4].copy_from_slice(&s::AVISO_RESUMEN.to_le_bytes());
+    resumen[4..8].copy_from_slice(&1000u32.to_le_bytes());
+    let r_resumen = mandar(AVISOS, &resumen);
+    let sin_resumen = r_resumen.is_some_and(|r| r.estado == MAL);
+    println!("  [avisador] el resumen de la pantalla de bloqueo sin ser sesiones: {}", if sin_resumen { "no lo da, bien" } else { "MAL" });
     // Mal hechos: vacío, largos enormes o que no cuadran, urgencia que no existe, sin título, 256 bytes de basura.
     let mut m = [0u8; 256];
     let n = pedir_aviso(&mut m, NORMAL, "título", "texto");
@@ -82,7 +90,7 @@ fn principal() -> u64 {
     }
     let inunda = guardados + 4 <= RITMO as usize && demasiados > 80 && otros == 0;
     println!("  [avisador] inundar: 100 mandados, {} guardados, {} demasiados: {}", guardados, demasiados, if inunda { "bien" } else { "MAL" });
-    if bueno && impostor && rechazos && inunda && acciones { 0 } else { 1 }
+    if bueno && impostor && sin_resumen && rechazos && inunda && acciones { 0 } else { 1 }
 }
 
 /// S27: avisos con acciones. Uno bueno (con su llave para oírlas) y su sustituto; acciones falsas escritas a mano; un

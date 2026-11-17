@@ -1105,6 +1105,13 @@ fn sesiones(memoria: u32) -> bool {
     dashos::cerrar(lectura);
     let delante_negado = delante == 4 && i32::from_le_bytes(rd[0..4].try_into().unwrap()) == s::PROTEGIDO;
     println!("  [hostil] sesiones: quién está delante, sin ser el panel ni la barra: {}", if delante_negado { "-2 y nada" } else { "MAL" });
+    // S27, oleada 6: los avisos de la pantalla de bloqueo, sin ser `guardian`: -2 y nada (ni cuántos ni de quién).
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut rb = [0u8; 128];
+    let bloqueo = if escribir(SESIONES, &s::AVISOS_BLOQUEO.to_le_bytes(), &[suyo]) { dashos::canal_leer_plazo(lectura, &mut rb, &mut [], 2_000_000).0 } else { -1 };
+    dashos::cerrar(lectura);
+    let bloqueo_negado = bloqueo == 4 && i32::from_le_bytes(rb[0..4].try_into().unwrap()) == s::PROTEGIDO;
+    println!("  [hostil] sesiones: los avisos de la pantalla de bloqueo, sin ser guardian: {}", if bloqueo_negado { "-2 y nada" } else { "MAL" });
     // aviso-cajas: escuchar el aviso de memoria baja sin ser una caja del sistema: -2, y el canal que da se cierra sin
     // usarse (no le llegará nunca el aviso, ni podrá hacer soltar a nadie). Decir que ha soltado, tampoco: -2.
     let (aviso_lee, aviso_escribe) = dashos::canal_crear();

@@ -18,6 +18,9 @@
 //!   barra y el panel; los ajustes (`ENV:Escritorio/avisos`, en bytes) solo los da la barra (se los pasa el centro de
 //!   control, que es quien lee los ficheros).
 //!
+//! - S27, oleada 6: lo que se ve en la pantalla de bloqueo lo pide `sesiones` sin marca (`AVISO_RESUMEN`, con la llave de
+//!   `guardian`): cuántos actuales, o también de quién, según el ajuste `bloqueo`; nunca el título ni el texto.
+//!
 //! Llave 1: el extremo de lectura de su canal "avisos".
 
 #![no_std]
@@ -313,6 +316,21 @@ fn principal() -> u64 {
                     }
                 }
                 sv.tocar();
+            } else if n == s::LARGO_AVISO_RESUMEN && u32_en(0) == s::AVISO_RESUMEN && k >= 1 {
+                // S27, oleada 6: la pantalla de bloqueo (por `sesiones`, con la llave de `guardian`): solo lo que deja
+                // el ajuste `bloqueo` (de serie, cuántos).
+                let bloqueo = avisos_ajustes::Ajustes::leer(&sv.ajustes[..sv.largo_ajustes]).map_or(avisos_ajustes::Bloqueo::Contador, |a| a.bloqueo);
+                let modo = match bloqueo {
+                    avisos_ajustes::Bloqueo::Nada => 0,
+                    avisos_ajustes::Bloqueo::Contador => 1,
+                    avisos_ajustes::Bloqueo::Nombres => 2,
+                    avisos_ajustes::Bloqueo::Todo => 3,
+                };
+                let mut r = [0u8; LARGO_RESUMEN];
+                let largo = sv.historial.resumen_bloqueo(&sv.detras, modo, &mut r);
+                dashos::canal_escribir(ll[0], &r[..largo], &[]);
+                dashos::cerrar(ll[0]);
+                usadas = 1;
             }
         } else if marca != u64::MAX && marca >> 63 == 0 && k >= 1 {
             let respuesta = ll[0];

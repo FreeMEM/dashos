@@ -178,6 +178,8 @@ DashOS en marcha con 4 núcleos.
 # del canal) pasa.
 ~│   [hostil] compositor: menús: ser la barra sin serlo da error: sí; poner su sitio sin ser el centro, también: sí; un menú mal formado, también: sí; uno de más de 16 KB, también: sí; elegir sin objeto de barra, también: sí; uno que vale casi del tope, no: sí
 ~│   [hostil] sesiones: quién está delante, sin ser el panel ni la barra: -2 y nada
+# S27, oleada 6: ni los avisos de la pantalla de bloqueo, sin ser `guardian`.
+~│   [hostil] sesiones: los avisos de la pantalla de bloqueo, sin ser guardian: -2 y nada
 # Apagar y reiniciar (decisión del usuario del 2026-11-13): solo `sesiones` tiene el permiso del kernel (llamada 51),
 # que le manda `inicio`, y solo el panel se lo puede pedir.
 ~│   [sesiones] tiene el permiso de apagar
@@ -396,6 +398,8 @@ DashOS en marcha con 4 núcleos.
 # inundar topa con su ritmo. El servicio sigue.
 ~│   [avisador] un aviso: 0 (sale como avisador): bien
 ~│   [avisador] hacerse pasar por guardian o Sistema: sale como avisador: bien
+# S27, oleada 6: ni el resumen de la pantalla de bloqueo con su marca (solo lo pide `sesiones`, sin marca).
+~│   [avisador] el resumen de la pantalla de bloqueo sin ser sesiones: no lo da, bien
 ~│   [avisador] mal hechos rechazados 6 de 6, bytes raros guardados limpios, y sigue: bien
 ~│   [avisos] avisador: demasiados avisos seguidos; los siguientes no se guardan
 ~│   [avisador] inundar: 100 mandados,

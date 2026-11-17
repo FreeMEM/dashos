@@ -240,6 +240,11 @@ pub const LARGO_AVISO_PERSONA: usize = 32;
 pub const AVISO_DETRAS: u32 = 0x5536_0002;
 pub const LARGO_AVISO_DETRAS: usize = 40;
 pub const MAX_DETRAS: usize = 8;
+/// S27, oleada 6: al servicio de avisos, con la llave de `guardian` para contestar: lo que se ve de los avisos en la
+/// pantalla de bloqueo de la persona de delante. Orden y su usuario (u32): 8 bytes. Lo pide `guardian` con
+/// `AVISOS_BLOQUEO`; el servicio le contesta a él (`protocolo::avisos::resumen_bloqueo`).
+pub const AVISO_RESUMEN: u32 = 0x5536_0003;
+pub const LARGO_AVISO_RESUMEN: usize = 8;
 /// S10, Commodities (`docs/bitacoras/commodities.md`): los permisos de commodities de un programa, al compositor.
 /// Orden, permisos (u32, los `PODER_*`), su marca (u64), dar (1) o quitar (0) (u32) y 4 de relleno: 24 bytes. Número
 /// alto, aparte de los de U6. Los mismos números en `wayland::escena` y `wayland::escena::commodities`.
@@ -364,6 +369,11 @@ pub const PRIMERA_CUENTA: u32 = 133;
 /// primera) y hasta `POR_PAGINA_ENTRADA` entradas de `ENTRADA_CUENTA` bytes: el nombre (16) y el nombre completo (48),
 /// rellenos de ceros. Solo las activas. A otro, `PROTEGIDO` y nada más.
 pub const CUENTAS_ENTRADA: u32 = 134;
+/// S27, oleada 6: de `guardian`, lo que dejan ver los avisos en su pantalla de bloqueo (orden). `sesiones` se lo pasa al
+/// servicio de avisos (`AVISO_RESUMEN`, sin marca, con la llave para contestar y el usuario de delante), y el servicio
+/// contesta a `guardian` directamente, según el ajuste `bloqueo` de los avisos. A otro, sin nadie delante o sin el
+/// servicio, `PROTEGIDO` (4 bytes).
+pub const AVISOS_BLOQUEO: u32 = 135;
 pub const ENTRADA_CUENTA: usize = 64;
 pub const POR_PAGINA_ENTRADA: usize = 3;
 /// S6b, S36 (rama `admin-desarrollo`): abrir un programa instalado **encerrado**, con la ficha que tendría al abrirlo

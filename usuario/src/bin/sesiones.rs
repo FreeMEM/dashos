@@ -174,9 +174,9 @@ const LANZADORES: &[&str] = &["barra", "workbench", "explorador", "dock"];
 const VEN_DELANTE: &[&str] = &["panel", "barra"];
 /// Trasfondo: los programas del escritorio que miran los procesos por la persona de delante (`MONITOR`): el fondo (su
 /// panel), la barra (sus indicadores) y el centro de control (el monitor del sistema). El centro también cierra por ella
-/// (`MATAR`), solo lo suyo.
+/// (`MATAR`), solo lo suyo; y la barra (S27, oleada 6: su monitor de procesos, como el de DMS).
 const MONITORES: &[&str] = &["fondo", "barra", "centro"];
-const MATAN_POR_DELANTE: &[&str] = &["centro"];
+const MATAN_POR_DELANTE: &[&str] = &["centro", "barra"];
 /// Los programas del escritorio (los que lanza `inicio` con estos nombres): salen en el monitor marcados así y nadie los
 /// cierra con `MATAR` (decisión del coordinador del 2026-11-14; el usuario puede cambiarla).
 const ESCRITORIO: &[&str] = &["fondo", "centro", "workbench", "explorador", "selector", "barra", "panel", "caja-amiga", "caja-linux", "dock"];
@@ -3404,6 +3404,27 @@ fn principal() -> u64 {
                     b.fill(0);
                 }
                 // Rama `cuentas-2`: las cuentas para la pantalla de entrada (elegir la persona en vez de teclearla).
+                // S27, oleada 6: los avisos de la pantalla de bloqueo, de `guardian`: al servicio de avisos, que le contesta.
+                AVISOS_BLOQUEO => {
+                    let mut m = [0u8; LARGO_AVISO_RESUMEN];
+                    m[0..4].copy_from_slice(&AVISO_RESUMEN.to_le_bytes());
+                    m[4..8].copy_from_slice(&activa.to_le_bytes());
+                    let copia = if yo.is_some_and(|f| es(&f, GUARDIANES)) && activa >= PRIMERA_PERSONA && siguen.avisos != 0 {
+                        // Solo para escribir, y que viaje una vez (al servicio, que no puede pasarla a nadie).
+                        u32::try_from(dashos::llave_duplicar(respuesta, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, 0)).ok().filter(|&c| c > 0)
+                    } else {
+                        None
+                    };
+                    match copia {
+                        Some(c) if dashos::canal_escribir(siguen.avisos, &m, &[c]) == 0 => {}
+                        otra => {
+                            if let Some(c) = otra {
+                                dashos::cerrar(c);
+                            }
+                            dashos::canal_escribir(respuesta, &PROTEGIDO.to_le_bytes(), &[]);
+                        }
+                    }
+                }
                 CUENTAS_ENTRADA => {
                     let mut r = [0u8; 16 + ENTRADA_CUENTA * POR_PAGINA_ENTRADA];
                     if !yo.is_some_and(|f| es(&f, GUARDIANES)) {

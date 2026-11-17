@@ -35,6 +35,10 @@
 //!   bytes de `avisos_ajustes::Ajustes::escribir`). El servicio solo usa lo del historial; sube la versión y toca el
 //!   timbre (la barra ya los tiene).
 //!
+//! - Solo sin marca, de `sesiones` (S27, oleada 6): `AVISO_RESUMEN` (`protocolo::sesiones`), con la llave de `guardian`:
+//!   lo que dejan ver los avisos en la pantalla de bloqueo, según el ajuste `bloqueo` (`resumen_bloqueo`). El servicio
+//!   contesta a `guardian` por esa llave. Un programa no lo pide: con su marca, no se entiende.
+//!
 //! Visibles: los del sistema y los de las personas que no tienen la sesión detrás (U6). Los de una sesión de detrás se
 //! guardan y salen cuando su dueña vuelve delante.
 
@@ -107,6 +111,15 @@ pub const CON_ACCIONES: u8 = 16;
 pub const CON_POR_DEFECTO: u8 = 32;
 /// Lo más largo de los ajustes que guarda el servicio para la barra.
 pub const MAX_AJUSTES: usize = 128;
+
+/// S27, oleada 6: lo que se contesta a la pantalla de bloqueo (`resumen_bloqueo`): estado (i32), modo (u32: 0 nada, 1
+/// contador, 2 nombres), cuántos actuales hay (u32), cuántos programas van (u32) y, con nombres, hasta
+/// `RESUMEN_PROGRAMAS` entradas de `ENTRADA_RESUMEN` bytes: el nombre de quien avisa (16, relleno de ceros) y cuántos
+/// (u32).
+pub const CABECERA_RESUMEN: usize = 16;
+pub const ENTRADA_RESUMEN: usize = 20;
+pub const RESUMEN_PROGRAMAS: usize = 5;
+pub const LARGO_RESUMEN: usize = CABECERA_RESUMEN + ENTRADA_RESUMEN * RESUMEN_PROGRAMAS;
 
 /// El historial: cuántos avisos guarda, y cuántos de un mismo programa (un programa que inunda solo se pisa a sí mismo).
 pub const MAX_HISTORIAL: usize = 50;
@@ -588,6 +601,46 @@ impl Historial {
         (0..MAX_HISTORIAL).filter(|&i| self.avisos[i].is_some_and(|x| f(&x))).min_by_key(|&i| self.avisos[i].unwrap().numero)
     }
 
+    /// S27, oleada 6: lo que dejan ver los avisos en la pantalla de bloqueo, con `detras` y el ajuste `bloqueo`
+    /// (`avisos_ajustes::Bloqueo`, en su número: 0 nada, 1 contador, 2 nombres, 3 todo). Con "nada", ni cuántos; con
+    /// "contador", cuántos actuales (como `lockNotifications` de DMS en su modo 1); con "nombres", además quién avisa,
+    /// agrupado por programa, los que más primero (su modo 2, los chips). "Todo" (el modo 3 de DMS, con el contenido)
+    /// va como "nombres": el título y el texto no salen del servicio con la sesión bloqueada. Devuelve cuántos bytes.
+    pub fn resumen_bloqueo(&self, detras: &[u32], bloqueo: u8, r: &mut [u8; LARGO_RESUMEN]) -> usize {
+        r.fill(0);
+        let modo = (bloqueo as u32).min(2);
+        r[4..8].copy_from_slice(&modo.to_le_bytes());
+        if modo == 0 {
+            return CABECERA_RESUMEN;
+        }
+        let mut grupos: [([u8; 16], u32, u32); MAX_HISTORIAL] = [([0; 16], 0, 0); MAX_HISTORIAL];
+        let (mut n, mut cuantos) = (0usize, 0u32);
+        for a in self.visibles(detras).filter(|a| a.actual) {
+            cuantos += 1;
+            match grupos[..n].iter_mut().find(|g| g.0 == a.de) {
+                Some(g) => g.1 += 1,
+                None => {
+                    grupos[n] = (a.de, 1, a.numero);
+                    n += 1;
+                }
+            }
+        }
+        r[8..12].copy_from_slice(&cuantos.to_le_bytes());
+        if modo < 2 {
+            return CABECERA_RESUMEN;
+        }
+        // Los que más avisan primero; a igualdad, el del aviso más nuevo.
+        grupos[..n].sort_unstable_by_key(|g| (core::cmp::Reverse(g.1), core::cmp::Reverse(g.2)));
+        let van = n.min(RESUMEN_PROGRAMAS);
+        r[12..16].copy_from_slice(&(van as u32).to_le_bytes());
+        for (i, g) in grupos[..van].iter().enumerate() {
+            let o = CABECERA_RESUMEN + ENTRADA_RESUMEN * i;
+            r[o..o + 16].copy_from_slice(&g.0);
+            r[o + 16..o + 20].copy_from_slice(&g.1.to_le_bytes());
+        }
+        CABECERA_RESUMEN + ENTRADA_RESUMEN * van
+    }
+
     /// Los que se ven con `detras`, del más nuevo al más viejo.
     pub fn visibles<'a>(&'a self, detras: &'a [u32]) -> impl Iterator<Item = &'a Aviso> + 'a {
         let mut v: [Option<&Aviso>; MAX_HISTORIAL] = [None; MAX_HISTORIAL];
@@ -771,6 +824,53 @@ impl NoMolestar {
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    /// S27, oleada 6: lo de la pantalla de bloqueo según el ajuste. Con "nada", ni cuántos; con "contador", solo
+    /// cuántos actuales (no los descartados ni los de una sesión de detrás); con "nombres", agrupados por programa, los
+    /// que más primero, cinco como mucho; "todo" no da más que "nombres"; nunca el título ni el texto.
+    #[test]
+    fn resumen_para_el_bloqueo() {
+        let mut h = Historial::new();
+        let de = |n: &str| {
+            let mut b = [0u8; 16];
+            b[..n.len()].copy_from_slice(n.as_bytes());
+            b
+        };
+        let meter = |h: &mut Historial, marca: u64, uid: u32, quien: &str| {
+            let mut a = aviso(marca, uid, "secreto del título");
+            a.de = de(quien);
+            h.meter(a)
+        };
+        for _ in 0..3 {
+            meter(&mut h, 70, 1000, "correo");
+        }
+        meter(&mut h, 71, 1000, "calendario");
+        let viejo = meter(&mut h, 72, 1000, "copias");
+        h.descartar(viejo, &[]);
+        meter(&mut h, 73, 1001, "de-carla");
+        for k in 0..6 {
+            meter(&mut h, 80 + k, 1, ["a", "b", "c", "d", "e", "f"][k as usize]);
+        }
+        let mut r = [0u8; LARGO_RESUMEN];
+        let u = |r: &[u8], i: usize| u32::from_le_bytes(r[i..i + 4].try_into().unwrap());
+        // Carla, detrás: lo suyo no cuenta.
+        assert_eq!(h.resumen_bloqueo(&[1001], 0, &mut r), CABECERA_RESUMEN);
+        assert_eq!((u(&r, 4), u(&r, 8), u(&r, 12)), (0, 0, 0));
+        assert_eq!(h.resumen_bloqueo(&[1001], 1, &mut r), CABECERA_RESUMEN);
+        assert_eq!((u(&r, 4), u(&r, 8), u(&r, 12)), (1, 4 + 6, 0));
+        let n = h.resumen_bloqueo(&[1001], 2, &mut r);
+        assert_eq!(n, CABECERA_RESUMEN + ENTRADA_RESUMEN * RESUMEN_PROGRAMAS);
+        assert_eq!((u(&r, 4), u(&r, 8), u(&r, 12)), (2, 10, 5));
+        assert_eq!(&r[16..22], b"correo");
+        assert_eq!(u(&r, 32), 3);
+        assert!(!r.windows(7).any(|w| w == b"secreto"), "el título salió");
+        assert!(!r.windows(8).any(|w| w == b"de-carla"), "lo de la sesión de detrás salió");
+        let mut r2 = [0u8; LARGO_RESUMEN];
+        assert_eq!(h.resumen_bloqueo(&[1001], 3, &mut r2), n);
+        assert_eq!(&r2[4..8], &2u32.to_le_bytes());
+        // Un ajuste que no existe (de más): como "nombres", sin pánico.
+        h.resumen_bloqueo(&[], 200, &mut r2);
+    }
 
     fn aviso(marca: u64, uid: u32, titulo: &str) -> Aviso {
         let mut a = Aviso::vacio();
