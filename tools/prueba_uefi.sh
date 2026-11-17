@@ -154,6 +154,12 @@ dash_intentos = 0
 guardian_visto = 0.0
 panel_desde = 0.0
 
+def clave_de_ana(texto):
+    # La contraseña de Ana ahora: el guion del Shell la cambia a "otra de Ana" y luego la devuelve (los pasos de
+    # `claves_vistas`). Los bloqueos de `guardian` van a su ritmo y pueden caer en medio (tecla-pegada: el bloqueo por
+    # tiempo salió entre los dos cambios y "clave de Ana" ya no valía; la sesión se quedó bloqueada).
+    return "otra de Ana" if texto.count("[guardian] cambio de contraseña de Ana: cambiada") % 2 == 1 else "clave de Ana"
+
 def ventana_de_guardian(texto):
     # Si hay en pantalla una ventana del sistema de `guardian` (una tanda de administrador del Shell, el código de
     # recuperación, el cambio de contraseña): cada una dice cuándo sale y cuándo se va. Van encima, con el teclado.
@@ -2219,7 +2225,7 @@ while time.time() - inicio < total:
                 if open(serie, errors="replace").read().count("contraseña mala en la pantalla de bloqueo") > antes:
                     break
             time.sleep(0.3)
-            teclear("clave de Ana")
+            teclear(clave_de_ana(open(serie, errors="replace").read()))
         if bloqueo == 6:
             if texto.count("[guardian] desbloqueado") < 2:
                 time.sleep(0.5)
@@ -2244,7 +2250,7 @@ while time.time() - inicio < total:
                 if open(serie, errors="replace").read().count("contraseña mala en la pantalla de bloqueo") > antes:
                     break
             time.sleep(0.3)
-            teclear("clave de Ana")
+            teclear(clave_de_ana(open(serie, errors="replace").read()))
         if bloqueo == 9:
             if texto.count("[guardian] desbloqueado") < 3:
                 time.sleep(0.5)
