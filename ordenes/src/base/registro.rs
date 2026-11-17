@@ -157,7 +157,7 @@ pub fn principal(o: &mut Orden) -> u64 {
         None => ULTIMAS,
     };
     let ficheros: Vec<usize> = (0..rg::FICHEROS.len()).filter(|&i| solo.is_none_or(|x| x == i)).collect();
-    let mut visto = [Visto::default(); 3];
+    let mut visto = [Visto::default(); rg::FICHEROS.len()];
     let mut todas = Vec::new();
     for &f in &ficheros {
         for parte in [1, 0] {
