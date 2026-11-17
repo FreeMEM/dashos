@@ -259,6 +259,104 @@ pub fn buscar_icono(icono: &str, tam: u32, temas: &[&str], bases: &[&str], exist
     existe(&c).then_some((c, Formato::Svg))
 }
 
+/// El catálogo de programas que manda la caja Linux a DashOS (lo hace el programa `programas` del puente dentro del
+/// invitado): por cada programa, su número, su nombre, si va en terminal y su icono (los bytes del PNG, o el nombre del
+/// SVG que aún no se puede pintar). Little-endian, como las tramas del puente:
+///
+/// `DPRG`, versión (1 byte, 1), cuántos (u16), y por cada uno: número (u16), terminal (1 byte), largo del nombre (u16)
+/// y el nombre en UTF-8, tipo de icono (1 byte: 0 ninguno, 1 PNG, 2 SVG), largo del icono (u32) y sus bytes.
+///
+/// Quien lo lee (DashOS) no se lo cree: [`leer_catalogo`] corta en los topes y salta lo que no vale.
+pub const MAX_PROGRAMAS: usize = 1000;
+/// Lo más que mide el nombre de un programa en el catálogo (el lanzador corta antes).
+pub const MAX_NOMBRE: usize = 120;
+/// Lo más que mide un icono en el catálogo (un PNG de 48 o 64 cabe de sobra).
+pub const MAX_ICONO: usize = 256 * 1024;
+/// Lo más que mide un catálogo entero.
+pub const MAX_CATALOGO: usize = 8 << 20;
+
+/// Un programa del catálogo.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Entrada {
+    pub numero: u16,
+    pub nombre: String,
+    pub terminal: bool,
+    pub icono: Icono,
+}
+
+/// El icono de un programa del catálogo.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Icono {
+    Ninguno,
+    Png(Vec<u8>),
+    /// El camino del SVG en el invitado (pendiente de pintor).
+    Svg(String),
+}
+
+/// El catálogo en bytes. Lo que pasa de los topes no entra (programas de más, nombres largos, iconos grandes).
+pub fn escribir_catalogo(entradas: &[Entrada]) -> Vec<u8> {
+    let validas: Vec<&Entrada> = entradas.iter().filter(|e| nombre_de_catalogo(&e.nombre)).take(MAX_PROGRAMAS).collect();
+    let mut v = Vec::from(&b"DPRG\x01"[..]);
+    v.extend_from_slice(&(validas.len() as u16).to_le_bytes());
+    for e in validas {
+        v.extend_from_slice(&e.numero.to_le_bytes());
+        v.push(e.terminal as u8);
+        v.extend_from_slice(&(e.nombre.len() as u16).to_le_bytes());
+        v.extend_from_slice(e.nombre.as_bytes());
+        let (tipo, datos): (u8, &[u8]) = match &e.icono {
+            Icono::Png(d) if d.len() <= MAX_ICONO => (1, d),
+            Icono::Svg(c) if c.len() <= MAX_CAMPO => (2, c.as_bytes()),
+            _ => (0, &[]),
+        };
+        v.push(tipo);
+        v.extend_from_slice(&(datos.len() as u32).to_le_bytes());
+        v.extend_from_slice(datos);
+    }
+    v
+}
+
+fn nombre_de_catalogo(n: &str) -> bool {
+    !n.trim().is_empty() && n.len() <= MAX_NOMBRE && !n.chars().any(|c| c.is_control())
+}
+
+/// Lee un catálogo. `None` si la cabecera no vale; si se corta a medias, lo que se leyó entero. Las entradas con un
+/// nombre que no vale (vacío, largo, con letras de control, no UTF-8) o un número repetido se saltan.
+pub fn leer_catalogo(d: &[u8]) -> Option<Vec<Entrada>> {
+    if d.len() < 7 || &d[..5] != b"DPRG\x01" || d.len() > MAX_CATALOGO {
+        return None;
+    }
+    let n = (u16::from_le_bytes([d[5], d[6]]) as usize).min(MAX_PROGRAMAS);
+    let mut v: Vec<Entrada> = Vec::new();
+    let mut pos = 7usize;
+    let tomar = |pos: &mut usize, k: usize| -> Option<&[u8]> {
+        let t = d.get(*pos..pos.checked_add(k)?)?;
+        *pos += k;
+        Some(t)
+    };
+    for _ in 0..n {
+        let Some(c) = tomar(&mut pos, 5) else { break };
+        let (numero, terminal, ln) = (u16::from_le_bytes([c[0], c[1]]), c[2] != 0, u16::from_le_bytes([c[3], c[4]]) as usize);
+        let Some(nombre) = tomar(&mut pos, ln) else { break };
+        let Some(c) = tomar(&mut pos, 5) else { break };
+        let (tipo, li) = (c[0], u32::from_le_bytes([c[1], c[2], c[3], c[4]]) as usize);
+        if li > MAX_ICONO {
+            break;
+        }
+        let Some(icono) = tomar(&mut pos, li) else { break };
+        let Ok(nombre) = core::str::from_utf8(nombre) else { continue };
+        if !nombre_de_catalogo(nombre) || v.iter().any(|e| e.numero == numero) {
+            continue;
+        }
+        let icono = match tipo {
+            1 => Icono::Png(icono.to_vec()),
+            2 => core::str::from_utf8(icono).ok().filter(|c| c.len() <= MAX_CAMPO).map_or(Icono::Ninguno, |c| Icono::Svg(String::from(c))),
+            _ => Icono::Ninguno,
+        };
+        v.push(Entrada { numero, nombre: String::from(nombre), terminal, icono });
+    }
+    Some(v)
+}
+
 #[cfg(test)]
 mod pruebas {
     use super::*;
@@ -333,5 +431,40 @@ mod pruebas {
         for malo in ["nada", "../../etc/passwd", "a/b", "..", "", "/etc/passwd", "foo\n"] {
             assert_eq!(buscar_icono(malo, 48, &[], &bases, &existe), None, "{malo}");
         }
+    }
+
+    #[test]
+    fn catalogo_ida_y_vuelta_y_hostil() {
+        let e = vec![
+            Entrada { numero: 0, nombre: "Terminal Foot".to_string(), terminal: false, icono: Icono::Png(vec![0x89, b'P', b'N', b'G']) },
+            Entrada { numero: 1, nombre: "GIMP".to_string(), terminal: false, icono: Icono::Svg("/usr/share/icons/hicolor/scalable/apps/gimp.svg".to_string()) },
+            Entrada { numero: 2, nombre: "htop".to_string(), terminal: true, icono: Icono::Ninguno },
+            // No entran: nombre vacío y con control.
+            Entrada { numero: 3, nombre: " ".to_string(), terminal: false, icono: Icono::Ninguno },
+            Entrada { numero: 4, nombre: "a\u{1b}[2J".to_string(), terminal: false, icono: Icono::Ninguno },
+        ];
+        let b = escribir_catalogo(&e);
+        assert_eq!(leer_catalogo(&b).unwrap(), e[..3].to_vec());
+        // Cortado por cualquier sitio: nunca pánico, y lo leído es un principio de lo bueno.
+        for k in 0..b.len() {
+            if let Some(v) = leer_catalogo(&b[..k]) {
+                assert!(v.len() <= 3 && v[..] == e[..v.len()]);
+            }
+        }
+        // Cabecera mala, cuentas falsas, icono enorme, números repetidos y nombres que no son UTF-8.
+        assert_eq!(leer_catalogo(b"DPRG\x02\x01\x00"), None);
+        assert_eq!(leer_catalogo(b"nada"), None);
+        assert_eq!(leer_catalogo(b"DPRG\x01\xff\xff").unwrap(), vec![]);
+        let mut grande = b"DPRG\x01\x01\x00\x00\x00\x00\x01\x00x\x01".to_vec();
+        grande.extend_from_slice(&(u32::MAX).to_le_bytes());
+        assert_eq!(leer_catalogo(&grande).unwrap(), vec![]);
+        let mut doble = escribir_catalogo(&e[..1]);
+        doble[5] = 2;
+        doble.extend_from_slice(&doble[7..].to_vec());
+        assert_eq!(leer_catalogo(&doble).unwrap().len(), 1);
+        let mut raro = b"DPRG\x01\x01\x00\x00\x00\x00\x02\x00\xff\xfe\x00\x00\x00\x00\x00".to_vec();
+        assert_eq!(leer_catalogo(&raro).unwrap(), vec![]);
+        raro.truncate(9);
+        assert_eq!(leer_catalogo(&raro).unwrap(), vec![]);
     }
 }
