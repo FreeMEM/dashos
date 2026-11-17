@@ -377,6 +377,78 @@ Bar
 MSG_125
 The bars and their widgets, as in DMS. Changes show at once.
 ; Las barras y sus widgets, como en DMS. Lo que se cambia se ve ya.
+MSG_126
+Dock
+; Dock
+MSG_127
+bottom
+; abajo
+MSG_128
+top
+; arriba
+MSG_129
+top centre
+; arriba en el centro
+MSG_130
+bottom centre
+; abajo en el centro
+MSG_131
+on the left, vertical
+; a la izquierda, en vertical
+MSG_132
+on the right, vertical
+; a la derecha, en vertical
+MSG_133
+a dot
+; un punto
+MSG_134
+a line
+; una raya
+MSG_135
+none
+; ninguno
+MSG_136
+none (pin them with the right button on the dock)
+; ninguno (se fijan con el botón derecho en el dock)
+MSG_137
+Show the dock: {}
+; Enseñar el dock: {}
+MSG_138
+Where: {}
+; Dónde: {}
+MSG_139
+Icon size: {} px
+; Tamaño de los iconos: {} px
+MSG_140
+Hide by itself: {}
+; Esconderse solo: {}
+MSG_141
+Group each program's windows: {}
+; Juntar las ventanas de cada programa: {}
+MSG_142
+Mark for open programs: {}
+; Marca de los abiertos: {}
+MSG_143
+Opacity: {} %
+; Opacidad: {} %
+MSG_144
+Pinned: {}
+; Fijados: {}
+MSG_145
+On-screen notices: {}
+; Avisos en pantalla: {}
+MSG_146
+Always show the value: {}
+; Enseñar siempre el valor: {}
+MSG_147
+Notice when switching workspace: {}
+; Aviso al cambiar de espacio de trabajo: {}
+MSG_148
+Caps Lock notice: {}
+; Aviso de Bloq Mayús: {}
+MSG_149
+The dock and the on-screen notices, as in DMS. Enter changes a row.
+; El dock y los avisos en pantalla, como en DMS. Intro cambia una fila.
 MSG_200
 Notifications
 ; Avisos

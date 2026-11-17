@@ -46,6 +46,9 @@ const FICHAS: &[(&str, u32, u32, u32, &str)] = &[
     // S10: la barra, para listar los programas de su lanzador: del sistema, sin derechos y encerrada en `Programas`.
     // Lanzar no lo hace ella: lo hace `sesiones`, como la persona que está delante.
     ("barra", 1, 1, 0, "Programas"),
+    // S27: el dock, para leer sus ajustes (`ENV:Escritorio/dock` y `osd`): como el centro, de Ana, sin derechos y
+    // encerrado en `C`; el disco para leer y el `RAM:` de la sesión se los ponen `RAICES_DE_MAS` y `sesiones`.
+    ("dock", 1000, 1000, 0, "C"),
     // C3: el fondo de escritorio, para leer las imágenes de `C/Fondos` y su nombre en `C/Prefs/fondo`.
     ("fondo", 1000, 1000, 0, "C"),
     // S10: el Workbench, de Ana (1000), con el derecho de repartir, como el selector: al empezar se cede a sí mismo el
@@ -90,6 +93,8 @@ const RAICES_DE_MAS: &[(&str, u8, u8, &str)] = &[
     ("centro", 1, 4, ""),
     // S8: y el disco, solo para leer (su `SYS:`): los repositorios y `SYS:Estado/Paq` (la lista y las claves).
     ("paq", 1, 4, ""),
+    // S27: el dock, igual: los ajustes de fábrica (`SYS:Prefs/Env-Archive`) antes de entrar nadie.
+    ("dock", 1, 4, ""),
 ];
 /// Los servicios cuyas llaves reparte `sesiones` (U4): de ellos recibe una copia sin marca, para hacer copias marcadas
 /// con el número de cada programa al que se las da. Del resto (archivos), una con la suya, como cualquier cliente.

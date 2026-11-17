@@ -86,13 +86,19 @@ prueba: $(PRUEBAS) catalogos
 	cd ../usuario && rustc --edition 2024 --test src/dms_medidas.rs -o target/dms_medidas_pruebas && ./target/dms_medidas_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/calendario.rs -o target/calendario_pruebas && ./target/calendario_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/cortafuegos_caja.rs -o target/cortafuegos_caja_pruebas && ./target/cortafuegos_caja_pruebas -q
-	@# S27: el volumen y el OSD del panel, la lista del lanzador y la fecha de la barra.
+	@# S27: el volumen del panel, la lista del lanzador y la fecha de la barra.
 	cd ../usuario && rustc --edition 2024 --test src/volumen_osd.rs -o target/volumen_osd_pruebas && ./target/volumen_osd_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/lanzador_lista.rs -o target/lanzador_lista_pruebas && ./target/lanzador_lista_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/reloj.rs -o target/reloj_pruebas && ./target/reloj_pruebas -q
 	@# S27, la barra de DMS: el modelo de las barras, el importador de settings.json y su lector de JSON (hostiles incluidos).
 	cd ../usuario && rustc --edition 2024 --test src/json_mini.rs -o target/json_mini_pruebas && ./target/json_mini_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/barra_config.rs -o target/barra_config_pruebas && ./target/barra_config_pruebas -q
+	@# S27, el dock y los OSD como los de DMS: muelles y curvas, ajustes en texto (fichero malo, bytes al azar), lo que
+	@# lleva el dock y dónde (mil ventanas, ráfagas, monitor que no existe) y los OSD (posiciones, ráfagas, relojes raros).
+	cd ../usuario && rustc --edition 2024 --test src/muelle.rs -o target/muelle_pruebas && ./target/muelle_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/dock_ajustes.rs -o target/dock_ajustes_pruebas && ./target/dock_ajustes_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/dock_modelo.rs -o target/dock_modelo_pruebas && ./target/dock_modelo_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/osd_modelo.rs -o target/osd_modelo_pruebas && ./target/osd_modelo_pruebas -q
 	@# S13, segunda parte: DNS (respuestas falsas, nombres en bucle, cortadas), SNTP, las zonas horarias y el cortafuegos de entrada.
 	cd ../usuario && rustc --edition 2024 --test src/dns.rs -o target/dns_pruebas && ./target/dns_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/sntp.rs -o target/sntp_pruebas && ./target/sntp_pruebas -q

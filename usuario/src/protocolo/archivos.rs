@@ -189,6 +189,15 @@ pub const RAM_COPIAR: u32 = 105;
 /// fichero, no se copia. Contesta en `a` los bytes copiados. `NO_EXISTE` si no está en `ENV:`, `MAL_FORMADO` si el
 /// nombre no vale o es demasiado grande. Número alto, para no chocar con otras ramas.
 pub const RAM_GUARDAR: u32 = 120;
+/// S27 (el dock): escribir un fichero de ajustes en `ENV:` en nombre de un programa del escritorio que no tiene la
+/// raíz de `RAM:` para escribir. Sin marca, como las demás de `RAM:`: solo lo pide `sesiones`, que antes mira que ese
+/// programa pueda escribir ese fichero (su lista de ajustes propios). Escribe `Env/<fichero>` del volumen en memoria de
+/// la sesión (bytes 4 a 7), con los cajones que falten (0700), suyo (uid y gid en los bytes 8 a 15) y 0600, con los
+/// bytes del objeto de memoria que viene en la primera llave (la segunda, la de la respuesta). Byte 16: lo que mide
+/// `fichero`, que va desde el byte 32; bytes 20 a 23: cuántos bytes del objeto. `fichero` tiene que valer
+/// (`ajuste_valido`) y los datos no pasar de `MAX_AJUSTE`. Lo que había se sustituye y quien vigila `ENV:` lo sabe.
+/// Contesta en `a` los bytes escritos. `MAL_FORMADO` si el nombre o el tamaño no valen.
+pub const RAM_ESCRIBIR: u32 = 121;
 /// Lo más que mide un fichero de ajustes que se guarda así (el tope del formato de texto).
 pub const MAX_AJUSTE: u64 = 64 * 1024;
 

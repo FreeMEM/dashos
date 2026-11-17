@@ -222,6 +222,13 @@ pub const SOLTADO: u32 = 29;
 /// -3 si el nombre no vale, u otro del servicio de archivos). Lo negado queda en el registro (`R_AJUSTE`). Número alto,
 /// para no chocar con otras ramas.
 pub const GUARDAR_ENV: u32 = 90;
+/// S27 (el dock): escribir un fichero de ajustes en el `ENV:` de la sesión de quien lo pide, para un programa del
+/// escritorio que solo lee `ENV:`. Orden, lo que mide el nombre (u32, como en `GUARDAR_ENV`), cuántos bytes (u32) y el
+/// nombre desde el byte 12. Llaves: la de contestar y un objeto de memoria con los bytes (para leer). Solo lo que esté
+/// en la lista de ese programa (por el nombre que da `inicio`; el centro de control, todo); lo demás se niega y queda en
+/// el registro común. Contesta 4 bytes: el estado (`BIEN`, `PROTEGIDO`, -3 si el nombre no vale, `NO_EXISTE` sin la
+/// sesión abierta, u otro del servicio de archivos).
+pub const ESCRIBIR_ENV: u32 = 91;
 /// De `sesiones` al compositor y al sonido, sin marca (U6, paso 2): solo `inicio` y `sesiones` tienen una llave sin
 /// marca de sus canales, así que ningún programa puede mandarlos. De quién es un programa: orden, usuario (u32; por
 /// debajo de `PRIMERA_PERSONA`, del sistema; 0, que se olvide), su marca (u64) y 16 bytes de nombre (solo para los
@@ -264,6 +271,8 @@ pub const R_ADMIN: u32 = 6;
 pub const R_APAGAR: u32 = 7;
 /// Ajustes en texto: guardar un ajuste de `ENV:` en `ENVARC:` (`GUARDAR_ENV`), negado.
 pub const R_AJUSTE: u32 = 90;
+/// S27: escribir un ajuste en `ENV:` (`ESCRIBIR_ENV`), negado.
+pub const R_AJUSTE_ESCRIBIR: u32 = 91;
 
 /// S6, S36 (regla 2): leer el registro común (`dashos::registro`), de cualquier programa: orden, fichero (u32: 0
 /// seguridad, 1 sistema, 2 programas, 3 dominio-red: `registro::FICHEROS`), parte (u32: 0 el de ahora, 1 el `.1` de antes de rotar), desde (u64: el byte

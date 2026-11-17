@@ -117,6 +117,9 @@ const COMMODITIES: Global = Global { nombre: 21, interfaz: &tablas::DASHOS_COMMO
 /// solo da los menús de sus ventanas; poner el sitio es del centro y ser la barra, de la barra. El 40, lejos de los
 /// demás.
 const MENUS: Global = Global { nombre: 40, interfaz: &tablas::DASHOS_MENUS_V1, version: 1 };
+/// S27: las ventanas abiertas y lo de los avisos en pantalla, para el dock (`escena::dock`). Solo lo ve el dock; a los
+/// demás no se les anuncia. El 41.
+const DOCK: Global = Global { nombre: 41, interfaz: &tablas::DASHOS_DOCK_V1, version: 1 };
 
 /// H9: quien pinta la barra de DashOS de las ventanas que la llevan, con el kit (Material 3): el contenedor de
 /// superficie (alto si tiene el teclado), las esquinas de arriba redondeadas, el título (title small: 14, medium) a 16
@@ -208,7 +211,9 @@ const PONEN_TEMA: &[&str] = &["centro"];
 /// con las capas, el panel rápido (C2), la barra con su lanzador, el Workbench con los iconos del escritorio (S10) y el
 /// fondo de escritorio (C3, una capa de fondo).
 const ESCRITORIOS: &[&str] = &["guardian"];
-const CON_CAPAS: &[&str] = &["panel", "barra", "workbench", "fondo"];
+const CON_CAPAS: &[&str] = &["panel", "barra", "workbench", "fondo", "dock"];
+/// S27: el dock (y los avisos en pantalla): ve las ventanas abiertas de quien está delante y las trae o las cierra.
+const DOCKS: &[&str] = &["dock"];
 /// Quién recibe Super+A (C2 de S10c): el panel rápido.
 const ABREN_PANEL: &[&str] = &["panel"];
 /// La barra de la pantalla (S10): pide el panel con su botón, y recibe Super sola (el lanzador) y el título de la
@@ -346,6 +351,19 @@ fn avisar_inactividad(escena: &mut Escena<Proyecciones>, clientes: &mut BTreeMap
     for (cl, aviso) in core::mem::take(&mut escena.mn.avisos) {
         if let Some(cli) = clientes.get_mut(&cl) {
             escena::menus::escribir_aviso(&mut cli.con, &aviso);
+            if !mandar(cli) {
+                caidos.push(cl);
+            }
+        }
+    }
+    // S27: lo del dock (las ventanas que cambiaron, el espacio, el volumen, Bloq Mayús).
+    escena.revisar_dock();
+    for linea in core::mem::take(&mut escena.dk.registro) {
+        println!("  [compositor] dock: {}", linea);
+    }
+    for (cl, aviso) in core::mem::take(&mut escena.dk.avisos) {
+        if let Some(cli) = clientes.get_mut(&cl) {
+            escena::dock::escribir_aviso(&mut cli.con, &aviso);
             if !mandar(cli) {
                 caidos.push(cl);
             }
@@ -1073,6 +1091,9 @@ fn principal() -> u64 {
                 if nombres.get(&marca).is_some_and(|n| BARRAS.contains(&n.as_str())) && !escena.barras.contains(&marca) {
                     escena.barras.push(marca);
                 }
+                if nombres.get(&marca).is_some_and(|n| DOCKS.contains(&n.as_str())) && !escena.dk.permitidos.contains(&marca) {
+                    escena.dk.permitidos.push(marca);
+                }
                 // S29: la terminal de la caja Linux y la pantalla de su invitado llevan la marca de la caja.
                 if nombres.get(&marca).is_some_and(|n| SUBCONEXIONES.contains(&n.as_str())) && !escena.de_caja.contains(&marca) {
                     escena.de_caja.push(marca);
@@ -1104,6 +1125,14 @@ fn principal() -> u64 {
                     let globales = if escena.cx.poderes_de(marca) != 0 {
                         con_cx = globales.iter().copied().chain([COMMODITIES]).collect();
                         &con_cx[..]
+                    } else {
+                        globales
+                    };
+                    // S27: el dock, también el suyo.
+                    let con_dock: Vec<Global>;
+                    let globales = if DOCKS.contains(&nombre) {
+                        con_dock = globales.iter().copied().chain([DOCK]).collect();
+                        &con_dock[..]
                     } else {
                         globales
                     };

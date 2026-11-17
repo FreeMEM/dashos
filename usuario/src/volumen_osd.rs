@@ -1,12 +1,10 @@
 //! S27: el volumen general que lleva el panel rápido, con las teclas del volumen (`dashos_tema_v1.volumen`) y los
-//! botones del panel, y el aviso en pantalla (OSD) que sale al pulsar las teclas.
+//! botones del panel. El aviso en pantalla (OSD) que sale al pulsar las teclas lo enseña el dock (`osd_modelo.rs`).
 //!
 //! Sin `alloc` ni nada de DashOS: se prueba en el PC con `rustc --edition 2024 --test usuario/src/volumen_osd.rs`.
 
 /// Lo que sube o baja cada pulsación de una tecla del volumen, en %.
 pub const PASO_TECLA: u32 = 5;
-/// Cuánto se ve el OSD tras la última pulsación, en microsegundos.
-pub const DURA_OSD_US: u64 = 1_500_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Volumen {
@@ -56,36 +54,6 @@ impl Volumen {
     }
 }
 
-/// El OSD: si se ve, hasta cuándo, y cuántas pulsaciones juntó desde que salió (para el registro: una ráfaga se dice
-/// en una línea al cerrarse, no en una por tecla).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Osd {
-    pub hasta: Option<u64>,
-    pub juntadas: u32,
-}
-
-impl Osd {
-    /// Una pulsación a la hora `ahora`: si ya se veía, solo se alarga (devuelve `false`); si no, hay que abrirlo
-    /// (`true`).
-    pub fn pulsacion(&mut self, ahora: u64) -> bool {
-        let abrir = self.hasta.is_none();
-        self.hasta = Some(ahora.saturating_add(DURA_OSD_US));
-        self.juntadas = if abrir { 1 } else { self.juntadas.saturating_add(1) };
-        abrir
-    }
-
-    /// Si a la hora `ahora` toca cerrarlo: cuántas pulsaciones juntó.
-    pub fn vencido(&mut self, ahora: u64) -> Option<u32> {
-        match self.hasta {
-            Some(h) if ahora >= h => {
-                self.hasta = None;
-                Some(core::mem::take(&mut self.juntadas))
-            }
-            _ => None,
-        }
-    }
-}
-
 #[cfg(test)]
 mod pruebas {
     use super::*;
@@ -126,20 +94,5 @@ mod pruebas {
             v.boton(true);
         }
         assert_eq!(v.efectivo(), 100);
-    }
-
-    #[test]
-    fn el_osd_junta_las_rafagas() {
-        let mut o = Osd::default();
-        assert!(o.pulsacion(0));
-        for t in 1..=500u64 {
-            assert!(!o.pulsacion(t * 1000), "abierto: solo se alarga");
-        }
-        assert_eq!(o.vencido(500_000 + DURA_OSD_US - 1), None);
-        assert_eq!(o.vencido(500_000 + DURA_OSD_US), Some(501));
-        assert_eq!(o.vencido(u64::MAX), None);
-        // La hora al final del todo no desborda.
-        assert!(o.pulsacion(u64::MAX - 1));
-        assert_eq!(o.hasta, Some(u64::MAX));
     }
 }

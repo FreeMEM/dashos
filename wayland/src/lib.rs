@@ -328,3 +328,6 @@ mod tests_commodities;
 
 #[cfg(test)]
 mod tests_menus;
+
+#[cfg(test)]
+mod tests_dock;

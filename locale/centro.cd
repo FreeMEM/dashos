@@ -251,6 +251,54 @@ MSG_124 (124//)
 Barra
 MSG_125 (125//)
 Las barras y sus widgets, como en DMS. Lo que se cambia se ve ya.
+MSG_126 (126//)
+Dock
+MSG_127 (127//)
+abajo
+MSG_128 (128//)
+arriba
+MSG_129 (129//)
+arriba en el centro
+MSG_130 (130//)
+abajo en el centro
+MSG_131 (131//)
+a la izquierda, en vertical
+MSG_132 (132//)
+a la derecha, en vertical
+MSG_133 (133//)
+un punto
+MSG_134 (134//)
+una raya
+MSG_135 (135//)
+ninguno
+MSG_136 (136//)
+ninguno (se fijan con el botón derecho en el dock)
+MSG_137 (137//)
+Enseñar el dock: {}
+MSG_138 (138//)
+Dónde: {}
+MSG_139 (139//)
+Tamaño de los iconos: {} px
+MSG_140 (140//)
+Esconderse solo: {}
+MSG_141 (141//)
+Juntar las ventanas de cada programa: {}
+MSG_142 (142//)
+Marca de los abiertos: {}
+MSG_143 (143//)
+Opacidad: {} %
+MSG_144 (144//)
+Fijados: {}
+MSG_145 (145//)
+Avisos en pantalla: {}
+MSG_146 (146//)
+Enseñar siempre el valor: {}
+MSG_147 (147//)
+Aviso al cambiar de espacio de trabajo: {}
+MSG_148 (148//)
+Aviso de Bloq Mayús: {}
+MSG_149 (149//)
+El dock y los avisos en pantalla, como en DMS. Intro cambia una fila.
 MSG_200 (200//)
 Avisos
 MSG_201 (201//)

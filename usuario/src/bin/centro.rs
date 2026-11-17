@@ -67,6 +67,10 @@ mod cc_rejilla;
 #[path = "../avisos_ajustes.rs"]
 #[allow(dead_code)]
 mod avisos_ajustes;
+// S27: Ajustes > Dock (el dock y los avisos en pantalla, como los de DMS).
+#[path = "../dock_ajustes.rs"]
+#[allow(dead_code)]
+mod dock_ajustes;
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -134,6 +138,8 @@ const CATEGORIAS: &[(&str, &str)] = &[
     // Unión de `dms-avisos`: también tras Acerca de.
     ("avisos", "Avisos"),
     ("panel", "Centro de control"),
+    // Unión de `dms-dock`: también tras Acerca de.
+    ("dock", "Dock"),
 ];
 /// El nombre que se ve de la categoría `k` de `CATEGORIAS`, en el idioma del usuario (el de la tabla es el de la
 /// consola, siempre en castellano).
@@ -152,6 +158,7 @@ fn nombre_categoria(k: usize) -> &'static str {
         9 => tr(124, "Barra"),
         10 => tr(200, "Avisos"),
         11 => tr(201, "Centro de control"),
+        12 => tr(126, "Dock"),
         _ => "",
     }
 }
@@ -164,6 +171,8 @@ const PANEL_FONDO: usize = 6;
 const CUENTAS: usize = 8;
 /// Ajustes > Barra: las barras del escritorio y sus widgets (el modelo de DMS).
 const BARRA_CAT: usize = 9;
+/// S27: Ajustes > Dock.
+const DOCK: usize = 12;
 const FICHERO_MONITOR: &str = "monitor";
 /// Cada cuánto se vuelve a medir con el monitor a la vista.
 const CADA_MONITOR_US: u64 = 2_000_000;
@@ -301,7 +310,7 @@ fn registro() -> Vec<String> {
                 s::R_LANZAR => tr(14, "lanzar"),
                 s::R_ADMIN => tr(15, "administrar"),
                 s::R_APAGAR => tr(16, "apagar"),
-                s::R_AJUSTE => tr(100, "guardar un ajuste"),
+                s::R_AJUSTE | s::R_AJUSTE_ESCRIBIR => tr(100, "guardar un ajuste"),
                 _ => "?",
             };
             let como = match estado {
@@ -1615,6 +1624,145 @@ fn cambiar_panel(aj: &mut monitor::Ajustes, k: usize) -> Option<String> {
     Some(alloc::format!("guardado: {} ({} bytes); releído: {}; el fondo: {}", guardado, bytes, if releido { "sí" } else { "no" }, fondo))
 }
 
+/// S27, Ajustes > Dock: los ajustes del dock y de los avisos en pantalla en uso (`ENV:Escritorio/dock` y `osd`, o los
+/// guardados, o lo de serie). Lo que no se entiende queda de serie, como en el dock.
+fn leer_dock() -> (dock_ajustes::Dock, dock_ajustes::Osd) {
+    let pares = |f: &str| -> Vec<(String, String)> {
+        leer_ajuste(f).ok().and_then(|b| kit::idioma::texto::Ajustes::leer(&b).ok()).map_or(Vec::new(), |x| x.todos().map(|(c, v)| (String::from(c), String::from(v))).collect())
+    };
+    let d = pares(dock_ajustes::FICHERO_DOCK);
+    let o = pares(dock_ajustes::FICHERO_OSD);
+    (dock_ajustes::Dock::de_pares(d.iter().map(|(c, v)| (c.as_str(), v.as_str()))).0, dock_ajustes::Osd::de_pares(o.iter().map(|(c, v)| (c.as_str(), v.as_str()))).0)
+}
+
+const ICONOS_DOCK: [i32; 5] = [32, 40, 48, 56, 64];
+const OPACIDADES_DOCK: [u32; 5] = [100, 90, 80, 66, 50];
+
+fn nombre_borde(b: dock_ajustes::Borde) -> &'static str {
+    match b {
+        dock_ajustes::Borde::Abajo => tr(127, "abajo"),
+        dock_ajustes::Borde::Arriba => tr(128, "arriba"),
+        dock_ajustes::Borde::Izquierda => tr(46, "a la izquierda"),
+        dock_ajustes::Borde::Derecha => tr(47, "a la derecha"),
+    }
+}
+
+fn nombre_pos_osd(p: dock_ajustes::PosOsd) -> &'static str {
+    use dock_ajustes::PosOsd as P;
+    match p {
+        P::ArribaCentro => tr(129, "arriba en el centro"),
+        P::AbajoCentro => tr(130, "abajo en el centro"),
+        P::ArribaIzquierda => tr(71, "arriba a la izquierda"),
+        P::ArribaDerecha => tr(72, "arriba a la derecha"),
+        P::AbajoIzquierda => tr(73, "abajo a la izquierda"),
+        P::AbajoDerecha => tr(74, "abajo a la derecha"),
+        P::IzquierdaCentro => tr(131, "a la izquierda, en vertical"),
+        P::DerechaCentro => tr(132, "a la derecha, en vertical"),
+    }
+}
+
+/// Las filas de Ajustes > Dock.
+fn lineas_dock(d: &dock_ajustes::Dock, o: &dock_ajustes::Osd) -> Vec<String> {
+    let indicador = match d.indicador {
+        dock_ajustes::Indicador::Circulo => tr(133, "un punto"),
+        dock_ajustes::Indicador::Linea => tr(134, "una raya"),
+        dock_ajustes::Indicador::Ninguno => tr(135, "ninguno"),
+    };
+    let fijados = if d.fijados.is_empty() { String::from(tr(136, "ninguno (se fijan con el botón derecho en el dock)")) } else { d.fijados.join(", ") };
+    alloc::vec![
+        trf(137, "Enseñar el dock: {}", &[&si_no(d.activo)]),
+        trf(138, "Dónde: {}", &[&nombre_borde(d.posicion)]),
+        trf(139, "Tamaño de los iconos: {} px", &[&d.iconos]),
+        trf(140, "Esconderse solo: {}", &[&si_no(d.autoocultar)]),
+        trf(141, "Juntar las ventanas de cada programa: {}", &[&si_no(d.agrupar)]),
+        trf(142, "Marca de los abiertos: {}", &[&indicador]),
+        trf(143, "Opacidad: {} %", &[&d.opacidad]),
+        trf(144, "Fijados: {}", &[&fijados]),
+        trf(145, "Avisos en pantalla: {}", &[&nombre_pos_osd(o.posicion)]),
+        trf(146, "Enseñar siempre el valor: {}", &[&si_no(o.siempre_valor)]),
+        trf(147, "Aviso al cambiar de espacio de trabajo: {}", &[&si_no(o.espacio)]),
+        trf(148, "Aviso de Bloq Mayús: {}", &[&si_no(o.mayusculas)]),
+    ]
+}
+
+/// Cambia la fila `k` de Ajustes > Dock (la opción siguiente), en `ENV:` (sobre lo que había: los comentarios se quedan)
+/// y guardado; el dock vigila `ENV:` y lo aplica en marcha. Lo que pasó, para la consola.
+fn cambiar_dock(d: &mut dock_ajustes::Dock, o: &mut dock_ajustes::Osd, k: usize) -> Option<String> {
+    use dock_ajustes::*;
+    let siguiente = |v: &[i32], x: i32| v[(v.iter().position(|&y| y == x).map_or(0, |i| i + 1)) % v.len()];
+    let del_osd = match k {
+        0 => {
+            d.activo = !d.activo;
+            false
+        }
+        1 => {
+            d.posicion = match d.posicion {
+                Borde::Abajo => Borde::Izquierda,
+                Borde::Izquierda => Borde::Arriba,
+                Borde::Arriba => Borde::Derecha,
+                Borde::Derecha => Borde::Abajo,
+            };
+            false
+        }
+        2 => {
+            d.iconos = siguiente(&ICONOS_DOCK, d.iconos);
+            false
+        }
+        3 => {
+            d.autoocultar = !d.autoocultar;
+            false
+        }
+        4 => {
+            d.agrupar = !d.agrupar;
+            false
+        }
+        5 => {
+            d.indicador = match d.indicador {
+                Indicador::Circulo => Indicador::Linea,
+                Indicador::Linea => Indicador::Ninguno,
+                Indicador::Ninguno => Indicador::Circulo,
+            };
+            false
+        }
+        6 => {
+            let v: Vec<i32> = OPACIDADES_DOCK.iter().map(|&x| x as i32).collect();
+            d.opacidad = siguiente(&v, d.opacidad as i32) as u32;
+            false
+        }
+        8 => {
+            let i = POSICIONES_OSD.iter().position(|p| p.0 == o.posicion).unwrap_or(0);
+            o.posicion = POSICIONES_OSD[(i + 1) % POSICIONES_OSD.len()].0;
+            true
+        }
+        9 => {
+            o.siempre_valor = !o.siempre_valor;
+            true
+        }
+        10 => {
+            o.espacio = !o.espacio;
+            true
+        }
+        11 => {
+            o.mayusculas = !o.mayusculas;
+            true
+        }
+        _ => return None,
+    };
+    let (fichero, cabecera, pares) = if del_osd { (FICHERO_OSD, CABECERA_OSD, o.a_pares()) } else { (FICHERO_DOCK, CABECERA_DOCK, d.a_pares()) };
+    let antes = leer_ajuste(fichero).ok();
+    let mut x = antes.as_deref().and_then(|b| kit::idioma::texto::Ajustes::leer(b).ok()).unwrap_or_else(|| {
+        let mut x = kit::idioma::texto::Ajustes::nuevo();
+        x.comentar(cabecera);
+        x
+    });
+    for (c, v) in &pares {
+        let _ = x.poner(c, v);
+    }
+    let usado = escribir_env(fichero, x.texto().as_bytes());
+    let guardado = if usado.is_ok() { guardar_en_envarc(fichero) } else { -1 };
+    Some(alloc::format!("{}: en ENV: {}; guardado: {}", fichero, usado.map_or_else(|e| e, |n| alloc::format!("{} bytes", n)), guardado))
+}
+
 /// Las filas de la lista: "programa · servicio". Sin '|', que separa las filas (un nombre así no lo da `inicio`).
 /// Sin nada concedido, una fila que lo dice (Quitar no hace nada en ella: no hay qué).
 fn filas(lista: &[(String, String)]) -> String {
@@ -2025,6 +2173,7 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
     // S27, oleada 3: los avisos y el centro de control, como estén en uso.
     let mut aj_avisos = leer_ajustes_avisos().unwrap_or(avisos_ajustes::Ajustes::DE_SERIE);
     let mut cc = leer_cc().unwrap_or_else(|_| cc_rejilla::Rejilla::de_serie());
+    let (mut aj_dock, mut aj_osd) = leer_dock();
     let poner = |i: &mut Interfaz, cat: usize, lista: &[(String, String)], reg: &[String]| {
         let (explicacion, contenido) = if cat == PERMISOS {
             (tr(87, "Lo que cada programa puede usar. Quitarlo lo revoca ya."), filas(lista))
@@ -2048,6 +2197,8 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
             (tr(236, "Los emergentes y el no molestar, como en DMS. Intro cambia una fila; se ve ya."), reg.join("|"))
         } else if cat == PANEL_CC {
             (tr(237, "Qué sale en el panel rápido y en qué orden. Intro cambia el ancho o añade; se ve ya."), reg.join("|"))
+        } else if cat == DOCK {
+            (tr(149, "El dock y los avisos en pantalla, como en DMS. Intro cambia una fila."), reg.join("|"))
         } else {
             (tr(94, "El sistema."), reg.join("|"))
         };
@@ -2113,6 +2264,8 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
         lineas_registro = lineas_avisos(&aj_avisos);
     } else if cat == PANEL_CC {
         lineas_registro = lineas_cc(&cc);
+    } else if cat == DOCK {
+        lineas_registro = lineas_dock(&aj_dock, &aj_osd);
     } else if cat != PERMISOS {
         lineas_registro = acerca();
     }
@@ -2229,7 +2382,7 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                         configurada = true;
                         presentar(&mut c, &mut i, px, medida, Some(bufer));
                         println!("  [centro] {} en pantalla: {} concedidos", CATEGORIAS[cat].1, lista.len());
-                        if cat == MONITOR_SIS || cat == PANEL_FONDO {
+                        if cat == MONITOR_SIS || cat == PANEL_FONDO || cat == DOCK {
                             println!("  [centro] {}: {}", CATEGORIAS[cat].1, lineas_registro.join("; "));
                         }
                         // Dónde queda la lista de la derecha en la ventana (las pruebas del ratón la buscan).
@@ -2357,6 +2510,10 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                         PANEL_CC => {
                             cc = leer_cc().unwrap_or(cc);
                             lineas_cc(&cc)
+                        }
+                        DOCK => {
+                            (aj_dock, aj_osd) = leer_dock();
+                            lineas_dock(&aj_dock, &aj_osd)
                         }
                         _ => acerca(),
                     };
@@ -2513,6 +2670,16 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                         CAMBIO_AVISOS.store(true, Ordering::Relaxed);
                         lineas_registro = lineas_avisos(&aj_avisos);
                         println!("  [centro] Avisos: {}; {}", lineas_registro[k], r);
+                        i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                        cambio = true;
+                    }
+                }
+                Some("elegir") if cat == DOCK => {
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                    let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
+                    if let Some(r) = usize::try_from(v).ok().and_then(|k| cambiar_dock(&mut aj_dock, &mut aj_osd, k)) {
+                        lineas_registro = lineas_dock(&aj_dock, &aj_osd);
+                        println!("  [centro] Dock: {}; {}", lineas_registro[v as usize], r);
                         i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
                         cambio = true;
                     }

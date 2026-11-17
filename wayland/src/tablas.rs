@@ -1443,6 +1443,43 @@ pub mod dashos_menus_barra_v1 {
     }
 }
 
+pub static DASHOS_DOCK_V1: Interface = Interface {
+    name: "dashos_dock_v1",
+    version: 1,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "activar", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "cerrar", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "lanzador", since: 1, destructor: false, args: &[] },
+    ],
+    events: &[
+        Message { name: "ventana", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "programa", kind: Kind::Str, nullable: false, interface: None }, Arg { name: "titulo", kind: Kind::Str, nullable: false, interface: None }, Arg { name: "espacio", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "salida", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "estado", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "fuera", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "hecho", since: 1, destructor: false, args: &[] },
+        Message { name: "espacio", since: 1, destructor: false, args: &[Arg { name: "actual", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "volumen", since: 1, destructor: false, args: &[Arg { name: "nivel", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "silencio", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "tecla", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "bloq_mayus", since: 1, destructor: false, args: &[Arg { name: "activo", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `dashos_dock_v1`.
+pub mod dashos_dock_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const ACTIVAR: u16 = 1;
+        pub const CERRAR: u16 = 2;
+        pub const LANZADOR: u16 = 3;
+    }
+    pub mod ev {
+        pub const VENTANA: u16 = 0;
+        pub const FUERA: u16 = 1;
+        pub const HECHO: u16 = 2;
+        pub const ESPACIO: u16 = 3;
+        pub const VOLUMEN: u16 = 4;
+        pub const BLOQ_MAYUS: u16 = 5;
+    }
+}
+
 /// Todas las interfaces, para buscarlas por nombre.
 pub static INTERFACES: &[&Interface] = &[
     &WL_DISPLAY,
@@ -1494,4 +1531,5 @@ pub static INTERFACES: &[&Interface] = &[
     &DASHOS_MENUS_V1,
     &DASHOS_MENU_V1,
     &DASHOS_MENUS_BARRA_V1,
+    &DASHOS_DOCK_V1,
 ];

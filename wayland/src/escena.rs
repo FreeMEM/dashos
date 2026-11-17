@@ -34,6 +34,9 @@ pub mod commodities;
 // S10: los menús de los programas, en la ventana o en la barra (`docs/bitacoras/menus.md`), en su fichero.
 #[path = "menus_escena.rs"]
 pub mod menus;
+// S27: el dock y los avisos en pantalla (`dashos_dock_v1`), en su fichero.
+#[path = "dock_escena.rs"]
+pub mod dock;
 
 /// Errores de `zwp_linux_buffer_params_v1` (de `linux-dmabuf-v1.xml`, G6).
 pub const DMABUF_USADO: u32 = 0;
@@ -691,6 +694,8 @@ pub struct Escena<M: Memorias> {
     pub cx: commodities::Estado,
     /// S10: los menús de los programas y dónde van (`menus`).
     pub mn: menus::Estado,
+    /// S27: el dock (las ventanas abiertas, lo de los avisos en pantalla).
+    pub dk: dock::Estado,
 }
 
 /// U6: cada cuánto reciben sus avisos de `frame` las ventanas de una sesión de detrás (no se pintan, pero así no se
@@ -903,6 +908,7 @@ impl<M: Memorias> Escena<M> {
             pegados_negados: Vec::new(),
             cx: Default::default(),
             mn: Default::default(),
+            dk: Default::default(),
         }
     }
 
@@ -1425,6 +1431,7 @@ impl<M: Memorias> Escena<M> {
         self.commodities_adios(cliente);
         // S10: sus menús, y si era la barra, los menús vuelven a las ventanas.
         self.menus_adios(cliente);
+        self.dock_adios(cliente);
         self.del_sistema.retain(|&c| c != cliente);
         self.temas.retain(|t| t.0 != cliente);
         self.avisos_tema.retain(|t| t.0 != cliente);
@@ -2256,6 +2263,10 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
         if let Some(r) = self.commodities(con, interfaz.name, objeto, orden, args) {
             return r;
         }
+        // S27: el dock.
+        if let Some(r) = self.dock(interfaz.name, objeto, orden, args) {
+            return r;
+        }
         // S10: los menús de los programas.
         if let Some(r) = self.menus(interfaz.name, objeto, orden, args) {
             return r;
@@ -2325,6 +2336,8 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                     return Err(ErrorProtocolo::new(objeto, 0, "solo el panel rápido da el estado"));
                 }
                 let nuevo = (args[0].uint().min(2), args[1].uint().min(100), (args[2].uint() != 0) as u32);
+                // S27: el volumen, al dock (para su OSD), si cambió.
+                escena.dock_volumen(nuevo.1, nuevo.2 != 0);
                 if escena.estado_escritorio != Some(nuevo) {
                     escena.estado_escritorio = Some(nuevo);
                     let barras = &escena.barras;
@@ -2983,6 +2996,9 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
         if core::ptr::eq(global.interfaz, &tablas::DASHOS_MENUS_V1) {
             self.menus_enlazado(con, id);
         }
+        if core::ptr::eq(global.interfaz, &tablas::DASHOS_DOCK_V1) {
+            self.dock_enlazado(con, id);
+        }
         if core::ptr::eq(global.interfaz, &tablas::DASHOS_TEMA_V1) {
             // El tema de ahora, en el acto; y se apunta para los cambios (con tope: de más, nada se apunta y se dice).
             avisar_tema(con, id, self.escena.tema, self.escena.esquema.as_ref());
@@ -3599,6 +3615,10 @@ impl<M: Memorias> Escena<M> {
         if self.commodities_tecla(uso, codigo, pulsada) {
             return out;
         }
+        // S27: Bloq Mayús, para el OSD del dock (sigue llegando a la ventana).
+        if pulsada && codigo == dock::KEY_BLOQ_MAYUS && self.bloqueo.is_none() {
+            self.dock_bloq_mayus();
+        }
         let mascara = match uso {
             0xE1 | 0xE5 => 1,
             0xE0 | 0xE4 => 4,
@@ -3628,6 +3648,8 @@ impl<M: Memorias> Escena<M> {
             {
                 if pulsada {
                     self.pedir_volumen(paso);
+                    // S27: y al dock, que enseña el OSD.
+                    self.dock_tecla_volumen();
                 }
                 return out;
             }

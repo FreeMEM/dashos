@@ -889,7 +889,11 @@ if sys.argv[1] == "--comprobar":
                           ("programas", " Shell Ana programa hola desde el guion del Shell: una prueba"),
                           ("programas", " Shell Ana programa ?[2J?[31mrojo"), ("programas", " Shell Ana registro "),
                           ("sistema", " caja-amiga Ana guardia niega "), ("sistema", " pide sistema memoria topa con su tope"),
-                          ("programas", " Shell Ana programa larga larga ")]:
+                          ("programas", " Shell Ana programa larga larga "),
+                          # S27: el dock solo escribe y guarda su fichero de ajustes; lo ajeno, negado y apuntado.
+                          ("seguridad", " dock Ana ajustes no escribe ENV:Escritorio/menus (estado -2)"),
+                          ("seguridad", " dock Ana ajustes no guarda ENV:Sys/locale en ENVARC: (estado -2)"),
+                          ("seguridad", " dock Ana ajustes no escribe ENV:Prefs/Red/hora (estado -2)")]:
             if quiere not in texto[n]:
                 fallos.append(f"Estado/Registros/{n}: falta {quiere!r}")
 

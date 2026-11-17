@@ -296,8 +296,23 @@ DashOS en marcha con 4 núcleos.
 ~│   [compositor] espacios: se ve el 2
 ~│   [barra] espacios: se ve el 2 de 3; el 1 en
 ~│   [barra] pide el espacio 1
-~│   [panel] OSD abierto: volumen
-~│   [panel] OSD cerrado: 7 pulsaciones; volumen
+~│   [dock] OSD volumen: 
+~│   [dock] OSD cerrado: juntó 7
+# S27: el dock (como el de DMS): escondido abajo, sale al pasar el ratón por el borde; trae una ventana, abre su menú,
+# fija el programa (en ENV:Escritorio/dock, guardado) y se esconde al salir el ratón. Bloq Mayús saca su OSD.
+~│   [dock] ajustes: abajo, iconos de 40, se esconde solo, 0 fijados; OSD arriba-centro
+~│   [dock] se ve: lanzador en (
+~│   [dock] trae la ventana 
+~│   [compositor] dock: activa la ventana 
+~│   [dock] menú de 
+~│   [dock] fija 
+~│   [dock] se esconde
+~│   [dock] OSD mayusculas: Bloq Mayús
+# Hostil: el dock solo escribe y guarda su fichero (`Escritorio/dock`); lo ajeno y los nombres que salen del cajón se
+# niegan (-2 o -3) y quedan en el registro común (lo mira la comprobación del disco).
+~│   [dock] hostil: escribir y guardar lo ajeno: Escritorio/menus -2/-2, Sys/locale -2/-2, Prefs/Red/hora -2/-2, ../Escritorio/dock -3/-3, Escritorio/../menus -3/-3, /Escritorio/dock -3/-3, Escritorio/dock/../../Sys/locale -3/-3: bien
+~│   [sesiones] dock pide escribir ENV:"Escritorio/menus": -2
+~│   [sesiones] dock escribe ENV:Escritorio/dock: 
 # S10: el Workbench de Ana. Sus raíces: el disco solo para leer (SYS:) y `C` (Home, provisional). No lista el cajón
 # de `sesiones` ni el de Carla, no abre sus ficheros, no crea por SYS: ni sube por encima de Home; y los nombres con
 # '|' o ':' no salen.
