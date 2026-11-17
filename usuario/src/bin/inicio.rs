@@ -97,7 +97,9 @@ const SIGUEN_SESIONES: &[&str] = &["compositor", "sonido", "avisos"];
 /// Otros servicios de cuyo canal recibe `sesiones` una copia sin marca, igual que de los de arriba: el selector de
 /// ficheros, para dar su llave a los programas que lanza y presentárselos (S6b: el selector es el camino por el que un
 /// programa encerrado llega a un fichero que el usuario elige).
-const A_SESIONES: &[&str] = &["selector"];
+/// S32: y el instalador (solo en vivo): `sesiones` da su llave a la orden `Instalar` y le autoriza el plan que confirma
+/// un administrador (la acción "instalar" de una tanda).
+const A_SESIONES: &[&str] = &["selector", "instalador"];
 /// Si `sesiones` recibe una copia sin marca del canal que sirve `programa`.
 fn va_a_sesiones(programa: &str) -> bool {
     SIGUEN_SESIONES.contains(&programa) || A_SESIONES.contains(&programa)

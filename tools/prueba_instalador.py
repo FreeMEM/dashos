@@ -20,7 +20,9 @@ CAPTURAS. Se lanzan de uno en uno (Windows pide 4 GB).
 """
 import importlib.util
 import os
+import struct
 import subprocess
+import zlib
 import sys
 import time
 
@@ -71,10 +73,16 @@ def pendrive(nombre, plan_texto):
     return salida
 
 
-def en_vivo(capa, etiqueta, pend, bus="nvme", sata2=None, matar_en=None, segundos=240):
-    """Arranca el pendrive con la capa como disco: el texto del puerto serie."""
+def en_vivo(capa, etiqueta, pend, bus="nvme", sata2=None, matar_en=None, segundos=240, vars_limpias=False):
+    """Arranca el pendrive con la capa como disco: el texto del puerto serie. Con `vars_limpias`, con una NVRAM nueva
+    (como quien elige el pendrive en el menú del firmware: si no, un `BootNext` de antes manda al disco)."""
     serie = os.path.join(B, f"{etiqueta}.serie.txt")
-    motivo, t = banco.arrancar(capa, segundos, bus=bus, pendrive=pend, serie=serie, esperar=None if matar_en else "SIN MANOS", matar_en=matar_en, etiqueta=etiqueta, memoria="2G", sata2=sata2)
+    vars_nombre = None
+    if vars_limpias:
+        vars_nombre = f"{capa}-limpia"
+        if os.path.exists(banco.vars_ruta(vars_nombre)):
+            os.unlink(banco.vars_ruta(vars_nombre))
+    motivo, t = banco.arrancar(capa, segundos, bus=bus, pendrive=pend, serie=serie, esperar=None if matar_en else "SIN MANOS", matar_en=matar_en, etiqueta=etiqueta, memoria="2G", sata2=sata2, vars_nombre=vars_nombre)
     return motivo, t
 
 
@@ -150,20 +158,30 @@ def escenario_hostiles():
     subprocess.run([banco.QEMU_IMG, "create", "-q", "-f", "qcow2", "-b", pend, "-F", "raw", copia], check=True)
     motivo, t = en_vivo("hostil-pendrive", "hostil-pendrive", pend, sata2="hostil-pendrive-sata")
     apuntar("es el pendrive del que arrancó DashOS" in t and "SIN MANOS: no instalado" in t, f"hostil: el pendrive no se ofrece como destino ({motivo})")
-    # La GPT con su copia del final rota (en la capa): se ve, se dice y no se escribe.
+    # Las dos copias de la GPT buenas pero distintas (en la del final, otro nombre a la ESP, con sus CRC rehechos): no
+    # se escribe. Una copia rota sin más no sirve en QEMU: el firmware (EDK2) la rehace desde la otra al arrancar.
     banco.capa("hostil-gpt", "vacio-1")
     f = os.path.join(B, "hostil-gpt.rw")
     p = exportar_rw("hostil-gpt", f)
     try:
         with open(f, "r+b") as d:
-            d.seek(-512 + 60, 2)
-            b = d.read(1)
-            d.seek(-512 + 60, 2)
-            d.write(bytes([b[0] ^ 0xFF]))
+            d.seek(-512, 2)
+            cab = bytearray(d.read(512))
+            lista_lba, n, tam = struct.unpack("<QII", cab[72:88])
+            d.seek(lista_lba * 512)
+            lista = bytearray(d.read(n * tam))
+            lista[56:56 + 12] = "OTRA ESP".encode("utf-16-le")[:12].ljust(12, b"\0")
+            cab[88:92] = struct.pack("<I", zlib.crc32(lista))
+            cab[16:20] = b"\0\0\0\0"
+            cab[16:20] = struct.pack("<I", zlib.crc32(cab[:92]))
+            d.seek(lista_lba * 512)
+            d.write(lista)
+            d.seek(-512, 2)
+            d.write(cab)
     finally:
         banco.soltar(f, p)
-    motivo, t = en_vivo("hostil-gpt", "hostil-gpt", pendrive("hostil-gpt", "disco nvme0\npedido reinstalar\n"))
-    apuntar("copias RespaldoRoto" in t and "SIN MANOS: no instalado" in t, f"hostil: GPT con la copia del final rota: no se escribe ({motivo})")
+    motivo, t = en_vivo("hostil-gpt", "hostil-gpt", pendrive("hostil-gpt", "disco nvme0\npedido reinstalar\n"), vars_limpias=True)
+    apuntar("copias Distintas" in t and "SIN MANOS: no instalado" in t, f"hostil: GPT con sus dos copias distintas: se dice y no se escribe ({motivo})")
     # Sin hueco: el Windows de serie (todo el disco ocupado).
     banco.capa("hostil-sinhueco", "win11-ntfs")
     motivo, t = en_vivo("hostil-sinhueco", "hostil-sinhueco", pendrive("hostil-sinhueco", "disco nvme0\npedido hueco\n"))
@@ -175,19 +193,42 @@ def escenario_hostiles():
     banco.capa("hostil-sucio", "win-hueco-base")
     motivo, t = en_vivo("hostil-sucio", "hostil-sucio", pendrive("hostil-sucio", "disco nvme0\npedido encoger 3\n"))
     apuntar("comprobación de disco pendiente" in t and "SIN MANOS: no instalado" in t, f"hostil: NTFS sucio, no se encoge y se dice ({motivo})")
+    # Windows hibernado (o con el inicio rápido): un `hiberfil.sys` que empieza por "HIBR", puesto con ntfscp en la capa.
+    banco.capa("hostil-hiber", "win11-ntfs")
+    hiber = banco.mio(os.path.join(B, "hiberfil.sys"))
+    with open(hiber, "wb") as f:
+        f.write(b"HIBR" + bytes(64 * 1024 - 4))
+    f, p = exportar_particion_rw("hostil-hiber", 1083392, 103223296)
+    try:
+        subprocess.run(["ntfscp", "-f", "-q", f, hiber, "hiberfil.sys"], check=True)
+    finally:
+        banco.soltar(f, p)
+    motivo, t = en_vivo("hostil-hiber", "hostil-hiber", pendrive("hostil-hiber", "disco nvme0\npedido encoger 3\n"))
+    apuntar("hibernado" in t and "SIN MANOS: no instalado" in t, f"hostil: Windows hibernado, no se encoge y se dice ({motivo})")
+    # BitLocker: la firma "-FVE-FS-" en el arranque de la partición de Windows (en la capa).
+    banco.capa("hostil-bitlocker", "win11-ntfs")
+    f, p = exportar_particion_rw("hostil-bitlocker", 1083392, 103223296)
+    try:
+        with open(f, "r+b") as d:
+            d.seek(3)
+            d.write(b"-FVE-FS-")
+    finally:
+        banco.soltar(f, p)
+    motivo, t = en_vivo("hostil-bitlocker", "hostil-bitlocker", pendrive("hostil-bitlocker", "disco nvme0\npedido encoger 3\n"))
+    apuntar("BitLocker (cifrada)" in t and "cifrada con BitLocker" in t and "SIN MANOS: no instalado" in t, f"hostil: BitLocker, no se toca y se dice ({motivo})")
     malas = banco.comparar("win11-ntfs", "hostil-sinhueco")
     apuntar(not malas, f"hostil: tras pedir encoger, Windows intacto {malas}")
     # Corte de luz a media instalación (al copiar el sistema), sobre Windows con hueco.
     banco.capa("hostil-corte", "win-hueco-base")
     c, plan, err = instalar_pc("hostil-corte", "plan", "nvme0", "hueco")
-    for donde in ("cargador puesto", "tabla de particiones escrita"):
+    for donde in ("copiando el sistema", "cargador puesto"):
         banco.capa("hostil-corte", "win-hueco-base")
         motivo, t = en_vivo("hostil-corte", f"hostil-corte", pendrive("hostil-corte", plan), matar_en=donde)
         malas = banco.comparar("win-hueco-base", "hostil-corte", (1,))
         apuntar(motivo == "matado" and not malas, f"hostil: corte de luz tras '{donde}': Windows intacto ({motivo}) {malas}")
         _, ver, _ = instalar_pc("hostil-corte", "ver", "nvme0")
         pedido = "reinstalar" if "DashOS" in ver.split("aviso")[0] and "copias Iguales" in ver else "hueco"
-        motivo, t = en_vivo("hostil-corte", "hostil-corte-repite", pendrive("hostil-corte-repite", f"disco nvme0\npedido {pedido}\n"))
+        motivo, t = en_vivo("hostil-corte", "hostil-corte-repite", pendrive("hostil-corte-repite", f"disco nvme0\npedido {pedido}\n"), vars_limpias=True)
         apuntar(instalado(t), f"hostil: tras el corte, se repite ({pedido}) y acaba ({motivo})")
 
 
@@ -202,6 +243,21 @@ def exportar_rw(capa, fichero):
             return p
         time.sleep(0.1)
     sys.exit("no se exporta")
+
+
+def exportar_particion_rw(capa, desde, hasta):
+    """El tramo [desde, hasta) (sectores) de la capa como fichero de lectura y escritura (FUSE)."""
+    fichero = banco.mio(os.path.join(B, f"{capa}.part"))
+    open(fichero, "a").close()
+    p = subprocess.Popen(["qemu-storage-daemon", "--blockdev", f"driver=file,node-name=f,filename={banco.capa_ruta(capa)}",
+                          "--blockdev", "driver=qcow2,node-name=q,file=f",
+                          "--blockdev", f"driver=raw,node-name=p,file=q,offset={desde * 512},size={(hasta - desde) * 512}",
+                          "--export", f"type=fuse,id=e,node-name=p,mountpoint={fichero},writable=on,allow-other=off"], stderr=subprocess.DEVNULL)
+    for _ in range(100):
+        if os.path.getsize(fichero) > 0:
+            return fichero, p
+        time.sleep(0.1)
+    sys.exit("no se exporta la partición")
 
 
 ESCENARIOS = {"vacio": escenario_vacio, "windows": escenario_windows, "debian": escenario_debian, "hostiles": escenario_hostiles}

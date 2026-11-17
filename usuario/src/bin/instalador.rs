@@ -17,6 +17,9 @@
 //! 64 KB con el texto de entrada (de `largo` bytes); el servicio deja el de salida en esa memoria y contesta (estado
 //! i32, largo u32). Órdenes: 1 ver (los discos y lo que tienen), 2 plan (entrada: "disco <nombre>" y "pedido hueco |
 //! disco-entero | reinstalar | encoger <n>"), 3 instalar (entrada: el plan), 4 registro (lo hecho hasta ahora).
+//! Instalar solo vale con el plan que un administrador confirmó (S6b): quien pide arma la tanda "instalar <número>"
+//! (el CRC-32 del texto del plan), `guardian` pide la contraseña, y `sesiones` lo dice aquí por su llave sin marca
+//! (orden 5); vale una vez y cinco minutos.
 
 #![no_std]
 #![no_main]
@@ -53,6 +56,8 @@ pub const VER: u32 = 1;
 pub const PLAN: u32 = 2;
 pub const INSTALAR: u32 = 3;
 pub const REGISTRO: u32 = 4;
+/// De `sesiones` (sin marca): el plan de ese número (su CRC-32) está confirmado por un administrador.
+pub const AUTORIZAR: u32 = 5;
 
 /// Un disco del PC, por el servicio de su controlador.
 struct DiscoCanal {
@@ -488,6 +493,7 @@ fn principal() -> u64 {
     }
     let Some(canal) = canal else { return 0 };
     let mut ultimo = String::new();
+    let mut autorizado: Option<(u32, u64)> = None;
     let mut buf = [0u8; 64];
     let mut ll = [0u32; 4];
     loop {
@@ -497,6 +503,14 @@ fn principal() -> u64 {
         }
         if r < 0 {
             dashos::dormir_us(10_000);
+            continue;
+        }
+        // De `sesiones`, por su llave sin marca: un administrador confirmó el plan de ese número (la tanda
+        // "instalar"). Vale una vez y cinco minutos.
+        if marca == 0 && k == 0 && r == 8 && u32::from_le_bytes(buf[0..4].try_into().unwrap()) == AUTORIZAR {
+            let n = u32::from_le_bytes(buf[4..8].try_into().unwrap());
+            println!("  [instalador] un administrador confirmó el plan {}", n);
+            autorizado = Some((n, dashos::ahora_us()));
             continue;
         }
         if k < 2 || marca == 0 || r != 8 {
@@ -521,7 +535,14 @@ fn principal() -> u64 {
                 VER => Ok(texto_ver(&mut lista, &vivo.arranque)),
                 PLAN => hacer_plan(&mut lista, &vivo.arranque, &entrada, &mut azar),
                 INSTALAR => {
-                    let r = instalar(&mut lista, &vivo, variables, &entrada);
+                    let n = instalador::disco::crc32(0, entrada.as_bytes());
+                    let vale = autorizado.take().is_some_and(|(a, t)| a == n && dashos::ahora_us() - t < 300_000_000);
+                    let r = if vale {
+                        instalar(&mut lista, &vivo, variables, &entrada)
+                    } else {
+                        println!("  [instalador] se pide instalar el plan {} sin la confirmación de un administrador: no", n);
+                        Err(String::from("sin la confirmación de un administrador para este plan"))
+                    };
                     ultimo = match &r {
                         Ok(t) => t.clone(),
                         Err(m) => m.clone(),

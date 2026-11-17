@@ -777,7 +777,7 @@ prueba-x86: usuario-x86 firmware-x86 FORCE
 # serie (compilado para x86: DASHOS_ARQ=x86_64), la red de usuario de QEMU y el sonido. Lo arranca
 # `tools/qemu_x86_a_mano.sh` (PANTALLA=ANCHOxALTO, SONIDO_X86=hda|virtio, VENTANA=gtk|sdl|none). No es una prueba: nada
 # la comprueba. Sin la caja Linux ni la caja Amiga (aún no van en x86).
-SERVICIOS_X86_USO := inicio consola compositor xhci nvme ahci disco-vivo instalador archivos comprobador eco sesiones red virtio-red fondo centro guardian imagen sonido avisos barra virtio-sonido hda selector panel explorador workbench hora
+SERVICIOS_X86_USO := inicio consola compositor xhci nvme ahci disco-vivo instalador instalar archivos comprobador eco sesiones red virtio-red fondo centro guardian imagen sonido avisos barra virtio-sonido hda selector panel explorador workbench hora
 # Los programas que van en el disco (`tools/disco_archivos.py`), también de x86.
 DISCO_PROGRAMAS_X86 := hola pide cambio ram avisa guarda espera blanker nocapslock
 FUNCIONES_X86_USO := archivos,ventanas,sonido,red,imagenes,ordenes

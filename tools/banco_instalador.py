@@ -16,7 +16,8 @@ BANCO, y comprueba al empezar y al acabar que los base no han cambiado (tamaño 
       --sata2 <capa>          un segundo disco (SATA)
       --serie <fichero>       el puerto serie a un fichero
       --esperar <texto>       acaba en cuanto el serie dice eso
-      --teclas <guion>        teclas por QMP: "espera:5,esc,espera:2,abajo,intro...", "captura", y "menu:<texto>"
+      --teclas <guion>        teclas por QMP: "espera:5,esc,espera:2,abajo,intro...", "captura", "texto:Ana~" (~ es
+                              Intro, teclado español) y "menu:<texto>"
                               (elige en el menú de arranque del firmware la entrada que dice eso, por OCR)
       --matar-en <texto>      mata QEMU (kill -9: corte de luz) en cuanto el serie dice eso
       --apagar <segundos>     al acabar, el botón de apagar (ACPI) y espera a que se apague
@@ -136,6 +137,19 @@ class Qmp:
     def tecla(self, t):
         self.orden("send-key", keys=[{"type": "qcode", "data": t}])
 
+    def escribir(self, texto):
+        """Un texto con el teclado (letras, cifras, espacio, punto, dos puntos, ">", "-"; mayúsculas con mayúsculas)."""
+        especiales = {" ": ["spc"], ".": ["dot"], ":": ["shift", "dot"], ">": ["shift", "less"], "-": ["slash"], "\n": ["ret"]}
+        for c in texto:
+            if c in especiales:
+                ks = especiales[c]
+            elif c.isupper():
+                ks = ["shift", c.lower()]
+            else:
+                ks = [c]
+            self.orden("send-key", keys=[{"type": "qcode", "data": k} for k in ks])
+            time.sleep(0.08)
+
 
 TECLAS = {"esc": "esc", "intro": "ret", "abajo": "down", "arriba": "up", "izquierda": "left", "derecha": "right", "f2": "f2", "f12": "f12", "tab": "tab", "espacio": "spc"}
 
@@ -212,6 +226,8 @@ def arrancar(nombre, segundos, bus="virtio", vars_nombre=None, pendrive=None, sa
                     proxima_tecla = time.time() + float(k[7:])
                 elif k == "captura":
                     captura()
+                elif k.startswith("texto:"):
+                    q.escribir(k[6:].replace("~", "\n"))
                 elif k.startswith("menu:"):
                     # Elegir en el menú de arranque del firmware la entrada que dice eso (por OCR de una captura).
                     i = elegir_en_menu(captura(), k[5:])

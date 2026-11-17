@@ -66,6 +66,9 @@ pub const ACCIONES: &[(&str, Argumento)] = &[
     ("devolver", Argumento::Cuenta),
     ("meter", Argumento::CuentaYGrupo),
     ("sacar", Argumento::CuentaYGrupo),
+    // S32: instalar DashOS con un plan (su número: el CRC-32 de su texto). Lo hace el servicio `instalador`, que solo
+    // está en vivo (arrancado del pendrive), y solo con el plan de ese número.
+    ("instalar", Argumento::Numero),
 ];
 
 /// Una acción ya leída: cuál (su sitio en `ACCIONES`) y su argumento: el número (de `matar`, o el de la cuenta de
@@ -262,6 +265,7 @@ impl core::fmt::Display for Frase<'_> {
             "sacar" if otro == cuentas::ADMIN => write!(f, "Quitar a \"{}\" de administradora (grupo admin)", cuenta),
             "sacar" => write!(f, "Quitar a \"{}\" del grupo \"{}\"", cuenta, otro),
             "comprobar" => f.write_str("Comprobar el disco"),
+            "instalar" => write!(f, "Instalar DashOS en el disco, con el plan {} (lo que dice el plan se escribe; lo de otros sistemas no se toca)", a.objetivo),
             "registro" => f.write_str("Leer el registro de todos los usuarios"),
             // Sin el nombre (quien lo escribe no lo sabe: la orden `Administrar`), por su número.
             "matar" if self.programa.is_empty() => write!(f, "Cerrar el proceso {}", self.accion.objetivo),
@@ -340,7 +344,7 @@ mod pruebas {
 
     #[test]
     fn las_acciones_son_las_de_sesiones() {
-        let nombres: [&str; 8] = ["comprobar", "matar", "registro", "crear", "borrar", "devolver", "meter", "sacar"];
+        let nombres: [&str; 9] = ["comprobar", "matar", "registro", "crear", "borrar", "devolver", "meter", "sacar", "instalar"];
         assert_eq!(ACCIONES.iter().map(|a| a.0).collect::<std::vec::Vec<_>>(), nombres);
     }
 

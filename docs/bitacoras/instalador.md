@@ -125,3 +125,80 @@ Sin nada del sistema (solo `alloc`): la usa el servicio en DashOS y `instalar-pc
   caía al abrir el DashFS.
 - El canal "instalador": ver, plan, instalar, registro (textos en una memoria). Sin manos: `SINMANOS.TXT` del pendrive
   (un plan o un pedido) se aplica al arrancar.
+
+### 4. La ventana y la orden del Shell, con la confirmación de administrador
+
+- **La ventana "Instalar DashOS"** (`usuario/src/bin/instalar.rs`, con el kit): solo en vivo, la lanza `inicio`. Los
+  discos y lo que tienen; un botón por modo ("Usar el espacio libre de nvme0", "Borrar nvme0 entero") que pide el plan y
+  lo enseña con su dibujo; "Instalar" (activo solo con un plan en pantalla). No sale encima de la pantalla de entrada:
+  se ve al entrar.
+- **La orden `Instalar`** (`ordenes/src/base/instalar.rs`): `Instalar` (los discos), `Instalar nvme0 hueco` (el plan; se
+  guarda con `>RAM:plan`), `Instalar PLAN RAM:plan` (aplicarlo). La hace el Shell, que tiene la llave del instalador
+  sin preguntar (`sesiones`, `PERMISOS`: ver y hacer planes no escribe nada).
+- **Una sola confirmación, de administrador** (S6b, S36): la acción nueva **`instalar <número>`** de la tanda
+  (`tanda.rs`; el número es el CRC-32 del texto del plan). `guardian` la enseña ("Instalar DashOS en el disco, con el plan
+  N (lo que dice el plan se escribe; lo de otros sistemas no se toca)") y pide la contraseña; `sesiones` se lo dice al
+  instalador por su llave sin marca (la recibe de `inicio`, `A_SESIONES`), y el instalador solo aplica ese plan, una vez
+  y en cinco minutos. Sin confirmación, "sin la confirmación de un administrador para este plan".
+- `tools/prueba_instalador_ventana.py`: como una persona (teclado y tableta por QMP): entra Ana, "Borrar nvme0 entero",
+  el plan en la ventana, "Instalar", la ventana del sistema pide la contraseña, se instala; en el Shell, `Instalar` e
+  `Instalar nvme0 reinstalar`; y DashOS arranca del disco. 8 de 8 (capturas `ventana-NN-*.png`).
+
+### 5. El banco de AmiCachy (`tools/banco_instalador.py`, `tools/prueba_instalador.py`)
+
+- Los discos base no se tocan: cada prueba en una capa qcow2 propia en `~/recuperar/geosian-7d/instalador-vm/`, con sus
+  OVMF_VARS; el guion se niega a escribir fuera de ahí y comprueba al empezar y al acabar el tamaño y la fecha de los
+  base (y la huella del vacío). Mirar una capa sin root: `qemu-storage-daemon` con exportación FUSE (de solo lectura,
+  salvo para preparar las hostiles).
+- Capas de partida: `win-hueco-base` (Windows 11 con un hueco de 21 GB: su NTFS encogido con `ntfsresize` desde fuera y
+  su entrada de la GPT recortada, solo en la capa) y `deb-hueco-base` (Debian 13 con un hueco de 29 GB, `resize2fs`).
+  Este Windows 11 deja el NTFS sucio tras encogerlo (banderas 0x0201) aunque arranque y se apague bien dos veces: sirve
+  de hostil "NTFS sucio".
+- **Resultado** (16 + 11 de 27 bien):
+  - vacío: disco entero; GPT con sus dos copias iguales; DashOS arranca por la NVRAM (el próximo arranque) y eligiéndolo
+    en el menú del firmware (OCR de la captura del menú de OVMF).
+  - Windows 11 con hueco: instalado; sus cuatro particiones iguales **byte a byte** y en la ESP solo `EFI/DashOS`
+    nuevo (los ficheros de Windows, iguales); DashOS arranca (NVRAM y menú: "Windows Boot Manager" primero, "DashOS"
+    después); Windows llega a su pantalla de bloqueo y se apaga limpio (capturas `windows-windows-NN.png`).
+  - Debian 13 con hueco: lo mismo; Debian llega a `login:` por el puerto serie y se apaga limpio.
+  - Hostiles: el pendrive como destino (el mismo pendrive puesto también como disco SATA: "es el pendrive del que
+    arrancó DashOS, no se ofrece"); las dos copias de la GPT buenas pero distintas (no se escribe); sin hueco (el
+    Windows de serie, disco lleno: "no hay sitio: el hueco libre más grande es de 1 MB y DashOS necesita 4,0 GB");
+    encoger Windows (se para antes de tocar nada: falta el dominio) y Windows intacto después; NTFS sucio, hibernado
+    (un `hiberfil.sys` con "HIBR" puesto con `ntfscp`) y BitLocker (la firma `-FVE-FS-`): se dice y no se toca; corte de
+    luz (QEMU muerto con `kill -9`) al copiar el sistema y tras poner el cargador: Windows intacto byte a byte, y la
+    instalación se repite y acaba.
+- **Lo que enseñó el banco**: una copia de la GPT simplemente rota no sirve de hostil en QEMU, porque el firmware (EDK2)
+  la rehace desde la otra al arrancar; la prueba usa dos copias buenas y distintas. Y un `BootNext` que dejó una
+  instalación cortada manda el siguiente arranque al disco, no al pendrive: para repetir, la prueba arranca con una
+  NVRAM limpia (como quien elige el pendrive en el menú del firmware).
+
+### Decisiones tomadas aquí (pendientes del usuario)
+
+1. **NVRAM desde el sistema, no desde el cargador**: la entrada se escribe en el momento con los servicios de ejecución
+   del firmware (como hace `efibootmgr`), con un permiso que solo tiene el instalador y solo para las variables de
+   arranque. Alternativa descartada: que el cargador del pendrive la escriba en el siguiente arranque (falla si se quita
+   el pendrive antes). Riesgo: firmwares con fallos en sus servicios de ejecución sin `SetVirtualAddressMap`; probado
+   solo en OVMF.
+2. **Orden de arranque**: DashOS se añade **al final** de `BootOrder` (el sistema que arrancaba sigue arrancando) y con
+   `BootNext` (el primer reinicio entra en DashOS, una vez). Elegir cuál arranca por omisión: en el plan, más adelante.
+3. **Tamaños**: DashOS necesita 4 GB como mínimo; la ESP nueva, 260 MB; a Windows se le deja un margen de 10 GB sobre lo
+   que usa al encogerlo.
+4. **El pendrive en vivo arranca en la pantalla de entrada** con las cuentas de la imagen de pruebas (Ana, Carla): una
+   imagen limpia para repartir, con el asistente de primer arranque de `cuentas-2`, cuando esté.
+5. **Sin manos**: `EFI/DashOS/SINMANOS.TXT` del pendrive (un plan, o un pedido) se aplica sin preguntar: quien hizo el
+   pendrive lo pidió para ese disco (un plan lleva la huella del disco). Es para el banco; un pendrive de serie no lo lleva.
+6. **La ventana del instalador** sale sola en vivo; la orden la hace el Shell con la llave del instalador sin preguntar.
+7. **Disco MBR**: se lee y se enseña, pero solo se instala en él borrándolo entero (a GPT).
+8. La copia de las tablas va a la ESP (`EFI/DashOS/TABLAS.BIN`) y al registro, no al pendrive: DashOS aún no escribe
+   en memorias USB en x86.
+
+### Pendiente
+
+- **Encoger NTFS**: el dominio Linux de x86 (unas 1.700 líneas, ver arriba). El plan, las comprobaciones previas, la
+  copia del principio de la partición y su hostil ya están; falta lo que ejecuta `ntfsresize`.
+- El pendrive de la **Pi 5** (`make tarjeta-pi5` hace la tarjeta; falta su versión en vivo con instalador).
+- Una imagen limpia (sin las cuentas de prueba ni el daño de A10) y el asistente de primer arranque.
+- Que `guardian` enseñe el resumen del plan (disco y modo) y no solo su número.
+- Windows y Debian en dos discos de la misma máquina (escenario "Windows + Debian"): no montado.
+- `Instalar PLAN` desde el Shell de principio a fin (la ventana sí se probó entera; la orden, ver y planear).

@@ -52,4 +52,6 @@ pub(super) static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // S32: el instalador, solo en vivo: los discos del PC enteros (por "nvme" y "sata"), el sistema que se copia, y
     // las variables de arranque de la NVRAM. Sirve "instalador" (la ventana y la orden del Shell).
     ("instalador", programa!("instalador"), &[("vivo-original", DATOS), ("variables", VARIABLES | OPCIONAL)], &["instalador", "nvme", "sata"]),
+    // S32: la ventana "Instalar DashOS" (la misma que la orden `Instalar`), también solo en vivo.
+    ("instalar", programa!("instalar"), &[("vivo-original", DATOS)], &["ventanas", "instalador", "sesiones"]),
 ];

@@ -474,6 +474,12 @@ test = false
 required-features = ["archivos"]
 
 [[bin]]
+name = "instalar"
+path = "src/bin/instalar.rs"
+test = false
+required-features = ["ventanas"]
+
+[[bin]]
 name = "archivos"
 path = "src/bin/archivos.rs"
 test = false

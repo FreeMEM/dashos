@@ -89,7 +89,10 @@ const GUARDAN_AJUSTES: &[&str] = &["centro"];
 /// H9: también el permiso de máquinas virtuales ("maquinas").
 /// S10 (Commodities): `atajos`, `fondo` y `commodities` no dan llave: son poderes del compositor (`PODERES_COMPOSITOR`),
 /// que se le dicen sin marca (`AVISO_PODER`). Al final, para no cambiar el número de los de antes en lo guardado.
-const REPARTE: &[(&str, u32)] = &[("eco", 5), ("plazo", PLAZO), ("sonido", SIN_NUMERO), ("avisos", SIN_NUMERO), ("maquinas", MAQUINAS), ("atajos", SIN_NUMERO), ("fondo", SIN_NUMERO), ("commodities", SIN_NUMERO)];
+/// S32: al final, el instalador (solo en vivo), con su llave sin marca de `inicio` (`INSTALADOR`).
+const REPARTE: &[(&str, u32)] = &[("eco", 5), ("plazo", PLAZO), ("sonido", SIN_NUMERO), ("avisos", SIN_NUMERO), ("maquinas", MAQUINAS), ("atajos", SIN_NUMERO), ("fondo", SIN_NUMERO), ("commodities", SIN_NUMERO), ("instalador", SIN_NUMERO)];
+/// S32: la llave sin marca del instalador (solo en vivo), que da `inicio`; 0 si no hay.
+static INSTALADOR: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 const SIN_NUMERO: u32 = 0;
 /// U6: los servicios que siguen las sesiones (el compositor y el sonido), por el nombre que da `inicio` a quien los
 /// sirve: no reciben entradas de directorio de lo que se reparte (un nombre así podría ser el de uno con poderes), sino
@@ -115,6 +118,11 @@ const SE_APUNTA: &[&str] = &["maquinas", "atajos", "fondo", "commodities"];
 /// S10, Commodities (`docs/bitacoras/commodities.md`): las clásicas de `SYS:Tools/Commodities` y Exchange (la ventana y la
 /// orden de `SYS:C`), por el nombre de su fichero, como herramientas del sistema; y la prueba de `virt`.
 const PERMISOS: &[(&str, &str)] = &[
+    // S32: la orden `Instalar` (la hace el Shell, o `SYS:C/Ordenes` si va suelta). Solo hay instalador en vivo; ver
+    // los discos y hacer un plan no escribe nada, e instalar pide además la contraseña de un administrador (la tanda).
+    ("Shell", "instalador"),
+    ("Instalar", "instalador"),
+    ("Ordenes", "instalador"),
     ("cambio", "sonido"),
     ("cambio", "avisos"),
     ("avisa", "avisos"),
@@ -1210,6 +1218,17 @@ fn seguir_tanda(
                 (BIEN, 0)
             }
             "matar" => matar_admin(fichas, a.objetivo, &t.programa, selector, registro),
+            // S32: autoriza al instalador el plan de ese número (una vez, por su llave sin marca); sin instalador (no
+            // se arrancó del pendrive), no existe.
+            "instalar" => match INSTALADOR.load(core::sync::atomic::Ordering::Relaxed) {
+                0 => (NO_EXISTE, 0),
+                l => {
+                    let mut m = [0u8; 8];
+                    m[0..4].copy_from_slice(&5u32.to_le_bytes());
+                    m[4..8].copy_from_slice(&(a.objetivo as u32).to_le_bytes());
+                    if a.objetivo > u32::MAX as u64 { (NO_EXISTE, 0) } else if dashos::canal_escribir(l, &m, &[]) == 0 { (BIEN, a.objetivo) } else { (NO_EXISTE, 0) }
+                }
+            },
             "comprobar" if comprobando.is_some() => (dashos::protocolo::archivos::EN_USO, 0),
             // A15: el comprobador aparte, sin esperar: su respuesta llega luego, y entonces se sigue.
             "comprobar" => match pedir_comprobar() {
@@ -1547,6 +1566,7 @@ impl Siguen {
         match REPARTE[s] {
             ("sonido", _) => self.sonido,
             ("avisos", _) => self.avisos,
+            ("instalador", _) => INSTALADOR.load(core::sync::atomic::Ordering::Relaxed),
             (_, n) => n,
         }
     }
@@ -2115,6 +2135,11 @@ fn principal() -> u64 {
                 // U6: la llave sin marca de uno que sigue las sesiones; se le dice lo que haya ya.
                 let mut quien = [0u8; 16];
                 quien.copy_from_slice(&m[4..20]);
+                if nombre(&quien) == "instalador" && INSTALADOR.load(core::sync::atomic::Ordering::Relaxed) == 0 {
+                    INSTALADOR.store(ll[0], core::sync::atomic::Ordering::Relaxed);
+                    usadas = 1;
+                    println!("  [sesiones] en vivo: dará el instalador a la orden Instalar");
+                }
                 if nombre(&quien) == "selector" && selector == 0 {
                     selector = ll[0];
                     usadas = 1;

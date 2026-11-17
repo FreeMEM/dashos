@@ -148,8 +148,9 @@ probada en el PC): reconoce GPT (las dos copias), MBR, ESP, NTFS (hibernado, suc
 btrfs, swap, LUKS, LVM, APFS, HFS+, FAT y exFAT; plan en texto con dibujo antes y después; instala en un hueco, en un
 disco entero o encima de DashOS; `EFI/DashOS/` en la ESP que hay; su entrada en la NVRAM (llamada 64, por los servicios
 de ejecución del firmware) al final del orden y como próximo arranque. Probado en el banco de AmiCachy con Windows 11,
-Debian 13 y un disco vacío (`tools/prueba_instalador.py`). Falta: encoger NTFS (el dominio Linux de x86), la ventana del
-escritorio y la orden del Shell con la confirmación de administrador, y el pendrive de la Pi 5.
+Debian 13 y un disco vacío (`tools/prueba_instalador.py`). La ventana "Instalar DashOS" y la orden `Instalar` del Shell
+hacen lo mismo, con una sola confirmación de administrador (la tanda "instalar <plan>"). Falta: encoger NTFS (el dominio
+Linux de x86) y el pendrive de la Pi 5.
 
 ## Lo que queda abierto
 
