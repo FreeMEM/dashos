@@ -1129,15 +1129,23 @@ fn confirmar_admin(q: &[u8; PREGUNTA], programa: &str, lineas: alloc::vec::Vec<S
 fn esperar_atendiendo(pid: u64, max_us: u64, preguntas: u32) -> bool {
     let hasta = dashos::ahora_us() + max_us;
     let mut mirado = 0u64;
+    // Acabado el programa, se atiende aún lo que quede en la cola antes de volver: `sesiones` manda "*codigo" tras
+    // crear una cuenta en una tanda, y el programa puede acabar antes de que se lea (arreglo de la oleada 6 de S27: la
+    // prueba de cuentas-2 daba "no hay código de Berta guardado" según cuánto tardara la ventana de la tanda).
+    let mut acabado = false;
     while dashos::ahora_us() < hasta {
-        if dashos::ahora_us() >= mirado + 500_000 {
-            if !vivo(pid) {
-                return true;
-            }
+        if !acabado && dashos::ahora_us() >= mirado + 500_000 {
+            acabado = !vivo(pid);
             mirado = dashos::ahora_us();
         }
         let mut q = [0u8; PREGUNTA];
-        if dashos::canal_leer_plazo(preguntas, &mut q, &mut [], 300_000).0 as usize != PREGUNTA || de_apagar(&q) || de_permiso(&q) || de_tanda(&q) {
+        if dashos::canal_leer_plazo(preguntas, &mut q, &mut [], 300_000).0 as usize != PREGUNTA {
+            if acabado {
+                return true;
+            }
+            continue;
+        }
+        if de_apagar(&q) || de_permiso(&q) || de_tanda(&q) {
             continue;
         }
         let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
@@ -2537,6 +2545,8 @@ fn pintar(px: &mut [u32], ancho: i32, alto: i32, p: &Pantalla, zona: Rect, fuent
     }
     // El aviso: el error, o qué hacer (en la fila de DMS, solo el error y Bloq Mayús, como su campo).
     let aviso = match (&p.aviso, p.modo) {
+        // Con Bloq Mayús, también tras un error (DMS los dice los dos).
+        (Some(x), Modo::Clave | Modo::Nombre) if a.bloq_mayus => Some(alloc::format!("{} · Bloq Mayús está activado", x)),
         (Some(a), _) => Some(a.clone()),
         (None, Modo::Clave | Modo::Nombre) if a.bloq_mayus => Some(String::from("Bloq Mayús está activado")),
         (None, Modo::Clave | Modo::Nombre) => None,
@@ -2964,6 +2974,12 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
                 repintar = true;
             }
         }
+        // Bloq Mayús, como lo lleva el teclado del kit (el compositor no manda los modificadores bloqueados: lo de antes
+        // de ponerse la pantalla no se sabe): se dice bajo el campo, como DMS.
+        if teclado.bloq_mayus() != alrededor.bloq_mayus {
+            alrededor.bloq_mayus = teclado.bloq_mayus();
+            repintar = true;
+        }
         // Lo que haya que repintar (también lo que acaba de cambiar arriba, la respuesta de `sesiones`).
         let toca = (repintar || !extras.is_empty()) && buf;
         // Rama `cuentas-2`: lo que hizo un clic, como si se tecleara (sin esperar a nada).
@@ -3051,14 +3067,6 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
                         let d = bv::disponer(ancho, alto);
                         extras.push(Rect::new(d.estado.0 - 120, d.estado.1 - 4, 124, bv::ICONO_ESTADO + 8));
                     }
-                }
-            }
-            // Bloq Mayús (el bit 2 de los bloqueados de xkb): se dice bajo el campo, como DMS.
-            (TECLADO, wl_keyboard::ev::MODIFIERS) if cuerpo.len() >= 16 => {
-                let bloq = palabra(3) & 2 != 0;
-                if bloq != alrededor.bloq_mayus {
-                    alrededor.bloq_mayus = bloq;
-                    repintar = true;
                 }
             }
             (CERROJO, ext_session_lock_v1::ev::FINISHED) => {
