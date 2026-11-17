@@ -129,6 +129,16 @@ al arrancar, las vencidas se borran del todo. Cada cambio, en `Estado:Registros/
 de una cuenta nueva (8 letras o más, sin repetirla), que el código salga solo en `guardian` y el programa `Usuarios`
 de `SYS:System`.
 
+**Hecho, lo que quedaba** (rama `cuentas-2`, 2026-11-16; bitácora `docs/bitacoras/cuentas-2.md`):
+- **Cambiar la propia contraseña** sin reescribir los datos: el servicio de archivos vuelve a envolver la llave del
+  volumen con la nueva en la ranura de la de ahora (`CAMBIAR_CLAVE`). La pide la ventana de `guardian` (la de ahora y la
+  nueva dos veces); el programa (`Usuario CLAVE`, o Ajustes, Cuentas, "Mi contraseña") no ve ninguna. Solo la propia.
+- **El código de recuperación**, en la pantalla de entrada (Tab: olvidé la contraseña): pone una contraseña nueva, las
+  de antes se van y el código se gasta: sale otro, para apuntarlo otra vez.
+- **Espera que crece** tras 3 contraseñas malas seguidas con una cuenta (5 s, y el doble cada vez, hasta 5 minutos).
+- **El programa `Usuarios`** es la categoría Cuentas de Ajustes (el centro de control): la lista, crear, borrar,
+  devolver y los grupos, con la misma tanda de administrador que la orden `Usuario`.
+
 ### Entrar, bloquear y salir
 
 1. `guardian` enseña la pantalla de entrada y manda nombre y contraseña a `sesiones`.
@@ -139,6 +149,10 @@ de `SYS:System`.
 
 Una sesión cada vez en la primera versión. El cambio rápido de usuario cabe después: las fichas ya llevan sesión.
 
+**Hecho, la lista** (rama `cuentas-2`): la pantalla de entrada y la de cambiar de usuario enseñan las cuentas activas
+para elegir con las flechas, con "Otra persona…" para teclear el nombre (y una letra empieza a teclearlo). Pendiente del
+usuario: si se puede esconder la lista (U6, decisión 4: enseñarla dice quién usa el equipo).
+
 Entrada automática: posible, guardando la clave del volumen en `Estado:`. Quien coja la tarjeta lee el cajón. Hay
 que decirlo al activarla. No recomendada de serie (S14 ya proponía pantalla de entrada).
 
@@ -146,6 +160,11 @@ que decirlo al activarla. No recomendada de serie (S14 ya proponía pantalla de 
 
 Un asistente crea el primer usuario, que es administrador, y su volumen. **Necesita azar de calidad** para las
 claves: hoy DashOS no lo tiene (S16, propiedad 5). Es condición previa.
+
+**Hecho** (rama `cuentas-2`): sin `Estado:Cuentas/usuarios` (o vacío), la pantalla de entrada es un asistente (nombre,
+nombre completo, contraseña dos veces); `sesiones` crea la cuenta en `admin`, con su volumen cifrado y su código de
+recuperación (del azar del kernel, R10), y entra. Solo `guardian` lo pide, y solo sin ninguna cuenta. Si `usuarios`
+tiene líneas pero ninguna vale, no es un primer arranque: nadie entra (y se dice en el registro).
 
 ## Ficheros: las dos capas
 
