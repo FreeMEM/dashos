@@ -2293,3 +2293,31 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
     por la consola también en `virt-uso`: arreglado en `union-menus` 5533f690, la imagen por el nombre de las llaves,
     con prueba de las tablas reales). Tras el arreglo: menús, prueba, shell y cuentas bien.
   - Pendiente: con la ventana de Ajustes abierta, el centro no aplica los cambios de `ENV:` hasta cerrarla.
+- **Unidas `firefox-firme`, `dms-barra`, `dms-avisos`, `dms-dock`, `iconos` e `iconos-cajas` (2026-11-17, rama
+  `union-dms`)**.
+  - `firefox-firme`: no se pierden teclas por el camino; ventanas que salen a destiempo con carga (caja Amiga,
+    preguntas de `guardian`) se llevan el teclado (la regla deja robarlo tras 2 s sin teclear). Los guiones esperan a
+    que la ventana a la que hablan tenga el teclado y repiten; una prueba que se cuelga para a los 30 s y dice qué
+    faltó; `hid.rs` avisa si tira una tecla. Wayland con carga: 3 de 3 (antes 3 de 5). Arreglo de raíz (permiso de un
+    solo uso para llevarse el teclado, como xdg-activation): pendiente del sí del usuario.
+  - `dms-barra` (S27, DMS portado, MIT): barras configurables (`ENV:Escritorio/barra`, varias, por monitor, cualquier
+    borde), 31 widgets de DMS más los menús, Ajustes > Barra con arrastrar, `Ajuste DMS <settings.json>` (importador),
+    perfil `SYS:Prefs/Presets/DMS/shiva.json`, esquema monocromo de matugen en el tema.
+  - `dms-avisos`: emergentes con acciones, centro de avisos con historial y no molestar, Dash del reloj con calendario,
+    centro de control configurable (`ENV:Escritorio/avisos`, `centro-control`), `make arranque-virt-dms`.
+  - `dms-dock`: dock y OSD de volumen y Bloq Mayús, protocolo `dashos_dock_v1`; el dock solo escribe su ajuste
+    (`AJUSTES_PROPIOS` en `sesiones`, `ESCRIBIR_ENV`, `archivos` `RAM_ESCRIBIR` solo de `sesiones`).
+  - `iconos`: Material Symbols Rounded recortados (Apache 2.0, `kit/iconos/NOTICE`), colección propia de 72 tonal,
+    temas de Linux instalables en `Home:Iconos/` (ninguno de serie), lector de SVG mínimo propio.
+  - `iconos-cajas`: lector de `.info` (clásico, NewIcons, GlowIcons, PNG de OS4/MOS) en el explorador; catálogo de
+    programas de Linux con icono (aún no llega al lanzador); `make arranque-virt-iconos`.
+  - Conflictos resueltos con las dos partes (categorías de Ajustes tras "Acerca de", catálogos sin números repetidos,
+    barra de dms-barra con avisos de dms-avisos, OSD al dock, explorador con `.info` delante); disco de pruebas justo:
+    `rota.png` desde un fondo más pequeño (A15 bien). Arreglados al probar: el centro de control no volvía a lo de
+    serie, el guion de avisos con error de Python, el centro de avisos fuera de 800x600, la orden `Registro` con 3
+    ficheros de 4, plazo de `arranque-virt` 900 s.
+  - Pruebas: `prueba`, `-dms`, `-iconos`, `-escritorio`, `-shell`, `-menus`, `-cuentas`, `-2` y `-wayland` bien a la
+    primera. `arranque-virt` mal: en la última vuelta todo hasta el explorador, que falla por una tecla que se queda
+    pulsada (la búsqueda se llena de "a"): familia distinta del robo de teclado, por investigar. Sin ver: el resto
+    de `arranque-virt` tras el explorador.
+  - Pendiente: el fondo del usuario no sale al arrancar (el fondo arranca antes que el disco; ya pasaba antes).
