@@ -787,6 +787,17 @@ const CABECERA_TEMA: &str = "El tema (Ajustes > Apariencia; la orden `Ajuste tem
 
 /// El fichero de ajustes `fichero` de `ENV:` o, si no está, de `ENVARC:`. `Err` con el porqué ("no hay" si en ninguno).
 fn leer_ajuste(fichero: &str) -> Result<Vec<u8>, String> {
+    leer_ajuste_de(fichero, &["ENV", "ENVARC"])
+}
+
+/// Si el ajuste está en `ENV:` (el que el usuario puso en marcha), y no solo en `ENVARC:` o de fábrica. Si no se sabe
+/// (sin servicio o sin tabla), `true`: quien pregunta se queda con lo que había.
+fn ajuste_en_env(fichero: &str) -> bool {
+    !matches!(leer_ajuste_de(fichero, &["ENV"]).as_deref().map_err(String::as_str), Err("no hay"))
+}
+
+/// `leer_ajuste` mirando solo en las asignaciones de `capas`, en su orden.
+fn leer_ajuste_de(fichero: &str, capas: &[&str]) -> Result<Vec<u8>, String> {
     use dashos::protocolo::archivos as a;
     let ses = Sesion::abrir().ok_or_else(|| String::from("sin servicio de archivos"))?;
     let Some(tabla) = dashos::asignaciones::pedir_tabla(SESIONES) else {
@@ -801,7 +812,7 @@ fn leer_ajuste(fichero: &str) -> Result<Vec<u8>, String> {
     };
     let mut fs = PorSesion(&ses);
     let mut l = idiomas::PorAsignaciones { fs: &mut fs, tabla: &tabla };
-    for asignacion in ["ENV", "ENVARC"] {
+    for asignacion in capas {
         let camino = alloc::format!("{}:{}", asignacion, fichero);
         match idiomas::Lector::leer(&mut l, &camino, kit::idioma::texto::MAX_FICHERO) {
             Ok((b, _)) => return Ok(b),
@@ -2000,6 +2011,14 @@ fn aplicar_avisos_y_cc(dados: &mut (Option<avisos_ajustes::Ajustes>, Option<cc_r
             dados.0 = Some(a);
         }
         Ok(_) => {}
+        // Unión de union-dms: si se quitó el de `ENV:` y lo de debajo (`ENVARC:`, la de fábrica) no vale, lo de serie,
+        // como al arrancar ("vuelven al quitar el fichero"); si lo que no vale es lo de `ENV:`, lo que había.
+        Err(e) if !ajuste_en_env(FICHERO_AVISOS) && dados.0 != Some(avisos_ajustes::Ajustes::DE_SERIE) => {
+            let a = avisos_ajustes::Ajustes::DE_SERIE;
+            println!("  [centro] {}: {}; lo de serie (no está en ENV:)", FICHERO_AVISOS, e);
+            println!("  [centro] avisos en marcha: emergentes {}, animación {} ms; a la barra: {}", a.posicion.nombre(), a.animacion_ms, dar_ajustes_a_avisos(&a));
+            dados.0 = Some(a);
+        }
         Err(e) => println!("  [centro] {}: {}; se quedan los que había", FICHERO_AVISOS, e),
     }
     match leer_cc() {
@@ -2008,6 +2027,14 @@ fn aplicar_avisos_y_cc(dados: &mut (Option<avisos_ajustes::Ajustes>, Option<cc_r
             dados.1 = Some(r);
         }
         Ok(_) => {}
+        Err(e) if !ajuste_en_env(FICHERO_CC) => {
+            let r = cc_rejilla::Rejilla::de_serie();
+            if dados.1.map(|d| (d.columnas, d.puestos().to_vec())) != Some((r.columnas, r.puestos().to_vec())) {
+                println!("  [centro] {}: {}; el de serie (no está en ENV:)", FICHERO_CC, e);
+                println!("  [centro] centro de control en marcha: {} mosaicos en {} columnas; al panel: {}", r.n, r.columnas, dar_cc_al_panel(&r));
+                dados.1 = Some(r);
+            }
+        }
         Err(e) => println!("  [centro] {}: {}; se queda el que había", FICHERO_CC, e),
     }
 }
