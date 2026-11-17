@@ -80,3 +80,6 @@ Amiga
 MSG_26
 Monochrome
 ; Monocromo
+MSG_27
+not a palette image
+; no es una imagen de paleta
