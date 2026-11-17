@@ -101,6 +101,9 @@ prueba: $(PRUEBAS) catalogos
 	cd ../usuario && rustc --edition 2024 --test src/dock_ajustes.rs -o target/dock_ajustes_pruebas && ./target/dock_ajustes_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/dock_modelo.rs -o target/dock_modelo_pruebas && ./target/dock_modelo_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/osd_modelo.rs -o target/osd_modelo_pruebas && ./target/osd_modelo_pruebas -q
+	@# tecla-pegada: cada teclado de arranque lo suyo (dos a la vez, el que se va suelta lo pulsado, informes malos) y la
+	@# cola sin sitio (nunca se tira un soltar; ráfagas).
+	cd ../usuario && rustc --edition 2024 --test src/hid_teclas.rs -o target/hid_teclas_pruebas && ./target/hid_teclas_pruebas -q
 	@# S13, segunda parte: DNS (respuestas falsas, nombres en bucle, cortadas), SNTP, las zonas horarias y el cortafuegos de entrada.
 	cd ../usuario && rustc --edition 2024 --test src/dns.rs -o target/dns_pruebas && ./target/dns_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/sntp.rs -o target/sntp_pruebas && ./target/sntp_pruebas -q

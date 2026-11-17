@@ -698,7 +698,7 @@ fn principal() -> u64 {
                 }
                 let informe = &informe[..largo.min(16)];
                 if r.teclado {
-                    entrada.teclado(informe)
+                    entrada.teclado(r.aparato, informe)
                 } else if let Some(t) = r.tableta {
                     if let Some(l) = dashos::hid_informe::leer(&t, informe) {
                         entrada.tableta(l)
@@ -715,6 +715,13 @@ fn principal() -> u64 {
         if let Some(i) = irq.filter(|_| n_aviso == 4) {
             dashos::interrupcion_terminar(i);
         }
+        // tecla-pegada: un teclado desenchufado o prestado a un dominio suelta lo que tenía pulsado (su soltar ya no
+        // llegará por aquí).
+        entrada.revisar_teclados(|a| {
+            lista.iter().enumerate().any(|(k, r)| {
+                r.is_some_and(|r| r.aparato == a && r.teclado) && !pm.prestados.iter().flatten().any(|p| p.k == k)
+            })
+        });
         if irq.is_some() && (entrada.pendiente() || pm.s_n > 0) && reintento.is_none() {
             let t = dashos::temporizador_crear(b, 10_000, 0);
             reintento = (t > 0).then_some(t as u32);

@@ -1,77 +1,64 @@
 //! Teclado y ratón de arranque (HID 1.11, apéndice B) como eventos para el compositor (C49): lo comparten los
 //! controladores de USB (`usb`, el DWC2 de la Pi; `xhci`, U6). Formato de los eventos en `docs/referencia/servicios.md`.
+//! Lo de cada teclado y la cola sin sitio, en `hid_teclas` (se prueba en el PC).
 
-/// Eventos que esperan a que el compositor haga sitio en su cola (E4).
-const PENDIENTES: usize = 32;
+use crate::hid_teclas::{Cola, Evento, Teclados};
 
 /// Lo que se manda a quien use el teclado y el ratón.
 pub struct Entrada {
     /// El canal de eventos; sin él, se escriben.
     canal: Option<u32>,
-    previo: [u8; 8],
+    /// Lo último que dijo cada teclado (tecla-pegada: cada uno lo suyo, y el que se va suelta lo que tenía).
+    teclados: Teclados,
     /// Quién escribe, para las líneas sin canal.
     nombre: &'static str,
     /// Los eventos que no cupieron, en orden (E4): una tecla soltada que se perdiera quedaría pulsada para siempre.
-    pendientes: [[u8; 8]; PENDIENTES],
-    n: usize,
+    pendientes: Cola,
     /// Teclas y botones tirados por falta de sitio (se dice cada uno: perder uno no debe pasar callado).
     tirados: u32,
 }
 
 impl Entrada {
     pub fn nueva(canal: Option<u32>, nombre: &'static str) -> Self {
-        Self { canal, previo: [0; 8], nombre, pendientes: [[0; 8]; PENDIENTES], n: 0, tirados: 0 }
+        Self { canal, teclados: Teclados::new(), nombre, pendientes: Cola::new(), tirados: 0 }
     }
 
     /// Si quedan eventos sin entregar: quien llame tiene que volver a llamar a `reintentar` dentro de poco.
     pub fn pendiente(&self) -> bool {
-        self.n > 0
+        !self.pendientes.is_empty()
     }
 
     /// Entrega los eventos que esperan, en orden, mientras quepan.
     pub fn reintentar(&mut self) {
         let Some(c) = self.canal else { return };
-        while self.n > 0 {
-            match crate::canal_escribir(c, &self.pendientes[0], &[]) {
+        while let Some(ev) = self.pendientes.primero() {
+            match crate::canal_escribir(c, &ev, &[]) {
                 0 => {}
                 // Nadie lee: se tira todo.
                 -4 => {
-                    self.n = 0;
+                    self.pendientes.vaciar();
                     return;
                 }
                 _ => return,
             }
-            self.pendientes.copy_within(1..self.n, 0);
-            self.n -= 1;
+            self.pendientes.quitar_primero();
         }
     }
 
-    /// Guarda un evento que no cupo. Sin sitio, se tira un movimiento del ratón (el más viejo); las teclas y los
-    /// botones no se tiran mientras haya movimientos.
-    fn guardar(&mut self, ev: [u8; 8]) {
-        if self.n == PENDIENTES {
-            let movimiento = |e: &[u8; 8]| e[0] == 2;
-            let fuera = self.pendientes[..self.n].iter().position(movimiento).unwrap_or(0);
-            if movimiento(&ev) && !self.pendientes[..self.n].iter().any(movimiento) {
-                return;
-            }
-            if !movimiento(&self.pendientes[fuera]) {
-                self.tirados += 1;
-                let e = self.pendientes[fuera];
-                crate::println!("  [{}] el compositor no recoge la entrada: se tira un evento ({}, {:#04x}; {} en total)", self.nombre, if e[0] == 1 { "tecla" } else { "tableta" }, e[1], self.tirados);
-            }
-            self.pendientes.copy_within(fuera + 1..self.n, fuera);
-            self.n -= 1;
+    /// Guarda un evento que no cupo (`hid_teclas::Cola`: sin sitio, se tira primero un movimiento del ratón, y un
+    /// soltar nunca mientras haya otra cosa).
+    fn guardar(&mut self, ev: Evento) {
+        if let Some(e) = self.pendientes.meter(ev) {
+            self.tirados += 1;
+            crate::println!("  [{}] el compositor no recoge la entrada: se tira un evento ({}, {:#04x}; {} en total)", self.nombre, if e[0] == 1 { "tecla" } else { "tableta" }, e[1], self.tirados);
         }
-        self.pendientes[self.n] = ev;
-        self.n += 1;
     }
 
-    pub fn mandar(&mut self, ev: [u8; 8]) {
+    pub fn mandar(&mut self, ev: Evento) {
         if let Some(c) = self.canal {
             // Si el canal está lleno, el evento espera (detrás de los que ya esperaban); si está cerrado, se pierde.
             self.reintentar();
-            if self.n > 0 {
+            if self.pendiente() {
                 self.guardar(ev);
             } else if crate::canal_escribir(c, &ev, &[]) == -8 {
                 self.guardar(ev);
@@ -87,30 +74,36 @@ impl Entrada {
         }
     }
 
-    /// Un informe de teclado de arranque (HID 1.11, B.1): modificadores, reservado y hasta seis teclas. Se compara con
-    /// el anterior para sacar lo que se pulsó y lo que se soltó.
-    pub fn teclado(&mut self, i: &[u8]) {
-        if i.len() < 8 || i[2] == 1 {
-            return; // demasiadas teclas a la vez: el informe no dice cuáles
-        }
-        let previo = self.previo;
-        let cambios = previo[0] ^ i[0];
-        for b in 0..8 {
-            if cambios & (1 << b) != 0 {
-                self.mandar([1, 0xE0 + b, (i[0] >> b) & 1, 0, 0, 0, 0, 0]);
+    /// Un informe de teclado de arranque (HID 1.11, B.1) del teclado `aparato`: se compara con el anterior de ese
+    /// teclado para sacar lo que se pulsó y lo que se soltó.
+    pub fn teclado(&mut self, aparato: u32, i: &[u8]) {
+        let mut evs = [[0u8; 8]; 22];
+        let mut n = 0;
+        self.teclados.informe(aparato, i, &mut |e| {
+            if n < evs.len() {
+                evs[n] = e;
+                n += 1;
             }
+        });
+        for &e in &evs[..n] {
+            self.mandar(e);
         }
-        for &k in &previo[2..8] {
-            if k > 3 && !i[2..8].contains(&k) {
-                self.mandar([1, k, 0, 0, 0, 0, 0, 0]);
+    }
+
+    /// Los teclados que ya no hablan con DashOS (desenchufados, prestados a un dominio), según `sigue`: se suelta lo
+    /// que tenían pulsado (tecla-pegada: si no, su soltar no llegaba nunca).
+    pub fn revisar_teclados(&mut self, sigue: impl Fn(u32) -> bool) {
+        let mut evs = [[0u8; 8]; 14 * crate::hid_teclas::MAX_TECLADOS];
+        let mut n = 0;
+        self.teclados.revisar(sigue, &mut |e| {
+            if n < evs.len() {
+                evs[n] = e;
+                n += 1;
             }
+        });
+        for &e in &evs[..n] {
+            self.mandar(e);
         }
-        for &k in &i[2..8] {
-            if k > 3 && !previo[2..8].contains(&k) {
-                self.mandar([1, k, 1, 0, 0, 0, 0, 0]);
-            }
-        }
-        self.previo.copy_from_slice(&i[..8]);
     }
 
     /// Lo que dijo una tableta (`hid_informe::leer`): evento 3, con la posición absoluta (0 a 32767 en cada eje,
