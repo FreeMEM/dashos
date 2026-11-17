@@ -83,7 +83,17 @@ def teclear(texto):
     ordenes.append("sendkey ret")
     mandar(*ordenes, pausa=0.15)
 
+TRAZA = os.environ.get("GUION_TRAZA")
+
 def mandar(*ordenes, pausa=0.0):
+    if TRAZA:
+        # Con GUION_TRAZA=fichero: cada envío, con la hora y el largo de la salida serie en ese momento (para ponerlo
+        # junto a lo que dijo el sistema).
+        try:
+            with open(TRAZA, "a") as f:
+                f.write("%.2f %d %s\n" % (time.time(), os.path.getsize(serie), " | ".join(ordenes)))
+        except OSError:
+            pass
     s = socket.socket(socket.AF_UNIX)
     s.connect(ruta)
     for o in ordenes:
@@ -141,6 +151,7 @@ dash_amiga = 0
 dash_nativo = 0
 dash_desde = 0
 dash_intentos = 0
+guardian_visto = 0.0
 dash_entradas = 0
 dash_fila_n = 2
 dash_subidas = 0
@@ -332,13 +343,25 @@ while time.time() - inicio < total:
         # "continue"), y cada paso, como mucho 30 s.
         import re
         centro_fuera = "[guardian] el centro de control abrirá" not in texto or "[centro] cerrado" in texto
-        # Si el clic no llegó (una pregunta de `guardian` salió encima mientras), otra vez, hasta tres.
+        # tecla-pegada: tampoco con una ventana del sistema de `guardian` (las tandas de administrador del Shell, el
+        # código de recuperación, el cambio de contraseña) ni hasta 4 s después de la última: salen en ráfaga y van
+        # encima, con el teclado; el clic en la ventana de Dash les llegaba a ellas (los tres intentos caían en la
+        # tanda de cuentas del Shell y el paso se rendía: "FALTA: [dash-ventana] pulsado").
+        ventana_guardian = any(texto.count("[guardian] " + q + " en pantalla: ") > texto.count("[guardian] " + q + " de ")
+                               for q in ("tanda", "código de recuperación", "cambio de contraseña"))
+        if ventana_guardian:
+            guardian_visto = time.time()
+        # Si el clic no llegó (una pregunta de `guardian` salió encima mientras), otra vez, hasta tres; si fue una
+        # ventana del sistema de `guardian`, ese intento no cuenta.
         if dash_nativo == 1 and "[dash-ventana] pulsado" not in texto and time.time() - dash_desde > 8 \
                 and dash_intentos < 3:
             dash_nativo = 0
+            if guardian_visto >= dash_desde:
+                dash_intentos -= 1
         # Tampoco con la ventana Amiga de H5 esperando su clic: delante, la de Dash la taparía.
         amiga_fuera = amiga >= 2 or "[caja-amiga] ventana Amiga en pantalla" not in texto
         if dash_nativo == 0 and menu == 2 and centro_fuera and amiga_fuera and libre_caja and \
+                not ventana_guardian and time.time() - guardian_visto > 4 and \
                 "[guardian] prueba acabada" in texto and "[hostil] selector:" in texto and \
                 selector not in (1, 2, 4, 5, 17, 18):
             d = re.search(r'\[dash-ui\] ventana "Dash (?:en|on) DashOS" en pantalla \((\d+)x\d+\).*?"Añadir" en \((\d+), (\d+)\)', texto)

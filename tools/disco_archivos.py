@@ -832,7 +832,9 @@ if sys.argv[1] == "--comprobar":
     # no de 1970 ni del futuro.
     fecha = subprocess.run([ver, disco, desde, "--fecha", "Escrito/hola.txt"], capture_output=True, text=True).stdout.split()
     ahora = int(time.time())
-    if len(fecha) != 2 or not all(ahora - 600 <= int(f) <= ahora for f in fecha):
+    # La prueba dura hasta 15 min y su reinicio (`TIEMPO_VIRT`, 900 s desde union-dms) y hola.txt se escribe al
+    # principio: con 600 s, una pasada entera ya no cabía (tecla-pegada, la primera que llegó hasta aquí tras la unión).
+    if len(fecha) != 2 or not all(ahora - 1800 <= int(f) <= ahora for f in fecha):
         fallos.append(f"Escrito/hola.txt con fecha {fecha} (ahora {ahora})")
     # U6: el registro de seguridad de `sesiones`, en su cajón: la cuenta (8 bytes) y un anillo de entradas de 40 (tipo,
     # estado, quién y qué). Tiene que tener los tres intentos del hostil (matar, la llave de un servicio y entrar).
@@ -881,17 +883,20 @@ if sys.argv[1] == "--comprobar":
     # ahora, en texto, una línea por hecho, sin letras de control; con lo que se espera de la prueba.
     regs = {l.split(" ")[0][len(REGISTROS) + 1:]: l for l in arbol_entero if l.startswith(REGISTROS + "/")}
     leer_reg = lambda n: subprocess.run([ver, disco, desde, f"{REGISTROS}/{n}"], capture_output=True).stdout
-    if set(regs) != {"", "seguridad", "sistema", "programas", "programas.1"}:
+    # `dominio-red` (rama dominio-red, el cuarto fichero del registro común) sale si el dominio de red apuntó algo.
+    if not {"", "seguridad", "sistema", "programas", "programas.1"} <= set(regs) <= {"", "seguridad", "sistema", "programas", "programas.1", "dominio-red"}:
         fallos.append(f"Estado/Registros: {sorted(regs)}")
     elif leer_reg("programas.1") != REGISTRO_VIEJO:
         fallos.append("Estado/Registros/programas.1 no es lo de antes de rotar")
     else:
         hora = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ|arranque\+\d+\.\d{3}s) \S+ \S+ \S+ .+$")
-        texto = {n: leer_reg(n).decode("utf-8", errors="replace") for n in ("seguridad", "sistema", "programas")}
+        texto = {n: leer_reg(n).decode("utf-8", errors="replace") for n in ("seguridad", "sistema", "programas", "dominio-red") if n in regs}
         for n, t in texto.items():
             # Cada línea, de las que da `registro::linea`: como mucho 384 bytes con su salto.
             malas = [l for l in t.split("\n")[:-1] if not hora.match(l) or any(ord(c) < 32 or 0x7f <= ord(c) < 0xa0 for c in l) or len(l.encode()) > 383]
-            if malas or not t.endswith("\n"):
+            # (Vacío vale: `dominio-red` se crea con el registro aunque el dominio no apunte nada; los otros tienen
+            # sus líneas pedidas más abajo.)
+            if malas or (t and not t.endswith("\n")):
                 fallos.append(f"Estado/Registros/{n}: líneas que no valen: {malas[:3]}")
         for n, quiere in [("seguridad", " hostil Carla permiso no se da \"eco\""), ("seguridad", " pide sistema permiso se da \"eco\""),
                           ("seguridad", " pide Ana permiso se quita \"eco\""), ("seguridad", "no escribe lo concedido de Ana"),
