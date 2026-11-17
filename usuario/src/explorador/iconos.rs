@@ -15,12 +15,19 @@ pub struct Fichero<'a> {
     pub raiz: u32,
     /// La caja de la que es, si es de una ("amiga", "linux").
     pub caja: Option<&'static str>,
+    /// Su icono `.info`, si es de la caja Amiga y lo tiene (`iconos_amiga`).
+    pub info: Option<&'a kit::imagen::Imagen>,
 }
 
 impl<'a> Fichero<'a> {
     pub fn de(e: &'a Entrada, donde: &Lugar) -> Self {
         let caja = if donde.raiz == crate::RAIZ_AMIGA { Some("amiga") } else { None };
-        Fichero { e, raiz: donde.raiz, caja }
+        Fichero { e, raiz: donde.raiz, caja, info: None }
+    }
+
+    pub fn con_info(mut self, info: Option<&'a kit::imagen::Imagen>) -> Self {
+        self.info = info;
+        self
     }
 }
 
@@ -53,6 +60,10 @@ pub fn icono_de(f: &Fichero) -> QueIcono {
 
 /// Pinta el icono de `f` en un cuadro de `s` (pensados en 64 y escalados); de una imagen, su miniatura si la hay.
 pub fn icono(l: &mut Lienzo, x: i32, y: i32, s: i32, f: &Fichero, t: &Tema, mini: Option<&kit::imagen::Imagen>) {
+    if let Some(img) = f.info {
+        iconos_cajas::dibujo::pintar(l, x, y, s, img);
+        return;
+    }
     let k = |v: i32| v * s / 64;
     let fino = (s / 32).max(1);
     match icono_de(f) {

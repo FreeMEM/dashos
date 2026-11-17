@@ -264,7 +264,11 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
                 Icono::Papelera => Simbolo::Papelera,
                 Icono::Disco | Icono::Amiga => Simbolo::Disco,
             };
-            simbolo(l, sim, r.x + 22, r.y + 20, tinta);
+            // El volumen de la caja Amiga, con el icono de su `Disk.info` si lo tiene.
+            match (s.icono, app.iconos_amiga.disco()) {
+                (Icono::Amiga, Some(img)) => iconos_cajas::dibujo::pintar(l, r.x + 8, r.y + 6, 28, img),
+                _ => simbolo(l, sim, r.x + 22, r.y + 20, tinta),
+            }
             let texto_tinta = if actual { t.sobre_contenedor_secundario() } else { t.sobre_superficie };
             let f = if actual { &mut *med } else { &mut *reg };
             f.dibujar(l, r.x + 44, r.y + 25, s.nombre, 14, texto_tinta);
@@ -554,6 +558,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
         let encima = v.encima == Zona::Cosa(i);
         let es_destino = e.cajon && destino_arrastre.as_ref() == Some(&cosa.donde.hijo(&e.nombre));
         let mini = app.miniaturas.get(&(cosa.donde.clone(), e.nombre.clone())).and_then(|m| m.as_ref());
+        let info = app.iconos_amiga.de(&cosa, &p.cosas, elegida);
         if p_lista {
             if elegida {
                 l.redondeado(r, 10, t.contenedor_secundario());
@@ -565,7 +570,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
             if cursor {
                 l.borde(r, 10, 2, t.primario);
             }
-            icono(l, r.x + 10, r.y + 6, 28, &Fichero::de(e, &cosa.donde), &t, mini);
+            icono(l, r.x + 10, r.y + 6, 28, &Fichero::de(e, &cosa.donde).con_info(info), &t, mini);
             let tinta = if elegida { t.sobre_contenedor_secundario() } else { t.sobre_superficie };
             let suave = if elegida { t.sobre_contenedor_secundario() } else { t.sobre_variante_superficie };
             let mut nombre_x = x_tam - (r.x + 50) - 12;
@@ -603,7 +608,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
             } else if encima {
                 l.redondeado(caja, 14, con_opacidad(t.sobre_superficie, 14));
             }
-            icono(l, cx - ICONO / 2, r.y + 10, ICONO, &Fichero::de(e, &cosa.donde), &t, mini);
+            icono(l, cx - ICONO / 2, r.y + 10, ICONO, &Fichero::de(e, &cosa.donde).con_info(info), &t, mini);
             let lineas = dos_lineas(reg, &e.nombre, 13, r.w - 14);
             let mut base = r.y + ICONO + 34;
             for ln in &lineas {

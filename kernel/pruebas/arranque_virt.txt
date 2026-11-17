@@ -337,6 +337,15 @@ DashOS en marcha con 4 núcleos.
 # no vale (sube con "..") y otro que sí; se mueve por su barra y se arrastra datos.bin de ella a la primera (Privado).
 ~│   [explorador] miniatura de Home:Fondos/
 ~│   [explorador] ventana 1: pestaña nueva (2 pestañas)
+# Plan de iconos, parte 3: en la pestaña nueva, Amiga:Iconos con un .info de cada formato (y uno roto, que se queda
+# con el icono de siempre); en Amiga:, el cajón Iconos con el suyo, y el volumen con su Disk.info.
+~│   [explorador] icono del volumen Amiga: 36x20
+~│   [explorador] icono de Amiga:Iconos/Brillo.info: 48x48 (GlowIcons, con seleccionado)
+~│   [explorador] icono de Amiga:Iconos/Cristal.info: 48x48 (ARGB de OS4, con seleccionado)
+~│   [explorador] icono de Amiga:Iconos/Estrella.info: 52x52 (PNG de OS4, con seleccionado)
+~│   [explorador] icono de Amiga:Iconos/Programa.info: 40x40 (NewIcons, con seleccionado)
+~│   [explorador] icono de Amiga:Iconos/Roto.info: no se lee (Corto), el de siempre
+~│   [explorador] icono de Amiga:Iconos.info: 44x22 (clásico, con seleccionado)
 ~│   [explorador] ventana 2: camino escrito "Home/../DeCarla": no vale
 ~│   [explorador] ventana 2: camino escrito "Home:Viaje": va a Home:Viaje
 ~│   [explorador] suelta en la ventana 1: mueve a Home:Privado

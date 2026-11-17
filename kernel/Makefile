@@ -75,6 +75,8 @@ prueba: $(PRUEBAS) catalogos
 	cd ../shell && cargo test --quiet
 	cd ../archivos/herramientas && cargo test --quiet --release
 	cd ../kit && cargo test --quiet
+	@# Los iconos de las cajas: los .info de cada formato, hostiles y mil mutados; los .desktop y los temas.
+	cd ../iconos-cajas && cargo test --quiet
 	cd ../caja-linux/vmm && cargo test --quiet
 	$(MAKE) -C ../caja/pruebas_hunk
 	mkdir -p target && rustc --edition 2024 --test src/rp1.rs -o target/rp1_pruebas && ./target/rp1_pruebas -q

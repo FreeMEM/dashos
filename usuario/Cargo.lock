@@ -157,6 +157,13 @@ name = "dashos-caja-vmm"
 version = "0.0.1"
 
 [[package]]
+name = "dashos-iconos-cajas"
+version = "0.0.1"
+dependencies = [
+ "dashos-kit",
+]
+
+[[package]]
 name = "dashos-idioma"
 version = "0.0.1"
 
@@ -186,6 +193,7 @@ dependencies = [
  "dashos-amigados",
  "dashos-audiodevice",
  "dashos-caja-vmm",
+ "dashos-iconos-cajas",
  "dashos-kit",
  "dashos-shell",
  "dashos-sonido",

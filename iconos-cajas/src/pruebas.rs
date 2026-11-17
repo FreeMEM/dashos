@@ -102,10 +102,10 @@ fn argb_de_os4() {
     let ic = amiga::leer(CRISTAL).unwrap();
     volcar("Cristal", &ic);
     assert_eq!((ic.formato, ic.sin_marco), (Formato::Argb, true));
-    assert_eq!((ic.normal.ancho, ic.normal.alto), (64, 64));
+    assert_eq!((ic.normal.ancho, ic.normal.alto), (48, 48));
     assert_eq!(px(&ic.normal, 0, 0) >> 24, 0);
-    assert_eq!(px(&ic.normal, 32, 32) >> 24, 255);
-    let borde = px(&ic.normal, 32, 4) >> 24;
+    assert_eq!(px(&ic.normal, 24, 24) >> 24, 255);
+    let borde = px(&ic.normal, 24, 3) >> 24;
     assert!(borde > 0 && borde < 255, "alfa a medias en el borde: {borde}");
     assert!(ic.seleccionado.is_some());
 }
@@ -253,4 +253,35 @@ fn iconos_reales() {
     for (k, v) in &cuenta {
         std::println!("{v:5} {k}");
     }
+}
+
+/// Con `DASHOS_CATALOGO=fichero` (un catálogo de `programas`, del puente) y `DASHOS_CATALOGO_PPM=salida`: lee los
+/// iconos PNG del catálogo y los pinta a 48 en una rejilla, como los pintaría el lanzador.
+#[test]
+fn catalogo_de_verdad() {
+    let (Ok(f), Ok(sal)) = (std::env::var("DASHOS_CATALOGO"), std::env::var("DASHOS_CATALOGO_PPM")) else { return };
+    let cat = crate::escritorio::leer_catalogo(&std::fs::read(f).unwrap()).unwrap();
+    let (cols, celda) = (12usize, 64usize);
+    let filas = cat.len().div_ceil(cols).max(1);
+    let (w, h) = (cols * celda, filas * celda);
+    let mut px = alloc::vec![0xffee_eef2u32; w * h];
+    let mut l = kit::lienzo::Lienzo::new(&mut px, w as i32, h as i32, w);
+    let (mut bien, mut mal) = (0, 0);
+    for (i, e) in cat.iter().enumerate() {
+        if let crate::escritorio::Icono::Png(d) = &e.icono {
+            match kit::png::leer(d, 1024 * 1024) {
+                Ok(img) => {
+                    bien += 1;
+                    crate::dibujo::pintar(&mut l, ((i % cols) * celda + 8) as i32, ((i / cols) * celda + 8) as i32, 48, &img);
+                }
+                Err(_) => mal += 1,
+            }
+        }
+    }
+    let mut ppm = std::format!("P6\n{w} {h}\n255\n").into_bytes();
+    for p in &px {
+        ppm.extend_from_slice(&[(p >> 16) as u8, (p >> 8) as u8, *p as u8]);
+    }
+    std::fs::write(sal, ppm).unwrap();
+    std::println!("catálogo: {} programas; {bien} iconos PNG leídos, {mal} no", cat.len());
 }

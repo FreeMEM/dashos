@@ -32,6 +32,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fondos_prueba  # noqa: E402
+import iconos_amiga_prueba  # noqa: E402
 
 # U2: un programa en el disco, para que `sesiones` lo lance desde ahí (el mismo `hola` que se construye).
 HOLA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "usuario", "target", "aarch64-unknown-none-softfloat", "release", "hola")
@@ -62,6 +63,13 @@ SALUDO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "caja", 
 CAJA_ICONO = bytes([0xE3, 0x10, 0, 1]) + bytes(74) + b"saludo\0"
 CAJA_GUION = b"; el arranque de la caja Amiga\nsaludo\n"
 CAJA_ADF = b"DOS\0" + bytes(11 * 512 - 4)
+# Plan de iconos, parte 3: los `.info` de prueba (`tools/iconos_amiga_prueba.py`, uno de cada formato y uno roto) que
+# enseña el explorador. El volumen con su `Disk.info` y el cajón `Iconos` con el suyo (los dos se esconden: son de otra
+# cosa); dentro, un `.info` suelto por formato (sueltos se ven, cada uno con su icono). Sin los ficheros de cada uno: el
+# disco va justo (A15).
+_ICONOS = iconos_amiga_prueba.iconos()
+CAJA_ICONOS = [("", "Disk.info", _ICONOS["Disk.info"]), ("", "Iconos.info", _ICONOS["Cajon.info"])] + \
+    [("Iconos", n + ".info", _ICONOS[n + ".info"]) for n in ("Brillo", "Cristal", "Estrella", "Programa", "Roto")]
 # S28: un ejecutable que actualiza `actualiza.exe` (un programa honrado; la guardia pregunta): una cabecera hunk vacía
 # con la versión en los 4 últimos bytes. La prueba lo deja en la versión 4 (tres vueltas con permiso).
 CAJA_VIEJO = struct.pack(">8I", 0x3F3, 0, 0, 0, 0, 0, 0, 1)
@@ -672,6 +680,8 @@ if sys.argv[1] == "--comprobar":
         f"{CAJA}/C/viejo 32",
         f"{CAJA}/Discos/ cajón",
         f"{CAJA}/Discos/disco.adf {len(CAJA_ADF)}",
+        f"{CAJA}/Iconos/ cajón",
+        *[f"{CAJA}/{s + '/' if s else ''}{n} {len(d)}" for s, n, d in CAJA_ICONOS],
         # T: y ENV: de la caja (los crea al arrancar si faltan).
         f"{CAJA}/Env/ cajón",
         f"{CAJA}/Libs/ cajón",
@@ -946,7 +956,7 @@ with tempfile.TemporaryDirectory() as t:
                                ("C", "viejo", CAJA_VIEJO),
                                ("S", "Startup-Sequence", CAJA_GUION), ("Discos", "disco.adf", CAJA_ADF),
                                ("", "datos.txt", b"datos de la caja\n"),
-                               *[("Libs", n, d) for n, d in CAJA_LIBS]]:
+                               *[("Libs", n, d) for n, d in CAJA_LIBS], *CAJA_ICONOS]:
         os.makedirs(os.path.join(caja, sub), exist_ok=True)
         with open(os.path.join(caja, sub, nombre), "wb") as f:
             f.write(datos)

@@ -1585,6 +1585,29 @@ while time.time() - inicio < total:
                 tecla_ex("ctrl-t")
             elif ex == 30:
                 sitio = True
+                # Plan de iconos, parte 3: en la pestaña nueva, los `.info` de la caja Amiga (uno de cada formato y uno
+                # roto) y el volumen con su `Disk.info`. Con CAPTURA_EXPLORADOR: .amiga y .amiga-raiz.
+                tecla_ex("ctrl-l")
+                time.sleep(0.4)
+                tecla_ex("ctrl-a")
+                escribir_ex("Amiga:Iconos")
+                tecla_ex("ret")
+                fin_iconos = time.time() + 10
+                while time.time() < fin_iconos and "[explorador] icono de Amiga:Iconos/Roto.info" not in open(serie, errors="replace").read():
+                    time.sleep(0.3)
+                time.sleep(0.6)
+                if captura_ex:
+                    mandar("screendump " + captura_ex + ".amiga.ppm")
+                    time.sleep(0.5)
+                tecla_ex("ctrl-l")
+                time.sleep(0.4)
+                tecla_ex("ctrl-a")
+                escribir_ex("Amiga:")
+                tecla_ex("ret")
+                time.sleep(2)
+                if captura_ex:
+                    mandar("screendump " + captura_ex + ".amiga-raiz.ppm")
+                    time.sleep(0.5)
                 tecla_ex("ctrl-w")
             elif ex == 31:
                 sitio = True

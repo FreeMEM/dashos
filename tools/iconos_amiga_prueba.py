@@ -7,7 +7,7 @@ formatos (Dirk Stöcker, 2002) y, el ARGB de OS4, como se ve en los bytes de los
 - `Disk.info`: clásico, disco, 4 colores, seleccionado por complemento (el del volumen).
 - `Programa.info`: clásico con NewIcons (36 colores; la segunda imagen, más clara).
 - `Brillo.info`: OS 3.5 (GlowIcons): `FACE` y dos `IMAG`, la primera con repeticiones.
-- `Cristal.info`: OS4: `FACE` y dos `ARGB` (con alfa de verdad).
+- `Cristal.info`: OS4: `FACE` y dos `ARGB` de 48 × 48 (con alfa de verdad).
 - `Estrella.info`: OS4 y MorphOS: PNG con su trozo `icOn` y un segundo PNG detrás.
 - `Roto.info`: un clásico que dice medir 300 × 400 con 8 planos y se acaba enseguida (el explorador pone el de
   reserva).
@@ -259,13 +259,13 @@ def brillo(sel):
 
 
 def argb_cristal(sel):
-    """Una esfera de cristal de 64 × 64 con alfa suave."""
+    """Una esfera de cristal de 48 × 48 con alfa suave (la luz en 8 escalones: así comprime bien)."""
     px = bytearray()
-    for y in range(64):
-        for x in range(64):
-            r = math.hypot(x - 31.5, y - 31.5)
-            a = max(0, min(255, int((28 - r) * 60)))
-            luz = max(0, 1 - math.hypot(x - 22, y - 20) / 30)
+    for y in range(48):
+        for x in range(48):
+            r = math.hypot(x - 23.5, y - 23.5)
+            a = max(0, min(255, int((21 - r) * 60)))
+            luz = int(max(0, 1 - math.hypot(x - 16, y - 15) / 23) * 8) / 8
             base = (40, 150, 120) if not sel else (150, 90, 200)
             c = [min(255, int(b + (255 - b) * luz * 0.9)) for b in base]
             px += bytes([a] + c)
@@ -323,7 +323,7 @@ def iconos():
     form = iff(b"FACE", struct.pack(">BBBBH", 47, 47, 0, 0x11, len(pa) * 3 - 1)) + imag(ia, pa, 0, True, 5) + imag(ib, None, 0, False)
     d["Brillo.info"] = disk_object(4, 16, 8, imagen(vacio, 16, 8, 2), herramienta=b"SYS:Utilities/MultiView",
                                    extra=b"FORM" + struct.pack(">I", len(form) + 4) + b"ICON" + form)
-    form = iff(b"FACE", struct.pack(">BBBBH", 63, 63, 1, 0x11, 0)) + argb_trozo(argb_cristal(False)) + argb_trozo(argb_cristal(True))
+    form = iff(b"FACE", struct.pack(">BBBBH", 47, 47, 1, 0x11, 0)) + argb_trozo(argb_cristal(False)) + argb_trozo(argb_cristal(True))
     d["Cristal.info"] = disk_object(3, 16, 8, imagen(vacio, 16, 8, 2), extra=b"FORM" + struct.pack(">I", len(form) + 4) + b"ICON" + form)
     d["Estrella.info"] = png(52, 52, estrella(False), icon_trozo()) + png(52, 52, estrella(True))
     roto = bytearray(disk_object(3, 16, 8, imagen(vacio, 16, 8, 2)))
