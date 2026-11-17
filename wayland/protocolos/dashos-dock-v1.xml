@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="dashos_dock_v1">
+  <copyright>
+    Protocolo propio de DashOS (S27, el dock y los avisos en pantalla como los de DankMaterialShell). Licencia MPL-2.0,
+    como el resto de DashOS.
+  </copyright>
+
+  <interface name="dashos_dock_v1" version="1">
+    <description summary="las ventanas abiertas, para el dock, y lo que enseñan los avisos en pantalla">
+      Solo lo ve el dock (por el nombre que da `inicio`); a otro no se le anuncia. Al enlazar, la lista de ahora y
+      `hecho`; después, solo los cambios, juntos tras cada tanda de mensajes y acabados en `hecho`. Solo las ventanas de
+      quien está delante (no las de una sesión de detrás), de todos los espacios de trabajo, como mucho 128.
+    </description>
+
+    <enum name="error">
+      <entry name="no_vale" value="0" summary="una ventana que no existe o un valor fuera de rango"/>
+    </enum>
+
+    <enum name="estado" bitfield="true">
+      <entry name="activa" value="1" summary="tiene el teclado"/>
+      <entry name="maximizada" value="2"/>
+      <entry name="pantalla_completa" value="4"/>
+    </enum>
+
+    <request name="destroy" type="destructor"/>
+
+    <request name="activar">
+      <description summary="traer una ventana">
+        La sube y le da el teclado; si está en otro espacio de trabajo, se pasa a ese. Una que ya no está, nada (puede
+        haberse cerrado mientras tanto). Con la sesión bloqueada, nada.
+      </description>
+      <arg name="id" type="uint"/>
+    </request>
+
+    <request name="cerrar">
+      <description summary="pedir a una ventana que se cierre">Como su botón de cerrar (xdg_toplevel.close).</description>
+      <arg name="id" type="uint"/>
+    </request>
+
+    <request name="lanzador">
+      <description summary="abrir o cerrar el lanzador de la barra">Como Super sola.</description>
+    </request>
+
+    <event name="ventana">
+      <description summary="una ventana nueva o que cambió">
+        Su número (no se repite mientras viva el compositor), el programa (su nombre en `Programas/`; las de las cajas,
+        "linux:" o "amiga:" y lo que dice el programa), el título (como mucho 96 bytes), el espacio de trabajo (1 a 9),
+        la salida (0 la principal) y el estado.
+      </description>
+      <arg name="id" type="uint"/>
+      <arg name="programa" type="string"/>
+      <arg name="titulo" type="string"/>
+      <arg name="espacio" type="uint"/>
+      <arg name="salida" type="uint"/>
+      <arg name="estado" type="uint"/>
+    </event>
+
+    <event name="fuera">
+      <description summary="una ventana que ya no está (o ya no se ve: su sesión pasó detrás)"/>
+      <arg name="id" type="uint"/>
+    </event>
+
+    <event name="hecho">
+      <description summary="se acabó una tanda de cambios"/>
+    </event>
+
+    <event name="espacio">
+      <description summary="el espacio de trabajo que se ve">Al enlazar y al cambiar (1 a 9).</description>
+      <arg name="actual" type="uint"/>
+    </event>
+
+    <event name="volumen">
+      <description summary="el volumen, para su aviso en pantalla">
+        Tecla 1: se pulsó una tecla del volumen (el nivel es el último que se sabe; el nuevo llega después, con tecla 0,
+        cuando el panel rápido lo cambia). Tecla 0: el panel dio otro nivel o silencio.
+      </description>
+      <arg name="nivel" type="uint"/>
+      <arg name="silencio" type="uint"/>
+      <arg name="tecla" type="uint"/>
+    </event>
+
+    <event name="bloq_mayus">
+      <description summary="Bloq Mayús se puso o se quitó">Al enlazar no: solo al pulsarla.</description>
+      <arg name="activo" type="uint"/>
+    </event>
+  </interface>
+</protocol>
