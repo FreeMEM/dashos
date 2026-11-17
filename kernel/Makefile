@@ -82,6 +82,8 @@ prueba: $(PRUEBAS) catalogos
 	mkdir -p target && rustc --edition 2024 --test src/rp1.rs -o target/rp1_pruebas && ./target/rp1_pruebas -q
 	cd ../usuario && mkdir -p target && rustc --edition 2024 --test src/cc_rejilla.rs -o target/cc_rejilla_pruebas && ./target/cc_rejilla_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/lanzables.rs -o target/lanzables_pruebas && ./target/lanzables_pruebas -q
+	@# centro-vivo: la cola fija entre hilos (la del canal del centro y la del fondo).
+	cd ../usuario && rustc --edition 2024 --test src/anillo.rs -o target/anillo_pruebas && ./target/anillo_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/terminal.rs -o target/terminal_pruebas && ./target/terminal_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/protocolo/avisos.rs -o target/avisos_pruebas && ./target/avisos_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/avisos_ajustes.rs -o target/avisos_ajustes_pruebas && ./target/avisos_ajustes_pruebas -q
@@ -194,11 +196,12 @@ arranque-virt: virt $(DISCO_NVME)
 # S27, oleada 3 (docs/bitacoras/dms-avisos.md): las capturas de los avisos, el Dash del reloj y el centro de control,
 # con la imagen de usar y `tools/guion_dms.py` (entra Ana, avisa, abre cada cosa). A 1920 × 1080 y con el aspecto del
 # usuario: DASHOS_PANTALLA=1920x1080 DASHOS_FONDO_EXTRA=fondo.png DASHOS_PREFS="apariencia=oscuro fondo;fondo=fondo.png"
-# (el fondo, fuera de git). Las capturas, en target/dms/ (PNG).
+# (el fondo, fuera de git). Las capturas, en target/dms/ (PNG). Rama `centro-vivo`: su disco, con un fondo guardado
+# (sin DASHOS_PREFS, atardecer.png), que sale al entrar Ana aunque `fondo` arranque antes que el servicio de archivos.
 arranque-virt-dms: virt-uso $(DISCO_NVME)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_USO)) cargo build --release
 	rm -rf target/dms && mkdir -p target/dms
-	cp --reflink=auto $(DISCO_NVME) target/dms/disco.img
+	DASHOS_PREFS="$(or $(DASHOS_PREFS),fondo=atardecer.png)" python3 ../tools/disco_archivos.py target/dms/disco.img $(DASHFS_AR)
 	GUARDAR=$(abspath target/salida_virt_dms.txt) DMS_CAPTURAS=$(abspath target/dms/dms) DMS_ANCHO=$(firstword $(subst x, ,$(or $(DASHOS_PANTALLA),800x600))) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU) -drive file=$(abspath target/dms/disco.img),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_dms.txt 400
 	@cat target/dms/dms.guion.txt
 
@@ -247,7 +250,8 @@ arranque-virt-iconos: virt-uso $(DISCO_NVME)
 # (target/menus/menus.*.png; y en ~/recuperar/geosian-7d/menus-pulido-capturas/, fuera de git).
 VIRT_MENUS := target/kernel8-virt-menus.img
 MENUS_CAPTURAS := 01-kitc-dentro 02-kitc-dentro-abierto 03-shell-dentro 04-shell-dentro-abierto 05-barra-shell 06-barra-shell-abierto 07-barra-elegido 08-barra-boton-derecho 09-barra-kitc 10-barra-kitc-abierto 11-kitc-elegido 12-dentro-otra-vez 13-f10 \
-	14-shell-teclas 15-kitc-teclas-fin 16-kitc-rueda 17-barra-submenu-teclas 18-barra-largo-rueda 19-barra-submenu-rueda 20-clic-que-cierra 21-cambia-desplegado 22-dentro-submenu-teclas 23-dentro-largo-rueda 24-ventana-cerrada
+	14-shell-teclas 15-kitc-teclas-fin 16-kitc-rueda 17-barra-submenu-teclas 18-barra-largo-rueda 19-barra-submenu-rueda 20-clic-que-cierra 21-cambia-desplegado 22-dentro-submenu-teclas 23-dentro-largo-rueda 24-ventana-cerrada \
+	25-kitc-ver 26-kitc-submenu 27-ajustes-abierta-menus-barra
 MENUS_FUERA ?= $(HOME)/recuperar/geosian-7d/menus-pulido-capturas
 arranque-virt-menus: usuario $(DISCO_NVME) FORCE
 	cargo build $(CARGO_PERFIL) --features virt,uso,menus

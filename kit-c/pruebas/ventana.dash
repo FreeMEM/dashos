@@ -1,5 +1,5 @@
 # La prueba de kit-c (las ventanas de los programas de Dash en DashOS): una ventana con un texto, un campo con su
-# etiqueta, un botón, una lista y un menú, hecha con las funciones mui_* de Dash. En el Amiga es una ventana de MUI;
+# etiqueta, un botón, una lista y sus menús (con una casilla, opciones y un submenú), hecha con las funciones mui_* de Dash. En el Amiga es una ventana de MUI;
 # en DashOS (./dash --dashos), del kit, con el aspecto de Material 3. Cada evento sale por la consola: la prueba del
 # arranque (tools/prueba_uefi.sh) pulsa el botón, y luego "Guardar" en la pregunta (mui_request); el programa guarda
 # la lista en su cajón por el servicio de archivos (file_*, dir_*), la lee y la borra. Después pide al selector de
@@ -82,6 +82,25 @@ Main
                     mui_menu_item("Entrada #{k}", "", 200 + k)
                 end
             mui_menu_end()
+            # Rama `centro-vivo` (pedido de la sesión de Dash): una casilla, un grupo de opciones y un submenú, para
+            # verlos en pantalla. Lo hostil: un submenú dentro de otro no lo hay (como en el Amiga): da 0 y lo suyo no
+            # se pone; lo que va tras su fin sigue en el de fuera.
+            mui_menu_begin("Ver")
+                rejilla = mui_menu_check("Rejilla", "", 20, 1)
+                mui_menu_separator()
+                chico = mui_menu_radio("Pequeño", "", 21, 0)
+                mediano = mui_menu_radio("Mediano", "", 22, 1)
+                grande = mui_menu_radio("Grande", "", 23, 0)
+                mui_menu_separator()
+                mui_submenu_begin("Orden")
+                    mui_menu_item("Por nombre", "", 24)
+                    mui_menu_item("Por fecha", "", 25)
+                    dentro = mui_submenu_begin("Más")
+                        mui_menu_item("No sale", "", 26)
+                    mui_submenu_end()
+                    mui_menu_item("Por tamaño", "", 27)
+                mui_submenu_end()
+            mui_menu_end()
             texto = mui_text("Hola desde Dash")
             mui_hgroup_begin()
                 mui_label("Nombre:")
@@ -90,6 +109,7 @@ Main
             mui_group_end()
             lista = mui_list()
         mui_window_end()
+        Print "[dash-ventana] submenú dentro de otro: #{dentro}"
         mui_list_add(lista, "Primera línea")
         mui_on_press(boton, 1)
         mui_on_double(lista, 2)
@@ -126,6 +146,14 @@ Main
                     Print "[dash-ventana] acerca de: #{r}"
                 elif ev > 200 and ev <= 230
                     Print "[dash-ventana] menú: Entrada #{ev - 200}"
+                elif ev == 20
+                    Print "[dash-ventana] Rejilla: #{mui_get_value(rejilla)}"
+                elif ev >= 21 and ev <= 23
+                    Print "[dash-ventana] tamaño: pequeño #{mui_get_value(chico)}, mediano #{mui_get_value(mediano)}, grande #{mui_get_value(grande)}"
+                elif ev == 24 or ev == 25 or ev == 27
+                    Print "[dash-ventana] orden: #{ev}"
+                elif ev == 26
+                    Print "[dash-ventana] MAL: elegido lo del submenú que no vale"
                 end
             end
             Print "[dash-ventana] fin"

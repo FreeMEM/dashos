@@ -1,6 +1,7 @@
 //! Hilos de usuario (llamadas 40 a 44, `docs/diseño/hilos-de-usuario.md`): crear, unirse, esperar en una palabra,
 //! despertar y acabar el proceso entero. Y un cerrojo hecho con la espera, que solo llama al kernel si hay que esperar.
 
+pub use crate::anillo::Anillo;
 use crate::llamada;
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -97,5 +98,30 @@ impl Cerrojo {
         if self.estado.swap(0, Ordering::Release) == 2 {
             despertar(&self.estado, 1);
         }
+    }
+}
+
+/// Una cola de hasta `N` cosas entre hilos de un proceso, con su cerrojo (rama `centro-vivo`): la usan `fondo` y el
+/// centro, donde un hilo lee el canal y el bucle principal atiende lo que deja. Sin montón: un anillo fijo.
+pub struct Cola<T, const N: usize> {
+    cerrojo: Cerrojo,
+    v: core::cell::UnsafeCell<Anillo<T, N>>,
+}
+
+// SAFETY: `v` solo se toca en `con`, con el cerrojo tomado; lo que lleva pasa de un hilo a otro (`Send`).
+unsafe impl<T: Send, const N: usize> Sync for Cola<T, N> {}
+
+impl<T, const N: usize> Cola<T, N> {
+    pub const fn nueva() -> Self {
+        Self { cerrojo: Cerrojo::nuevo(), v: core::cell::UnsafeCell::new(Anillo::nuevo()) }
+    }
+
+    /// `f` con la cola, con el cerrojo tomado (que `f` no tarde: los demás hilos esperan).
+    pub fn con<R>(&self, f: impl FnOnce(&mut Anillo<T, N>) -> R) -> R {
+        self.cerrojo.tomar();
+        // SAFETY: con el cerrojo tomado, nadie más toca la cola.
+        let r = f(unsafe { &mut *self.v.get() });
+        self.cerrojo.soltar();
+        r
     }
 }
