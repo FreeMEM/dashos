@@ -152,6 +152,13 @@ dash_nativo = 0
 dash_desde = 0
 dash_intentos = 0
 guardian_visto = 0.0
+panel_desde = 0.0
+
+def ventana_de_guardian(texto):
+    # Si hay en pantalla una ventana del sistema de `guardian` (una tanda de administrador del Shell, el código de
+    # recuperación, el cambio de contraseña): cada una dice cuándo sale y cuándo se va. Van encima, con el teclado.
+    return any(texto.count("[guardian] " + q + " en pantalla: ") > texto.count("[guardian] " + q + " de ")
+               for q in ("tanda", "código de recuperación", "cambio de contraseña"))
 dash_entradas = 0
 dash_fila_n = 2
 dash_subidas = 0
@@ -347,8 +354,7 @@ while time.time() - inicio < total:
         # código de recuperación, el cambio de contraseña) ni hasta 4 s después de la última: salen en ráfaga y van
         # encima, con el teclado; el clic en la ventana de Dash les llegaba a ellas (los tres intentos caían en la
         # tanda de cuentas del Shell y el paso se rendía: "FALTA: [dash-ventana] pulsado").
-        ventana_guardian = any(texto.count("[guardian] " + q + " en pantalla: ") > texto.count("[guardian] " + q + " de ")
-                               for q in ("tanda", "código de recuperación", "cambio de contraseña"))
+        ventana_guardian = ventana_de_guardian(texto)
         if ventana_guardian:
             guardian_visto = time.time()
         # Si el clic no llegó (una pregunta de `guardian` salió encima mientras), otra vez, hasta tres; si fue una
@@ -1129,6 +1135,14 @@ while time.time() - inicio < total:
             reintento = time.time() + 6
         if 1 <= panel <= 14:
             import re
+            # tecla-pegada: como el paso de Dash, nada con una ventana de `guardian` delante ni hasta 4 s después (sus
+            # tandas del Shell salen a la vez que esto y se llevan el clic del mosaico).
+            if ventana_de_guardian(texto):
+                guardian_visto = time.time()
+            if time.time() - guardian_visto < 4:
+                reintento = max(reintento, time.time() + 6)
+                time.sleep(0.25)
+                continue
             def ir_panel(x, y):
                 # El panel dice sus sitios como si estuviera a 8 del borde de arriba; con la barra (S10) sale más abajo:
                 # dónde, lo dice el compositor.
@@ -1173,6 +1187,11 @@ while time.time() - inicio < total:
                       12: "[panel] sube bloquear" in texto and len(edicion) >= 6 and en_edicion("hecho") is not None,
                       13: texto.count("[panel] hecho: ") >= 2,
                       14: "[panel] cerrado" in texto}[panel]
+            if not espera and 2 <= panel <= 14 and guardian_visto >= panel_desde:
+                # Salió una ventana de `guardian` tras lo último que se hizo y no llegó lo que se esperaba: se repite.
+                panel -= 1
+                panel_desde = time.time()
+                continue
             if not espera:
                 if time.time() > reintento and panel < 14:
                     # No llegó: se cierra el panel (las líneas que falten lo dirán).
@@ -1219,6 +1238,7 @@ while time.time() - inicio < total:
                 mandar("sendkey meta_l-a")
             panel += 1
             reintento = time.time() + 6
+            panel_desde = time.time()
             # Sin lo de siempre (un clic de más daría otra vuelta al modo) hasta acabar.
             continue
         # S10: la barra y el lanzador, tras el panel (con la sesión de Ana delante, desbloqueada). Un clic en el botón del
