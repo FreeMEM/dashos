@@ -2356,3 +2356,12 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   (oía la contraseña sin verse): con la sesión bloqueada el teclado solo va a la pantalla de bloqueo (prueba hostil
   del compositor). Tanda completa 12 de 12 y `-shell`, `-menus`, `-dms`, `-cuentas`, `-iconos` y `-dominio`: todo
   bien a la primera, por primera vez sin repetir nada. Por decidir: los siete puntos de su bitácora.
+- **Unida `gpu-diseno` (2026-11-17)**: diseño S38 (el escritorio en la GPU y los fondos animados) y prototipo fuera de
+  DashOS: un compositor con Mesa en el invitado (`caja-linux/invitado/componer_gl.c`, `tools/gpu_componer.py`).
+  Medido a 1920x1080 con fondo animado, 4 ventanas y sombras: PC 3,0 ms componer + 2,2 ms el fondo por CPU frente a
+  0,03-0,04 ms en la GPU; aarch64 emulado 13,4 + 8,2 ms frente a 0,38-1,05 ms con virgl. Las sombras son 1,7 de los 3,0
+  ms. Decidido por el usuario (las seis): escritorio acelerado por el dominio de gráficos con nuestro compositor;
+  prueba 3D en QEMU por x86 (`virtio-vga-gl` pasada al dominio con IOMMU); Pi 5 primero planos del HVS y la V3D en un
+  dominio con MMU vigilada; fondos de GPU de una lista firmada (propios solo en modo de desarrollo); con batería, pocos
+  cuadros con ajuste de tres valores. Mientras, el camino por CPU (sombras guardadas, SIMD) en la rama
+  `compositor-rapido`. Pruebas en su rama: `prueba` y `arranque-virt` bien (no toca código del sistema).
