@@ -1077,7 +1077,15 @@ fn principal() -> u64 {
         let mut soltar = false;
         let mut soltar_sub: Option<Cliente> = None;
         match buf.first().copied().filter(|_| de_ventanas) {
-            Some(TROZO_CONECTAR) if k == 1 && !clientes.contains_key(&marca) => {
+            Some(TROZO_CONECTAR) if k == 1 => {
+                // tecla-pegada: una marca lleva una conexión. Si ya tenía una, la de antes se acabó y su adiós no llegó
+                // (el selector no mira lo que da `canal_escribir` al despedirse: con la cola de "ventanas" llena, -8).
+                // Antes la nueva se ignoraba y sus datos iban a la de antes: el selector, al abrir otra ventana justo
+                // tras cerrar una, daba "número de objeto nuevo malo" y se quedaba sin ventana.
+                if clientes.get(&marca).is_some_and(|c| c.sub.is_none()) {
+                    println!("  [compositor] {} conecta otra vez: la conexión de antes se cierra", nombre_de(&nombres, &lanzados, marca));
+                    soltar_cliente(&mut clientes, &mut escena, nombre_de(&nombres, &lanzados, marca), marca);
+                }
                 let del_sistema = nombres.get(&marca).is_some_and(|n| SISTEMA.contains(&n.as_str()));
                 if del_sistema && !escena.del_sistema.contains(&marca) {
                     escena.del_sistema.push(marca);
