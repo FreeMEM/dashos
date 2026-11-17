@@ -736,10 +736,10 @@ prueba-x86: usuario-x86 firmware-x86 FORCE
 
 # La imagen de usar en x86-64 (`make x86-uso`): el escritorio de `virt-uso` (`kernel/src/inicio_x86_uso.rs`) en QEMU q35
 # con OVMF, en una ventana, con KVM si hay /dev/kvm (SIN_KVM=1 lo quita), una tableta USB y el teclado, el disco de
-# serie (compilado para x86: DASHOS_ARQ=x86_64), la red de usuario de QEMU y el sonido. Lo arranca
-# `tools/qemu_x86_a_mano.sh` (PANTALLA=ANCHOxALTO, SONIDO_X86=hda|virtio, VENTANA=gtk|sdl|none). No es una prueba: nada
-# la comprueba. Sin la caja Linux ni la caja Amiga (aún no van en x86).
-SERVICIOS_X86_USO := inicio consola compositor xhci nvme ahci archivos comprobador eco sesiones red virtio-red fondo centro guardian imagen sonido avisos barra virtio-sonido hda selector panel explorador workbench hora
+# serie (compilado para x86: DASHOS_ARQ=x86_64), la red de usuario de QEMU, el sonido y la pantalla por virtio-gpu
+# (x86-gpu). Lo arranca `tools/qemu_x86_a_mano.sh` (PANTALLA=ANCHOxALTO, SONIDO_X86=hda|virtio, GPU_X86=virtio|vga,
+# VENTANA=gtk|sdl|none). No es una prueba: nada la comprueba. Sin la caja Linux ni la caja Amiga (aún no van en x86).
+SERVICIOS_X86_USO := inicio consola compositor xhci nvme ahci archivos comprobador eco sesiones red virtio-red fondo centro guardian imagen sonido avisos barra virtio-sonido hda selector panel explorador workbench hora virtio-gpu
 # Los programas que van en el disco (`tools/disco_archivos.py`), también de x86.
 DISCO_PROGRAMAS_X86 := hola pide cambio ram avisa guarda espera blanker nocapslock
 FUNCIONES_X86_USO := archivos,ventanas,sonido,red,imagenes,ordenes

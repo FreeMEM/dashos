@@ -124,6 +124,8 @@ pub struct Funciones {
     pub fsgsbase: bool,
     /// XSAVE: CPUID 1, ECX bit 26.
     pub xsave: bool,
+    /// PAT: CPUID 1, EDX bit 16.
+    pub pat: bool,
 }
 
 pub fn funciones() -> Funciones {
@@ -141,7 +143,21 @@ pub fn funciones() -> Funciones {
         pcid: ecx1 & (1 << 17) != 0,
         fsgsbase: ebx7 & 1 != 0,
         xsave: ecx1 & (1 << 26) != 0,
+        pat: edx1 & (1 << 16) != 0,
     }
+}
+
+/// La PAT (SDM, volumen 3, 13.12; APM, volumen 2, 7.8): ocho tipos de memoria, uno por cada combinación de los bits
+/// PAT, PCD y PWT de una entrada. La de serie es WB, WT, UC-, UC dos veces; x86-gpu cambia la entrada 1 (solo PWT) de
+/// WT a WC, la combinación de escritura, para la pantalla del GOP (`espacio::Permiso::Pantalla`). Nada usaba PWT
+/// solo: las entradas sin caché llevan PCD y PWT (la 3, UC), también las de NPT del hipervisor.
+pub const MSR_PAT: u32 = 0x277;
+const PAT_CON_WC: u64 = 0x0007_0406_0007_0106;
+static PAT_WC: AtomicBool = AtomicBool::new(false);
+
+/// ¿Da PWT solo la combinación de escritura (WC)? Si no (sin PAT), es WT, como siempre.
+pub fn hay_wc() -> bool {
+    PAT_WC.load(Ordering::Relaxed)
 }
 
 static NX: AtomicBool = AtomicBool::new(false);
@@ -216,6 +232,12 @@ pub fn encender_defensas() -> Funciones {
     }
     escribir_msr(MSR_FS_BASE, 0);
     escribir_msr(MSR_KERNEL_GS_BASE, 0);
+    // La entrada 1 de la PAT, WC (x86-gpu). Igual en todos los núcleos, antes de que ninguna tabla la use (el núcleo 0
+    // aún no tiene las suyas; los demás arrancan antes de que haya procesos); el CR3 que se carga después vacía la TLB.
+    if f.pat {
+        escribir_msr(MSR_PAT, PAT_CON_WC);
+        PAT_WC.store(true, Ordering::Relaxed);
+    }
     f
 }
 

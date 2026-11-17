@@ -1506,6 +1506,10 @@ mod ventanas {
         mandar(&mut escena, &mut carla, 2, &e);
         escena.componer(&mut pantalla, 200, 150, 200, 0, &mut |_, _, _| {});
         assert_eq!((pantalla[41 * 200 + 41], pantalla[73 * 200 + 73]), (0xFF11_1111, 0xFF22_2222));
+        // x86-gpu: un aviso de un programa nuevo que no oculta ni enseña nada no recompone la pantalla entera.
+        escena.componer(&mut pantalla, 200, 150, 200, 0, &mut |_, _, _| {});
+        escena.aviso_de_sesiones(0, &persona(5, 1000));
+        assert!(escena.componer(&mut pantalla, 200, 150, 200, 0, &mut |_, _, _| {}).is_empty());
         // Un clic en la de Ana le da el teclado.
         escena.raton(41, 41, 1);
         escena.raton(0, 0, 0);

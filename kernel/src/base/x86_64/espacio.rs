@@ -103,6 +103,9 @@ pub enum Permiso {
     DatosSinCache,
     /// Búferes de DMA proyectados solo para leer.
     SoloLecturaSinCache,
+    /// La pantalla del GOP (x86-gpu): con combinación de escritura (WC, la entrada 1 de la PAT: solo PWT), que junta las
+    /// escrituras seguidas en ráfagas; sin PAT, memoria normal (los MTRR deciden). Nunca se ejecuta.
+    Pantalla,
 }
 
 /// Intermediarios revocables por proyección, como mucho: los que puede haber uno dentro de otro (objetos.rs).
@@ -379,6 +382,7 @@ impl Espacio {
                 Permiso::Datos | Permiso::DatosSinCache => ESCRITURA | SUCIA | nx(),
                 Permiso::SoloLectura | Permiso::SoloLecturaSinCache => nx(),
                 Permiso::Dispositivo => ESCRITURA | SUCIA | PCD | PWT | nx(),
+                Permiso::Pantalla => ESCRITURA | SUCIA | (if super::cpu::hay_wc() { PWT } else { 0 }) | nx(),
             };
         unsafe { e.write_volatile((fisica & DIRECCION) | atributos) };
         Ok(())
@@ -552,7 +556,9 @@ impl Espacio {
     }
 
     /// Proyecta memoria del firmware (C50; en un PC, la pantalla del GOP): fuera de la RAM que reparte el kernel, o
-    /// dentro de una de sus reservas. Como memoria normal (los MTRR del firmware deciden la caché), nunca ejecutable.
+    /// dentro de una de sus reservas. Con combinación de escritura (x86-gpu, `Permiso::Pantalla`): con los MTRR del
+    /// firmware, que suelen dejar la pantalla sin caché (UC), WC gana (SDM, volumen 3, tabla 13-7), y la copia del
+    /// compositor va en ráfagas en vez de palabra a palabra. Nunca ejecutable.
     pub fn proyectar_firmware(&mut self, va: u64, fisica: u64, tamano: u64) -> Result<(), Error> {
         fisica.checked_add(tamano).ok_or(Error::Direccion)?;
         let p = paginas();
@@ -564,7 +570,7 @@ impl Espacio {
         self.preparar(va, tamano.div_ceil(PAGINA))?;
         let mut i = 0;
         while i < tamano {
-            let _ = self.proyectar(va + i, fisica + i, Permiso::DatosSinCache);
+            let _ = self.proyectar(va + i, fisica + i, Permiso::Pantalla);
             i += PAGINA;
         }
         Ok(())
