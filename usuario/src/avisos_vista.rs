@@ -531,6 +531,9 @@ struct Centro {
     /// Lo que se pintó: las filas, con su rectángulo (sin desplazar) y sus partes.
     zonas: Vec<(Zona, Rect)>,
     alto_lista: i32,
+    /// Lo más alto que puede ser la lista para que el centro quepa en la pantalla (unión de union-dms: en 800 × 600,
+    /// con el historial lleno, el pie con "Borrar todo" se salía por abajo).
+    max_lista: i32,
 }
 
 /// Dónde puede caer un clic en el centro.
@@ -563,6 +566,8 @@ pub struct Vista {
     visto_hasta: u32,
     /// El ancho de la pantalla (lo que mide la barra).
     pub ancho_pantalla: i32,
+    /// Lo que queda de alto en la pantalla bajo las barras (lo dice la barra; el centro de avisos no pasa de ahí).
+    pub alto_util: i32,
     /// Las mayúsculas pulsadas (para Mayúsculas+Supr).
     mayus: bool,
     emergentes: Vec<Emergente>,
@@ -584,6 +589,7 @@ impl Vista {
             nm_quedan: (0, 0),
             visto_hasta: 0,
             ancho_pantalla: 1920,
+            alto_util: 1080,
             mayus: false,
             emergentes: Vec::new(),
             capa_e: None,
@@ -1315,6 +1321,7 @@ impl Vista {
             abre_us: dashos::ahora_us(),
             zonas: Vec::new(),
             alto_lista: MIN_LISTA,
+            max_lista: (self.alto_util - dm::XS - (RELLENO_C + PESTANAS + dm::S + dm::S + PIE + RELLENO_C) - dm::XS).clamp(MIN_LISTA, MAX_LISTA),
         });
         self.releer_centro(c, le);
         if let Some(r) = self.pedir(c, &orden(av::LEIDOS, 0, 0), &[]) {
@@ -1655,7 +1662,7 @@ fn disponer_centro(cn: &mut Centro, m: &mut Fuente) {
         }
     }
     let contenido = (y - ENTRE).max(0);
-    cn.alto_lista = contenido.clamp(MIN_LISTA, MAX_LISTA);
+    cn.alto_lista = contenido.clamp(MIN_LISTA, cn.max_lista);
     cn.desplaza = cn.desplaza.clamp(0, (contenido - cn.alto_lista).max(0));
     let y_pie = y_lista + cn.alto_lista + dm::S;
     zonas.push((Zona::NoMolestar, Rect::new(RELLENO_C, y_pie, PIE, PIE)));

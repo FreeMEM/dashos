@@ -1259,6 +1259,7 @@ fn principal() -> u64 {
         // Los avisos: animaciones y tiempos de los emergentes; y el timbre (los avisos y las barras configuradas, que
         // comparten puerta; los ajustes de los avisos llegan por la suya, en `recibidos`).
         avs.ancho_pantalla = ancho_principal(&bs);
+        avs.alto_util = alto_util_principal(&bs);
         avs.tic(&mut c, &b.tema, &mut avisos_vista::Letras { f: &mut fuente, m: &mut medio }, &reloj());
         if let Some(d) = dash.as_mut().filter(|d| d.animando()) {
             d.pintar(&mut c, &b.tema, &mut avisos_vista::Letras { f: &mut fuente, m: &mut medio }, &reloj());
@@ -1882,6 +1883,14 @@ fn medir_disco() -> Option<u32> {
     }
     dashos::cerrar(lectura);
     res
+}
+
+/// Unión de `dms-avisos`: lo que queda de alto en el primer monitor bajo sus barras de arriba y de abajo (su zona
+/// exclusiva), para que el centro de avisos quepa; 1080 si aún no se sabe lo que mide.
+fn alto_util_principal(bs: &Barras) -> i32 {
+    let Some(s) = bs.salidas.first().filter(|s| s.alto > 0) else { return 1080 };
+    let zonas: i32 = bs.inst.iter().filter(|i| i.salida == s.global && !i.firma.0.vertical()).map(|i| i.firma.3.max(0)).sum();
+    (s.alto - zonas).max(1)
 }
 
 /// Unión de `dms-avisos`: el ancho del primer monitor (donde salen los emergentes, el centro de avisos y el Dash, que
