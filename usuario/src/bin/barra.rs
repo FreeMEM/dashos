@@ -71,6 +71,11 @@ mod avisos_vista;
 #[path = "../avisos_ajustes.rs"]
 #[allow(dead_code)]
 mod avisos_ajustes;
+// S27, oleada 6: el monitor de procesos de DMS (el desplegable de las píldoras de CPU y memoria).
+#[path = "../procesos_lista.rs"]
+mod procesos_lista;
+#[path = "../procesos_vista.rs"]
+mod procesos_vista;
 #[path = "../dms_medidas.rs"]
 #[allow(dead_code)]
 mod dms_medidas;
@@ -129,12 +134,8 @@ const SUP_PROC: u32 = 35;
 const CAPA_PROC: u32 = 36;
 const BUFER_PROC: u32 = 37;
 const POOL_P: u32 = 38;
-const ANCHO_P: i32 = 400;
-const FILAS_P: usize = 10;
-const ALTO_FILA_P: i32 = 36;
-const Y_FILAS_P: i32 = 76;
-const PIE_P: i32 = 52;
-const ALTO_P_MAX: i32 = Y_FILAS_P + FILAS_P as i32 * ALTO_FILA_P + 12 + PIE_P;
+const ANCHO_P: i32 = procesos_vista::ANCHO;
+const ALTO_P_MAX: i32 = procesos_vista::ALTO_MAX;
 /// Cada cuánto se mide la CPU y la memoria de la píldora (y el desplegable, si está abierto).
 const CADA_MEDIDA_US: u64 = 2_000_000;
 /// Dónde se ve la ventana del servicio de archivos.
@@ -158,6 +159,8 @@ const VA_P: usize = VA + (4 << 32);
 const BOTON_IZQUIERDO: u32 = 0x110;
 const BOTON_DERECHO: u32 = 0x111;
 const KEY_ESC: u32 = 1;
+/// Supr (evdev): cierra el proceso elegido en el monitor.
+const KEY_SUPR: u32 = 111;
 /// Lo que se espera a `sesiones` y a archivos, como mucho.
 const PLAZO_LANZAR_US: u64 = 5_000_000;
 const PLAZO_ARCHIVOS_US: u64 = 1_000_000;
@@ -643,13 +646,14 @@ fn lanzar(c: &mut Cliente, nombre: &str) -> (i32, u64) {
     if n == 12 { (i32::from_le_bytes(r[0..4].try_into().unwrap()), u64::from_le_bytes(r[4..12].try_into().unwrap())) } else { (i32::MIN, 0) }
 }
 
-/// Trasfondo: el desplegable de los procesos, mientras se ve.
+/// Trasfondo: el desplegable de los procesos, mientras se ve. S27, oleada 6: el monitor de procesos de DMS
+/// (`procesos_vista`).
 struct Procesos {
     hoja: Option<Lamina>,
     listo: bool,
-    alto: i32,
-    sin_datos: bool,
-    encima_abrir: bool,
+    mon: procesos_vista::Monitor,
+    /// Quién está delante (lo suyo va con su nombre en la columna del usuario).
+    delante: String,
 }
 
 /// La CPU de la máquina y la memoria en uso, en décimas (llamada 29: nada de otros procesos).
@@ -689,83 +693,19 @@ fn medir_procesos(m: &mut monitor::Medidor) -> bool {
     true
 }
 
-fn alto_procesos(n: usize) -> i32 {
-    Y_FILAS_P + n.clamp(1, FILAS_P) as i32 * ALTO_FILA_P + 12 + PIE_P
+/// La cabecera del monitor (`ProcessSystemHeader` de DMS): el sistema, cuánto lleva encendido y cuántos procesos.
+fn cabecera_procesos(m: &monitor::Medidor) -> String {
+    let min = dashos::ahora_us() / 60_000_000;
+    let encendido = if min < 60 { alloc::format!("{} min", min) } else { alloc::format!("{} h {} min", min / 60, min % 60) };
+    let n: u32 = m.vistos.iter().map(|v| v.e.cuantos.max(1)).sum();
+    alloc::format!("DashOS · encendido {} · {} procesos", encendido, n)
 }
 
-/// El botón del pie del desplegable: abre el monitor del sistema en Ajustes.
-fn boton_abrir(alto: i32) -> Rect {
-    Rect::new(ANCHO_P - 16 - 236, alto - PIE_P + 6, 236, 40)
-}
-const ABRIR_MONITOR: &str = "Abrir el monitor del sistema";
-
-/// La pastilla de una caja, como la de la barra de sus ventanas: "68K" o "LINUX" en su color. Devuelve su ancho.
-fn pastilla_caja(l: &mut Lienzo, f: &mut Fuente, x: i32, cy: i32, clase: u32) -> i32 {
-    use wayland::escena::marca as mc;
-    let (texto, fondo, tinta) = match clase {
-        monitor::M_CAJA_AMIGA => (mc::TEXTO_AMIGA, mc::COLOR_AMIGA, mc::TINTA_AMIGA),
-        monitor::M_CAJA_LINUX => (mc::TEXTO_LINUX, mc::COLOR_LINUX, mc::TINTA),
-        _ => return 0,
-    };
-    let w = f.medir(texto, 10).ancho + 12;
-    l.redondeado(Rect::new(x, cy - 8, w, 16), 8, fondo);
-    f.dibujar(l, x + 6, cy + 4, texto, 10, tinta);
-    w
-}
-
-fn pintar_procesos(px: &mut [u32], p: &Procesos, m: &monitor::Medidor, t: &Tema, fuente: &mut Fuente, medio: &mut Fuente) {
-    let mut l = Lienzo::new(px, ANCHO_P, p.alto, ANCHO_P as usize);
-    l.borrar(Rect::new(0, 0, ANCHO_P, p.alto), 0);
-    l.redondeado(Rect::new(0, 0, ANCHO_P, p.alto), kit::tema::RADIO_DIALOGO, t.contenedor());
-    medio.dibujar(&mut l, 20, 30, "Procesos", 16, t.sobre_superficie);
-    let total = m.total.ultimo().map_or(String::new(), |d| alloc::format!("CPU {}", monitor::por_ciento(d)));
-    let w = fuente.medir(&total, 13).ancho;
-    fuente.dibujar(&mut l, ANCHO_P - 20 - w, 30, &total, 13, t.sobre_variante_superficie);
-    fuente.dibujar(&mut l, 20, 50, "Los tuyos; el sistema y otros usuarios, sumados", 12, t.sobre_variante_superficie);
-    let (col_cpu, col_mem) = (ANCHO_P - 20 - 84, ANCHO_P - 20);
-    let derecha = |f: &mut Fuente, l: &mut Lienzo, x: i32, y: i32, s: &str, tam: u32, c: Color| {
-        let w = f.medir(s, tam).ancho;
-        f.dibujar(l, x - w, y, s, tam, c);
-    };
-    derecha(medio, &mut l, col_cpu, 70, "CPU", 11, t.sobre_variante_superficie);
-    derecha(medio, &mut l, col_mem, 70, "Memoria", 11, t.sobre_variante_superficie);
-    let filas = m.los_que_mas(FILAS_P);
-    if filas.is_empty() {
-        fuente.dibujar(&mut l, 20, Y_FILAS_P + 24, if p.sin_datos { "sesiones no contesta" } else { "Nada que enseñar" }, 13, t.sobre_variante_superficie);
-    }
-    for (k, v) in filas.iter().enumerate() {
-        let y = Y_FILAS_P + k as i32 * ALTO_FILA_P;
-        if k % 2 == 1 {
-            l.redondeado(Rect::new(8, y, ANCHO_P - 16, ALTO_FILA_P), 8, t.contenedor_bajo());
-        }
-        let cy = y + ALTO_FILA_P / 2;
-        let mut x = 20;
-        let pw = pastilla_caja(&mut l, medio, x, cy, v.e.clase);
-        if pw > 0 {
-            x += pw + 8;
-        }
-        let suma = matches!(v.e.clase, monitor::M_SISTEMA | monitor::M_OTROS);
-        let nombre = que_quepa(fuente, &v.e.titulo(), 14, col_cpu - 70 - x);
-        fuente.dibujar(&mut l, x, cy + 5, &nombre, 14, if suma { t.sobre_variante_superficie } else { t.sobre_superficie });
-        derecha(fuente, &mut l, col_cpu, cy + 5, &monitor::por_ciento(v.cpu), 13, t.sobre_superficie);
-        derecha(fuente, &mut l, col_mem, cy + 5, &monitor::bytes(v.e.memoria), 13, t.sobre_variante_superficie);
-    }
-    // El pie: un botón de texto de Material 3 (el primario, sin contenedor) que abre el monitor del sistema.
-    let b = boton_abrir(p.alto);
-    l.rellenar(Rect::new(16, b.y - 6, ANCHO_P - 32, 1), t.variante_contorno);
-    if p.encima_abrir {
-        l.redondeado(b, b.h / 2, con_opacidad(t.primario, 20));
-    }
-    let w = medio.medir(ABRIR_MONITOR, 14).ancho;
-    medio.dibujar(&mut l, b.x + (b.w - w) / 2, b.y + 25, ABRIR_MONITOR, 14, t.primario);
-}
-
-fn pantalla_procesos(c: &mut Cliente, p: &mut Procesos, m: &monitor::Medidor, t: &Tema, fuente: &mut Fuente, medio: &mut Fuente) {
-    let alto = p.alto;
+fn pantalla_procesos(c: &mut Cliente, p: &mut Procesos, m: &monitor::Medidor, t: &Tema, fuente: &mut Fuente, medio: &mut Fuente, sim: &Simbolos) {
+    let alto = p.mon.alto;
     let Some(hoja) = p.hoja.as_mut() else { return };
     let px = hoja.px((ANCHO_P * alto) as usize);
-    let p2 = Procesos { hoja: None, listo: p.listo, alto, sin_datos: p.sin_datos, encima_abrir: p.encima_abrir };
-    pintar_procesos(px, &p2, m, t, fuente, medio);
+    p.mon.pintar(px, m, t, fuente, medio, sim, &cabecera_procesos(m));
     let mut e = Escritor::new();
     e.empezar(SUP_PROC, wl_surface::req::ATTACH).uint(BUFER_PROC).int(0).int(0).fin();
     e.empezar(SUP_PROC, wl_surface::req::DAMAGE).int(0).int(0).int(ANCHO_P).int(alto).fin();
@@ -773,15 +713,17 @@ fn pantalla_procesos(c: &mut Cliente, p: &mut Procesos, m: &monitor::Medidor, t:
     c.mandar(&e);
 }
 
-/// Abre el desplegable bajo la píldora (`r`): mide dos veces (un cuarto de segundo entre una y otra) para tener ya el uso
-/// de cada uno.
-fn abrir_procesos(c: &mut Cliente, b: &mut Barra, p: &mut Procesos, m: &mut monitor::Medidor, ancla: Ancla) {
+/// Abre el monitor bajo la píldora (`r`): mide dos veces (un cuarto de segundo entre una y otra) para tener ya el uso
+/// de cada uno. Se lleva el teclado (el buscador, como en DMS).
+fn abrir_procesos(c: &mut Cliente, b: &mut Barra, p: &mut Procesos, m: &mut monitor::Medidor, ancla: Ancla, alto_util: i32) {
     let ok = medir_procesos(m);
     dashos::dormir_us(250_000);
     (b.d.cpu, b.d.memoria) = medir_uso(m);
     let ok = ok && medir_procesos(m);
-    p.sin_datos = !ok;
-    p.alto = alto_procesos(m.vistos.len());
+    p.delante = quien_delante(c);
+    p.mon = procesos_vista::Monitor::nuevo(alto_util);
+    p.mon.sin_datos = !ok;
+    p.mon.poner(m, &p.delante);
     let mut e = Escritor::new();
     let Some(hoja) = Lamina::nueva(&mut e, (ANCHO_P * ALTO_P_MAX * 4) as usize, VA_P, POOL_P) else {
         println!("  [barra] sin memoria para los procesos");
@@ -790,20 +732,21 @@ fn abrir_procesos(c: &mut Cliente, b: &mut Barra, p: &mut Procesos, m: &mut moni
     p.hoja = Some(hoja);
     p.listo = false;
     b.d.procesos_abierto = true;
-    e.empezar(POOL_P, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER_PROC).int(0).int(ANCHO_P).int(p.alto).int(ANCHO_P * 4).uint(0).fin();
+    let alto = p.mon.alto;
+    e.empezar(POOL_P, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER_PROC).int(0).int(ANCHO_P).int(alto).int(ANCHO_P * 4).uint(0).fin();
     e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUP_PROC).fin();
     e.empezar(CAPAS, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(CAPA_PROC).uint(SUP_PROC).uint(ancla.salida).uint(2).texto(Some("procesos")).fin();
-    e.empezar(CAPA_PROC, zwlr_layer_surface_v1::req::SET_SIZE).uint(ANCHO_P as u32).uint(p.alto as u32).fin();
+    e.empezar(CAPA_PROC, zwlr_layer_surface_v1::req::SET_SIZE).uint(ANCHO_P as u32).uint(alto as u32).fin();
     ancla_capa(&mut e, CAPA_PROC, &ancla);
-    e.empezar(CAPA_PROC, zwlr_layer_surface_v1::req::SET_KEYBOARD_INTERACTIVITY).uint(0).fin();
+    e.empezar(CAPA_PROC, zwlr_layer_surface_v1::req::SET_KEYBOARD_INTERACTIVITY).uint(1).fin();
     e.empezar(SUP_PROC, wl_surface::req::COMMIT).fin();
     c.mandar(&e);
-    let nombres: Vec<String> = m.los_que_mas(FILAS_P).iter().map(|v| match v.e.pastilla() {
+    let nombres: Vec<String> = m.los_que_mas(6).iter().map(|v| match v.e.pastilla() {
         Some(x) => alloc::format!("{} [{}]", v.e.titulo(), x),
         None => v.e.titulo(),
     }).collect();
-    let b = boton_abrir(p.alto);
-    println!("  [barra] procesos abiertos: {} filas{}: {}; abrir el monitor en ({}, {})", m.vistos.len(), if ok { "" } else { " (sesiones no contesta)" }, nombres.join(", "), b.x + b.w / 2, b.y + b.h / 2);
+    let (bx, by) = p.mon.sitio_monitor();
+    println!("  [barra] procesos abiertos: {} filas{}: {}; abrir el monitor en ({}, {})", m.vistos.len(), if ok { "" } else { " (sesiones no contesta)" }, nombres.join(", "), bx, by);
 }
 
 fn cerrar_procesos(c: &mut Cliente, b: &mut Barra, p: &mut Procesos) {
@@ -821,6 +764,106 @@ fn cerrar_procesos(c: &mut Cliente, b: &mut Barra, p: &mut Procesos) {
     p.listo = false;
     b.d.procesos_abierto = false;
     println!("  [barra] procesos cerrados");
+}
+
+/// S27, oleada 6: lo que pidió el monitor de procesos (una tecla o un clic). `true` si hay que repintar las barras (se
+/// cerró).
+#[allow(clippy::too_many_arguments)]
+fn hecho_procesos(c: &mut Cliente, b: &mut Barra, p: &mut Procesos, med: &mut monitor::Medidor, hecho: procesos_vista::Hecho, fuente: &mut Fuente, medio: &mut Fuente) -> bool {
+    use procesos_vista::Hecho;
+    match hecho {
+        Hecho::Nada => false,
+        Hecho::Repintar => {
+            if p.listo {
+                pantalla_procesos(c, p, med, &b.tema, fuente, medio, &b.simbolos);
+            }
+            false
+        }
+        Hecho::CerrarVentana => {
+            cerrar_procesos(c, b, p);
+            true
+        }
+        Hecho::AbrirMonitor => {
+            let r = dashos::canal_escribir(CENTRO, b"abrir monitor", &[]);
+            println!("  [barra] abre el monitor del sistema: {}", r);
+            cerrar_procesos(c, b, p);
+            true
+        }
+        Hecho::Cerrar(x) => {
+            let nombre = p.mon.nombre_elegido();
+            let dicho = cerrar_proceso(c, x, &nombre);
+            p.mon.mensaje = Some(dicho);
+            p.mon.lista.elegida = None;
+            p.mon.sin_datos = !medir_procesos(med);
+            p.mon.poner(med, &p.delante);
+            if p.listo {
+                pantalla_procesos(c, p, med, &b.tema, fuente, medio, &b.simbolos);
+            }
+            false
+        }
+    }
+}
+
+/// Donde se ve un momento la memoria con la lista de una tanda (se copia y se quita).
+const VA_TANDA: usize = VA + (12 << 32);
+
+/// S27, oleada 6: cierra el proceso `marca` desde el monitor: si es de quien está delante, con `MATAR`; si no (un
+/// programa del escritorio, una caja del sistema), con la acción "matar" de la tanda de administrador (la ventana del
+/// sistema pide la contraseña de un administrador). Mientras espera, sigue leyendo al compositor. Lo que pasó, en llano.
+fn cerrar_proceso(c: &mut Cliente, cerrar: procesos_lista::Cerrar, nombre: &str) -> String {
+    use procesos_lista::Cerrar;
+    let (marca, admin) = match cerrar {
+        Cerrar::Propio(m) => (m, false),
+        Cerrar::Administrador(m) => (m, true),
+        Cerrar::NoSe => return String::from("Una suma no se cierra"),
+    };
+    if !admin {
+        let mut p = [0u8; 12];
+        p[0..4].copy_from_slice(&s::MATAR.to_le_bytes());
+        p[4..12].copy_from_slice(&marca.to_le_bytes());
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 4];
+        let n = if dashos::canal_escribir(SESIONES, &p, &[suyo]) == 0 { esperar(c, lectura, &mut r, 2_000_000) } else { -1 };
+        dashos::cerrar(lectura);
+        let estado = if n == 4 { i32::from_le_bytes(r) } else { i32::MIN };
+        println!("  [barra] monitor: cerrar {} (proceso {}): {}", nombre, marca, estado);
+        return match estado {
+            s::BIEN => alloc::format!("{}: cerrado", nombre),
+            s::NO_EXISTE => alloc::format!("{} ya no está", nombre),
+            s::PROTEGIDO => alloc::format!("{}: hace falta un administrador", nombre),
+            _ => String::from("sesiones no contesta"),
+        };
+    }
+    // La tanda: una acción, "matar <marca>", en una memoria que `sesiones` copia.
+    let lista = alloc::format!("matar {}\n", marca);
+    let mem = dashos::memoria_crear(lista.len());
+    if (mem as i32) <= 0 || dashos::memoria_proyectar(mem, VA_TANDA, true) != 0 {
+        if (mem as i32) > 0 {
+            dashos::cerrar(mem);
+        }
+        return String::from("Sin memoria para pedirlo");
+    }
+    // SAFETY: recién proyectada aquí con al menos `lista.len()` bytes; se quita en la línea siguiente.
+    unsafe { core::slice::from_raw_parts_mut(VA_TANDA as *mut u8, lista.len()) }.copy_from_slice(lista.as_bytes());
+    dashos::memoria_quitar(VA_TANDA);
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut m = [0u8; 8];
+    m[0..4].copy_from_slice(&s::TANDA.to_le_bytes());
+    m[4..8].copy_from_slice(&(lista.len() as u32).to_le_bytes());
+    let mut r = [0u8; 256];
+    let n = if dashos::canal_escribir(SESIONES, &m, &[suyo, mem]) == 0 {
+        // Hasta que la persona conteste en la ventana del sistema (dos minutos y un poco más).
+        esperar(c, lectura, &mut r, 160_000_000)
+    } else {
+        dashos::cerrar(suyo);
+        dashos::cerrar(mem);
+        -1
+    };
+    dashos::cerrar(lectura);
+    let res = dashos::tanda::Resultado::de_bytes(&r[..n.max(0) as usize]);
+    let (estado, hechas) = res.map_or((i32::MIN, 0), |x| (x.estado, x.hechas));
+    println!("  [barra] monitor: cerrar {} (proceso {}) como administrador: {} ({} hechas)", nombre, marca, estado, hechas);
+    if estado == 0 && hechas >= 1 { alloc::format!("{}: cerrado", nombre) } else { alloc::format!("{}: no se cerró", nombre) }
 }
 
 /// S27: quién está delante, de `sesiones` (vacío si no hay nadie o no contesta), para el Dash.
@@ -1138,7 +1181,7 @@ fn principal() -> u64 {
     let mut med = monitor::Medidor::default();
     medir_todo(&mut b, &mut med);
     let mut proxima_medida = dashos::ahora_us() + CADA_MEDIDA_US;
-    let mut procs = Procesos { hoja: None, listo: false, alto: 0, sin_datos: false, encima_abrir: false };
+    let mut procs = Procesos { hoja: None, listo: false, mon: procesos_vista::Monitor::nuevo(ALTO_P_MAX + 16), delante: String::new() };
     let mut uso_dicho = false;
     // Los avisos (S27, oleada 3: emergentes y centro, como en DMS): se suscribe con la puerta. Lo que ya hubiera no sale
     // como emergente, solo cuenta para la campana.
@@ -1250,9 +1293,10 @@ fn principal() -> u64 {
                 }
             }
             if b.d.procesos_abierto {
-                procs.sin_datos = !medir_procesos(&mut med);
+                procs.mon.sin_datos = !medir_procesos(&mut med);
+                procs.mon.poner(&med, &procs.delante);
                 if procs.listo {
-                    pantalla_procesos(&mut c, &mut procs, &med, &b.tema, &mut fuente, &mut medio);
+                    pantalla_procesos(&mut c, &mut procs, &med, &b.tema, &mut fuente, &mut medio, &b.simbolos);
                 }
             }
         }
@@ -1456,7 +1500,7 @@ fn principal() -> u64 {
                     d.pintar(&mut c, &b.tema, &mut avisos_vista::Letras { f: &mut fuente, m: &mut medio }, &reloj());
                 }
                 if procs.listo {
-                    pantalla_procesos(&mut c, &mut procs, &med, &b.tema, &mut fuente, &mut medio);
+                    pantalla_procesos(&mut c, &mut procs, &med, &b.tema, &mut fuente, &mut medio, &b.simbolos);
                 }
             }
             (TEMA, dashos_tema_v1::ev::TITULO) => {
@@ -1516,7 +1560,7 @@ fn principal() -> u64 {
                 e.empezar(CAPA_PROC, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(palabra(0)).fin();
                 c.mandar(&e);
                 procs.listo = true;
-                pantalla_procesos(&mut c, &mut procs, &med, &b.tema, &mut fuente, &mut medio);
+                pantalla_procesos(&mut c, &mut procs, &med, &b.tema, &mut fuente, &mut medio, &b.simbolos);
             }
             (CAPA_PROC, zwlr_layer_surface_v1::ev::CLOSED) => {
                 cerrar_procesos(&mut c, &mut b, &mut procs);
@@ -1555,6 +1599,28 @@ fn principal() -> u64 {
             (TECLADO, wl_keyboard::ev::LEAVE) => {
                 if b.mb.teclado_sale(&mut c, palabra(1), &b.tema.clone(), &mut fuente, &mut medio) {
                     pintar_todas(&mut c, &b, &mut bs, &mut fuente, &mut medio);
+                }
+            }
+            // S27, oleada 6: con el monitor de procesos abierto (tiene el teclado), las teclas son suyas.
+            (TECLADO, wl_keyboard::ev::KEY) if b.d.procesos_abierto && !b.d.lanzador_abierto => {
+                let (codigo, pulsada) = (palabra(2), palabra(3) == 1);
+                let tecla = teclado.tecla(codigo, pulsada);
+                if !pulsada {
+                    continue;
+                }
+                let busca = procs.mon.lista.busca.clone();
+                let hecho = procs.mon.tecla(tecla, codigo == KEY_SUPR, codigo == KEY_ESC);
+                if procs.mon.lista.busca != busca {
+                    println!("  [barra] monitor: busca \"{}\": {}", procs.mon.lista.busca, procs.mon.resumen());
+                }
+                if hecho_procesos(&mut c, &mut b, &mut procs, &mut med, hecho, &mut fuente, &mut medio) {
+                    pintar_todas(&mut c, &b, &mut bs, &mut fuente, &mut medio);
+                }
+            }
+            (PUNTERO, wl_pointer::ev::AXIS) if sobre == SUP_PROC && b.d.procesos_abierto && palabra(1) == 0 => {
+                procs.mon.rueda(kit::controles::pasos_rueda(palabra(2)));
+                if procs.listo {
+                    pantalla_procesos(&mut c, &mut procs, &med, &b.tema, &mut fuente, &mut medio, &b.simbolos);
                 }
             }
             // S27: con el Dash abierto (tiene el teclado), las teclas son suyas.
@@ -1643,11 +1709,11 @@ fn principal() -> u64 {
                 } else {
                     None
                 };
-                let abrir = sobre == SUP_PROC && boton_abrir(procs.alto).contiene(x, y);
-                if b.d.procesos_abierto && abrir != procs.encima_abrir {
-                    procs.encima_abrir = abrir;
+                let encima_p = if sobre == SUP_PROC { procs.mon.en(x, y) } else { None };
+                if b.d.procesos_abierto && encima_p != procs.mon.encima {
+                    procs.mon.encima = encima_p;
                     if procs.listo {
-                        pantalla_procesos(&mut c, &mut procs, &med, &b.tema, &mut fuente, &mut medio);
+                        pantalla_procesos(&mut c, &mut procs, &med, &b.tema, &mut fuente, &mut medio, &b.simbolos);
                     }
                 }
                 // Los avisos: el ratón sobre los emergentes (para su tiempo) y sobre el centro.
@@ -1711,7 +1777,7 @@ fn principal() -> u64 {
                             if b.d.procesos_abierto {
                                 cerrar_procesos(&mut c, &mut b, &mut procs);
                             } else {
-                                abrir_procesos(&mut c, &mut b, &mut procs, &mut med, ancla);
+                                abrir_procesos(&mut c, &mut b, &mut procs, &mut med, ancla, alto_util_principal(&bs));
                             }
                         }
                         // S27 (dms-avisos): el reloj abre o cierra el Dash (con el centro de avisos abierto, se cierra
@@ -1734,11 +1800,12 @@ fn principal() -> u64 {
                         _ => {}
                     }
                     pintar_todas(&mut c, &b, &mut bs, &mut fuente, &mut medio);
-                } else if sobre == SUP_PROC && b.d.procesos_abierto && boton_abrir(procs.alto).contiene(x, y) {
-                    let r = dashos::canal_escribir(CENTRO, b"abrir monitor", &[]);
-                    println!("  [barra] abre el monitor del sistema: {}", r);
-                    cerrar_procesos(&mut c, &mut b, &mut procs);
-                    pintar_todas(&mut c, &b, &mut bs, &mut fuente, &mut medio);
+                } else if sobre == SUP_PROC && b.d.procesos_abierto {
+                    // S27, oleada 6: el monitor de procesos (filtros, columnas, filas, cerrar, el monitor del sistema).
+                    let hecho = procs.mon.clic(x, y);
+                    if hecho_procesos(&mut c, &mut b, &mut procs, &mut med, hecho, &mut fuente, &mut medio) {
+                        pintar_todas(&mut c, &b, &mut bs, &mut fuente, &mut medio);
+                    }
                 } else if dash.as_ref().is_some_and(|d| d.suya(sobre)) {
                     let hecho = match dash.as_mut() {
                         Some(d) => d.clic(&mut c, x, y, &b.tema, &mut avisos_vista::Letras { f: &mut fuente, m: &mut medio }, &reloj()),
