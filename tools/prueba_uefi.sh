@@ -2151,6 +2151,11 @@ if [ -n "${SHELL_CAPTURAS:-}" ]; then
     python3 -I "$(dirname "$0")/guion_shell.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$SHELL_CAPTURAS" >/dev/null 2>&1 &
     SHELL_PID=$!
 fi
+# Plan de iconos, parte 3: con ICONOS_CAPTURAS=prefijo, `tools/guion_iconos.py` (`make arranque-virt-iconos`).
+if [ -n "${ICONOS_CAPTURAS:-}" ]; then
+    python3 -I "$(dirname "$0")/guion_iconos.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$ICONOS_CAPTURAS" >/dev/null 2>&1 &
+    ICONOS_PID=$!
+fi
 # S10, los menús: con MENUS_CAPTURAS=prefijo, `tools/guion_menus.py` (`make arranque-virt-menus`).
 if [ -n "${MENUS_CAPTURAS:-}" ]; then
     python3 -I "$(dirname "$0")/guion_menus.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$MENUS_CAPTURAS" >/dev/null 2>&1 &

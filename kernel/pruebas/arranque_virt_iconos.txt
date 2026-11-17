@@ -1,0 +1,19 @@
+# Plan de iconos, parte 3 (`make arranque-virt-iconos`, tools/guion_iconos.py; docs/bitacoras/iconos-cajas.md): la
+# imagen de usar con el disco de pruebas. Entra Ana y abre el explorador; en Amiga:Iconos, un .info suelto de cada
+# formato con su icono (y uno roto, con el de siempre); en Amiga:, el cajón Iconos con el suyo y el volumen con su
+# Disk.info, los dos escondidos hasta Ctrl+H; y la lista.
+DashOS en marcha con 4 núcleos
+~[guardian] entra Ana
+~[explorador] ventana 1 en SYS:,
+~[explorador] icono del volumen Amiga: 36x20
+~[explorador] ventana 1 en Amiga:Iconos, 5 elementos (0 nombres raros sin enseñar): Brillo.info | Cristal.info | Estrella.info | Programa.info | Roto.info
+~[explorador] icono de Amiga:Iconos/Brillo.info: 48x48 (GlowIcons, con seleccionado)
+~[explorador] icono de Amiga:Iconos/Cristal.info: 48x48 (ARGB de OS4, con seleccionado)
+~[explorador] icono de Amiga:Iconos/Estrella.info: 52x52 (PNG de OS4, con seleccionado)
+~[explorador] icono de Amiga:Iconos/Programa.info: 40x40 (NewIcons, con seleccionado)
+~[explorador] icono de Amiga:Iconos/Roto.info: no se lee (Corto), el de siempre
+~[explorador] icono de Amiga:Iconos.info: 44x22 (clásico, con seleccionado)
+~[explorador] icono de Amiga:Disk.info: 36x20 (clásico, con seleccionado)
+~[explorador] ventana 1 como lista
+# El guion llegó al final con todo bien.
+~[explorador] ventana 1: camino escrito "Amiga:Iconos/Hechos"
