@@ -2270,3 +2270,26 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
 - **x86 (rama `x86-uso`, para la sesión de x86)**: `revision` unida en x86 y `make -C kernel x86-uso` (q35, OVMF, KVM,
   ventana GTK). Cambian números de la rama x86: `puertos_permitir` 56 → 59, llave de puertos 12 → 13. Sin cajas.
   Avisada la sesión de x86 para unirla.
+- **Unidas `cuentas-2`, `archivos-memoria`, `dominio-usb` y `paq` (2026-11-17, una tanda)** más el arreglo `union-menus`.
+  - `cuentas-2`: cambiar la propia contraseña (Ajustes y `Usuario CLAVE`, solo recierra la llave del volumen; orden
+    42 de `archivos`), entrar con el código de recuperación (se gasta y sale otro), asistente de primer arranque,
+    lista de cuentas en la entrada, Ajustes > Cuentas, espera creciente tras 3 intentos (5 s a 5 min); órdenes 130 a
+    134 de `sesiones` solo de `guardian`. Prueba `make arranque-virt-cuentas`.
+  - `archivos-memoria`: lo que no cabe da `SIN_MEMORIA` (-15) y el servicio sigue; el montón común suelta lo grande
+    al kernel y tiene colchón de 2 MB; DashFS deshace la transacción con ENOMEM; Argon2 vuelve a 64 MiB (tope del
+    grupo de archivos 128 MB, pendiente del sí del usuario).
+  - `dominio-usb` (S35): el xHCI presta el adaptador USB al dominio por USB/IP sobre un tubo de memoria (sin IOMMU,
+    vale en la Pi); registro por dominio en `Estado:Registros/dominio-red`; aviso a la tercera caída; el dominio se
+    vuelve a presentar si `virtio-red` cae.
+  - `paq` (S8): orden `Paq` y servicio `paq` (instalar, quitar, buscar, info, actualizar, generaciones, volver,
+    limpiar, repos, claves), `Paquetes:` con tanda de administrador y `Home:Paquetes` sin ella, generaciones
+    atómicas, firmas Ed25519, hostiles rechazados; `pkg2` de Hangar traído aparte (`tools/traer_pkg2.sh`, fuera de
+    git). Para Hangar: faltan en pkg2 la lectura del índice, las firmas y quitar en el resolutor.
+  - Conflictos: `seal.rs` (dos `cost`, se dejó uno), guion del Shell y líneas esperadas (cuentas y paq, las dos).
+  - Tanda: 10 de 12 bien; `arranque-virt` y `arranque-virt-wayland` solo en la familia conocida (teclado robado por
+    ventanas a destiempo; el arreglo de los guiones está en `firefox-firme`, por unir); `arranque-virt-shell`,
+    `-dominio` y `-cuentas` bien. `arranque-virt-menus` falló 2 de 2: `guardian` (de `cuentas-2`) tomaba toda imagen
+    de usar por la de cuentas al contar sus llaves (abría Cuentas en el centro y sacaba los códigos de recuperación
+    por la consola también en `virt-uso`: arreglado en `union-menus` 5533f690, la imagen por el nombre de las llaves,
+    con prueba de las tablas reales). Tras el arreglo: menús, prueba, shell y cuentas bien.
+  - Pendiente: con la ventana de Ajustes abierta, el centro no aplica los cambios de `ENV:` hasta cerrarla.
