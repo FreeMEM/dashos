@@ -2,13 +2,13 @@
 
 Rama `gpu-diseno`, desde `revision` (ba0c2a2e). Encargo de diseño con prototipo: el camino de la GPU para el
 escritorio y los fondos animados (la herramienta de fondos va en `fondos`). A mitad, el usuario pidió "vamos a por la
-del 3D": el prototipo del camino 3D de verdad. Diseño en `docs/diseño/S37-gpu-escritorio.md`.
+del 3D": el prototipo del camino 3D de verdad. Diseño en `docs/diseño/S38-gpu-escritorio.md`.
 
 ## 2026-11-17
 
 ### Lo hecho
 
-- **`docs/diseño/S37-gpu-escritorio.md`**: qué hace hoy el compositor y cuánto cuesta, los cuatro caminos, los fondos
+- **`docs/diseño/S38-gpu-escritorio.md`**: qué hace hoy el compositor y cuánto cuesta, los cuatro caminos, los fondos
   animados baratos, la seguridad y la recomendación (el escritorio por el dominio de gráficos con un servidor de
   composición propio; en QEMU, la `virtio-vga-gl` pasada al dominio en x86).
 - **`medir_componer_1080`** (`wayland/src/tests.rs`, `#[ignore]`): la escena de 1920 × 1080 por CPU, seis casos.
@@ -23,7 +23,7 @@ del 3D": el prototipo del camino 3D de verdad. Diseño en `docs/diseño/S37-gpu-
 
 ### Lo medido
 
-Las tablas, en S37 (secciones 1, 3 y "Lo medido del prototipo"). En corto, CPU por cuadro a 1920 × 1080 con el fondo
+Las tablas, en S38 (secciones 1, 3 y "Lo medido del prototipo"). En corto, CPU por cuadro a 1920 × 1080 con el fondo
 animado entero, cuatro ventanas y sombras:
 
 - Compositor de DashOS por CPU: 3,0 ms en el PC (13,4 en aarch64 por TCG), más 2,2 (8,2) del plasma.
@@ -44,9 +44,9 @@ animado entero, cuatro ventanas y sombras:
 
 ### Pendiente
 
-- G1 a G8 de S37. Lo siguiente con más riesgo es G5 (el dominio de x86 con la `virtio-vga-gl` pasada), en la rama
+- G1 a G8 de S38. Lo siguiente con más riesgo es G5 (el dominio de x86 con la `virtio-vga-gl` pasada), en la rama
   `x86`.
-- Decisiones del usuario: las seis de S37.
+- Decisiones del usuario: las seis de S38.
 
 ### Lo que NO se ha comprobado
 

@@ -1,4 +1,4 @@
-/* componer_gl: el prototipo del servidor de composición del dominio de gráficos (S37). Compone con la GPU, por
+/* componer_gl: el prototipo del servidor de composición del dominio de gráficos (S38). Compone con la GPU, por
  * OpenGL ES 2 y Mesa, lo mismo que el compositor de DashOS compone hoy por CPU (`wayland/src/escena.rs`): un fondo,
  * cuatro ventanas (dos opacas, una con esquinas redondeadas y una a medias) y la sombra de cada una. El fondo es
  * animado y lo calcula un sombreador (un "plasma"): cambia entero en cada cuadro.

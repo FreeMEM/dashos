@@ -1,4 +1,4 @@
-# S37. El escritorio en la GPU y los fondos animados
+# S38. El escritorio en la GPU y los fondos animados
 
 Del 2026-11-17. Lo pidió el usuario: "una herramienta espectacular para cambiar de fondo, poner fondos animados con un
 bajo consumo de CPU, que si lo calcula la GPU sería lo suyo. Supongo que el escritorio podría ser renderizado por la
@@ -265,3 +265,19 @@ Lo que se lee:
 S9 (fases A, B y C; el compositor), S21 (cada trabajo a su chip; H2 y H6), S25 (la GPU de la caja Linux; la V3D
 mediada), S33 (vídeo), S34 (el dominio de gráficos; X12 a X15), S35 (dominios), S22 (energía), S6 (registros), S27 y
 S10c (el fondo, rama `fondos`), `GRAFICOS_LOOP.md` (G7 y G8).
+
+
+## Decidido el 2026-11-17
+
+El usuario aceptó las seis recomendaciones ("Si"):
+
+1. El escritorio acelerado va por el dominio de gráficos con nuestro programa de composición: DashOS decide qué se ve
+   y dónde, y manda cada cuadro como lista de capas; el dominio compone con Mesa y saca el cuadro a la pantalla.
+2. La prueba en QEMU del camino 3D va por x86 (`virtio-vga-gl` pasada al dominio con IOMMU); ARM se queda sin 3D en
+   QEMU.
+3. En la Pi 5, primero los planos del HVS; la V3D después, en un dominio con su MMU vigilada (cambia lo que decía S34,
+   "sin dominio").
+4. Los fondos que pinta la GPU salen de una lista firmada con parámetros; los que escriba el usuario, solo en el modo
+   de desarrollo.
+5. Con batería, animación a pocos cuadros, con un ajuste de tres valores: siempre, solo con corriente, nunca.
+6. Este documento pasa a S38 (S37 ya era el de los iconos).

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""S37: el prototipo del servidor de composición (caja-linux/invitado/componer_gl.c), medido donde puede correr hoy.
+"""S38: el prototipo del servidor de composición (caja-linux/invitado/componer_gl.c), medido donde puede correr hoy.
 
     python3 tools/gpu_componer.py pc      en el PC, con cada GPU que tenga (/dev/dri/renderD*) y con llvmpipe
     python3 tools/gpu_componer.py qemu    en el Linux de la caja (Arch Linux ARM, Image-arch) en qemu-system-aarch64
@@ -7,9 +7,9 @@
                                           la GPU del PC (-display egl-headless); y con llvmpipe en el mismo invitado
     python3 tools/gpu_componer.py hostil  argumentos malos: tienen que dar su error, sin pánico ni cuelgue
 
-Es la prueba del dominio de gráficos de S37 sin DashOS de por medio: el mismo programa que haría de servidor de
+Es la prueba del dominio de gráficos de S38 sin DashOS de por medio: el mismo programa que haría de servidor de
 composición en el dominio, con la GPU que tendría el dominio (la de verdad en el PC, por paso directo; la virtio-gpu
-3D en QEMU). Lo que falta para que DashOS se lo pida, en docs/diseño/S37-gpu-escritorio.md.
+3D en QEMU). Lo que falta para que DashOS se lo pida, en docs/diseño/S38-gpu-escritorio.md.
 
 El disco de Arch va con snapshot=on (no se toca) y el programa entra por la red de usuario de QEMU (un servidor de HTTP
 en el PC, en 10.0.2.2). Hace falta `tools/caja_linux_invitado.py preparar-arch` hecho antes (el kernel y el disco).
