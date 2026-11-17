@@ -63,6 +63,7 @@ use dashos::println;
 use dashos::protocolo::archivos as a;
 use dashos::protocolo::avisos as av;
 use dashos::protocolo::sesiones as s;
+use kit::iconos::{simbolo, Simbolos};
 use kit::lienzo::{Color, Lienzo, Rect};
 use lanzador_lista::{Lista, MAX_PROGRAMAS};
 use kit::teclado::{Tecla, Teclado};
@@ -198,6 +199,8 @@ struct Barra {
     /// Trasfondo: la CPU y la memoria en uso (décimas), si ya se midieron, y si el desplegable está abierto.
     uso: (Option<u32>, Option<u32>),
     procesos_abierto: bool,
+    /// Los Material Symbols de la barra (kit::iconos), con su caché.
+    simbolos: Simbolos,
     /// S10: los menús del programa activo, si van en la barra.
     mb: barra_menus::MenusBarra,
 }
@@ -316,6 +319,7 @@ struct Lanzador {
     alto: i32,
     /// La memoria de su búfer, mientras está abierto.
     hoja: Option<Lamina>,
+    simbolos: Simbolos,
 }
 
 /// La altura del lanzador con `n` programas: hasta `FILAS` filas, y al menos una (para decir que no hay). Se fija al
@@ -357,57 +361,15 @@ fn punto(l: &mut Lienzo, cx2: i32, cy2: i32, d: i32, color: Color) {
     l.redondeado(Rect::new((cx2 - d) / 2, (cy2 - d) / 2, d, d), d / 2, color);
 }
 
-/// El icono de aplicaciones de Material (nueve puntos en rejilla), de 18, centrado en `r`.
-fn icono_apps(l: &mut Lienzo, r: Rect, color: Color) {
-    let (cx2, cy2) = (2 * r.x + r.w, 2 * r.y + r.h);
-    for fy in -1..=1 {
-        for fx in -1..=1 {
-            punto(l, cx2 + fx * 14, cy2 + fy * 14, 4, color);
-        }
+/// El símbolo del altavoz para el nivel (Material: "volume_up" por encima del 50 %, "volume_down" hasta él,
+/// "volume_mute" en 0) y el silencio ("volume_off").
+fn simbolo_sonido(nivel: u32, silencio: bool) -> kit::iconos::Simbolo {
+    match (silencio, nivel) {
+        (true, _) => simbolo::VOLUME_OFF,
+        (false, 0) => simbolo::VOLUME_MUTE,
+        (false, 1..=50) => simbolo::VOLUME_DOWN,
+        _ => simbolo::VOLUME_UP,
     }
-}
-
-/// La lupa de buscar, de 20, centrada en `r`.
-fn icono_lupa(l: &mut Lienzo, r: Rect, color: Color) {
-    let (cx, cy) = (r.x + r.w / 2 - 2, r.y + r.h / 2 - 2);
-    l.borde(Rect::new(cx - 6, cy - 6, 13, 13), 7, 2, color);
-    l.trazo(((cx + 4) * 8 + 4, (cy + 4) * 8 + 4), ((cx + 9) * 8, (cy + 9) * 8), 18, color);
-}
-
-
-/// El icono de red (el "lan" de Material, de 16): una caja arriba unida a dos abajo.
-fn icono_red(l: &mut Lienzo, r: Rect, color: Color) {
-    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-    l.redondeado(Rect::new(cx - 3, cy - 8, 6, 5), 1, color);
-    l.rellenar(Rect::new(cx - 1, cy - 3, 2, 3), color);
-    l.rellenar(Rect::new(cx - 6, cy, 12, 2), color);
-    l.rellenar(Rect::new(cx - 6, cy + 2, 2, 2), color);
-    l.rellenar(Rect::new(cx + 4, cy + 2, 2, 2), color);
-    l.redondeado(Rect::new(cx - 8, cy + 4, 6, 5), 1, color);
-    l.redondeado(Rect::new(cx + 2, cy + 4, 6, 5), 1, color);
-}
-
-/// El altavoz (de 16): la caja, la bocina (un trapecio con los lados suavizados) y las ondas que pida el nivel (una hasta
-/// el 50 %, dos por encima, ninguna en 0); con el silencio, una cruz.
-fn icono_sonido(l: &mut Lienzo, r: Rect, nivel: u32, silencio: bool, color: Color) {
-    let (cx, cy) = (r.x + 5, r.y + r.h / 2);
-    l.rellenar(Rect::new(cx - 4, cy - 2, 3, 4), color);
-    for i in 0..4 {
-        l.rellenar(Rect::new(cx - 1 + i, cy - 2 - i, 1, 4 + 2 * i), color);
-    }
-    if silencio {
-        l.trazo(((cx + 5) * 8 + 4, (cy - 3) * 8 + 4), ((cx + 10) * 8 + 4, (cy + 2) * 8 + 4), 12, color);
-        l.trazo(((cx + 10) * 8 + 4, (cy - 3) * 8 + 4), ((cx + 5) * 8 + 4, (cy + 2) * 8 + 4), 12, color);
-        return;
-    }
-    l.recortar(Rect::new(cx + 4, r.y, r.w, r.h));
-    if nivel > 0 {
-        l.borde(Rect::new(cx - 1, cy - 3, 7, 6), 3, 1, color);
-    }
-    if nivel > 50 {
-        l.borde(Rect::new(cx - 2, cy - 6, 11, 12), 6, 1, color);
-    }
-    l.soltar_recorte();
 }
 
 /// La barra, al estilo de DMS con Material 3: la tira en el contenedor de superficie, algo translúcida, y en ella las
@@ -430,7 +392,7 @@ fn pintar_barra(px: &mut [u32], b: &Barra, fuente: &mut Fuente, medio: &mut Fuen
     };
     // El lanzador.
     let tinta = pildora(&mut l, d.lanzador, b.lanzador_abierto, Some(Boton::Lanzador));
-    icono_apps(&mut l, d.lanzador, if b.lanzador_abierto { tinta } else { t.primario });
+    b.simbolos.centrado(&mut l, d.lanzador, 20, simbolo::APPS, if b.lanzador_abierto { tinta } else { t.primario });
     // Los espacios: el que se ve en el primario; los que tienen ventanas, en el color del texto; los vacíos, en el del
     // contorno. Encima de uno, su capa de estado.
     pildora(&mut l, d.espacios, false, None);
@@ -469,7 +431,7 @@ fn pintar_barra(px: &mut [u32], b: &Barra, fuente: &mut Fuente, medio: &mut Fuen
     }
     // La campana, con el punto de error si hay avisos sin leer.
     let tinta = pildora(&mut l, d.campana, b.historial_abierto, Some(Boton::Campana));
-    icono_campana(&mut l, d.campana, tinta);
+    b.simbolos.centrado(&mut l, d.campana, 20, simbolo::NOTIFICATIONS, tinta);
     if b.sin_leer > 0 {
         punto(&mut l, 2 * (d.campana.x + d.campana.w - 11), 2 * (d.campana.y + 6), 6, t.error);
     }
@@ -478,58 +440,26 @@ fn pintar_barra(px: &mut [u32], b: &Barra, fuente: &mut Fuente, medio: &mut Fuen
     let color_icono = if b.procesos_abierto { tinta } else { t.primario };
     let mut x = d.monitor.x + 12;
     let cy = d.monitor.y + d.monitor.h / 2;
-    icono_cpu(&mut l, Rect::new(x, cy - 8, 16, 16), color_icono);
+    b.simbolos.pintar(&mut l, x - 1, cy - 9, 18, simbolo::MEMORY, color_icono);
     x += 20;
     fuente.dibujar(&mut l, x, d.monitor.y + 17, &d.textos_monitor.0, 13, tinta);
     x += fuente.medir("100 %", 13).ancho + 10;
-    icono_memoria(&mut l, Rect::new(x, cy - 8, 16, 16), color_icono);
+    b.simbolos.pintar(&mut l, x - 1, cy - 9, 18, simbolo::MEMORY_ALT, color_icono);
     fuente.dibujar(&mut l, x + 20, d.monitor.y + 17, &d.textos_monitor.1, 13, tinta);
     // El estado: red y sonido, en el primario (como DMS); abre el panel rápido.
     pildora(&mut l, d.estado, false, Some(Boton::Panel));
     // Con el estado del panel (oleada 2): sin red, el icono en el color suave y tachado; con el silencio, la cruz.
     let (red, nivel, silencio) = b.estado.unwrap_or((2, 100, false));
-    let r_red = Rect::new(d.estado.x + 10, d.estado.y + 4, 16, 16);
+    // De 18: los de Material dejan 2 de margen de cada 24 (a 16 se quedaban pequeños al lado del texto).
+    let r_red = Rect::new(d.estado.x + 9, d.estado.y + 3, 18, 18);
     if red == 2 {
-        icono_red(&mut l, r_red, t.primario);
+        b.simbolos.pintar(&mut l, r_red.x, r_red.y, 18, simbolo::LAN, t.primario);
     } else {
-        icono_red(&mut l, r_red, t.sobre_variante_superficie);
-        l.trazo(((r_red.x + 1) * 8, (r_red.y + 1) * 8), ((r_red.x + 15) * 8, (r_red.y + 15) * 8), 12, t.sobre_variante_superficie);
+        b.simbolos.pintar(&mut l, r_red.x, r_red.y, 18, simbolo::LAN, t.sobre_variante_superficie);
+        l.trazo(((r_red.x + 2) * 8, (r_red.y + 2) * 8), ((r_red.x + 16) * 8, (r_red.y + 16) * 8), 12, t.sobre_variante_superficie);
     }
     let color = if silencio { t.sobre_variante_superficie } else { t.primario };
-    icono_sonido(&mut l, Rect::new(d.estado.x + 34, d.estado.y + 4, 16, 16), nivel, silencio, color);
-}
-
-/// Trasfondo: el chip de la CPU (de 16): un cuadrado con un hueco y patillas a los lados.
-fn icono_cpu(l: &mut Lienzo, r: Rect, color: Color) {
-    let (cx, cy) = (r.x + 8, r.y + 8);
-    l.borde(Rect::new(cx - 5, cy - 5, 10, 10), 2, 2, color);
-    l.redondeado(Rect::new(cx - 2, cy - 2, 4, 4), 1, color);
-    for k in [-3, 0, 3] {
-        l.rellenar(Rect::new(cx + k - 1, cy - 8, 2, 3), color);
-        l.rellenar(Rect::new(cx + k - 1, cy + 5, 2, 3), color);
-        l.rellenar(Rect::new(cx - 8, cy + k - 1, 3, 2), color);
-        l.rellenar(Rect::new(cx + 5, cy + k - 1, 3, 2), color);
-    }
-}
-
-/// Trasfondo: la memoria (de 16): una tarjeta con sus chips y los dientes abajo.
-fn icono_memoria(l: &mut Lienzo, r: Rect, color: Color) {
-    let (cx, cy) = (r.x + 8, r.y + 8);
-    l.borde(Rect::new(cx - 8, cy - 5, 16, 9), 2, 2, color);
-    for k in [-5, -1, 3] {
-        l.rellenar(Rect::new(cx + k, cy - 2, 2, 3), color);
-    }
-    for k in [-6, -3, 0, 3, 6] {
-        l.rellenar(Rect::new(cx + k - 1, cy + 5, 2, 3), color);
-    }
-}
-
-/// La campana de los avisos (18), centrada en `r`: la cúpula, el borde y el badajo.
-fn icono_campana(l: &mut Lienzo, r: Rect, color: Color) {
-    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-    l.redondeado_esquinas(Rect::new(cx - 6, cy - 7, 12, 11), [6, 6, 1, 1], color);
-    l.redondeado(Rect::new(cx - 8, cy + 3, 16, 2), 1, color);
-    punto(l, 2 * cx, 2 * cy + 13, 4, color);
+    b.simbolos.pintar(&mut l, d.estado.x + 33, d.estado.y + 3, 18, simbolo_sonido(nivel, silencio), color);
 }
 
 /// La hora de `ns` en la zona horaria (S13), como "hh:mm"; sin hora, vacío.
@@ -694,7 +624,7 @@ fn pintar_lanzador(px: &mut [u32], la: &Lanzador, t: &Tema, fuente: &mut Fuente,
     let mut l = Lienzo::new(px, ANCHO_L, alto, ANCHO_L as usize);
     l.redondeado(Rect::new(0, 0, ANCHO_L, alto), 28, t.contenedor());
     l.redondeado(BUSCADOR, BUSCADOR.h / 2, t.contenedor_alto());
-    icono_lupa(&mut l, Rect::new(BUSCADOR.x + 12, BUSCADOR.y + 16, 24, 24), t.sobre_variante_superficie);
+    la.simbolos.pintar(&mut l, BUSCADOR.x + 12, BUSCADOR.y + 16, 24, simbolo::SEARCH, t.sobre_variante_superficie);
     let x = BUSCADOR.x + 52;
     let base = BUSCADOR.y + 34;
     let cursor = if lista.busca.is_empty() {
@@ -1346,7 +1276,7 @@ fn principal() -> u64 {
     if let Err(porque) = leer_zona() {
         println!("  [barra] zona horaria: {}; se queda UTC", porque);
     }
-    let mut b = Barra { tema: Tema::CLARO, ancho: 0, titulo: String::new(), hora: hora_ahora(), encima: None, lanzador_abierto: false, sin_leer: 0, historial_abierto: false, espacio: 1, ocupados: 0, estado: None, uso: (None, None), procesos_abierto: false, mb };
+    let mut b = Barra { tema: Tema::CLARO, ancho: 0, titulo: String::new(), hora: hora_ahora(), encima: None, lanzador_abierto: false, sin_leer: 0, historial_abierto: false, espacio: 1, ocupados: 0, estado: None, uso: (None, None), procesos_abierto: false, mb, simbolos: Simbolos::new() };
     // Trasfondo: lo que se mide (la píldora y el desplegable) y el desplegable.
     let mut med = monitor::Medidor::default();
     b.uso = medir_uso(&mut med);
@@ -1368,7 +1298,7 @@ fn principal() -> u64 {
             r => println!("  [barra] sin servicio de avisos ({})", r.map_or(i32::MIN, |x| x.0)),
         }
     }
-    let mut la = Lanzador { lista: Lista::default(), encima: None, fallo: None, alto: 0, hoja: None };
+    let mut la = Lanzador { lista: Lista::default(), encima: None, fallo: None, alto: 0, hoja: None, simbolos: Simbolos::new() };
     // El búfer de la barra: su ancho (0 si aún no está hecho) y su memoria, de ese ancho.
     let mut bufer_ancho = 0i32;
     let mut hoja_barra: Option<Lamina> = None;

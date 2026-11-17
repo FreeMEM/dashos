@@ -50,6 +50,7 @@ mod volumen_osd;
 use alloc::string::String;
 use alloc::vec::Vec;
 use dashos::println;
+use kit::iconos::{simbolo, Simbolos};
 use kit::lienzo::{Color, Lienzo, Rect};
 use kit::tema::{apagado, Tema};
 use kit::texto::Fuente;
@@ -283,27 +284,15 @@ enum Icono {
 }
 
 /// Un icono de 24 (los de Material: chevrones, cerrar, añadir, quitar) centrado en `r`.
-fn icono(l: &mut Lienzo, r: Rect, i: Icono, color: Color) {
-    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-    match i {
-        Icono::Subir => {
-            trazo(l, (cx - 6, cy + 3), (cx, cy - 3), 2, color);
-            trazo(l, (cx, cy - 3), (cx + 6, cy + 3), 2, color);
-        }
-        Icono::Bajar => {
-            trazo(l, (cx - 6, cy - 3), (cx, cy + 3), 2, color);
-            trazo(l, (cx, cy + 3), (cx + 6, cy - 3), 2, color);
-        }
-        Icono::Quitar => {
-            trazo(l, (cx - 5, cy - 5), (cx + 5, cy + 5), 2, color);
-            trazo(l, (cx + 5, cy - 5), (cx - 5, cy + 5), 2, color);
-        }
-        Icono::Poner => {
-            trazo(l, (cx - 6, cy), (cx + 6, cy), 2, color);
-            trazo(l, (cx, cy - 6), (cx, cy + 6), 2, color);
-        }
-        Icono::Menos => trazo(l, (cx - 6, cy), (cx + 6, cy), 2, color),
-    }
+fn icono(e: &Estado, l: &mut Lienzo, r: Rect, i: Icono, color: Color) {
+    let s = match i {
+        Icono::Subir => simbolo::EXPAND_LESS,
+        Icono::Bajar => simbolo::EXPAND_MORE,
+        Icono::Quitar => simbolo::CLOSE,
+        Icono::Poner => simbolo::ADD,
+        Icono::Menos => simbolo::REMOVE,
+    };
+    simbolo_en(e, l, r, s, color);
 }
 
 /// Un texto centrado a lo ancho de `r`, con la línea base en `base`.
@@ -325,75 +314,31 @@ struct Estado {
     persona: String,
     /// Se ve el menú de apagado en vez de los controles.
     menu: bool,
+    /// Los Material Symbols del panel (kit::iconos), con su caché.
+    simbolos: Simbolos,
 }
 
-/// El de encendido (24): un arco abierto arriba y una raya que entra por el hueco. El hueco se borra con el color de
-/// `fondo`.
-fn icono_encendido(l: &mut Lienzo, r: Rect, color: Color, fondo: Color) {
-    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-    l.borde(Rect::new(cx - 8, cy - 7, 17, 17), 9, 2, color);
-    l.rellenar(Rect::new(cx - 4, cy - 8, 9, 6), fondo);
-    trazo(l, (cx, cy - 9), (cx, cy - 1), 2, color);
+/// Un Material Symbol de 24 centrado en `r` (los de los mosaicos, los botones y el menú de apagado).
+fn simbolo_en(e: &Estado, l: &mut Lienzo, r: Rect, s: kit::iconos::Simbolo, color: Color) {
+    e.simbolos.centrado(l, r, 24, s, color);
 }
 
-/// El de reiniciar (24): un arco abierto arriba a la derecha con la punta de una flecha.
-fn icono_reiniciar(l: &mut Lienzo, r: Rect, color: Color, fondo: Color) {
-    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-    l.borde(Rect::new(cx - 8, cy - 8, 17, 17), 9, 2, color);
-    l.rellenar(Rect::new(cx + 1, cy - 9, 9, 8), fondo);
-    trazo(l, (cx + 1, cy - 8), (cx + 6, cy - 8), 2, color);
-    trazo(l, (cx + 6, cy - 8), (cx + 6, cy - 3), 2, color);
-}
-
-/// El de cerrar sesión (24): media caja a la izquierda y una flecha que sale a la derecha.
-fn icono_salir(l: &mut Lienzo, r: Rect, color: Color) {
-    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-    trazo(l, (cx - 8, cy - 8), (cx - 1, cy - 8), 2, color);
-    trazo(l, (cx - 8, cy - 8), (cx - 8, cy + 8), 2, color);
-    trazo(l, (cx - 8, cy + 8), (cx - 1, cy + 8), 2, color);
-    trazo(l, (cx - 3, cy), (cx + 8, cy), 2, color);
-    trazo(l, (cx + 4, cy - 4), (cx + 8, cy), 2, color);
-    trazo(l, (cx + 4, cy + 4), (cx + 8, cy), 2, color);
-}
-
-/// El candado (24): el cuerpo y el arco.
-fn icono_candado(l: &mut Lienzo, r: Rect, color: Color) {
-    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-    l.redondeado(Rect::new(cx - 7, cy - 2, 14, 10), 2, color);
-    l.recortar(Rect::new(cx - 8, cy - 10, 16, 9));
-    l.borde(Rect::new(cx - 5, cy - 9, 10, 14), 5, 2, color);
-    l.soltar_recorte();
-}
-
-/// La luna del modo oscuro (24): un círculo al que le muerde otro del color del fondo.
-fn icono_luna(l: &mut Lienzo, r: Rect, color: Color, fondo: Color) {
-    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-    l.redondeado(Rect::new(cx - 8, cy - 8, 16, 16), 8, color);
-    l.redondeado(Rect::new(cx - 3, cy - 11, 14, 14), 7, fondo);
-}
-
-/// La red (24): una caja arriba unida a dos abajo (el "lan" de Material); sin red, tachada.
-fn icono_red(l: &mut Lienzo, r: Rect, color: Color, tachada: bool) {
-    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-    l.redondeado(Rect::new(cx - 4, cy - 10, 8, 6), 1, color);
-    l.rellenar(Rect::new(cx - 1, cy - 4, 2, 4), color);
-    l.rellenar(Rect::new(cx - 8, cy, 16, 2), color);
-    l.rellenar(Rect::new(cx - 8, cy + 2, 2, 2), color);
-    l.rellenar(Rect::new(cx + 6, cy + 2, 2, 2), color);
-    l.redondeado(Rect::new(cx - 10, cy + 4, 8, 6), 1, color);
-    l.redondeado(Rect::new(cx + 2, cy + 4, 8, 6), 1, color);
+/// La red ("lan" de Material) centrada en `r`; sin red, tachada (S27): una raya del color, como los "_off" de Material.
+fn icono_red(e: &Estado, l: &mut Lienzo, r: Rect, color: Color, tachada: bool) {
+    simbolo_en(e, l, r, simbolo::LAN, color);
     if tachada {
+        let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
         trazo(l, (cx - 10, cy - 10), (cx + 10, cy + 10), 2, color);
     }
 }
 
-/// El sol del brillo (24): un círculo y ocho rayos.
-fn icono_sol(l: &mut Lienzo, r: Rect, color: Color) {
-    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-    l.redondeado(Rect::new(cx - 4, cy - 4, 9, 9), 4, color);
-    for (dx, dy) in [(0, -1), (1, -1), (1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1)] {
-        let (a, b) = if dx != 0 && dy != 0 { (5, 7) } else { (7, 9) };
-        trazo(l, (cx + dx * a, cy + dy * a), (cx + dx * b, cy + dy * b), 2, color);
+/// El altavoz de Material para el nivel y el silencio ("volume_off", "volume_mute", "volume_down" o "volume_up").
+fn simbolo_sonido(nivel: u32, silencio: bool) -> kit::iconos::Simbolo {
+    match (silencio, nivel) {
+        (true, _) => simbolo::VOLUME_OFF,
+        (false, 0) => simbolo::VOLUME_MUTE,
+        (false, 1..=50) => simbolo::VOLUME_DOWN,
+        _ => simbolo::VOLUME_UP,
     }
 }
 
@@ -420,7 +365,7 @@ fn pintar_controles(l: &mut Lienzo, e: &Estado, d: &Disposicion, fuente: &mut Fu
         if m == VOLUMEN {
             let v = e.volumen;
             deslizador(l, r, pista_volumen(r), v.efectivo(), !v.silencio, t);
-            icono_altavoz(l, Rect::new(r.x + 12, r.y + 16, 24, 24), v.silencio, v.nivel, t.sobre_superficie);
+            e.simbolos.pintar(l, r.x + 12, r.y + 16, 24, simbolo_sonido(v.nivel, v.silencio), t.sobre_superficie);
             continue;
         }
         // Un mosaico: el icono en un cuadrado redondeado (en el primario si está encendido), el nombre y su estado.
@@ -431,7 +376,7 @@ fn pintar_controles(l: &mut Lienzo, e: &Estado, d: &Disposicion, fuente: &mut Fu
         l.redondeado(cuadro, 12, fondo);
         let (titulo, abajo) = match m {
             MOSAICO_RED => {
-                icono_red(l, cuadro, tinta, e.red != 2);
+                icono_red(e, l, cuadro, tinta, e.red != 2);
                 let abajo = match e.red {
                     2 => alloc::format!("Conectada · {}.{}.{}.{}", e.ip[0], e.ip[1], e.ip[2], e.ip[3]),
                     1 => String::from("Sin dirección"),
@@ -440,11 +385,11 @@ fn pintar_controles(l: &mut Lienzo, e: &Estado, d: &Disposicion, fuente: &mut Fu
                 ("Red", abajo)
             }
             OSCURO => {
-                icono_luna(l, cuadro, tinta, fondo);
+                simbolo_en(e, l, cuadro, if e.oscuro { simbolo::DARK_MODE_LLENO } else { simbolo::DARK_MODE }, tinta);
                 (MOSAICOS[m].1, String::from(if e.oscuro { "Encendido" } else { "Apagado" }))
             }
             _ => {
-                icono_candado(l, cuadro, tinta);
+                simbolo_en(e, l, cuadro, simbolo::LOCK, tinta);
                 (MOSAICOS[m].1, String::from("Super+L"))
             }
         };
@@ -460,7 +405,7 @@ fn pintar_controles(l: &mut Lienzo, e: &Estado, d: &Disposicion, fuente: &mut Fu
             let apagado_si = (a == Accion::VolumenMenos && e.volumen.efectivo() == 0) || (a == Accion::VolumenMas && e.volumen.efectivo() == 100);
             l.redondeado(z, ICONO / 2, if apagado_si { kit::tema::fondo_apagado(t.sobre_superficie) } else { t.contenedor_secundario() });
             let color = if apagado_si { apagado(t.sobre_superficie) } else { t.sobre_contenedor_secundario() };
-            icono(l, z, if a == Accion::VolumenMenos { Icono::Menos } else { Icono::Poner }, color);
+            icono(e, l, z, if a == Accion::VolumenMenos { Icono::Menos } else { Icono::Poner }, color);
         }
     }
     // El brillo: apagado, con el sol y lo que pasa.
@@ -468,7 +413,7 @@ fn pintar_controles(l: &mut Lienzo, e: &Estado, d: &Disposicion, fuente: &mut Fu
         let r = d.brillo;
         let pista = Rect::new(r.x + 56, r.y + (r.h - 16) / 2, r.w - 56 - 140, 16);
         deslizador(l, r, pista, 100, false, t);
-        icono_sol(l, Rect::new(r.x + 12, r.y + 16, 24, 24), apagado(t.sobre_superficie));
+        e.simbolos.pintar(l, r.x + 12, r.y + 16, 24, simbolo::LIGHT_MODE, apagado(t.sobre_superficie));
         fuente.dibujar(l, pista.x + pista.w + 16, r.y + 33, "Sin control aquí", 12, apagado(t.sobre_superficie));
     }
 }
@@ -512,10 +457,10 @@ fn pintar(px: &mut [u32], alto: i32, e: &Estado, d: &Disposicion, fuente: &mut F
         fuente.dibujar(&mut l, 72, 54, &encendido, 12, t.sobre_variante_superficie);
         // Bloquear: botón de icono tonal. El de apagado, igual; con el menú abierto, lleno.
         l.redondeado(BOTON_BLOQUEAR, ICONO / 2, t.contenedor_secundario());
-        icono_candado(&mut l, BOTON_BLOQUEAR, t.sobre_contenedor_secundario());
+        simbolo_en(e, &mut l, BOTON_BLOQUEAR, simbolo::LOCK, t.sobre_contenedor_secundario());
         let (fondo, tinta) = if e.menu { (t.primario, t.sobre_primario) } else { (t.contenedor_secundario(), t.sobre_contenedor_secundario()) };
         l.redondeado(BOTON_APAGADO, ICONO / 2, fondo);
-        icono_encendido(&mut l, BOTON_APAGADO, tinta, fondo);
+        simbolo_en(e, &mut l, BOTON_APAGADO, simbolo::POWER_SETTINGS_NEW, tinta);
     }
     // Editar: botón tonal; Hecho: lleno (lo que se espera que se pulse).
     let (fondo, texto) = if e.editando { (t.primario, t.sobre_primario) } else { (t.contenedor_secundario(), t.sobre_contenedor_secundario()) };
@@ -529,12 +474,13 @@ fn pintar(px: &mut [u32], alto: i32, e: &Estado, d: &Disposicion, fuente: &mut F
             let cuadro = Rect::new(r.x + 8, r.y + 8, 40, 40);
             let (fondo, tinta) = (t.contenedor_secundario(), t.sobre_contenedor_secundario());
             l.redondeado(cuadro, 12, fondo);
-            match i {
-                0 => icono_encendido(&mut l, cuadro, tinta, fondo),
-                1 => icono_reiniciar(&mut l, cuadro, tinta, fondo),
-                2 => icono_salir(&mut l, cuadro, tinta),
-                _ => icono_candado(&mut l, cuadro, tinta),
-            }
+            let s = match i {
+                0 => simbolo::POWER_SETTINGS_NEW,
+                1 => simbolo::RESTART_ALT,
+                2 => simbolo::LOGOUT,
+                _ => simbolo::LOCK,
+            };
+            simbolo_en(e, &mut l, cuadro, s, tinta);
             medio.dibujar(&mut l, r.x + 64, r.y + 34, ENERGIA[i].0, 16, t.sobre_superficie);
         }
         return;
@@ -566,45 +512,19 @@ fn pintar(px: &mut [u32], alto: i32, e: &Estado, d: &Disposicion, fuente: &mut F
             _ => continue,
         };
         let color = if desactivado { apagado(t.sobre_variante_superficie) } else { t.sobre_variante_superficie };
-        icono(&mut l, z, i, color);
+        icono(e, &mut l, z, i, color);
     }
-}
-
-/// El altavoz de Material (24), centrado en `r`: la caja, la bocina y dos ondas; con el silencio, una cruz en vez de
-/// las ondas. Las ondas, como trozos de un borde redondo recortado a la derecha.
-fn icono_altavoz(l: &mut Lienzo, r: Rect, silencio: bool, nivel: u32, color: Color) {
-    let (cx, cy) = (r.x + r.w / 2 - 4, r.y + r.h / 2);
-    l.redondeado(Rect::new(cx - 7, cy - 3, 5, 7), 1, color);
-    // La bocina: un trapecio, columna a columna, con los bordes suavizados por dos trazos.
-    for i in 0..5 {
-        l.rellenar(Rect::new(cx - 2 + i, cy - 3 - i, 1, 7 + 2 * i), color);
-    }
-    trazo(l, (cx - 2, cy - 3), (cx + 2, cy - 7), 1, color);
-    trazo(l, (cx - 2, cy + 3), (cx + 2, cy + 7), 1, color);
-    if silencio {
-        trazo(l, (cx + 6, cy - 3), (cx + 11, cy + 2), 2, color);
-        trazo(l, (cx + 11, cy - 3), (cx + 6, cy + 2), 2, color);
-        return;
-    }
-    l.recortar(Rect::new(cx + 4, r.y, r.w, r.h));
-    if nivel > 0 {
-        l.borde(Rect::new(cx - 1, cy - 4, 9, 9), 5, 2, color);
-    }
-    if nivel > 50 {
-        l.borde(Rect::new(cx - 4, cy - 8, 17, 17), 9, 2, color);
-    }
-    l.soltar_recorte();
 }
 
 /// El OSD del volumen: una píldora en el contenedor más alto (como un menú o una tarjeta elevada de Material 3), con el
 /// altavoz, la pista (activa en el primario, el resto en el contenedor secundario, como el deslizador del kit) y el
 /// valor. El compositor le pone la sombra.
-fn pintar_osd(px: &mut [u32], v: &Volumen, t: &Tema, medio: &mut Fuente) {
+fn pintar_osd(px: &mut [u32], v: &Volumen, t: &Tema, medio: &mut Fuente, simbolos: &Simbolos) {
     px.fill(0);
     let mut l = Lienzo::new(px, ANCHO_OSD, ALTO_OSD, ANCHO_OSD as usize);
     let r = Rect::new(0, 0, ANCHO_OSD, ALTO_OSD);
     l.redondeado(r, ALTO_OSD / 2, t.contenedor_alto());
-    icono_altavoz(&mut l, Rect::new(16, 16, 24, 24), v.silencio, v.nivel, t.sobre_superficie);
+    simbolos.pintar(&mut l, 16, 16, 24, simbolo_sonido(v.nivel, v.silencio), t.sobre_superficie);
     let texto = if v.silencio { String::from("Silencio") } else { alloc::format!("{} %", v.nivel) };
     let ancho_texto = medio.medir("Silencio", 14).ancho.max(medio.medir("100 %", 14).ancho);
     let pista = Rect::new(56, (ALTO_OSD - 8) / 2, ANCHO_OSD - 56 - 20 - ancho_texto - 16, 8);
@@ -848,7 +768,7 @@ fn principal() -> u64 {
     e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(POOL).llave(copia as u32).int(tamano as i32).fin();
     c.mandar(&e);
     println!("  [panel] en marcha: Super+A lo abre");
-    let mut est = Estado { tema: Tema::CLARO, oscuro: false, volumen: Volumen::new(), orden, editando: false, red: 0, ip: [0; 4], persona: String::new(), menu: false };
+    let mut est = Estado { tema: Tema::CLARO, oscuro: false, volumen: Volumen::new(), orden, editando: false, red: 0, ip: [0; 4], persona: String::new(), menu: false, simbolos: Simbolos::new() };
     // S27, oleada 2: lo último que se dijo al compositor del estado (para la barra) y cuándo toca preguntar a la red.
     let mut estado_dicho: Option<(u32, u32, u32)> = None;
     let mut proxima_red = 0u64;
@@ -1050,7 +970,7 @@ fn principal() -> u64 {
                     let v = est.volumen;
                     println!("  [panel] OSD abierto: volumen {}{}", v.nivel, if v.silencio { " (silencio)" } else { "" });
                 } else if osd_listo && let Some(h) = hoja_osd.as_mut() {
-                    pintar_osd(h.px((ANCHO_OSD * ALTO_OSD) as usize), &est.volumen, &est.tema, &mut medio);
+                    pintar_osd(h.px((ANCHO_OSD * ALTO_OSD) as usize), &est.volumen, &est.tema, &mut medio, &est.simbolos);
                     let mut e = Escritor::new();
                     e.empezar(SUP_OSD, wl_surface::req::ATTACH).uint(BUFER_OSD).int(0).int(0).fin();
                     e.empezar(SUP_OSD, wl_surface::req::DAMAGE).int(0).int(0).int(ANCHO_OSD).int(ALTO_OSD).fin();
@@ -1062,7 +982,7 @@ fn principal() -> u64 {
                 let mut e = Escritor::new();
                 e.empezar(CAPA_OSD, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(palabra(0)).fin();
                 if let Some(h) = hoja_osd.as_mut() {
-                    pintar_osd(h.px((ANCHO_OSD * ALTO_OSD) as usize), &est.volumen, &est.tema, &mut medio);
+                    pintar_osd(h.px((ANCHO_OSD * ALTO_OSD) as usize), &est.volumen, &est.tema, &mut medio, &est.simbolos);
                 }
                 e.empezar(SUP_OSD, wl_surface::req::ATTACH).uint(BUFER_OSD).int(0).int(0).fin();
                 e.empezar(SUP_OSD, wl_surface::req::DAMAGE).int(0).int(0).int(ANCHO_OSD).int(ALTO_OSD).fin();

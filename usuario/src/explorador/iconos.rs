@@ -1,11 +1,17 @@
-//! Qué icono lleva cada cosa del explorador, en un solo sitio: `icono_de` decide (por el nombre, si es cajón, si es
-//! un programa, el volumen y la caja de la que es) y `icono` lo pinta. Hoy son los dibujados a mano, como los del
-//! Workbench. Cuando lleguen los iconos de verdad (Material Symbols Rounded para la interfaz, la colección de DashOS
-//! que toma el color del fondo, los temas de Linux y los `.info` de la caja Amiga), se cambia solo aquí.
+//! Qué icono lleva cada cosa del explorador, en un solo sitio: `icono_de` decide la clase (por el nombre, si es cajón,
+//! si es un programa, el volumen y la caja de la que es), `nombre_de` el icono de la colección de DashOS
+//! (`kit::iconos::coleccion`, que toma los tonos del tema) y `icono` lo pinta. Una imagen con miniatura enseña la
+//! miniatura; con un tema de Linux elegido en Ajustes (S37, `tema_linux`), el suyo si lo tiene (por los nombres de
+//! freedesktop de cada icono de la colección). Cuando lleguen los `.info` de la caja Amiga, se cambia solo aquí.
 
 use crate::logica::{clase_de, Clase, Entrada, Lugar};
+use alloc::collections::BTreeMap;
+use kit::iconos::coleccion::Iconos;
 use kit::lienzo::{Lienzo, Rect};
-use kit::tema::{con_opacidad, mezcla, Tema};
+use kit::tema::Tema;
+
+/// S37: los iconos de un tema de Linux ya pintados, por icono de la colección y lado (`None`: no hay, el de DashOS).
+pub type DelTema = BTreeMap<(&'static str, i32), Option<kit::imagen::Imagen>>;
 
 /// Lo que hace falta saber de un fichero para elegir su icono.
 #[allow(dead_code)]
@@ -50,81 +56,81 @@ pub fn icono_de(f: &Fichero) -> QueIcono {
     }
 }
 
-
-/// Pinta el icono de `f` en un cuadro de `s` (pensados en 64 y escalados); de una imagen, su miniatura si la hay.
-pub fn icono(l: &mut Lienzo, x: i32, y: i32, s: i32, f: &Fichero, t: &Tema, mini: Option<&kit::imagen::Imagen>) {
-    let k = |v: i32| v * s / 64;
-    let fino = (s / 32).max(1);
+/// El icono de la colección de DashOS para `f`: el de su clase, afinado por el nombre del cajón (los de siempre de
+/// `Home:` y de `SYS:`) o por la extensión.
+pub fn nombre_de(f: &Fichero) -> &'static str {
+    let ext = f.e.extension();
     match icono_de(f) {
-        QueIcono::Carpeta => {
-            // La pestaña de atrás, el fondo y el frente (como las carpetas de Adwaita, con los tonos del tema).
-            l.redondeado_esquinas(Rect::new(x + k(6), y + k(12), k(24), k(10)), [k(5), k(5), 0, 0], mezcla(t.primario, t.contenedor_primario, 110));
-            l.redondeado(Rect::new(x + k(6), y + k(17), k(52), k(38)), k(6), mezcla(t.primario, t.contenedor_primario, 110));
-            l.redondeado(Rect::new(x + k(6), y + k(23), k(52), k(32)), k(6), t.contenedor_primario);
-            l.rellenar(Rect::new(x + k(6), y + k(23), k(52), fino), con_opacidad(t.superficie, 140));
-        }
-        QueIcono::Programa => {
-            l.redondeado(Rect::new(x + k(8), y + k(8), k(48), k(48)), k(14), t.contenedor_terciario);
-            let (cx, cy) = (x + k(32), y + k(32));
-            let h = k(22);
-            for fila in 0..h {
-                let d = (fila * 2 - h).abs();
-                let ancho = (h - d) * k(18) / h;
-                if ancho > 0 {
-                    l.rellenar(Rect::new(cx - k(7), cy - h / 2 + fila, ancho, 1), t.sobre_contenedor_terciario);
-                }
-            }
-        }
-        clase => {
-            // Una hoja con la esquina doblada.
-            let hoja = Rect::new(x + k(13), y + k(5), k(38), k(54));
-            if let (QueIcono::Imagen, Some(img)) = (clase, mini) {
-                crate::pintar::miniatura(l, img, Rect::new(x + k(2), y + k(4), k(60), k(56)), t);
-                return;
-            }
-            l.sombra(hoja, k(4), 1, 0, 3, 40);
-            l.redondeado(hoja, k(4), mezcla(t.superficie, 0xffff_ffff, 128));
-            l.borde(hoja, k(4), fino, t.variante_contorno);
-            let pliegue = Rect::new(x + k(39), y + k(5), k(12), k(12));
-            l.redondeado_esquinas(pliegue, [0, k(4), 0, k(3)], t.variante_contorno);
-            match clase {
-                QueIcono::Texto => {
-                    for i in 0..5 {
-                        let w = if i == 4 { k(14) } else { k(24) };
-                        l.redondeado(Rect::new(x + k(20), y + k(22) + i * k(6), w, (k(2)).max(1)), 1, t.contorno);
-                    }
-                }
-                QueIcono::Imagen => {
-                    let r = Rect::new(x + k(19), y + k(24), k(26), k(22));
-                    l.redondeado(r, k(3), t.contenedor_terciario);
-                    l.redondeado(Rect::new(x + k(34), y + k(28), k(6), k(6)), k(3), t.sobre_contenedor_terciario);
-                    for fila in 0..k(10) {
-                        let ancho = fila * 2;
-                        l.rellenar(Rect::new(x + k(26) - fila, y + k(36) + fila, ancho.max(1), 1), t.primario);
-                    }
-                }
-                QueIcono::Disco => {
-                    let r = Rect::new(x + k(20), y + k(24), k(24), k(24));
-                    l.redondeado(r, k(3), t.primario);
-                    l.rellenar(Rect::new(x + k(25), y + k(24), k(12), k(8)), t.contenedor_primario);
-                    l.redondeado(Rect::new(x + k(24), y + k(38), k(16), k(8)), k(2), t.contenedor_primario);
-                }
-                QueIcono::IconoAmiga => {
-                    // El de la caja Amiga: la marca de color de la caja.
-                    l.redondeado(Rect::new(x + k(19), y + k(28), k(26), k(16)), k(8), 0xffd9_6b1e);
-                }
-                QueIcono::Datos => {
-                    for i in 0..3 {
-                        for j in 0..4 {
-                            if (i + j) % 2 == 0 {
-                                l.redondeado(Rect::new(x + k(20) + j * k(6), y + k(24) + i * k(7), k(4), k(4)), 1, t.contorno);
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
+        QueIcono::Carpeta => carpeta(&f.e.nombre),
+        QueIcono::Programa if f.caja == Some("amiga") => "programa-amiga",
+        QueIcono::Programa => "programa",
+        QueIcono::Imagen => "imagen",
+        QueIcono::Disco => "imagen-disco",
+        QueIcono::IconoAmiga => "icono-amiga",
+        QueIcono::Datos => "datos",
+        QueIcono::Texto => match ext.as_deref() {
+            Some("rs" | "c" | "h" | "py") => "codigo",
+            Some("dash" | "sh") => "guion",
+            Some("cfg" | "conf") => "ajustes-fichero",
+            Some("doc" | "guide") => "documento",
+            _ => "texto",
+        },
+        QueIcono::Fichero => match ext.as_deref() {
+            Some("pdf") => "pdf",
+            Some("wav" | "mp3" | "ogg" | "flac" | "mod" | "8svx" | "aiff") => "audio",
+            Some("mp4" | "mkv" | "webm" | "avi" | "anim") => "video",
+            Some("zip" | "lha" | "lzx" | "tar" | "gz" | "xz" | "zst" | "7z") => "comprimido",
+            Some("html" | "htm") => "web",
+            Some("csv" | "ods" | "xlsx") => "hoja-calculo",
+            Some("odp" | "pptx") => "presentacion",
+            Some("ttf" | "otf" | "font") => "fuente",
+            Some("pem" | "crt" | "key" | "asc") => "clave",
+            Some("eml") => "correo",
+            Some("ics") => "calendario",
+            Some("log") => "registro",
+            Some("paq") => "paquete",
+            Some("db" | "sqlite") => "datos",
+            _ => "fichero",
+        },
     }
 }
 
+/// El de un cajón por su nombre (en castellano y en inglés, como los dejan los programas de Linux y de Amiga).
+fn carpeta(nombre: &str) -> &'static str {
+    let n = nombre.to_lowercase();
+    match n.as_str() {
+        "documentos" | "documents" => "carpeta-documentos",
+        "imágenes" | "imagenes" | "fondos" | "pictures" | "fotos" => "carpeta-imagenes",
+        "música" | "musica" | "music" => "carpeta-musica",
+        "vídeos" | "videos" => "carpeta-videos",
+        "descargas" | "downloads" => "carpeta-descargas",
+        "escritorio" | "desktop" => "carpeta-escritorio",
+        "programas" | "paquetes" | "c" | "utilities" | "tools" => "carpeta-programas",
+        "prefs" | "env" | "envarc" => "carpeta-prefs",
+        "compartido" | "público" | "publico" | "public" => "carpeta-compartida",
+        "privado" | "private" => "carpeta-bloqueada",
+        "instantáneas" | "instantaneas" => "carpeta-instantanea",
+        "fonts" | "fuentes" => "carpeta-fuentes",
+        "libs" | "devs" | "l" | "classes" | "sistema" | "system" | "s" => "carpeta-sistema",
+        "código" | "codigo" | "src" | "proyectos" => "carpeta-codigo",
+        _ => "carpeta",
+    }
+}
+
+/// Pinta el icono de `f` en un cuadro de `s` (de la colección; se ve bien de 16 a 72 y más); de una imagen, su
+/// miniatura si la hay.
+#[allow(clippy::too_many_arguments)]
+pub fn icono(ico: &mut Iconos, linux: &DelTema, l: &mut Lienzo, x: i32, y: i32, s: i32, f: &Fichero, t: &Tema, mini: Option<&kit::imagen::Imagen>) {
+    let k = |v: i32| v * s / 64;
+    if let (QueIcono::Imagen, Some(img)) = (icono_de(f), mini) {
+        crate::pintar::miniatura(l, img, Rect::new(x + k(2), y + k(4), k(60), k(56)), t);
+        return;
+    }
+    let nombre = nombre_de(f);
+    // El del tema de Linux elegido, si lo hay ya pintado a este tamaño.
+    if let Some(Some(img)) = linux.get(&(nombre, s)) {
+        kit::iconos::svg::pintar_imagen(l, x, y, img);
+        return;
+    }
+    ico.pintar_nombre(l, x, y, s, nombre, t);
+}
