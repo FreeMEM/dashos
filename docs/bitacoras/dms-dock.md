@@ -72,7 +72,38 @@ tecla del volumen (además de dársela al panel, que sigue llevando el volumen) 
 
 ## Pruebas
 
-(Se completa abajo con los resultados.)
+- PC (`make prueba` las corre): `muelle.rs` 7 (muelles que se paran, sin animaciones, tiempos absurdos, curvas),
+  `dock_ajustes.rs` 11 (lo de serie es lo de shiva, ida y vuelta, fichero malo, mil fijados, 2.000 ficheros de bytes al
+  azar, monitor que no existe), `dock_modelo.rs` 29 (agrupar o no como DMS, desbordado, medidas de shiva, los cuatro
+  bordes y el modo barra, mil ventanas, 10.000 ráfagas de abrir y cerrar, monitor de 0 × 0, se ve y se esconde, el
+  saltito, el menú siempre dentro de la pantalla) y `osd_modelo.rs` 23 (el volumen de shiva medido, las ocho
+  posiciones en tres pantallas, mil teclas en un OSD, entrada con escala y opacidad, niveles y relojes absurdos).
+- Escena (`cd wayland && cargo test --lib`): 139, bien; 7 nuevas en `tests_dock.rs` (la lista y sus cambios, traer de
+  otro espacio y cerrar, quien no es el dock, mil ventanas de 40 programas, ráfagas en una tanda, títulos con control y
+  un programa de la caja Linux que dice ser nativo, la sesión de detrás, Bloq Mayús y el volumen).
+- `make prueba`: BIEN (esperado.txt y cargador hunk).
+- `make arranque-virt`: tres vueltas, las tres MAL por la familia del fallo conocido de `revision` (teclas y clics
+  perdidos con carga): la 1.ª, "[dash-ventana] pulsado"; la 2.ª, "[ajustes] el compositor pide 800x560"; la 3.ª, "[ajustes]
+  el desplegable dice: Destello" (y, por eso, el paso de `guarda`, que espera a que salga todo lo demás). En la 3.ª
+  salieron todas las líneas del dock: el OSD del volumen ("juntó 7"), el dock que sale por el borde, traer una ventana,
+  su menú, fijar, esconderse y el OSD de Bloq Mayús. Las dos primeras vueltas sirvieron para arreglar el guion (salir del
+  dock lo esconde: ahora se mueve sin salir) y las llaves (el dock buscaba "sesiones" y "archivos" por número).
+- `make arranque-virt-2`, `make arranque-virt-escritorio` y `make arranque-virt-shell`: BIEN.
+
+## Capturas (fuera de git, `~/recuperar/geosian-7d/dms-dock-capturas/`)
+
+A 1920 × 1080, con la imagen de usar (entra Ana, abre dos Shell desde la barra), el fondo de shiva (su "Lofi - Chill
+Room2", en PNG de paleta, solo en el disco de la prueba) y el modo oscuro con la paleta del fondo: `shiva.0` (el dock
+escondido), `shiva.1` (visto, con la burbuja y el saltito), `shiva.2` (el menú), `shiva.3` (fijado), `shiva.4` (OSD del
+volumen, arriba en el centro) y `shiva.5` (OSD de Bloq Mayús). La paleta no es la de shiva: allí es matugen
+`scheme-monochrome` (primario blanco sobre #131313), que el kit no tiene; aquí sale del fondo (salmón). Es cosa del
+aspecto común (`dms-barra`).
+
+## Medido
+
+- El programa: 414 KB (ELF), 262 KB comprimido en la imagen del kernel. En marcha, 744 KB en el monitor del sistema
+  (con dos Shell abiertos). Su capa: 188 × 74 × 4 = 56 KB con cuatro elementos; la del OSD del volumen, 336 × 72 × 4 =
+  97 KB solo mientras se ve. El panel baja 4 KB (332 KB) al quitarle el OSD.
 
 ## Pendiente del usuario
 
