@@ -633,6 +633,10 @@ struct Compositor {
     visible: u32,
     danos_previos: Vec<Rect>,
     gpu: Option<Gpu>,
+    /// Una fila con los colores cambiados (la pantalla que va en R, G, B).
+    fila: Vec<u32>,
+    /// x86-gpu, la medida de la copia a las salidas: microsegundos y píxeles, desde la última vez que se dijo.
+    copia: (u64, u64),
 }
 
 impl Compositor {
@@ -650,24 +654,37 @@ impl Compositor {
                 zonas.extend(self.danos_previos.iter().copied());
             }
             let fila0 = bufer * p.alto;
-            for r in &zonas {
-                let (dx, dy) = ((r.x - f.rect.x) as usize, (r.y - f.rect.y) as u32);
-                for fila in 0..r.h as u32 {
-                    let linea = p.base + ((fila0 + dy + fila) * p.paso) as usize;
-                    let origen = (r.y as u32 + fila) as usize * self.ancho as usize + r.x as usize;
+            let t0 = dashos::ahora_us();
+            // x86-gpu: de arriba abajo por filas de pantalla, con todos los daños de cada fila, y cada trozo de fila de
+            // una vez. Con un solo búfer (la pantalla de UEFI) no hay cuándo cambiar de imagen: quien enseña la
+            // pantalla (la tarjeta, o QEMU al refrescar su ventana) puede leerla mientras se copia. Así lo que pilla a
+            // medias es, como mucho, la parte de arriba nueva y la de abajo vieja, nunca una ventana que se fue de su
+            // sitio y aún no está en el nuevo (por daños: primero el sitio viejo, después el nuevo). Y deprisa: la
+            // pantalla del GOP va con combinación de escritura (WC) y una fila entera sale en ráfagas.
+            let (arriba, abajo) = zonas.iter().fold((i32::MAX, i32::MIN), |(a, b), r| (a.min(r.y), b.max(r.y + r.h)));
+            for y in arriba..abajo {
+                let linea = p.base + ((fila0 + (y - f.rect.y) as u32) * p.paso) as usize;
+                for r in zonas.iter().filter(|r| r.y <= y && y < r.y + r.h) {
+                    let dx = (r.x - f.rect.x) as usize;
+                    let origen = y as usize * self.ancho as usize + r.x as usize;
                     let de = &self.marco[origen..origen + r.w as usize];
-                    if f.cabeza.is_some() {
-                        // Memoria normal sin caché (la del controlador): la fila de una vez. El byte alto no lo mira.
-                        unsafe { core::ptr::copy_nonoverlapping(de.as_ptr(), (linea + dx * 4) as *mut u32, de.len()) };
-                        continue;
-                    }
-                    for (x, &c) in de.iter().enumerate() {
-                        let c = c & 0x00ff_ffff;
-                        let c = if p.rb { (c & 0xff00) | (c >> 16 & 0xff) | (c & 0xff) << 16 } else { c };
-                        unsafe { ((linea + (dx + x) * 4) as *mut u32).write_volatile(c.to_le()) };
-                    }
+                    // El byte alto (la X de XRGB) no lo mira nadie: ni el controlador ni el GOP (reservado).
+                    let de = if p.rb {
+                        self.fila.clear();
+                        self.fila.extend(de.iter().map(|&c| (c & 0xff00) | (c >> 16 & 0xff) | (c & 0xff) << 16));
+                        &self.fila[..]
+                    } else {
+                        de
+                    };
+                    // SAFETY: la fila está dentro de la pantalla proyectada (los daños vienen recortados a la salida) y
+                    // nadie más escribe en ella; no se lee nunca.
+                    unsafe { core::ptr::copy_nonoverlapping(de.as_ptr(), (linea + dx * 4) as *mut u32, de.len()) };
                 }
             }
+            // Lo que quede en los búferes de combinación de escritura, a la pantalla ya.
+            dashos::barrera::pantalla();
+            self.copia.0 += dashos::ahora_us() - t0;
+            self.copia.1 += zonas.iter().map(|r| r.w as u64 * r.h as u64).sum::<u64>();
             if let (Some(k), Some(g)) = (f.cabeza, self.gpu.as_mut()) {
                 g.pendiente[k as usize].extend(zonas.iter().map(|r| Rect { x: r.x - f.rect.x, y: r.y - f.rect.y, w: r.w, h: r.h }));
             }
@@ -823,6 +840,8 @@ fn principal() -> u64 {
         visible: 0,
         danos_previos: Vec::new(),
         gpu: None,
+        fila: Vec::new(),
+        copia: (0, 0),
     };
     let mut escena = Escena::new(Proyecciones::default(), FONDO);
     // Material 3: las ventanas echan sombra.
@@ -981,7 +1000,14 @@ fn principal() -> u64 {
                     .collect();
                 let antes: Vec<u32> = escena.salidas.iter().map(|o| o.global).collect();
                 (ancho, alto) = (w, h);
-                c.marco = vec![0; (w * h) as usize];
+                // x86-gpu: el marco viejo se suelta antes de pedir el nuevo (o se reusa si mide lo mismo): con los dos
+                // a la vez, a 1920x1080 (8 MB cada uno) el compositor topaba con su tope de memoria (16 MB) y moría.
+                if c.marco.len() == (w * h) as usize {
+                    c.marco.fill(0);
+                } else {
+                    c.marco = Vec::new();
+                    c.marco = vec![0; (w * h) as usize];
+                }
                 (c.ancho, c.alto) = (w as u32, h as u32);
                 c.fisicas = nuevas.into_iter().enumerate().map(|(i, (rect, p, _))| Fisica { rect, p, cabeza: Some(i as u32) }).collect();
                 c.gpu = Some(Gpu { canal, pendiente: (0..total).map(|_| Vec::new()).collect() });
@@ -1257,7 +1283,9 @@ fn principal() -> u64 {
         }
         if t0 >= medida.3 + 10_000_000 {
             if medida.0 > 0 {
-                println!("  [compositor] en 10 s: {} cuadros, {} ms componiendo, {} kpx", medida.0, medida.1 / 1000, medida.2 / 1000);
+                // x86-gpu: y, de eso, lo que tardó la copia a las salidas (y a cuánto: MB por segundo).
+                let (us, px) = core::mem::take(&mut c.copia);
+                println!("  [compositor] en 10 s: {} cuadros, {} ms componiendo, {} kpx; copia {} ms ({} MB/s)", medida.0, medida.1 / 1000, medida.2 / 1000, us / 1000, px * 4 / us.max(1));
             }
             medida = (0, 0, 0, t0);
         }

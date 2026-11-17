@@ -58,3 +58,16 @@ pub fn completa() {
         core::arch::asm!("mfence", options(nostack, preserves_flags))
     };
 }
+
+/// Lo escrito en una pantalla con combinación de escritura (x86: WC, que junta las escrituras en búferes propios de la
+/// CPU) sale ya hacia ella, y antes que lo de después (`sfence`). En ARM la pantalla es memoria normal sin caché: basta
+/// con el orden de las escrituras.
+#[inline(always)]
+pub fn pantalla() {
+    #[cfg(target_arch = "aarch64")]
+    escrituras();
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        core::arch::asm!("sfence", options(nostack, preserves_flags))
+    };
+}

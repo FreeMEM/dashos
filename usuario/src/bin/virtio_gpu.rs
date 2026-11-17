@@ -1,8 +1,19 @@
 //! El controlador de virtio-gpu (multimonitor, primera versión), fuera del kernel. Escrito con la especificación virtio
 //! 1.2: transporte PCI (4.1), colas partidas (2.7) y el aparato de GPU (5.7), solo en 2D (sin VIRGL ni EDID).
 //!
-//! Llaves: la 1, su permiso DMA; la 2, sus registros (la BAR 4); la 3, su espacio de configuración del PCIe; la 4, su
-//! interrupción, si la hay (no la usa: mira la cola al mandar); la siguiente, el canal "ventanas" (el compositor).
+//! Llaves: la 1, su permiso DMA; la 2, sus registros (la BAR de las capacidades de virtio: la 4 en `virtio-gpu-pci`, la
+//! 2 en `virtio-vga`, que tiene la memoria de la VGA en la 0); la 3, su espacio de configuración del PCIe; la 4, su
+//! interrupción, si la hay (no la usa: mira la cola al mandar); la siguiente, el canal "ventanas" (el compositor). En
+//! x86 (x86-gpu), antes del canal, "pantalla-info": las medidas de la pantalla del GOP. Las dos últimas se buscan por su
+//! nombre (`dashos::llaves`).
+//!
+//! El tamaño de cada cabeza es el que dice el aparato (`GET_DISPLAY_INFO`). En QEMU con ventana GTK, ese es el tamaño
+//! de la ventana cuando arranca el controlador (lo que tocara: 640x480, 1280x800...); con las medidas del GOP, la
+//! cabeza 0 se queda con el modo que puso el firmware (el que pidió el cargador), como antes de la virtio-gpu, y la
+//! ventana lo escala.
+//!
+//! Va en ARM (`virt`, transporte PCI del ECAM) y en x86 (x86-gpu: `make -C kernel x86-uso`), igual; las barreras, de
+//! `dashos::barrera`.
 //!
 //! Lee las cabezas que ofrece el aparato (`GET_DISPLAY_INFO`); a cada una le crea un recurso 2D en B8G8R8X8 (el
 //! XRGB8888 del compositor), le da memoria DMA en trozos de 4 MB, la pone en su salida y se la pasa al compositor
@@ -137,17 +148,34 @@ struct Bloques {
     aparato: usize,
 }
 
-/// Recorre las capacidades del PCIe buscando las de virtio (0x09); todas deben estar en la BAR 4, la que da el kernel.
+/// La BAR de las capacidades de virtio: la de la común (la que da el kernel, que la busca igual).
+fn bar_comun() -> Option<u32> {
+    let mut q = (cfg32(0x34) & 0xfc) as usize;
+    let mut vueltas = 0;
+    while q != 0 && vueltas < 48 {
+        let w = cfg32(q);
+        if w & 0xff == 0x09 && (w >> 24) & 0xff == 1 {
+            return Some(cfg32(q + 4) & 0xff);
+        }
+        q = ((w >> 8) & 0xfc) as usize;
+        vueltas += 1;
+    }
+    None
+}
+
+/// Recorre las capacidades del PCIe buscando las de virtio (0x09); todas deben estar en la BAR de la común, la que da
+/// el kernel.
 fn bloques() -> Option<Bloques> {
     if (cfg32(4) >> 16) & (1 << 4) == 0 {
         return None;
     }
+    let bar = bar_comun()?;
     let (mut comun, mut aviso, mut aparato, mut multiplicador) = (None, None, None, 0);
     let mut q = (cfg32(0x34) & 0xfc) as usize;
     let mut vueltas = 0;
     while q != 0 && vueltas < 48 {
         let w = cfg32(q);
-        if w & 0xff == 0x09 && cfg32(q + 4) & 0xff == 4 {
+        if w & 0xff == 0x09 && cfg32(q + 4) & 0xff == bar {
             let desde = cfg32(q + 8) as usize;
             match (w >> 24) & 0xff {
                 1 => comun = Some(desde),
@@ -197,10 +225,10 @@ impl Cola {
             self.descriptor(2 * k as u16 + 1, resp, respuestas[k], D_ESCRIBE, 0);
             poner16(M_COLA + DISP + 4 + 2 * (self.disp.wrapping_add(k as u16) % ENTRADAS) as usize, 2 * k as u16);
         }
-        unsafe { core::arch::asm!("dmb oshst") };
+        dashos::barrera::escrituras();
         self.disp = self.disp.wrapping_add(n as u16);
         poner16(M_COLA + DISP + 2, self.disp);
-        unsafe { core::arch::asm!("dmb osh") };
+        dashos::barrera::total();
         poner_reg16(self.aviso, COLA_CONTROL);
         // Se espera a que vuelvan: primero girando un poco y después a ratos de 100 µs, hasta 1 s.
         let fin = dashos::ahora_us() + 1_000_000;
@@ -217,7 +245,7 @@ impl Cola {
                 }
                 continue;
             }
-            unsafe { core::arch::asm!("dmb oshld") };
+            dashos::barrera::lecturas();
             let id = dma32(M_COLA + USADOS + 4 + 8 * (self.usados % ENTRADAS) as usize) as usize;
             self.usados = self.usados.wrapping_add(1);
             if id % 2 != 0 || id / 2 >= n {
@@ -284,13 +312,15 @@ fn principal() -> u64 {
         }
         copia > 0
     };
-    let ventanas = if existe(5) { 5u32 } else { 4u32 };
+    let tabla = dashos::llaves::Tabla::leer();
+    let ventanas = tabla.buscar("ventanas").unwrap_or(if existe(5) { 5 } else { 4 });
+    let modo = tabla.buscar("pantalla-info").and_then(modo_del_gop);
     if dashos::registros_proyectar(2, VA) != 0 || dashos::registros_proyectar(3, VA_CFG) != 0 {
         println!("  [virtio-gpu] sin registros");
         return 1;
     }
     let Some(b) = bloques() else {
-        println!("  [virtio-gpu] sin las capacidades de virtio en la BAR 4");
+        println!("  [virtio-gpu] sin las capacidades de virtio en una BAR");
         return 2;
     };
     // Reiniciar, enterado, conductor (3.1.1).
@@ -347,7 +377,11 @@ fn principal() -> u64 {
         let info = M_INFO + 4 * CAB + 24 * i;
         let (ancho, alto, encendida) = (dma32(info + 8), dma32(info + 12), dma32(info + 16) != 0);
         let conectada = encendida && (1..=p::MAX_LADO).contains(&ancho) && (1..=p::MAX_LADO).contains(&alto);
-        let (ancho, alto) = if conectada { (ancho, alto) } else { (ANCHO_SIN, ALTO_SIN) };
+        let (ancho, alto) = match modo {
+            Some(m) if i == 0 => m,
+            _ if conectada => (ancho, alto),
+            _ => (ANCHO_SIN, ALTO_SIN),
+        };
         // La memoria, en trozos de 4 MB (lo más que da `memoria_dma`).
         let total = (ancho * alto * 4) as usize;
         let n_trozos = total.div_ceil(p::TROZO);
@@ -484,6 +518,21 @@ fn principal() -> u64 {
             println!("  [virtio-gpu] {} vaciados, {} malos, {} raros", vaciados, malos, cola.raras);
         }
     }
+}
+
+/// Dónde se lee "pantalla-info".
+const VA_INFO: usize = 0x31_0000_0000;
+
+/// Las medidas de la pantalla del GOP (x86-gpu): ancho y alto, las dos primeras palabras de "pantalla-info" (como las
+/// lee el compositor). Si no cuadran, nada.
+fn modo_del_gop(llave: u32) -> Option<(u32, u32)> {
+    if dashos::memoria_tamano(llave) < 8 || dashos::memoria_proyectar(llave, VA_INFO, false) != 0 {
+        return None;
+    }
+    let leer = |i: usize| unsafe { read_volatile((VA_INFO + 4 * i) as *const u32) };
+    let (ancho, alto) = (leer(0), leer(1));
+    dashos::memoria_quitar(VA_INFO);
+    ((1..=p::MAX_LADO).contains(&ancho) && (1..=p::MAX_LADO).contains(&alto)).then_some((ancho, alto))
 }
 
 fn palabras(p: &[u32]) -> &[u8] {

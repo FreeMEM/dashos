@@ -6,7 +6,11 @@
 #   ACCEL=kvm          con KVM y la CPU del PC (lo pone el Makefile si hay /dev/kvm); vacío, TCG con -cpu max (lento).
 #   PANTALLA=AxB       el modo del GOP que pide el cargador (por omisión 1920x1080; OVMF da los de la VGA de QEMU).
 #   VENTANA=gtk|sdl    la ventana de QEMU (por omisión gtk); none, sin ventana (para capturas por QMP).
+#   GTK_AJUSTAR=on     con GTK, la imagen se escala a la ventana (off: la ventana mide lo que la pantalla).
 #   SONIDO_X86=hda     Intel HDA con hda-duplex (por omisión) o virtio (virtio-sound).
+#   GPU_X86=virtio     la tarjeta gráfica: virtio (por omisión), `virtio-vga`, la virtio-gpu con la VGA de siempre
+#                      delante (el GOP de OVMF va por ella; DashOS pasa a la virtio-gpu, que no se ve a medias); vga, la
+#                      VGA de QEMU sola (solo el GOP, como un PC sin controlador de su tarjeta).
 #   AUDIO=pipewire     el sonido del PC (por omisión pipewire; none, en silencio).
 #   QMP=ruta           un socket de QMP en esa ruta (para capturas y entrada por guion, `tools/x86_uso_capturas.py`).
 #
@@ -33,21 +37,28 @@ else
     CPU="-cpu max"
 fi
 case "${VENTANA:-gtk}" in
-    gtk) PANTALLA_QEMU="-display gtk,zoom-to-fit=on" ;;
+    gtk) PANTALLA_QEMU="-display gtk,zoom-to-fit=${GTK_AJUSTAR:-on}" ;;
     sdl) PANTALLA_QEMU="-display sdl" ;;
     none) PANTALLA_QEMU="-display none" ;;
     *) echo "VENTANA tiene que ser gtk, sdl o none" >&2; exit 1 ;;
+esac
+W=${PANTALLA%x*}
+H=${PANTALLA#*x}
+case "${GPU_X86:-virtio}" in
+    virtio) GPU="-vga none -device virtio-vga,xres=$W,yres=$H" ;;
+    vga) GPU="-vga std" ;;
+    *) echo "GPU_X86 tiene que ser virtio o vga" >&2; exit 1 ;;
 esac
 case "${SONIDO_X86:-hda}" in
     hda) SONIDO="-device intel-hda -device hda-duplex,audiodev=snd0" ;;
     virtio) SONIDO="-device virtio-sound-pci,audiodev=snd0" ;;
     *) echo "SONIDO_X86 tiene que ser hda o virtio" >&2; exit 1 ;;
 esac
-# shellcheck disable=SC2086 # CPU, PANTALLA_QEMU y SONIDO son varias opciones de QEMU.
+# shellcheck disable=SC2086 # CPU, PANTALLA_QEMU, GPU y SONIDO son varias opciones de QEMU.
 exec qemu-system-x86_64 -name DashOS -M q35 $CPU -smp 4 -m 2G \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF" -drive if=pflash,format=raw,file="$D/vars.fd" \
     -drive file=fat:rw:"$D/arranque",format=raw,if=virtio \
-    $PANTALLA_QEMU -serial file:"$D/serie.txt" ${QMP:+-qmp unix:"$QMP",server,nowait} \
+    $PANTALLA_QEMU $GPU -serial file:"$D/serie.txt" ${QMP:+-qmp unix:"$QMP",server,nowait} \
     -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 \
     -device usb-tablet,bus=xhci.0,port=2 \
     -drive file="$D/disco.img",if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv \
