@@ -66,9 +66,28 @@ tecla del volumen (además de dársela al panel, que sigue llevando el volumen) 
 
 - Compositor: las capas y `dashos_dock_v1`.
 - `sesiones`: lanzar lo fijado (`LANZADORES`, solo de `Programas/`, como quien está delante), leer `ENV:`
-  (`LEEN_IDIOMA`) y guardar sus ajustes en `ENVARC:` (`GUARDAN_AJUSTES`: escribe su `ENV:` y pide `GUARDAR_ENV`), y sale
-  como programa del escritorio en el monitor (`ESCRITORIO`).
+  (`LEEN_IDIOMA`: su raíz de `RAM:` es solo para leer) y sale como programa del escritorio en el monitor (`ESCRITORIO`).
 - `inicio`: su ficha (como el centro: de Ana, encerrado en `C`) y el disco para leer (los ajustes de fábrica).
+
+### Guardar solo lo suyo (pedido del coordinador, 2026-11-17)
+
+La primera versión metía al dock en `GUARDAN_AJUSTES`: con eso tenía la raíz de `RAM:` para escribir y podía pedir
+`GUARDAR_ENV` de cualquier fichero de `ENV:`. Era un agujero. Ahora:
+
+- `sesiones` lleva una lista de ajustes por programa, `AJUSTES_PROPIOS` (el dock: solo `Escritorio/dock`). El centro
+  de control sigue pudiendo con todos (es la ventana de Ajustes). Se compara el nombre entero, después de
+  `ajuste_valido`: nada con `..`, `/` de más, `:` ni bytes de control.
+- El dock ya no escribe `ENV:` por su cuenta (su raíz de `RAM:` es solo para leer). Escribe con la orden nueva de
+  `sesiones` **`ESCRIBIR_ENV` (91)**: el nombre en el mensaje y los bytes en un objeto de memoria. `sesiones` mira la
+  lista y se lo pide a `archivos` con la orden nueva **`RAM_ESCRIBIR` (121)** (sin marca: solo `sesiones`), que escribe
+  `Env/<fichero>` del `RAM:` de la sesión (cajones 0700, fichero 0600, del usuario) y avisa a quien vigila `ENV:`.
+- `GUARDAR_ENV` mira la misma lista.
+- Lo negado va al registro común, clase "ajustes": "no escribe ENV:…" (`R_AJUSTE_ESCRIBIR`, 91) y "no guarda ENV:… en
+  ENVARC:" (`R_AJUSTE`), con el porqué ("no es un ajuste suyo", o "el nombre sale del cajón de los ajustes").
+- Prueba hostil (solo en la imagen de las pruebas: el dock nace con el canal "dock-prueba"): al entrar alguien (o a los 2 min), el dock
+  intenta escribir y guardar `Escritorio/menus`, `Sys/locale`, `Prefs/Red/hora`, `../Escritorio/dock`,
+  `Escritorio/../menus`, `/Escritorio/dock` y `Escritorio/dock/../../Sys/locale`. Todo se niega (-2 lo ajeno, -3 los
+  nombres que no valen) y la comprobación del disco tras la prueba busca las líneas en `Estado:Registros/seguridad`.
 
 ## Pruebas
 
@@ -90,6 +109,20 @@ tecla del volumen (además de dársela al panel, que sigue llevando el volumen) 
   dock lo esconde: ahora se mueve sin salir) y las llaves (el dock buscaba "sesiones" y "archivos" por número).
 - `make arranque-virt-2`, `make arranque-virt-escritorio` y `make arranque-virt-shell`: BIEN.
 
+### Pruebas del arreglo de "guardar solo lo suyo"
+
+- `make prueba`: BIEN.
+- `make arranque-virt`, tres vueltas: la línea hostil sale "bien" (las siete rutas negadas, -2 lo ajeno y -3 los nombres
+  que salen del cajón, en escribir y en guardar). Fallan solo líneas de la familia conocida ("[ajustes] el compositor pide
+  800x560" en una vuelta, "[dash-ventana] pulsado" en otra), salvo una vuelta con "[ficheros] A15 sujetar sin soltar":
+  la prueba hostil corría al arrancar y sus negativas iban al registro del disco mientras A15 lo sujetaba. Se pasó a
+  "al entrar alguien, o a los 2 min", y en la vuelta siguiente A15 salió bien. Con el guion atascado antes de entrar Ana
+  no se llega a la comprobación del registro en el disco: esas tres líneas no se han visto pasar.
+- Fijar por la vía nueva, con la imagen de usar a 1920 × 1080: "[sesiones] dock escribe ENV:Escritorio/dock: 1337 bytes" y
+  "guarda ENV:Escritorio/dock en ENVARC: de Ana".
+- `make arranque-virt-linux`, `-escritorio` y `-shell`: BIEN. `-2`: BIEN a la segunda (la primera, "vuelta1: solo 91 %
+  de fondo con Ajustes de vuelta", una captura del multimonitor; no se repitió).
+
 ## Capturas (fuera de git, `~/recuperar/geosian-7d/dms-dock-capturas/`)
 
 A 1920 × 1080, con la imagen de usar (entra Ana, abre dos Shell desde la barra), el fondo de shiva (su "Lofi - Chill
@@ -107,9 +140,7 @@ aspecto común (`dms-barra`).
 
 ## Pendiente del usuario
 
-1. **`GUARDAN_AJUSTES` para el dock**: para guardar lo fijado desde su menú, el dock escribe en el `ENV:` de la sesión y
-   pide `GUARDAR_ENV`; con eso podría escribir cualquier fichero de `ENV:` del usuario. Alternativa: que lo fijado lo
-   guarde el centro a petición del dock. Elegí lo primero (es lo que hace DMS: el dock guarda sus fijados).
+1. (Resuelto: el dock solo escribe y guarda `Escritorio/dock`; ver "Guardar solo lo suyo".)
 2. **El OSD del espacio de trabajo no sale de serie** (como DMS y como shiva). Se pone en Ajustes > Dock.
 3. **Un clic en la ventana que ya tiene el teclado** la trae (no hay minimizar en DashOS); DMS la minimiza.
 4. **El radio del dock** (3, el de niri en shiva) y la redondez de los OSD (38) van en los ficheros del dock y del OSD;

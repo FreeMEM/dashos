@@ -191,7 +191,11 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // S27: el dock y los avisos en pantalla (OSD), como los de DMS. Las capas y la lista de ventanas por su nombre;
     // "sesiones" para lanzar lo fijado (como quien está delante, solo de `Programas/`) y la tabla de nombres, y
     // "archivos" para leer y vigilar sus ajustes de `ENV:`.
-    #[cfg(feature = "virt")]
+    // En la imagen de las pruebas, también el canal "dock-prueba" (de nadie más): con él, el dock hace su prueba hostil
+    // de los ajustes (escribir y guardar los que no son suyos).
+    #[cfg(all(feature = "virt", not(feature = "uso")))]
+    ("dock", programa!("dock"), &[], &["ventanas", "sesiones", "archivos", "dock-prueba"]),
+    #[cfg(all(feature = "virt", feature = "uso"))]
     ("dock", programa!("dock"), &[], &["ventanas", "sesiones", "archivos"]),
     // S10: la prueba hostil de los avisos: un programa cualquiera con la llave.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]

@@ -271,7 +271,7 @@ fn registro() -> Vec<String> {
                 s::R_LANZAR => tr(14, "lanzar"),
                 s::R_ADMIN => tr(15, "administrar"),
                 s::R_APAGAR => tr(16, "apagar"),
-                s::R_AJUSTE => tr(100, "guardar un ajuste"),
+                s::R_AJUSTE | s::R_AJUSTE_ESCRIBIR => tr(100, "guardar un ajuste"),
                 _ => "?",
             };
             let como = match estado {

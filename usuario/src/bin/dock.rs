@@ -361,52 +361,57 @@ fn leer_ajustes() -> (ajustes::Dock, ajustes::Osd, Vec<String>) {
     (dock, osd, dicho)
 }
 
-/// Escribe `bytes` en `ENV:<fichero>` (lo crea, con su cajón, si no está). Los bytes, o el porqué.
-fn escribir_env(fichero: &str, bytes: &[u8]) -> Result<usize, String> {
-    use dashos::asignaciones as asig;
-    let tabla = asig::pedir_tabla(SESIONES()).ok_or_else(|| String::from("sin tabla de nombres"))?;
-    let ses = Sesion::abrir().ok_or_else(|| String::from("sin servicio de archivos"))?;
-    if bytes.len() > a::VENTANA {
-        return Err("demasiado grande".into());
+/// Escribe `bytes` en `ENV:<fichero>` por `sesiones` (`ESCRIBIR_ENV`): el dock solo lee `ENV:`, y `sesiones` solo le
+/// deja escribir los suyos (`Escritorio/dock`). Los bytes van en un objeto de memoria. El estado.
+fn escribir_env(fichero: &str, bytes: &[u8]) -> i32 {
+    const VA_ESCRIBIR: usize = 0x51_0000_0000;
+    let tam = bytes.len().max(1).next_multiple_of(4096);
+    let m = dashos::memoria_crear(tam);
+    if (m as i32) <= 0 {
+        return -1;
     }
-    let mut fs = PorSesion(&ses);
-    if asig::mirar(&mut fs, &tabla, b"ENV:").is_err() {
-        return Err("sin sesión".into());
+    if dashos::memoria_proyectar(m, VA_ESCRIBIR, true) != 0 {
+        dashos::cerrar(m);
+        return -1;
     }
-    let camino = alloc::format!("ENV:{}", fichero);
-    let malo = |e: i32| alloc::format!("{} ({})", camino, e);
-    if let Some((cajon, _)) = fichero.rsplit_once('/') {
-        let c = alloc::format!("ENV:{}", cajon);
-        match asig::abrir(&mut fs, &tabla, c.as_bytes()) {
-            Ok((r, _)) => {
-                ses.pedir(a::CERRAR, r.asa, 0, 0, b"");
-            }
-            Err(a::NO_EXISTE) => {
-                let (r, _) = asig::crear(&mut fs, &tabla, c.as_bytes(), a::CAJON).map_err(malo)?;
-                ses.pedir(a::CERRAR, r.asa, 0, 0, b"");
-            }
-            Err(e) => return Err(malo(e)),
-        }
+    unsafe { core::slice::from_raw_parts_mut(VA_ESCRIBIR as *mut u8, bytes.len()) }.copy_from_slice(bytes);
+    dashos::memoria_quitar(VA_ESCRIBIR);
+    let copia = dashos::llave_duplicar(m, dashos::LEER | dashos::TRANSFERIR, 0);
+    dashos::cerrar(m);
+    if copia <= 0 {
+        return -1;
     }
-    let asa = match asig::abrir(&mut fs, &tabla, camino.as_bytes()) {
-        Ok((r, _)) => {
-            let (e, ..) = ses.pedir(a::TAMANO, r.asa, 0, 0, b"");
-            if e != a::BIEN {
-                ses.pedir(a::CERRAR, r.asa, 0, 0, b"");
-                return Err(malo(e));
-            }
-            r.asa
-        }
-        Err(a::NO_EXISTE) => asig::crear(&mut fs, &tabla, camino.as_bytes(), a::FICHERO).map_err(malo)?.0.asa,
-        Err(e) => return Err(malo(e)),
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut p = [0u8; 12 + 128];
+    let n = fichero.len().min(128);
+    p[0..4].copy_from_slice(&s::ESCRIBIR_ENV.to_le_bytes());
+    p[4..8].copy_from_slice(&(n as u32).to_le_bytes());
+    p[8..12].copy_from_slice(&(bytes.len() as u32).to_le_bytes());
+    p[12..12 + n].copy_from_slice(&fichero.as_bytes()[..n]);
+    let mut r = [0u8; 4];
+    let leido = if dashos::canal_escribir(SESIONES(), &p[..12 + n], &[suyo, copia as u32]) == 0 {
+        dashos::canal_leer_plazo(lectura, &mut r, &mut [], 5_000_000).0
+    } else {
+        dashos::cerrar(suyo);
+        dashos::cerrar(copia as u32);
+        -1
     };
-    ses.ventana()[..bytes.len()].copy_from_slice(bytes);
-    let (e, _, escritos, _, _) = ses.pedir(a::ESCRIBIR, asa, 0, bytes.len() as u64, b"");
-    ses.pedir(a::CERRAR, asa, 0, 0, b"");
-    if e != a::BIEN || escritos as usize != bytes.len() {
-        return Err(malo(if e != a::BIEN { e } else { a::LLENO }));
+    dashos::cerrar(lectura);
+    if leido == 4 { i32::from_le_bytes(r) } else { -1 }
+}
+
+/// S27, prueba hostil (solo en la imagen de las pruebas, con la llave "dock-prueba"): escribir y guardar ajustes que no
+/// son del dock. `sesiones` los niega todos (y los apunta en el registro común).
+fn prueba_hostil_ajustes() {
+    let ajenos = ["Escritorio/menus", "Sys/locale", "Prefs/Red/hora", "../Escritorio/dock", "Escritorio/../menus", "/Escritorio/dock", "Escritorio/dock/../../Sys/locale"];
+    let mut dicho = Vec::new();
+    let mut bien = true;
+    for f in ajenos {
+        let (e, g) = (escribir_env(f, b"x = 1\n"), guardar_en_envarc(f));
+        bien &= e != 0 && g != 0;
+        dicho.push(alloc::format!("{} {}/{}", f, e, g));
     }
-    Ok(bytes.len())
+    println!("  [dock] hostil: escribir y guardar lo ajeno: {}: {}", dicho.join(", "), if bien { "bien" } else { "MAL" });
 }
 
 /// Que `sesiones` copie `ENV:<fichero>` al `ENVARC:` de quien está delante. El estado.
@@ -441,9 +446,10 @@ fn cambiar_fijado(aj: &mut ajustes::Dock, programa: &str, fijar: bool) -> String
         x
     });
     let _ = x.poner("fijados", &aj.fijados.join(", "));
-    let usado = escribir_env(ajustes::FICHERO_DOCK, x.texto().as_bytes());
-    let guardado = if usado.is_ok() { guardar_en_envarc(ajustes::FICHERO_DOCK) } else { -1 };
-    alloc::format!("en ENV: {}; guardado: {}", usado.map_or_else(|e| e, |n| alloc::format!("{} bytes", n)), guardado)
+    let texto = x.texto();
+    let usado = escribir_env(ajustes::FICHERO_DOCK, texto.as_bytes());
+    let guardado = if usado == 0 { guardar_en_envarc(ajustes::FICHERO_DOCK) } else { -1 };
+    alloc::format!("en ENV: {} ({} bytes); guardado: {}", usado, texto.len(), guardado)
 }
 
 /// La vigilancia de `ENV:` y `ENV:Escritorio` (avisos de cambio por la puerta), y el temporizador de reintentar.
@@ -1460,6 +1466,10 @@ fn principal() -> u64 {
     };
     let mut vigila = Vigila { ids: [0; 2], temporizador: 0 };
     vigila.armar(puerta);
+    // S27, la imagen de las pruebas: la prueba hostil de los ajustes, al entrar alguien o, si nadie entra, a los 2 min
+    // (lo ajeno se niega antes de mirar si hay sesión). No al arrancar: sus negativas van al registro común, en el
+    // disco, mientras otras pruebas del arranque sujetan el disco (A15).
+    let mut hostil_hasta = tabla.buscar("dock-prueba").map(|_| dashos::ahora_us() + 120_000_000);
     // Dónde está el puntero.
     let (mut sobre, mut px, mut py) = (0u32, 0i32, 0i32);
     let mut lista_dicha = false;
@@ -1488,6 +1498,14 @@ fn principal() -> u64 {
         }
         if let Some(p) = est.osd.proximo_us(ahora) {
             plazo = plazo.min(p.max(1));
+        }
+        if let Some(h) = hostil_hasta {
+            if ahora >= h || vigila.ids[0] != 0 {
+                hostil_hasta = None;
+                prueba_hostil_ajustes();
+            } else {
+                plazo = plazo.min(h - ahora);
+            }
         }
         let ev = match c.evento_plazo(plazo) {
             Err(()) => {

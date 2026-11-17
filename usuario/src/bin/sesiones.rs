@@ -81,8 +81,17 @@ const CEDEN_RAICES: &[&str] = &["workbench", "explorador"];
 const LEEN_IDIOMA: &[&str] = &["centro", "dock"];
 /// Ajustes en texto: los programas del escritorio que piden guardar un ajuste de `ENV:` en `ENVARC:` (`GUARDAR_ENV`) y
 /// escriben `ENV:` (su raíz de `RAM:`, para leer y escribir): el centro de control, que es la ventana de Ajustes.
-/// S27: también el dock, que guarda los programas fijados desde su menú (`Escritorio/dock`).
-const GUARDAN_AJUSTES: &[&str] = &["centro", "dock"];
+const GUARDAN_AJUSTES: &[&str] = &["centro"];
+/// S27: lo que puede escribir en `ENV:` (`ESCRIBIR_ENV`) y guardar en `ENVARC:` (`GUARDAR_ENV`) cada programa del
+/// escritorio que no es la ventana de Ajustes: solo sus ficheros, uno a uno. El dock, el suyo (los programas fijados
+/// desde su menú). Su raíz de `RAM:` es solo para leer: no escribe `ENV:` por su cuenta.
+const AJUSTES_PROPIOS: &[(&str, &[&str])] = &[("dock", &["Escritorio/dock"])];
+
+/// Si el programa de la ficha `f` puede escribir y guardar el ajuste `fichero`: el centro, cualquiera que valga; los de
+/// `AJUSTES_PROPIOS`, solo los suyos, tal cual (sin `..`, sin `/` de más: se compara el nombre entero).
+fn puede_ajuste(f: &Ficha, fichero: &[u8]) -> bool {
+    es(f, GUARDAN_AJUSTES) || AJUSTES_PROPIOS.iter().any(|(p, lista)| nombre(&f.nombre) == *p && lista.iter().any(|x| x.as_bytes() == fichero))
+}
 /// Lo que reparte, con la llave sin marca de cada uno: servicios (canales) y permisos del kernel, como el de la clase de
 /// plazo (U4). A un canal se le dice quién es el nuevo cliente (su entrada de directorio); a un permiso, no.
 /// U6: el sonido, con la llave sin marca que da `inicio` (`CANAL_SISTEMA`), no con un número fijo (`SIN_NUMERO`).
@@ -223,7 +232,7 @@ impl Registro {
             R_MATAR | R_LANZAR => (rg::SEGURIDAD, "procesos"),
             R_ADMIN => (rg::SEGURIDAD, "admin"),
             R_APAGAR => (rg::SEGURIDAD, "apagar"),
-            R_AJUSTE => (rg::SEGURIDAD, "ajustes"),
+            R_AJUSTE | R_AJUSTE_ESCRIBIR => (rg::SEGURIDAD, "ajustes"),
             _ => (rg::SEGURIDAD, "programa"),
         };
         let uid = self.uid;
@@ -242,6 +251,7 @@ impl Registro {
             (R_APAGAR, true) => self.linea(f, quien, uid, clase, format_args!("{}", q), motivo),
             (R_APAGAR, false) => self.linea(f, quien, uid, clase, format_args!("no puede {}", q), motivo),
             (R_AJUSTE, _) => self.linea(f, quien, uid, clase, format_args!("no guarda ENV:{} en ENVARC: (estado {})", q, estado), motivo),
+            (R_AJUSTE_ESCRIBIR, _) => self.linea(f, quien, uid, clase, format_args!("no escribe ENV:{} (estado {})", q, estado), motivo),
             _ => self.linea(f, quien, uid, clase, format_args!("{} {}", q, estado), motivo),
         }
         self.apuntar_binario(tipo, estado, quien, que);
@@ -3366,10 +3376,10 @@ fn principal() -> u64 {
                     let fichero = m.get(8..8 + largo).unwrap_or(b"");
                     // De la sesión de quien lo pide: su usuario, con la sesión abierta y su cuenta.
                     let cuenta = yo.filter(|f| abiertas.contains(&f.uid)).and_then(|f| volumen_de(f.uid).map(|v| (f.uid, v)));
-                    let estado = if !yo.is_some_and(|f| es(&f, GUARDAN_AJUSTES)) {
-                        PROTEGIDO
-                    } else if !dashos::protocolo::archivos::ajuste_valido(fichero) {
+                    let estado = if !dashos::protocolo::archivos::ajuste_valido(fichero) {
                         -3
+                    } else if !yo.is_some_and(|f| puede_ajuste(&f, fichero)) {
+                        PROTEGIDO
                     } else if let Some((uid, vol)) = cuenta {
                         let cuenta = vol.as_str();
                         let mut r = cabecera_ram(dashos::protocolo::archivos::RAM_GUARDAR, uid, uid);
@@ -3390,13 +3400,56 @@ fn principal() -> u64 {
                         println!("  [sesiones] {} pide guardar ENV:{:?} en ENVARC:: {}", nombre(&quien), core::str::from_utf8(&fichero[..fichero.len().min(64)]).unwrap_or("?"), estado);
                         // Lo negado, al registro común (`Estado:Registros/seguridad`, clase "ajustes"), con el porqué.
                         let porque = match estado {
-                            PROTEGIDO => "solo lo pide el centro de control",
+                            PROTEGIDO => "no es un ajuste suyo",
                             -3 => "el nombre sale del cajón de los ajustes o no vale",
                             NO_EXISTE => "sin la sesión abierta",
                             _ => "el servicio de archivos no pudo",
                         };
                         let f = &fichero[..fichero.len().min(rg::MAX_TEXTO / 2)];
                         registro.apuntar_por(R_AJUSTE, estado, &quien, f, porque);
+                    }
+                    dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
+                }
+                // S27: escribir un ajuste en `ENV:` por un programa del escritorio que solo lee `ENV:` (el dock), y solo
+                // los suyos (`AJUSTES_PROPIOS`). Los bytes llegan en memoria (ll[1]); va a `archivos` con `RAM_ESCRIBIR`.
+                ESCRIBIR_ENV => {
+                    let quien = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
+                    let largo = (u32_en(4) as usize).min(m.len().saturating_sub(12));
+                    let bytes = u32_en(8);
+                    let fichero = m.get(12..12 + largo).unwrap_or(b"");
+                    let cuenta = yo.filter(|f| abiertas.contains(&f.uid)).map(|f| f.uid);
+                    let estado = if !dashos::protocolo::archivos::ajuste_valido(fichero) {
+                        -3
+                    } else if !yo.is_some_and(|f| puede_ajuste(&f, fichero)) {
+                        PROTEGIDO
+                    } else if k < 2 || bytes as u64 > dashos::protocolo::archivos::MAX_AJUSTE {
+                        -3
+                    } else if let Some(uid) = cuenta {
+                        let mut r = cabecera_ram(dashos::protocolo::archivos::RAM_ESCRIBIR, uid, uid);
+                        r[16] = fichero.len() as u8;
+                        r[20..24].copy_from_slice(&bytes.to_le_bytes());
+                        let c = dashos::protocolo::archivos::CABECERA;
+                        r[c..c + fichero.len()].copy_from_slice(fichero);
+                        // La memoria va a `archivos` (la cierra él, o `orden_ram` si no sale).
+                        usadas = 2;
+                        let (e, escritos, _) = orden_ram(&r[..c + fichero.len()], Some(ll[1]));
+                        if e == BIEN {
+                            println!("  [sesiones] {} escribe ENV:{}: {} bytes", nombre(&quien), core::str::from_utf8(fichero).unwrap_or("?"), escritos);
+                        }
+                        e
+                    } else {
+                        NO_EXISTE
+                    };
+                    if estado != BIEN {
+                        println!("  [sesiones] {} pide escribir ENV:{:?}: {}", nombre(&quien), core::str::from_utf8(&fichero[..fichero.len().min(64)]).unwrap_or("?"), estado);
+                        let porque = match estado {
+                            PROTEGIDO => "no es un ajuste suyo",
+                            -3 => "el nombre sale del cajón de los ajustes o no vale",
+                            NO_EXISTE => "sin la sesión abierta",
+                            _ => "el servicio de archivos no pudo",
+                        };
+                        let f = &fichero[..fichero.len().min(rg::MAX_TEXTO / 2)];
+                        registro.apuntar_por(R_AJUSTE_ESCRIBIR, estado, &quien, f, porque);
                     }
                     dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
                 }
