@@ -8,7 +8,9 @@
 //!
 //! Tres ficheros, para que lo que manda un programa no se coma lo de seguridad: `seguridad` (lo que decide `sesiones`:
 //! permisos dados, quitados y negados, acciones de administrador, entradas), `sistema` (servicios que se caen y vuelven,
-//! memoria) y `programas` (lo que apunta cada programa, con un ritmo máximo por programa).
+//! memoria) y `programas` (lo que apunta cada programa, con un ritmo máximo por programa). Y uno por dominio de
+//! controladores (S35, "Los dominios se dejan mirar"): lo que dice su consola y cada vez que se reinicia (clase
+//! "consola"; solo de su servicio, `DOMINIOS`), para que el kernel de un dominio no se coma `sistema`.
 //!
 //! Una línea:
 //!
@@ -29,10 +31,24 @@
 /// El cajón de los registros, desde la raíz del disco (`Estado:Registros/`, S4b).
 pub const CAJON: &str = "Estado/Registros";
 /// Los ficheros, por su número en el protocolo (`REGISTRO_LEER` de `protocolo::sesiones`).
-pub const FICHEROS: [&str; 3] = ["seguridad", "sistema", "programas"];
+pub const FICHEROS: [&str; 4] = ["seguridad", "sistema", "programas", "dominio-red"];
 pub const SEGURIDAD: usize = 0;
 pub const SISTEMA: usize = 1;
 pub const PROGRAMAS: usize = 2;
+pub const DOMINIO_RED: usize = 3;
+/// Los servicios de dominios de controladores y su fichero: solo ellos apuntan "consola", y va a su fichero.
+pub const DOMINIOS: &[(&str, usize)] = &[("dominio", DOMINIO_RED)];
+/// La consola de un dominio va a otro ritmo (un arranque de su kernel son decenas de líneas seguidas): una ráfaga de
+/// `RAFAGA_CONSOLA` y después una cada `CADA_CONSOLA_US`.
+pub const RAFAGA_CONSOLA: u32 = 200;
+pub const CADA_CONSOLA_US: u64 = 50_000;
+
+/// El fichero de la consola del programa `programa` (su nombre, como lo sabe `sesiones`), si es el servicio de un
+/// dominio.
+pub fn fichero_de_consola(programa: &[u8]) -> Option<usize> {
+    let p = &programa[..programa.iter().position(|&c| c == 0).unwrap_or(programa.len())];
+    DOMINIOS.iter().find(|(n, _)| n.as_bytes() == p).map(|x| x.1)
+}
 /// Lo que crece un fichero antes de pasar a `.1`.
 pub const TOPE: u64 = 64 * 1024;
 /// Lo más que mide una línea entera, con su salto.
@@ -55,12 +71,13 @@ pub const CLASES: &[(&str, &str)] = &[
     ("guardia", "lo que la guardia de la caja Amiga niega"),
     ("memoria", "memoria baja y programas que topan con su tope"),
     ("servicio", "servicios que se caen y vuelven"),
+    ("consola", "lo que dice un dominio de controladores (su kernel y su /init) y sus reinicios"),
     ("registro", "el propio registro: líneas que no se apuntaron"),
     ("programa", "lo que apunta un programa"),
 ];
 
 /// Las clases que puede pedir un programa del sistema al apuntar (los demás apuntan siempre "programa").
-pub const CLASES_DEL_SISTEMA: &[&str] = &["guardia", "memoria", "servicio", "programa"];
+pub const CLASES_DEL_SISTEMA: &[&str] = &["guardia", "memoria", "servicio", "programa", "consola"];
 
 /// Si `c` es una clase conocida.
 pub fn es_clase(c: &str) -> bool {
@@ -385,18 +402,23 @@ impl<const N: usize> Default for Ritmo<N> {
 impl<const N: usize> Ritmo<N> {
     /// Si `marca` puede apuntar ahora (`ahora_us`). Sí: cuántas se le perdieron antes (para decirlo). No: `None`.
     pub fn dejar(&mut self, marca: u64, ahora_us: u64) -> Option<u32> {
+        self.dejar_con(marca, ahora_us, RAFAGA, CADA_US)
+    }
+
+    /// Como `dejar`, con otra ráfaga y otro ritmo (la consola de un dominio).
+    pub fn dejar_con(&mut self, marca: u64, ahora_us: u64, rafaga: u32, cada_us: u64) -> Option<u32> {
         let i = match self.e.iter().position(|x| x.0 == marca && marca != 0) {
             Some(i) => i,
             None => {
                 let i = (0..N).min_by_key(|&i| if self.e[i].0 == 0 { 0 } else { self.e[i].2.max(1) }).unwrap_or(0);
-                self.e[i] = (marca, RAFAGA, ahora_us, 0);
+                self.e[i] = (marca, rafaga, ahora_us, 0);
                 i
             }
         };
         let x = &mut self.e[i];
-        let nuevas = (ahora_us.saturating_sub(x.2) / CADA_US).min(RAFAGA as u64) as u32;
+        let nuevas = (ahora_us.saturating_sub(x.2) / cada_us.max(1)).min(rafaga as u64) as u32;
         if nuevas > 0 {
-            x.1 = (x.1 + nuevas).min(RAFAGA);
+            x.1 = (x.1 + nuevas).min(rafaga);
             x.2 = ahora_us;
         }
         if x.1 == 0 {
@@ -576,5 +598,24 @@ mod pruebas {
             assert!(r.dejar(1, 10_000_000).is_some());
         }
         assert!(r.dejar(1, 0).is_none());
+    }
+
+    #[test]
+    fn la_consola_de_un_dominio() {
+        assert_eq!(fichero_de_consola(b"dominio\0\0\0"), Some(DOMINIO_RED));
+        assert_eq!(FICHEROS[DOMINIO_RED], "dominio-red");
+        assert_eq!(fichero_de_consola(b"editor"), None);
+        assert_eq!(fichero_de_consola(b"dominio-falso"), None);
+        assert!(es_clase("consola") && CLASES_DEL_SISTEMA.contains(&"consola"));
+        // Su ritmo: una ráfaga larga y después una cada 50 ms, aparte del de siempre.
+        let mut r = Ritmo::<4>::default();
+        let mut si = 0;
+        for _ in 0..300 {
+            if r.dejar_con(5, 1_000, RAFAGA_CONSOLA, CADA_CONSOLA_US).is_some() {
+                si += 1;
+            }
+        }
+        assert_eq!(si, RAFAGA_CONSOLA);
+        assert_eq!(r.dejar_con(5, 1_000 + CADA_CONSOLA_US, RAFAGA_CONSOLA, CADA_CONSOLA_US), Some(300 - RAFAGA_CONSOLA));
     }
 }

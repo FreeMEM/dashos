@@ -95,6 +95,8 @@ prueba: $(PRUEBAS) catalogos
 	cd ../usuario && rustc --edition 2024 --test src/protocolo/archivos.rs -o target/protocolo_archivos_pruebas && ./target/protocolo_archivos_pruebas -q
 	@# S35, paso 2: virtio por mensajes entre virtio-red y el servicio de un dominio (mensajes malos, colas fuera de la ventana).
 	cd ../usuario && rustc --edition 2024 --test src/protocolo/virtio_msg.rs -o target/virtio_msg_pruebas && ./target/virtio_msg_pruebas -q
+	@# S35, paso 2 con USB: el protocolo del aparato prestado entre el xHCI y el servicio del dominio.
+	cd ../usuario && rustc --edition 2024 --test src/protocolo/usb_prestado.rs -o target/usb_prestado_pruebas && ./target/usb_prestado_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/cortafuegos.rs -o target/cortafuegos_pruebas && ./target/cortafuegos_pruebas -q
 	@# Trasfondo nativo: las cuentas del monitor (contadores raros, procesos que nacen y mueren) y sus ajustes.
 	cd ../usuario && rustc --edition 2024 --test src/monitor.rs -o target/monitor_pruebas && ./target/monitor_pruebas -q
@@ -254,23 +256,28 @@ arranque-virt-linux: usuario FORCE
 	@# La captura de la terminal, fuera de git (capturas-agente/ está en .git/info/exclude).
 	mkdir -p ../capturas-agente && cp target/caja-terminal.png ../capturas-agente/caja-linux-terminal.png 2>/dev/null || true
 
-# Un dominio de controladores (S35, paso 2; docs/bitacoras/dominio-red.md): la imagen de `virt` con `dominio`, en QEMU
-# con virtualization=on. La red de DashOS no tiene virtio-net-pci: tiene una e1000 que DashOS presta (sin IOMMU, solo
-# en QEMU) a un Linux mínimo en una máquina virtual (`dominio`); ese Linux la lleva y devuelve a DashOS una virtio-net
-# por mensajes, que lleva `virtio-red` de siempre. La e1000 está en el concentrador con la red de usuario de QEMU (DHCP
-# y el eco del PC en 10.0.2.100:7, con restrict=on: nada sale del PC) y el vecino de prueba (`tools/red_vecino.py`,
-# 10.0.2.53). `dominio-prueba` hace DHCP, ecos TCP y UDP, y relanza el dominio en modos hostiles (oferta falsa,
-# descriptores que no son suyos, leer fuera de su memoria, colgarse y morir a media transferencia). El kernel y el
-# initramfs del dominio, fuera de git: `tools/dominio_red.py preparar` (DOMINIO_IMAGE, DOMINIO_INITRD). Con el disco de
-# las pruebas (NVMe): así `sesiones` escribe el registro común, donde quedan las caídas del dominio, y la prueba lo lee.
-DOMINIO_DIR ?= $(HOME)/recuperar/geosian-7d/dominio-red
+# Un dominio de controladores (S35, paso 2; docs/bitacoras/dominio-red.md y dominio-usb.md): la imagen de `virt` con
+# `dominio`, en QEMU con virtualization=on. La red de DashOS no tiene virtio-net-pci: tiene un adaptador de red USB
+# (el usb-net de QEMU, en el puerto 3 del xHCI, junto al teclado y el ratón) que el xHCI de DashOS presta por USB/IP a
+# un Linux mínimo en una máquina virtual (`dominio`); ese Linux lo lleva con su controlador (cdc_ether) y devuelve a
+# DashOS una virtio-net por mensajes, que lleva `virtio-red` de siempre. El adaptador está en el concentrador con la red
+# de usuario de QEMU (DHCP y el eco del PC en 10.0.2.100:7, con restrict=on: nada sale del PC) y el vecino de prueba
+# (`tools/red_vecino.py`, 10.0.2.53). `dominio-prueba` hace DHCP, ecos TCP y UDP, y relanza el dominio en modos
+# hostiles (oferta falsa, USB/IP falso o enorme, otro aparato, tormenta de peticiones, basura en el flujo, colgarse y
+# morir a media transferencia), pide desenchufar y enchufar el adaptador (lo hace `tools/guion_dominio_usb.py` por el
+# monitor de QEMU), mata al conductor y lo hace caer tres veces seguidas (el aviso). El kernel y el initramfs del
+# dominio, fuera de git: `tools/dominio_red.py preparar usb` (DOMINIO_IMAGE, DOMINIO_INITRD). Con el disco de las
+# pruebas (NVMe): así `sesiones` escribe el registro común, donde quedan las caídas y la consola del dominio, y la prueba
+# lo lee.
+DOMINIO_DIR ?= $(HOME)/recuperar/geosian-7d/dominio-usb
 DOMINIO_IMAGE ?= $(DOMINIO_DIR)/Image
 DOMINIO_INITRD ?= $(DOMINIO_DIR)/initramfs.cpio
 VIRT_DOMINIO := target/kernel8-virt-dominio.img
-RED_DOMINIO := -netdev user,id=red0,restrict=on,guestfwd=tcp:10.0.2.100:7-cmd:$(abspath ../tools/red_eco.py) -netdev dgram,id=red5,local.type=unix,local.path=$(RED)/qemu2.sock,remote.type=unix,remote.path=$(RED)/vecino.sock -netdev hubport,id=red6,hubid=0,netdev=red5 -netdev hubport,id=red2,hubid=0,netdev=red0 -netdev hubport,id=red4,hubid=0 -device e1000,netdev=red4,mac=$(RED_MAC),romfile=
+ADAPTADOR_USB := usb-net,netdev=red4,mac=$(RED_MAC),bus=xhci.0,port=3,id=usbred
+RED_DOMINIO := -netdev user,id=red0,restrict=on,guestfwd=tcp:10.0.2.100:7-cmd:$(abspath ../tools/red_eco.py) -netdev dgram,id=red5,local.type=unix,local.path=$(RED)/qemu2.sock,remote.type=unix,remote.path=$(RED)/vecino.sock -netdev hubport,id=red6,hubid=0,netdev=red5 -netdev hubport,id=red2,hubid=0,netdev=red0 -netdev hubport,id=red4,hubid=0 $(USB_QEMU) -device $(ADAPTADOR_USB)
 arranque-virt-dominio: usuario $(DISCO_NVME) FORCE
-	@test -f "$(DOMINIO_IMAGE)" || { echo "Falta el kernel del dominio (DOMINIO_IMAGE=$(DOMINIO_IMAGE)): no va en git; tools/dominio_red.py preparar"; exit 1; }
-	@test -f "$(DOMINIO_INITRD)" || { echo "Falta el initramfs del dominio (DOMINIO_INITRD=$(DOMINIO_INITRD)): tools/dominio_red.py preparar"; exit 1; }
+	@test -f "$(DOMINIO_IMAGE)" || { echo "Falta el kernel del dominio (DOMINIO_IMAGE=$(DOMINIO_IMAGE)): no va en git; tools/dominio_red.py preparar usb"; exit 1; }
+	@test -f "$(DOMINIO_INITRD)" || { echo "Falta el initramfs del dominio (DOMINIO_INITRD=$(DOMINIO_INITRD)): tools/dominio_red.py preparar usb"; exit 1; }
 	mkdir -p target/dominio
 	cp "$(DOMINIO_IMAGE)" target/dominio/Image
 	cp "$(DOMINIO_INITRD)" target/dominio/initrd
@@ -280,9 +287,9 @@ arranque-virt-dominio: usuario $(DISCO_NVME) FORCE
 	rm -f $(RED)/qemu2.sock $(RED)/vecino.sock
 	mkdir -p $(RED)
 	python3 -I ../tools/red_vecino.py $(RED) $(RED_MAC) 900 & VECINO=$$!; \
-	GUARDAR=$(abspath target/salida_virt_dominio.txt) MEMORIA=3G MAQUINA=highmem=off,virtualization=on QEMU_EXTRA="-device ramfb -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv $(RED_DOMINIO)" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_dominio.txt $(or $(TIEMPO_DOMINIO),900); \
+	DOMINIO_USB="$(ADAPTADOR_USB)" GUARDAR=$(abspath target/salida_virt_dominio.txt) MEMORIA=3G MAQUINA=highmem=off,virtualization=on QEMU_EXTRA="-device ramfb -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv $(RED_DOMINIO)" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_dominio.txt $(or $(TIEMPO_DOMINIO),900); \
 	R=$$?; kill $$VECINO 2>/dev/null; exit $$R
-	grep -E "\[(dominio|dominio-prueba|virtio-red)\]" target/salida_virt_dominio.txt | grep -vE "linux: \[ " || true
+	grep -E "\[(dominio|dominio-prueba|virtio-red|xhci)\]" target/salida_virt_dominio.txt | grep -vE "linux: \[ |tecla|ratón" || true
 
 # Arch Linux ARM en la caja Linux (H9, docs/bitacoras/caja-linux.md): la Image de Image-arch (tinyconfig con lo que
 # pide systemd), sin initramfs, y el disco de Arch como NVMe: una GPT con la partición de DashOS (en ella, el RedoxFS de

@@ -33,7 +33,13 @@
 //! | 0x06c | OFERTA_COLAS | escribe | Cuántas colas |
 //! | 0x070 | OFERTA_TAM_COLA | escribe | El tamaño máximo de cada cola |
 //! | 0x074 | OFERTA | escribe 1 / lee | Publica la oferta; leído: 0 sin publicar, 1 aceptada, 2 rechazada |
+//! | 0x05c | TUBO | escribe | Hay algo nuevo en el tubo de USB/IP (bytes en la ida, o sitio en la vuelta) |
 //! | 0x080..0x08c | MEDIDA | escribe | Memoria total y libre (KB) y su reloj (ms); escribir en 0x08c (LISTO) la publica |
+//! | 0x090, 0x094 | TUBO_DIR | lee | Dónde ve el dominio el tubo de USB/IP (`dominio::usbip`); 0 si no hay |
+//! | 0x098 | TUBO_TAM | lee | Lo que mide |
+//! | 0x09c | USB_DEVID | lee | El aparato USB prestado (`busnum << 16 | devnum`, como lo engancha vhci-hcd); 0, ninguno |
+//! | 0x0a0 | USB_VELOCIDAD | lee | Su velocidad, como la cuenta Linux (`USB_SPEED_*`: 1 baja, 2 plena, 3 alta, 5 super) |
+//! | 0x0a4 | USB_CUENTA | lee | El número del préstamo: cambia con cada uno (y al quitarlo) |
 //! | 0x100..0x13f | CONFIG | lee y escribe | El espacio de configuración del aparato (en la red, la MAC); fijo tras la oferta |
 
 use alloc::rc::Rc;
@@ -64,6 +70,7 @@ pub const R_COLA_LISTA: u64 = 0x048;
 pub const R_USADOS: u64 = 0x050;
 pub const R_LATIDO: u64 = 0x054;
 pub const R_FALLO: u64 = 0x058;
+pub const R_TUBO: u64 = 0x05c;
 pub const R_OFERTA_TIPO: u64 = 0x060;
 pub const R_OFERTA_FUNC: u64 = 0x064;
 pub const R_OFERTA_COLAS: u64 = 0x06c;
@@ -73,6 +80,11 @@ pub const R_MEDIDA_TOTAL: u64 = 0x080;
 pub const R_MEDIDA_LIBRE: u64 = 0x084;
 pub const R_MEDIDA_RELOJ: u64 = 0x088;
 pub const R_LISTO: u64 = 0x08c;
+pub const R_TUBO_DIR: u64 = 0x090;
+pub const R_TUBO_TAM: u64 = 0x098;
+pub const R_USB_DEVID: u64 = 0x09c;
+pub const R_USB_VELOCIDAD: u64 = 0x0a0;
+pub const R_USB_CUENTA: u64 = 0x0a4;
 pub const R_CONFIG: u64 = 0x100;
 pub const TAM_CONFIG: usize = 64;
 
@@ -80,6 +92,10 @@ pub const TAM_CONFIG: usize = 64;
 pub const E_AVISO: u32 = 1;
 /// En EVENTOS: cambió el estado, las funciones, la ventana o las colas.
 pub const E_CAMBIO: u32 = 2;
+/// En EVENTOS: el servicio escribió en la vuelta del tubo o leyó de la ida.
+pub const E_TUBO: u32 = 4;
+/// En EVENTOS: cambió el aparato USB prestado (USB_DEVID, USB_CUENTA).
+pub const E_USB: u32 = 8;
 
 /// Colas como mucho (la red sin varias colas usa dos: recibir y enviar).
 pub const MAX_COLAS: usize = 2;
@@ -160,6 +176,10 @@ pub struct Novedades {
     pub medida: Option<(u32, u32, u32)>,
     /// Accesos de tamaño o desplazamiento que no existen.
     pub raros: u64,
+    /// Escribió TUBO: hay que mirar el tubo.
+    pub tubo: bool,
+    /// Cuántas veces escribió TUBO.
+    pub tubo_escritos: u64,
 }
 
 /// El estado del canal, que comparten el aparato (lo que ve el dominio) y el servicio.
@@ -180,6 +200,8 @@ pub struct EstadoCanal {
     config: [u32; TAM_CONFIG / 4],
     oferta: u32,
     medida: [u32; 3],
+    tubo: (u64, u64),
+    usb: (u32, u32, u32),
     nov: Novedades,
 }
 
@@ -239,6 +261,30 @@ impl EstadoCanal {
         self.colas.get(i).copied()
     }
 
+    /// El tubo de USB/IP: dónde lo ve el dominio y cuánto mide.
+    pub fn poner_tubo(&mut self, base: u64, tam: u64) {
+        self.tubo = (base, tam);
+    }
+
+    /// El servicio escribió en la vuelta del tubo o leyó de la ida.
+    pub fn avisar_tubo(&mut self) {
+        self.eventos |= E_TUBO;
+    }
+
+    /// Presta al dominio el aparato `devid` a `velocidad` (o ninguno, con 0). Devuelve el número del préstamo, que
+    /// cambia cada vez.
+    pub fn poner_usb(&mut self, devid: u32, velocidad: u32) -> u32 {
+        let cuenta = self.usb.2.wrapping_add(1).max(1);
+        self.usb = (devid, if devid == 0 { 0 } else { velocidad }, cuenta);
+        self.eventos |= E_USB;
+        cuenta
+    }
+
+    /// El préstamo de ahora: (devid, velocidad, número).
+    pub fn usb(&self) -> (u32, u32, u32) {
+        self.usb
+    }
+
     /// La línea de interrupción: alta mientras haya eventos sin leer.
     pub fn linea(&self) -> bool {
         self.eventos != 0
@@ -267,6 +313,12 @@ impl EstadoCanal {
             0x044 => (cola.usados >> 32) as u32,
             R_COLA_LISTA => cola.lista as u32,
             R_OFERTA => self.oferta,
+            R_TUBO_DIR => self.tubo.0 as u32,
+            0x094 => (self.tubo.0 >> 32) as u32,
+            R_TUBO_TAM => self.tubo.1.min(u32::MAX as u64) as u32,
+            R_USB_DEVID => self.usb.0,
+            R_USB_VELOCIDAD => self.usb.1,
+            R_USB_CUENTA => self.usb.2,
             d if (R_CONFIG..R_CONFIG + TAM_CONFIG as u64).contains(&d) => self.config[((d - R_CONFIG) / 4) as usize],
             _ => {
                 self.nov.raros += 1;
@@ -288,6 +340,10 @@ impl EstadoCanal {
             }
             R_LATIDO => self.nov.latido = true,
             R_FALLO => self.nov.fallo = true,
+            R_TUBO => {
+                self.nov.tubo = true;
+                self.nov.tubo_escritos += 1;
+            }
             // La oferta se escribe antes de publicarla, y una vez aceptada ya no cambia. Una rechazada se puede volver a
             // escribir y publicar.
             R_OFERTA_TIPO if self.oferta != OFERTA_ACEPTADA => self.o_tipo = v,
@@ -490,6 +546,37 @@ mod pruebas {
         // 33 333 USADOS con la cola 2 (no existe), y los cuatro accesos raros.
         assert_eq!(n.raros, 33_333 + 4);
         assert_eq!(e.borrow_mut().novedades(), Novedades::default());
+    }
+
+    #[test]
+    fn tubo_y_usb() {
+        let (mut c, e) = Canal::nuevo();
+        let mut m = ram();
+        assert_eq!(c.leer(R_USB_DEVID, 4, &mut m), 0);
+        e.borrow_mut().poner_tubo(0x4190_0000, 0x4_1000);
+        let n = e.borrow_mut().poner_usb(0x0001_0002, 3);
+        assert_eq!(c.leer(R_EVENTOS, 4, &mut m), E_USB as u64);
+        assert_eq!(c.leer(R_TUBO_DIR, 4, &mut m), 0x4190_0000);
+        assert_eq!(c.leer(R_TUBO_TAM, 4, &mut m), 0x4_1000);
+        assert_eq!(c.leer(R_USB_DEVID, 4, &mut m), 0x0001_0002);
+        assert_eq!(c.leer(R_USB_VELOCIDAD, 4, &mut m), 3);
+        assert_eq!(c.leer(R_USB_CUENTA, 4, &mut m), n as u64);
+        // Quitarlo: sin aparato ni velocidad, y otro número.
+        let n2 = e.borrow_mut().poner_usb(0, 3);
+        assert_ne!(n, n2);
+        assert_eq!(c.leer(R_USB_VELOCIDAD, 4, &mut m), 0);
+        // Los avisos del tubo, en los dos sentidos.
+        e.borrow_mut().avisar_tubo();
+        assert_eq!(c.leer(R_EVENTOS, 4, &mut m), (E_USB | E_TUBO) as u64);
+        for _ in 0..1000 {
+            c.escribir(R_TUBO, 4, 0, &mut m);
+        }
+        // Sus registros de solo lectura no se escriben.
+        c.escribir(R_USB_DEVID, 4, 7, &mut m);
+        let nov = e.borrow_mut().novedades();
+        assert!(nov.tubo);
+        assert_eq!((nov.tubo_escritos, nov.raros), (1000, 1));
+        assert_eq!(c.leer(R_USB_DEVID, 4, &mut m), 0);
     }
 
     #[test]

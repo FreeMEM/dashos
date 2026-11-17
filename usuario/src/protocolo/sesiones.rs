@@ -263,7 +263,7 @@ pub const R_APAGAR: u32 = 7;
 pub const R_AJUSTE: u32 = 90;
 
 /// S6, S36 (regla 2): leer el registro común (`dashos::registro`), de cualquier programa: orden, fichero (u32: 0
-/// seguridad, 1 sistema, 2 programas), parte (u32: 0 el de ahora, 1 el `.1` de antes de rotar), desde (u64: el byte
+/// seguridad, 1 sistema, 2 programas, 3 dominio-red: `registro::FICHEROS`), parte (u32: 0 el de ahora, 1 el `.1` de antes de rotar), desde (u64: el byte
 /// del de ahora desde el que se lee; si pasa del final, es que rotó, y se lee desde el principio) y una llave para
 /// contestar. Contesta el estado (i32), cuántas veces ha rotado ese fichero (u32), hasta qué byte llegó (u64: el `desde`
 /// de la próxima vez), lo que miden las líneas (u64) y, si hay alguna, una llave de memoria solo para leer con ellas:
@@ -274,7 +274,8 @@ pub const LARGO_REGISTRO_LEER: usize = 24;
 /// S6, S36: apuntar en el registro común, de cualquier programa con ficha: orden, largo del qué (u32), largo del
 /// motivo (u32), clase (16 bytes, rellenos de ceros: solo cuenta en los programas del sistema, y de
 /// `registro::CLASES_DEL_SISTEMA`; los demás apuntan "programa"), el qué y el motivo. La hora, el programa y el usuario
-/// los pone `sesiones`. Va a `programas` (o a `sistema`, de un programa del sistema con otra clase). Contesta un i32:
+/// los pone `sesiones`. Va a `programas` (o a `sistema`, de un programa del sistema con otra clase; o, con "consola",
+/// al fichero de su dominio, solo del servicio de un dominio: `registro::DOMINIOS`). Contesta un i32:
 /// 0, o `OCUPADO` si va más deprisa que `registro::RAFAGA` (no se apunta; se cuenta y se dice luego).
 pub const APUNTAR: u32 = 81;
 /// S6b, S36 (regla 3): lo concedido a los programas del usuario de quien pide, para la orden `Permiso`; ver lo propio es

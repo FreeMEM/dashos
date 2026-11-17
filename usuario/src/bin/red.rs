@@ -989,6 +989,14 @@ impl Servicio {
                         Some(r) => self.red = Some(r),
                         None => cerrar_llaves(llaves),
                     }
+                } else if orden == p::TARJETA && k == 2 && n >= 10 && self.red.as_ref().is_some_and(|r| r.tarjeta.mac == m[4..10]) {
+                    // E6 con un dominio (S35): el controlador se cayó y `inicio` lo relanzó; trae la misma tarjeta con
+                    // memoria de tramas y aviso nuevos (los índices empiezan de cero en los dos lados). La pila sigue:
+                    // la dirección y las conexiones no se pierden.
+                    if !relevar_tarjeta(self.red.as_mut().unwrap(), llaves[0], llaves[1]) {
+                        self.red = None;
+                        cerrar_llaves(llaves);
+                    }
                 } else {
                     cerrar_llaves(llaves);
                 }
@@ -1417,6 +1425,27 @@ fn puerto_nuevo(red: &mut Option<Red>, mac: &[u8], aviso: u32) -> i32 {
 }
 
 /// Con la tarjeta: proyecta sus ranuras, crea la interfaz y pide la dirección por DHCP (IPv4) y por SLAAC (IPv6).
+/// La misma tarjeta, de un controlador relanzado: su memoria de tramas y su aviso, nuevos. Falso si la memoria no
+/// sirve: la de antes ya no está proyectada, así que la red se queda sin tarjeta hasta otro `TARJETA`.
+fn relevar_tarjeta(r: &mut Red, memoria: u32, aviso: u32) -> bool {
+    dashos::memoria_quitar(VA_TRAMAS);
+    let tam = dashos::memoria_tamano(memoria);
+    let (rx, tx) = if tam > 0 && dashos::memoria_proyectar(memoria, VA_TRAMAS, true) == 0 { (tramas(p::T_RANURAS_RX), tramas(p::T_RANURAS_TX)) } else { (0, 0) };
+    if !(1..=RANURAS_MAX).contains(&rx) || !(1..=RANURAS_MAX).contains(&tx) || 64 + (rx + tx) as i64 * p::RANURA as i64 > tam {
+        println!("  [red] la tarjeta del controlador relanzado no sirve ({} y {} ranuras en {} bytes)", rx, tx, tam);
+        dashos::memoria_quitar(VA_TRAMAS);
+        return false;
+    }
+    // La memoria sigue con su llave, como la primera (`tarjeta_nueva`).
+    dashos::cerrar(core::mem::replace(&mut r.aviso, aviso));
+    r.tarjeta.rx = rx;
+    r.tarjeta.tx = tx;
+    r.tarjeta.enviadas = false;
+    r.tarjeta.llena = false;
+    println!("  [red] el controlador de la tarjeta se relanzó: la misma tarjeta, con {} y {} ranuras nuevas; la pila sigue", rx, tx);
+    true
+}
+
 fn tarjeta_nueva(mac: &[u8], memoria: u32, aviso: u32) -> Option<Red> {
     let tam = dashos::memoria_tamano(memoria);
     if tam <= 0 || dashos::memoria_proyectar(memoria, VA_TRAMAS, true) != 0 {

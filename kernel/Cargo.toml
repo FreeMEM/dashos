@@ -58,7 +58,7 @@ linux = []
 # caja/build-demo): sus programas esperan a que alguien los mire.
 demo = ["uso", "linux"]
 # Con `virt`: un dominio de controladores (S35, paso 2; `make arranque-virt-dominio`): el kernel y el initramfs del
-# dominio de red (fuera de git, de target/dominio/) y la e1000 de QEMU, que se le presta sin IOMMU (solo en QEMU).
+# dominio de red (fuera de git, de target/dominio/); su aparato, un adaptador de red USB que le presta el xHCI.
 dominio = ["virt"]
 
 # El build.rs comprime los programas del paquete de arranque (LZ4, formato de bloque); el kernel no depende de nada.

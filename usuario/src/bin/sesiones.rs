@@ -3530,10 +3530,20 @@ fn principal() -> u64 {
                         None => PROTEGIDO,
                         Some(f) => {
                             let del_sistema = f.marca < PRIMER_PID_PROPIO && rg::CLASES_DEL_SISTEMA.contains(&clase) && clase != "programa";
-                            let (fichero, clase) = if del_sistema { (rg::SISTEMA, clase) } else { (rg::PROGRAMAS, "programa") };
+                            // S35: la consola de un dominio, a su fichero (solo de su servicio) y con su ritmo.
+                            let consola = if del_sistema && clase == "consola" { rg::fichero_de_consola(&f.nombre) } else { None };
+                            let (fichero, clase) = match consola {
+                                Some(c) => (c, clase),
+                                None if del_sistema && clase != "consola" => (rg::SISTEMA, clase),
+                                None => (rg::PROGRAMAS, "programa"),
+                            };
                             // El ritmo, por programa y usuario (no por proceso: lanzar copias no da más).
                             let clave = f.nombre.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3)) ^ ((f.uid as u64) << 32) | 1;
-                            match ritmo.dejar(clave, dashos::ahora_us()) {
+                            let dejar = match consola {
+                                Some(_) => ritmo.dejar_con(clave ^ 2, dashos::ahora_us(), rg::RAFAGA_CONSOLA, rg::CADA_CONSOLA_US),
+                                None => ritmo.dejar(clave, dashos::ahora_us()),
+                            };
+                            match dejar {
                                 None => OCUPADO,
                                 Some(perdidas) => {
                                     if perdidas > 0 {
