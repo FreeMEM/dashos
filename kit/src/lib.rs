@@ -11,6 +11,7 @@ pub mod lienzo;
 pub mod menus;
 pub mod objetos;
 pub mod color;
+pub mod iconos;
 pub mod imagen;
 pub mod png;
 pub mod semilla;
@@ -18,6 +19,7 @@ pub mod tema;
 pub mod teclado;
 pub mod texto;
 pub mod textos;
+mod trazos;
 
 /// Idiomas y catálogos (el crate `idioma`), para los programas que usan el kit.
 pub use idioma;

@@ -113,6 +113,8 @@ pub struct Menus {
     tragar: bool,
     teclado: Teclado,
     ctrl: u8,
+    /// Los símbolos de las marcas y de la flecha de los submenús.
+    simbolos: crate::iconos::Simbolos,
 }
 
 fn mover(r: Rect, origen: (i32, i32)) -> Rect {
@@ -157,6 +159,7 @@ impl Menus {
             tragar: false,
             teclado: Teclado::new(),
             ctrl: 0,
+            simbolos: crate::iconos::Simbolos::new(),
         }
     }
 
@@ -859,10 +862,10 @@ impl Menus {
         let cosas = &self.datos.menus[a.menu].cosas;
         let marcas = self.medida_menu(a.menu).marcas;
         let sub = a.sub.map(|s| s.cosa);
-        dibujar_caja(l, t, regular, medium, mover(caja, origen), cosas, a.primera, a.actual, a.teclado, marcas, sub, origen, caja);
+        dibujar_caja(l, t, regular, medium, &self.simbolos, mover(caja, origen), cosas, a.primera, a.actual, a.teclado, marcas, sub, origen, caja);
         if let Some((caja_s, cosas_s, s)) = self.sub_abierto() {
             let marcas = self.medida_sub(a.menu, s.cosa).marcas;
-            dibujar_caja(l, t, regular, medium, mover(caja_s, origen), cosas_s, s.primera, s.actual, a.teclado, marcas, None, origen, caja_s);
+            dibujar_caja(l, t, regular, medium, &self.simbolos, mover(caja_s, origen), cosas_s, s.primera, s.actual, a.teclado, marcas, None, origen, caja_s);
         }
     }
 }
@@ -880,6 +883,7 @@ fn dibujar_caja(
     t: &Tema,
     regular: &mut Fuente,
     medium: &mut Fuente,
+    simbolos: &crate::iconos::Simbolos,
     caja: Rect,
     cosas: &[Cosa],
     primera: usize,
@@ -923,11 +927,8 @@ fn dibujar_caja(
             if let Cosa::Entrada(e) = c {
                 let (cx, cy) = (x + MARCA / 2, r.y + r.h / 2);
                 match e.marca {
-                    // La marca de casilla: un ✓ de dos trazos (en octavos de píxel).
-                    Marca::Casilla(true) => {
-                        l.trazo(((cx - 6) * 8, cy * 8), ((cx - 2) * 8, (cy + 4) * 8), 16, tinta);
-                        l.trazo(((cx - 2) * 8, (cy + 4) * 8), ((cx + 6) * 8, (cy - 5) * 8), 16, tinta);
-                    }
+                    // La marca de casilla: el símbolo "check" de Material, de 20.
+                    Marca::Casilla(true) => simbolos.pintar(l, cx - 10, cy - 10, 20, crate::iconos::simbolo::CHECK, tinta),
                     Marca::Opcion(true) => l.redondeado(Rect::new(cx - 4, cy - 4, 8, 8), 4, tinta),
                     Marca::Opcion(false) => l.borde(Rect::new(cx - 7, cy - 7, 14, 14), 7, 2, suave),
                     _ => {}
@@ -948,10 +949,8 @@ fn dibujar_caja(
                 regular.dibujar(l, derecha - w, y, &e.atajo, TAM, suave);
             }
             Cosa::Sub(_) => {
-                // La flecha del submenú: un ángulo hacia la derecha.
-                let (cx, cy) = (derecha - 4, r.y + r.h / 2);
-                l.trazo(((cx - 3) * 8, (cy - 5) * 8), ((cx + 2) * 8, cy * 8), 14, suave);
-                l.trazo(((cx + 2) * 8, cy * 8), ((cx - 3) * 8, (cy + 5) * 8), 14, suave);
+                // La flecha del submenú: el símbolo "arrow_right" de Material (Material 3), de 24, pegado a la derecha.
+                simbolos.pintar(l, derecha - 16, r.y + (r.h - 24) / 2, 24, crate::iconos::simbolo::ARROW_RIGHT, suave);
             }
             _ => {}
         }

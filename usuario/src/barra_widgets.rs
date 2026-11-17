@@ -10,6 +10,7 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use kit::iconos::{simbolo, Simbolo, Simbolos};
 use kit::lienzo::{Color, Lienzo, Rect};
 use kit::tema::{con_opacidad, mezcla, Tema};
 use kit::texto::Fuente;
@@ -450,7 +451,9 @@ pub struct Vista {
 }
 
 /// Pinta la barra entera en `px` (de `ancho` x `alto`).
-pub fn pintar(px: &mut [u32], ancho: i32, alto: i32, c: &Config, b: &Barra, d: &Datos, disp: &Disposicion, v: &Vista, t: &Tema, f: &mut Fuente, medio: &mut Fuente) {
+/// Unión de `iconos`: los iconos son Material Symbols (`kit::iconos`), de `sim`, con su caché.
+#[allow(clippy::too_many_arguments)]
+pub fn pintar(px: &mut [u32], ancho: i32, alto: i32, c: &Config, b: &Barra, d: &Datos, disp: &Disposicion, v: &Vista, t: &Tema, f: &mut Fuente, medio: &mut Fuente, sim: &Simbolos) {
     let m = disp.m;
     let mut l = Lienzo::new(px, ancho, alto, ancho as usize);
     l.borrar(Rect::new(0, 0, ancho, alto), 0);
@@ -510,9 +513,9 @@ pub fn pintar(px: &mut [u32], ancho: i32, alto: i32, c: &Config, b: &Barra, d: &
         let centro_y = y0 + p.r.h / 2;
         let tam = m.letra;
         match p.id {
-            "lanzador" => icono_apps(&mut l, p.r, if abierto { icono_c } else { t.primario }),
+            "lanzador" => sim.centrado(&mut l, p.r, 20, simbolo::APPS, if abierto { icono_c } else { t.primario }),
             "avisos" => {
-                icono_campana(&mut l, p.r, icono_c);
+                sim.centrado(&mut l, p.r, 20, simbolo::NOTIFICATIONS, icono_c);
                 if d.sin_leer > 0 {
                     punto(&mut l, 2 * (p.r.x + p.r.w / 2 + 6), 2 * (p.r.y + p.r.h / 2 - 6), 6, t.error);
                 }
@@ -595,10 +598,14 @@ pub fn pintar(px: &mut [u32], ancho: i32, alto: i32, c: &Config, b: &Barra, d: &
                 }
             }
             "cpu" | "memoria" | "disco" => {
-                let ic = |l: &mut Lienzo, r: Rect, col| match p.id {
-                    "cpu" => icono_cpu(l, r, col),
-                    "memoria" => icono_memoria(l, r, col),
-                    _ => icono_disco(l, r, col),
+                // De 18 en el cuadro de 16 (los de Material dejan 2 de margen de cada 24).
+                let ic = |l: &mut Lienzo, r: Rect, col| {
+                    let s = match p.id {
+                        "cpu" => simbolo::MEMORY,
+                        "memoria" => simbolo::MEMORY_ALT,
+                        _ => simbolo::HARD_DRIVE,
+                    };
+                    sim.pintar(l, r.x - 1, r.y - 1, 18, s, col);
                 };
                 let col = if abierto { icono_c } else { t.primario };
                 if vertical {
@@ -627,14 +634,15 @@ pub fn pintar(px: &mut [u32], ancho: i32, alto: i32, c: &Config, b: &Barra, d: &
                 for i in iconos {
                     let r = if vertical { Rect::new(x0 + (p.r.w - 16) / 2, y0 + a + (m.icono - 16) / 2, 16, 16) } else { Rect::new(x0 + a + (m.icono - 16) / 2, centro_y - 8, 16, 16) };
                     if i == 0 {
+                        // Sin red, "lan" con una raya encima (Material no tiene "lan_off").
                         if red == 2 {
-                            icono_red(&mut l, r, t.primario);
+                            sim.pintar(&mut l, r.x - 1, r.y - 1, 18, simbolo::LAN, t.primario);
                         } else {
-                            icono_red(&mut l, r, t.sobre_variante_superficie);
+                            sim.pintar(&mut l, r.x - 1, r.y - 1, 18, simbolo::LAN, t.sobre_variante_superficie);
                             l.trazo(((r.x + 1) * 8, (r.y + 1) * 8), ((r.x + 15) * 8, (r.y + 15) * 8), 12, t.sobre_variante_superficie);
                         }
                     } else {
-                        icono_sonido(&mut l, r, nivel, silencio, if silencio { t.sobre_variante_superficie } else { t.primario });
+                        sim.pintar(&mut l, r.x - 1, r.y - 1, 18, simbolo_sonido(nivel, silencio), if silencio { t.sobre_variante_superficie } else { t.primario });
                     }
                     a += paso;
                 }
@@ -660,87 +668,13 @@ pub fn pintar(px: &mut [u32], ancho: i32, alto: i32, c: &Config, b: &Barra, d: &
     }
 }
 
-/// El icono de aplicaciones de Material (nueve puntos en rejilla), de 18, centrado en `r`.
-pub fn icono_apps(l: &mut Lienzo, r: Rect, color: Color) {
-    let (cx2, cy2) = (2 * r.x + r.w, 2 * r.y + r.h);
-    for fy in -1..=1 {
-        for fx in -1..=1 {
-            punto(l, cx2 + fx * 14, cy2 + fy * 14, 4, color);
-        }
+/// El símbolo del altavoz para el nivel (Material: "volume_up" por encima del 50 %, "volume_down" hasta él,
+/// "volume_mute" en 0) y el silencio ("volume_off"). De la rama `iconos`.
+pub fn simbolo_sonido(nivel: u32, silencio: bool) -> Simbolo {
+    match (silencio, nivel) {
+        (true, _) => simbolo::VOLUME_OFF,
+        (false, 0) => simbolo::VOLUME_MUTE,
+        (false, 1..=50) => simbolo::VOLUME_DOWN,
+        _ => simbolo::VOLUME_UP,
     }
-}
-
-/// El icono de red (el "lan" de Material, de 16): una caja arriba unida a dos abajo.
-pub fn icono_red(l: &mut Lienzo, r: Rect, color: Color) {
-    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-    l.redondeado(Rect::new(cx - 3, cy - 8, 6, 5), 1, color);
-    l.rellenar(Rect::new(cx - 1, cy - 3, 2, 3), color);
-    l.rellenar(Rect::new(cx - 6, cy, 12, 2), color);
-    l.rellenar(Rect::new(cx - 6, cy + 2, 2, 2), color);
-    l.rellenar(Rect::new(cx + 4, cy + 2, 2, 2), color);
-    l.redondeado(Rect::new(cx - 8, cy + 4, 6, 5), 1, color);
-    l.redondeado(Rect::new(cx + 2, cy + 4, 6, 5), 1, color);
-}
-
-/// El altavoz (de 16): la caja, la bocina y las ondas que pida el nivel; con el silencio, una cruz.
-pub fn icono_sonido(l: &mut Lienzo, r: Rect, nivel: u32, silencio: bool, color: Color) {
-    let (cx, cy) = (r.x + 5, r.y + r.h / 2);
-    l.rellenar(Rect::new(cx - 4, cy - 2, 3, 4), color);
-    for i in 0..4 {
-        l.rellenar(Rect::new(cx - 1 + i, cy - 2 - i, 1, 4 + 2 * i), color);
-    }
-    if silencio {
-        l.trazo(((cx + 5) * 8 + 4, (cy - 3) * 8 + 4), ((cx + 10) * 8 + 4, (cy + 2) * 8 + 4), 12, color);
-        l.trazo(((cx + 10) * 8 + 4, (cy - 3) * 8 + 4), ((cx + 5) * 8 + 4, (cy + 2) * 8 + 4), 12, color);
-        return;
-    }
-    l.recortar(Rect::new(cx + 4, r.y, r.w, r.h));
-    if nivel > 0 {
-        l.borde(Rect::new(cx - 1, cy - 3, 7, 6), 3, 1, color);
-    }
-    if nivel > 50 {
-        l.borde(Rect::new(cx - 2, cy - 6, 11, 12), 6, 1, color);
-    }
-    l.soltar_recorte();
-}
-
-/// El chip de la CPU (de 16).
-pub fn icono_cpu(l: &mut Lienzo, r: Rect, color: Color) {
-    let (cx, cy) = (r.x + 8, r.y + 8);
-    l.borde(Rect::new(cx - 5, cy - 5, 10, 10), 2, 2, color);
-    l.redondeado(Rect::new(cx - 2, cy - 2, 4, 4), 1, color);
-    for k in [-3, 0, 3] {
-        l.rellenar(Rect::new(cx + k - 1, cy - 8, 2, 3), color);
-        l.rellenar(Rect::new(cx + k - 1, cy + 5, 2, 3), color);
-        l.rellenar(Rect::new(cx - 8, cy + k - 1, 3, 2), color);
-        l.rellenar(Rect::new(cx + 5, cy + k - 1, 3, 2), color);
-    }
-}
-
-/// La memoria (de 16): una tarjeta con sus chips y los dientes abajo.
-pub fn icono_memoria(l: &mut Lienzo, r: Rect, color: Color) {
-    let (cx, cy) = (r.x + 8, r.y + 8);
-    l.borde(Rect::new(cx - 8, cy - 5, 16, 9), 2, 2, color);
-    for k in [-5, -1, 3] {
-        l.rellenar(Rect::new(cx + k, cy - 2, 2, 3), color);
-    }
-    for k in [-6, -3, 0, 3, 6] {
-        l.rellenar(Rect::new(cx + k - 1, cy + 5, 2, 3), color);
-    }
-}
-
-/// El disco (el "storage" de Material, de 16): tres bandejas con su luz.
-pub fn icono_disco(l: &mut Lienzo, r: Rect, color: Color) {
-    let (cx, cy) = (r.x + 8, r.y + 8);
-    for k in [-6, -1, 4] {
-        l.redondeado(Rect::new(cx - 7, cy + k, 14, 3), 1, color);
-    }
-}
-
-/// La campana de los avisos (18), centrada en `r`.
-pub fn icono_campana(l: &mut Lienzo, r: Rect, color: Color) {
-    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-    l.redondeado_esquinas(Rect::new(cx - 6, cy - 7, 12, 11), [6, 6, 1, 1], color);
-    l.redondeado(Rect::new(cx - 8, cy + 3, 16, 2), 1, color);
-    punto(l, 2 * cx, 2 * cy + 13, 4, color);
 }

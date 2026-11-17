@@ -141,6 +141,12 @@ const CATEGORIAS: &[(&str, &str)] = &[
     // Unión de `dms-dock`: también tras Acerca de.
     ("dock", "Dock"),
 ];
+/// El icono de cada categoría (Material Symbols, en el orden de `CATEGORIAS`).
+const ICONOS_CATEGORIAS: [kit::iconos::Simbolo; CATEGORIAS.len()] = {
+    use kit::iconos::simbolo as m;
+    // Unión de union-dms: Cuentas, Barra, Avisos, Centro de control y Dock, tras Acerca de.
+    [m::KEY, m::SHIELD, m::HARD_DRIVE, m::MONITOR, m::PALETTE, m::MONITOR_HEART, m::DASHBOARD, m::INFO, m::MANAGE_ACCOUNTS, m::TOOLBAR, m::NOTIFICATIONS, m::TUNE, m::DOCK_TO_BOTTOM]
+};
 /// El nombre que se ve de la categoría `k` de `CATEGORIAS`, en el idioma del usuario (el de la tabla es el de la
 /// consola, siempre en castellano).
 fn nombre_categoria(k: usize) -> &'static str {
@@ -550,6 +556,8 @@ const PREFS: &str = "Prefs";
 const FICHERO_FONDO: &str = "fondo";
 /// S26: el aspecto de los programas de las cajas (el texto de `wayland::aspecto`), al lado.
 const FICHERO_CAJAS: &str = "cajas";
+/// S37: el tema de iconos elegido, `Escritorio/iconos` de `ENV:` y `ENVARC:` (`kit::iconos::freedesktop`).
+const FICHERO_ICONOS: &str = kit::iconos::freedesktop::FICHERO_ELECCION;
 
 /// Una sesión con el servicio de archivos, con su ventana proyectada (se quita al soltarla).
 struct Sesion {
@@ -1314,7 +1322,75 @@ fn apariencia(ap: &Apariencia, cajas: &Ajuste) -> (Vec<String>, Vec<String>) {
         let en_pantalla = if estado == 0 && *f == visto { alloc::format!(" · {}", tr(42, "en pantalla")) } else { String::new() };
         l.push(alloc::format!("{}{}", trf(43, "Fondo: {}", &[f]), en_pantalla));
     }
+    // S37: los iconos de los ficheros, si el usuario ha instalado algún tema de Linux en `Home:Iconos/` (si no, no hay
+    // nada que elegir y no sale): los de DashOS o uno de ellos.
+    let temas = temas_iconos();
+    if !temas.is_empty() {
+        let elegido = leer_ajuste(FICHERO_ICONOS).ok().and_then(|b| kit::iconos::freedesktop::eleccion_de(&b));
+        l.push(alloc::format!("{}{}", "Iconos: los de DashOS", marca(elegido.is_none())));
+        for (cajon, nombre) in &temas {
+            l.push(alloc::format!("Iconos: {}{}", nombre, marca(elegido.as_deref() == Some(cajon.as_str()))));
+        }
+    }
     (l, lista)
+}
+
+/// S37: los temas de iconos de Linux que hay en `Iconos/` (los cajones con un `index.theme` que se lee y no está
+/// oculto, como mucho 16), por orden: su cajón y el nombre que dice.
+fn temas_iconos() -> Vec<(String, String)> {
+    use dashos::protocolo::archivos as a;
+    use kit::iconos::freedesktop as fd;
+    let mut l = Vec::new();
+    let Some(ses) = Sesion::abrir() else { return l };
+    let (e, asa, _, _, _) = ses.pedir(a::BUSCAR, 0, 0, 0, fd::CAJON_TEMAS);
+    if e != a::BIEN {
+        return l;
+    }
+    let mut cajones = Vec::new();
+    let mut desde = 0u64;
+    'pag: while cajones.len() < 16 {
+        let (e, _, cuantas, siguiente, usados) = ses.pedir(a::LISTAR, asa, desde, 0, "");
+        if e != a::BIEN || cuantas == 0 {
+            break;
+        }
+        let v = ses.ventana();
+        let mut p = 0usize;
+        for _ in 0..cuantas {
+            if p + 24 > (usados as usize).min(v.len()) {
+                break 'pag;
+            }
+            let (tipo, ln, lc) = (v[p + 18], v[p + 19] as usize, v[p + 22] as usize);
+            let nombre = v.get(p + 24..p + 24 + ln).and_then(|b| core::str::from_utf8(b).ok()).unwrap_or("");
+            if tipo == a::CAJON && fd::nombre_seguro(nombre) && !nombre.contains('|') && cajones.len() < 16 {
+                cajones.push(String::from(nombre));
+            }
+            p = (p + 24 + ln + lc).next_multiple_of(8);
+        }
+        if siguiente == u64::MAX {
+            break;
+        }
+        desde = siguiente;
+    }
+    ses.pedir(a::CERRAR, asa, 0, 0, "");
+    for c in cajones {
+        let (e, asa, tam, _, _) = ses.pedir(a::BUSCAR, 0, 0, 0, &alloc::format!("{}/{}/index.theme", fd::CAJON_TEMAS, c));
+        if e != a::BIEN {
+            continue;
+        }
+        let max = (ses.ventana().len() as u64).min(fd::MAX_INDEX as u64);
+        let (e, _, leidos, _, _) = ses.pedir(a::LEER, asa, 0, tam.min(max), "");
+        ses.pedir(a::CERRAR, asa, 0, 0, "");
+        if e != a::BIEN || tam > max {
+            continue;
+        }
+        if let Ok(t) = fd::leer_index(&c, &ses.ventana()[..leidos.min(max) as usize]) {
+            if !t.oculto {
+                l.push((c, t.nombre.replace('|', " ")));
+            }
+        }
+    }
+    l.sort();
+    l
 }
 
 /// Lo que se sabe de una pantalla (de su `wl_output`): su objeto, nombre, sitio, ancho, alto, frecuencia en mHz y
@@ -2087,8 +2163,9 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
         (atr::FILAS, Valor::Int(CATEGORIAS.len() as i64)),
         (atr::VALOR, Valor::Int(categoria as i64)),
         (atr::PESO, Valor::Int(40)),
-        // La de navegación de Material 3: sin contenedor y la categoría elegida en una píldora.
+        // La de navegación de Material 3: sin contenedor y la categoría elegida en una píldora, con su icono.
         (atr::ESTILO, Valor::Int(1)),
+        (atr::ICONOS, Valor::Texto(ICONOS_CATEGORIAS.map(|s| s.trazado()).join("|"))),
     ]);
     // Material 3: la categoría como título y su explicación como texto secundario; Quitar, tonal; Cerrar, de texto.
     let titulo = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new())), (atr::ESTILO, Valor::Int(1))]);
@@ -2858,6 +2935,23 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                             (lineas_registro, lista_fondos) = apariencia(&ap, &cajas);
                             i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
                             cambio = true;
+                        }
+                        // S37: los iconos de los ficheros (los de DashOS o un tema de Linux de `Home:Iconos/`). Va a
+                        // `ENV:` y se guarda en `ENVARC:`; el explorador lo lee al prepararse.
+                        k if k >= (FILAS_FIJAS + lista_fondos.len()) as i64 => {
+                            let temas = temas_iconos();
+                            let j = k as usize - FILAS_FIJAS - lista_fondos.len();
+                            if j <= temas.len() {
+                                let tema = if j == 0 { None } else { Some(temas[j - 1].0.as_str()) };
+                                let antes = leer_ajuste(FICHERO_ICONOS).ok();
+                                let texto = kit::iconos::freedesktop::texto_de_eleccion(tema, antes.as_deref());
+                                let usado = escribir_env(FICHERO_ICONOS, texto.as_bytes());
+                                let guardado = if usado.is_ok() { guardar_en_envarc(FICHERO_ICONOS) } else { -1 };
+                                println!("  [centro] Iconos: {}; en ENV: {:?}; guardado: {}", tema.unwrap_or("los de DashOS"), usado, guardado);
+                                (lineas_registro, lista_fondos) = apariencia(&ap, &cajas);
+                                i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                                cambio = true;
+                            }
                         }
                         _ => {}
                     }

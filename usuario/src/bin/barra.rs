@@ -86,6 +86,7 @@ use alloc::vec::Vec;
 use dashos::println;
 use dashos::protocolo::archivos as a;
 use dashos::protocolo::sesiones as s;
+use kit::iconos::{simbolo, Simbolos};
 use kit::lienzo::{Color, Lienzo, Rect};
 use lanzador_lista::{Lista, MAX_PROGRAMAS};
 use kit::teclado::{Tecla, Teclado};
@@ -169,6 +170,8 @@ struct Barra {
     d: Datos,
     /// S10: los menús del programa activo, si van en la barra.
     mb: barra_menus::MenusBarra,
+    /// Los Material Symbols de las barras (kit::iconos), con su caché (rama `iconos`).
+    simbolos: Simbolos,
 }
 
 /// Un monitor: su global y su objeto `wl_output`, su nombre (DASHOS-1...) y lo que mide.
@@ -429,6 +432,7 @@ struct Lanzador {
     alto: i32,
     /// La memoria de su búfer, mientras está abierto.
     hoja: Option<Lamina>,
+    simbolos: Simbolos,
 }
 
 /// La altura del lanzador con `n` programas: hasta `FILAS` filas, y al menos una (para decir que no hay). Se fija al
@@ -450,12 +454,6 @@ fn centrado(f: &mut Fuente, l: &mut Lienzo, r: Rect, base: i32, texto: &str, tam
 
 
 
-/// La lupa de buscar, de 20, centrada en `r`.
-fn icono_lupa(l: &mut Lienzo, r: Rect, color: Color) {
-    let (cx, cy) = (r.x + r.w / 2 - 2, r.y + r.h / 2 - 2);
-    l.borde(Rect::new(cx - 6, cy - 6, 13, 13), 7, 2, color);
-    l.trazo(((cx + 4) * 8 + 4, (cy + 4) * 8 + 4), ((cx + 9) * 8, (cy + 9) * 8), 18, color);
-}
 
 
 
@@ -475,7 +473,7 @@ fn pintar_lanzador(px: &mut [u32], la: &Lanzador, t: &Tema, fuente: &mut Fuente,
     let mut l = Lienzo::new(px, ANCHO_L, alto, ANCHO_L as usize);
     l.redondeado(Rect::new(0, 0, ANCHO_L, alto), 28, t.contenedor());
     l.redondeado(BUSCADOR, BUSCADOR.h / 2, t.contenedor_alto());
-    icono_lupa(&mut l, Rect::new(BUSCADOR.x + 12, BUSCADOR.y + 16, 24, 24), t.sobre_variante_superficie);
+    la.simbolos.pintar(&mut l, BUSCADOR.x + 12, BUSCADOR.y + 16, 24, simbolo::SEARCH, t.sobre_variante_superficie);
     let x = BUSCADOR.x + 52;
     let base = BUSCADOR.y + 34;
     let cursor = if lista.busca.is_empty() {
@@ -1025,7 +1023,7 @@ fn pintar_inst(c: &mut Cliente, b: &Barra, bs: &mut Barras, k: usize, fuente: &m
     i.vista.pulsado = i.pulso.map(|p| (p.0, progreso_pulso(p, ahora).0));
     let (ancho, alto) = (i.ancho, i.alto);
     let px = i.hoja.as_mut().unwrap().px((ancho * alto) as usize);
-    pintar(px, ancho, alto, &b.cfg, cb, &d, &disp, &i.vista, &b.tema, fuente, medio);
+    pintar(px, ancho, alto, &b.cfg, cb, &d, &disp, &i.vista, &b.tema, fuente, medio, &b.simbolos);
     if menus && let Some(fila) = disp.menus {
         let mut l = Lienzo::new(px, ancho, alto, ancho as usize);
         b.mb.pintar_fila(&mut l, &b.tema, fuente, medio, fila, ancho);
@@ -1115,7 +1113,7 @@ fn principal() -> u64 {
     if let Err(porque) = leer_zona() {
         println!("  [barra] zona horaria: {}; se queda UTC", porque);
     }
-    let mut b = Barra { tema: Tema::CLARO, cfg: Config::de_serie(), d: Datos { espacio: 1, espacio_antes: 1, cambio: 1000, ..Datos::default() }, mb };
+    let mut b = Barra { tema: Tema::CLARO, cfg: Config::de_serie(), d: Datos { espacio: 1, espacio_antes: 1, cambio: 1000, ..Datos::default() }, mb, simbolos: Simbolos::new() };
     // Las barras configuradas: se piden al centro, y se espera un poco a la primera (para no poner las de serie y
     // cambiarlas al momento).
     if suscribir_cfg(puerta_centro) {
@@ -1156,7 +1154,7 @@ fn principal() -> u64 {
     }
     let reloj = || avisos_vista::Reloj { ns: dashos::hora_ns(), zona: zona_de_ahora() };
     let mut dash: Option<dash_reloj::Dash> = None;
-    let mut la = Lanzador { lista: Lista::default(), encima: None, fallo: None, alto: 0, hoja: None };
+    let mut la = Lanzador { lista: Lista::default(), encima: None, fallo: None, alto: 0, hoja: None, simbolos: Simbolos::new() };
     let mut lanzador_configurado = false;
     let mut teclado = Teclado::new();
     // Dónde está el puntero: en qué superficie y en qué punto.

@@ -44,6 +44,8 @@ mod ops;
 mod pintar;
 #[path = "../explorador/iconos.rs"]
 mod iconos;
+#[path = "../explorador/tema_linux.rs"]
+mod tema_linux;
 #[path = "../idiomas.rs"]
 mod idiomas;
 
@@ -835,6 +837,12 @@ pub struct App {
     pub tema: Tema,
     pub regular: Fuente,
     pub medio: Fuente,
+    /// Los símbolos de la interfaz (Material Symbols) y la colección de iconos de DashOS, con sus cachés.
+    pub simbolos: kit::iconos::Simbolos,
+    pub iconos: kit::iconos::coleccion::Iconos,
+    /// S37: el tema de iconos de Linux elegido en Ajustes (vacío: los de DashOS) y sus iconos ya pintados.
+    tema_linux: Vec<kit::iconos::freedesktop::TemaIconos>,
+    pub iconos_linux: iconos::DelTema,
     ventanas: Vec<Ventana>,
     siguiente_id: u32,
     abiertas: u32,
@@ -2286,6 +2294,7 @@ pub fn preparar(app: &mut App) {
     comprobar_nombres(app);
     preparar_papelera(app);
     app.disco_libre();
+    app.cargar_tema_iconos();
     println!("  [explorador] listo: espera a que el Workbench le pida abrir algo");
 }
 
@@ -2461,6 +2470,10 @@ fn principal() -> u64 {
         tema: Tema::CLARO,
         regular: Fuente::regular(),
         medio: Fuente::medium(),
+        simbolos: kit::iconos::Simbolos::new(),
+        iconos: kit::iconos::coleccion::Iconos::new(),
+        tema_linux: Vec::new(),
+        iconos_linux: BTreeMap::new(),
         ventanas: Vec::new(),
         siguiente_id: PRIMER_ID,
         abiertas: 0,
