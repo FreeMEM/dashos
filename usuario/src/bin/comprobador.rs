@@ -250,13 +250,12 @@ fn principal() -> u64 {
     servir(lectura, vuelta, sectores, al)
 }
 
-/// Sujetar el disco; si otro lo tiene sujeto, esperar (hasta 10 s). El estado.
+/// Sujetar el disco; si otro lo tiene sujeto, esperar a que lo suelte (hasta 120 s: la prueba de `ficheros` que
+/// sujeta sin soltar escribe hasta llenarlo, y con el PC cargado tarda). El estado.
 fn sujetar(al: u32) -> i32 {
+    let desde = dashos::ahora_us();
     let mut e = archivos(al, SUJETAR);
-    for _ in 0..1000 {
-        if e != EN_USO {
-            break;
-        }
+    while e == EN_USO && dashos::ahora_us() - desde < 120_000_000 {
         dashos::dormir_us(10_000);
         e = archivos(al, SUJETAR);
     }
