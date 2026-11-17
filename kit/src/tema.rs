@@ -86,15 +86,39 @@ impl Tema {
 /// Los colores de acento que ofrece el centro de control (S10c); el primero, el violeta de referencia.
 pub const ACENTOS: [(&str, Color); 4] = [("Violeta", 0xff67_50a4), ("Azul", 0xff00_61a4), ("Verde", 0xff38_6a20), ("Naranja", 0xff8b_5000)];
 
-/// El nombre del acento número `i` de `ACENTOS`, en el idioma del usuario.
+/// El nombre del acento número `i` de `ACENTOS`, en el idioma del usuario (el 4, `MONOCROMO`).
 pub fn nombre_acento(i: usize) -> &'static str {
     match i {
         0 => tr(10, "Violeta"),
         1 => tr(11, "Azul"),
         2 => tr(12, "Verde"),
         3 => tr(13, "Naranja"),
+        4 => tr(26, "Monocromo"),
         _ => "",
     }
+}
+
+/// El esquema monocromo (dms-barra, para el escritorio del usuario en shiva): el `scheme-monochrome` de matugen, el que
+/// usa DMS con "dynamic" y ese esquema. Todos los papeles en grises, sin tono: el primario blanco en oscuro y negro en
+/// claro, las superficies grises neutras. No sale del fondo (sin croma, el fondo no cambia nada): son los valores de
+/// matugen tal cual (la paleta neutra de Material 3 con croma 0). Su "color" en el protocolo del tema es el negro puro:
+/// un fondo negro puro tampoco tiene tono, así que lo que daría es esto mismo.
+pub const MONOCROMO: Color = 0xff00_0000;
+/// Sus trece colores (en el orden de `Tema::colores`), claro y oscuro; el error, el de matugen.
+const MONO_CLARO: [Color; COLORES] = [
+    0xff00_0000, 0xffe2_e2e2, 0xff3b_3b3b, 0xffff_ffff, 0xfff9_f9f9, 0xff1b_1b1b, 0xffe2_e2e2, 0xff47_4747, 0xff77_7777, 0xffc6_c6c6,
+    0xff5e_5e5e, 0xff74_7474, 0xffff_ffff,
+];
+const MONO_OSCURO: [Color; COLORES] = [
+    0xffff_ffff, 0xff1b_1b1b, 0xffd4_d4d4, 0xff00_0000, 0xff13_1313, 0xffe2_e2e2, 0xff47_4747, 0xffc6_c6c6, 0xff91_9191, 0xff47_4747,
+    0xffc6_c6c6, 0xff91_9191, 0xff00_0000,
+];
+
+/// El tema monocromo.
+pub fn monocromo(oscuro: bool) -> Tema {
+    let mut t = Tema::de_colores(if oscuro { &MONO_OSCURO } else { &MONO_CLARO }, oscuro);
+    t.error = if oscuro { 0xffff_b4ab } else { 0xffba_1a1a };
+    t
 }
 
 /// Los esquemas de los `ACENTOS`, ya calculados con `desde_color` (en el PC; la prueba `tabla_igual_que_el_calculo`
@@ -141,6 +165,9 @@ impl Tema {
         let color = color | 0xff00_0000;
         if color == 0xff67_50a4 {
             return if oscuro { Tema::OSCURO } else { Tema::CLARO };
+        }
+        if color == MONOCROMO {
+            return monocromo(oscuro);
         }
         // Los acentos del centro de control, de la tabla (con sus otros papeles, de `TABLA_OTROS`); uno que llegó ya
         // hecho (el del fondo, C3: lo calcula el centro y lo reparte el compositor), o calculado aquí antes; si no, se
@@ -235,6 +262,11 @@ pub const ESQUEMAS: usize = 2 * COLORES;
 
 pub fn esquemas(color: Color) -> [Color; ESQUEMAS] {
     let mut r = [0; ESQUEMAS];
+    if color | 0xff00_0000 == MONOCROMO {
+        r[..COLORES].copy_from_slice(&MONO_CLARO);
+        r[COLORES..].copy_from_slice(&MONO_OSCURO);
+        return r;
+    }
     r[..COLORES].copy_from_slice(&Tema::desde_color(color, false).colores());
     r[COLORES..].copy_from_slice(&Tema::desde_color(color, true).colores());
     r
@@ -569,6 +601,30 @@ mod pruebas {
         assert_eq!(a, Tema::desde_color(otro, true));
         assert_eq!(Tema::del_sistema(otro, true), a);
         assert_eq!(esquemas(otro)[COLORES..], a.colores());
+    }
+
+    /// El monocromo: los grises de matugen, sin tono, y que se leen (WCAG AA, como los demás); sus esquemas, iguales
+    /// por `del_sistema` y por `esquemas` (lo que reparte el centro).
+    #[test]
+    fn monocromo_sin_tono_y_que_se_lee() {
+        for oscuro in [false, true] {
+            let t = Tema::del_sistema(MONOCROMO, oscuro);
+            for c in t.colores() {
+                let (r, g, b) = (c >> 16 & 0xff, c >> 8 & 0xff, c & 0xff);
+                assert!(r == g && g == b, "{c:08x}: con tono");
+            }
+            assert_eq!(t.primario, if oscuro { 0xffff_ffff } else { 0xff00_0000 });
+            assert_eq!(esquemas(MONOCROMO)[if oscuro { COLORES } else { 0 }..][..COLORES], t.colores());
+            for (papel, texto, fondo) in [
+                ("sobre_superficie", t.sobre_superficie, t.superficie),
+                ("sobre_superficie en contenedor_alto", t.sobre_superficie, t.contenedor_alto()),
+                ("sobre_primario", t.sobre_primario, t.primario),
+                ("sobre_contenedor_primario", t.sobre_contenedor_primario, t.contenedor_primario),
+                ("sobre_variante_superficie", t.sobre_variante_superficie, t.variante_superficie),
+            ] {
+                assert!(contraste(texto, fondo) >= 4.5, "oscuro {oscuro}: {papel}");
+            }
+        }
     }
 
     /// La tabla de los acentos da lo mismo que calcularlo (si `desde_color` cambia, la tabla se rehace).

@@ -54,6 +54,15 @@ mod panel_mosaicos;
 mod monitor;
 #[path = "../idiomas.rs"]
 mod idiomas;
+// Ajustes > Barra (docs/bitacoras/dms-barra.md): el modelo de las barras de DMS, sus widgets y el editor.
+#[path = "../barra_config.rs"]
+#[allow(dead_code)]
+mod barra_config;
+#[path = "../barra_widgets.rs"]
+#[allow(dead_code)]
+mod barra_widgets;
+#[path = "../barra_editor.rs"]
+mod barra_editor;
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -117,6 +126,8 @@ const CATEGORIAS: &[(&str, &str)] = &[
     ("acerca", "Acerca de"),
     // Rama `cuentas-2`: al final, para no mover las de antes (el guion de la prueba las recorre con las flechas).
     ("cuentas", "Cuentas"),
+    // Las de S27 (DMS), también tras Acerca de, por lo mismo.
+    ("barra", "Barra"),
 ];
 /// El nombre que se ve de la categoría `k` de `CATEGORIAS`, en el idioma del usuario (el de la tabla es el de la
 /// consola, siempre en castellano).
@@ -131,6 +142,8 @@ fn nombre_categoria(k: usize) -> &'static str {
         6 => tr(7, "Escritorio"),
         7 => tr(8, "Acerca de"),
         8 => tr(104, "Cuentas"),
+        // Unión de `dms-barra`: tras Cuentas (el guion de la prueba baja con las flechas hasta Acerca de).
+        9 => tr(124, "Barra"),
         _ => "",
     }
 }
@@ -138,6 +151,8 @@ const MONITOR_SIS: usize = 5;
 const PANEL_FONDO: usize = 6;
 /// Rama `cuentas-2`: las cuentas de usuario.
 const CUENTAS: usize = 8;
+/// Ajustes > Barra: las barras del escritorio y sus widgets (el modelo de DMS).
+const BARRA_CAT: usize = 9;
 const FICHERO_MONITOR: &str = "monitor";
 /// Cada cuánto se vuelve a medir con el monitor a la vista.
 const CADA_MONITOR_US: u64 = 2_000_000;
@@ -152,7 +167,8 @@ const MAX_PANTALLAS: usize = 8;
 /// El objeto del tema del sistema (`dashos_tema_v1`).
 const TEMA_OBJ: u32 = 43;
 /// Los colores de acento que se ofrecen (el primero, el violeta de referencia de Material 3).
-const COLORES: &[(&str, u32)] = &kit::tema::ACENTOS;
+// Los acentos y, detrás, el monocromo (dms-barra: el `scheme-monochrome` de matugen que usa DMS en shiva).
+const COLORES: &[(&str, u32)] = &[kit::tema::ACENTOS[0], kit::tema::ACENTOS[1], kit::tema::ACENTOS[2], kit::tema::ACENTOS[3], ("Monocromo", kit::tema::MONOCROMO)];
 /// C3: el color "del fondo", tras los de la tabla.
 const DEL_FONDO: usize = COLORES.len();
 /// Las filas de Apariencia: los dos modos, los colores fijos, la paleta del fondo, (S26) el aspecto de los programas de
@@ -741,7 +757,7 @@ fn hex6(t: &str) -> Option<u32> {
 /// calcularlos otra vez; se pueden borrar). La misma que escribe la orden `Ajuste`. Antes de entrar nadie no hay `ENV:`:
 /// vale la de fábrica (`SYS:Prefs/Env-Archive`, por `ENVARC:`) y lo que se elija queda en uso sin guardarse.
 const FICHERO_TEMA: &str = "Escritorio/apariencia";
-const CABECERA_TEMA: &str = "El tema (Ajustes > Apariencia; la orden `Ajuste tema` y `Ajuste acento`). Este fichero manda.\nmodo: claro u oscuro. acento: violeta, azul, verde, naranja o fondo (la paleta del fondo de escritorio).\nsemilla y esquemas: los colores del fondo, calculados por el centro de control; se pueden borrar.";
+const CABECERA_TEMA: &str = "El tema (Ajustes > Apariencia; la orden `Ajuste tema` y `Ajuste acento`). Este fichero manda.\nmodo: claro u oscuro. acento: violeta, azul, verde, naranja, monocromo o fondo (la paleta del fondo de escritorio).\nsemilla y esquemas: los colores del fondo, calculados por el centro de control; se pueden borrar.";
 
 /// El fichero de ajustes `fichero` de `ENV:` o, si no está, de `ENVARC:`. `Err` con el porqué ("no hay" si en ninguno).
 fn leer_ajuste(fichero: &str) -> Result<Vec<u8>, String> {
@@ -1022,6 +1038,144 @@ fn guardar_en_envarc(fichero: &str) -> i32 {
     };
     dashos::cerrar(lectura);
     if leido == 4 { i32::from_le_bytes(r) } else { -1 }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Las barras del escritorio (`docs/bitacoras/dms-barra.md`): `ENV:Escritorio/barra`, el modelo de DMS. La barra no ve
+// `ENV:` (es del sistema y `ENV:` está en el `RAM:` de quien entra): se suscribe aquí con una memoria suya y una copia
+// de la puerta de su timbre; el centro le escribe el texto en la memoria y toca el timbre cada vez que cambia (por la
+// ventana de Ajustes, por la orden `Ajuste` o `ImportarDMS`, o a mano: lo dicen los avisos de cambio de `ENV:`).
+
+const FICHERO_BARRA: &str = "Escritorio/barra";
+/// Dónde ve el centro la memoria de la barra.
+const VA_BARRA: usize = 0x46_0000_0000;
+/// Lo más que se escribe (el resto de la memoria de la barra; la cabecera son 16 bytes).
+const MAX_BARRA: usize = kit::idioma::texto::MAX_FICHERO;
+/// La puerta del timbre de la barra (0, nadie suscrito) y la última vez escrita.
+static PUERTA_BARRA: AtomicU32 = AtomicU32::new(0);
+static VEZ_BARRA: AtomicU32 = AtomicU32::new(0);
+/// Una firma de lo último que se le dio (para no tocar el timbre si no cambió).
+static FIRMA_BARRA: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(u64::MAX);
+
+/// La barra se suscribe: su memoria (para escribir) y su puerta. La de antes, si había, se suelta.
+fn suscribir_barra(memoria: u32, puerta: u32) -> bool {
+    let vieja = PUERTA_BARRA.swap(0, Ordering::Relaxed);
+    if vieja != 0 {
+        dashos::cerrar(vieja);
+        dashos::memoria_quitar(VA_BARRA);
+    }
+    let tam = dashos::memoria_tamano(memoria);
+    if tam < (16 + MAX_BARRA) as i64 || dashos::memoria_proyectar(memoria, VA_BARRA, true) != 0 {
+        dashos::cerrar(memoria);
+        dashos::cerrar(puerta);
+        return false;
+    }
+    dashos::cerrar(memoria);
+    PUERTA_BARRA.store(puerta, Ordering::Relaxed);
+    FIRMA_BARRA.store(u64::MAX, Ordering::Relaxed);
+    true
+}
+
+fn firma(b: &[u8]) -> u64 {
+    // FNV-1a: solo para saber si cambió.
+    b.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &x| (h ^ x as u64).wrapping_mul(0x100_0000_01b3))
+}
+
+/// Da a la barra `texto` (vacío: lo de serie) si es otro que lo último que se le dio: lo escribe en su memoria (la vez,
+/// impar mientras escribe) y toca su timbre. Lo que pasó, para la consola (`None` si no había que hacer nada).
+fn dar_a_la_barra(texto: &[u8]) -> Option<&'static str> {
+    use core::sync::atomic::{fence, Ordering as O};
+    let puerta = PUERTA_BARRA.load(O::Relaxed);
+    if puerta == 0 {
+        return None;
+    }
+    let texto = &texto[..texto.len().min(MAX_BARRA)];
+    if FIRMA_BARRA.swap(firma(texto), O::Relaxed) == firma(texto) {
+        return None;
+    }
+    let p = VA_BARRA as *mut u8;
+    let poner32 = |o: usize, v: u32| unsafe { core::ptr::write_volatile(p.add(o) as *mut [u8; 4], v.to_le_bytes()) };
+    let vez = VEZ_BARRA.load(O::Relaxed);
+    // La memoria es de la barra, proyectada para escribir en `suscribir_barra`; la cabecera va por delante.
+    poner32(0, u32::from_le_bytes(*b"BARR"));
+    poner32(4, vez | 1);
+    fence(O::Release);
+    for (i, &x) in texto.iter().enumerate() {
+        unsafe { core::ptr::write_volatile(p.add(16 + i), x) };
+    }
+    poner32(8, texto.len() as u32);
+    fence(O::Release);
+    let nueva = (vez | 1).wrapping_add(1).max(2);
+    poner32(4, nueva);
+    VEZ_BARRA.store(nueva, O::Relaxed);
+    if dashos::canal_escribir(puerta, b"barra", &[]) != 0 {
+        // La barra se fue: ya no se le escribe.
+        PUERTA_BARRA.store(0, O::Relaxed);
+        dashos::cerrar(puerta);
+        dashos::memoria_quitar(VA_BARRA);
+        return Some("la barra ya no escucha");
+    }
+    Some("dado a la barra")
+}
+
+/// Ajustes > Barra: hay cambios en `ENV:` sin Guardar ni Usar (al cerrar se guardan, como en DMS).
+static BARRA_PENDIENTE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// La configuración de un texto (vacío, lo de serie).
+fn config_barra(texto: &[u8]) -> barra_config::Config {
+    if texto.is_empty() { barra_config::Config::de_serie() } else { barra_config::Config::leer(texto).0 }
+}
+
+/// Las filas de la lista de barras: nombre, posición y monitores.
+fn filas_barras(c: &barra_config::Config) -> Vec<String> {
+    c.barras
+        .iter()
+        .map(|b| {
+            let mon = match &b.monitores {
+                barra_config::Monitores::Todos => String::from("todos los monitores"),
+                barra_config::Monitores::Estos(m) => m.join(", "),
+            };
+            let n = b.zonas.iter().flatten().filter(|w| w.se_ve()).count();
+            alloc::format!("{} · {} · {} · {} widgets{}", b.nombre, b.posicion.nombre(), mon, n, if b.activa { "" } else { " (apagada)" })
+        })
+        .collect()
+}
+
+/// Usar: la configuración en `ENV:` (sobre lo que había, sus comentarios se quedan) y a la barra, que cambia ya. Antes
+/// de entrar nadie no hay `ENV:`: solo a la barra (en uso, sin guardarse). Lo que pasó, para la consola.
+fn usar_barra(c: &barra_config::Config) -> String {
+    let antes = leer_ajuste(FICHERO_BARRA).ok();
+    let texto = match c.escribir(antes.as_deref()) {
+        Ok(t) => t,
+        Err(porque) => return alloc::format!("no se escribe: {}", porque),
+    };
+    let en_env = match escribir_env(FICHERO_BARRA, &texto) {
+        Ok(n) => alloc::format!("en ENV: ({} bytes)", n),
+        Err(porque) => alloc::format!("en ENV: no ({})", porque),
+    };
+    let dado = dar_a_la_barra(&texto).unwrap_or("la barra ya lo tenía");
+    alloc::format!("{}; {}", en_env, dado)
+}
+
+/// Lo que hay ahora en `ENV:Escritorio/barra` (o lo guardado o lo de fábrica), para la barra: vacío si no hay.
+fn texto_barra() -> Vec<u8> {
+    match leer_ajuste(FICHERO_BARRA) {
+        Ok(b) => b,
+        Err(porque) => {
+            if porque != "no hay" {
+                println!("  [centro] {}: {}; la barra se queda con lo de serie", FICHERO_BARRA, porque);
+            }
+            Vec::new()
+        }
+    }
+}
+
+/// Da a la barra lo que haya ahora, si cambió.
+fn barra_al_dia(de_donde: &str) {
+    let texto = texto_barra();
+    if let Some(q) = dar_a_la_barra(&texto) {
+        println!("  [centro] barras ({} bytes, de {}): {}", texto.len(), de_donde, q);
+    }
 }
 
 /// C3: una petición al fondo de escritorio (por la llave 4), con una llave para la respuesta: (estado, semilla, ancho,
@@ -1477,6 +1631,9 @@ fn ventana(categoria: usize, uso: &mut Apariencia) {
     if pendiente {
         println!("  [centro] al cerrar, la apariencia se guarda en ENVARC:: {}", guardar_en_envarc(FICHERO_TEMA));
     }
+    if BARRA_PENDIENTE.swap(false, Ordering::Relaxed) {
+        println!("  [centro] al cerrar, las barras se guardan en ENVARC:: {}", guardar_en_envarc(FICHERO_BARRA));
+    }
     adios_al_compositor();
     dashos::memoria_quitar(VA);
     dashos::memoria_quitar(VA_2);
@@ -1514,6 +1671,8 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
     let titulo = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new())), (atr::ESTILO, Valor::Int(1))]);
     let explica = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new())), (atr::ESTILO, Valor::Int(2))]);
     let permisos = arbol.crear(Lista, &[(atr::OPCIONES, Valor::Texto(String::new())), (atr::FILAS, Valor::Int(4)), (atr::VALOR, Valor::Int(-1))]);
+    // Ajustes > Barra: el editor de las zonas (no mide nada en las demás categorías).
+    let editor = arbol.crear(barra_editor::EditorBarra, &[(barra_editor::ACTIVO, Valor::Bool(false)), (barra_editor::ANADIR, Valor::Int(-1))]);
     let quitar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto(tr(85, "Quitar").into())), (atr::ESTILO, Valor::Int(1))]);
     let cerrar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto(tr(86, "Cerrar").into())), (atr::ESTILO, Valor::Int(2))]);
     // Ajustes en texto: Usar y Cancelar (Guardar es el botón de Quitar en Apariencia), como en las Prefs del Amiga.
@@ -1536,7 +1695,8 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
     // En Cuentas, dos filas de botones (en una no caben a lo ancho de la ventana): Crear, Grupo y Borrar, con lo que hay
     // en el campo y la cuenta elegida; debajo, Mi contraseña y Cerrar.
     let raiz_de = |con_cuentas: bool| {
-        let mut columna = alloc::vec![Hijo::Obj(titulo), Hijo::Obj(explica), Hijo::Obj(permisos)];
+        // Unión de `dms-barra`: el editor de la barra bajo la lista (sin tamaño fuera de Ajustes > Barra).
+        let mut columna = alloc::vec![Hijo::Obj(titulo), Hijo::Obj(explica), Hijo::Obj(permisos), Hijo::Obj(editor)];
         if con_cuentas {
             columna.push(Hijo::Obj(campo));
             columna.push(Hijo::Fila(alloc::vec![Hijo::Obj(hueco), Hijo::Obj(cancelar), Hijo::Obj(grupo), Hijo::Obj(quitar)]));
@@ -1582,6 +1742,11 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
     let mut aj_panel = leer_ajustes_monitor();
     // Rama `cuentas-2`: las cuentas de las filas de Cuentas (en su orden).
     let mut filas_cuentas: Vec<FilaCuenta> = Vec::new();
+    // Ajustes > Barra: lo de `ENV:Escritorio/barra` al abrir (para Cancelar), lo que se edita y la barra elegida.
+    let barra_al_abrir = texto_barra();
+    let mut cfg_barra = config_barra(&barra_al_abrir);
+    let mut barra_k = 0usize;
+    i.arbol.poner(editor, atr::TEXTO, Valor::Texto(String::from_utf8_lossy(&cfg_barra.escribir(None).unwrap_or_default()).into_owned()));
     let poner = |i: &mut Interfaz, cat: usize, lista: &[(String, String)], reg: &[String]| {
         let (explicacion, contenido) = if cat == PERMISOS {
             (tr(87, "Lo que cada programa puede usar. Quitarlo lo revoca ya."), filas(lista))
@@ -1599,6 +1764,8 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
             (tr(93, "Los menús y el monitor del fondo. Intro cambia una fila."), reg.join("|"))
         } else if cat == CUENTAS {
             (tr(116, "Quién usa el equipo; los cambios, con un administrador."), reg.join("|"))
+        } else if cat == BARRA_CAT {
+            (tr(125, "Las barras y sus widgets, como en DMS. Lo que se cambia se ve ya."), reg.join("|"))
         } else {
             (tr(94, "El sistema."), reg.join("|"))
         };
@@ -1606,20 +1773,26 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
         i.arbol.poner(explica, atr::TEXTO, Valor::Texto(explicacion.into()));
         i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(contenido));
         // Rama `cuentas-2`: en Cuentas, debajo de la lista van el campo y dos filas de botones: la lista pide menos filas
-        // (crece con lo que sobre) para que todo quepa en la ventana.
-        i.arbol.poner(permisos, atr::FILAS, Valor::Int(if cat == CUENTAS { 2 } else { 4 }));
+        // (crece con lo que sobre) para que todo quepa en la ventana (las filas, más abajo, con las de Barra).
         i.arbol.poner(permisos, atr::VALOR, Valor::Int(-1));
         i.arbol.poner(permisos, atr::PRIMERA, Valor::Int(0));
-        i.arbol.poner(quitar, atr::DESACTIVADO, Valor::Bool(cat != PERMISOS && cat != MONITOR_SIS && cat != APARIENCIA && cat != CUENTAS));
+        // En Barra, la lista son las barras (una fila cada una) y debajo va el editor.
+        i.arbol.poner(permisos, atr::FILAS, Valor::Int(match cat {
+            CUENTAS => 2,
+            BARRA_CAT => reg.len().clamp(1, barra_config::MAX_BARRAS) as i64,
+            _ => 4,
+        }));
+        i.arbol.poner(editor, barra_editor::ACTIVO, Valor::Bool(cat == BARRA_CAT));
+        i.arbol.poner(quitar, atr::DESACTIVADO, Valor::Bool(cat != PERMISOS && cat != MONITOR_SIS && cat != APARIENCIA && cat != CUENTAS && cat != BARRA_CAT));
         let texto_quitar = match cat {
             MONITOR_SIS => tr(95, "Cerrar proceso"),
-            APARIENCIA => tr(99, "Guardar"),
+            APARIENCIA | BARRA_CAT => tr(99, "Guardar"),
             CUENTAS => tr(117, "Borrar"),
             _ => tr(85, "Quitar"),
         };
         i.arbol.poner(quitar, atr::TEXTO, Valor::Texto(texto_quitar.into()));
-        i.arbol.poner(usar, atr::DESACTIVADO, Valor::Bool(cat != APARIENCIA && cat != CUENTAS));
-        i.arbol.poner(cancelar, atr::DESACTIVADO, Valor::Bool(cat != APARIENCIA && cat != CUENTAS));
+        i.arbol.poner(usar, atr::DESACTIVADO, Valor::Bool(cat != APARIENCIA && cat != CUENTAS && cat != BARRA_CAT));
+        i.arbol.poner(cancelar, atr::DESACTIVADO, Valor::Bool(cat != APARIENCIA && cat != CUENTAS && cat != BARRA_CAT));
         // Rama `cuentas-2`: en Cuentas, Cancelar es "Nueva cuenta" y Usar es "Mi contraseña".
         i.arbol.poner(usar, atr::TEXTO, Valor::Texto(if cat == CUENTAS { tr(118, "Mi contraseña") } else { tr(97, "Usar") }.into()));
         i.arbol.poner(cancelar, atr::TEXTO, Valor::Texto(if cat == CUENTAS { tr(119, "Crear") } else { tr(98, "Cancelar") }.into()));
@@ -1641,6 +1814,8 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
         lineas_registro = lineas_panel(&aj_panel);
     } else if cat == CUENTAS {
         (lineas_registro, filas_cuentas) = cuentas();
+    } else if cat == BARRA_CAT {
+        lineas_registro = filas_barras(&cfg_barra);
     } else if cat != PERMISOS {
         lineas_registro = acerca();
     }
@@ -1877,6 +2052,7 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                             filas_cuentas = f;
                             l
                         }
+                        BARRA_CAT => filas_barras(&cfg_barra),
                         _ => acerca(),
                     };
                     println!("  [centro] {}: {}", CATEGORIAS[cat].1, lineas_registro.join("; "));
@@ -1947,6 +2123,59 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                 i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
                 i.arbol.poner(permisos, atr::VALOR, Valor::Int(v.min(filas_cuentas.len() as i64 - 1)));
                 cambio = true;
+            }
+            if cat == BARRA_CAT {
+                // La barra elegida en la lista de barras.
+                let sel = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
+                if sel >= 0 && sel as usize != barra_k {
+                    barra_k = sel as usize;
+                    i.arbol.poner(editor, atr::VALOR, Valor::Int(sel));
+                    i.arbol.poner(editor, barra_editor::ABIERTO, Valor::Texto(String::new()));
+                    cambio = true;
+                }
+                // Soltado fuera del editor: lo pulsado se olvida.
+                if !pulsado && i.arbol.leer(editor, barra_editor::PRESION).is_some_and(|v| !v.texto().is_empty()) {
+                    i.arbol.poner(editor, barra_editor::PRESION, Valor::Texto(String::new()));
+                }
+                let pedido = i.arbol.leer(editor, barra_editor::ACCION).map(Valor::texto).unwrap_or_default();
+                if !pedido.is_empty() {
+                    i.arbol.poner(editor, barra_editor::ACCION, Valor::Texto(String::new()));
+                    let p: Vec<&str> = pedido.split(' ').collect();
+                    let cambia_cfg = match p[0] {
+                        // Abrir o cerrar las opciones de un widget, o el catálogo de una zona: solo se ve.
+                        "abrir" => {
+                            let ya = i.arbol.leer(editor, barra_editor::ABIERTO).map(Valor::texto).unwrap_or_default();
+                            let nuevo = alloc::format!("{},{}", p.get(1).unwrap_or(&""), p.get(2).unwrap_or(&""));
+                            i.arbol.poner(editor, barra_editor::ABIERTO, Valor::Texto(if ya == nuevo { String::new() } else { nuevo }));
+                            false
+                        }
+                        "anadir" => {
+                            let z = p.get(1).and_then(|z| z.parse::<i64>().ok()).unwrap_or(-1);
+                            let ya = i.arbol.leer(editor, barra_editor::ANADIR).map_or(-1, Valor::int);
+                            i.arbol.poner(editor, barra_editor::ANADIR, Valor::Int(if ya == z { -1 } else { z }));
+                            false
+                        }
+                        _ => true,
+                    };
+                    if cambia_cfg {
+                        if p[0] == "elegido" {
+                            i.arbol.poner(editor, barra_editor::ANADIR, Valor::Int(-1));
+                        }
+                        let monitores: Vec<String> = pantalla.iter().filter(|x| !x.nombre.is_empty()).map(|x| x.nombre.clone()).collect();
+                        let monitores = if monitores.is_empty() { alloc::vec![String::from("DASHOS-1"), String::from("DASHOS-2")] } else { monitores };
+                        let hecho = barra_config::aplicar_pedido(&mut cfg_barra, &mut barra_k, &pedido, &monitores).unwrap_or_else(|| String::from("no se entiende"));
+                        let en_env = usar_barra(&cfg_barra);
+                        BARRA_PENDIENTE.store(true, Ordering::Relaxed);
+                        println!("  [centro] Barra: {}: {}; {}", pedido, hecho, en_env);
+                        lineas_registro = filas_barras(&cfg_barra);
+                        poner(&mut i, cat, &lista, &lineas_registro);
+                        i.arbol.poner(permisos, atr::VALOR, Valor::Int(barra_k as i64));
+                        i.arbol.poner(editor, atr::VALOR, Valor::Int(barra_k as i64));
+                        i.arbol.poner(editor, atr::TEXTO, Valor::Texto(String::from_utf8_lossy(&cfg_barra.escribir(None).unwrap_or_default()).into_owned()));
+                    }
+                    i.colocar(Rect::new(0, 0, medida.0, medida.1));
+                    cambio = true;
+                }
             }
             match i.arbol.leer(marca, atr::TEXTO).map(Valor::texto).as_deref() {
                 Some("cerrar") => return Some(()),
@@ -2137,6 +2366,32 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                 }
                 // Ajustes en texto: Guardar (`ENV:` a `ENVARC:`, por `sesiones`), Usar (se queda en `ENV:`, sin guardar) y
                 // Cancelar (vuelve a como estaba al abrir).
+                Some("quitar") if cat == BARRA_CAT => {
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                    let g = guardar_en_envarc(FICHERO_BARRA);
+                    BARRA_PENDIENTE.store(false, Ordering::Relaxed);
+                    println!("  [centro] Barra: Guardar en ENVARC:: {}", g);
+                    cambio = true;
+                }
+                Some("usar") if cat == BARRA_CAT => {
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                    BARRA_PENDIENTE.store(false, Ordering::Relaxed);
+                    println!("  [centro] Barra: Usar: en ENV:, sin guardar");
+                }
+                Some("cancelar") if cat == BARRA_CAT => {
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                    cfg_barra = config_barra(&barra_al_abrir);
+                    barra_k = 0;
+                    let en_env = usar_barra(&cfg_barra);
+                    BARRA_PENDIENTE.store(false, Ordering::Relaxed);
+                    println!("  [centro] Barra: Cancelar: vuelve a como estaba; {}", en_env);
+                    lineas_registro = filas_barras(&cfg_barra);
+                    poner(&mut i, cat, &lista, &lineas_registro);
+                    i.arbol.poner(editor, atr::VALOR, Valor::Int(0));
+                    i.arbol.poner(editor, atr::TEXTO, Valor::Texto(String::from_utf8_lossy(&cfg_barra.escribir(None).unwrap_or_default()).into_owned()));
+                    i.colocar(Rect::new(0, 0, medida.0, medida.1));
+                    cambio = true;
+                }
                 Some("quitar") if cat == APARIENCIA => {
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
                     let usado = usar_apariencia(&ap);
@@ -2467,6 +2722,8 @@ fn al_cambiar_env(v: &mut Vigila, idioma: &mut Option<idiomas::Idiomas>, uso: &m
     }
     // S10: dónde van los menús.
     aplicar_sitio_menus("ENV:Escritorio/menus");
+    // Las barras del escritorio, si cambiaron.
+    barra_al_dia("ENV:");
     // El tema: el de `ENV:`, si es otro que el que está en uso.
     match leer_apariencia() {
         Ok(mut ap) => {
@@ -2604,6 +2861,24 @@ fn principal() -> u64 {
             .filter(|_| nombres.get(&marca).is_some_and(|n| PIDEN_MODO.contains(&n.as_str())));
             // C2: los mosaicos del panel, también solo del panel rápido. A otro, lo de un pedido que no vale (-1).
             let del_panel = nombres.get(&marca).is_some_and(|n| PIDEN_MODO.contains(&n.as_str()));
+            // Las barras: solo la barra (por el nombre que da `inicio`) se suscribe, con su memoria y su puerta.
+            if &buf[..n] == b"barra suscribir" {
+                if nombres.get(&marca).is_some_and(|n| n == "barra") && k == 2 {
+                    let bien = suscribir_barra(ll[0], ll[1]);
+                    println!("  [centro] la barra se suscribe a las barras: {}", if bien { "sí" } else { "no (memoria que no vale)" });
+                    if bien {
+                        barra_al_dia("al suscribirse");
+                    }
+                } else {
+                    // A otro, lo de un pedido que no vale (-1), por la primera llave; y nada más.
+                    println!("  [centro] suscribirse a las barras sin ser la barra: no");
+                    if k >= 1 {
+                        dashos::canal_escribir(ll[0], &(-1i32).to_le_bytes(), &[]);
+                    }
+                    cerrar_llaves(&ll[..k]);
+                }
+                continue;
+            }
             if del_panel && &buf[..n] == b"panel leer" {
                 if k >= 1 {
                     contestar_panel_leer(ll[0]);

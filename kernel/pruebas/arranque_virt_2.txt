@@ -17,11 +17,14 @@ DashOS en marcha con 4 núcleos.
 ~│   [compositor] Wayland: 2 ventanas en pantalla
 ~│   [ajustes] ventana del kit en pantalla (360x408)
 ~│   [barra] en pantalla: 800x40, zona exclusiva 40
-# El cursor pasa a la segunda; Super+Mayúsculas+Derecha lleva Ajustes allí; maximizada llena la segunda (sin barra:
-# 1024x768); Super+Mayúsculas+Izquierda la trae.
+# La barra de DMS: una en cada monitor (la de serie va en todos).
+~│   [barra] barras: 1 configuradas; en pantalla: principal@DASHOS-1, principal@DASHOS-2
+# El cursor pasa a la segunda; Super+Mayúsculas+Derecha lleva Ajustes allí; maximizada llena la segunda (bajo su barra:
+# 1024x728); Super+Mayúsculas+Izquierda la trae.
 ~│   [compositor] el cursor pasa a DASHOS-2
 ~│   [compositor] ventana de ajustes a DASHOS-2 en (
-~│   [ajustes] el compositor pide 1024x768
+# La barra de DMS: la de serie va en todos los monitores (como en DMS), así que maximizada en el segundo deja sus 40.
+~│   [ajustes] el compositor pide 1024x728
 ~│   [compositor] ventana de ajustes a DASHOS-1 en (
 # El centro de control enseña las dos pantallas.
 ~│   [centro] Pantallas: Pantalla DASHOS-1: 800 × 600, a la izquierda; Pantalla DASHOS-2: 1024 × 768, a la derecha; Frecuencia: 60,000 Hz; Escala: 1

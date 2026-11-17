@@ -189,6 +189,13 @@ def principal():
     time.sleep(2)
     teclear("Version")
     capturar("7-pestana", 3)
+    # La barra de DMS (docs/bitacoras/dms-barra.md): un ajuste de la barra con `Ajuste` se ve en marcha (ENV: → el
+    # centro → la barra); y el importador de DMS con la barra de shiva (otra forma: la barra se rehace).
+    teclear("Ajuste Escritorio/barra.principal-centro reloj")
+    esperar(r"\[barra\] configuración: principal arriba \[[^|]*\| reloj \|", 10)
+    teclear("Ajuste DMS SYS:Prefs/Presets/DMS/shiva.json")
+    esperar(r"\[barra\] barras: 1 configuradas; en pantalla: principal@DASHOS-1 \(1 nuevas, 1 quitadas\)", 10)
+    capturar("7b-barra-shiva", 2)
     # 9. Que llegaron las teclas (`sesiones` dice la asignación) y un trabajo de fondo que sigue en marcha.
     teclear("Assign CapturasHechas: RAM:")
     time.sleep(1)

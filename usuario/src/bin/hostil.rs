@@ -1437,6 +1437,10 @@ fn centro(memoria: u32) -> bool {
     let panel: [&[u8]; 6] = [b"panel leer", b"panel guardar volumen", b"panel guardar ", b"panel guardar nube", b"panel guardar oscuro oscuro", b"panel guardar"];
     let rechazos_panel: [i32; 6] = core::array::from_fn(|k| pedir(panel[k]));
     let panel_bien = rechazos_panel.iter().all(|&e| e == -1);
+    // La barra de DMS (docs/bitacoras/dms-barra.md): suscribirse a las barras (y que el centro escriba en una memoria
+    // suya) solo lo hace la barra. Al hostil, -1 y nada.
+    let barras = pedir(b"barra suscribir");
+    println!("  [hostil] centro: suscribirse a las barras sin ser la barra: {}", barras);
     println!("  [hostil] centro: los mosaicos del panel sin ser el panel: {}", if panel_bien { "-1 y nada" } else { "MAL" });
     if !panel_bien {
         println!("  [hostil] centro: a los mosaicos del panel, {:?}", rechazos_panel);

@@ -371,3 +371,9 @@ Choose an account in the list
 MSG_123
 Type above the name of the group
 ; Escribe arriba el nombre del grupo
+MSG_124
+Bar
+; Barra
+MSG_125
+The bars and their widgets, as in DMS. Changes show at once.
+; Las barras y sus widgets, como en DMS. Lo que se cambia se ve ya.

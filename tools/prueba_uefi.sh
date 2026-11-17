@@ -1059,6 +1059,14 @@ while time.time() - inicio < total:
             if captura_centro:
                 time.sleep(0.8)
                 mandar("screendump " + captura_centro + ".max.ppm")
+                # La barra de DMS (docs/bitacoras/dms-barra.md): Ajustes > Barra, maximizada (dos más abajo, tras
+                # Cuentas), y vuelta.
+                mandar("sendkey down", "sendkey down", pausa=0.3)
+                time.sleep(2)
+                mandar("screendump " + captura_centro + ".barra.ppm")
+                time.sleep(0.5)
+                mandar("sendkey up", "sendkey up", pausa=0.3)
+                time.sleep(0.8)
             time.sleep(0.5)
             mandar("sendkey meta_l-down")
             reintento = time.time() + 4
@@ -1183,6 +1191,26 @@ while time.time() - inicio < total:
         # cierra. El botón del panel lo abre (la segunda vez que se abre) y otro clic lo cierra. Los botones los dice la
         # barra, que está en (0, 0). Con CAPTURA_BARRA=fichero.ppm: el lanzador abierto (fichero.ppm), con la búsqueda
         # (fichero.busca.ppm) y la barra con el panel (fichero.panel.ppm).
+        # La barra de DMS (docs/bitacoras/dms-barra.md), solo para capturas: con CAPTURA_AJUSTES_BARRA=fichero.ppm, la barra
+        # al empezar (fichero.sola.ppm) y Ajustes > Barra, que abre el botón derecho sobre la barra (fichero.ppm); Esc la
+        # cierra. Pronto (antes de lo demás): la prueba no sale bien así, es solo para ver.
+        if os.environ.get("CAPTURA_AJUSTES_BARRA") and not globals().get("ajustes_barra_hecho") and "[barra] botones: " in texto \
+                and "[barra] CPU y memoria: " in texto:
+            import re
+            globals()["ajustes_barra_hecho"] = True
+            cab = os.environ["CAPTURA_AJUSTES_BARRA"]
+            time.sleep(2)
+            mandar("screendump " + cab[:-4] + ".sola.ppm")
+            bb = re.search(r"\[barra\] botones: lanzador en \((\d+), (\d+)\)", texto)
+            mandar(*["mouse_move -100 -100"] * 20, pausa=0.05)
+            mandar(*["mouse_move 100 0"] * 5, f"mouse_move 0 {bb.group(2)}", pausa=0.05)
+            mandar("mouse_button 2", "mouse_button 0", pausa=0.1)
+            time.sleep(4)
+            mandar("sendkey meta_l-up")
+            time.sleep(3)
+            mandar("screendump " + cab)
+            time.sleep(1)
+            mandar("sendkey esc")
         if barra == 0 and panel == 14 and "[barra] botones: " in texto:
             barra = 1
             import re

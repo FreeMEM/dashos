@@ -7,7 +7,8 @@ Lee PREFIJO.cabeza0.ppm y .cabeza1.ppm (al empezar), .max0.ppm y .max1.ppm (con 
 .vuelta0.ppm y .vuelta1.ppm (con Ajustes de vuelta en la primera), las que haya.
 
 - La primera mide 800 x 600 y la segunda 1024 x 768.
-- Al empezar, la segunda es solo fondo: ni ventanas ni la sombra de la barra de la primera en su esquina.
+- Al empezar, la segunda es solo fondo bajo su propia barra (dms-barra: la de serie va en todos los monitores, como en
+  DMS): ni ventanas ni la sombra de la barra de la primera en su esquina.
 - Con Ajustes maximizada, la segunda es casi toda ventana (no fondo), y la primera sigue con su barra arriba.
 - De vuelta, la segunda otra vez solo fondo.
 """
@@ -15,6 +16,8 @@ import os
 import sys
 
 FONDO = (0x20, 0x40, 0x60)
+# Lo que ocupa la barra de cada monitor (y su sombra): de ahí abajo se mira el fondo.
+BAJO_LA_BARRA = 56
 
 
 def leer_ppm(ruta):
@@ -45,10 +48,10 @@ def pixel(img, x, y):
     return tuple(d[k : k + 3])
 
 
-def parte_de_fondo(img, paso=8):
+def parte_de_fondo(img, paso=8, desde=0):
     ancho, alto, _ = img
     total = fondo = 0
-    for y in range(0, alto, paso):
+    for y in range(desde, alto, paso):
         for x in range(0, ancho, paso):
             total += 1
             fondo += pixel(img, x, y) == FONDO
@@ -73,9 +76,13 @@ def main():
     c0, c1 = mirar("cabeza0", 800, 600), mirar("cabeza1", 1024, 768)
     if c0 and c1:
         vistas += 1
-        if parte_de_fondo(c1) < 0.98:
-            fallos.append(f"cabeza1: solo {parte_de_fondo(c1):.0%} de fondo al empezar")
-        esquina = [pixel(c1, x, y) for y in range(0, 60) for x in range(0, 20)]
+        if parte_de_fondo(c1, desde=BAJO_LA_BARRA) < 0.98:
+            fallos.append(f"cabeza1: solo {parte_de_fondo(c1, desde=BAJO_LA_BARRA):.0%} de fondo al empezar")
+        if pixel(c1, 512, 20) == FONDO:
+            fallos.append("cabeza1: sin su barra arriba")
+        # Bajo su barra y su sombra (la que pone el compositor bajo la capa de cada barra): fondo. La de la primera no
+        # pasa (ya no se puede distinguir encima: la segunda tiene su propia barra con su sombra).
+        esquina = [pixel(c1, x, y) for y in range(56, 64) for x in range(0, 20)]
         if any(p != FONDO for p in esquina):
             fallos.append("cabeza1: la esquina de arriba a la izquierda no es fondo (¿la sombra de la barra?)")
         if pixel(c0, 400, 20) == FONDO:
@@ -90,8 +97,8 @@ def main():
     v0, v1 = mirar("vuelta0", 800, 600), mirar("vuelta1", 1024, 768)
     if v0 and v1:
         vistas += 1
-        if parte_de_fondo(v1) < 0.98:
-            fallos.append(f"vuelta1: solo {parte_de_fondo(v1):.0%} de fondo con Ajustes de vuelta")
+        if parte_de_fondo(v1, desde=BAJO_LA_BARRA) < 0.98:
+            fallos.append(f"vuelta1: solo {parte_de_fondo(v1, desde=BAJO_LA_BARRA):.0%} de fondo con Ajustes de vuelta")
     if vistas < 3:
         fallos.append(f"faltan capturas: {vistas} de 3 pares")
     for f in fallos:

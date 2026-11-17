@@ -203,6 +203,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [hostil] centro: pedidos malos rechazados sin abrir nada, y sigue contestando tras la inundación: bien
 # C2: los mosaicos del panel rápido solo los lee y los guarda el panel: al hostil, -1 a todo.
 ~│   [hostil] centro: los mosaicos del panel sin ser el panel: -1 y nada
+~│   [hostil] centro: suscribirse a las barras sin ser la barra: -1
 # U2: sesiones, primera parte. Un programa del usuario 1001 no mata a uno del 1000, y sí a uno suyo.
 ~│   [sesiones] en marcha, con el servicio de archivos
 # S8 (rama paq): el servicio paq, al arrancar, quita el cerrojo que quedó de antes (el disco de pruebas lo trae).
@@ -269,6 +270,10 @@ DashOS en marcha con 4 núcleos.
 # S10: la barra de la pantalla, arriba a todo lo ancho con su zona exclusiva (las ventanas, debajo). La hora se mueve
 # (la prueba dura más de un minuto).
 ~│   [barra] en pantalla: 800x40, zona exclusiva 40
+# La barra de DMS (docs/bitacoras/dms-barra.md): se suscribe al centro, que le da ENV:Escritorio/barra (sin fichero, lo
+# de serie: una barra arriba en todos los monitores).
+~│   [centro] la barra se suscribe a las barras: sí
+~│   [barra] barras: 1 configuradas; en pantalla: principal@DASHOS-1
 ~│   [barra] la hora se mueve: 
 # En medio, el título de la ventana con el teclado (el compositor solo se lo dice a la barra); con la sesión bloqueada,
 # ninguno.
@@ -677,6 +682,13 @@ DashOS en marcha con 4 núcleos.
 ~│   [centro] menús en marcha: dentro de las ventanas, de ENV:Escritorio/menus; en el compositor: sí
 ~│   [barra] menús: dentro de las ventanas
 ~│   [shell] menus: dentro (ENV:Escritorio/menus sitio)
+# La barra de DMS (docs/bitacoras/dms-barra.md): un cambio en ENV:Escritorio/barra se ve en marcha (el centro se lo da a
+# la barra, que no ve ENV:); el importador no cambia nada con un fichero que no es de DMS; sin el fichero, la de serie.
+~│   [shell] Escritorio/barra.principal-centro: reloj(orden=fecha) (en RAM:Env/Escritorio/barra)
+~│   [barra] configuración: principal arriba [lanzador, espacios, ventana, menus | reloj(orden=fecha) | bandeja, portapapeles, cpu, memoria, avisos, bateria, estado]
+~│   [shell] Ajuste: SYS:C/frio.bin: no es JSON
+~│   [shell] Ajuste: LOCALE:Countries/españa.country: no es JSON
+~│   [barra] configuración: principal arriba [lanzador, espacios, ventana, menus | musica, reloj, tiempo | bandeja, portapapeles, cpu, memoria, avisos, bateria, estado]
 # S6, S36: el registro común. Lo que apunta un guion sale con el programa que lo lanza (el Shell), y la hora y el
 # usuario que pone `sesiones`. Lo de antes de rotar (programas.1, de "ayer") se sigue leyendo; lo del hostil, que es de
 # Carla, Ana no lo ve.

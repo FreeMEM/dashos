@@ -10,6 +10,10 @@
 //! conoce, vale cualquier `fichero.clave` (`Ajuste Escritorio/barra.segundos sí`), sin más comprobación que la del
 //! formato.
 //!
+//! - `Ajuste DMS <settings.json>`: importa las barras de DankMaterialShell (`barConfigs`) a `ENV:Escritorio/barra`
+//!   (con `GUARDAR`, también a `ENVARC:`), sobre lo que hubiera, y dice lo que DashOS no tiene y se dejó fuera
+//!   (`docs/bitacoras/dms-barra.md`). `SYS:Prefs/Presets/DMS/shiva.json` es la barra del escritorio del usuario.
+//!
 //! Lo que es de la máquina (la zona horaria) o de seguridad (permisos, cuentas) no se cambia por aquí sin la
 //! confirmación de `guardian`, que esta orden aún no sabe pedir: se niega y lo dice. Leerlo, sí.
 
@@ -20,6 +24,11 @@ use dashos::protocolo::archivos as a;
 use kit::idioma::prefs::{self, Prefs};
 use kit::idioma::texto::{self, Ajustes};
 use kit::idioma::Pais;
+
+// Las barras de DMS: el modelo y el importador, los mismos que usan la barra y el centro.
+#[path = "../../../usuario/src/barra_config.rs"]
+#[allow(dead_code)]
+mod barra_config;
 
 /// Lo que se comprueba de un valor.
 #[derive(Clone, Copy)]
@@ -49,14 +58,14 @@ const CONOCIDOS: &[Conocido] = &[
     Conocido { nombre: "idioma", fichero: "Sys/locale", clave: prefs::CLAVE_IDIOMAS, explica: "los idiomas, por orden (english, español)", clase: Clase::Idiomas },
     Conocido { nombre: "pais", fichero: "Sys/locale", clave: prefs::CLAVE_PAIS, explica: "el país: fechas, números y dinero", clase: Clase::Pais },
     Conocido { nombre: "tema", fichero: "Escritorio/apariencia", clave: "modo", explica: "claro u oscuro", clase: Clase::Uno(&["claro", "oscuro"]) },
-    Conocido { nombre: "acento", fichero: "Escritorio/apariencia", clave: "acento", explica: "el color: violeta, azul, verde, naranja o fondo", clase: Clase::Acento },
+    Conocido { nombre: "acento", fichero: "Escritorio/apariencia", clave: "acento", explica: "el color: violeta, azul, verde, naranja, monocromo o fondo", clase: Clase::Acento },
     // S10: dónde van los menús de los programas (`docs/bitacoras/menus.md`); lo aplica el centro en marcha.
     Conocido { nombre: "menus", fichero: "Escritorio/menus", clave: "sitio", explica: "dónde van los menús: dentro (en cada ventana) o barra (arriba, como en el Amiga)", clase: Clase::Uno(&["dentro", "barra"]) },
     Conocido { nombre: "zona", fichero: "", clave: "", explica: "la zona horaria (de la máquina)", clase: Clase::Maquina(crate::ZONA) },
 ];
 
 /// Lo que lleva encima un `Escritorio/apariencia` nuevo.
-const CABECERA_TEMA: &str = "El tema (Ajustes > Apariencia; la orden `Ajuste tema` y `Ajuste acento`). Este fichero manda.\nmodo: claro u oscuro. acento: violeta, azul, verde, naranja o fondo (la paleta del fondo de escritorio).";
+const CABECERA_TEMA: &str = "El tema (Ajustes > Apariencia; la orden `Ajuste tema` y `Ajuste acento`). Este fichero manda.\nmodo: claro u oscuro. acento: violeta, azul, verde, naranja, monocromo o fondo (la paleta del fondo de escritorio).";
 
 /// Lo que lleva encima un `Escritorio/menus` nuevo (lo mismo que escribe el centro de control).
 const CABECERA_MENUS: &str = "Dónde van los menús de los programas (Ajustes > Escritorio; la orden `Ajuste menus`). Este fichero manda.\nsitio: dentro (una fila en cada ventana) o barra (los del programa activo en la barra de arriba, como en el Amiga).";
@@ -175,11 +184,14 @@ fn comprobar(o: &mut Orden, c: &Conocido, valor: &str) -> Result<String, String>
             if v.eq_ignore_ascii_case("fondo") {
                 return Ok("fondo".into());
             }
+            if v.eq_ignore_ascii_case("monocromo") {
+                return Ok("monocromo".into());
+            }
             kit::tema::ACENTOS
                 .iter()
                 .find(|x| x.0.eq_ignore_ascii_case(v))
                 .map(|x| x.0.to_lowercase())
-                .ok_or_else(|| alloc::format!("{:?} no vale: violeta, azul, verde, naranja o fondo", v))
+                .ok_or_else(|| alloc::format!("{:?} no vale: violeta, azul, verde, naranja, monocromo o fondo", v))
         }
         Clase::Maquina(_) => Err(String::new()),
     }
@@ -224,6 +236,9 @@ pub fn principal(o: &mut Orden) -> u64 {
     let nombre = args.texto("NOMBRE").map(String::from);
     let valor = args.texto("VALOR").map(String::from);
     let guardar = args.si("GUARDAR");
+    if let Some(desde) = args.texto("DMS").map(String::from) {
+        return importar_dms(o, &desde, guardar);
+    }
     let Some(nombre) = nombre.filter(|_| !args.si("LISTA")) else {
         listar(o);
         return o.fin(shell::RC_BIEN);
@@ -350,5 +365,95 @@ pub fn principal(o: &mut Orden) -> u64 {
         }
     }
     di!(o, "{}: {} (en {})\n", nombre, valor, escritos.join(" y "));
+    o.fin(shell::RC_BIEN)
+}
+
+/// `Ajuste DMS <settings.json> [GUARDAR]`: las barras de DMS a `ENV:Escritorio/barra` (y a `ENVARC:`), sobre lo que hubiera
+/// (sus comentarios se quedan). Si algo no vale, no se escribe nada.
+fn importar_dms(o: &mut Orden, desde: &str, guardar: bool) -> u64 {
+    let bytes = match o.s.leer_entero(desde, 4 << 20) {
+        Ok(b) => b,
+        Err(e) => {
+            o.error_de(e, desde);
+            return o.fin(shell::RC_FALLO);
+        }
+    };
+    let (cfg, dice) = match barra_config::importar_dms(&bytes) {
+        Ok(x) => x,
+        Err(porque) => {
+            o.error(format_args!("{}: {}. No se ha cambiado nada", desde, porque));
+            return o.fin(shell::RC_FALLO);
+        }
+    };
+    let fichero = barra_config::FICHERO;
+    let mut por_escribir: Vec<(&str, Vec<u8>)> = Vec::new();
+    for asignacion in if guardar { &["ENV", "ENVARC"][..] } else { &["ENV"][..] } {
+        let camino = alloc::format!("{}:{}", asignacion, fichero);
+        let antes = match leer(o, &camino) {
+            Ok(b) => b.filter(|b| Ajustes::leer(b).is_ok()),
+            Err(e) => {
+                o.error(format_args!("{}: {}. No se ha cambiado nada", camino, crate::texto_error(e)));
+                return o.fin(shell::RC_FALLO);
+            }
+        };
+        match cfg.escribir(antes.as_deref()) {
+            Ok(b) => por_escribir.push((asignacion, b)),
+            Err(porque) => {
+                o.error(format_args!("{}: {}. No se ha cambiado nada", camino, porque));
+                return o.fin(shell::RC_FALLO);
+            }
+        }
+    }
+    let mut escritos = Vec::new();
+    for (asignacion, bytes) in &por_escribir {
+        match escribir(o, asignacion, fichero, bytes) {
+            Ok(c) => escritos.push(c),
+            Err(porque) => {
+                o.error(format_args!("{}", porque));
+                return o.fin(shell::RC_FALLO);
+            }
+        }
+    }
+    // El color (DMS dinámico con scheme-monochrome: el monocromo), en `Escritorio/apariencia`, solo su clave.
+    let mut dice = dice;
+    if let Some((acento, que)) = barra_config::acento_dms(&bytes) {
+        dice.push(que);
+        if !acento.is_empty() {
+            for asignacion in if guardar { &["ENV", "ENVARC"][..] } else { &["ENV"][..] } {
+                let camino = alloc::format!("{}:Escritorio/apariencia", asignacion);
+                let mut x = match leer(o, &camino) {
+                    Ok(Some(b)) => match Ajustes::leer(&b) {
+                        Ok(x) => x,
+                        Err(_) => {
+                            dice.push(alloc::format!("{} no se lee: el color no se toca", camino));
+                            continue;
+                        }
+                    },
+                    Ok(None) => {
+                        let mut x = Ajustes::nuevo();
+                        x.comentar(CABECERA_TEMA);
+                        x
+                    }
+                    Err(e) => {
+                        dice.push(alloc::format!("{}: {}: el color no se toca", camino, crate::texto_error(e)));
+                        continue;
+                    }
+                };
+                if x.poner("acento", acento).is_ok()
+                    && let Err(porque) = escribir(o, asignacion, "Escritorio/apariencia", x.texto().as_bytes())
+                {
+                    dice.push(porque);
+                }
+            }
+        }
+    }
+    let barras: Vec<String> = cfg.barras.iter().map(|b| alloc::format!("{} ({}, {} widgets)", b.id, b.posicion.nombre(), b.zonas.iter().map(Vec::len).sum::<usize>())).collect();
+    di!(o, "Barras de DMS importadas de {}: {} (en {})\n", desde, barras.join(", "), escritos.join(" y "));
+    if !dice.is_empty() {
+        di!(o, "Lo que DashOS no tiene o cambió:\n");
+        for d in &dice {
+            di!(o, "  {}\n", d);
+        }
+    }
     o.fin(shell::RC_BIEN)
 }
