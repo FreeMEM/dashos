@@ -188,6 +188,11 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     #[cfg(feature = "virt")]
     // Trasfondo: también "centro", para abrir el monitor del sistema desde su desplegable de procesos.
     ("barra", programa!("barra"), &[], &["ventanas", "sesiones", "archivos", "centro", "avisos"]),
+    // S27: el dock y los avisos en pantalla (OSD), como los de DMS. Las capas y la lista de ventanas por su nombre;
+    // "sesiones" para lanzar lo fijado (como quien está delante, solo de `Programas/`) y la tabla de nombres, y
+    // "archivos" para leer y vigilar sus ajustes de `ENV:`.
+    #[cfg(feature = "virt")]
+    ("dock", programa!("dock"), &[], &["ventanas", "sesiones", "archivos"]),
     // S10: la prueba hostil de los avisos: un programa cualquiera con la llave.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
     ("avisador", programa!("avisador"), &[], &["avisos"]),

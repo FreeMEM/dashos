@@ -202,6 +202,11 @@ path = "src/bin/barra.rs"
 required-features = ["ventanas"]
 
 [[bin]]
+name = "dock"
+path = "src/bin/dock.rs"
+required-features = ["ventanas"]
+
+[[bin]]
 name = "workbench"
 path = "src/bin/workbench.rs"
 required-features = ["ventanas"]

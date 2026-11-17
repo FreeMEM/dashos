@@ -227,7 +227,7 @@ impl Tramo {
 
     /// Desde lo que vale ahora (a `ahora_us`) hacia `hasta`.
     pub fn hacia(&self, ahora_us: u64, hasta: i64, dura_us: u64, curva: Curva) -> Tramo {
-        Tramo { desde: self.valor(ahora_us), hasta, inicio_us: ahora_us, dura_us, curva }
+        Tramo { desde: self.valor(ahora_us), hasta, inicio_us: ahora_us, dura_us: dura_us.min(u64::MAX - ahora_us), curva }
     }
 
     pub fn valor(&self, ahora_us: u64) -> i64 {

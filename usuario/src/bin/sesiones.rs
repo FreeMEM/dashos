@@ -78,10 +78,11 @@ const CEDEN_RAICES: &[&str] = &["workbench", "explorador"];
 /// Idiomas (paso 4): programas de `inicio` que nacen con el disco en la raíz 1, solo para leer (`RAICES_DE_MAS` de
 /// `inicio`), y a los que `sesiones` pone en la 3, también solo para leer, el `RAM:` de la sesión de su usuario cuando
 /// entra (`ram_entrar`): su tabla de nombres trae `SYS:` y `RAM:`, y por ellos leen `LOCALE:` y `ENV:`.
-const LEEN_IDIOMA: &[&str] = &["centro"];
+const LEEN_IDIOMA: &[&str] = &["centro", "dock"];
 /// Ajustes en texto: los programas del escritorio que piden guardar un ajuste de `ENV:` en `ENVARC:` (`GUARDAR_ENV`) y
 /// escriben `ENV:` (su raíz de `RAM:`, para leer y escribir): el centro de control, que es la ventana de Ajustes.
-const GUARDAN_AJUSTES: &[&str] = &["centro"];
+/// S27: también el dock, que guarda los programas fijados desde su menú (`Escritorio/dock`).
+const GUARDAN_AJUSTES: &[&str] = &["centro", "dock"];
 /// Lo que reparte, con la llave sin marca de cada uno: servicios (canales) y permisos del kernel, como el de la clase de
 /// plazo (U4). A un canal se le dice quién es el nuevo cliente (su entrada de directorio); a un permiso, no.
 /// U6: el sonido, con la llave sin marca que da `inicio` (`CANAL_SISTEMA`), no con un número fijo (`SIN_NUMERO`).
@@ -153,7 +154,8 @@ const GUARDIANES: &[&str] = &["guardian", "entrada"];
 const VEN_PERMISOS: &[&str] = &["guardian", "entrada", "centro"];
 /// Quién lanza como la persona de delante, solo de `Programas/` (S10): la barra de la pantalla, con su lanzador, y el
 /// Workbench (doble clic en un programa de `Programas`).
-const LANZADORES: &[&str] = &["barra", "workbench", "explorador"];
+/// S27: y el dock (un programa fijado).
+const LANZADORES: &[&str] = &["barra", "workbench", "explorador", "dock"];
 /// Quién puede preguntar quién está delante (S27, oleada 2: la cabecera del panel rápido).
 const VEN_DELANTE: &[&str] = &["panel", "barra"];
 /// Trasfondo: los programas del escritorio que miran los procesos por la persona de delante (`MONITOR`): el fondo (su
@@ -163,7 +165,7 @@ const MONITORES: &[&str] = &["fondo", "barra", "centro"];
 const MATAN_POR_DELANTE: &[&str] = &["centro"];
 /// Los programas del escritorio (los que lanza `inicio` con estos nombres): salen en el monitor marcados así y nadie los
 /// cierra con `MATAR` (decisión del coordinador del 2026-11-14; el usuario puede cambiarla).
-const ESCRITORIO: &[&str] = &["fondo", "centro", "workbench", "explorador", "selector", "barra", "panel", "caja-amiga", "caja-linux"];
+const ESCRITORIO: &[&str] = &["fondo", "centro", "workbench", "explorador", "selector", "barra", "panel", "caja-amiga", "caja-linux", "dock"];
 /// Las cajas, que salen por su nombre en el monitor (con su pastilla) si son del sistema o de quien mira; la de otra
 /// persona va sumada en "otros", como lo demás suyo.
 const CAJAS: &[(&str, u32)] = &[("caja-amiga", M_CAJA_AMIGA), ("caja-linux", M_CAJA_LINUX)];

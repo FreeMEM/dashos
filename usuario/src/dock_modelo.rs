@@ -18,10 +18,15 @@ extern crate alloc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+// En el PC (las pruebas) van aquí; en el programa, los declara él (`crate::ajustes`, `crate::muelle`).
+#[cfg(test)]
 #[path = "dock_ajustes.rs"]
 pub mod ajustes;
+#[cfg(test)]
 #[path = "muelle.rs"]
 pub mod muelle;
+#[cfg(not(test))]
+use crate::{ajustes, muelle};
 
 use ajustes::{Borde, Dock, Indicador, Modo};
 use muelle::{Curva, Muelle, Preset, Tramo, UNO};
@@ -498,7 +503,7 @@ impl Vista {
     pub fn nueva(ahora_us: u64, escondido: i32) -> Vista {
         let mut desliz = Muelle::preset(Preset::Rapido, muelle::corta_ms(muelle::BASE_MS));
         desliz.saltar(escondido as i64 * UNO);
-        Vista { arranque_us: ahora_us + ESPERA_ARRANQUE_US, raton: false, menu: false, gracia_hasta: None, pantalla_completa: false, tapado: false, desliz, saltos: Vec::new() }
+        Vista { arranque_us: ahora_us.saturating_add(ESPERA_ARRANQUE_US), raton: false, menu: false, gracia_hasta: None, pantalla_completa: false, tapado: false, desliz, saltos: Vec::new() }
     }
 
     /// `reveal`.
@@ -525,7 +530,7 @@ impl Vista {
         if dentro {
             self.gracia_hasta = None;
         } else if aj.autoocultar && !self.menu {
-            self.gracia_hasta = Some(ahora_us + ESPERA_ESCONDER_US);
+            self.gracia_hasta = Some(ahora_us.saturating_add(ESPERA_ESCONDER_US));
         }
     }
 
@@ -536,7 +541,7 @@ impl Vista {
         }
         self.menu = abierto;
         if !abierto && aj.autoocultar && !self.raton {
-            self.gracia_hasta = Some(ahora_us + ESPERA_ESCONDER_US);
+            self.gracia_hasta = Some(ahora_us.saturating_add(ESPERA_ESCONDER_US));
         }
     }
 
