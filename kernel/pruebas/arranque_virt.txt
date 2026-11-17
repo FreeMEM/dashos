@@ -550,7 +550,7 @@ DashOS en marcha con 4 núcleos.
 # dms-dock, `sesiones` mira el nombre antes que quién lo pide: el que sale del cajón ("../../Prefs/Red/hora") es -3.
 ~│   [ram] Carla: guardar ENV: en ENVARC: por sesiones [-2, -3]; la orden de archivos con su llave -1
 ~│   [sesiones] ram pide guardar ENV:"Sys/locale" en ENVARC:: -2
-~│   [sesiones] ram pide guardar ENV:"../../Prefs/Red/hora" en ENVARC:: -2
+~│   [sesiones] ram pide guardar ENV:"../../Prefs/Red/hora" en ENVARC:: -3
 ~│   [ram] Carla: escribir la zona de la máquina -12 y en ENVARC: de fábrica -12: bien
 ~(ENV: sigue como al entrar: true): bien
 ~│   [guardian] cambio de usuario: entra Ana (0 intentos malos); Carla sigue detrás
@@ -763,8 +763,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [guardian] Shell pide registro: contesta como Ana
 ~ hostil (Carla) permiso: no se da "eco"
 # Ajustes en texto: lo negado a `ram` en GUARDAR_ENV, en el registro común (seguridad, clase "ajustes").
-~ ram (Carla) ajustes: no guarda ENV:Sys/locale en ENVARC: (estado -2): solo lo pide el centro de control
-~ ram (Carla) ajustes: no guarda ENV:../../Prefs/Red/hora en ENVARC: (estado -2): solo lo pide el centro de control
+~ ram (Carla) ajustes: no guarda ENV:Sys/locale en ENVARC: (estado -2): no es un ajuste suyo
+~ ram (Carla) ajustes: no guarda ENV:../../Prefs/Red/hora en ENVARC: (estado -3): el nombre sale del cajón de los ajustes o no vale
 # En vivo: lo que llega mientras mira.
 ~ Shell (Ana) programa: una línea en vivo
 # S6b, S36: los permisos, en Home:Prefs/Permisos/concedidos. Ver lo propio es libre; dar y quitar lo confirma el usuario

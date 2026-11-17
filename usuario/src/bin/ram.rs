@@ -564,6 +564,7 @@ fn carla_primera(arch: &Archivos, t: &Tabla) -> bool {
         dashos::cerrar(lectura);
         if n == 4 { i32::from_le_bytes(r) } else { i32::MIN }
     };
+    // El primero no es suyo (PROTEGIDO); el segundo sale del cajón: desde dms-dock, `sesiones` mira antes el nombre (-3).
     let pedidos = [guardar_env(b"Sys/locale"), guardar_env(b"../../Prefs/Red/hora")];
     let mut cab = [0u8; 64];
     cab[0..4].copy_from_slice(&1000u32.to_le_bytes());
@@ -572,7 +573,7 @@ fn carla_primera(arch: &Archivos, t: &Tabla) -> bool {
     cab[32..35].copy_from_slice(b"Ana");
     cab[35..45].copy_from_slice(b"Sys/locale");
     let directo = arch.orden(a::RAM_GUARDAR, 1000, 1000, 1000, &cab).e;
-    let maquina = e_zona == a::PROTEGIDO && e_fabrica == a::PROTEGIDO && pedidos == [s::PROTEGIDO, s::PROTEGIDO] && directo == a::MAL_FORMADO;
+    let maquina = e_zona == a::PROTEGIDO && e_fabrica == a::PROTEGIDO && pedidos == [s::PROTEGIDO, -3] && directo == a::MAL_FORMADO;
     println!("  [ram] Carla: guardar ENV: en ENVARC: por sesiones {:?}; la orden de archivos con su llave {}", pedidos, directo);
     println!("  [ram] Carla: escribir la zona de la máquina {} y en ENVARC: de fábrica {}: {}", e_zona, e_fabrica, if maquina { "bien" } else { "MAL" });
     let soltadas = soltadas && maquina;
