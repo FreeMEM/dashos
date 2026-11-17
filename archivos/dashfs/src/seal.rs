@@ -288,7 +288,8 @@ impl VolumeKeySlot {
         }
     }
 
-    /// DashOS (branch `cuentas-2`): the Argon2 cost it was made with (a new password for it keeps it).
+    /// The Argon2 cost it was made with: what this slot costs to try (DashOS, branch `cuentas-2`: a new password for it
+    /// keeps it).
     pub fn cost(&self) -> Cost {
         Cost {
             memory: self.memory.to_ne(),
@@ -345,15 +346,6 @@ impl VolumeKeySlot {
             wrapped,
             ..Default::default()
         })
-    }
-
-    /// What this slot costs to try.
-    fn cost(&self) -> Cost {
-        Cost {
-            memory: self.memory.to_ne(),
-            passes: self.passes.to_ne(),
-            lanes: self.lanes.to_ne(),
-        }
     }
 
     /// The volume key, if `password` is the one of this slot.
