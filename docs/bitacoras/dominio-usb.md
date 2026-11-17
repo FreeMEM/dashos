@@ -207,8 +207,13 @@ QEMU `virt` con TCG, 4 núcleos, el PC muy cargado por otras sesiones (carga 40 
   al azar; y las del canal y el árbol con el tubo).
 - `usb_prestado` (3 pruebas en el PC: todos los mensajes, 200 000 al azar y las comprobaciones) y `registro` (la clase
   "consola" y su ritmo), en `make prueba`.
-- `make prueba`, `make arranque-virt`, `make arranque-virt-usb`, `make arranque-virt-linux` y `make arranque-virt-2`:
-  ver abajo.
+- `make arranque-virt-usb`, `make arranque-virt-linux` y `make arranque-virt-2`: bien. `make prueba`: bien a la
+  segunda (la primera, "C14: clase de plazo" con la carga del PC en 94).
+- `make arranque-virt`: falla en las dos vueltas solo por clics del guion perdidos con carga, el fallo conocido de
+  `revision` que arregla `firefox-firme`: "[ajustes] menú abierto; la segunda opción en (" la primera y "[ajustes] el
+  desplegable dice: Destello" la segunda (y detrás, en cadena, lo que el guion ya no llega a hacer: el Shell, `guarda`
+  y la commodity). El teclado y el ratón por el xHCI llegan ("[ajustes] el campo dice: DashOSa"), y las otras pruebas
+  con USB (`arranque-virt-usb`, `-linux`, `-2`) salen bien.
 
 ### Lo que queda
 
