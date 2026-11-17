@@ -515,7 +515,8 @@ fn principal() -> u64 {
             "presion" => 1 << 40,
             // S32: el instalador (solo en vivo): copias del sistema y del cargador que instala, y el DashFS de la
             // partición nueva abierto para crecerlo (su asignador, para decenas de GB).
-            "instalador" => 128 << 20,
+            // Y el dominio Linux de x86 con ntfsresize para encoger Windows (S35 en x86): su RAM (128 MB) sale de aquí.
+            "instalador" => 320 << 20,
             _ => 16 << 20,
         };
         // De un servicio, inicio guarda una copia de cada llave, con los mismos derechos, para relanzarlo (E6).

@@ -471,7 +471,7 @@ test = false
 name = "instalador"
 path = "src/bin/instalador.rs"
 test = false
-required-features = ["archivos"]
+required-features = ["archivos", "caja"]
 
 [[bin]]
 name = "instalar"

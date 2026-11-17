@@ -250,7 +250,8 @@ fn entradas(cab: &Cabecera, lista: &[u8]) -> Vec<Particion> {
     v
 }
 
-/// Si dos listas solo difieren en entradas de DashOS (una vacía en una y de DashOS en la otra, o de DashOS en las dos).
+/// Si dos listas solo difieren en entradas de DashOS (una vacía en una y de DashOS en la otra, o de DashOS en las dos)
+/// o en el final de una partición encogida para DashOS.
 fn difieren_solo_dashos(a: &Cabecera, la: &[u8], b: &Cabecera, lb: &[u8]) -> bool {
     if a.n != b.n || a.tam_e != b.tam_e || a.disco_guid != b.disco_guid || a.primer_util != b.primer_util || a.ultimo_util != b.ultimo_util {
         return false;
@@ -263,7 +264,10 @@ fn difieren_solo_dashos(a: &Cabecera, la: &[u8], b: &Cabecera, lb: &[u8]) -> boo
             continue;
         }
         let ok = |e: &[u8]| e.iter().all(|&x| x == 0) || e[..16] == tipos::DASHOS;
-        if !ok(ea) || !ok(eb) {
+        // S32 (encoger): o la misma partición (tipo, GUID, principio, nombre), solo más corta en una de las dos: la
+        // que se encogió para hacer sitio a DashOS en la misma escritura.
+        let encogida = ea[..40] == eb[..40] && ea[48..] == eb[48..];
+        if !(ok(ea) && ok(eb)) && !encogida {
             return false;
         }
         alguna = true;
@@ -588,4 +592,23 @@ pub fn mbr_protector(sectores: u64, ts: usize) -> Vec<u8> {
     s[510] = 0x55;
     s[511] = 0xAA;
     s
+}
+
+/// S32 (encoger): la tabla `t` con la partición `numero` acabando en `nuevo_hasta` (exclusivo), en su lista y en sus
+/// particiones. Solo encoge (nunca crece ni mueve el principio).
+pub fn con_encogida(t: &Tabla, numero: u32, nuevo_hasta: u64) -> Result<Tabla, FalloEscribir> {
+    let Some(cab) = t.cabecera else { return Err(FalloEscribir::NoEscribible) };
+    let k = (numero as usize).checked_sub(1).filter(|&k| k < cab.n as usize).ok_or(FalloEscribir::NoCabe)?;
+    let mut n = t.clone();
+    let te = cab.tam_e as usize;
+    let e = &mut n.lista[k * te..(k + 1) * te];
+    let (desde, ultimo) = (u64_en(e, 32), u64_en(e, 40));
+    if e[..16].iter().all(|&x| x == 0) || nuevo_hasta <= desde || nuevo_hasta > ultimo + 1 {
+        return Err(FalloEscribir::NoCabe);
+    }
+    poner_u64(e, 40, nuevo_hasta - 1);
+    for q in n.particiones.iter_mut().filter(|q| q.numero == numero) {
+        q.hasta = nuevo_hasta;
+    }
+    Ok(n)
 }

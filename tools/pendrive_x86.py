@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """S32: la imagen del pendrive en vivo de DashOS para un PC (x86-64, UEFI).
 
-    pendrive_x86.py <salida.img> <cargador.efi> <disco de serie> [--sin-manos <fichero>]
+    pendrive_x86.py <salida.img> <cargador.efi> <disco de serie> [--sin-manos <fichero>] [--dominio <bzImage> <initramfs>]
 
 Un disco GPT con una sola partición, la de arranque EFI (FAT32), con:
   EFI/BOOT/BOOTX64.EFI   el cargador de DashOS (con el kernel dentro), el que arranca el firmware de un pendrive;
@@ -9,6 +9,8 @@ Un disco GPT con una sola partición, la de arranque EFI (FAT32), con:
                          entero a la memoria. DashOS arranca de él en vivo: lo que se cambia queda en la memoria y se
                          pierde al apagar; no toca los discos del PC (solo el instalador, y con permiso).
   EFI/DashOS/LEEME.TXT   qué es esto, en llano.
+  EFI/DashOS/DOMINIO.BZI y DOMINIO.CPI (con --dominio): el dominio Linux de x86 con ntfsresize, para encoger Windows
+                         (`tools/dominio_x86.py`; no va en git).
 Con --sin-manos, el fichero va como `EFI/DashOS/SINMANOS.TXT`: un plan del instalador (o un pedido: "disco <nombre>"
 y "pedido <...>") que el instalador aplica nada más arrancar, sin preguntar (para las pruebas del banco,
 `tools/prueba_instalador.py`).
@@ -79,6 +81,11 @@ arranque del ordenador sin quitar a nadie.
 def main():
     args = sys.argv[1:]
     sin_manos = None
+    dominio = None
+    if "--dominio" in args:
+        i = args.index("--dominio")
+        dominio = (args[i + 1], args[i + 2])
+        del args[i:i + 3]
     if "--sin-manos" in args:
         i = args.index("--sin-manos")
         sin_manos = args[i + 1]
@@ -88,7 +95,8 @@ def main():
     salida, cargador, disco = args
     sistema = dashfs_de(disco)
     with tempfile.TemporaryDirectory() as t:
-        tam_esp = max(64 * MIB, (len(sistema) + os.path.getsize(cargador) + 16 * MIB + MIB - 1) // MIB * MIB)
+        extra = sum(os.path.getsize(f) for f in dominio) if dominio else 0
+        tam_esp = max(64 * MIB, (len(sistema) + os.path.getsize(cargador) + extra + 16 * MIB + MIB - 1) // MIB * MIB)
         sectores = (tam_esp + 2 * MIB) // SECTOR
         desde, hasta = 2048, 2048 + tam_esp // SECTOR
         principio, final = gpt(sectores, [(ESP, uuid.uuid4(), desde, hasta, "DashOS en vivo")], uuid.uuid4())
@@ -111,6 +119,8 @@ def main():
         ficheros = [(cargador, "::EFI/BOOT/BOOTX64.EFI"), (img, "::EFI/DashOS/VIVO.IMG"), (leeme, "::EFI/DashOS/LEEME.TXT")]
         if sin_manos is not None:
             ficheros.append((sin_manos, "::EFI/DashOS/SINMANOS.TXT"))
+        if dominio:
+            ficheros += [(dominio[0], "::EFI/DashOS/DOMINIO.BZI"), (dominio[1], "::EFI/DashOS/DOMINIO.CPI")]
         for de, a in ficheros:
             subprocess.run(["mcopy", "-i", destino, de, a], check=True)
         print(f"{salida}: pendrive en vivo de {sectores * SECTOR // MIB} MB (sistema de {len(sistema) // 1024} KB, ESP de {tam_k // 1024} MB)")

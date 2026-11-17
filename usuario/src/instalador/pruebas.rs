@@ -640,3 +640,35 @@ fn aplicar_disco_entero_y_encoger_sin_dominio() {
     v.contenidos[k] = reconocer::Contenido::BitLocker;
     assert!(plan::calcular(&v, Pedido::Encoger(3, 0), &mut guids()).unwrap_err().contains("BitLocker"));
 }
+
+/// Encoger: la entrada de Windows más corta y la de DashOS, en la misma escritura de la GPT, cortada en cada sector:
+/// siempre se lee una tabla que se puede escribir (la de antes, la nueva, o una instalación cortada que se reconoce),
+/// con Windows empezando donde empezaba.
+#[test]
+fn gpt_encoger_cortada_en_cada_sector() {
+    let base = disco_con(64 * GB, &[(tipos::ESP, MIB, 201 * MIB), (tipos::MS_DATOS, 217 * MIB, 60 * 1024 * MIB)]);
+    let antes = gpt::leer(&mut Disperso { datos: base.datos.clone(), ..Disperso::nuevo(64 * GB) }).unwrap();
+    let encogida = gpt::con_encogida(&antes, 2, 30 * 1024 * MIB).unwrap();
+    assert!(gpt::con_encogida(&antes, 2, 61 * 1024 * MIB).is_err(), "no crece");
+    assert!(gpt::con_encogida(&antes, 2, 217 * MIB).is_err(), "ni se queda en nada");
+    assert!(gpt::con_encogida(&antes, 9, 30 * 1024 * MIB).is_err());
+    let nueva = Nueva { tipo: tipos::DASHOS, guid: guid(0x66), desde: 30 * 1024 * MIB, hasta: 60 * 1024 * MIB, nombre: "DashOS" };
+    assert!(gpt::lista_nueva(&antes, &[nueva], false).is_err(), "sin encoger, pisa a Windows");
+    let lista = gpt::lista_nueva(&encogida, &[nueva], false).unwrap();
+    for corte in 0..100 {
+        let mut d = Disperso { datos: base.datos.clone(), ..Disperso::nuevo(64 * GB) };
+        d.corte = Some(corte);
+        let r = gpt::escribir_gpt(&mut d, &encogida, &lista);
+        d.corte = None;
+        let t = gpt::leer(&mut d).unwrap();
+        assert!(t.escribible(), "corte {}: {:?}", corte, t.copias);
+        let w = t.particiones.iter().find(|p| p.tipo == tipos::MS_DATOS).unwrap();
+        assert_eq!(w.desde, 217 * MIB);
+        if r.is_ok() {
+            assert_eq!(t.copias, Copias::Iguales);
+            assert_eq!(w.hasta, 30 * 1024 * MIB);
+            return;
+        }
+    }
+    panic!("no acabó");
+}

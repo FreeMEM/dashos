@@ -13,6 +13,8 @@
 //! | 32, 40 | el cargador |
 //! | 48, 56 | el plan sin manos (0 bytes si no hay) |
 //! | 64 | el GUID de la partición de arranque (16 bytes) |
+//! | 80, 88 | el kernel del dominio Linux de x86 (`EFI/DashOS/DOMINIO.BZI`, 0 bytes si no hay) |
+//! | 96, 104 | su initramfs (`EFI/DashOS/DOMINIO.CPI`) |
 //!
 //! Escrito con la especificación de UEFI 2.10: 9.1 (EFI_LOADED_IMAGE_PROTOCOL), 10.2 y 10.3 (rutas de dispositivo:
 //! el nodo de disco duro, 4/1, y el de fichero, 4/4), 13.4 y 13.5 (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL, EFI_FILE_PROTOCOL).
@@ -161,17 +163,29 @@ pub(super) fn buscar(imagen: *const c_void, bs: &ServiciosArranque, info: &mut s
     };
     let plan = abrir(raiz, ucs2("\\EFI\\DashOS\\SINMANOS.TXT", &mut b)).filter(|p| p.1 <= 64 * 1024);
     let tam_plan = plan.map_or(0, |p| p.1);
+    // El dominio Linux de x86 (para encoger Windows), si está.
+    let dbz = abrir(raiz, ucs2("\\EFI\\DashOS\\DOMINIO.BZI", &mut b)).filter(|p| p.1 <= 64 << 20);
+    let dcpio = abrir(raiz, ucs2("\\EFI\\DashOS\\DOMINIO.CPI", &mut b)).filter(|p| p.1 <= 64 << 20);
+    let (tam_bz, tam_cpio) = match (dbz, dcpio) {
+        (Some(a), Some(c)) => (a.1, c.1),
+        _ => (0, 0),
+    };
     let pag = |x: u64| x.div_ceil(PAGINA as u64) * PAGINA as u64;
     let (o_sistema, o_cargador) = (CABECERA as u64, CABECERA as u64 + pag(tam_sistema));
     let o_plan = o_cargador + pag(tam_cargador);
-    let total = o_plan + pag(tam_plan);
+    let o_bz = o_plan + pag(tam_plan);
+    let o_cpio = o_bz + pag(tam_bz);
+    let total = o_cpio + pag(tam_cpio);
     let mut zona = 0u64;
     if (bs.reservar_paginas)(CUALQUIER_SITIO, DATOS_DEL_CARGADOR, (total / PAGINA as u64) as usize, &mut zona) != BIEN {
         let _ = writeln!(c, "DashOS: no hay memoria para el sistema en vivo ({} MB)", total >> 20);
         return;
     }
     unsafe { core::ptr::write_bytes(zona as *mut u8, 0, CABECERA) };
-    let bien = leer(sistema, zona + o_sistema, tam_sistema) && leer(cargador, zona + o_cargador, tam_cargador) && plan.is_none_or(|(f, t)| leer(f, zona + o_plan, t));
+    let bien = leer(sistema, zona + o_sistema, tam_sistema)
+        && leer(cargador, zona + o_cargador, tam_cargador)
+        && plan.is_none_or(|(f, t)| leer(f, zona + o_plan, t))
+        && (tam_bz == 0 || (leer(dbz.unwrap().0, zona + o_bz, tam_bz) && leer(dcpio.unwrap().0, zona + o_cpio, tam_cpio)));
     if !bien {
         let _ = writeln!(c, "DashOS: no se pudo leer el sistema en vivo del pendrive");
         return;
@@ -187,7 +201,14 @@ pub(super) fn buscar(imagen: *const c_void, bs: &ServiciosArranque, info: &mut s
     poner(48, o_plan);
     poner(56, tam_plan);
     unsafe { core::ptr::copy_nonoverlapping(guid.as_ptr(), cab.add(64), 16) };
+    poner(80, o_bz);
+    poner(88, tam_bz);
+    poner(96, o_cpio);
+    poner(104, tam_cpio);
     info.vivo = zona;
     info.vivo_tamano = total;
     let _ = writeln!(c, "DashOS: en vivo desde el pendrive: sistema de {} KB, cargador de {} KB{}", tam_sistema / 1024, tam_cargador / 1024, if tam_plan > 0 { ", con plan sin manos" } else { "" });
+    if tam_bz > 0 {
+        let _ = writeln!(c, "DashOS: con el dominio Linux de x86: kernel de {} KB, initramfs de {} KB", tam_bz / 1024, tam_cpio / 1024);
+    }
 }

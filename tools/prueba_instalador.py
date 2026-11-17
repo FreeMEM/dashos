@@ -20,6 +20,7 @@ CAPTURAS. Se lanzan de uno en uno (Windows pide 4 GB).
 """
 import importlib.util
 import os
+import re
 import struct
 import subprocess
 import zlib
@@ -36,6 +37,8 @@ INSTALAR_PC = os.path.join(RAIZ, "usuario", "target", "instalar-pc")
 CARGADOR = os.path.join(banco.BANCO, "cargador-del-pendrive.efi")
 SISTEMA = os.path.join(RAIZ, "kernel", "target", "nvme-x86.img")
 PENDRIVE = os.path.join(RAIZ, "kernel", "target", "pendrive-x86.img")
+# El dominio Linux de x86 con ntfsresize (`tools/dominio_x86.py preparar`), para encoger.
+DOMINIO_X86 = os.path.expanduser(os.environ.get("DASHOS_DOMINIO_X86", "~/recuperar/geosian-7d/dominio-x86"))
 B = banco.BANCO
 resumen = []
 
@@ -69,7 +72,9 @@ def pendrive(nombre, plan_texto):
     with open(banco.mio(plan), "w") as f:
         f.write(plan_texto)
     salida = banco.mio(os.path.join(B, f"pendrive-{nombre}.img"))
-    subprocess.run([sys.executable, os.path.join(AQUI, "pendrive_x86.py"), salida, CARGADOR, SISTEMA, "--sin-manos", plan], check=True, capture_output=True)
+    dominio = [os.path.join(DOMINIO_X86, f) for f in ("bzImage", "initramfs.cpio")]
+    extra = ["--dominio", *dominio] if all(os.path.exists(f) for f in dominio) else []
+    subprocess.run([sys.executable, os.path.join(AQUI, "pendrive_x86.py"), salida, CARGADOR, SISTEMA, "--sin-manos", plan, *extra], check=True, capture_output=True)
     return salida
 
 
@@ -186,9 +191,6 @@ def escenario_hostiles():
     banco.capa("hostil-sinhueco", "win11-ntfs")
     motivo, t = en_vivo("hostil-sinhueco", "hostil-sinhueco", pendrive("hostil-sinhueco", "disco nvme0\npedido hueco\n"))
     apuntar("no hay sitio" in t and "SIN MANOS: no instalado" in t, f"hostil: sin hueco suficiente, no se instala y se dice ({motivo})")
-    # Encoger Windows: sin el dominio de x86, se para antes de tocar nada; y con NTFS sucio, se dice.
-    motivo, t = en_vivo("hostil-sinhueco", "hostil-encoger", pendrive("hostil-encoger", "disco nvme0\npedido encoger 3\n"))
-    apuntar("dominio Linux de x86" in t and "SIN MANOS: no instalado" in t, f"hostil: encoger Windows se para sin el dominio, antes de tocar nada ({motivo})")
     # NTFS sucio (el de `win-hueco-base`: ntfsresize lo deja así y este Windows 11 no lo limpia): se dice y no se toca.
     banco.capa("hostil-sucio", "win-hueco-base")
     motivo, t = en_vivo("hostil-sucio", "hostil-sucio", pendrive("hostil-sucio", "disco nvme0\npedido encoger 3\n"))
@@ -216,8 +218,6 @@ def escenario_hostiles():
         banco.soltar(f, p)
     motivo, t = en_vivo("hostil-bitlocker", "hostil-bitlocker", pendrive("hostil-bitlocker", "disco nvme0\npedido encoger 3\n"))
     apuntar("BitLocker (cifrada)" in t and "cifrada con BitLocker" in t and "SIN MANOS: no instalado" in t, f"hostil: BitLocker, no se toca y se dice ({motivo})")
-    malas = banco.comparar("win11-ntfs", "hostil-sinhueco")
-    apuntar(not malas, f"hostil: tras pedir encoger, Windows intacto {malas}")
     # Corte de luz a media instalación (al copiar el sistema), sobre Windows con hueco.
     banco.capa("hostil-corte", "win-hueco-base")
     c, plan, err = instalar_pc("hostil-corte", "plan", "nvme0", "hueco")
@@ -260,7 +260,62 @@ def exportar_particion_rw(capa, desde, hasta):
     sys.exit("no se exporta la partición")
 
 
-ESCENARIOS = {"vacio": escenario_vacio, "windows": escenario_windows, "debian": escenario_debian, "hostiles": escenario_hostiles}
+def ntfs_en_el_pc(capa, desde, hasta):
+    """`ntfsresize --info` y `ntfsfix -n` en el PC sobre la partición [desde, hasta) de la capa (solo leer): (bien, texto)."""
+    f = banco.mio(os.path.join(B, f"{capa}.ntfs"))
+    open(f, "a").close()
+    p = subprocess.Popen(["qemu-storage-daemon", "--blockdev", f"driver=file,node-name=f,filename={banco.capa_ruta(capa)},read-only=on",
+                          "--blockdev", "driver=qcow2,node-name=q,file=f,read-only=on",
+                          "--blockdev", f"driver=raw,node-name=p,file=q,offset={desde * 512},size={(hasta - desde) * 512},read-only=on",
+                          "--export", f"type=fuse,id=e,node-name=p,mountpoint={f},writable=off,allow-other=off"], stderr=subprocess.DEVNULL)
+    for _ in range(100):
+        if os.path.getsize(f) > 0:
+            break
+        time.sleep(0.1)
+    try:
+        r = subprocess.run(["ntfsresize", "--info", "--no-progress-bar", "-f", f], capture_output=True, text=True)
+        tam = re.findall(r"Current volume size: (\d+) bytes", r.stdout)
+        return r.returncode == 0, (tam[0] if tam else "?") + " bytes; " + " ".join(l for l in r.stdout.splitlines() if "resize at" in l or "ERROR" in l)
+    finally:
+        banco.soltar(f, p)
+
+
+def escenario_encoger():
+    """Encoger Windows 11 (el de serie, sin hueco) con ntfsresize en el dominio Linux de x86, e instalar en lo que queda."""
+    banco.capa("encoger-1", "win11-ntfs")
+    c, plan, err = instalar_pc("encoger-1", "plan", "nvme0", "encoger:3")
+    apuntar(c == 0, f"encoger: plan de encoger Windows ({err.strip() or 'hecho en el PC'})")
+    if c != 0:
+        return
+    nuevo = int(re.findall(r"^encoger 3 (\d+)$", plan, re.M)[0])
+    motivo, t = en_vivo("encoger-1", "encoger-instala", pendrive("encoger-1", plan), segundos=900)
+    apuntar(instalado(t), f"encoger: Windows encogido por ntfsresize en el dominio e instalado en el hueco ({motivo})")
+    apuntar("dominio: fin encoger 0" in t, "encoger: el dominio dice que ntfsresize acabó bien")
+    malas = banco.comparar("win11-ntfs", "encoger-1", (1,))
+    malas = [m for m in malas if "partición 3" not in m]
+    apuntar(not malas, f"encoger: las demás particiones de Windows, iguales byte a byte {malas}")
+    ok, texto = ntfs_en_el_pc("encoger-1", 1083392, nuevo)
+    apuntar(ok, f"encoger: el NTFS encogido, comprobado en el PC con ntfsresize --info ({texto})")
+    # El primer arranque es el de DashOS (BootNext); luego Windows, con el suyo de siempre.
+    ok, _ = dashos_arranca("encoger-1", "encoger-dashos-nvram")
+    apuntar(ok, "encoger: DashOS arranca desde su entrada de la NVRAM")
+    motivo, t = otro_arranca("encoger-1", "encoger-windows", None, segundos=240)
+    apuntar("apagado limpio" in motivo, f"encoger: Windows arranca tras encogerlo (su comprobación de disco, si la pide) y se apaga limpio ({motivo}; capturas encoger-windows-NN.png)")
+    ok, texto = ntfs_en_el_pc("encoger-1", 1083392, nuevo)
+    apuntar(ok, f"encoger: el NTFS tras arrancar Windows ({texto})")
+    ok, _ = dashos_arranca("encoger-1", "encoger-dashos-menu", por_menu=True)
+    apuntar(ok, "encoger: DashOS arranca eligiéndolo en el menú del firmware")
+    # Corte de luz en mitad de ntfsresize (en otra capa): Windows puede quedar a medias; se mira qué queda.
+    banco.capa("encoger-corte", "win11-ntfs")
+    motivo, t = en_vivo("encoger-corte", "encoger-corte", pendrive("encoger-corte", plan), matar_en="Are you sure you want to proceed", segundos=900)
+    ok, texto = ntfs_en_el_pc("encoger-corte", 1083392, 103223296)
+    _, ver, _ = instalar_pc("encoger-corte", "ver", "nvme0")
+    apuntar(motivo == "matado", f"encoger: corte de luz durante ntfsresize ({motivo}); el NTFS después, en el PC: {'se lee' if ok else 'NO se lee'} ({texto})")
+    motivo, t = en_vivo("encoger-corte", "encoger-corte-repite", pendrive("encoger-corte-repite", "disco nvme0\npedido encoger 3\n"), segundos=900, vars_limpias=True)
+    apuntar(instalado(t) or "no instalado" in t, f"encoger: tras el corte, se repite: {'acaba' if instalado(t) else 'se para y lo dice'} ({motivo})")
+
+
+ESCENARIOS = {"encoger": escenario_encoger, "vacio": escenario_vacio, "windows": escenario_windows, "debian": escenario_debian, "hostiles": escenario_hostiles}
 
 
 def main():

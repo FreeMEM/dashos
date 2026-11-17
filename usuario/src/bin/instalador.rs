@@ -36,6 +36,16 @@ use core::fmt::Write;
 mod instalador;
 
 use instalador::{aplicar, disco::Disco, nvram, plan};
+
+/// El dominio Linux de x86 (la pieza común, `usuario/src/dominio_x86.rs`).
+#[path = "../dominio_x86.rs"]
+mod dominio_x86;
+
+/// La RAM del dominio de ntfsresize (medido en `docs/bitacoras/x86-dominio.md`).
+const RAM_DOMINIO_MB: u64 = 128;
+/// Su línea de órdenes, sin la frecuencia del TSC ni la orden (las pone `linea_dominio`).
+/// (La misma que `LINEA` de `tools/dominio_x86.py`, donde está el porqué de cada parte.)
+const LINEA_DOMINIO: &str = "earlyprintk=serial,0x3f8,115200,keep tsc=reliable printk.devkmsg=on virtio_mmio.device=4K@0xd0000000:5";
 use dashos::println;
 
 dashos::programa!(principal);
@@ -202,6 +212,9 @@ struct Vivo {
     cargador: &'static [u8],
     plan: &'static [u8],
     arranque: [u8; 16],
+    /// El dominio Linux de x86 con ntfsresize (vacíos si el pendrive no lo trae).
+    dominio_bz: &'static [u8],
+    dominio_initrd: &'static [u8],
 }
 
 fn vivo(llave: u32) -> Option<Vivo> {
@@ -217,7 +230,7 @@ fn vivo(llave: u32) -> Option<Vivo> {
     let trozo = |o: usize| zona.get(u(o)..u(o).checked_add(u(o + 8))?);
     let mut arranque = [0u8; 16];
     arranque.copy_from_slice(&zona[64..80]);
-    Some(Vivo { sistema: trozo(16)?, cargador: trozo(32)?, plan: trozo(48).unwrap_or(&[]), arranque })
+    Some(Vivo { sistema: trozo(16)?, cargador: trozo(32)?, plan: trozo(48).unwrap_or(&[]), arranque, dominio_bz: trozo(80).unwrap_or(&[]), dominio_initrd: trozo(96).unwrap_or(&[]) })
 }
 
 /// El entorno de `aplicar` en DashOS.
@@ -225,6 +238,78 @@ struct Entorno<'a> {
     vivo: &'a Vivo,
     variables: Option<u32>,
     registro: &'a mut String,
+    /// El permiso de máquinas virtuales (el dominio Linux para encoger) y el disco del plan (canal y número), para
+    /// prestarle solo la partición que se encoge.
+    hipervisor: Option<u32>,
+    disco: (u32, usize, u64, u64, usize),
+}
+
+/// S35 en x86: la partición prestada al dominio. Solo [desde, hasta) del disco: el invitado no ve nada más.
+struct Prestada {
+    d: DiscoCanal,
+    desde: u64,
+    hasta: u64,
+}
+
+impl caja_vmm::virtio::bloque::Bloques for Prestada {
+    fn sectores(&self) -> u64 {
+        (self.hasta - self.desde) * self.d.tam as u64 / 512
+    }
+    fn leer(&mut self, sector: u64, buf: &mut [u8]) -> Result<(), caja_vmm::virtio::bloque::ErrorBloques> {
+        self.acceso(sector, buf.len(), |d, lba, n| d.leer(lba, &mut buf[..n]))
+    }
+    fn escribir(&mut self, sector: u64, datos: &[u8]) -> Result<(), caja_vmm::virtio::bloque::ErrorBloques> {
+        self.acceso(sector, datos.len(), |d, lba, n| d.escribir(lba, &datos[..n]))
+    }
+    fn vaciar(&mut self) -> Result<(), caja_vmm::virtio::bloque::ErrorBloques> {
+        self.d.vaciar().map_err(|_| caja_vmm::virtio::bloque::ErrorBloques)
+    }
+    fn id(&self) -> [u8; 20] {
+        *b"dashos-particion\0\0\0\0"
+    }
+}
+
+impl Prestada {
+    /// Un acceso del invitado (sectores de 512) en sectores del disco, comprobado contra la partición.
+    fn acceso(&mut self, sector: u64, bytes: usize, f: impl FnOnce(&mut DiscoCanal, u64, usize) -> Result<(), ()>) -> Result<(), caja_vmm::virtio::bloque::ErrorBloques> {
+        let ts = self.d.tam as u64;
+        let (byte, fin) = (sector * 512, sector * 512 + bytes as u64);
+        if byte % ts != 0 || fin % ts != 0 || fin > (self.hasta - self.desde) * ts {
+            return Err(caja_vmm::virtio::bloque::ErrorBloques);
+        }
+        f(&mut self.d, self.desde + byte / ts, bytes).map_err(|_| caja_vmm::virtio::bloque::ErrorBloques)
+    }
+}
+
+/// La línea de órdenes del dominio (`tools/dominio_x86.py`, `docs/bitacoras/x86-dominio.md`) con la frecuencia del TSC
+/// (no hay PIT ni HPET con que medirla) y la orden de ntfsresize.
+fn linea_dominio(orden: &str) -> String {
+    format!("{} tsc_early_khz={} dashos.ntfs={}", LINEA_DOMINIO, dashos::frecuencia() / 1000, orden)
+}
+
+/// Corre el dominio con `orden`; cada línea suya, al registro. Devuelve el código de salida de su último paso.
+fn en_el_dominio(e: &mut Entorno, orden: &str, desde: u64, hasta: u64) -> Result<(String, i64), String> {
+    let Some(permiso) = e.hipervisor else { return Err(String::from("sin el permiso de máquinas virtuales")) };
+    if e.vivo.dominio_bz.is_empty() {
+        return Err(String::from("este pendrive no trae el dominio Linux de x86 (ntfsresize): no se puede encoger"));
+    }
+    let (canal, cual, numero, sectores, tam) = e.disco;
+    let p = Prestada { d: DiscoCanal { canal, cual, numero, sectores, tam }, desde, hasta };
+    let mut dom = dominio_x86::Dominio::nuevo(permiso, RAM_DOMINIO_MB, e.vivo.dominio_bz, e.vivo.dominio_initrd, &linea_dominio(orden), alloc::boxed::Box::new(p))?;
+    let t0 = dashos::ahora_us();
+    let mut texto = String::new();
+    let fin = dom.correr(600_000_000, &mut |l| {
+        if let Some(x) = l.find("dominio: ") {
+            println!("  [instalador] {}", &l[x..]);
+            let _ = writeln!(texto, "{}", &l[x + 9..]);
+        }
+    })?;
+    drop(dom);
+    let _ = writeln!(e.registro, "{}", texto.trim_end());
+    let mut p = fin.split_ascii_whitespace().skip(2);
+    let (paso, codigo) = (p.next().unwrap_or(""), p.next().and_then(|c| c.parse::<i64>().ok()).unwrap_or(-1));
+    println!("  [instalador] dominio: {} acabó con {} en {} ms", paso, codigo, (dashos::ahora_us() - t0) / 1000);
+    Ok((String::from(paso), codigo))
 }
 
 /// Una variable del firmware (llamada 64): (estado, bytes).
@@ -264,10 +349,21 @@ impl aplicar::Entorno for Entorno<'_> {
         println!("  [instalador] DashFS crecido a {} MB", nuevo >> 20);
         Ok(())
     }
-    fn encoger(&mut self, _: &mut dyn Disco, _: u64, _: u64, _: u64) -> Result<(), String> {
-        Err(String::from(
-            "encoger Windows necesita el dominio Linux de x86 (ntfsresize en una máquina virtual), que aún no existe: no se ha tocado nada",
-        ))
+    fn encoger(&mut self, d: &mut dyn Disco, desde: u64, hasta: u64, nuevo_hasta: u64) -> Result<(), String> {
+        let _ = d;
+        // 1. ntfsresize --info: que el NTFS se deje (ni hibernado, ni sucio, ni con su registro sin vaciar).
+        let (paso, c) = en_el_dominio(self, "info", desde, hasta)?;
+        if paso != "info" || c != 0 {
+            return Err(String::from("ntfsresize no deja encoger este Windows (lo dice arriba): no se ha tocado nada"));
+        }
+        // 2. Encoger (el dominio hace antes la prueba en seco y solo sigue si sale bien).
+        let bytes = (nuevo_hasta - desde) * self.disco.4 as u64;
+        let (paso, c) = en_el_dominio(self, &format!("encoger:{}", bytes), desde, hasta)?;
+        match (paso.as_str(), c) {
+            ("encoger", 0) => Ok(()),
+            ("prueba", _) => Err(String::from("la prueba en seco de ntfsresize no salió: no se ha tocado nada")),
+            _ => Err(format!("ntfsresize no acabó bien ({} {}): Windows puede necesitar una comprobación de disco", paso, c)),
+        }
     }
     fn nvram(&mut self, numero: u32, desde: u64, hasta: u64, guid: &[u8; 16]) -> Result<u16, String> {
         let Some(p) = self.variables else { return Err(String::from("no hay permiso de variables (¿sin servicios de ejecución de UEFI?)")) };
@@ -420,13 +516,14 @@ fn hacer_plan(lista: &mut [(String, DiscoCanal)], arranque: &[u8; 16], pedido: &
 }
 
 /// Aplica el plan en texto. Devuelve el registro.
-fn instalar(lista: &mut [(String, DiscoCanal)], vivo: &Vivo, variables: Option<u32>, texto: &str) -> Result<String, String> {
+fn instalar(lista: &mut [(String, DiscoCanal)], vivo: &Vivo, variables: Option<u32>, hipervisor: Option<u32>, texto: &str) -> Result<String, String> {
     let mut registro = String::new();
     let p = plan::leer(texto)?;
     let (nombre, d) = lista.iter_mut().find(|(n, _)| *n == p.disco).ok_or("el disco del plan no está")?;
     let _ = writeln!(registro, "# Instalación de DashOS (S32), con este plan:\n{}", texto.trim_end());
     let r = {
-        let mut e = Entorno { vivo, variables, registro: &mut registro };
+        let disco = (d.canal, d.cual, d.numero, d.sectores, d.tam);
+        let mut e = Entorno { vivo, variables, registro: &mut registro, hipervisor, disco };
         aplicar::aplicar(d, &p, nombre, "", &vivo.arranque, &mut e)
     };
     if let Err(m) = &r {
@@ -452,6 +549,7 @@ fn principal() -> u64 {
         return 0;
     };
     let variables = tabla.buscar("variables");
+    let hipervisor = tabla.buscar("hipervisor");
     let canal = tabla.buscar("instalador");
     let mut lista = discos(tabla.buscar("nvme"), tabla.buscar("sata"));
     println!(
@@ -486,7 +584,7 @@ fn principal() -> u64 {
                 Err(m) => r = Err(m),
             }
         }
-        match r.and_then(|_| instalar(&mut lista, &vivo, variables, &texto)) {
+        match r.and_then(|_| instalar(&mut lista, &vivo, variables, hipervisor, &texto)) {
             Ok(_) => println!("  [instalador] SIN MANOS: instalado"),
             Err(m) => println!("  [instalador] SIN MANOS: no instalado: {}", m),
         }
@@ -538,7 +636,7 @@ fn principal() -> u64 {
                     let n = instalador::disco::crc32(0, entrada.as_bytes());
                     let vale = autorizado.take().is_some_and(|(a, t)| a == n && dashos::ahora_us() - t < 300_000_000);
                     let r = if vale {
-                        instalar(&mut lista, &vivo, variables, &entrada)
+                        instalar(&mut lista, &vivo, variables, hipervisor, &entrada)
                     } else {
                         println!("  [instalador] se pide instalar el plan {} sin la confirmación de un administrador: no", n);
                         Err(String::from("sin la confirmación de un administrador para este plan"))

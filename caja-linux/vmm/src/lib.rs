@@ -38,3 +38,5 @@ pub mod pl031;
 pub mod psci;
 pub mod v3d;
 pub mod virtio;
+/// El dominio Linux mínimo de x86-64 (S35 en x86): arranque del bzImage, tabla MP, APIC e IOAPIC, y la máquina.
+pub mod x86;

@@ -780,7 +780,7 @@ prueba-x86: usuario-x86 firmware-x86 FORCE
 SERVICIOS_X86_USO := inicio consola compositor xhci nvme ahci disco-vivo instalador instalar archivos comprobador eco sesiones red virtio-red fondo centro guardian imagen sonido avisos barra virtio-sonido hda selector panel explorador workbench hora
 # Los programas que van en el disco (`tools/disco_archivos.py`), también de x86.
 DISCO_PROGRAMAS_X86 := hola pide cambio ram avisa guarda espera blanker nocapslock
-FUNCIONES_X86_USO := archivos,ventanas,sonido,red,imagenes,ordenes
+FUNCIONES_X86_USO := archivos,ventanas,sonido,red,imagenes,ordenes,caja
 NUCLEO_X86_USO := target/kernel-x86-uso.elf
 DISCO_X86 := target/nvme-x86.img
 ACCEL_USO := $(if $(SIN_KVM),,$(if $(wildcard /dev/kvm),kvm))
@@ -802,9 +802,13 @@ x86-uso: x86-uso-imagen $(DISCO_X86)
 # discos del PC, y desde él se instala (`docs/bitacoras/instalador.md`). SIN_MANOS=<plan> pone ese plan en
 # EFI/DashOS/SINMANOS.TXT (las pruebas del banco). La de la Pi 5, pendiente (S32).
 PENDRIVE_X86 := target/pendrive-x86.img
+# El dominio Linux de x86 con ntfsresize (`tools/dominio_x86.py preparar`, fuera de git): si está, va en el pendrive
+# para encoger Windows.
+DOMINIO_X86 ?= $(HOME)/recuperar/geosian-7d/dominio-x86
+DOMINIO_X86_FICHEROS := $(and $(wildcard $(DOMINIO_X86)/bzImage),$(wildcard $(DOMINIO_X86)/initramfs.cpio),--dominio $(DOMINIO_X86)/bzImage $(DOMINIO_X86)/initramfs.cpio)
 pendrive-x86: x86-uso-imagen $(DISCO_X86)
 	cd ../uefi && DASHOS_PANTALLA=$(or $(PANTALLA),1280x800) DASHOS_NUCLEO=$(abspath $(NUCLEO_X86_USO)) cargo build --release --target x86_64-unknown-uefi
-	python3 ../tools/pendrive_x86.py $(PENDRIVE_X86) ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi $(DISCO_X86) $(if $(SIN_MANOS),--sin-manos $(SIN_MANOS))
+	python3 ../tools/pendrive_x86.py $(PENDRIVE_X86) ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi $(DISCO_X86) $(if $(SIN_MANOS),--sin-manos $(SIN_MANOS)) $(DOMINIO_X86_FICHEROS)
 
 # S32: el pendrive en vivo en QEMU (q35 con OVMF, KVM si hay), como USB, con un disco NVMe vacío de 64 GB al lado para
 # instalar (`target/vivo-destino.img`, nuevo cada vez). Para usarlo a mano; las pruebas, `prueba-instalar-x86`.

@@ -159,6 +159,11 @@ pub fn aplicar(d: &mut dyn Disco, p: &Plan, nombre: &str, modelo: &str, de_arran
         nuevas.push(Nueva { tipo: tipos::DASHOS, guid: guid_dashos, desde: a, hasta: b, nombre: "DashOS" });
         // Una instalación cortada a medias deja una entrada de DashOS en una copia: se quita y se pone la buena.
         let quitar = tabla.copias == gpt::Copias::SoloDashOS;
+        // Encoger: la partición encogida, en la misma escritura que la de DashOS.
+        let tabla = match p.encoger {
+            Some((n, f)) => gpt::con_encogida(&tabla, n, f).map_err(|f| format!("la tabla con la partición encogida: {:?}", f))?,
+            None => tabla,
+        };
         let lista = gpt::lista_nueva(&tabla, &nuevas, quitar).map_err(|f| format!("la tabla nueva: {:?}", f))?;
         if p.modo == Modo::DiscoEntero {
             // El MBR protector, primero: sin él nadie mira la GPT; con él y sin GPT buena, nadie usa el disco.
