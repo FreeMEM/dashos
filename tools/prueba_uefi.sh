@@ -372,7 +372,10 @@ while time.time() - inicio < total:
                 dash_intentos -= 1
         # Tampoco con la ventana Amiga de H5 esperando su clic: delante, la de Dash la taparía.
         amiga_fuera = amiga >= 2 or "[caja-amiga] ventana Amiga en pantalla" not in texto
-        if dash_nativo == 0 and menu == 2 and centro_fuera and amiga_fuera and libre_caja and \
+        # union-tres: ni a la vez que el paso del panel (Super+A y sus clics): con las tandas del Shell hasta tarde, los
+        # dos pasos quedaban libres en la misma vuelta, el panel salía encima y se llevaba el clic de "Añadir"
+        # ("FALTA: [dash-ventana] pulsado"). El que empieza antes, acaba antes de que empiece el otro.
+        if dash_nativo == 0 and menu == 2 and centro_fuera and amiga_fuera and libre_caja and not 1 <= panel <= 14 and \
                 not ventana_guardian and time.time() - guardian_visto > 4 and \
                 "[guardian] prueba acabada" in texto and "[hostil] selector:" in texto and \
                 selector not in (1, 2, 4, 5, 17, 18):
@@ -1134,7 +1137,7 @@ while time.time() - inicio < total:
         # arriba a la derecha. Con CAPTURA_CENTRO, también fichero.panel.ppm (abierto, en oscuro), fichero.panel-claro.ppm,
         # fichero.panel-edicion.ppm (en edición, Bloquear quitado), fichero.panel-sin.ppm (sin Bloquear) y
         # fichero.panel-anadir.ppm (la lista para añadir).
-        if panel == 0 and "[guardian] bloqueo con la tecla: " in texto:
+        if panel == 0 and "[guardian] bloqueo con la tecla: " in texto and dash_nativo not in (1, 2, 3, 31, 4, 5):
             panel = 1
             time.sleep(0.5)
             mandar("sendkey meta_l-a")

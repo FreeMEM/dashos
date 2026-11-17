@@ -111,3 +111,31 @@ dice: "[centro] al entrar, el fondo guardado: X en pantalla (...)". Se espera la
   que lo haga con la ventana abierta.
 - Ajustes > Escritorio, cambiar el sitio de los menús desde la propia ventana (ahora por su conexión): ninguna prueba.
 - `make arranque-virt-2` y `-linux`: no tocan nada de esto y no se han pasado. En la Pi, nada.
+
+## union-tres: `make arranque-virt` sin `guarda` (rama `union-tres`, de fusion-fondo 0c68227c)
+
+El encargo: unido con `tecla-pegada` y `paq-formato`, el guion se quedaba en la commodity y no lanzaba `guarda`. El paso
+de `guarda` solo empieza cuando ya salió todo lo demás que se espera; lo que faltaba en esa salida eran las líneas de
+`actualiza.exe` de la caja Amiga: su primera pregunta se contestó "no" a los 30 s (el plazo de `guardian`), porque el
+guion no llegó a pulsar la "e" a tiempo. En mi rama sola faltaba `guarda` por lo mismo: allí la prueba se paraba antes,
+en el explorador (la tecla pegada), y `guarda` esperaba esas líneas.
+
+No sale del centro: con Ajustes cerrada el centro hace lo de antes, y en ese tramo no hay ventana del centro ni fondo al
+entrar (eso pasa al entrar Ana, mucho después). En seis vueltas de union-tres no se repitió: la pregunta de
+`actualiza` se contestó a los 7-10 s.
+
+Lo que sí salió (la tercera vuelta): "FALTA: [dash-ventana] pulsado". Con las tandas del Shell hasta tarde (las de
+`paq-formato` son más), el paso de la ventana de Dash y el del panel quedaban libres en la misma vuelta del guion:
+Super+A sacaba el panel encima y se llevaba el clic de "Añadir". Arreglo en `tools/prueba_uefi.sh`: los dos pasos van de
+uno en uno (el de Dash no empieza con el del panel a medias, y el del panel no empieza con el de Dash a medias).
+
+Pruebas en union-tres: `make prueba` BIEN; `make arranque-virt` tres vueltas seguidas BIEN enteras (con el reinicio, el
+disco, la captura y el sonido), más una cuarta BIEN de antes del arreglo; `-menus`, `-dms` y `-shell` BIEN.
+
+Otra vuelta de antes del arreglo (la primera) pasó todo `arranque_virt.txt`, `guarda` incluido, y falló en el segundo
+arranque: tras "se reinicia la máquina", EDK2 se quedó 5 min sin pasar de su primera línea, hasta el tope de 900 s. No se
+repitió en las otras cuatro vueltas con reinicio; no he visto por qué (no es del centro ni del fondo: es antes de que
+arranque DashOS).
+
+Lo que no he podido ver: la vuelta del coordinador sin la "e" a tiempo, con su traza del guion (no la había). Si vuelve,
+`GUION_TRAZA=fichero` y `ESTADO_GUION=fichero` dicen qué hacía el guion entonces.
