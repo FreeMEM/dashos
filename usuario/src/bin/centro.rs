@@ -973,10 +973,36 @@ fn leer_sitio_menus() -> Result<u32, String> {
     }
 }
 
-/// Dice al compositor dónde van los menús, con una conexión de un momento. 0 si lo hizo; -1 si no.
-fn poner_menus_en_compositor(sitio: u32) -> i32 {
-    const MENUS_OBJ: u32 = 45;
+/// El objeto de `dashos_menus_v1` (en la conexión de un momento y en la de la ventana).
+const MENUS_OBJ: u32 = 45;
+
+/// Rama `centro-vivo`: la conexión de la ventana de Ajustes abierta, para poner en el compositor lo que llega por el
+/// canal mientras tanto (el compositor lleva una conexión por proceso: otra de un momento se le mezclaría con esta).
+struct ConVentana<'a> {
+    c: &'a mut Cliente,
+    /// La versión del tema enlazada en `TEMA_OBJ`, o `None` si no se enlazó.
+    tema: Option<u32>,
+    /// El global de `dashos_menus_v1`, y si ya se enlazó en `MENUS_OBJ`.
+    menus: Option<u32>,
+    menus_enlazado: &'a mut bool,
+}
+
+/// Dice al compositor dónde van los menús: por la conexión de la ventana, si está abierta (sin esperar: lo hace en su
+/// orden), o con una de un momento. 0 si lo hizo; -1 si no.
+fn poner_menus_en_compositor(sitio: u32, via: &mut Option<ConVentana>) -> i32 {
     const SYNC: u32 = 44;
+    if let Some(v) = via.as_mut() {
+        let Some(gm) = v.menus else { return -1 };
+        let mut e = Escritor::new();
+        if !*v.menus_enlazado {
+            e.empezar(REGISTRO, wl_registry::req::BIND).uint(gm).texto(Some("dashos_menus_v1")).uint(1).uint(MENUS_OBJ).fin();
+            *v.menus_enlazado = true;
+        }
+        e.empezar(MENUS_OBJ, wayland::tablas::dashos_menus_v1::req::PONER_SITIO).uint(sitio).fin();
+        v.c.mandar(&e);
+        MENUS_EN_USO.store(sitio, Ordering::Relaxed);
+        return 0;
+    }
     let mut conexion = None;
     for _ in 0..20 {
         if let Some(mut c) = Cliente::conectar() {
@@ -1011,7 +1037,7 @@ fn poner_menus_en_compositor(sitio: u32) -> i32 {
 
 /// Ajustes > Escritorio: el otro sitio para los menús, en `ENV:` (sobre lo que había), guardado en `ENVARC:` y puesto
 /// en el compositor. Lo que pasó, para la consola.
-fn cambiar_sitio_menus() -> String {
+fn cambiar_sitio_menus(via: &mut Option<ConVentana>) -> String {
     use kit::idioma::texto::Ajustes;
     let nuevo = if MENUS_EN_USO.load(Ordering::Relaxed) == SITIO_BARRA { SITIO_DENTRO } else { SITIO_BARRA };
     let antes = leer_ajuste(FICHERO_MENUS).ok();
@@ -1023,7 +1049,7 @@ fn cambiar_sitio_menus() -> String {
     let _ = x.poner("sitio", if nuevo == SITIO_BARRA { "barra" } else { "dentro" });
     let usado = escribir_env(FICHERO_MENUS, x.texto().as_bytes());
     let guardado = if usado.is_ok() { guardar_en_envarc(FICHERO_MENUS) } else { -1 };
-    let puesto = poner_menus_en_compositor(nuevo);
+    let puesto = poner_menus_en_compositor(nuevo, via);
     alloc::format!(
         "en ENV: {}; guardado: {}; en el compositor: {}",
         match usado {
@@ -1037,7 +1063,7 @@ fn cambiar_sitio_menus() -> String {
 
 /// Los menús de `ENV:`, si son otros que los que tiene el compositor (lo llaman el arranque y los avisos de cambio).
 /// Sin ajuste (o tras salir de la sesión), los de serie: dentro.
-fn aplicar_sitio_menus(de_donde: &str) {
+fn aplicar_sitio_menus(de_donde: &str, via: &mut Option<ConVentana>) {
     let sitio = match leer_sitio_menus() {
         Ok(s) => s,
         Err(porque) if porque == "no hay" => SITIO_DENTRO,
@@ -1047,7 +1073,7 @@ fn aplicar_sitio_menus(de_donde: &str) {
         }
     };
     if sitio != MENUS_EN_USO.load(Ordering::Relaxed) {
-        let puesto = poner_menus_en_compositor(sitio);
+        let puesto = poner_menus_en_compositor(sitio, via);
         println!("  [centro] menús en marcha: {}, de {}; en el compositor: {}", if sitio == SITIO_BARRA { "en la barra" } else { "dentro de las ventanas" }, de_donde, if puesto == 0 { "sí" } else { "no" });
     }
 }
@@ -1232,6 +1258,20 @@ fn al_fondo(pedido: &str) -> (i32, u32, u32, u32, u32, String) {
     let u = |i: usize| u32::from_le_bytes(r[i..i + 4].try_into().unwrap());
     let nombre = core::str::from_utf8(&r[20..n as usize]).unwrap_or("");
     (u(0) as i32, u(4), u(8), u(12), u(16), String::from(nombre))
+}
+
+/// Rama `centro-vivo`: al entrar alguien, que `fondo` ponga el fondo guardado ("guardado": lo lee de `Prefs/fondo`; si
+/// ya es el que se ve, no lo vuelve a pintar). `fondo` arranca antes que el servicio de archivos y entonces no puede
+/// leerlo; al salir `ENV:`, la sesión y el disco ya están. La semilla del que se ve, si se ve alguno.
+fn fondo_al_entrar() -> Option<u32> {
+    let (estado, semilla, w, h, ms, nombre) = al_fondo("guardado");
+    if estado == 0 {
+        println!("  [centro] al entrar, el fondo guardado: {} en pantalla ({} × {}, {} ms), semilla {:06x}", nombre, w, h, ms, semilla & 0xff_ffff);
+        Some(semilla)
+    } else {
+        println!("  [centro] al entrar, el fondo guardado no se pone ({}); se queda lo que había", estado);
+        None
+    }
 }
 
 /// C3: los fondos que hay (los PNG de `Fondos/`, como mucho 16), por orden.
@@ -2144,10 +2184,14 @@ fn cambiar_cc(r: &mut cc_rejilla::Rejilla, k: usize) -> Option<String> {
 static CAMBIO_AVISOS: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 static CAMBIO_CC: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-fn ventana(categoria: usize, uso: &mut Apariencia) {
+/// La ventana de Ajustes, abierta en `categoria`, hasta que se cierra. Mientras, se atiende el canal; si llega otro
+/// "abrir", pasa a esa categoría y su llave va a `respuestas` (se contesta al cerrar).
+fn ventana(categoria: usize, ce: &mut Centro, respuestas: &mut Vec<u32>) {
     // S27: cerrar es Guardar. Lo que se cambió en Apariencia y no se guardó ni se dejó en uso (Usar), al cerrar se guarda.
     let mut pendiente = false;
-    ventana_dentro(categoria, uso, &mut pendiente);
+    ventana_dentro(categoria, ce, respuestas, &mut pendiente);
+    // Sin ventana, el hilo del canal ya no toca su puerta (despierta al bucle principal).
+    poner_puerta(0);
     if pendiente {
         println!("  [centro] al cerrar, la apariencia se guarda en ENVARC:: {}", guardar_en_envarc(FICHERO_TEMA));
     }
@@ -2166,10 +2210,15 @@ fn ventana(categoria: usize, uso: &mut Apariencia) {
     println!("  [centro] cerrado");
 }
 
-fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) -> Option<()> {
-    let mut c = Cliente::conectar()?;
+fn ventana_dentro(categoria: usize, ce: &mut Centro, respuestas: &mut Vec<u32>, pendiente: &mut bool) -> Option<()> {
+    // Con una puerta: por ella el hilo del canal despierta al bucle de la ventana cuando llega algo.
+    let (mut c, puerta) = Cliente::conectar_con_puerta(MARCA_PUERTA)?;
+    poner_puerta(puerta);
     let globales = c.globales()?;
     let global = |n: &str| globales.iter().find(|g| g.1 == n).map(|g| g.0);
+    // Los menús, por si hay que ponerlos en el compositor con la ventana abierta (se enlazan la primera vez).
+    let gm = global("dashos_menus_v1");
+    let mut menus_enlazado = false;
     let (Some(gc), Some(gs), Some(gx), Some(ga)) =
         (global("wl_compositor"), global("wl_shm"), global("xdg_wm_base"), global("wl_seat"))
     else {
@@ -2242,8 +2291,8 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
     // Lo de la derecha según la categoría.
     let mut cat = categoria;
     // La apariencia en uso (la de `ENV:`, o la elegida antes de entrar nadie) y la de al abrir, para Cancelar.
-    let mut ap = *uso;
-    let al_abrir = *uso;
+    let mut ap = ce.uso;
+    let al_abrir = ce.uso;
     println!("  [centro] apariencia en uso: {}, color {}", ap.modo(), ap.nombre());
     // S26: el aspecto de los programas de las cajas; si no hay o no se entiende, el de serie (todo como DashOS).
     let mut cajas = match leer_cajas() {
@@ -2428,7 +2477,9 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
         let (mut x, mut y, mut pulsado, mut configurada) = (0i32, 0i32, false, false);
         loop {
             let Ok(ev) = c.evento_plazo(200_000) else { return None };
-            let Some((o, orden, cuerpo)) = ev else { continue };
+            // Sin evento (el plazo, o el timbre del hilo del canal), el objeto 0, que no es de nadie: no cambia nada, y
+            // el resto de la vuelta (el canal, el monitor cada 2 s) se hace igual.
+            let (o, orden, cuerpo) = ev.unwrap_or((0, 0, Vec::new()));
             let palabra = |k: usize| u32::from_le_bytes(cuerpo[4 * k..4 * k + 4].try_into().unwrap());
             let mut cambio = match (o, orden) {
                 (XDG, xdg_wm_base::ev::PING) => {
@@ -2570,6 +2621,26 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                 }
                 _ => false,
             };
+            // Rama `centro-vivo`: el canal, a la vez. Lo que llegó se atiende ya (un `Ajuste` desde el Shell, el modo del
+            // panel...); un "abrir" pasa a su categoría.
+            c.timbres = 0;
+            while let Some(m) = sacar() {
+                let mut via = Some(ConVentana { c: &mut c, tema: gt.map(|_| version_tema), menus: gm, menus_enlazado: &mut menus_enlazado });
+                if let Some((otra, llave)) = atender(m, ce, &mut via) {
+                    respuestas.extend(llave);
+                    i.arbol.poner(lado, atr::VALOR, Valor::Int(otra as i64));
+                }
+            }
+            // Lo de fuera cambió el tema en uso (el de `ENV:`, el modo del panel): la ventana lo sigue.
+            if ce.uso.guardable() != ap.guardable() {
+                ap = ce.uso;
+                i.ctx.tema = ap.tema();
+                if cat == APARIENCIA {
+                    (lineas_registro, lista_fondos) = apariencia(&ap, &cajas);
+                    i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                }
+                cambio = true;
+            }
             // Otra categoría elegida en la barra lateral.
             let elegida = i.arbol.leer(lado, atr::VALOR).map_or(-1, Valor::int);
             if let Ok(nueva) = usize::try_from(elegida)
@@ -2759,7 +2830,7 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                 Some("elegir") if cat == PANEL_FONDO && i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int) == 0 => {
                     // S10: dónde van los menús: el otro sitio, en `ENV:` (se ve ya) y guardado.
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
-                    let r = cambiar_sitio_menus();
+                    let r = cambiar_sitio_menus(&mut Some(ConVentana { c: &mut c, tema: gt.map(|_| version_tema), menus: gm, menus_enlazado: &mut menus_enlazado }));
                     lineas_registro = lineas_panel(&aj_panel);
                     println!("  [centro] Escritorio: {}; {}", lineas_registro[0], r);
                     i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
@@ -2771,6 +2842,7 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                     let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
                     if let Ok(k) = usize::try_from(v) && cambiar_avisos(&mut aj_avisos, k) {
                         let r = usar_avisos(&aj_avisos, false);
+                        ce.dados.0 = Some(aj_avisos);
                         CAMBIO_AVISOS.store(true, Ordering::Relaxed);
                         lineas_registro = lineas_avisos(&aj_avisos);
                         println!("  [centro] Avisos: {}; {}", lineas_registro[k], r);
@@ -2793,6 +2865,7 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                     let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
                     if let Some(hecho) = usize::try_from(v).ok().and_then(|k| cambiar_cc(&mut cc, k)) {
                         let r = usar_cc(&cc, false);
+                        ce.dados.1 = Some(cc);
                         CAMBIO_CC.store(true, Ordering::Relaxed);
                         lineas_registro = lineas_cc(&cc);
                         println!("  [centro] Centro de control: {}; {}", hecho, r);
@@ -2814,6 +2887,7 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                     };
                     if let Some((que, fila)) = hecho {
                         let r = usar_cc(&cc, false);
+                        ce.dados.1 = Some(cc);
                         CAMBIO_CC.store(true, Ordering::Relaxed);
                         lineas_registro = lineas_cc(&cc);
                         println!("  [centro] Centro de control: {}; {}", que, r);
@@ -2992,7 +3066,7 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                             c.mandar(&e);
                         }
                         // Se ve ya y va a `ENV:` (en uso); Guardar, Usar o cerrar deciden si se guarda.
-                        *uso = ap;
+                        ce.uso = ap;
                         match usar_apariencia(&ap) {
                             Ok(bytes) => {
                                 *pendiente = true;
@@ -3049,7 +3123,7 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                 Some("cancelar") if cat == APARIENCIA => {
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
                     ap = al_abrir;
-                    *uso = ap;
+                    ce.uso = ap;
                     *pendiente = false;
                     i.ctx.tema = ap.tema();
                     (lineas_registro, lista_fondos) = apariencia(&ap, &cajas);
@@ -3137,9 +3211,9 @@ const PIDEN_MODO: &[&str] = &["panel"];
 /// C2: el modo pedido por el panel, aunque la ventana esté cerrada: con el color guardado, se pone en el compositor
 /// (una conexión de un momento) y, si se pudo, se guarda; si no, el disco no cambia (no dice algo que no se ve). El
 /// estado: 0, o -1 si no se pudo poner.
-fn aplicar_modo(oscuro: bool, uso: &mut Apariencia) -> i32 {
+fn aplicar_modo(oscuro: bool, uso: &mut Apariencia, via: &mut Option<ConVentana>) -> i32 {
     let ap = Apariencia { oscuro, ..*uso };
-    if poner_en_compositor(&ap, None) != 0 {
+    if poner_en_compositor(&ap, None, via) != 0 {
         return -1;
     }
     *uso = ap;
@@ -3155,9 +3229,21 @@ fn aplicar_modo(oscuro: bool, uso: &mut Apariencia) -> i32 {
     0
 }
 
-/// Pone la apariencia (y, con `cajas`, el aspecto de los programas de las cajas, S26) en el compositor, con una conexión
-/// de un momento. 0 si el compositor lo hizo; -1 si no se pudo.
-fn poner_en_compositor(ap: &Apariencia, cajas: Option<&Ajuste>) -> i32 {
+/// Pone la apariencia (y, con `cajas`, el aspecto de los programas de las cajas, S26) en el compositor: por la conexión
+/// de la ventana, si está abierta (sin esperar), o con una de un momento. 0 si el compositor lo hizo; -1 si no se pudo.
+fn poner_en_compositor(ap: &Apariencia, cajas: Option<&Ajuste>, via: &mut Option<ConVentana>) -> i32 {
+    if let Some(v) = via.as_mut() {
+        let Some(version) = v.tema else { return -1 };
+        let mut e = Escritor::new();
+        ap.mandar(&mut e, version);
+        if let Some(cajas) = cajas
+            && version >= 3
+        {
+            e.empezar(TEMA_OBJ, dashos_tema_v1::req::CAJAS).texto(Some(&cajas.escribir())).fin();
+        }
+        v.c.mandar(&e);
+        return 0;
+    }
     // Recién cerrada la conexión anterior, el compositor puede no haberla soltado aún: unos intentos.
     let mut conexion = None;
     for _ in 0..20 {
@@ -3306,7 +3392,7 @@ impl Vigila {
 
 /// Algo cambió en `ENV:` (o es hora de reintentar vigilarlo): pide los avisos, vuelve a vigilar lo que falte, y aplica el
 /// idioma y el tema si son otros.
-fn al_cambiar_env(v: &mut Vigila, idioma: &mut Option<idiomas::Idiomas>, uso: &mut Apariencia) {
+fn al_cambiar_env(v: &mut Vigila, idioma: &mut Option<idiomas::Idiomas>, uso: &mut Apariencia, via: &mut Option<ConVentana>) {
     let hubo = v.avisos();
     let antes = v.ids;
     v.armar();
@@ -3314,6 +3400,8 @@ fn al_cambiar_env(v: &mut Vigila, idioma: &mut Option<idiomas::Idiomas>, uso: &m
     if !hubo && antes == v.ids {
         return;
     }
+    // Acaba de entrar alguien (sale `ENV:`): el fondo que tiene guardado.
+    let semilla_al_entrar = if antes[0] == 0 && v.ids[0] != 0 { fondo_al_entrar() } else { None };
     // El idioma: se carga otra vez sin mirar firmas (el aviso ya dice que cambió).
     if let (Some(tabla), Some(ses)) = (dashos::asignaciones::pedir_tabla(SESIONES), Sesion::abrir()) {
         let nuevo = idiomas::arrancar(&mut PorSesion(&ses), &tabla, &TEXTOS, CATALOGO);
@@ -3324,35 +3412,45 @@ fn al_cambiar_env(v: &mut Vigila, idioma: &mut Option<idiomas::Idiomas>, uso: &m
         *idioma = Some(nuevo);
     }
     // S10: dónde van los menús.
-    aplicar_sitio_menus("ENV:Escritorio/menus");
+    aplicar_sitio_menus("ENV:Escritorio/menus", via);
     // Las barras del escritorio, si cambiaron.
     barra_al_dia("ENV:");
-    // El tema: el de `ENV:`, si es otro que el que está en uso.
-    match leer_apariencia() {
-        Ok(mut ap) => {
+    // El tema: el de `ENV:`, si es otro que el que está en uso. Sin tema guardado, al entrar, el que está en uso (con
+    // la paleta del fondo que acaba de salir, si es la suya).
+    let tema = match leer_apariencia() {
+        Ok(ap) => {
             v.dicho = None;
-            // La paleta del fondo sin sus colores calculados: los del que está en uso, si es la misma paleta; si no,
-            // se calculan.
-            if ap.color == DEL_FONDO && ap.fondo.is_none() {
-                if uso.color == DEL_FONDO && uso.fondo.is_some() {
-                    ap.fondo = uso.fondo;
-                } else {
-                    let _ = colores_del_fondo(&mut ap, None);
-                }
-            }
-            if ap.guardable() != uso.guardable() {
-                let puesto = poner_en_compositor(&ap, None);
-                println!("  [centro] tema en marcha: {}, color {}, de {}; en el compositor: {}", ap.modo(), ap.nombre(), TEMA_TEXTO, if puesto == 0 { "sí" } else { "no" });
-                if puesto == 0 {
-                    *uso = ap;
-                }
-            }
+            Some(ap)
         }
-        Err(porque) if porque == "no hay" => v.dicho = None,
+        Err(porque) if porque == "no hay" => {
+            v.dicho = None;
+            semilla_al_entrar.map(|_| *uso)
+        }
         Err(porque) => {
             if v.dicho.as_deref() != Some(porque.as_str()) {
                 println!("  [centro] {}: {}; se queda el tema que hay", TEMA_TEXTO, porque);
                 v.dicho = Some(porque);
+            }
+            None
+        }
+    };
+    if let Some(mut ap) = tema {
+        // La paleta del fondo: al entrar, la del fondo que se acaba de poner (si es la que había, ya calculada). Sin
+        // sus colores calculados: los del que está en uso, si es la misma paleta; si no, se calculan.
+        if ap.color == DEL_FONDO && let Some(s) = semilla_al_entrar {
+            let _ = colores_del_fondo(&mut ap, Some(s));
+        } else if ap.color == DEL_FONDO && ap.fondo.is_none() {
+            if uso.color == DEL_FONDO && uso.fondo.is_some() {
+                ap.fondo = uso.fondo;
+            } else {
+                let _ = colores_del_fondo(&mut ap, None);
+            }
+        }
+        if ap.guardable() != uso.guardable() {
+            let puesto = poner_en_compositor(&ap, None, via);
+            println!("  [centro] tema en marcha: {}, color {}, de {}; en el compositor: {}", ap.modo(), ap.nombre(), TEMA_TEXTO, if puesto == 0 { "sí" } else { "no" });
+            if puesto == 0 {
+                *uso = ap;
             }
         }
     }
@@ -3395,14 +3493,14 @@ fn aplicar_al_arrancar() -> Apariencia {
     }
     let mut puesto = -1;
     for _ in 0..10 {
-        puesto = poner_en_compositor(&ap, Some(&cajas));
+        puesto = poner_en_compositor(&ap, Some(&cajas), &mut None);
         if puesto == 0 {
             break;
         }
         dashos::dormir_us(300_000);
     }
     // S10: los menús, si la de fábrica dice otra cosa que lo de serie.
-    aplicar_sitio_menus("ENVARC:Escritorio/menus");
+    aplicar_sitio_menus("ENVARC:Escritorio/menus", &mut None);
     // Lo calculado no se guarda: antes de entrar nadie no hay `ENV:` (se queda en uso).
     let guardado: Option<i32> = None;
     let _ = antes;
@@ -3418,155 +3516,281 @@ fn aplicar_al_arrancar() -> Apariencia {
     ap
 }
 
-fn principal() -> u64 {
-    dashos::monton::con_nombre(&"centro");
+// ---------------------------------------------------------------------------------------------------------------
+// El canal y la ventana a la vez (rama `centro-vivo`): con la ventana de Ajustes abierta, el centro sigue atendiendo
+// su canal (los avisos de cambio de `ENV:`, la barra, el panel, otro "abrir"). Un hilo aparte lee el canal, deja cada
+// mensaje en una cola y despierta a quien atiende: sin ventana, al bucle principal, que espera en una palabra; con ella,
+// al bucle de la ventana, tocando la puerta de su conexión con el compositor (un proceso solo espera en un canal). Como
+// el de `fondo`. Lo que haya que poner en el compositor con la ventana abierta (el tema, los menús) va por la conexión
+// de la ventana: el compositor lleva una por proceso, y otra de un momento se le mezclaría con la suya.
+
+/// Un mensaje del canal "centro": los datos, las llaves y la marca.
+struct Mensaje {
+    datos: Vec<u8>,
+    llaves: Vec<u32>,
+    marca: u64,
+}
+
+/// La cola entre el hilo del canal y quien atiende. Llena, el hilo espera a que se saque alguno: lo de detrás se queda en
+/// la cola del canal, que limita el kernel, y no se tira nada.
+static COLA: dashos::hilos::Cola<Mensaje, MAX_COLA> = dashos::hilos::Cola::nueva();
+const MAX_COLA: usize = 16;
+/// Cuántos mensajes ha dejado el hilo en la cola: el bucle principal, sin ventana, espera en ella.
+static LLEGADOS: AtomicU32 = AtomicU32::new(0);
+/// Cuántos se han sacado con la cola llena: el hilo, con la cola llena, espera en ella.
+static SACADOS: AtomicU32 = AtomicU32::new(0);
+/// Nadie más puede escribir en el canal: al vaciar la cola, el centro acaba.
+static CANAL_CERRADO: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+/// La puerta de la conexión de la ventana abierta (0: sin ventana). Se usa y se cambia con el cerrojo de la cola tomado:
+/// así el hilo nunca escribe por una llave ya cerrada (y quizá dada después a otra cosa).
+static PUERTA: AtomicU32 = AtomicU32::new(0);
+/// La marca de esa puerta: lo que llega por ella no se mezcla con lo del compositor.
+const MARCA_PUERTA: u64 = 0xce47_0001;
+/// La pila del hilo del canal: solo lee y copia mensajes.
+const PILA_HILO: usize = 32 << 10;
+
+/// Llegó algo (o se cerró el canal): despierta al bucle principal y, si hay ventana, toca su puerta.
+fn avisar_llegada() {
+    LLEGADOS.fetch_add(1, Ordering::Release);
+    dashos::hilos::despertar(&LLEGADOS, 1);
+    COLA.con(|_| {
+        let p = PUERTA.load(Ordering::Acquire);
+        if p != 0 {
+            // Llena la cola del canal de la ventana, el timbre sobra: ya hay otros esperando.
+            dashos::canal_escribir(p, &[1], &[]);
+        }
+    });
+}
+
+/// El hilo del canal "centro": recoge cada mensaje y lo deja en la cola.
+fn hilo_canal(_: u64) -> u64 {
     let mut buf = [0u8; MAX_DATOS];
     let mut ll = [0u32; MAX_LLAVES];
-    let mut malos = 0u64;
-    // El directorio de `inicio` (sin marca): la marca y el nombre de cada cliente del canal.
-    let mut nombres: alloc::collections::BTreeMap<u64, alloc::string::String> = alloc::collections::BTreeMap::new();
-    // La apariencia en uso: la ponen el arranque, la ventana, el panel y los cambios de `ENV:`.
-    let mut uso = aplicar_al_arrancar();
-    // Idiomas (paso 4): antes de abrir ninguna ventana. Va tras poner el tema, que no enseña textos: así el tema no
-    // espera a `sesiones` (la tabla de nombres) ni a los ficheros de idioma.
-    let mut idioma = poner_idioma(None);
-    // Ajustes en texto: vigilar `ENV:` (sin sesión aún, se reintenta con un temporizador).
-    let mut vigila = Vigila::nueva();
-    vigila.armar();
-    // S27, oleada 3: los avisos y el centro de control que se dieron (al servicio y al panel).
-    let mut dados = (None, None);
-    aplicar_avisos_y_cc(&mut dados);
     loop {
         let (n, k, marca) = match recibir(CANAL, &mut buf, &mut ll) {
             Recibido::Mensaje { n, k, marca } => (n, k, marca),
-            Recibido::Cerrado => return 0,
+            Recibido::Cerrado => {
+                CANAL_CERRADO.store(true, Ordering::Release);
+                avisar_llegada();
+                return 0;
+            }
             Recibido::Nada => continue,
         };
-        // Lo suyo: un timbre del servicio de archivos o el temporizador de reintentar.
-        if marca == MARCA_PROPIA {
-            cerrar_llaves(&ll[..k]);
-            al_cambiar_env(&mut vigila, &mut idioma, &mut uso);
-            aplicar_avisos_y_cc(&mut dados);
-            continue;
+        let mut m = Some(Mensaje { datos: buf[..n].to_vec(), llaves: ll[..k].to_vec(), marca });
+        loop {
+            let visto = SACADOS.load(Ordering::Acquire);
+            // Llena, `meter` la devuelve y se espera.
+            m = COLA.con(|c| m.take().and_then(|x| c.meter(x).err()));
+            if m.is_none() {
+                break;
+            }
+            dashos::hilos::esperar(&SACADOS, visto, 0);
         }
-        // Sin marca: las entradas del directorio de `inicio` (8 bytes de marca y 16 de nombre), para saber quién es quién.
-        if marca == 0 && n == 24 && nombres.len() < 64 {
+        avisar_llegada();
+    }
+}
+
+/// El siguiente mensaje de la cola, si hay. Si estaba llena, despierta al hilo.
+fn sacar() -> Option<Mensaje> {
+    let (llena, m) = COLA.con(|c| (c.llena(), c.sacar()));
+    if m.is_some() && llena {
+        SACADOS.fetch_add(1, Ordering::Release);
+        dashos::hilos::despertar(&SACADOS, 1);
+    }
+    m
+}
+
+/// La puerta de la ventana que se abre (0, ninguna) o, al cerrarse, que ya no la hay (y se suelta la que había).
+fn poner_puerta(p: u32) {
+    COLA.con(|_| {
+        let antes = PUERTA.swap(p, Ordering::AcqRel);
+        if antes != 0 && antes != p {
+            dashos::cerrar(antes);
+        }
+    });
+}
+
+/// Lo que el centro lleva entre un mensaje y otro (con la ventana abierta, también).
+struct Centro {
+    /// El directorio de `inicio` (sin marca): la marca y el nombre de cada cliente del canal.
+    nombres: alloc::collections::BTreeMap<u64, String>,
+    /// Pedidos que no se entienden (los tres primeros se dicen).
+    malos: u64,
+    /// La apariencia en uso: la ponen el arranque, la ventana, el panel y los cambios de `ENV:`.
+    uso: Apariencia,
+    idioma: Option<idiomas::Idiomas>,
+    vigila: Vigila,
+    /// S27, oleada 3: los avisos y el centro de control que se dieron (al servicio y al panel).
+    dados: (Option<avisos_ajustes::Ajustes>, Option<cc_rejilla::Rejilla>),
+}
+
+/// Atiende un mensaje del canal. Si pide abrir Ajustes en una categoría, la categoría y la llave para contestar al
+/// cerrarla (si trajo): eso lo hace quien llama (abrirla, o con la ventana abierta, pasar a ella).
+fn atender(m: Mensaje, ce: &mut Centro, via: &mut Option<ConVentana>) -> Option<(usize, Option<u32>)> {
+    let (buf, n, ll, k, marca) = (&m.datos[..], m.datos.len(), &m.llaves[..], m.llaves.len(), m.marca);
+    // Lo suyo: un timbre del servicio de archivos o el temporizador de reintentar.
+    if marca == MARCA_PROPIA {
+        cerrar_llaves(ll);
+        al_cambiar_env(&mut ce.vigila, &mut ce.idioma, &mut ce.uso, via);
+        aplicar_avisos_y_cc(&mut ce.dados);
+        return None;
+    }
+    // Sin marca: las entradas del directorio de `inicio` (8 bytes de marca y 16 de nombre), para saber quién es quién.
+    if marca == 0 {
+        if n == 24 && ce.nombres.len() < 64 {
             let de = u64::from_le_bytes(buf[..8].try_into().unwrap());
             let nombre = &buf[8..24];
             let nombre = core::str::from_utf8(&nombre[..nombre.iter().position(|&c| c == 0).unwrap_or(16)]).unwrap_or("");
-            nombres.insert(de, nombre.into());
+            ce.nombres.insert(de, nombre.into());
         }
-        if marca != 0 {
-            let pedido = core::str::from_utf8(&buf[..n]).unwrap_or("");
-            let categoria = pedido.strip_prefix("abrir ").and_then(|c| CATEGORIAS.iter().position(|x| x.0 == c));
-            // C2: el modo, solo del panel rápido.
-            let modo = match pedido {
-                "modo oscuro" => Some(true),
-                "modo claro" => Some(false),
-                _ => None,
+        cerrar_llaves(ll);
+        return None;
+    }
+    let pedido = core::str::from_utf8(buf).unwrap_or("");
+    let categoria = pedido.strip_prefix("abrir ").and_then(|c| CATEGORIAS.iter().position(|x| x.0 == c));
+    // C2: el modo y los mosaicos del panel, solo del panel rápido. A otro, lo de un pedido que no vale (-1).
+    let del_panel = ce.nombres.get(&marca).is_some_and(|n| PIDEN_MODO.contains(&n.as_str()));
+    let modo = match pedido {
+        "modo oscuro" => Some(true),
+        "modo claro" => Some(false),
+        _ => None,
+    }
+    .filter(|_| del_panel);
+    let de_la_barra = ce.nombres.get(&marca).is_some_and(|n| n == "barra");
+    // Las barras: solo la barra (por el nombre que da `inicio`) se suscribe, con su memoria y su puerta.
+    if buf == b"barra suscribir" {
+        if de_la_barra && k == 2 {
+            let bien = suscribir_barra(ll[0], ll[1]);
+            println!("  [centro] la barra se suscribe a las barras: {}", if bien { "sí" } else { "no (memoria que no vale)" });
+            if bien {
+                barra_al_dia("al suscribirse");
             }
-            .filter(|_| nombres.get(&marca).is_some_and(|n| PIDEN_MODO.contains(&n.as_str())));
-            // C2: los mosaicos del panel, también solo del panel rápido. A otro, lo de un pedido que no vale (-1).
-            let del_panel = nombres.get(&marca).is_some_and(|n| PIDEN_MODO.contains(&n.as_str()));
-            // Las barras: solo la barra (por el nombre que da `inicio`) se suscribe, con su memoria y su puerta.
-            if &buf[..n] == b"barra suscribir" {
-                if nombres.get(&marca).is_some_and(|n| n == "barra") && k == 2 {
-                    let bien = suscribir_barra(ll[0], ll[1]);
-                    println!("  [centro] la barra se suscribe a las barras: {}", if bien { "sí" } else { "no (memoria que no vale)" });
-                    if bien {
-                        barra_al_dia("al suscribirse");
-                    }
-                } else {
-                    // A otro, lo de un pedido que no vale (-1), por la primera llave; y nada más.
-                    println!("  [centro] suscribirse a las barras sin ser la barra: no");
-                    if k >= 1 {
-                        dashos::canal_escribir(ll[0], &(-1i32).to_le_bytes(), &[]);
-                    }
-                    cerrar_llaves(&ll[..k]);
-                }
-                continue;
-            }
-            // S27, oleada 3: el panel da su puerta ("cc vigilar"): por ella le llega el centro de control cada vez que
-            // cambie. Se le contesta con el que hay.
-            if del_panel && &buf[..n] == b"cc vigilar" && k >= 2 {
-                let antes = PUERTA_PANEL.swap(ll[1], Ordering::Relaxed);
-                if antes != 0 {
-                    dashos::cerrar(antes);
-                }
-                let r = leer_cc().unwrap_or_else(|e| {
-                    println!("  [centro] {}: {}; se queda el de serie", FICHERO_CC, e);
-                    cc_rejilla::Rejilla::de_serie()
-                });
-                println!("  [centro] el panel vigila el centro de control: {} mosaicos; se lo da: {}", r.n, dar_cc_al_panel(&r));
-                dashos::canal_escribir(ll[0], &0i32.to_le_bytes(), &[]);
-                dados.1 = Some(r);
-                cerrar_llaves(&ll[2..k]);
-                continue;
-            }
-            // La barra da su puerta ("avisos vigilar"): por ella le llegan los ajustes de los avisos.
-            if nombres.get(&marca).is_some_and(|n| n == "barra") && &buf[..n] == b"avisos vigilar" && k >= 2 {
-                let antes = PUERTA_AVISOS_BARRA.swap(ll[1], Ordering::Relaxed);
-                if antes != 0 {
-                    dashos::cerrar(antes);
-                }
-                let a = leer_ajustes_avisos().unwrap_or(avisos_ajustes::Ajustes::DE_SERIE);
-                println!("  [centro] la barra vigila los avisos: emergentes {}; se los da: {}", a.posicion.nombre(), dar_ajustes_a_avisos(&a));
-                dashos::canal_escribir(ll[0], &0i32.to_le_bytes(), &[]);
-                dados.0 = Some(a);
-                cerrar_llaves(&ll[2..k]);
-                continue;
-            }
-            // El panel guarda lo que se editó en él (en bytes): en `ENV:` y en `ENVARC:`. Lo que no vale, -1 y nada.
-            if del_panel && let Some(bytes) = buf[..n].strip_prefix(b"cc guardar ") {
-                let estado: i32 = match cc_rejilla::Rejilla::leer_bytes(bytes) {
-                    Some(r) => {
-                        let hecho = usar_cc(&r, true);
-                        println!("  [centro] centro de control (lo pide el panel): {} mosaicos; {}", r.n, hecho);
-                        dados.1 = Some(r);
-                        if hecho.contains("guardado: 0") { 0 } else { -3 }
-                    }
-                    None => {
-                        println!("  [centro] centro de control (lo pide el panel): no se entiende; nada");
-                        -1
-                    }
-                };
-                if k >= 1 {
-                    dashos::canal_escribir(ll[0], &estado.to_le_bytes(), &[]);
-                }
-                cerrar_llaves(&ll[..k]);
-                continue;
-            }
-            if let Some(oscuro) = modo {
-                let estado = aplicar_modo(oscuro, &mut uso);
-                if k >= 1 {
-                    dashos::canal_escribir(ll[0], &estado.to_le_bytes(), &[]);
-                }
-                cerrar_llaves(&ll[..k]);
-                continue;
-            }
-            let abierto = categoria.is_some();
-            match categoria {
-                Some(cat) => {
-                    println!("  [centro] abre {}", CATEGORIAS[cat].1);
-                    idioma = poner_idioma(idioma);
-                    ventana(cat, &mut uso);
-                    // Lo que se cambió en la ventana ya se dio; lo de `ENV:` que cambió mientras, se da ahora.
-                    aplicar_avisos_y_cc(&mut dados);
-                }
-                None => {
-                    // Los tres primeros se dicen; los demás (una inundación) solo se cuentan.
-                    malos += 1;
-                    if malos <= 3 {
-                        println!("  [centro] pedido que no se entiende ({} bytes): nada", n);
-                    }
-                }
-            }
-            // Si trae llave, se contesta: 0 tras cerrar la ventana, -1 si el pedido no valía (y no se abrió nada).
+        } else {
+            // A otro, lo de un pedido que no vale (-1), por la primera llave; y nada más.
+            println!("  [centro] suscribirse a las barras sin ser la barra: no");
             if k >= 1 {
-                let estado: i32 = if abierto { 0 } else { -1 };
-                dashos::canal_escribir(ll[0], &estado.to_le_bytes(), &[]);
+                dashos::canal_escribir(ll[0], &(-1i32).to_le_bytes(), &[]);
+            }
+            cerrar_llaves(ll);
+        }
+        return None;
+    }
+    // S27, oleada 3: el panel da su puerta ("cc vigilar"): por ella le llega el centro de control cada vez que cambie. Se
+    // le contesta con el que hay.
+    if del_panel && buf == b"cc vigilar" && k >= 2 {
+        let antes = PUERTA_PANEL.swap(ll[1], Ordering::Relaxed);
+        if antes != 0 {
+            dashos::cerrar(antes);
+        }
+        let r = leer_cc().unwrap_or_else(|e| {
+            println!("  [centro] {}: {}; se queda el de serie", FICHERO_CC, e);
+            cc_rejilla::Rejilla::de_serie()
+        });
+        println!("  [centro] el panel vigila el centro de control: {} mosaicos; se lo da: {}", r.n, dar_cc_al_panel(&r));
+        dashos::canal_escribir(ll[0], &0i32.to_le_bytes(), &[]);
+        ce.dados.1 = Some(r);
+        dashos::cerrar(ll[0]);
+        cerrar_llaves(&ll[2..]);
+        return None;
+    }
+    // La barra da su puerta ("avisos vigilar"): por ella le llegan los ajustes de los avisos.
+    if de_la_barra && buf == b"avisos vigilar" && k >= 2 {
+        let antes = PUERTA_AVISOS_BARRA.swap(ll[1], Ordering::Relaxed);
+        if antes != 0 {
+            dashos::cerrar(antes);
+        }
+        let a = leer_ajustes_avisos().unwrap_or(avisos_ajustes::Ajustes::DE_SERIE);
+        println!("  [centro] la barra vigila los avisos: emergentes {}; se los da: {}", a.posicion.nombre(), dar_ajustes_a_avisos(&a));
+        dashos::canal_escribir(ll[0], &0i32.to_le_bytes(), &[]);
+        ce.dados.0 = Some(a);
+        dashos::cerrar(ll[0]);
+        cerrar_llaves(&ll[2..]);
+        return None;
+    }
+    // El panel guarda lo que se editó en él (en bytes): en `ENV:` y en `ENVARC:`. Lo que no vale, -1 y nada.
+    if del_panel && let Some(bytes) = buf.strip_prefix(b"cc guardar ") {
+        let estado: i32 = match cc_rejilla::Rejilla::leer_bytes(bytes) {
+            Some(r) => {
+                let hecho = usar_cc(&r, true);
+                println!("  [centro] centro de control (lo pide el panel): {} mosaicos; {}", r.n, hecho);
+                ce.dados.1 = Some(r);
+                if hecho.contains("guardado: 0") { 0 } else { -3 }
+            }
+            None => {
+                println!("  [centro] centro de control (lo pide el panel): no se entiende; nada");
+                -1
+            }
+        };
+        if k >= 1 {
+            dashos::canal_escribir(ll[0], &estado.to_le_bytes(), &[]);
+        }
+        cerrar_llaves(ll);
+        return None;
+    }
+    if let Some(oscuro) = modo {
+        let estado = aplicar_modo(oscuro, &mut ce.uso, via);
+        if k >= 1 {
+            dashos::canal_escribir(ll[0], &estado.to_le_bytes(), &[]);
+        }
+        cerrar_llaves(ll);
+        return None;
+    }
+    match categoria {
+        Some(cat) => {
+            println!("  [centro] abre {}", CATEGORIAS[cat].1);
+            // Si trae llave, se contesta por ella al cerrar la ventana (0); lo demás que traiga sobra.
+            cerrar_llaves(ll.get(1..).unwrap_or(&[]));
+            Some((cat, ll.first().copied()))
+        }
+        None => {
+            // Los tres primeros se dicen; los demás (una inundación) solo se cuentan.
+            ce.malos += 1;
+            if ce.malos <= 3 {
+                println!("  [centro] pedido que no se entiende ({} bytes): nada", n);
+            }
+            // Si trae llave, se contesta -1: el pedido no valía (y no se abrió nada).
+            if k >= 1 {
+                dashos::canal_escribir(ll[0], &(-1i32).to_le_bytes(), &[]);
+            }
+            cerrar_llaves(ll);
+            None
+        }
+    }
+}
+
+fn principal() -> u64 {
+    dashos::monton::con_nombre(&"centro");
+    // La apariencia, lo primero; el idioma (paso 4), antes de abrir ninguna ventana. Va tras poner el tema, que no
+    // enseña textos: así el tema no espera a `sesiones` (la tabla de nombres) ni a los ficheros de idioma.
+    let uso = aplicar_al_arrancar();
+    let mut ce = Centro { nombres: alloc::collections::BTreeMap::new(), malos: 0, uso, idioma: poner_idioma(None), vigila: Vigila::nueva(), dados: (None, None) };
+    // Ajustes en texto: vigilar `ENV:` (sin sesión aún, se reintenta con un temporizador).
+    ce.vigila.armar();
+    aplicar_avisos_y_cc(&mut ce.dados);
+    // El canal "centro", en su hilo (vive lo que el programa).
+    let pila: &'static mut [u8] = alloc::vec![0u8; PILA_HILO].leak();
+    if dashos::hilos::crear(hilo_canal, 0, pila, 0) < 0 {
+        println!("  [centro] no se pudo lanzar el hilo de su canal");
+        return 1;
+    }
+    loop {
+        let visto = LLEGADOS.load(Ordering::Acquire);
+        while let Some(m) = sacar() {
+            let Some((cat, llave)) = atender(m, &mut ce, &mut None) else { continue };
+            ce.idioma = poner_idioma(ce.idioma.take());
+            let mut respuestas: Vec<u32> = llave.into_iter().collect();
+            ventana(cat, &mut ce, &mut respuestas);
+            // Lo de `ENV:` se aplicó con la ventana abierta; esto, por si algo se quedó sin dar.
+            aplicar_avisos_y_cc(&mut ce.dados);
+            // A quien pidió abrirla con una llave (también si lo pidió con la ventana ya abierta): 0, cerrada.
+            for l in respuestas {
+                dashos::canal_escribir(l, &0i32.to_le_bytes(), &[]);
+                dashos::cerrar(l);
             }
         }
-        cerrar_llaves(&ll[..k]);
+        if CANAL_CERRADO.load(Ordering::Acquire) && COLA.con(|c| c.is_empty()) {
+            return 0;
+        }
+        dashos::hilos::esperar(&LLEGADOS, visto, 0);
     }
 }

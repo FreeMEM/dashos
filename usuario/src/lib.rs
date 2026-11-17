@@ -39,6 +39,8 @@ pub mod asignaciones;
 /// La tabla de llaves: qué es cada llave con que nace el programa (sin dependencias: se prueba en el PC).
 pub mod llaves;
 pub mod hilos;
+/// La cola fija de `hilos::Cola` (rama `centro-vivo`; sin dependencias: se prueba en el PC).
+pub mod anillo;
 pub mod red_cliente;
 /// S29: el cortafuegos de la caja Linux en el servicio de red (sin dependencias: se prueba en el PC).
 pub mod cortafuegos_caja;

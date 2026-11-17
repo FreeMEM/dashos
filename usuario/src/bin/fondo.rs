@@ -9,7 +9,9 @@
 //! Por su canal "fondo" solo le habla el centro de control (por el nombre que da `inicio`), con una llave para la
 //! respuesta:
 //! - "poner <nombre>": pone `Fondos/<nombre>` (no lo guarda: eso lo hace el centro si sale bien);
-//! - "semilla": el color del fondo de ahora.
+//! - "semilla": el color del fondo de ahora;
+//! - "guardado" (rama `centro-vivo`): pone el de `Prefs/fondo` (si no hay, el de serie), si no es ya el que se ve. Lo
+//!   pide el centro al entrar alguien: el fondo arranca antes que el servicio de archivos, y entonces no puede leerlo.
 //!
 //! La respuesta, 20 bytes: estado (0 bien; -1 pedido malo; -2 no se lee el fichero; -3 no se entiende la imagen; -4
 //! demasiado grande; -5 sin memoria; -6 sin pantalla; -7 no hay fondo), la semilla (ARGB; 0 si la imagen no tiene
@@ -45,7 +47,7 @@ mod reloj;
 #[path = "../fondo_panel.rs"]
 mod fondo_panel;
 
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use dashos::println;
@@ -470,24 +472,8 @@ struct Mensaje {
 }
 
 /// La cola entre el hilo del canal y el bucle principal (como mucho `MAX_COLA`; lo que sobre se tira y se cierra).
-struct Cola {
-    cerrojo: dashos::hilos::Cerrojo,
-    v: core::cell::UnsafeCell<VecDeque<Mensaje>>,
-}
-// El cerrojo protege `v`.
-unsafe impl Sync for Cola {}
-static COLA: Cola = Cola { cerrojo: dashos::hilos::Cerrojo::nuevo(), v: core::cell::UnsafeCell::new(VecDeque::new()) };
+static COLA: dashos::hilos::Cola<Mensaje, MAX_COLA> = dashos::hilos::Cola::nueva();
 const MAX_COLA: usize = 16;
-
-impl Cola {
-    fn con<R>(&self, f: impl FnOnce(&mut VecDeque<Mensaje>) -> R) -> R {
-        self.cerrojo.tomar();
-        // SAFETY: con el cerrojo tomado, nadie más toca la cola.
-        let r = f(unsafe { &mut *self.v.get() });
-        self.cerrojo.soltar();
-        r
-    }
-}
 
 /// El hilo del canal "fondo": recoge cada mensaje, lo deja en la cola y despierta al bucle principal.
 fn hilo_canal(_: u64) -> u64 {
@@ -500,14 +486,7 @@ fn hilo_canal(_: u64) -> u64 {
             Recibido::Nada => continue,
         };
         let m = Mensaje { datos: buf[..n].to_vec(), llaves: ll[..k].to_vec(), marca };
-        let sobra = COLA.con(|c| {
-            if c.len() >= MAX_COLA {
-                Some(m)
-            } else {
-                c.push_back(m);
-                None
-            }
-        });
+        let sobra = COLA.con(|c| c.meter(m).err());
         if let Some(m) = sobra {
             cerrar_llaves(&m.llaves);
         }
@@ -552,7 +531,7 @@ fn principal() -> u64 {
             panel.tic(&mut p.c, medida);
         }
         // Lo que llegó por el canal "fondo".
-        while let Some(m) = COLA.con(|c| c.pop_front()) {
+        while let Some(m) = COLA.con(|c| c.sacar()) {
             atender(m, &mut pantalla, &mut actual, &mut nombres, &mut malos, &mut panel);
         }
         // Esperar: en la conexión con el compositor hasta la próxima medida (como mucho 2 s, por si un timbre no
@@ -611,6 +590,13 @@ fn atender(m: Mensaje, pantalla: &mut Option<Pantalla>, actual: &mut Option<(Str
             Some((_, s, w, h)) => (BIEN, *s, *w, *h, 0),
             None => (SIN_FONDO, 0, 0, 0, 0),
         },
+        None if del_centro && pedido == "guardado" => {
+            let nombre = guardado();
+            match actual {
+                Some((visto, s, w, h)) if *visto == nombre => (BIEN, *s, *w, *h, 0),
+                _ => poner(pantalla, &nombre, actual),
+            }
+        }
         _ => {
             *malos += 1;
             if *malos <= 3 {
@@ -620,8 +606,8 @@ fn atender(m: Mensaje, pantalla: &mut Option<Pantalla>, actual: &mut Option<(Str
         }
     };
     if k >= 1 {
-        // Tras "semilla", también el nombre del que se ve.
-        let visto = if pedido == "semilla" { actual.as_ref().map_or("", |a| a.0.as_str()) } else { "" };
+        // Tras "semilla" y "guardado", también el nombre del que se ve.
+        let visto = if pedido == "semilla" || pedido == "guardado" { actual.as_ref().map_or("", |a| a.0.as_str()) } else { "" };
         contestar(ll[0], respuesta, visto);
     }
     cerrar_llaves(ll);
