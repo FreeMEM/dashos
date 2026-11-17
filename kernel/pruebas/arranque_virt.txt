@@ -546,8 +546,9 @@ DashOS en marcha con 4 núcleos.
 ~│   [ram] Carla: su RAM: tiene 2 entradas (T y Env); el secreto de Ana: -2 en la suya, 0 caminos llegan a él; pedir el volumen [-12, -12, -12]; órdenes de sesiones [-1, -1, -1, -1]: bien
 # Ana se fue con 64 vigilancias puestas: el servicio las soltó al acabar ella.
 ~ en el servicio con la de Carla: bien
-# Ajustes en texto, hostil: Carla no escribe la zona (de la máquina) ni la capa de fábrica de `ENVARC:`.
-~│   [ram] Carla: guardar ENV: en ENVARC: por sesiones [-2, -2]; la orden de archivos con su llave -1
+# Ajustes en texto, hostil: Carla no escribe la zona (de la máquina) ni la capa de fábrica de `ENVARC:`. Desde
+# dms-dock, `sesiones` mira el nombre antes que quién lo pide: el que sale del cajón ("../../Prefs/Red/hora") es -3.
+~│   [ram] Carla: guardar ENV: en ENVARC: por sesiones [-2, -3]; la orden de archivos con su llave -1
 ~│   [sesiones] ram pide guardar ENV:"Sys/locale" en ENVARC:: -2
 ~│   [sesiones] ram pide guardar ENV:"../../Prefs/Red/hora" en ENVARC:: -2
 ~│   [ram] Carla: escribir la zona de la máquina -12 y en ENVARC: de fábrica -12: bien
