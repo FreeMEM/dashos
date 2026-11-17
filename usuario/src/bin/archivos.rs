@@ -1645,7 +1645,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
     let ficha = c.ficha;
     // Las órdenes de volúmenes, instantáneas y comprobación, solo con el derecho de administrar (A13). Pedir la raíz
     // propia (VOLUMEN sin nombre) no lo necesita.
-    let de_administrar = matches!(p.orden, COMPROBAR | SUJETAR | SOLTAR | INSTANTANEAS | TOMAR | DESCARTAR | VOLVER | VOLUMENES | HACER_VOLUMEN | QUITAR_VOLUMEN | ABRIR_VOLUMEN | CERRAR_VOLUMEN | COMPROBAR_CLAVE | CRECER | CUOTA)
+    let de_administrar = matches!(p.orden, COMPROBAR | SUJETAR | SOLTAR | INSTANTANEAS | TOMAR | DESCARTAR | VOLVER | VOLUMENES | HACER_VOLUMEN | QUITAR_VOLUMEN | ABRIR_VOLUMEN | CERRAR_VOLUMEN | COMPROBAR_CLAVE | CAMBIAR_CLAVE | CRECER | CUOTA)
         || (p.orden == VOLUMEN && !p.nombre.is_empty());
     if de_administrar && ficha.derechos & D_ADMINISTRAR == 0 {
         return mal(PROTEGIDO);
@@ -2414,6 +2414,58 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 Ok(()) => Respuesta { estado: BIEN, ..Default::default() },
                 Err(e) => mal(estado_de(e)),
             }
+        }
+        // S6b, rama `cuentas-2`: la contraseña de un volumen, nueva, sin tocar sus datos (solo su bloque de llaves). Con
+        // `CON_CODIGO`, desde el código de recuperación, que se gasta: el nuevo, del azar del kernel, a la ventana.
+        CAMBIAR_CLAVE => {
+            let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
+            let (lv, ln) = ((p.b & 0xffff_ffff) as usize, (p.b >> 32) as usize);
+            let codigo = p.a & CON_CODIGO != 0;
+            if p.a & !CON_CODIGO != 0 || lv == 0 || ln == 0 || lv > MAX_CLAVE || ln > MAX_CLAVE {
+                return mal(MAL_FORMADO);
+            }
+            let mut vieja = [0u8; MAX_CLAVE];
+            let mut nueva = [0u8; MAX_CLAVE];
+            {
+                let v = c.ventana();
+                vieja[..lv].copy_from_slice(&v[..lv]);
+                nueva[..ln].copy_from_slice(&v[lv..lv + ln]);
+                v[..lv + ln].fill(0);
+            }
+            // Las sales (y, con el código, el azar del nuevo), del azar del kernel (R10): sin azar de calidad, no.
+            let mut azar = [0u8; 16 + 16 + 15];
+            let mut otro = [0u8; dashos::cuentas::LARGO_CODIGO];
+            let r = if dashos::azar(&mut azar) != Some(true) {
+                Err(SIN_AZAR)
+            } else {
+                if codigo {
+                    otro = dashos::cuentas::codigo_recuperacion(azar[32..47].try_into().unwrap());
+                }
+                fs.tx(|tx| {
+                    let id = tx.find_volume(nombre)?;
+                    let sal: [u8; 16] = azar[..16].try_into().unwrap();
+                    if codigo {
+                        tx.recover_volume(id, &vieja[..lv], &nueva[..ln], &otro, [sal, azar[16..32].try_into().unwrap()])
+                    } else {
+                        tx.change_volume_password(id, &vieja[..lv], &nueva[..ln], sal)
+                    }
+                })
+                .map_err(estado_de)
+            };
+            vieja.fill(0);
+            nueva.fill(0);
+            azar.fill(0);
+            let respuesta = match r {
+                Ok(()) if codigo => {
+                    c.ventana()[..otro.len()].copy_from_slice(&otro);
+                    Respuesta { estado: BIEN, b: otro.len() as u64, ..Default::default() }
+                }
+                Ok(()) => Respuesta { estado: BIEN, ..Default::default() },
+                Err(e) => mal(e),
+            };
+            otro.fill(0);
+            core::hint::black_box((&vieja, &nueva, &azar, &otro));
+            respuesta
         }
         CERRAR_VOLUMEN => {
             let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
@@ -3377,7 +3429,7 @@ fn tras_guardar(clientes: &mut [Option<Cliente>], solo_lectura: &mut bool) {
 }
 
 /// Las que cambian instantáneas o volúmenes: raras, y van al disco en seguida.
-const SIEMPRE_AL_DISCO: &[u32] = &[TOMAR, DESCARTAR, VOLVER, HACER_VOLUMEN, QUITAR_VOLUMEN, ABRIR_VOLUMEN, CERRAR_VOLUMEN, CRECER, CUOTA];
+const SIEMPRE_AL_DISCO: &[u32] = &[TOMAR, DESCARTAR, VOLVER, HACER_VOLUMEN, QUITAR_VOLUMEN, ABRIR_VOLUMEN, CERRAR_VOLUMEN, CAMBIAR_CLAVE, CRECER, CUOTA];
 
 /// Pone o quita el temporizador del siguiente guardado según quede algo por guardar.
 fn al_disco(fs: &Fs, plazo: &mut Option<(u64, u32)>) {

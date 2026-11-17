@@ -163,7 +163,7 @@ arranque-virt: virt $(DISCO_NVME)
 	rm -f target/explorador*.ppm target/captura.ppm target/amiga.ppm target/dash.ppm target/dash-nativo.ppm target/dash-nativo-pregunta.ppm target/gadtools.ppm target/gadtools-menu.ppm target/gadtools-dash.ppm target/requester.ppm target/reaction.ppm target/reaction.orig.ppm target/sonido.wav $(RED)/qemu.sock $(RED)/pc.sock $(RED)/qemu2.sock $(RED)/vecino.sock target/u6.ana.ppm target/u6.carla.ppm
 	mkdir -p $(RED)
 	python3 -I ../tools/red_basura.py $(RED) $(RED_MAC) 300 & BASURA=$$!; $(RED_ANTES); \
-	GUARDAR=$(abspath target/salida_virt.txt) CAPTURA=$(abspath target/captura.ppm) CAPTURA_AMIGA=$(abspath target/amiga.ppm) CAPTURA_DASH=$(abspath target/dash.ppm) CAPTURA_DASHOS=$(abspath target/dash-nativo.ppm) CAPTURA_GT=$(abspath target/gadtools.ppm) CAPTURA_GT_MENU=$(abspath target/gadtools-menu.ppm) CAPTURA_GT_DASH=$(abspath target/gadtools-dash.ppm) CAPTURA_REQ=$(abspath target/requester.ppm) CAPTURA_RA=$(abspath target/reaction) CAPTURA_EXPLORADOR=$(abspath target/explorador) CAPTURA_U6=$(abspath target/u6) CAPTURA_MONITOR=$(abspath target/monitor) REINICIO=$(abspath pruebas/arranque_virt_reinicio.txt) TECLAS=1 MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv -audiodev wav,id=snd0,path=$(abspath target/sonido.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0 $(RED_QEMU)" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt.txt $(or $(TIEMPO_VIRT),600); \
+	GUARDAR=$(abspath target/salida_virt.txt) CAPTURA=$(abspath target/captura.ppm) CAPTURA_AMIGA=$(abspath target/amiga.ppm) CAPTURA_DASH=$(abspath target/dash.ppm) CAPTURA_DASHOS=$(abspath target/dash-nativo.ppm) CAPTURA_GT=$(abspath target/gadtools.ppm) CAPTURA_GT_MENU=$(abspath target/gadtools-menu.ppm) CAPTURA_GT_DASH=$(abspath target/gadtools-dash.ppm) CAPTURA_REQ=$(abspath target/requester.ppm) CAPTURA_RA=$(abspath target/reaction) CAPTURA_EXPLORADOR=$(abspath target/explorador) CAPTURA_U6=$(abspath target/u6) CAPTURA_MONITOR=$(abspath target/monitor) REINICIO=$(abspath pruebas/arranque_virt_reinicio.txt) TECLAS=1 MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv -audiodev wav,id=snd0,path=$(abspath target/sonido.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0 $(RED_QEMU)" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt.txt $(or $(TIEMPO_VIRT),720); \
 	R=$$?; $(RED_DESPUES); exit $$R
 	python3 ../tools/disco_archivos.py --comprobar $(DISCO_NVME) $(VER)
 	python3 ../tools/captura_ventanas.py target/captura.ppm
@@ -212,6 +212,27 @@ arranque-virt-menus: usuario $(DISCO_NVME) FORCE
 	@cat target/menus/menus.guion.txt
 	for c in $(MENUS_CAPTURAS); do test -s target/menus/menus.$$c.png || { echo "FALTA la captura $$c"; exit 1; }; done
 	mkdir -p $(MENUS_FUERA) && for c in $(MENUS_CAPTURAS); do cp target/menus/menus.$$c.png $(MENUS_FUERA)/$$c.png; done
+
+# Rama cuentas-2, las cuentas en pantalla (docs/bitacoras/cuentas-2.md): la imagen de usar con `cuentas` (`guardian`
+# escribe los códigos de recuperación en la consola) y un disco de pruebas sin cuentas (primer arranque).
+# `tools/guion_cuentas.py`: el asistente crea a Eva (un nombre reservado primero: no), Ajustes > Cuentas crea a Fran, lo
+# pone en un grupo, lo borra y lo devuelve, y cambia la contraseña de Eva; al cerrar su sesión, la pantalla de entrada
+# con la lista, y Fran entra con su código de recuperación (uno malo primero); al cerrar la de Fran, vuelve Eva. Con una captura en cada momento (target/cuentas/cuentas.*.png; y en
+# ~/recuperar/geosian-7d/cuentas-2-capturas/, fuera de git).
+VIRT_CUENTAS := target/kernel8-virt-cuentas.img
+CUENTAS_CAPTURAS := 01-asistente 02-asistente-reservado 03-codigo-primera 04-ajustes-cuentas 05-tanda-nueva 06-codigo-fran \
+	07-cuentas-fran 08-borrada 09-mi-contrasena 10-entrada-lista 11-olvide 12-codigo-malo 13-codigo-nuevo 14-entrada-otra-vez 15-entrada-clave
+CUENTAS_FUERA ?= $(HOME)/recuperar/geosian-7d/cuentas-2-capturas
+arranque-virt-cuentas: usuario $(DISCO_NVME) FORCE
+	cargo build $(CARGO_PERFIL) --features virt,uso,cuentas
+	$(OBJCOPY) -O binary $(ELF) $(VIRT_CUENTAS)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_CUENTAS)) cargo build --release
+	rm -rf target/cuentas && mkdir -p target/cuentas
+	python3 ../tools/disco_archivos.py --sin-cuentas target/cuentas/disco.img $(DASHFS_AR)
+	GUARDAR=$(abspath target/salida_virt_cuentas.txt) CUENTAS_CAPTURAS=$(abspath target/cuentas/cuentas) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU) -drive file=$(abspath target/cuentas/disco.img),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_cuentas.txt 900
+	@cat target/cuentas/cuentas.guion.txt
+	for c in $(CUENTAS_CAPTURAS); do test -s target/cuentas/cuentas.$$c.png || { echo "FALTA la captura $$c"; exit 1; }; done
+	mkdir -p $(CUENTAS_FUERA) && for c in $(CUENTAS_CAPTURAS); do cp target/cuentas/cuentas.$$c.png $(CUENTAS_FUERA)/$$c.png; done
 
 # La caja Linux (H9, docs/bitacoras/caja-linux.md): la misma imagen de `virt` en una QEMU virt con virtualization=on,
 # sin disco ni USB. EDK2 y el cargador entran en EL2: el kernel deja ahí el trozo del hipervisor y el servicio

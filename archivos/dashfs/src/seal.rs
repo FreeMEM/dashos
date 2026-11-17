@@ -266,6 +266,15 @@ impl VolumeKeySlot {
         }
     }
 
+    /// DashOS (branch `cuentas-2`): the Argon2 cost it was made with (a new password for it keeps it).
+    pub fn cost(&self) -> Cost {
+        Cost {
+            memory: self.memory.to_ne(),
+            passes: self.passes.to_ne(),
+            lanes: self.lanes.to_ne(),
+        }
+    }
+
     fn wrapping_key(password: &[u8], salt: &[u8; 16], cost: Cost) -> Result<Adiantum> {
         let params = argon2::Params::new(cost.memory, cost.passes, cost.lanes, Some(32))
             .map_err(|_| Error::new(EINVAL))?;

@@ -21,6 +21,12 @@
 //! - **Panel del escritorio** (trasfondo, como TrasfondoPrefs): si se enseña, la esquina, el intervalo, las gráficas y
 //!   qué bloques. Se guarda en `Prefs/monitor` y se le dice al fondo ("monitor"), que lo relee.
 //! - **Acerca de**: la versión, cuánto lleva encendido, la fecha y hora (UTC, A14) y cuántos procesos hay.
+//! - **Cuentas** (rama `cuentas-2`, el `Usuarios` de S4b; la última): quién usa el equipo, de `Estado:Cuentas/`, con
+//!   su número, sus grupos y si está borrada (hasta cuándo se puede devolver). Crear una cuenta (el nombre, en el
+//!   campo), borrarla o devolverla y ponerla o quitarla de un grupo son acciones de la tanda de administrador (S36): la
+//!   ventana del sistema pide la contraseña de un administrador (y, al crear, la de la cuenta nueva, y enseña su código
+//!   de recuperación). "Mi contraseña" cambia la de la persona de delante (`CLAVE_PROPIA`), también en la ventana del
+//!   sistema. Lo mismo que la orden `Usuario` del Shell.
 //!
 //! Por su canal "centro" solo se le pide que abra una categoría ("abrir permisos"): nadie cambia un ajuste desde fuera.
 //! Si el mensaje trae una llave, cuando se cierra la ventana se contesta por ella (4 bytes a cero). Ver y quitar lo
@@ -55,7 +61,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use dashos::println;
 use dashos::protocolo::sesiones as s;
 use dashos::servicio::{cerrar_llaves, recibir, Recibido, MAX_DATOS, MAX_LLAVES};
-use kit::controles::{Boton, Hijo, Interfaz, Lista, Texto};
+use kit::controles::{Boton, Campo, Hijo, Interfaz, Lista, Texto};
 use kit::lienzo::{Lienzo, Rect};
 use kit::objetos::{atr, Arbol, Cuando, Que, Valor};
 use kit::tema::Tema;
@@ -109,6 +115,8 @@ const CATEGORIAS: &[(&str, &str)] = &[
     ("monitor", "Monitor del sistema"),
     ("escritorio", "Escritorio"),
     ("acerca", "Acerca de"),
+    // Rama `cuentas-2`: al final, para no mover las de antes (el guion de la prueba las recorre con las flechas).
+    ("cuentas", "Cuentas"),
 ];
 /// El nombre que se ve de la categoría `k` de `CATEGORIAS`, en el idioma del usuario (el de la tabla es el de la
 /// consola, siempre en castellano).
@@ -122,11 +130,14 @@ fn nombre_categoria(k: usize) -> &'static str {
         5 => tr(6, "Monitor del sistema"),
         6 => tr(7, "Escritorio"),
         7 => tr(8, "Acerca de"),
+        8 => tr(104, "Cuentas"),
         _ => "",
     }
 }
 const MONITOR_SIS: usize = 5;
 const PANEL_FONDO: usize = 6;
+/// Rama `cuentas-2`: las cuentas de usuario.
+const CUENTAS: usize = 8;
 const FICHERO_MONITOR: &str = "monitor";
 /// Cada cuánto se vuelve a medir con el monitor a la vista.
 const CADA_MONITOR_US: u64 = 2_000_000;
@@ -353,6 +364,128 @@ fn cajas_a_sesiones(mb: u32) -> i32 {
     let n = if dashos::canal_escribir(SESIONES, &p, &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 2_000_000).0 } else { -1 };
     dashos::cerrar(lectura);
     if n == 4 { i32::from_le_bytes(r) } else { i32::MIN }
+}
+
+/// Rama `cuentas-2`: una cuenta en la lista de Cuentas: su nombre, si está borrada y sus grupos.
+struct FilaCuenta {
+    nombre: String,
+    borrada: bool,
+    grupos: Vec<String>,
+}
+
+/// Rama `cuentas-2`: las cuentas de `Estado:Cuentas/` (que leen todos), como filas en llano y por nombre. Sin poder
+/// leerlas, una fila que lo dice.
+fn cuentas() -> (Vec<String>, Vec<FilaCuenta>) {
+    use dashos::cuentas as cu;
+    use dashos::protocolo::archivos as a;
+    let Some(ses) = Sesion::abrir() else { return (alloc::vec![String::from(tr(105, "No se pueden leer las cuentas"))], Vec::new()) };
+    let mut leer = |f: &str| -> Vec<u8> {
+        let camino = alloc::format!("{}/{}", cu::CAJON, f);
+        let (e, _, leidos, _, _) = ses.pedir_bytes(a::LEER_NOMBRE, 1, 0, cu::MAX_FICHERO as u64, camino.as_bytes());
+        if e == a::BIEN { ses.ventana()[..leidos as usize].to_vec() } else { Vec::new() }
+    };
+    let (u, g) = (leer(cu::USUARIOS), leer(cu::GRUPOS));
+    let (c, ..) = cu::Cuentas::leer(&u, &g);
+    let mut lineas = Vec::new();
+    let mut filas = Vec::new();
+    for x in c.todas() {
+        let grupos: Vec<String> = c.grupos().filter(|gr| gr.miembros().contains(&x.uid)).map(|gr| String::from(gr.nombre.as_str())).collect();
+        let quien = if x.completo.as_str().is_empty() || x.completo.as_str() == x.nombre.as_str() {
+            String::from(x.nombre.as_str())
+        } else {
+            alloc::format!("{} ({})", x.completo.as_str(), x.nombre.as_str())
+        };
+        let mut linea = alloc::format!("{} · {}", quien, trf(106, "número {}", &[&x.uid]));
+        if !grupos.is_empty() {
+            linea.push_str(" · ");
+            linea.push_str(&grupos.join(", "));
+        }
+        if let cu::Estado::Retirada(desde) = x.estado {
+            // La fecha, sin la hora (`fecha` la da en UTC, "aaaa-mm-dd hh:mm (UTC)").
+            let hasta = fecha((desde + cu::PLAZO_RETIRADA_S).saturating_mul(1_000_000_000));
+            linea.push_str(" · ");
+            linea.push_str(&trf(107, "borrada: se puede devolver hasta el {}", &[&hasta.split(' ').next().unwrap_or("?")]));
+        }
+        lineas.push(linea);
+        filas.push(FilaCuenta { nombre: String::from(x.nombre.as_str()), borrada: !x.activa(), grupos });
+    }
+    if lineas.is_empty() {
+        lineas.push(String::from(tr(105, "No se pueden leer las cuentas")));
+    }
+    (lineas, filas)
+}
+
+/// Donde se ve un momento la memoria con la lista de una tanda (se copia y se quita).
+const VA_TANDA: usize = 0x58_0000_0000;
+
+/// Rama `cuentas-2`: una tanda de acciones de cuentas a `sesiones` (como la orden `Usuario`); espera a que el usuario
+/// conteste en la ventana del sistema (dos minutos, y un poco más). El estado y cuántas se hicieron; `i32::MIN` si
+/// `sesiones` no contesta.
+fn tanda_de_cuentas(lista: &str) -> (i32, u32) {
+    let mem = dashos::memoria_crear(lista.len().max(1));
+    if (mem as i32) <= 0 {
+        return (i32::MIN, 0);
+    }
+    if dashos::memoria_proyectar(mem, VA_TANDA, true) != 0 {
+        dashos::cerrar(mem);
+        return (i32::MIN, 0);
+    }
+    // SAFETY: recién proyectada aquí con al menos `lista.len()` bytes; se quita en la línea siguiente.
+    unsafe { core::slice::from_raw_parts_mut(VA_TANDA as *mut u8, lista.len()) }.copy_from_slice(lista.as_bytes());
+    dashos::memoria_quitar(VA_TANDA);
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut m = [0u8; 8];
+    m[0..4].copy_from_slice(&s::TANDA.to_le_bytes());
+    m[4..8].copy_from_slice(&(lista.len() as u32).to_le_bytes());
+    let r = if dashos::canal_escribir(SESIONES, &m, &[suyo, mem]) == 0 {
+        let mut r = [0u8; 256];
+        let (n, _, _) = dashos::canal_leer_plazo(lectura, &mut r, &mut [], 160_000_000);
+        dashos::tanda::Resultado::de_bytes(&r[..n.max(0) as usize]).map_or((i32::MIN, 0), |x| (x.estado, x.hechas as u32))
+    } else {
+        dashos::cerrar(suyo);
+        dashos::cerrar(mem);
+        (i32::MIN, 0)
+    };
+    dashos::cerrar(lectura);
+    r
+}
+
+/// Rama `cuentas-2`: cambiar la contraseña de la persona de delante (`CLAVE_PROPIA`); la pide la ventana del sistema.
+fn mi_contrasena() -> i32 {
+    let mut m = [0u8; 8];
+    m[0..4].copy_from_slice(&s::CLAVE_PROPIA.to_le_bytes());
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut r = [0u8; 4];
+    let n = if dashos::canal_escribir(SESIONES, &m, &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 160_000_000).0 } else { -1 };
+    dashos::cerrar(lectura);
+    if n == 4 { i32::from_le_bytes(r) } else { i32::MIN }
+}
+
+/// Lo que se dice tras una acción de Cuentas, en llano.
+fn resultado_cuentas(e: i32) -> String {
+    match e {
+        0 => String::from(tr(108, "Hecho")),
+        s::PROTEGIDO => String::from(tr(109, "No se hizo: no se confirmó en la ventana del sistema")),
+        s::OCUPADO => String::from(tr(110, "Ya hay otra esperando en la ventana del sistema")),
+        s::NO_EXISTE => String::from(tr(111, "No existe")),
+        i32::MIN => String::from(tr(112, "sesiones no contesta")),
+        e => match dashos::cuentas::Fallo::de_estado(e) {
+            Some(f) => String::from(f.texto()),
+            None => trf(113, "No se hizo ({})", &[&e]),
+        },
+    }
+}
+
+/// Rama `cuentas-2`, para las pruebas: lo que hay en Cuentas y dónde queda en la ventana la lista, el campo y cada botón.
+fn decir_sitios_cuentas(i: &Interfaz, objs: &[kit::objetos::Obj], lineas: &[String]) {
+    let mut sitios = Vec::new();
+    for (o, nombre) in objs.iter().zip(["lista", "campo", "nueva", "grupo", "mi contraseña", "borrar"]) {
+        if let Some(r) = i.sitios.get(o) {
+            sitios.push(alloc::format!("{} ({}, {})", nombre, r.x + r.w / 2, if nombre == "lista" { r.y } else { r.y + r.h / 2 }));
+        }
+    }
+    println!("  [centro] Cuentas: {}", lineas.join("; "));
+    println!("  [centro] Cuentas, sitios: {}", sitios.join(" "));
 }
 
 /// El estado y cuántos problemas.
@@ -1394,13 +1527,26 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
     arbol.notificar(cancelar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("cancelar".into())));
     // Un hueco delante: los botones, al final de la fila (Material 3).
     let hueco = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);
-    let derecha = Hijo::Columna(alloc::vec![
-        Hijo::Obj(titulo),
-        Hijo::Obj(explica),
-        Hijo::Obj(permisos),
-        Hijo::Fila(alloc::vec![Hijo::Obj(hueco), Hijo::Obj(cancelar), Hijo::Obj(usar), Hijo::Obj(quitar), Hijo::Obj(cerrar)]),
-    ]);
-    let raiz = Hijo::Fila(alloc::vec![Hijo::Obj(lado), derecha]);
+    // Rama `cuentas-2`: en Cuentas, el nombre para una cuenta nueva o un grupo, y el botón de los grupos.
+    let campo = arbol.crear(Campo, &[(atr::TEXTO, Valor::Texto(String::new())), (atr::ETIQUETA, Valor::Texto(tr(114, "Nombre (cuenta nueva o grupo)").into()))]);
+    let grupo = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto(tr(115, "Grupo").into())), (atr::ESTILO, Valor::Int(2))]);
+    let hueco_2 = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);
+    arbol.notificar(grupo, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("grupo".into())));
+    // Lo de la derecha: en Cuentas, con el campo y el botón de los grupos.
+    // En Cuentas, dos filas de botones (en una no caben a lo ancho de la ventana): Crear, Grupo y Borrar, con lo que hay
+    // en el campo y la cuenta elegida; debajo, Mi contraseña y Cerrar.
+    let raiz_de = |con_cuentas: bool| {
+        let mut columna = alloc::vec![Hijo::Obj(titulo), Hijo::Obj(explica), Hijo::Obj(permisos)];
+        if con_cuentas {
+            columna.push(Hijo::Obj(campo));
+            columna.push(Hijo::Fila(alloc::vec![Hijo::Obj(hueco), Hijo::Obj(cancelar), Hijo::Obj(grupo), Hijo::Obj(quitar)]));
+            columna.push(Hijo::Fila(alloc::vec![Hijo::Obj(hueco_2), Hijo::Obj(usar), Hijo::Obj(cerrar)]));
+        } else {
+            columna.push(Hijo::Fila(alloc::vec![Hijo::Obj(hueco), Hijo::Obj(cancelar), Hijo::Obj(usar), Hijo::Obj(quitar), Hijo::Obj(cerrar)]));
+        }
+        Hijo::Fila(alloc::vec![Hijo::Obj(lado), Hijo::Columna(columna)])
+    };
+    let raiz = raiz_de(categoria == CUENTAS);
     let mut i = Interfaz::new(arbol, raiz, Tema::CLARO);
     // Material 3: esquinas redondeadas (el búfer es ARGB); maximizada, en ángulo recto. 24 de margen.
     i.esquinas = kit::tema::RADIO_VENTANA;
@@ -1434,6 +1580,8 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
     // Trasfondo: el monitor del sistema y los ajustes del panel del escritorio.
     let mut vm = VistaMonitor { med: monitor::Medidor::default(), orden: 0, filas: Vec::new(), medido: 0, sin_datos: false, nombres: nombres_de_cuentas() };
     let mut aj_panel = leer_ajustes_monitor();
+    // Rama `cuentas-2`: las cuentas de las filas de Cuentas (en su orden).
+    let mut filas_cuentas: Vec<FilaCuenta> = Vec::new();
     let poner = |i: &mut Interfaz, cat: usize, lista: &[(String, String)], reg: &[String]| {
         let (explicacion, contenido) = if cat == PERMISOS {
             (tr(87, "Lo que cada programa puede usar. Quitarlo lo revoca ya."), filas(lista))
@@ -1449,23 +1597,32 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
             (tr(92, "Lo tuyo con detalle; lo demás, sumado."), reg.join("|"))
         } else if cat == PANEL_FONDO {
             (tr(93, "Los menús y el monitor del fondo. Intro cambia una fila."), reg.join("|"))
+        } else if cat == CUENTAS {
+            (tr(116, "Quién usa el equipo; los cambios, con un administrador."), reg.join("|"))
         } else {
             (tr(94, "El sistema."), reg.join("|"))
         };
         i.arbol.poner(titulo, atr::TEXTO, Valor::Texto(nombre_categoria(cat).into()));
         i.arbol.poner(explica, atr::TEXTO, Valor::Texto(explicacion.into()));
         i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(contenido));
+        // Rama `cuentas-2`: en Cuentas, debajo de la lista van el campo y dos filas de botones: la lista pide menos filas
+        // (crece con lo que sobre) para que todo quepa en la ventana.
+        i.arbol.poner(permisos, atr::FILAS, Valor::Int(if cat == CUENTAS { 2 } else { 4 }));
         i.arbol.poner(permisos, atr::VALOR, Valor::Int(-1));
         i.arbol.poner(permisos, atr::PRIMERA, Valor::Int(0));
-        i.arbol.poner(quitar, atr::DESACTIVADO, Valor::Bool(cat != PERMISOS && cat != MONITOR_SIS && cat != APARIENCIA));
+        i.arbol.poner(quitar, atr::DESACTIVADO, Valor::Bool(cat != PERMISOS && cat != MONITOR_SIS && cat != APARIENCIA && cat != CUENTAS));
         let texto_quitar = match cat {
             MONITOR_SIS => tr(95, "Cerrar proceso"),
             APARIENCIA => tr(99, "Guardar"),
+            CUENTAS => tr(117, "Borrar"),
             _ => tr(85, "Quitar"),
         };
         i.arbol.poner(quitar, atr::TEXTO, Valor::Texto(texto_quitar.into()));
-        i.arbol.poner(usar, atr::DESACTIVADO, Valor::Bool(cat != APARIENCIA));
-        i.arbol.poner(cancelar, atr::DESACTIVADO, Valor::Bool(cat != APARIENCIA));
+        i.arbol.poner(usar, atr::DESACTIVADO, Valor::Bool(cat != APARIENCIA && cat != CUENTAS));
+        i.arbol.poner(cancelar, atr::DESACTIVADO, Valor::Bool(cat != APARIENCIA && cat != CUENTAS));
+        // Rama `cuentas-2`: en Cuentas, Cancelar es "Nueva cuenta" y Usar es "Mi contraseña".
+        i.arbol.poner(usar, atr::TEXTO, Valor::Texto(if cat == CUENTAS { tr(118, "Mi contraseña") } else { tr(97, "Usar") }.into()));
+        i.arbol.poner(cancelar, atr::TEXTO, Valor::Texto(if cat == CUENTAS { tr(119, "Crear") } else { tr(98, "Cancelar") }.into()));
     };
     if cat == SEGURIDAD {
         lineas_registro = registro();
@@ -1482,6 +1639,8 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
         lineas_registro = lineas_monitor(&vm);
     } else if cat == PANEL_FONDO {
         lineas_registro = lineas_panel(&aj_panel);
+    } else if cat == CUENTAS {
+        (lineas_registro, filas_cuentas) = cuentas();
     } else if cat != PERMISOS {
         lineas_registro = acerca();
     }
@@ -1608,6 +1767,9 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                         if let Some(r) = i.sitios.get(&quitar) {
                             println!("  [centro] botón Quitar en ({}, {})", r.x + r.w / 2, r.y + r.h / 2);
                         }
+                        if cat == CUENTAS {
+                            decir_sitios_cuentas(&i, &[permisos, campo, cancelar, grupo, usar, quitar], &lineas_registro);
+                        }
                     }
                     false
                 }
@@ -1710,6 +1872,11 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                             aj_panel = leer_ajustes_monitor();
                             lineas_panel(&aj_panel)
                         }
+                        CUENTAS => {
+                            let (l, f) = cuentas();
+                            filas_cuentas = f;
+                            l
+                        }
                         _ => acerca(),
                     };
                     println!("  [centro] {}: {}", CATEGORIAS[cat].1, lineas_registro.join("; "));
@@ -1719,8 +1886,66 @@ fn ventana_dentro(categoria: usize, uso: &mut Apariencia, pendiente: &mut bool) 
                     println!("  [centro] {}, con negativas del hostil: {}; {} entradas", CATEGORIAS[cat].1, if hostil { "sí" } else { "no" }, lineas_registro.len());
                 }
                 poner(&mut i, cat, &lista, &lineas_registro);
+                // Rama `cuentas-2`: Cuentas lleva el campo y el botón de los grupos; las demás, no.
+                i.raiz = raiz_de(cat == CUENTAS);
                 // Lo de la derecha cambió de medida (trasfondo: las columnas del monitor): se vuelve a colocar.
                 i.colocar(Rect::new(0, 0, medida.0, medida.1));
+                if cat == CUENTAS {
+                    decir_sitios_cuentas(&i, &[permisos, campo, cancelar, grupo, usar, quitar], &lineas_registro);
+                }
+                cambio = true;
+            }
+            // Rama `cuentas-2`: en Cuentas, el botón de borrar dice "Devolver" si la elegida está borrada.
+            if cat == CUENTAS {
+                let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
+                let borrada = usize::try_from(v).ok().and_then(|k| filas_cuentas.get(k)).is_some_and(|f| f.borrada);
+                let texto = if borrada { tr(120, "Devolver") } else { tr(117, "Borrar") };
+                if i.arbol.leer(quitar, atr::TEXTO).map(Valor::texto).as_deref() != Some(texto) {
+                    i.arbol.poner(quitar, atr::TEXTO, Valor::Texto(texto.into()));
+                    cambio = true;
+                }
+            }
+            let accion_cuentas = match i.arbol.leer(marca, atr::TEXTO).map(Valor::texto).as_deref() {
+                Some(m @ ("cancelar" | "usar" | "grupo" | "quitar" | "quitar-supr")) if cat == CUENTAS => Some(String::from(m)),
+                _ => None,
+            };
+            if let Some(que) = accion_cuentas {
+                i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
+                let elegida = usize::try_from(v).ok().and_then(|k| filas_cuentas.get(k));
+                let escrito = i.arbol.leer(campo, atr::TEXTO).map(Valor::texto).unwrap_or_default();
+                let escrito = String::from(escrito.trim());
+                // Lo que se pide, en las palabras de la tanda (`dashos::tanda`), y para decirlo.
+                let pedido: Result<String, &str> = match (que.as_str(), elegida) {
+                    ("usar", _) => Ok(String::new()),
+                    ("cancelar", _) if escrito.is_empty() || escrito.contains(char::is_whitespace) => Err(tr(121, "Escribe arriba el nombre de la cuenta nueva")),
+                    ("cancelar", _) => Ok(alloc::format!("crear {} 0", escrito)),
+                    (_, None) => Err(tr(122, "Elige una cuenta en la lista")),
+                    ("grupo", _) if escrito.is_empty() || escrito.contains(char::is_whitespace) => Err(tr(123, "Escribe arriba el nombre del grupo")),
+                    ("grupo", Some(f)) => Ok(alloc::format!("{} {} {}", if f.grupos.contains(&escrito) { "sacar" } else { "meter" }, f.nombre, escrito)),
+                    (_, Some(f)) => Ok(alloc::format!("{} {}", if f.borrada { "devolver" } else { "borrar" }, f.nombre)),
+                };
+                let dicho = match pedido {
+                    Err(porque) => String::from(porque),
+                    Ok(t) if t.is_empty() => {
+                        let e = mi_contrasena();
+                        println!("  [centro] Cuentas: mi contraseña: {} ({})", e, resultado_cuentas(e));
+                        resultado_cuentas(e)
+                    }
+                    Ok(t) => {
+                        let (e, hechas) = tanda_de_cuentas(&t);
+                        println!("  [centro] Cuentas: \"{}\": {} ({}; {} hechas)", t, e, resultado_cuentas(e), hechas);
+                        if e == 0 && que == "cancelar" {
+                            i.arbol.poner(campo, atr::TEXTO, Valor::Texto(String::new()));
+                        }
+                        resultado_cuentas(e)
+                    }
+                };
+                (lineas_registro, filas_cuentas) = cuentas();
+                lineas_registro.push(dicho);
+                println!("  [centro] Cuentas: {}", lineas_registro.join("; "));
+                i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                i.arbol.poner(permisos, atr::VALOR, Valor::Int(v.min(filas_cuentas.len() as i64 - 1)));
                 cambio = true;
             }
             match i.arbol.leer(marca, atr::TEXTO).map(Valor::texto).as_deref() {

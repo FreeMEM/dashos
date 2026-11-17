@@ -669,6 +669,35 @@ pub fn hacer_volumen(altas: u32, uid: u32, nombre: &[u8], clave: &[u8], barato: 
     r_
 }
 
+/// Rama `cuentas-2`: la contraseña nueva del volumen `nombre` (el `Home:` de una cuenta), sin reescribir sus datos
+/// (`CAMBIAR_CLAVE`), con un cliente con el derecho de administrar. Con `codigo` (Some), lo de ahora es el código de
+/// recuperación, que se gasta: el nuevo queda en `codigo`. El estado del servicio (`PROTEGIDO` si lo de ahora no vale).
+/// Las contraseñas solo pasan por la ventana, y se borran.
+pub fn cambiar_clave(altas: u32, nombre: &[u8], vieja: &[u8], nueva: &[u8], codigo: Option<&mut [u8; dashos::cuentas::LARGO_CODIGO]>) -> i32 {
+    let Some(c) = Cliente::abrir_como(altas, MARCA_VOLUMEN, SESIONES_UID, a::D_ADMINISTRAR, b"Estado", VA_VOLUMEN) else { return a::ERROR_DEL_DISCO };
+    let (vieja, nueva) = (&vieja[..vieja.len().min(128)], &nueva[..nueva.len().min(128)]);
+    let v = c.ventana();
+    v[..vieja.len()].copy_from_slice(vieja);
+    v[vieja.len()..vieja.len() + nueva.len()].copy_from_slice(nueva);
+    let largos = vieja.len() as u64 | (nueva.len() as u64) << 32;
+    let con_codigo = codigo.is_some();
+    let (mut e, _, _, largo) = c.orden(a::CAMBIAR_CLAVE, 0, if con_codigo { a::CON_CODIGO } else { 0 }, largos, nombre);
+    // El código nuevo, que el servicio dejó al principio de la ventana, antes de borrarla (antes se borraba primero y el
+    // código salía a ceros: lo vio la comprobación del disco).
+    if let Some(codigo) = codigo {
+        if e == a::BIEN && largo as usize == codigo.len() {
+            codigo.copy_from_slice(&v[..dashos::cuentas::LARGO_CODIGO]);
+        } else if e == a::BIEN {
+            e = a::MAL_FORMADO;
+        }
+    }
+    // Por si el servicio no llegó a leerlas; y el código, fuera.
+    v[..(vieja.len() + nueva.len()).max(dashos::cuentas::LARGO_CODIGO)].fill(0);
+    c.orden(a::VACIAR, 0, 0, 0, b"");
+    c.cerrar(altas);
+    e
+}
+
 /// Quita del todo el volumen `nombre` (el de una cuenta borrada a la que se le acabó el plazo), con un cliente con el
 /// derecho de administrar. El estado del servicio.
 pub fn quitar_volumen(altas: u32, nombre: &[u8]) -> i32 {

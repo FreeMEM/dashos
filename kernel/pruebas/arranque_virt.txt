@@ -738,6 +738,8 @@ DashOS en marcha con 4 núcleos.
 # de una cuenta, ni hacerlo ni quitarlo sin el derecho de administrar.
 ~│   [tanda] cuentas: repetidas, números usados o malos, reservadas, la propia, la última administradora: no se preguntan: bien
 ~│   [tanda] hacer un volumen o quitar el de Carla sin administrar: -12 y -12: bien
+~│   [tanda] cuentas-2: recuperar -2, crear la primera -2, la lista -2, la contraseña de Carla -2, contestar por guardian -2147483648: bien
+~│   [tanda] cuentas-2: cambiar la contraseña del volumen de Carla sin administrar: -12 y -12: bien
 ~│   [tanda] prueba hostil acabada: bien
 # S6b, S36: `Abrir` abre encerrado, como con doble clic. Sin modo de desarrollo, la aplicación no carga de Home:Libs; con
 # él (`Permiso DAR espera desarrollo`, confirmado en `guardian`), sí, y el compositor marca sus ventanas; quitado, otra
@@ -791,10 +793,27 @@ DashOS en marcha con 4 núcleos.
 ~│   [shell] Usuario: no se hace nada: no se confirmó con la contraseña de un administrador
 ~│   [shell] Usuario: se paró en la 1: la contraseña de la cuenta nueva es corta: 8 letras o más
 ~│   [shell] Berta             1002  Berta Gil                -
+# Rama cuentas-2: cambiar la propia contraseña desde el Shell (`Usuario CLAVE`), en la ventana de `guardian`: la de
+# ahora mal y luego bien; de vuelta a la de siempre; dos nuevas distintas (no se cambia); la de otra cuenta, sin ventana.
+~│   [guardian] cambio de contraseña de Ana: La contraseña de ahora no es esa.
+~│   [sesiones] Ana cambia su contraseña (lo pidió Shell)
+~│   [guardian] cambio de contraseña de Ana: cambiada
+~│   [guardian] cambio de contraseña: las dos nuevas no son iguales
+~│   [guardian] cambio de contraseña de Ana: el usuario dice que no
+~│   [shell] Contraseña cambiada. Lo que hay en tu Home: sigue igual; la de antes ya no vale.
+~│   [shell] Usuario: no se cambió (se dijo que no, o tu sesión no está delante)
+~│   [shell] Usuario: solo se cambia la propia: la de otra cuenta, con su código de recuperación
 ~│   [shell] Home:PruebaShell borrado
 ~│   [shell] Fin de la prueba del Shell
 ~│   [shell] acaba con el código 0
 ~│   [guardian] Shell nativo: lanza System/Shell como Ana: 0, acaba: true
+# Rama cuentas-2, sin pantalla: la lista de la entrada, crear "la primera" con cuentas hechas (no), recuperar a Berta con
+# su código (el malo no; el bueno da otro; el gastado ya no) y la espera que crece tras tres malas seguidas.
+~│   [guardian] cuentas-2: la lista de la entrada: ["Ana", "Carla", "Berta"], primer arranque false: bien
+~│   [guardian] cuentas-2: recuperar a Berta con su código, 0; da otro: true: bien
+~│   [sesiones] 3 intentos malos seguidos con la cuenta Berta (volver): no se prueba otra en 5 s
+~│   [guardian] cuentas-2: pasada la espera, la nueva de Berta vale: 0: bien
+~│   [guardian] cuentas-2: lista, primer arranque, recuperar y esperas: bien
 ~│   [guardian] S28: retirar a caja-amiga el permiso ejec:actualiza: 0
 # Hostil: un programa del disco llamado como el panel rápido no tiene sus poderes (son por el nombre que da `inicio`).
 ~│   [cambio] lanzado del disco como panel: 

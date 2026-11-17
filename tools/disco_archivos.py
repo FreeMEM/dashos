@@ -15,7 +15,11 @@
   PC a otro.
 
 Uso: disco_archivos.py SALIDA DASHFS_AR
+     disco_archivos.py --sin-cuentas SALIDA DASHFS_AR
      disco_archivos.py --comprobar DISCO VER
+
+Con --sin-cuentas (rama cuentas-2, `make arranque-virt-cuentas`), el mismo disco sin `Estado/Cuentas/usuarios` ni
+`grupos` (el cajón, sí, de `sesiones`): un primer arranque, en el que nadie puede entrar hasta crear la primera cuenta.
 
 Con --comprobar, tras la prueba en QEMU, mira con `ver` (archivos/herramientas) que el disco tiene lo que escribió
 el cliente `ficheros` (FS4) y nada más: lo escrito por DashOS está de verdad en el disco. Y que el comprobador (FS8)
@@ -515,6 +519,13 @@ PRUEBA_SHELL = "\n".join([
     "Usuario CREAR Dora",
     "Usuario CREAR Dora",
     "Usuario",
+    "; Rama cuentas-2: cambiar la propia contraseña (la ventana del sistema pide la de ahora y la nueva dos veces; esta",
+    "; orden no ve ninguna). La de ahora mal y luego bien; de vuelta a la de siempre; dos nuevas distintas y Esc: no se",
+    "; cambia. La de otra cuenta no llega a preguntarse.",
+    "Usuario CLAVE",
+    "Usuario CLAVE Ana",
+    "Usuario CLAVE",
+    "Usuario CLAVE Carla",
     "; Se deja todo como estaba.",
     "Cd Home:",
     "Assign Prueba: REMOVE",
@@ -807,6 +818,8 @@ if sys.argv[1] == "--comprobar":
     # malas), y nada más en su cajón. Y el volumen de Berta abre con su contraseña y con su código de recuperación (el
     # que enseñó `guardian`; en las pruebas lo escribe en la consola), y no con otra: en una copia del disco, con
     # `duenos`, que es lo que abre volúmenes cifrados desde Linux.
+    # Rama cuentas-2: `guardian` recupera después a Berta con ese código: su contraseña es "nueva de Berta" y su código,
+    # el segundo que escribe; ni la de antes ni el primer código (gastado) la abren.
     cuentas = sorted(l.split(" ")[0] for l in arbol_entero if l.startswith(CUENTAS + "/"))
     if cuentas != [CUENTAS + "/", CUENTAS + "/grupos", CUENTAS + "/usuarios"]:
         fallos.append(f"{CUENTAS}: {cuentas}")
@@ -816,18 +829,19 @@ if sys.argv[1] == "--comprobar":
             fallos.append(f"{CUENTAS}/{n}: {hay!r}")
     salida = os.path.join(os.path.dirname(os.path.abspath(disco)), "salida_virt.txt")
     codigo = re.findall(r"el código de recuperación de Berta es ([A-Z0-9-]{29})", open(salida, errors="replace").read()) if os.path.exists(salida) else []
-    if len(codigo) != 1:
-        fallos.append(f"el código de recuperación de Berta en la consola: {codigo}")
+    if len(codigo) != 2 or codigo[0] == codigo[1]:
+        fallos.append(f"los códigos de recuperación de Berta en la consola: {codigo}")
     else:
         with tempfile.TemporaryDirectory() as t:
             copia = os.path.join(t, "disco.img")
             with open(copia, "wb") as f:
                 f.write(open(disco, "rb").read())
             duenos = os.path.join(os.path.dirname(ver), "duenos")
-            for clave, abre in (("clave de Berta", True), (codigo[0], True), ("clave de Ana", False), (codigo[0].replace("-", ""), False)):
+            for clave, abre in (("nueva de Berta", True), (codigo[1], True), ("clave de Berta", False), (codigo[0], False),
+                                ("clave de Ana", False), (codigo[1].replace("-", ""), False)):
                 r = subprocess.run([duenos, copia, str(1 << 20), "1002:1002", "Berta"], input=(clave + "\n").encode(), capture_output=True)
                 if (r.returncode == 0) != abre:
-                    fallos.append(f"el volumen de Berta con {'su contraseña' if clave == 'clave de Berta' else repr(clave)}: {r.returncode}")
+                    fallos.append(f"el volumen de Berta con {clave!r}: {r.returncode}")
 
     informe = subprocess.run([ver, disco, desde, "C/informe.txt"], capture_output=True).stdout
     if informe != "segunda versión\n".encode():
@@ -870,6 +884,9 @@ if sys.argv[1] == "--comprobar":
     print("BIEN: el disco tras la prueba, leído en Linux")
     sys.exit(0)
 
+sin_cuentas = sys.argv[1] == "--sin-cuentas"
+if sin_cuentas:
+    del sys.argv[1]
 salida, ar = sys.argv[1], sys.argv[2]
 with tempfile.TemporaryDirectory() as t:
     raiz = os.path.join(t, "raiz")
@@ -921,6 +938,8 @@ with tempfile.TemporaryDirectory() as t:
     cuentas = os.path.join(raiz, *CUENTAS.split("/"))
     os.makedirs(cuentas)
     for nombre, datos in (("usuarios", CUENTAS_USUARIOS), ("grupos", CUENTAS_GRUPOS)):
+        if sin_cuentas:
+            continue
         with open(os.path.join(cuentas, nombre), "wb") as f:
             f.write(datos)
         os.chmod(os.path.join(cuentas, nombre), 0o644)

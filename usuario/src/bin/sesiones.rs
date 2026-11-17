@@ -525,6 +525,72 @@ fn para_entrar(nombre: &[u8]) -> Option<(u32, cu::Nombre)> {
 fn es_admin(uid: u32) -> bool {
     con_cuentas(|c| c.es_admin(uid))
 }
+
+/// Rama `cuentas-2`: si toca el primer arranque (S6b): se leyó `Estado:Cuentas/usuarios` y no tiene ninguna cuenta, ni
+/// buena ni mala (si hay líneas que no valen, algo se dañó: no se ofrece crear una administradora nueva encima). Se
+/// apaga al crear la primera.
+static PRIMER_ARRANQUE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Rama `cuentas-2`: los programas que cambian la contraseña de la persona de delante (no la de su ficha): el centro de
+/// control, que es del escritorio.
+const CAMBIAN_POR_DELANTE: &[&str] = &["centro"];
+/// Lo más que se espera a que `guardian` acabe un cambio de contraseña (su ventana espera dos minutos): pasado, otro
+/// programa puede pedir el suyo, y al que esperaba se le dice que no.
+const PLAZO_CLAVE_US: u64 = 180_000_000;
+
+/// Un cambio de la propia contraseña (`CLAVE_PROPIA`) que espera a `guardian`: su número, la llave para contestar al
+/// programa, de quién es la cuenta, quién lo pidió y desde cuándo.
+#[derive(Clone, Copy)]
+struct CambioClave {
+    id: u32,
+    a_quien: u32,
+    uid: u32,
+    programa: [u8; 16],
+    desde: u64,
+}
+
+/// Los segundos (hacia arriba) de unos µs.
+fn segundos(us: u64) -> u32 {
+    us.div_ceil(1_000_000).min(u32::MAX as u64) as u32
+}
+
+/// Rama `cuentas-2`: un intento malo con la cuenta `uid` (0: un nombre que no es de nadie) al `que` (entrar, volver,
+/// administrar...): se cuenta y, si empieza una espera, se dice y queda en el registro de seguridad. Los segundos de
+/// espera (0 si aún ninguna).
+fn intento_malo(esperas: &mut cu::Esperas, registro: &mut Registro, uid: u32, que: &str) -> u32 {
+    let (malos, espera) = esperas.mala(uid, dashos::ahora_us());
+    if espera > 0 {
+        let cuenta = nombre_de(uid);
+        let cuenta = cuenta.as_ref().map_or("(un nombre que no es de nadie)", |n| n.as_str());
+        println!("  [sesiones] {} intentos malos seguidos con la cuenta {} ({}): no se prueba otra en {} s", malos, cuenta, que, segundos(espera));
+        registro.linea(
+            rg::SEGURIDAD,
+            b"sesiones",
+            uid,
+            "entrada",
+            format_args!("{} intentos malos seguidos con la cuenta {} ({}): espera {} s", malos, cuenta, que, segundos(espera)),
+            "contra probar contraseñas a ciegas",
+        );
+    }
+    segundos(espera)
+}
+
+/// Rama `cuentas-2`: la contraseña de un administrador (la de la ventana de una tanda o de una acción), comprobada con
+/// su volumen sin abrirlo y con las esperas: si su cuenta tiene que esperar, ni se prueba.
+fn clave_de_admin(archivos: &Option<Archivos>, esperas: &mut cu::Esperas, registro: &mut Registro, usuario: &[u8], clave: &[u8]) -> bool {
+    let Some((uid, vol)) = para_entrar(usuario).filter(|x| es_admin(x.0)) else { return false };
+    if let Some(falta) = esperas.falta(uid, dashos::ahora_us()) {
+        println!("  [sesiones] la contraseña de administrador de {} no se prueba: faltan {} s de espera", nombre_de(uid).as_ref().map_or("?", |n| n.as_str()), segundos(falta));
+        return false;
+    }
+    let buena = archivos.as_ref().is_some_and(|a| a.abrir_volumen(vol.bytes(), clave, true) == BIEN);
+    if buena {
+        esperas.buena(uid);
+    } else {
+        intento_malo(esperas, registro, uid, "administrar");
+    }
+    buena
+}
 /// En las preguntas pendientes, el "servicio" de una acción de administrador: `ACCION + i` (i en `ACCIONES`).
 const ACCION: usize = 1000;
 /// S28: el "servicio" de un permiso sin llave (la guardia de ficheros de la caja Amiga, `preguntas_ficheros`), en lo
@@ -1013,6 +1079,8 @@ fn cargar_cuentas(registro: &mut Registro) {
         Ok((nu, ng)) => {
             let (c, iu, ig) = cu::Cuentas::leer(&u[..nu], &g[..ng]);
             cambiar_cuentas(|x| *x = c);
+            // Rama `cuentas-2`: sin ninguna cuenta (ni mala), el primer arranque: `guardian` enseña el asistente.
+            PRIMER_ARRANQUE.store(c.todas().count() == 0 && iu.malas == 0, core::sync::atomic::Ordering::Relaxed);
             let admins = con_cuentas(|c| c.admins());
             println!(
                 "  [sesiones] cuentas de Estado:Cuentas: {} ({} activas), {} grupos, {} administradores",
@@ -1028,9 +1096,12 @@ fn cargar_cuentas(registro: &mut Registro) {
                     registro.linea(rg::SEGURIDAD, b"sesiones", 0, "cuentas", format_args!("{} líneas de Estado:Cuentas/{} no valen (la primera, la {})", inf.malas, f, inf.primera_mala), motivo);
                 }
             }
-            if nu == 0 {
-                println!("  [sesiones] cuentas: no hay Estado:Cuentas/usuarios: nadie puede entrar");
-                registro.linea(rg::SEGURIDAD, b"sesiones", 0, "cuentas", format_args!("no hay cuentas"), "falta Estado:Cuentas/usuarios");
+            if PRIMER_ARRANQUE.load(core::sync::atomic::Ordering::Relaxed) {
+                println!("  [sesiones] cuentas: no hay ninguna: primer arranque, guardian puede crear la primera");
+                registro.linea(rg::SEGURIDAD, b"sesiones", 0, "cuentas", format_args!("no hay cuentas: primer arranque"), "falta Estado:Cuentas/usuarios, o está vacío");
+            } else if con_cuentas(|c| c.todas().count()) == 0 {
+                println!("  [sesiones] cuentas: ninguna vale: nadie puede entrar (y no es un primer arranque)");
+                registro.linea(rg::SEGURIDAD, b"sesiones", 0, "cuentas", format_args!("ninguna cuenta vale: nadie puede entrar"), "Estado:Cuentas/usuarios tiene líneas, pero ninguna se entiende");
             }
         }
         Err(f) => {
@@ -1856,6 +1927,10 @@ fn principal() -> u64 {
     let mut tanda_comprobando: Option<usize> = None;
     // S6b, rama `cuentas`: la contraseña de la cuenta nueva de la tanda que se está haciendo.
     let mut clave_nueva = ClaveNueva::nada();
+    // Rama `cuentas-2`: los intentos malos de cada cuenta (la espera que crece) y el cambio de contraseña que espera a
+    // `guardian`.
+    let mut esperas = cu::Esperas::nuevas();
+    let mut cambio_clave: Option<CambioClave> = None;
     let mut canal_guardian = 0u32;
     // El permiso de apagar del kernel (llega de `inicio`, `PERMISO_APAGAR`) y lo que espera la respuesta de `guardian`
     // (número de la pregunta, si es reiniciar, quién lo pidió y cuándo: pasado un minuto sin respuesta, se olvida).
@@ -2197,8 +2272,14 @@ fn principal() -> u64 {
                         if u32_en(0) == SALIR { con_cuentas(|c| c.todas().find(|x| x.nombre.bytes() == u).map(|x| (x.uid, x.volumen))) } else { para_entrar(u) }
                     });
                     let ya_dentro = u32_en(0) == ENTRAR && la_cuenta.is_some_and(|c| abiertas.contains(&c.0));
+                    // Rama `cuentas-2`: tras varias malas seguidas con la cuenta (0, un nombre que no es de nadie), se
+                    // espera: no se prueba ni la buena.
+                    let cuenta_uid = la_cuenta.map_or(0, |c| c.0);
+                    let con_clave = guardian && u32_en(0) != SALIR;
+                    let falta = if con_clave { esperas.falta(cuenta_uid, dashos::ahora_us()) } else { None };
                     let estado = match (&archivos, guardian, la_cuenta, m.get(12 + nl..12 + nl + cl)) {
                         (_, false, ..) => dashos::protocolo::archivos::PROTEGIDO,
+                        _ if falta.is_some() => OCUPADO,
                         // Sin una cuenta activa con ese nombre (no existe, o está borrada): como una contraseña mala.
                         (Some(_), true, None, _) if m.get(12..12 + nl).is_some() => dashos::protocolo::archivos::PROTEGIDO,
                         (Some(a), true, Some((_, vol)), Some(clave)) if u32_en(0) == ENTRAR => a.abrir_volumen(vol.bytes(), clave, ya_dentro),
@@ -2211,9 +2292,15 @@ fn principal() -> u64 {
                     };
                     let quien = m.get(12..12 + nl).and_then(|u| core::str::from_utf8(u).ok()).unwrap_or("?");
                     let que = match u32_en(0) { ENTRAR => "entrar", VOLVER => "volver", _ => "salir" };
-                    // Tras una contraseña mala, un rato sin contestar: probar a ciegas sale caro.
+                    // Tras una contraseña mala, un rato sin contestar: probar a ciegas sale caro. Y se cuenta (rama `cuentas-2`).
+                    let mut espera_s = falta.map_or(0, segundos);
                     if estado == dashos::protocolo::archivos::PROTEGIDO && guardian {
                         dashos::dormir_us(300_000);
+                        if con_clave {
+                            espera_s = intento_malo(&mut esperas, &mut registro, cuenta_uid, if u32_en(0) == ENTRAR { "entrar" } else { "volver" });
+                        }
+                    } else if estado == BIEN && con_clave {
+                        esperas.buena(cuenta_uid);
                     }
                     let pide = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
                     println!("  [sesiones] {} pide {} como {}: {}", nombre(&pide), que, quien, estado);
@@ -2275,7 +2362,16 @@ fn principal() -> u64 {
                             }
                         }
                     }
-                    dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
+                    if estado == OCUPADO {
+                        // Rama `cuentas-2`: esperando, con los segundos que faltan.
+                        registro.apuntar(R_ENTRAR, OCUPADO, &pide, quien.as_bytes());
+                        let mut r = [0u8; 8];
+                        r[0..4].copy_from_slice(&OCUPADO.to_le_bytes());
+                        r[4..8].copy_from_slice(&espera_s.to_le_bytes());
+                        dashos::canal_escribir(respuesta, &r, &[]);
+                    } else {
+                        dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
+                    }
                     // La contraseña, fuera de la memoria en cuanto se usa (S6b, regla 9).
                     b.fill(0);
                 }
@@ -3004,6 +3100,233 @@ fn principal() -> u64 {
                     t.resultado.estado = estado;
                     dashos::canal_escribir(respuesta, &t.resultado.en_bytes(), &[]);
                 }
+                // Rama `cuentas-2` (S6b): cambiar la propia contraseña. Se pregunta a `guardian`, que pide la de ahora y la
+                // nueva en su ventana; el programa no ve ninguna.
+                CLAVE_PROPIA => {
+                    let nl = (u32_en(4) as usize).min(cu::MAX_NOMBRE + 1);
+                    let pedido = m.get(8..8 + nl).unwrap_or(b"");
+                    let programa = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
+                    // La persona del programa; la del centro de control, la de delante.
+                    let uid = yo.map_or(0, |f| if es(&f, CAMBIAN_POR_DELANTE) { activa } else { f.uid });
+                    let cuenta = (uid >= PRIMERA_PERSONA).then(|| con_cuentas(|c| c.activa(uid).map(|x| x.nombre))).flatten();
+                    let ahora = dashos::ahora_us();
+                    // El que lleva demasiado esperando a `guardian` se acaba: no.
+                    if let Some(c) = cambio_clave.filter(|c| ahora.saturating_sub(c.desde) > PLAZO_CLAVE_US) {
+                        println!("  [sesiones] el cambio de contraseña de {} lleva {} s sin acabar: se deja", nombre(&c.programa), PLAZO_CLAVE_US / 1_000_000);
+                        dashos::canal_escribir(c.a_quien, &PROTEGIDO.to_le_bytes(), &[]);
+                        dashos::cerrar(c.a_quien);
+                        cambio_clave = None;
+                    }
+                    let (estado, motivo) = match () {
+                        _ if yo.is_none() || cuenta.is_none() => (NO_EXISTE, "no es de una persona con cuenta"),
+                        _ if !pedido.is_empty() && !cuenta.is_some_and(|c| c.bytes() == pedido) => (PROTEGIDO, "pide la contraseña de otra cuenta"),
+                        _ if yo.is_some_and(|f| f.perfil == PERFIL_APLICACION) => (PROTEGIDO, "un programa encerrado no cambia la contraseña"),
+                        _ if !abiertas.contains(&uid) || activa != uid => (PROTEGIDO, "su sesión no está delante: no se pregunta"),
+                        _ if cambio_clave.is_some() => (OCUPADO, "ya hay un cambio de contraseña sin acabar"),
+                        _ if canal_guardian == 0 => (PROTEGIDO, "no hay a quién preguntar"),
+                        _ => (BIEN, ""),
+                    };
+                    let cuenta_t = cuenta.as_ref().map_or("?", |c| c.as_str());
+                    if estado == BIEN {
+                        let id = siguiente_pregunta;
+                        siguiente_pregunta = siguiente_pregunta.wrapping_add(1).max(1);
+                        let mut q = [0u8; PREGUNTA];
+                        q[0..4].copy_from_slice(&id.to_le_bytes());
+                        q[4..8].copy_from_slice(&uid.to_le_bytes());
+                        let n = cuenta.as_ref().map_or(&b""[..], |c| c.bytes());
+                        q[8..8 + n.len()].copy_from_slice(n);
+                        q[24..30].copy_from_slice(b"*clave");
+                        q[40..56].copy_from_slice(&programa);
+                        if dashos::canal_escribir(canal_guardian, &q, &[]) == 0 {
+                            cambio_clave = Some(CambioClave { id, a_quien: respuesta, uid, programa, desde: ahora });
+                            println!("  [sesiones] {} pide cambiar la contraseña de {}: se pregunta", nombre(&programa), cuenta_t);
+                            continue;
+                        }
+                    }
+                    let estado = if estado == BIEN { PROTEGIDO } else { estado };
+                    println!("  [sesiones] {} pide cambiar la contraseña de {}: no ({}: {})", nombre(&programa), cuenta_t, estado, motivo);
+                    registro.linea(rg::SEGURIDAD, &programa, uid, "cuentas", format_args!("pide cambiar la contraseña de {}: no", core::str::from_utf8(pedido).ok().filter(|p| !p.is_empty()).unwrap_or(cuenta_t)), motivo);
+                    dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
+                }
+                RESPUESTA_CLAVE if yo.is_some_and(|f| es(&f, GUARDIANES)) => {
+                    let (id, lv, ln) = (u32_en(4), u32_en(8) as usize, u32_en(12) as usize);
+                    let vieja = m.get(16..16usize.saturating_add(lv)).filter(|v| v.len() <= 128).unwrap_or(b"");
+                    let nueva = m.get(16 + vieja.len()..(16 + vieja.len()).saturating_add(ln)).filter(|v| v.len() <= 128).unwrap_or(b"");
+                    let mut r = [0u8; LARGO_RESPUESTA_CLAVE];
+                    let (estado, espera, acaba) = match cambio_clave.filter(|c| c.id == id) {
+                        None => (NO_EXISTE, 0, false),
+                        Some(c) => {
+                            let vol = volumen_de(c.uid);
+                            let cuenta = nombre_de(c.uid);
+                            let cuenta = cuenta.as_ref().map_or("?", |n| n.as_str());
+                            let por = Texto16::de(format_args!("pedido por {}", nombre(&c.programa)));
+                            match (vol, archivos.as_ref()) {
+                                // Dijo que no (o se cerró la ventana).
+                                _ if lv == 0 && ln == 0 => {
+                                    println!("  [sesiones] cambiar la contraseña de {}: el usuario dice que no", cuenta);
+                                    registro.linea(rg::SEGURIDAD, &c.programa, c.uid, "cuentas", format_args!("no cambia la contraseña de {}: se dijo que no", cuenta), por.como_str());
+                                    (PROTEGIDO, 0, true)
+                                }
+                                (None, _) | (_, None) => (NO_EXISTE, 0, true),
+                                _ if let Some(f) = esperas.falta(c.uid, dashos::ahora_us()) => (OCUPADO, segundos(f), false),
+                                _ if nueva.len() < cu::MIN_CLAVE => (cu::Fallo::NuevaCorta.estado(), 0, false),
+                                (Some(vol), Some(_)) => match sd::cambiar_clave(ARCHIVOS_ALTAS, vol.bytes(), vieja, nueva, None) {
+                                    BIEN => {
+                                        esperas.buena(c.uid);
+                                        println!("  [sesiones] {} cambia su contraseña (lo pidió {})", cuenta, nombre(&c.programa));
+                                        registro.linea(rg::SEGURIDAD, &c.programa, c.uid, "cuentas", format_args!("{} cambia su contraseña", cuenta), por.como_str());
+                                        (BIEN, 0, true)
+                                    }
+                                    e if e == dashos::protocolo::archivos::PROTEGIDO => {
+                                        println!("  [sesiones] cambiar la contraseña de {}: la de ahora no es", cuenta);
+                                        let s = intento_malo(&mut esperas, &mut registro, c.uid, "cambiar la contraseña");
+                                        (PROTEGIDO, s, false)
+                                    }
+                                    e => {
+                                        println!("  [sesiones] cambiar la contraseña de {}: el servicio de archivos dice {}", cuenta, e);
+                                        (e, 0, true)
+                                    }
+                                },
+                            }
+                        }
+                    };
+                    r[0..4].copy_from_slice(&estado.to_le_bytes());
+                    r[4..8].copy_from_slice(&espera.to_le_bytes());
+                    dashos::canal_escribir(respuesta, &r, &[]);
+                    if acaba && let Some(c) = cambio_clave.take() {
+                        dashos::canal_escribir(c.a_quien, &estado.to_le_bytes(), &[]);
+                        dashos::cerrar(c.a_quien);
+                    }
+                    // Las contraseñas, fuera de la memoria (S6b, regla 9).
+                    b.fill(0);
+                }
+                // Rama `cuentas-2` (S6b): contraseña nueva con el código de recuperación, desde la pantalla de entrada.
+                RECUPERAR | PRIMERA_CUENTA => {
+                    let guardian = yo.is_some_and(|f| es(&f, GUARDIANES));
+                    let recuperar = u32_en(0) == RECUPERAR;
+                    let (l1, l2, l3) = (u32_en(4) as usize, u32_en(8) as usize, u32_en(12) as usize);
+                    let uno = m.get(16..16usize.saturating_add(l1)).unwrap_or(b"");
+                    let dos = m.get(16 + uno.len()..(16 + uno.len()).saturating_add(l2)).unwrap_or(b"");
+                    let tres = m.get(16 + uno.len() + dos.len()..(16 + uno.len() + dos.len()).saturating_add(l3)).filter(|t| t.len() <= 128).unwrap_or(b"");
+                    let pide = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
+                    let mut codigo = [0u8; cu::LARGO_CODIGO];
+                    let que = if recuperar { "recuperar" } else { "crear la primera cuenta" };
+                    let (estado, espera) = if !guardian {
+                        println!("  [sesiones] {} pide {}: solo guardian", nombre(&pide), que);
+                        registro.linea(rg::SEGURIDAD, &pide, yo.map_or(0, |f| f.uid), "cuentas", format_args!("pide {}: no", que), "solo lo pide la pantalla de entrada (guardian)");
+                        (PROTEGIDO, 0)
+                    } else if recuperar {
+                        // `uno` es el nombre, `dos` el código y `tres` la contraseña nueva.
+                        let cuenta = para_entrar(uno);
+                        let uid = cuenta.map_or(0, |c| c.0);
+                        let quien = core::str::from_utf8(uno).unwrap_or("?");
+                        match (cuenta, cu::normalizar_codigo(dos)) {
+                            _ if let Some(f) = esperas.falta(uid, dashos::ahora_us()) => (OCUPADO, segundos(f)),
+                            _ if tres.len() < cu::MIN_CLAVE => (cu::Fallo::NuevaCorta.estado(), 0),
+                            (Some((uid, vol)), Some(bueno)) if archivos.is_some() => {
+                                match sd::cambiar_clave(ARCHIVOS_ALTAS, vol.bytes(), &bueno, tres, Some(&mut codigo)) {
+                                    BIEN => {
+                                        esperas.buena(uid);
+                                        println!("  [sesiones] {} pone contraseña nueva con su código de recuperación; código nuevo", quien);
+                                        registro.linea(rg::SEGURIDAD, &pide, uid, "cuentas", format_args!("{} pone contraseña nueva con su código de recuperación", quien), "las de antes y el código ya no valen: tiene uno nuevo");
+                                        (BIEN, 0)
+                                    }
+                                    e if e == dashos::protocolo::archivos::PROTEGIDO => {
+                                        println!("  [sesiones] recuperar {}: el código no es", quien);
+                                        registro.linea(rg::SEGURIDAD, &pide, uid, "cuentas", format_args!("recuperar {}: el código no es", quien), "");
+                                        (PROTEGIDO, intento_malo(&mut esperas, &mut registro, uid, "recuperar"))
+                                    }
+                                    e => (e, 0),
+                                }
+                            }
+                            _ => {
+                                // Una cuenta que no existe, o un código que no lo parece: como uno malo.
+                                println!("  [sesiones] recuperar {}: no (la cuenta no existe o el código no lo es)", quien);
+                                registro.linea(rg::SEGURIDAD, &pide, uid, "cuentas", format_args!("recuperar {}: el código no es", quien), "");
+                                (PROTEGIDO, intento_malo(&mut esperas, &mut registro, uid, "recuperar"))
+                            }
+                        }
+                    } else {
+                        // `uno` es el nombre, `dos` el nombre completo y `tres` la contraseña.
+                        let quien = core::str::from_utf8(uno).unwrap_or("?");
+                        let hay = con_cuentas(|c| c.todas().count());
+                        let r = if !PRIMER_ARRANQUE.load(core::sync::atomic::Ordering::Relaxed) || hay > 0 {
+                            Err(cu::Fallo::HayCuentas.estado())
+                        } else if tres.len() < cu::MIN_CLAVE {
+                            Err(cu::Fallo::NuevaCorta.estado())
+                        } else {
+                            con_cuentas(|c| c.puede_crear(uno, 0, dos)).map_err(|f| f.estado())
+                        };
+                        match r {
+                            Err(e) => {
+                                println!("  [sesiones] primer arranque: crear {}: no ({})", quien, e);
+                                if e == cu::Fallo::HayCuentas.estado() {
+                                    registro.linea(rg::SEGURIDAD, &pide, 0, "cuentas", format_args!("pide crear la primera cuenta ({}) con {} cuentas ya hechas: no", quien, hay), "el primer arranque ya se hizo");
+                                }
+                                (e, 0)
+                            }
+                            Ok(uid) => match sd::hacer_volumen(ARCHIVOS_ALTAS, uid, uno, tres, COSTE_BARATO, &mut codigo) {
+                                Err(e) => {
+                                    println!("  [sesiones] primer arranque: el volumen de {} no se hace ({})", quien, e);
+                                    (e, 0)
+                                }
+                                Ok(()) => {
+                                    let antes = con_cuentas(|c| *c);
+                                    let hecho = cambiar_cuentas(|c| c.crear(uno, uid, dos).and_then(|_| c.meter(uno, cu::ADMIN.as_bytes())));
+                                    if hecho.is_ok() && guardar_cuentas().is_ok() {
+                                        PRIMER_ARRANQUE.store(false, core::sync::atomic::Ordering::Relaxed);
+                                        println!("  [sesiones] primer arranque: crea {} (usuario {}), administradora, con su volumen cifrado y su código de recuperación", quien, uid);
+                                        registro.linea(rg::SEGURIDAD, &pide, uid, "cuentas", format_args!("crea la primera cuenta, {} (usuario {}), administradora, con su volumen cifrado", quien, uid), "primer arranque");
+                                        (BIEN, 0)
+                                    } else {
+                                        cambiar_cuentas(|c| *c = antes);
+                                        let quitado = sd::quitar_volumen(ARCHIVOS_ALTAS, uno);
+                                        codigo.fill(0);
+                                        println!("  [sesiones] primer arranque: {} no se guarda; su volumen, fuera ({})", quien, quitado);
+                                        (hecho.err().map_or(dashos::protocolo::archivos::ERROR_DEL_DISCO, |f| f.estado()), 0)
+                                    }
+                                }
+                            },
+                        }
+                    };
+                    let mut r = [0u8; LARGO_RECUPERAR];
+                    r[0..4].copy_from_slice(&estado.to_le_bytes());
+                    r[4..8].copy_from_slice(&espera.to_le_bytes());
+                    if estado == BIEN {
+                        r[8..].copy_from_slice(&codigo);
+                    }
+                    dashos::canal_escribir(respuesta, &r, &[]);
+                    r.fill(0);
+                    codigo.fill(0);
+                    core::hint::black_box((&r, &codigo));
+                    b.fill(0);
+                }
+                // Rama `cuentas-2`: las cuentas para la pantalla de entrada (elegir la persona en vez de teclearla).
+                CUENTAS_ENTRADA => {
+                    let mut r = [0u8; 16 + ENTRADA_CUENTA * POR_PAGINA_ENTRADA];
+                    if !yo.is_some_and(|f| es(&f, GUARDIANES)) {
+                        dashos::canal_escribir(respuesta, &PROTEGIDO.to_le_bytes(), &[]);
+                    } else {
+                        let desde = u32_en(4) as usize;
+                        let (total, van) = con_cuentas(|c| {
+                            let mut van = 0;
+                            for x in c.todas().filter(|x| x.activa()).skip(desde).take(POR_PAGINA_ENTRADA) {
+                                let o = 16 + ENTRADA_CUENTA * van;
+                                r[o..o + x.nombre.bytes().len()].copy_from_slice(x.nombre.bytes());
+                                let completo = x.completo.as_str().as_bytes();
+                                let l = completo.len().min(ENTRADA_CUENTA - 16);
+                                r[o + 16..o + 16 + l].copy_from_slice(&completo[..l]);
+                                van += 1;
+                            }
+                            (c.todas().filter(|x| x.activa()).count(), van)
+                        });
+                        let primer = PRIMER_ARRANQUE.load(core::sync::atomic::Ordering::Relaxed) && total == 0;
+                        r[4..8].copy_from_slice(&(total as u32).to_le_bytes());
+                        r[8..12].copy_from_slice(&(van as u32).to_le_bytes());
+                        r[12..16].copy_from_slice(&(primer as u32).to_le_bytes());
+                        dashos::canal_escribir(respuesta, &r[..16 + ENTRADA_CUENTA * van], &[]);
+                    }
+                }
                 // S36, decisión 1: la lista de una tanda en llano, para `guardian`, que la enseña entera.
                 TANDA_LISTA if yo.is_some_and(|f| es(&f, GUARDIANES)) => {
                     let (id, desde) = (u32_en(4), u32_en(8) as usize);
@@ -3039,13 +3362,12 @@ fn principal() -> u64 {
                     let otra = m.get(20 + lu + lc..20 + lu + lc + ln).filter(|o| o.len() <= 128).unwrap_or(b"");
                     // Un administrador (activo, del grupo `admin` de `Estado:Cuentas/grupos`) con su contraseña buena: la
                     // comprueba `sesiones` con su volumen, sin abrirlo.
-                    let admin = para_entrar(usuario).filter(|x| es_admin(x.0));
                     // S36, decisión 1: la contraseña de una tanda: con la buena de un administrador, se hace la lista
                     // enseñada, en orden; si no, nada.
                     // Solo una que aún no se confirmó (la que espera al comprobador ya está en marcha).
                     if let Some(h) = tandas.iter().position(|t| t.is_some_and(|t| t.id == id && t.quien == [0; 16])) {
                         let mut t = tandas[h].take().unwrap();
-                        let clave_buena = admin.is_some_and(|(_, vol)| archivos.as_ref().is_some_and(|a| a.abrir_volumen(vol.bytes(), clave, true) == BIEN));
+                        let clave_buena = clave_de_admin(&archivos, &mut esperas, &mut registro, usuario, clave);
                         if clave_buena {
                             t.quien = nombre16(usuario);
                             clave_nueva.borrar();
@@ -3072,7 +3394,7 @@ fn principal() -> u64 {
                         registro.uid = fichas.iter().flatten().find(|f| f.marca == de).map_or(0, |f| f.uid);
                         // Un administrador (del grupo `admin`) con su contraseña buena: la comprueba `sesiones` con su
                         // volumen, sin abrirlo. Sin plazo de gracia: cada acción, la suya.
-                        let clave_buena = admin.is_some_and(|(_, vol)| archivos.as_ref().is_some_and(|a| a.abrir_volumen(vol.bytes(), clave, true) == BIEN));
+                        let clave_buena = clave_de_admin(&archivos, &mut esperas, &mut registro, usuario, clave);
                         let hecho = match (clave_buena, &archivos) {
                             // A15: lo hace el comprobador aparte, con los datos, sin parar al servicio de archivos ni a
                             // `sesiones`: la respuesta llega luego (`MARCA_COMPROBADOR`). Una a la vez.

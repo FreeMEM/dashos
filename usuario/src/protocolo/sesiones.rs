@@ -25,6 +25,9 @@ pub const SALIR: u32 = 4;
 /// De `guardian`: volver de un bloqueo (como `ENTRAR`). Comprueba la contraseña sin tocar el volumen, que sigue
 /// abierto. Con la buena, su sesión pasa a ser la de delante (U6); `ENTRAR` con una sesión ya abierta hace lo mismo.
 /// Tras una mala, `sesiones` tarda un poco en contestar (contra probar contraseñas a ciegas).
+/// Rama `cuentas-2`: y tras varias malas seguidas con la misma cuenta, una espera que crece (`cuentas::Esperas`):
+/// mientras, no se prueba ninguna y se contesta `OCUPADO` con 8 bytes (el estado y los segundos que faltan, u32). Las de
+/// `ENTRAR`, `VOLVER`, `RECUPERAR`, `RESPUESTA_CLAVE` y la contraseña de un administrador cuentan juntas.
 pub const VOLVER: u32 = 5;
 /// De un programa (U4): la llave de un servicio (orden, largo del nombre, 0, el nombre). Si su ficha tiene el permiso,
 /// contesta 0 con la llave: marcada con su número, revocable y sin derecho de transferirla; si no, -2.
@@ -316,6 +319,43 @@ pub const TANDA: u32 = 120;
 /// A otro, -2 y nada más.
 pub const TANDA_LISTA: u32 = 121;
 pub const POR_PAGINA_TANDA: usize = 256 - 32;
+
+/// Rama `cuentas-2` (S6b): **cambiar la propia contraseña**. De un programa con ficha: la orden, lo que mide el nombre
+/// (u32) y el nombre de la cuenta, que puede ir vacío. Es siempre la de la persona del programa (la de delante, si lo
+/// pide el centro de control), desde su sesión, delante; si el nombre es el de otra cuenta, no se pregunta
+/// (`PROTEGIDO`). `sesiones` se lo pregunta a `guardian` ("*clave", con el nombre de la cuenta donde va el programa y
+/// quién lo pide en el detalle), que pide la de ahora y la nueva dos veces en su ventana: el programa no ve ninguna. La
+/// cambia el servicio de archivos sin reescribir los datos (`archivos::CAMBIAR_CLAVE`). Contesta un i32 al acabar: 0
+/// cambiada; `PROTEGIDO` si no (dijo que no, otro nombre, sin `guardian`, su sesión detrás o sin abrir); `NO_EXISTE` si
+/// el programa no es de una persona con cuenta; `OCUPADO` si ya hay otro cambio de contraseña sin acabar.
+pub const CLAVE_PROPIA: u32 = 130;
+/// De `guardian`: un intento de la ventana de `CLAVE_PROPIA` (orden, número u32, lo que miden la de ahora y la nueva
+/// (u32 y u32), la de ahora y la nueva). Las dos vacías: el usuario dijo que no. Contesta `LARGO_RESPUESTA_CLAVE` bytes:
+/// el estado (i32: 0 cambiada; `PROTEGIDO`, la de ahora no es; `OCUPADO`, hay que esperar, tras varios intentos malos;
+/// `cuentas::Fallo::NuevaCorta`; otro del servicio de archivos) y los segundos que quedan de espera (u32). Si va bien o
+/// el usuario dijo que no, se acaba y se contesta al programa; si no, la ventana sigue y se puede probar otra vez.
+pub const RESPUESTA_CLAVE: u32 = 131;
+pub const LARGO_RESPUESTA_CLAVE: usize = 8;
+/// De `guardian`, en la pantalla de entrada: **contraseña nueva con el código de recuperación** (orden, lo que miden el
+/// nombre, el código y la nueva (tres u32), el nombre, el código y la nueva). El código vale como se teclee
+/// (`cuentas::normalizar_codigo`). Las contraseñas de antes se van y el código se gasta (`archivos::CON_CODIGO`).
+/// Contesta `LARGO_RECUPERAR` bytes: el estado (i32: 0; `PROTEGIDO` si la cuenta no existe o el código no es, que cuenta
+/// como un intento malo; `OCUPADO` si hay que esperar; `cuentas::Fallo::NuevaCorta`), los segundos de espera (u32) y, si
+/// fue bien, el código nuevo (`cuentas::LARGO_CODIGO` bytes), que `guardian` enseña para apuntarlo. A otro, `PROTEGIDO`.
+pub const RECUPERAR: u32 = 132;
+pub const LARGO_RECUPERAR: usize = 8 + crate::cuentas::LARGO_CODIGO;
+/// De `guardian`, solo en el **primer arranque** (sin ninguna cuenta: no hay `Estado:Cuentas/usuarios`, o está vacío):
+/// crear la primera cuenta, que es administradora, con su volumen cifrado y su código de recuperación (orden, lo que miden
+/// el nombre, el nombre completo y la contraseña (tres u32), y los tres). Contesta como `RECUPERAR` (el estado, 0 y el
+/// código). Si ya hay cuentas, `cuentas::Fallo::HayCuentas`, y queda en el registro de seguridad; a otro, `PROTEGIDO`.
+pub const PRIMERA_CUENTA: u32 = 133;
+/// De `guardian`: las cuentas para la pantalla de entrada, desde la que se diga (orden, desde u32). Contesta el estado
+/// (i32), cuántas hay (u32), cuántas van (u32), si toca el primer arranque (u32: 1 si no hay ninguna y se puede crear la
+/// primera) y hasta `POR_PAGINA_ENTRADA` entradas de `ENTRADA_CUENTA` bytes: el nombre (16) y el nombre completo (48),
+/// rellenos de ceros. Solo las activas. A otro, `PROTEGIDO` y nada más.
+pub const CUENTAS_ENTRADA: u32 = 134;
+pub const ENTRADA_CUENTA: usize = 64;
+pub const POR_PAGINA_ENTRADA: usize = 3;
 /// S6b, S36 (rama `admin-desarrollo`): abrir un programa instalado **encerrado**, con la ficha que tendría al abrirlo
 /// con doble clic (perfil "aplicación"), para probarlo como lo verá el usuario: su propia identidad (sus permisos, no
 /// los de quien lo abre), solo su cajón `Home:Datos/<programa>` (`Datos:`), `SYS:` y su `PROGDIR:` para leer, sin

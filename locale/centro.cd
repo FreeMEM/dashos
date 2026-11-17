@@ -207,3 +207,43 @@ MSG_102 (102//)
 en la ventana
 MSG_103 (103//)
 en la barra de arriba
+MSG_104 (104//)
+Cuentas
+MSG_105 (105//)
+No se pueden leer las cuentas
+MSG_106 (106//)
+número {}
+MSG_107 (107//)
+borrada: se puede devolver hasta el {}
+MSG_108 (108//)
+Hecho
+MSG_109 (109//)
+No se hizo: no se confirmó en la ventana del sistema
+MSG_110 (110//)
+Ya hay otra esperando en la ventana del sistema
+MSG_111 (111//)
+No existe
+MSG_112 (112//)
+sesiones no contesta
+MSG_113 (113//)
+No se hizo ({})
+MSG_114 (114//)
+Nombre (cuenta nueva o grupo)
+MSG_115 (115//)
+Grupo
+MSG_116 (116//)
+Quién usa el equipo; los cambios, con un administrador.
+MSG_117 (117//)
+Borrar
+MSG_118 (118//)
+Mi contraseña
+MSG_119 (119//)
+Crear
+MSG_120 (120//)
+Devolver
+MSG_121 (121//)
+Escribe arriba el nombre de la cuenta nueva
+MSG_122 (122//)
+Elige una cuenta en la lista
+MSG_123 (123//)
+Escribe arriba el nombre del grupo
