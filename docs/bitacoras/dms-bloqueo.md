@@ -108,7 +108,9 @@ emergentes con agarre y cualquier otro camino).
   `AVISO_RESUMEN` con su marca (no lo da); la ventana del sistema dice que no a la tanda de cerrar el Workbench y no
   se cierra.
 - `make prueba`, `make arranque-virt` (entero, con el disco, la captura, el sonido y U6), `-cuentas`, `-escritorio`,
-  `-shell`, `-2` y `-linux`: BIEN a la primera, en una tanda seguida.
+  `-shell`, `-2` y `-linux`: BIEN a la primera, en una tanda seguida. Otra vuelta de `make arranque-virt` falló en la
+  carrera de la prueba de `cuentas-2` (arriba); arreglada, `make arranque-virt` dos veces seguidas, `-cuentas`, `-dms`
+  y `make prueba`: BIEN.
 - `make arranque-virt-dms`: BIEN a 800 × 600 (lo de siempre) y a 1920 × 1080. Antes de que saliera bien se arreglaron
   tres cosas que solo se ven en marcha: la llave del fondo y la del resumen de avisos no llevaban el derecho de viajar
   (`TRANSFERIR`) y no llegaban; tras una contraseña mala, el error no se pintaba hasta la siguiente tecla (se miraba si
