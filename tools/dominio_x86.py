@@ -56,6 +56,10 @@ NUCLEOS = min(os.cpu_count() or 8, 8)  # la máquina es compartida
 
 NTFS3G = ("ntfs-3g_ntfsprogs-2026.9.28.tgz", "https://download.tuxera.com/opensource/ntfs-3g_ntfsprogs-2026.9.28.tgz",
           "350d9415c59f7c3fa74e23985ad2d56423c6a168337368f672e2e362d8f295c8")
+# El código de Linux, si no está ya en $DASHOS_MEDIR_LINUX (el de medir_dominios.py): de kernel.org, con la suma de su
+# sha256sums.asc firmado (comprobada el 2026-11-16 al bajarlo para S35). Así `preparar` vale en otra máquina.
+LINUX = ("linux-7.3.4.tar.xz", "https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.4.tar.xz",
+         "b11b6df8295e8e991ff040b71aaa4994a8b55caa23b6b092907f195b5840fd1f")
 MUSL = ("musl-1.2.6.tar.gz", "https://musl.libc.org/releases/musl-1.2.6.tar.gz",
         "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a")
 
@@ -166,8 +170,18 @@ def init():
     return binario
 
 
+def fuente_linux():
+    """El código de Linux en FUENTE; si no está, se baja (con su suma) y se descomprime allí."""
+    if FUENTE.exists():
+        return
+    tar = bajar(*LINUX)
+    FUENTE.parent.mkdir(parents=True, exist_ok=True)
+    run("tar", "-xf", tar, "-C", FUENTE.parent)
+
+
 def preparar():
     OBJ.mkdir(parents=True, exist_ok=True)
+    fuente_linux()
     kernel()
     nr, ini = ntfsresize(), init()
     entradas = [(d, 0o040755, b"", (0, 0)) for d in ("bin", "dev", "proc")]

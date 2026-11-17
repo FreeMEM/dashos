@@ -257,3 +257,16 @@ complemento de TCG propio que apunta cada RDMSR/WRMSR. El resultado queda en `ob
 ### Pruebas de make (tras unir origin/x86)
 
 `make prueba`, `make prueba-x86` (KVM), `make arranque-x86` con KVM y sin él (TCG) y `make arranque-virt`: todas bien.
+
+### Escenario sin el banco de AmiCachy (`encoger-sintetico`, para otra máquina)
+
+`tools/prueba_instalador.py encoger-sintetico`: un disco de 26 GB hecho aquí (GPT de `pendrive_x86.gpt`, ESP FAT32 con
+mtools y un `EFI/Boot/bootx64.efi` de mentira, y un NTFS de 25,9 GB con `mkntfs` y tres ficheros puestos con
+`ntfscp`, uno de 64 MB al azar). El instalador en DashOS (pendrive en vivo, KVM) lo encoge con el dominio e instala en
+el hueco; en el PC, `ntfsresize --info` (10,9 GB, lo que mide la partición nueva) y los tres ficheros iguales
+(`ntfscat`); la GPT con sus dos copias iguales; DashOS arranca por su entrada de la NVRAM. 8 de 8 en shiva (AMD, KVM):
+`info` 0,4 s y encoger 0,9 s en el dominio.
+
+Para que valga en otra máquina: `tools/dominio_x86.py preparar` baja también el código de Linux de kernel.org (con su
+suma) si no está; el banco usa los OVMF_VARS del sistema si no está el de AmiCachy (`OVMF_CODE` y `OVMF_VARS` se
+pueden dar), crea su carpeta y no mira los discos base si no están.

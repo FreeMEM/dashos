@@ -320,7 +320,119 @@ def escenario_encoger():
     apuntar(instalado(t) or "no instalado" in t, f"encoger: tras el corte, se repite: {'acaba' if instalado(t) else 'se para y lo dice'} ({motivo})")
 
 
-ESCENARIOS = {"encoger": escenario_encoger, "vacio": escenario_vacio, "windows": escenario_windows, "debian": escenario_debian, "hostiles": escenario_hostiles}
+def disco_sintetico(nombre):
+    """Un disco "con Windows" sin el banco de AmiCachy: GPT, una ESP (FAT32, con un `EFI/Boot/bootx64.efi` de mentira)
+    y un NTFS de 24 GB hecho con `mkntfs`, con ficheros puestos con `ntfscp` (uno de 64 MB al azar). Como qcow2 en
+    BANCO, para hacer capas encima. Devuelve (desde, hasta) del NTFS en sectores y {fichero: sha256}."""
+    import hashlib
+    import uuid
+    sys.path.insert(0, AQUI)
+    from pendrive_x86 import gpt
+    mib = 2048
+    total = 26 * 1024 * mib
+    esp = (mib, 101 * mib)
+    ntfs = (101 * mib, total - mib)
+    crudo = banco.mio(os.path.join(B, f"{nombre}.raw"))
+    with open(crudo, "wb") as f:
+        f.truncate(total * 512)
+    ms = uuid.UUID("EBD0A0A2-B9E5-4433-87C0-68B6B72699C7")
+    principio, final = gpt(total, [(uuid.UUID("C12A7328-F81F-11D2-BA4B-00A0C93EC93B"), uuid.uuid4(), *esp, "EFI system partition"),
+                                   (ms, uuid.uuid4(), *ntfs, "Basic data partition")], uuid.uuid4())
+    # La tabla de pendrive_x86.gpt empieza lo utilizable en 2048 y acaba antes de la copia: vale igual para este disco.
+    with open(crudo, "r+b") as f:
+        f.write(principio)
+        f.seek(total * 512 - len(final))
+        f.write(final)
+    d = f"{crudo}@@{esp[0] * 512}"
+    subprocess.run(["mformat", "-i", d, "-F", "-T", str(esp[1] - esp[0]), "-v", "SYSTEM", "::"], check=True)
+    cargador = banco.mio(os.path.join(B, f"{nombre}.bootx64"))
+    open(cargador, "wb").write(b"no es un cargador de verdad" * 100)
+    for c in ("::EFI", "::EFI/Boot"):
+        subprocess.run(["mmd", "-i", d, c], check=True)
+    subprocess.run(["mcopy", "-i", d, cargador, "::EFI/Boot/bootx64.efi"], check=True)
+    # El NTFS: en su propio fichero, y luego dentro del disco.
+    parte = banco.mio(os.path.join(B, f"{nombre}.ntfs"))
+    with open(parte, "wb") as f:
+        f.truncate((ntfs[1] - ntfs[0]) * 512)
+    subprocess.run(["mkntfs", "-Q", "-F", "-q", "-L", "Windows", "-p", str(ntfs[0]), "-H", "255", "-S", "63", parte], check=True)
+    huellas = {}
+    for k, tam in enumerate((64 << 20, 1 << 20, 4096)):
+        datos = os.urandom(tam)
+        f = banco.mio(os.path.join(B, f"{nombre}.f{k}"))
+        open(f, "wb").write(datos)
+        subprocess.run(["ntfscp", "-q", parte, f, f"fichero{k}.bin"], check=True)
+        huellas[f"fichero{k}.bin"] = hashlib.sha256(datos).hexdigest()
+        os.unlink(f)
+    with open(crudo, "r+b") as f, open(parte, "rb") as n:
+        f.seek(ntfs[0] * 512)
+        while True:
+            b = n.read(16 << 20)
+            if not b:
+                break
+            if b.count(0) == len(b):
+                f.seek(len(b), 1)
+            else:
+                f.write(b)
+    os.unlink(parte)
+    base = banco.mio(os.path.join(B, f"{nombre}.qcow2"))
+    if os.path.exists(base):
+        os.unlink(base)
+    subprocess.run([banco.QEMU_IMG, "convert", "-q", "-f", "raw", "-O", "qcow2", crudo, base], check=True)
+    os.unlink(crudo)
+    return ntfs, huellas
+
+
+def ficheros_ntfs(capa, desde, hasta, huellas):
+    """Los ficheros del NTFS (con `ntfscat` en el PC, solo leer), comparados con sus huellas: lista de lo que no casa."""
+    import hashlib
+    f = banco.mio(os.path.join(B, f"{capa}.ntfs"))
+    open(f, "a").close()
+    p = subprocess.Popen(["qemu-storage-daemon", "--blockdev", f"driver=file,node-name=f,filename={banco.capa_ruta(capa)},read-only=on",
+                          "--blockdev", "driver=qcow2,node-name=q,file=f,read-only=on",
+                          "--blockdev", f"driver=raw,node-name=p,file=q,offset={desde * 512},size={(hasta - desde) * 512},read-only=on",
+                          "--export", f"type=fuse,id=e,node-name=p,mountpoint={f},writable=off,allow-other=off"], stderr=subprocess.DEVNULL)
+    for _ in range(100):
+        if os.path.getsize(f) > 0:
+            break
+        time.sleep(0.1)
+    try:
+        malas = []
+        for n, h in huellas.items():
+            r = subprocess.run(["ntfscat", "-f", f, n], capture_output=True)
+            if r.returncode != 0 or hashlib.sha256(r.stdout).hexdigest() != h:
+                malas.append(n)
+        return malas
+    finally:
+        banco.soltar(f, p)
+
+
+def escenario_encoger_sintetico():
+    """Encoger un NTFS hecho con mkntfs (sin el banco de AmiCachy): el instalador en DashOS (pendrive en vivo, x86,
+    KVM) lo encoge con ntfsresize en el dominio Linux de x86 e instala en el hueco; en el PC, `ntfsresize --info` y los
+    ficheros de dentro."""
+    ntfs, huellas = disco_sintetico("sint-base")
+    banco.capa("sint-1", "sint-base")
+    c, plan, err = instalar_pc("sint-1", "plan", "nvme0", "encoger:2")
+    apuntar(c == 0, f"sintético: plan de encoger el NTFS ({err.strip() or 'hecho en el PC'})")
+    if c != 0:
+        return
+    nuevo = int(re.findall(r"^encoger 2 (\d+)$", plan, re.M)[0])
+    motivo, t = en_vivo("sint-1", "sint-instala", pendrive("sint-1", plan), segundos=900)
+    apuntar(instalado(t) and "dominio: fin encoger 0" in t, f"sintético: encogido por ntfsresize en el dominio e instalado en el hueco ({motivo})")
+    tiempos = re.findall(r"dominio: (\w+) acabó con \d+ en (\d+) ms", t)
+    apuntar(bool(tiempos), f"sintético: tiempos del dominio {tiempos}")
+    ok, texto = ntfs_en_el_pc("sint-1", ntfs[0], nuevo)
+    tam = re.findall(r"^(\d+) bytes", texto)
+    apuntar(ok and tam and int(tam[0]) <= (nuevo - ntfs[0]) * 512, f"sintético: el NTFS encogido, en el PC con ntfsresize --info ({texto}; la partición: {(nuevo - ntfs[0]) * 512} bytes)")
+    malas = ficheros_ntfs("sint-1", ntfs[0], nuevo, huellas)
+    apuntar(not malas, f"sintético: los ficheros del NTFS, iguales tras encogerlo ({len(huellas)}; mal: {malas})")
+    _, ver, _ = instalar_pc("sint-1", "ver", "nvme0")
+    apuntar("copias Iguales" in ver and "DashFS" in ver, "sintético: la GPT con la partición encogida y la de DashOS, sus dos copias iguales")
+    ok, _ = dashos_arranca("sint-1", "sint-dashos")
+    apuntar(ok, "sintético: DashOS arranca desde su entrada de la NVRAM")
+
+
+ESCENARIOS = {"encoger-sintetico": escenario_encoger_sintetico, "encoger": escenario_encoger, "vacio": escenario_vacio, "windows": escenario_windows, "debian": escenario_debian, "hostiles": escenario_hostiles}
 
 
 def main():

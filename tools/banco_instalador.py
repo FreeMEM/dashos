@@ -46,8 +46,12 @@ BASES = os.path.join(AMICACHY, "baselines")
 BANCO = os.path.realpath(os.path.expanduser(os.environ.get("BANCO", "~/recuperar/geosian-7d/instalador-vm")))
 CAPTURAS = os.path.realpath(os.path.expanduser(os.environ.get("CAPTURAS", "~/recuperar/geosian-7d/instalador-capturas")))
 QEMU_IMG = "/usr/bin/qemu-img"
-OVMF_CODE = "/usr/share/edk2/x64/OVMF_CODE.4m.fd"
-OVMF_VARS = os.path.join(AMICACHY, "ovmf", "OVMF_VARS-template.4m.fd")
+OVMF_CODE = os.environ.get("OVMF_CODE", "/usr/share/edk2/x64/OVMF_CODE.4m.fd")
+# Los VARS de partida: los del banco de AmiCachy si está; si no (otra máquina), los del sistema.
+OVMF_VARS = os.environ.get("OVMF_VARS", os.path.join(AMICACHY, "ovmf", "OVMF_VARS-template.4m.fd"))
+if not os.path.exists(OVMF_VARS):
+    OVMF_VARS = "/usr/share/edk2/x64/OVMF_VARS.4m.fd"
+os.makedirs(BANCO, exist_ok=True)
 
 
 def mio(ruta):
@@ -76,6 +80,9 @@ def huella_bases():
 
 
 def bases():
+    if not os.path.isdir(BASES):
+        print("bases: sin el banco de AmiCachy en esta máquina (solo valen los escenarios sintéticos)")
+        return True
     guardada = os.path.join(BANCO, "bases.json")
     ahora = huella_bases()
     if not os.path.exists(guardada):
