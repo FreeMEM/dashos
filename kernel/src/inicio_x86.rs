@@ -138,7 +138,30 @@ const APARATOS: &[(&str, Quien, usize, Option<&str>, &str)] = &[
     ("intel-red", Quien::Ids(0x8086, INTEL_RED), 0, Some("ired-cfg"), "dma-ired"),
     // La Realtek RTL8125 (`docs/spec/hw/rtl8125.md`, 2.1): los registros en la BAR 2 (la 4 es la tabla de MSI-X).
     ("rtl-red", Quien::Id(0x10ec, 0x8125), 2, Some("rtl-cfg"), "dma-rtl"),
+    // x86-gpu: la virtio-gpu, tipo 16 (virtio 1.2, 4.1.2 y 5.7). Sus registros, en la BAR que diga su capacidad común:
+    // la 4 en `virtio-gpu-pci` y la 2 en `virtio-vga` (la 0 es la memoria de la VGA, la del GOP).
+    ("virtio-gpu", Quien::Id(0x1af4, 0x1050), BAR_VIRTIO, Some("vgpu-cfg"), "dma-vgpu"),
 ];
+
+/// En `APARATOS`: la BAR es la de la capacidad común de virtio (virtio 1.2, 4.1.4.3), no una fija.
+const BAR_VIRTIO: usize = usize::MAX;
+
+/// La BAR de la capacidad común de virtio (la capacidad del fabricante, 0x09, de tipo 1) de `f`, si la tiene.
+fn bar_virtio(f: &Funcion) -> Option<usize> {
+    let mut p = f.capacidad(0x09)?;
+    for _ in 0..48 {
+        let palabra = f.leer(p);
+        if palabra & 0xff == 0x09 && (palabra >> 24) & 0xff == 1 {
+            let bar = (f.leer(p + 4) & 0xff) as usize;
+            return (bar <= 5).then_some(bar);
+        }
+        p = ((palabra >> 8) & 0xfc) as usize;
+        if p < 0x40 {
+            return None;
+        }
+    }
+    None
+}
 
 /// El firmware del PHY de la RTL8125B (`rtl8125b-2.fw`, `docs/spec/hw/rtl8125.md` 6.3), si el sistema donde se compila
 /// lo tiene: el Makefile lo deja en `target/firmware/` y `build.rs` lo copia (vacío si no está). No va en git: es de
@@ -253,7 +276,8 @@ pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
                 continue;
             }
         };
-        let Some((fisica, tamano, irq)) = preparar(f, *bar, nombre) else { continue };
+        let bar = if *bar == BAR_VIRTIO { bar_virtio(f) } else { Some(*bar) };
+        let Some((fisica, tamano, irq)) = bar.and_then(|b| preparar(f, b, nombre)) else { continue };
         apuntar(&mut llaves, nombre, REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano }, DERECHOS));
         con_rtl |= *nombre == "rtl-red";
         if let Some(c) = cfg {

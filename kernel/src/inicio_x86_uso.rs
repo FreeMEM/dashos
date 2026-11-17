@@ -1,6 +1,7 @@
 //! La imagen de usar en x86-64 (`make x86-uso`): el escritorio de `virt` con `uso` (`inicio.rs`), con los aparatos de un
 //! PC. Los mismos programas, en el mismo orden y con los mismos canales, para que cada uno tenga las mismas llaves que
-//! en ARM; cambian los controladores (el NVMe y el AHCI, el xHCI, virtio-net, virtio-sound y el HDA).
+//! en ARM; cambian los controladores (el NVMe y el AHCI, el xHCI, virtio-net, virtio-sound y el HDA). La virtio-gpu,
+//! como en ARM, al final.
 //!
 //! Fuera, de momento: la caja Linux (su VMM es de ARM: virtio por MMIO, GIC, PSCI, árbol de dispositivos) y la caja
 //! Amiga (el JIT de Emu68 es de ARM; en x86 irá RelevoJIT, X7a). `sesiones` tiene igual el permiso de máquinas
@@ -46,4 +47,9 @@ pub(super) static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("workbench", programa!("workbench"), &[], &["ventanas", "archivos", "sesiones", "explorador"]),
     // S13: la hora por la red (SNTP), con el permiso del reloj.
     ("hora", programa!("hora"), &[("reloj", RELOJ)], &["red"]),
+    // x86-gpu: la virtio-gpu (en QEMU, `virtio-vga`), como en `virt`: da sus cabezas al compositor por "ventanas" y la
+    // pantalla del GOP queda de reserva. Al final, como en `inicio.rs`: las marcas de los demás no cambian. Con las
+    // medidas del GOP, para que su primera cabeza tenga el modo que puso el firmware (y no el tamaño de la ventana de
+    // QEMU en ese momento).
+    ("virtio-gpu", programa!("virtio-gpu"), &[("dma-vgpu", PERMISO_DMA), ("virtio-gpu", REGISTROS), ("vgpu-cfg", REGISTROS), ("virtio-gpu", INTERRUPCION | OPCIONAL), ("pantalla-info", DATOS | OPCIONAL)], &["ventanas"]),
 ];
