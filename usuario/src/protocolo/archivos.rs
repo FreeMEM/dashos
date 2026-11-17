@@ -37,6 +37,10 @@ pub const HACER_VOLUMEN: u32 = 23;
 /// (`dashos::cuentas::codigo_recuperacion`) y deja en la ventana, en el lugar de la contraseña; en b de la respuesta,
 /// lo que mide. El volumen se queda abierto, como sin él.
 pub const CON_RECUPERACION: u64 = 4;
+/// En a de `HACER_VOLUMEN` (cifrado de verdad, el 1), desde este bit: la memoria de Argon2 en MiB, 16 bits (0: la de
+/// serie, 64 MiB, `Cost::NORMAL`). Con tres pasadas. La que pase de los topes de `dashfs::seal::Cost` (de 1 a 341
+/// MiB con tres pasadas) da `MAL_FORMADO`; la que no quepa en el servicio, `SIN_MEMORIA` (rama `archivos-memoria`).
+pub const MEMORIA_ARGON2: u32 = 32;
 pub const QUITAR_VOLUMEN: u32 = 24;
 pub const ABRIR_VOLUMEN: u32 = 25;
 pub const CERRAR_VOLUMEN: u32 = 26;
@@ -251,6 +255,9 @@ pub const LLENO: i32 = -11;
 pub const PROTEGIDO: i32 = -12;
 pub const EN_USO: i32 = -13;
 pub const SIN_AZAR: i32 = -14;
+/// Rama `archivos-memoria`: la orden necesitaba más memoria de la que el servicio tiene ahora (un Argon2 grande, un
+/// cajón o un volumen enormes). No se hizo nada; el servicio sigue, y otra vez (o con menos) puede caber.
+pub const SIN_MEMORIA: i32 = -15;
 
 // Tipos de entrada (en `DATOS` y `LISTAR`).
 pub const FICHERO: u8 = 1;

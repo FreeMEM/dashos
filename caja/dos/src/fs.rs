@@ -32,6 +32,8 @@ pub enum ErrorFs {
     Protegido,
     EnUso,
     SinAzar,
+    /// -15: la orden no cupo en la memoria del servicio (rama `archivos-memoria`).
+    SinMemoria,
     /// Lo que el servicio aún no hace (por ejemplo, cambiar la fecha).
     NoSoportado,
 }
@@ -55,6 +57,7 @@ impl ErrorFs {
             -12 => Protegido,
             -13 => EnUso,
             -14 => SinAzar,
+            -15 => SinMemoria,
             _ => return None,
         })
     }

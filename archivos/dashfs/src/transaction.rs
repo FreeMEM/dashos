@@ -9,7 +9,7 @@ use core::{
     ops::{Deref, DerefMut},
 };
 use syscall::error::{
-    EEXIST, EINVAL, EIO, EISDIR, ENOENT, ENOSPC, ENOTDIR, ENOTEMPTY, ERANGE, Error, Result,
+    EEXIST, EINVAL, EIO, EISDIR, ENOENT, ENOMEM, ENOSPC, ENOTDIR, ENOTEMPTY, ERANGE, Error, Result,
 };
 
 use crate::{
@@ -122,6 +122,11 @@ pub struct Transaction<'a, D: Disk> {
     pub(crate) global: bool,
     /// La cuota no se aplica: la reparación, que no debe fallar por ella.
     pub(crate) unlimited: bool,
+    /// DashOS (rama `archivos-memoria`): una liberación no cupo en memoria (sus listas no pudieron crecer) y no se
+    /// hizo. La transacción ya no vale: no se escribe (`sync` da ENOMEM) y, al soltarla, se deshace como cualquier
+    /// otra. Así una que suelta millones de bloques (un volumen o un fichero enormes) falla en vez de tumbar a quien
+    /// la hace.
+    pub(crate) out_of_memory: bool,
 }
 
 /// How many checked blocks `FileSystem::verified` remembers (16 bytes each).
@@ -153,7 +158,41 @@ impl<'a, D: Disk> Transaction<'a, D> {
             grown: 0,
             global: false,
             unlimited: false,
+            out_of_memory: false,
         }
+    }
+
+    /// Sitio en las listas donde puede ir una liberación (`dead`, `deallocate` y `undo`); si no lo hay, la transacción
+    /// queda marcada (`out_of_memory`) y la liberación no se hace.
+    fn room_to_free(&mut self) -> bool {
+        if self.out_of_memory
+            || self.dead.try_reserve(1).is_err()
+            || self.deallocate.try_reserve(1).is_err()
+            || self.undo.try_reserve(1).is_err()
+        {
+            self.out_of_memory = true;
+            return false;
+        }
+        true
+    }
+
+    /// Whether a block could not be freed for lack of memory: the transaction cannot be written.
+    pub fn is_out_of_memory(&self) -> bool {
+        self.out_of_memory
+    }
+
+    /// Sitio en las listas donde se apunta una reserva (`undo`, `allocator_log` y `fresh`); ENOMEM si no lo hay, o
+    /// si la transacción ya se quedó sin memoria (no sigue trabajando para nada).
+    fn room_to_allocate(&mut self) -> Result<()> {
+        if self.out_of_memory
+            || self.undo.try_reserve(1).is_err()
+            || self.allocator_log.try_reserve(1).is_err()
+            || self.fresh.try_reserve(1).is_err()
+        {
+            self.out_of_memory = true;
+            return Err(Error::new(ENOMEM));
+        }
+        Ok(())
     }
 
     pub fn commit(mut self, squash: bool) -> Result<()> {
@@ -188,6 +227,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         ctx: &mut dyn AllocCtx,
         meta: BlockMeta,
     ) -> Result<BlockAddr> {
+        self.room_to_allocate()?;
         match self.alloc_allocate(meta) {
             Some(addr) => {
                 // Stamped with the epoch, for the snapshots (FS9).
@@ -207,6 +247,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
     /// Reserva un bloque como `old` (su nivel, su compresión y su época) para llevar allí lo que hay en `old`
     /// (encoger, `resize.rs`). La época es la del bloque viejo: las instantáneas lo siguen viendo igual.
     pub(crate) fn reallocate(&mut self, old: BlockAddr) -> Result<BlockAddr> {
+        self.room_to_allocate()?;
         let addr = self.fs.allocator.allocate_snug(old.meta()).ok_or(Error::new(ENOSPC))?;
         self.undo.push((true, addr));
         let addr = addr.with_epoch(old.epoch());
@@ -258,6 +299,9 @@ impl<'a, D: Disk> Transaction<'a, D> {
     pub(crate) unsafe fn deallocate(&mut self, ctx: &mut dyn AllocCtx, addr: BlockAddr) {
         //TODO: should we use some sort of not-null abstraction?
         assert!(!addr.is_null());
+        if !self.room_to_free() {
+            return;
+        }
         ctx.deallocate(addr);
         if self.seen_by_snapshot(addr) {
             // Even if it was written in this transaction, before the snapshot: it must still reach the disk.
@@ -270,6 +314,9 @@ impl<'a, D: Disk> Transaction<'a, D> {
     /// Deallocate a block that no snapshot can see: the allocation log, the release list, the dead lists and the
     /// list of snapshots, which are not part of the tree of nodes.
     pub(crate) unsafe fn deallocate_unshared(&mut self, addr: BlockAddr) {
+        if !self.room_to_free() {
+            return;
+        }
         self.count(-addr.level().blocks::<i64>());
         // Remove from write_cache if it is there, since it no longer needs to be written
         //TODO: for larger blocks do we need to check for sub-blocks in here?
@@ -460,6 +507,10 @@ impl<'a, D: Disk> Transaction<'a, D> {
 
     /// Write all changes cached in this [`Transaction`] to disk.
     pub fn sync(&mut self, force_squash: bool) -> Result<bool> {
+        // A block that could not be freed: what is in memory is not what the transaction did.
+        if self.out_of_memory {
+            return Err(Error::new(ENOMEM));
+        }
         // The dead list first: writing it allocates and frees blocks.
         self.write_dead()?;
         // Then the list of volumes, which allocates and frees too.
@@ -1094,7 +1145,17 @@ impl<'a, D: Disk> Transaction<'a, D> {
             for entry in htree_node.ptrs.iter().filter(|entry| !entry.is_null()) {
                 let dir_ptr: BlockPtr<DirList> = unsafe { entry.ptr.cast() };
                 let dir = self.read_block(dir_ptr)?;
-                for entry in dir.data().entries() {
+                // DashOS (rama `archivos-memoria`): un cajón enorme da ENOMEM en vez de tumbar a quien lo lista.
+                let entries = dir.data().entries();
+                children
+                    .try_reserve(entries.size_hint().0.max(1))
+                    .map_err(|_| Error::new(ENOMEM))?;
+                for entry in entries {
+                    if children.len() == children.capacity() {
+                        children
+                            .try_reserve(1)
+                            .map_err(|_| Error::new(ENOMEM))?;
+                    }
                     children.push(entry);
                 }
             }

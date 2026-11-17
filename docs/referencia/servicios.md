@@ -375,7 +375,9 @@ disco para leer, y si su usuario tiene cuenta, 2 su volumen, 3 su `RAM:` (el vol
 Estados: 0 bien, -1 mal formado, -2 no existe, -3 no es un cajón, -4 es un cajón, -5 asa mala, -6 sin sitio (de asas
 o clientes), -7 error del disco, -8 solo lectura, -9 ya existe, -10 cajón no vacío, -11 disco lleno, -12 protegido
 (sin permiso de escritura, o con "no borrar"; o un volumen cifrado cerrado, o una contraseña que no es), -13 en uso
-(un volumen con algo abierto), -14 sin azar de calidad (para hacer llaves).
+(un volumen con algo abierto), -14 sin azar de calidad (para hacer llaves), -15 sin memoria (la orden necesitaba más
+memoria de la que el servicio tiene ahora: un Argon2 grande, un cajón o un volumen enormes; no se hizo nada y el
+servicio sigue; rama `archivos-memoria`).
 
 Cada asa es de un volumen (FS10): lo que se busca, crea o renombra desde ella queda en el suyo. La asa 0 es la raíz
 del cliente; la orden 21 da la raíz de otro volumen.
@@ -406,9 +408,9 @@ del cliente; la orden 21 da la raíz de otro volumen.
 | 20 volver | Vuelve el volumen de la asa a su instantánea más nueva, que se queda. Lo escrito después se pierde y las asas de todos los clientes en ese volumen dejan de valer, también sus raíces 1 a 15 en él, salvo las que son la raíz del volumen (S28) | asa, nombre | a el volumen |
 | 21 volumen | Abre la raíz del volumen `nombre` (FS10); vacío, la raíz del cliente. Un cifrado cerrado se abre, pero no se lee | nombre | como buscar |
 | 22 volúmenes | Pone en la ventana los volúmenes además del principal: número (8), marcas (1: 1 cifrado, 2 abierto), largo del nombre (1) y el nombre; el siguiente en un múltiplo de 8 | — | a cuántos caben, b cuántos hay, c bytes usados |
-| 23 hacer volumen | Hace un volumen. Cifrado, con su primera contraseña en los b primeros bytes de la ventana (que se borran) y las llaves del azar del kernel (R10); sin azar de calidad, -14. Queda abierto. Con `CON_RECUPERACION` (4) en a, además una ranura con un código de recuperación del azar (`cuentas::codigo_recuperacion`), que se contesta en la ventana (rama `cuentas`) | nombre; a: 0 sin cifrar, 1 cifrado (Argon2 de 16 MiB y 3 pasadas, `Cost::SERVICE`: el de 64 MiB no cabe en el servicio), 2 cifrado con Argon2 barato (pruebas), y 4; b largo de la contraseña | a su número; con 4, b lo que mide el código |
+| 23 hacer volumen | Hace un volumen. Cifrado, con su primera contraseña en los b primeros bytes de la ventana (que se borran) y las llaves del azar del kernel (R10); sin azar de calidad, -14. Queda abierto. Con `CON_RECUPERACION` (4) en a, además una ranura con un código de recuperación del azar (`cuentas::codigo_recuperacion`), que se contesta en la ventana (rama `cuentas`) | nombre; a: 0 sin cifrar, 1 cifrado (Argon2 de 64 MiB y 3 pasadas, `Cost::NORMAL`, el de S6b; con 1, desde el bit 32 (`MEMORIA_ARGON2`) la memoria en MiB, de 1 a 341: más, -1; si no cabe en el servicio, -15), 2 cifrado con Argon2 barato (pruebas), y 4; b largo de la contraseña | a su número; con 4, b lo que mide el código |
 | 24 quitar volumen | Borra un volumen con todo lo que tiene, instantáneas incluidas; no con algo abierto | nombre | — |
-| 25 abrir volumen | Abre un volumen cifrado con una de sus contraseñas, hasta que se cierre. La contraseña va en los b primeros bytes de la ventana, no en el mensaje (A13): el servicio la copia y la borra de la ventana. No se guarda | nombre, b largo de la contraseña (hasta 1.024) | — |
+| 25 abrir volumen | Abre un volumen cifrado con una de sus contraseñas, hasta que se cierre. La contraseña va en los b primeros bytes de la ventana, no en el mensaje (A13): el servicio la copia y la borra de la ventana. No se guarda. Una ranura cuyo coste pasa de los topes (`Cost::is_reasonable`: un disco hostil) no se prueba; si ninguna se pudo probar, -1; si una no cupo en memoria y ninguna otra vale, -15 | nombre, b largo de la contraseña (hasta 1.024) | — |
 | 26 cerrar volumen | Olvida la llave de un volumen cifrado; no con algo abierto | nombre | — |
 | 27 guardar | Crea el fichero `nombre` en el cajón de la asa con lo que hay al principio de la ventana, en una sola transacción, y en el disco al contestar. No lo deja abierto. No sobrescribe | asa, b cuánto (hasta la ventana), nombre | a bytes escritos, b tamaño |
 | 28 leer por nombre | Busca `nombre` desde la asa y lo lee al principio de la ventana, sin dejar asa abierta (A3): buscar, leer y cerrar en un viaje | asa, a desde, b cuánto (hasta la ventana), nombre | a bytes leídos, b fecha, c tamaño total; asa 0 |

@@ -11,7 +11,7 @@
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::{fmt, mem, ops, slice};
 use endian_num::Le;
-use syscall::error::{EBUSY, EEXIST, EINVAL, ENOENT, Error, Result};
+use syscall::error::{EBUSY, EEXIST, EINVAL, ENOENT, ENOMEM, Error, Result};
 
 use crate::casefold::Names;
 use crate::seal::{Cost, SlotKind, VOLUME_ENCRYPTED, VolumeCipher, VolumeKeys};
@@ -633,12 +633,22 @@ impl<D: Disk> Transaction<'_, D> {
             self.delete_snapshot(snapshot.name())?;
         }
         self.write_dead()?;
+        // DashOS (rama `archivos-memoria`): la lista de un volumen enorme puede no caber; entonces ENOMEM y el
+        // volumen sigue como estaba (la transacción se suelta sin escribir).
         let mut blocks = Vec::new();
+        let mut no_memory = false;
         let root = self.header.tree;
         self.tree_blocks(root, &mut |addr| {
+            if no_memory || blocks.try_reserve(1).is_err() {
+                no_memory = true;
+                return false;
+            }
             blocks.push(addr);
             true
         })?;
+        if no_memory {
+            return Err(Error::new(ENOMEM));
+        }
         for addr in blocks {
             unsafe { self.deallocate(&mut FsCtx, addr) };
         }

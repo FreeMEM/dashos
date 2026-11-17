@@ -13,9 +13,10 @@
 //! The key of the volume (32 random bytes) is kept in its key block, wrapped by each password: Argon2id turns the
 //! password into a key, which encrypts the volume key followed by 16 zero bytes, so a wrong password is noticed.
 
+use alloc::vec::Vec;
 use core::{mem, ops, slice};
 use endian_num::Le;
-use syscall::error::{EACCES, EINVAL, ENOSPC, Error, Result};
+use syscall::error::{EACCES, EINVAL, ENOMEM, ENOSPC, Error, Result};
 
 use crate::adiantum::Adiantum;
 use crate::{BLOCK_SIZE, BlockAddr, BlockLevel, BlockTrait, Node};
@@ -204,9 +205,10 @@ impl Cost {
         passes: 3,
         lanes: 1,
     };
-    /// DashOS: what fits in the file service, which makes and opens the volumes of the accounts: its group has a
-    /// 64 MB cap and NORMAL's 64 MiB made it run out of memory and fall (branch `cuentas`, 2026-11-16). 16 MiB and 3
-    /// passes: more than OWASP's minimum for Argon2id (12 MiB, 3 passes).
+    /// DashOS: what fitted in the file service when its group had a 64 MB cap and NORMAL's 64 MiB made it run out of
+    /// memory and fall (branch `cuentas`, 2026-11-16). 16 MiB and 3 passes: more than OWASP's minimum for Argon2id
+    /// (12 MiB, 3 passes). Since branch `archivos-memoria` the service uses NORMAL again; this one stays for volumes
+    /// already made with it (their slots say their own cost).
     pub const SERVICE: Cost = Cost {
         memory: 16 * 1024,
         passes: 3,
@@ -218,6 +220,26 @@ impl Cost {
         passes: 1,
         lanes: 1,
     };
+
+    /// DashOS (branch `archivos-memoria`): the most a slot may cost. A key block comes from the disk, and a disk can be
+    /// hostile: a slot asking for 256 GiB or four thousand million passes would make whoever opens the volume run out
+    /// of memory or never finish. Up to 1 GiB of memory, 16 passes, 16 lanes, and memory times passes up to 1 GiB (on a
+    /// Raspberry Pi 4, about three seconds; NORMAL is 192 MiB of that). A slot beyond this is not tried.
+    pub const MAX_MEMORY: u32 = 1024 * 1024;
+    pub const MAX_PASSES: u32 = 16;
+    pub const MAX_LANES: u32 = 16;
+    pub const MAX_WORK: u64 = 1024 * 1024;
+
+    /// Whether this cost is within the limits above (and Argon2's minimum: 8 KiB per lane).
+    pub fn is_reasonable(&self) -> bool {
+        self.lanes >= 1
+            && self.lanes <= Self::MAX_LANES
+            && self.passes >= 1
+            && self.passes <= Self::MAX_PASSES
+            && self.memory >= 8 * self.lanes
+            && self.memory <= Self::MAX_MEMORY
+            && self.memory as u64 * self.passes as u64 <= Self::MAX_WORK
+    }
 }
 
 /// What a slot of the key block holds.
@@ -275,15 +297,28 @@ impl VolumeKeySlot {
         }
     }
 
+    /// The key that wraps the volume key. EINVAL if the cost is beyond the limits (`Cost::is_reasonable`); ENOMEM if
+    /// its memory cannot be had (DashOS, branch `archivos-memoria`: `hash_password_into` takes it with `vec!`, and
+    /// the file service died when it did not fit; now it is asked for with `try_reserve_exact`).
     fn wrapping_key(password: &[u8], salt: &[u8; 16], cost: Cost) -> Result<Adiantum> {
+        if !cost.is_reasonable() {
+            return Err(Error::new(EINVAL));
+        }
         let params = argon2::Params::new(cost.memory, cost.passes, cost.lanes, Some(32))
             .map_err(|_| Error::new(EINVAL))?;
+        let blocks = params.block_count();
         let argon2 =
             argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
+        let mut memory: Vec<argon2::Block> = Vec::new();
+        memory
+            .try_reserve_exact(blocks)
+            .map_err(|_| Error::new(ENOMEM))?;
+        memory.resize(blocks, argon2::Block::default());
         let mut key = [0u8; 32];
         argon2
-            .hash_password_into(password, salt, &mut key)
+            .hash_password_into_with_memory(password, salt, &mut key, &mut memory)
             .map_err(|_| Error::new(EINVAL))?;
+        drop(memory);
         let adiantum = Adiantum::new(&key);
         key.fill(0);
         Ok(adiantum)
@@ -312,16 +347,21 @@ impl VolumeKeySlot {
         })
     }
 
+    /// What this slot costs to try.
+    fn cost(&self) -> Cost {
+        Cost {
+            memory: self.memory.to_ne(),
+            passes: self.passes.to_ne(),
+            lanes: self.lanes.to_ne(),
+        }
+    }
+
     /// The volume key, if `password` is the one of this slot.
     fn unwrap(&self, password: &[u8], index: usize) -> Result<Option<[u8; 32]>> {
         if self.kind() == SlotKind::Empty {
             return Ok(None);
         }
-        let cost = Cost {
-            memory: self.memory.to_ne(),
-            passes: self.passes.to_ne(),
-            lanes: self.lanes.to_ne(),
-        };
+        let cost = self.cost();
         let wrapping = Self::wrapping_key(password, &self.salt, cost)?;
         let mut plain = self.wrapped;
         wrapping.decrypt(&mut plain, &slot_tweak(index));
@@ -412,14 +452,36 @@ impl VolumeKeys {
     }
 
     /// The volume key and the slot that opened it; EACCES if no slot takes the password.
+    ///
+    /// DashOS (branch `archivos-memoria`): a slot whose cost is beyond the limits (a hostile or damaged disk) is not
+    /// tried, and one whose memory cannot be had does not stop the others. If no slot takes the password: ENOMEM if
+    /// one could not be tried for memory (it might have been the one), EINVAL if the slots there are could not be
+    /// tried for their cost (the key block is no good), and EACCES otherwise.
     pub fn unwrap(&self, password: &[u8]) -> Result<([u8; 32], usize)> {
         let slots = self.slots;
+        let (mut tried, mut no_memory, mut refused) = (false, false, false);
         for (index, slot) in slots.iter().enumerate() {
-            if let Some(master) = slot.unwrap(password, index)? {
-                return Ok((master, index));
+            if slot.kind() == SlotKind::Empty {
+                continue;
+            }
+            if !slot.cost().is_reasonable() {
+                refused = true;
+                continue;
+            }
+            match slot.unwrap(password, index) {
+                Ok(Some(master)) => return Ok((master, index)),
+                Ok(None) => tried = true,
+                Err(e) if e.errno == ENOMEM => no_memory = true,
+                Err(e) => return Err(e),
             }
         }
-        Err(Error::new(EACCES))
+        Err(Error::new(if no_memory {
+            ENOMEM
+        } else if refused && !tried {
+            EINVAL
+        } else {
+            EACCES
+        }))
     }
 }
 
@@ -480,4 +542,38 @@ fn passwords() {
     keys.remove(0).unwrap();
     assert_eq!(keys.unwrap(b"secreto").err().unwrap().errno, EACCES);
     assert_eq!(keys.unwrap(b"ABCD-EFGH").unwrap().0, master);
+}
+
+/// DashOS (rama `archivos-memoria`): una ranura con un coste que no es razonable (de un disco hostil) no se prueba:
+/// con cuatro mil millones de pasadas, probarla no acabaría. Las demás siguen valiendo.
+#[test]
+fn hostile_slot() {
+    let master = [5u8; 32];
+    let mut keys = VolumeKeys::empty(BlockLevel::default()).unwrap();
+    keys.add(SlotKind::Password, b"buena", [1; 16], Cost::CHEAP, &master)
+        .unwrap();
+    let mut slots = keys.slots;
+    slots[1] = slots[0];
+    slots[1].passes = u32::MAX.into();
+    slots[2] = slots[0];
+    slots[2].memory = 0x0FFF_FFFF.into();
+    keys.slots = slots;
+    assert_eq!(keys.unwrap(b"buena").unwrap(), (master, 0));
+    assert_eq!(keys.unwrap(b"mala").err().unwrap().errno, EACCES);
+    // Sin la buena: no queda ninguna que probar.
+    keys.remove(0).unwrap();
+    assert_eq!(keys.unwrap(b"buena").err().unwrap().errno, EINVAL);
+    // Y no se puede poner una así.
+    let absurd = Cost {
+        memory: 64,
+        passes: u32::MAX,
+        lanes: 1,
+    };
+    assert_eq!(
+        keys.add(SlotKind::Password, b"otra", [2; 16], absurd, &master)
+            .err()
+            .unwrap()
+            .errno,
+        EINVAL
+    );
 }

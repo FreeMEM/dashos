@@ -742,5 +742,128 @@ fn principal() -> u64 {
         // Cuál falla, en el orden de arriba.
         println!("  [ficheros] FS10 por partes: {:?}", partes);
     }
+    memoria(&c);
     0
+}
+
+/// "f000" a "f099": los nombres de los ficheros de la prueba de memoria (sin montón en este programa).
+fn nombre_f(i: u32, b: &mut [u8; 4]) -> &str {
+    *b = [b'f', b'0' + (i / 100 % 10) as u8, b'0' + (i / 10 % 10) as u8, b'0' + (i % 10) as u8];
+    core::str::from_utf8(b).unwrap()
+}
+
+/// El montón del servicio, de su `PERFIL` (rama `archivos-memoria`): KB en uso y reservados, pedidos que no cupieron
+/// y veces que gastó el colchón.
+fn monton_del_servicio(c: &Cliente) -> Option<(u64, u64, u64, u64)> {
+    let r = c.pedir(98, 0, 0, 0, "");
+    let texto = core::str::from_utf8(&c.ventana()[..(r.a as usize).min(4096)]).ok()?;
+    let valor = |clave: &str| texto.split(' ').find_map(|p| p.strip_prefix(clave));
+    let mut m = valor("monton=")?.split('/').map(|x| x.parse::<u64>().ok());
+    let (en_uso, _maximo, reservado) = (m.next()??, m.next()??, m.next()??);
+    Some((en_uso, reservado, valor("fallos=")?.parse().ok()?, valor("colchones=")?.parse().ok()?))
+}
+
+/// Rama `archivos-memoria`: órdenes que agotan la memoria del servicio. El Argon2 de serie (64 MiB, el de S6b) cabe y
+/// su memoria vuelve; uno fuera de los topes da `MAL_FORMADO` y uno que no cabe, `SIN_MEMORIA`, también con 100
+/// ficheros abiertos y escritos sin guardar; un fichero de cientos de trozos se escribe, se lee y se borra. Después,
+/// todo sigue: se lee lo de antes, lo pendiente se guarda y la comprobación (con los datos) no encuentra nada.
+fn memoria(c: &Cliente) {
+    let si = |b: bool| if b { "bien" } else { "MAL" };
+    let antes = monton_del_servicio(c);
+    // El de serie: 64 MiB y tres pasadas, al hacerlo y en cada intento de abrirlo.
+    c.ventana_mut()[..10].copy_from_slice(b"clave Gema");
+    let t0 = dashos::ahora_us();
+    let hecho = c.pedir(HACER_VOLUMEN, 0, 1, 10, "Gema");
+    let t_hacer = dashos::ahora_us() - t0;
+    let de_serie = if hecho.estado == SIN_AZAR {
+        println!("  [ficheros] memoria: sin azar de calidad, no se hace el de 64 MiB");
+        true
+    } else {
+        let t0 = dashos::ahora_us();
+        let otra = c.abrir_volumen("Gema", "otra");
+        let t_otra = dashos::ahora_us() - t0;
+        let bien = hecho.estado == 0
+            && c.pedir(CERRAR_VOLUMEN, 0, 0, 0, "Gema").estado == 0
+            && otra.estado == PROTEGIDO
+            && c.abrir_volumen("Gema", "clave Gema").estado == 0
+            && c.pedir(QUITAR_VOLUMEN, 0, 0, 0, "Gema").estado == 0;
+        println!("  [ficheros] memoria: volumen con Argon2 de 64 MiB: hacerlo {} ms, probar una contraseña mala {} ms", t_hacer / 1000, t_otra / 1000);
+        if !bien {
+            println!("  [ficheros] memoria: de serie: hacer {}, otra {}", hecho.estado, otra.estado);
+        }
+        bien
+    };
+    let despues = monton_del_servicio(c);
+    // Lo de Argon2 vuelve al kernel: el montón no se queda con los 64 MB (8 MB de margen por lo que crezca lo demás).
+    let devuelto = matches!((antes, despues), (Some(a), Some(d)) if d.1 < a.1 + 8 * 1024);
+    // Fuera de los topes del coste (4 GiB): MAL_FORMADO, sin intentarlo.
+    c.ventana_mut()[..10].copy_from_slice(b"clave Gema");
+    let fuera = c.pedir(HACER_VOLUMEN, 0, 1 | 4096 << MEMORIA_ARGON2, 10, "Gema").estado;
+    // Dentro de los topes pero más de lo que tiene el servicio (320 MiB; su grupo, 128 MB): SIN_MEMORIA, y nada a medias.
+    c.ventana_mut()[..10].copy_from_slice(b"clave Gema");
+    let enorme = c.pedir(HACER_VOLUMEN, 0, 1 | 320 << MEMORIA_ARGON2, 10, "Gema").estado;
+    let nada = c.pedir(VOLUMEN, 0, 0, 0, "Gema").estado == NO_EXISTE;
+    // Muchas cosas abiertas a la vez: 100 ficheros escritos sin guardar, y otra vez el enorme (el disco de la prueba
+    // tiene poco sitio: 1 KB cada uno, en su nodo).
+    let dir = c.pedir(BUSCAR, 0, 0, 0, "Escrito");
+    let cajon = c.pedir(CREAR, dir.asa, 2, 0, "memoria");
+    let mut asas = [0u32; 100];
+    let mut escritos = true;
+    let mut nb = [0u8; 4];
+    for (i, asa) in asas.iter_mut().enumerate() {
+        let f = c.pedir(CREAR, cajon.asa, 1, 0, nombre_f(i as u32, &mut nb));
+        for (j, b) in c.ventana_mut()[..1024].iter_mut().enumerate() {
+            *b = dato(j as u64 + i as u64);
+        }
+        escritos &= f.estado == 0 && c.pedir(ESCRIBIR, f.asa, 0, 1024, "").a == 1024;
+        *asa = f.asa;
+    }
+    c.ventana_mut()[..10].copy_from_slice(b"clave Gema");
+    let enorme_con_todo = c.pedir(HACER_VOLUMEN, 0, 1 | 320 << MEMORIA_ARGON2, 10, "Gema").estado;
+    // Siguen ahí, se cierran y se guardan.
+    let mut releidos = true;
+    for (i, &asa) in asas.iter().enumerate() {
+        let l = c.pedir(LEER, asa, 0, 4096, "");
+        releidos &= l.a == 1024 && c.ventana()[..1024].iter().enumerate().all(|(j, &b)| b == dato(j as u64 + i as u64));
+        c.pedir(CERRAR, asa, 0, 0, "");
+    }
+    let guardado = c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
+    // Un fichero de cientos de trozos: un byte en cada registro de 128 KB (comprimido, un bloque cada uno).
+    let t = c.pedir(CREAR, cajon.asa, 1, 0, "trozos");
+    const TROZOS: u64 = 150;
+    let mut troceado = t.estado == 0;
+    for k in 0..TROZOS {
+        c.ventana_mut()[0] = k as u8 | 1;
+        troceado &= c.pedir(ESCRIBIR, t.asa, k * 128 * 1024 + 4096, 1, "").a == 1;
+    }
+    for k in 0..TROZOS {
+        let l = c.pedir(LEER, t.asa, k * 128 * 1024 + 4095, 2, "");
+        troceado &= l.a == 2 && c.ventana()[..2] == [0, k as u8 | 1];
+    }
+    c.pedir(CERRAR, t.asa, 0, 0, "");
+    // Se borra todo lo de la prueba (los 100 y el troceado), y el cajón.
+    let mut borrado = c.pedir(BORRAR, cajon.asa, 0, 0, "trozos").estado == 0;
+    for i in 0..100u32 {
+        borrado &= c.pedir(BORRAR, cajon.asa, 0, 0, nombre_f(i, &mut nb)).estado == 0;
+    }
+    c.pedir(CERRAR, cajon.asa, 0, 0, "");
+    borrado &= c.pedir(BORRAR, dir.asa, 0, 0, "memoria").estado == 0;
+    c.pedir(CERRAR, dir.asa, 0, 0, "");
+    // Lo de siempre sigue: LEEME.txt y una comprobación entera, con los datos.
+    let f = c.pedir(BUSCAR, 0, 0, 0, "LEEME.txt");
+    let leeme = c.pedir(LEER, f.asa, 0, 64, "").a == 19 && &c.ventana()[..6] == b"DashOS";
+    c.pedir(CERRAR, f.asa, 0, 0, "");
+    let comprobado = c.pedir(COMPROBAR, 0, 1, 0, "");
+    let limpio = comprobado.estado == 0 && comprobado.a == 0;
+    let al_final = monton_del_servicio(c);
+    let fallos = al_final.map_or(0, |m| m.2);
+    let partes = [de_serie, devuelto, fuera == MAL_FORMADO, enorme == SIN_MEMORIA, nada, escritos, enorme_con_todo == SIN_MEMORIA, releidos, guardado, troceado, borrado, leeme, limpio, fallos >= 2];
+    println!("  [ficheros] memoria: Argon2 de 64 MiB {}, vuelve al kernel {}; fuera de topes {}, sin memoria {} (y con 100 abiertos {}); el disco, limpio {}", si(de_serie), si(devuelto), si(fuera == MAL_FORMADO), si(enorme == SIN_MEMORIA), si(enorme_con_todo == SIN_MEMORIA), si(limpio));
+    if let (Some(a), Some(d), Some(f)) = (antes, despues, al_final) {
+        println!("  [ficheros] memoria: montón del servicio (KB en uso/reservados): {}/{} antes, {}/{} tras Argon2, {}/{} al final; {} pedidos no cupieron, colchón gastado {} veces", a.0, a.1, d.0, d.1, f.0, f.1, f.2, f.3);
+    }
+    println!("  [ficheros] memoria: {}", si(partes.iter().all(|&p| p)));
+    if !partes.iter().all(|&p| p) {
+        println!("  [ficheros] memoria por partes: {:?}; fuera {}, enorme {}, con todo {}, comprobar {} {}", partes, fuera, enorme, enorme_con_todo, comprobado.estado, comprobado.a);
+    }
 }

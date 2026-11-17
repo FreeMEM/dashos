@@ -479,8 +479,11 @@ fn principal() -> u64 {
         // U6: `sesiones`, 512: lo usado por los grupos de lo que lanza (64 MB cada uno) cuenta en el suyo.
         // C3: el fondo, 48: la imagen a pantalla entera en el montón y dos juegos de franjas (el que se ve y el nuevo); a
         // 1920 × 1080, unos 8 MB cada cosa.
+        // Rama `archivos-memoria`: el de archivos, 128, para el Argon2 de 64 MiB de S6b (mientras dura, y vuelve al
+        // kernel) encima de lo suyo: 24 MB de caché de páginas, hasta 16 de bloques, 4 de nodos, 2 de colchón y las
+        // ventanas de los clientes (hasta 16 MB las grandes).
         let cupo = match nombre(nombre_cab) {
-            "archivos" => 64 << 20,
+            "archivos" => 128 << 20,
             "sesiones" => 512 << 20,
             "fondo" => 48 << 20,
             // El explorador: sus ventanas (3 MB cada una a 1100 × 720, 8 maximizada en Full HD), las fuentes, un PNG a

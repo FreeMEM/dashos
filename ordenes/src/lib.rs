@@ -92,6 +92,7 @@ pub fn texto_error(e: i32) -> &'static str {
         a::LLENO => "el disco está lleno",
         a::PROTEGIDO => "está protegido",
         a::EN_USO => "está en uso",
+        a::SIN_MEMORIA => "no hay memoria para hacerlo",
         asig::BUCLE => "la asignación lleva a sí misma",
         asig::NO_CABE => "el nombre es demasiado largo",
         _ => "error",
