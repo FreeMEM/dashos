@@ -630,8 +630,8 @@ mismos límites. Cambian los registros y lo que es de la CPU:
     está en la siguiente instrucción; en 2 y 3 también, tras decodificar. La palabra 5 del informe (el ESR en ARM) es
     el código de salida de la CPU (el de AMD o la razón de Intel), para depurar.
   - **Lo que resuelve el kernel sin salir:** CPUID (el de la CPU sin VMX, SVM, MONITOR, x2APIC, PKU, los contadores,
-    RDTSCP ni RDPID, y con el bit de hipervisor, el plazo del TSC y la hoja 0x4000_0000 = "DashOSDashOS"); EFER, PAT y
-    IA32_TSC_DEADLINE; las MSR que cambian de mundo con el invitado (bases de FS y GS, KernelGsBase, STAR, LSTAR,
+    RDTSCP ni RDPID, y con el bit de hipervisor, el plazo del TSC y la hoja 0x4000_0000 = "DashOSDashOS"); EFER, PAT,
+    IA32_TSC_DEADLINE e IA32_MISC_ENABLE (se lee fija, 0x1801; se ignora lo que se escribe); las MSR que cambian de mundo con el invitado (bases de FS y GS, KernelGsBase, STAR, LSTAR,
     CSTAR, SFMASK, SYSENTER) sin salir; leer el TSC (el del anfitrión, sin desplazamiento); XSETBV (lo que cabe en lo
     que guarda el kernel: x87, SSE, AVX y AVX-512); en VT-x, CR0, CR4 y CR8 (el invitado ve sus valores). Las
     instrucciones de virtualización, MONITOR y MWAIT dan #UD al invitado; RDPMC, #GP; #AC se le devuelve.

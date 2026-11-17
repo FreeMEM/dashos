@@ -91,6 +91,7 @@ static ASID_SIG: [AtomicU32; MAX_NUCLEOS] = [const { AtomicU32::new(0) }; MAX_NU
 
 // MSR.
 const MSR_EFER: u32 = 0xc000_0080;
+const MSR_MISC_ENABLE: u32 = 0x1a0;
 const MSR_STAR: u32 = 0xc000_0081;
 const MSR_LSTAR: u32 = 0xc000_0082;
 const MSR_CSTAR: u32 = 0xc000_0083;
@@ -1724,6 +1725,10 @@ impl Vcpu {
             } else {
                 Ok(self.plazo_tsc)
             }),
+            // IA32_MISC_ENABLE: Linux la lee en Intel en cuanto arranca (verify_cpu, antes de tener IDT; un #GP ahí es
+            // un triple fallo) para quitar "XD apagado". Se lee fija: cadenas rápidas (0), sin BTS (11) ni PEBS (12),
+            // sin MONITOR (18, como en la CPUID) y con XD (34 a 0). Lo que escriba se ignora.
+            MSR_MISC_ENABLE => Some(if escritura { Ok(0) } else { Ok(1 | 1 << 11 | 1 << 12) }),
             _ => None,
         }
     }

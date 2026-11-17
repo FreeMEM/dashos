@@ -141,7 +141,7 @@ impl Dominio {
                     }
                 },
                 maquina::WFI | maquina::INTERRUMPIDO | maquina::HVC => {}
-                r => return Err(format!("el dominio paró: motivo {} en {:#x} (dirección {:#x}), tras {} salidas", r, i.pc, i.direccion, self.salidas)),
+                r => return Err(format!("el dominio paró: motivo {} en {:#x} (dirección {:#x}, código de la CPU {:#x}), tras {} salidas", r, i.pc, i.direccion, i.esr, self.salidas)),
             }
             for l in self.mq.sacar_lineas() {
                 linea(&l);
