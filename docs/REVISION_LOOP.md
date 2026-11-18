@@ -2365,3 +2365,12 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   dominio con MMU vigilada; fondos de GPU de una lista firmada (propios solo en modo de desarrollo); con batería, pocos
   cuadros con ajuste de tres valores. Mientras, el camino por CPU (sombras guardadas, SIMD) en la rama
   `compositor-rapido`. Pruebas en su rama: `prueba` y `arranque-virt` bien (no toca código del sistema).
+- **Unida `dock-discos` (2026-11-18)**: la columna de discos de la derecha pasa a panel flotante translúcido como los
+  widgets de DMS (tarjeta por volumen con icono, nombre, libre y barra; animaciones al aparecer, montar y pasar el
+  ratón; menú Abrir/Información; `ENV:Escritorio/discos`); el dock con lupa (también apartando), arrastrar fijados,
+  indicador animado, cuerpo con muelle y rebote al abrir. Decisiones del usuario: los discos así, de serie; el rebote
+  no ("ya un poco antiguo"): latido del indicador (en la rama, por unir). Tanda: 11 de 12 y shell, menus, dms y
+  cuentas bien; `arranque-virt` falló dos veces en pasos del guion, distintos: la comprobación de cuentas-2 "lista de
+  la entrada" antes de que el Shell cree a Berta (carrera de dos pruebas) y "[ajustes] el campo dice: DashOSa" (una
+  "a" de fondo del guion entra en el campo). Las dos son del guion de pruebas, no del sistema; arreglo encargado.
+  Salidas en ~/recuperar/geosian-7d/salida_av_lista_entrada.txt y salida_av_dashosa.txt.
