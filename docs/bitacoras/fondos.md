@@ -105,16 +105,24 @@ compuso. En milésimas de un núcleo, en reposo (nada encima), tras la transici�
 
 | Fondo | 800 × 600: `fondo` | 800 × 600: compositor | 1920 × 1080: `fondo` | 1920 × 1080: compositor |
 |---|---|---|---|---|
-| quieto (atardecer.png) | ~6 (su panel) | 7 | ~10 | 15 a 19 |
-| aurora | 18 | 45 | 22 | 48 |
-| luciérnagas | 9 | 22 | 21 a 38 | 132 a 156 |
-| nieve | 9 | 24 | 12 | 242 |
-| respira | 6 | 100 a 109 | 10 | 103 |
-| paleta animada (mar.png) | 11 | 101 | 14 | 85 |
-| bloqueada (aurora sin verse) | 8 | (sin componer el fondo) | 8, 0 cuadros | — |
+| quieto (atardecer.png) | 4 a 6 (su panel) | 7 | ~10 | 15 a 19 |
+| aurora | 15 a 17 | 36 | 22 | 48 |
+| luciérnagas | 11 | 21 a 23 | 21 a 38 | 132 a 156 (*) |
+| nieve | 9 | 24 | 12 | 242 (*) |
+| nieve como efecto sobre atardecer.png | 10 | 26 | — | — |
+| respira | 5 | 61 a 73 | 10 | 103 |
+| paleta animada (mar.png) | 8 a 10 | 71 | 14 | 85 |
+| bloqueada (aurora sin verse) | 4, 0 cuadros | sin componer el fondo | 8, 0 cuadros | — |
 
-- 800 × 600 con el tope de serie final (5 %, contando el compositor); 1920 × 1080, de la vuelta anterior (tope 3 % y
-  140 copos de nieve: con 57 se queda en lo de las luciérnagas). La vuelta final a 1920 × 1080 va abajo.
+- 800 × 600: la vuelta final (tope de serie 5 %, contando el compositor con 90 ns por píxel y 5 ms por cuadro).
+- 1920 × 1080: la vuelta de antes del tope final (3 % y 40 ns por píxel), ya con el arreglo de `colocar_capa`. (*) Con
+  ese tope las partículas iban a 15 cuadros por segundo y el compositor gastaba 10 ms por cuadro aunque fuera pequeño:
+  por eso el tope cuenta ahora un coste fijo por cuadro, y la nieve tiene 57 copos en vez de 140. La vuelta final a
+  1920 × 1080 salió con la máquina muy cargada por otras sesiones (el compositor componiendo 5 a 6 s de cada 10 hasta con
+  el fondo quieto): sus números no valen para comparar (están en `consola-1920x1080.txt`); sus capturas, sí.
+- En 800 × 600 todo lo que se mueve en reposo cuesta del 3 al 8 % de un núcleo entre los dos (`fondo` y compositor); lo
+  que más, respira y la paleta animada (cambian mucha superficie). El objetivo de "pocos por ciento" se cumple en
+  800 × 600; en 1920 × 1080 las partículas y la aurora quedan en el 5 al 7 % y respira y la paleta, en el 10 %.
 - Lo que manda es el compositor (componer por CPU en QEMU: de 49 a 99 ns por píxel y unos 5 a 10 ms por cuadro aunque
   sea pequeño). El fondo pinta poco: la aurora, una de cuatro tiras del cielo; las partículas, 4 a 22 kpx por cuadro;
   la paleta, 105 kpx (800 × 600) o 300 kpx (1920 × 1080).
@@ -122,7 +130,8 @@ compuso. En milésimas de un núcleo, en reposo (nada encima), tras la transici�
   la aurora pasó de 213-292‰ a 48‰ en el compositor; (2) los daños de las partículas se juntaban en uno que lo cubría
   todo (1 Mpx por cuadro): `juntar_danos`.
 - Las transiciones a 1920 × 1080 (2 s para verlas): 8 a 10 pasos (de 4 a 5 por segundo); el fundido es el más caro
-  (toda la pantalla en cada paso). En las capturas se ven a medias (`t-*-05` a `t-*-07`).
+  (toda la pantalla en cada paso). En 800 × 600 el compositor contestaba tan deprisa que daba 270 pasos por segundo:
+  ahora como mucho 40. En las capturas se ven a medias (`t-*-05` a `t-*-07`).
 - Leer y poner un PNG: atardecer (640 × 480) 85 a 140 ms; mar.png 60 a 110 ms; un animado, 3 a 20 ms.
 - Sin verse (pantalla bloqueada): "aurora: 0 cuadros en 10 s" y el compositor no compone el fondo; al desbloquear sigue.
 
@@ -141,6 +150,8 @@ compuso. En milésimas de un núcleo, en reposo (nada encima), tras la transici�
   su aviso; al irse, sí; con la pantalla apagada, tampoco; y un commit con el mismo búfer compone solo su daño (falla
   sin el arreglo de `colocar_capa`).
 - `make prueba`: BIEN. `cargo test` del Shell (la plantilla de `Fondo`): bien.
+- `make arranque-virt`: BIEN (la raíz del disco lleva ahora `Fondos/`: 23 entradas). `make arranque-virt-2`,
+  `-escritorio`, `-dms` y `-shell`: BIEN.
 - `make arranque-virt-fondos` (nuevo, `tools/guion_fondos.py`, `kernel/pruebas/arranque_virt_fondos.txt`): BIEN a
   800 × 600. Entra Ana, un guion del Shell cambia de fondo con cada transición, `Fondo` abre la herramienta, Home:Fondos
   con sus miniaturas (las rotas, con su porqué), la vista previa al dejar el ratón quieto, los animados, la aurora en
@@ -154,8 +165,8 @@ compuso. En milésimas de un núcleo, en reposo (nada encima), tras la transici�
 transición; `p-paleta-*`; `h0` a `h5`: la herramienta, la vista previa, los animados, el acento y la aurora aplicada;
 `m-*`: cada animado en reposo; `z-*`: bloqueada y desbloqueada) y las consolas. `fuente/fuji.png` es un fondo del
 usuario (Fuji-Dark, reducido a 1920 × 1013) solo para las capturas: no va en git. Las de `v3/` y `v4/` son de vueltas
-de antes (con fallos ya arreglados). No hay vídeo: las ráfagas de capturas de QEMU salen a 3 o 4 por segundo; se puede
-montar un GIF con ellas.
+de antes (con fallos ya arreglados). No hay vídeo de verdad: las ráfagas de capturas de QEMU salen a 3 o 4 por segundo;
+con ellas, `transiciones-1920x1080.gif` (las cuatro transiciones y la paleta animada).
 
 ## Decisiones que debe mirar el usuario
 

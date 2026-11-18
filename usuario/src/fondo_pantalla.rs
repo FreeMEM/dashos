@@ -38,8 +38,12 @@ pub const CAPAS: u32 = 21;
 const PRIMER_AVISO: u32 = 0x0010_0000;
 const AVISOS: u32 = 0x0001_0000;
 /// Si el aviso de una transición no llega en este rato (la pantalla no se ve), se acaba de golpe. En QEMU, componer
-/// un paso de un fundido a 1920 × 1080 tarda más de 100 ms: un segundo.
-const SIN_AVISO_US: u64 = 1_000_000;
+/// un paso de un fundido a 1920 × 1080 tarda más de 100 ms, y una captura de pantalla para la máquina un segundo o más:
+/// tres segundos.
+const SIN_AVISO_US: u64 = 3_000_000;
+/// Una transición da como mucho 40 pasos por segundo: en una pantalla pequeña el compositor contesta enseguida y, sin
+/// tope, eran 270 pasos por segundo (CPU tirada: el ojo no ve más de eso).
+const PASO_TRANSICION_US: u64 = 25_000;
 
 fn va(salida: usize, juego: usize, franja: usize) -> usize {
     VA_FRANJAS + ((salida * 3 + juego) * MAX_FRANJAS + franja) * HUECO
@@ -150,6 +154,8 @@ pub struct Salida {
     /// Cuándo toca el próximo cuadro del animado (µs), y desde cuándo se espera un aviso.
     proximo_us: u64,
     esperando_desde: u64,
+    /// Cuándo se dio el último paso de la transición (como mucho uno cada `PASO_TRANSICION_US`).
+    paso_trans_us: u64,
     /// Para medir: cuadros, píxeles dañados y µs de CPU, desde la última vez que se dijo.
     pub cuadros: u64,
     pub pixeles: u64,
@@ -178,6 +184,7 @@ impl Salida {
             ritmo: Ritmo::nuevo(kit::fondos::ritmo::TOPE_DE_SERIE),
             proximo_us: 0,
             esperando_desde: 0,
+            paso_trans_us: 0,
             cuadros: 0,
             pixeles: 0,
             cpu_us: 0,
@@ -201,7 +208,7 @@ impl Salida {
             return if self.trans.is_some() { self.esperando_desde + SIN_AVISO_US } else { u64::MAX };
         }
         if self.trans.is_some() {
-            return ahora;
+            return ahora.max(self.paso_trans_us + PASO_TRANSICION_US);
         }
         if self.anim.is_some() { self.proximo_us } else { u64::MAX }
     }
@@ -402,7 +409,11 @@ impl Salida {
             }
             return;
         }
+        if self.trans.is_some() && ahora < self.paso_trans_us + PASO_TRANSICION_US {
+            return;
+        }
         if let Some((mut t, inicio)) = self.trans.take() {
+            self.paso_trans_us = ahora;
             let ms = ((ahora.saturating_sub(inicio)) / 1000) as u32;
             let (Some(v), Some(n)) = (self.vista.as_mut(), self.nueva.as_mut()) else { return };
             let t0 = dashos::ahora_us();
