@@ -219,7 +219,8 @@ impl Rebote {
         ahora >= self.fin()
     }
 
-    /// Lo que sube ahora (hacia dentro de la pantalla): una parábola por bote, de la mitad del icono.
+    /// Lo que sube ahora (hacia dentro de la pantalla): una parábola por bote, de la mitad de `icono` (el dock le pasa el
+    /// doble del hueco de su capa para el saltito: así bota lo que cabe, el 35 % del icono).
     pub fn altura(&self, ahora: u64, icono: i32) -> i32 {
         if ahora < self.desde || self.acabado(ahora) {
             return 0;

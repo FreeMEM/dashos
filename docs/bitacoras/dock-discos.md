@@ -131,7 +131,7 @@ y los ajustes de DMS v2.1.2. "Hecha" quiere decir que está en DashOS (antes de 
 | Qué | Cómo (de DMS salvo lo dicho) |
 |---|---|
 | Lupa | Escala = 1 + (M − 1)·f(d/R)·p; M = `escala_aumento` (1,05 a 2), R = 1,8 / 2,2 / 2,5 iconos (parabólica, gauss, coseno), f = 1 − u², ½(1 + cos πu) o (e^(−3u²) − e^(−3))/(1 − e^(−3)) en enteros; p entra en 50 ms con OutCubic y sale en 75 ms con InCubic. Crece desde el borde de la pantalla. Sin apartar, los vecinos se solapan; con `aumento_expandir`, cada uno se ensancha y aparta a los demás, y el cuerpo crece hasta su tope. La capa deja ese sitio de antemano (no cambia de tamaño a cada cuadro) |
-| Rebote al abrir un programa | Propio (DMS no lo tiene; es el de macOS): el icono bota media altura de icono, 560 ms cada bote, hasta que sale su ventana (acaba el bote que lleva) o 5 botes |
+| Rebote al abrir un programa | Propio (DMS no lo tiene; es el de macOS): el icono bota lo que deja el hueco de la capa para el saltito (el 35 % del icono), 560 ms cada bote, hasta que sale su ventana (acaba el bote que lleva) o 5 botes. Lo que sube y lo que crece con la lupa se recortan para no salirse de la capa (en la primera vuelta de capturas el icono subía de más y no se veía) |
 | Indicador | El del activo se alarga o acorta en 75 ms con OutCubic (DMS); el punto de una ventana nueva crece desde nada con el muelle expresivo (propio: DMS lo pone sin animar) |
 | Reordenar | El arrastrado sigue al ratón con el fondo y el filo del primario; los demás van a su hueco en 250 ms con `expressiveDefaultSpatial` (0,38, 1,21, 0,22, 1: se pasa y vuelve) |
 | El cuerpo | Cambia de largo con el muelle "fast" de 75 ms cuando entra o sale un elemento (DMS) |
@@ -143,11 +143,65 @@ tecla-pegada).
 
 ## Pruebas
 
-(Se rellena al final.)
+- PC (`make prueba` las corre): `discos_modelo.rs` 26 (la primera entrada y las barras, montar con rebote y desmontar,
+  volver antes de irse, poner otra vez mientras entran, el ratón y la onda, sin animaciones, lados y alturas, **mil
+  volúmenes y pantallas de 0 a 100.000 de alto**, **10.000 ráfagas de montar y desmontar al azar con el ratón y clics
+  por medio y pasos de reloj absurdos**, ajustes en marcha), `discos_ajustes.rs` (de serie, ida y vuelta, lo que no
+  vale, **2.000 ficheros de bytes al azar**), `dock_vivo.rs` 27 (e^-x y cos πx en enteros, los tres perfiles, las
+  escalas de DMS, apartar con tope, la lupa entra y sale, el rebote, el indicador, arrastrar, **destinos absurdos y mil
+  fijados arrastrados al azar: siempre una permutación**), `muelle.rs` (las dos curvas nuevas), `dock_ajustes.rs` y
+  `dock_modelo.rs` (con `aumento_expandir` y el sitio de la lupa).
+- `make prueba`: BIEN (esperado.txt y cargador hunk); 66 baterías de `cargo test`, todas bien.
+- `make arranque-virt`: tres vueltas. La 1.ª, BIEN entera con el reinicio (la comprobación del disco no la vi: el
+  registro lo pisó otra sesión que escribe en la misma carpeta temporal). La 2.ª (ya con los commits) se paró en
+  "[ram] Ana: avisos hostiles": llegaron 16 de los 63 timbres en los 300 ms que espera la prueba (con otras tres QEMU
+  de otras sesiones en marcha); no toca nada de lo de aquí (vigila otro fichero, en otra sesión). La 3.ª, BIEN entera:
+  las líneas, el reinicio, el disco leído en Linux, la captura, el sonido y U6.
+- `make arranque-virt-2`, `-escritorio`, `-dms` y `-shell`: BIEN a la primera.
+- Tras recortar el rebote a la capa (último cambio del dock): `make prueba`, `make arranque-virt` (entera, con el disco,
+  la captura, el sonido y U6) y `make arranque-virt-dms`: BIEN a la primera.
+- `make capturas-discos` (con `DMS_SHIVA=1` y el fondo del usuario): cuatro vueltas, que sacaron cuatro fallos ya
+  arreglados: medir los volúmenes antes de saber el alto de la pantalla ("1 no caben"); el menú se cerraba al pasar el
+  ratón por la esquina (el guion); la animación de entrada acababa antes del primer cuadro con el sistema ocupado (ahora
+  nada se mueve hasta que la capa está en pantalla); y las tarjetas que entraban de una en una se quedaban sin entrar si
+  se volvían a poner los volúmenes a medias (al entrar la sesión: habría dejado SYS: y Work: invisibles). La última
+  prueba de PC de arriba es la de ese fallo.
+
+## Capturas (fuera de git, `~/recuperar/geosian-7d/dock-discos-capturas/`)
+
+A 1920 × 1080 con la imagen de usar, el perfil de shiva (tema oscuro, su barra) y su fondo ("Lofi - Chill Room2", en PNG
+de 128 colores, solo en el disco de la prueba): `shiva.1-discos` (quietos), `2-encima`, `3-onda`, `4-elegido`,
+`5-menu`, `6-informacion` (la de Work:), `7-explorador` (doble clic en SYS:), `8-izquierda` (a la izquierda, abajo,
+grande), `9-compacto` (en el centro, pequeño, sin la barra), y del dock `10-dock-lupa` y `11-dock-lupa-entre` (la
+lupa sobre un icono y entre dos) y `12-dock-menu`. GIF: `discos-aparecer.gif` (el panel entra y las tarjetas tras él),
+`discos-entrar-sesion.gif` (al entrar Ana; la pantalla de entrada tapa casi toda la animación), `dock-lupa.gif` (el
+ratón de lado a lado por el dock) y `dock-rebote.gif` (el Shell fijado, abierto desde el dock, bota hasta que sale su
+ventana). Los GIF son tiras de `screendump` de QEMU cada 50-70 ms: van a saltos, no a 60 cuadros por segundo.
+El guion de las capturas es `tools/guion_discos.py` (`make capturas-discos`, con `DMS_SHIVA=1`, `DASHOS_PANTALLA`,
+`DASHOS_FONDO_EXTRA` y `DASHOS_PREFS` como `arranque-virt-dms`). El fondo no siempre sale (el programa `fondo`
+arranca antes que el servicio de archivos: lo apuntó `union-dms`); en las vueltas en que no salió, el fondo es azul.
 
 ## Medido
 
-(Se rellena al final.)
+Con `cpu_propia.rs` (el tiempo de CPU del grupo de cada programa; lo dicen en la consola unas pocas veces), en QEMU
+(TCG, sin aceleración: todo va muchas veces más lento que en una máquina de verdad):
+
+| | Quieto (10 s) | Animando |
+|---|---|---|
+| Discos (Workbench), 800 × 600 | 3,8 a 4,7 ms de CPU (0,05 %) | 27 a 40 % de un núcleo mientras dura (de 0,3 a 1,3 s cada vez) |
+| Discos, 1920 × 1080 (antes de limitar los cuadros) | 4,6 ms | 40 a 59 % |
+| Dock, 800 × 600 | 7,4 a 7,6 ms | 1,2 a 5,5 % (salir, esconderse, el saltito) |
+| Dock, 1920 × 1080 con la lupa | 1,7 a 16 ms | 7 a 9 % moviendo el ratón por encima |
+
+Quietos no gastan: el Workbench despierta cada 500 ms (como antes) y el dock cada segundo. Animando, los discos
+pintan el panel entero en cada cuadro (unos 6 ms por cuadro en QEMU); al principio se pintaba más deprisa que la
+pantalla (cada commit trae un aviso del compositor que despierta el bucle) y ahora va como mucho a un cuadro cada
+16,7 ms. Lo que queda por bajar, si hace falta: pintar solo la tarjeta que cambia.
+
+Tamaños (ELF, frente a `fusion-fondo`): `workbench` 532.832 → 655.712 bytes (+120 KB: la colección de iconos y la
+letra regular), `dock` 414.128 → 430.512 (+16 KB), `centro` 857.416 → 865.608 (+8 KB). Van en la imagen del kernel: el
+disco de pruebas no cambia. La capa de los discos: 248 × 300 × 4 = 290 KB con cuatro (la columna era 104 × 560 × 4 =
+227 KB a 800 × 600, y 104 × 1040 × 4 = 422 KB a 1920 × 1080). El menú, 188 × 92 × 4 = 68 KB mientras se ve.
 
 ## Pendiente del usuario
 

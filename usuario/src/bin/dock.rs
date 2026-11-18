@@ -746,7 +746,8 @@ fn pintar_dock(px: &mut [u32], w: i32, h: i32, e: &Estado, m: &Muelle, ahora: u6
             continue;
         }
         // El saltito y el rebote, hacia dentro de la pantalla; a lo largo, lo que aparta la lupa y el arrastre.
-        let s = m.vista.salto(&it.clave, ahora) + m.rebotes.iter().find(|r| r.clave == it.clave).map_or(0, |r| r.altura(ahora, aj.iconos));
+        // El rebote sube lo que deja el hueco de la capa para el saltito (`animationHeadroom`, el 35 % del icono).
+        let s = m.vista.salto(&it.clave, ahora) + m.rebotes.iter().find(|r| r.clave == it.clave).map_or(0, |r| r.altura(ahora, 2 * m.disp.cabecera));
         let mut largo = aparte.get(k).copied().unwrap_or(0);
         if let Some(a) = m.arrastre.as_ref().filter(|a| a.activo)
             && it.fijado
@@ -757,6 +758,11 @@ fn pintar_dock(px: &mut [u32], w: i32, h: i32, e: &Estado, m: &Muelle, ahora: u6
         let (lx, ly) = if vertical { (0, largo) } else { (largo, 0) };
         let celda = Caja { x: celda.x + lx, y: celda.y + ly, ..celda };
         let escala = escalas.get(k).copied().unwrap_or(1000);
+        // Lo que sube (saltito, rebote) y lo que crece (lupa), sin salirse de la capa: lo que se saliera no se vería.
+        let traves = if vertical { m.disp.capa.ancho } else { m.disp.capa.alto };
+        let desde_borde = if vertical { if sx > 0 { m.disp.capa.ancho - celda.x - celda.w } else { celda.x } } else if sy > 0 { m.disp.capa.alto - celda.y - celda.h } else { celda.y };
+        let crecido = (aj.iconos as i64 * escala / 1000) as i32;
+        let s = s.clamp(0, (traves - desde_borde - crecido).max(0));
         let c = mover(escalar(celda, escala, aj.posicion), -sx * s, -sy * s);
         let r = caja_a_rect(c);
         let lado = (aj.iconos as i64 * escala / 1000) as i32;

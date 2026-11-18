@@ -14,9 +14,9 @@ Uso (lo lanza `tools/prueba_uefi.sh` con DISCOS_CAPTURAS=prefijo; `make capturas
 5. Los ajustes en marcha, con la orden `Ajuste` en el Shell: a la izquierda y abajo, grande (PREFIJO.8-izquierda), y
    sin la barra del espacio, pequeño, en el centro (PREFIJO.9-compacto); luego, lo de serie. Al final, esconderlos y
    sacarlos otra vez: la tira de cuadros de su entrada (PREFIJO.anim-aparecer-NN).
-6. El dock con la lupa encendida (`Ajuste Escritorio/dock.aumento si`) y dos Shell más: el ratón de lado a lado (la
-   tira PREFIJO.anim-lupa-NN), sobre un icono (PREFIJO.10-dock-lupa) y entre dos (PREFIJO.11-dock-lupa-entre); el menú
-   (PREFIJO.12-dock-menu), fijar el Shell y abrir otro desde el fijado: la tira del rebote (PREFIJO.anim-rebote-NN).
+6. El dock: el menú del Shell (PREFIJO.12-dock-menu) y Fijar; se cierra el Shell y se abre desde el fijado (la tira
+   del rebote, PREFIJO.anim-rebote-NN); con otro Shell y la lupa encendida (`Ajuste Escritorio/dock.aumento si`), el
+   ratón de lado a lado (PREFIJO.anim-lupa-NN), sobre un icono (PREFIJO.10-dock-lupa) y entre dos (PREFIJO.11-...).
 
 Cada captura queda también en PNG. Lo que hace, con la hora, en PREFIJO.guion.txt.
 """
@@ -203,51 +203,48 @@ def tira_moviendo(nombre, dx, veces):
     apuntar(f"tira {nombre}: {veces} cuadros")
 
 
-def dock():
-    """El dock: con la lupa encendida, el ratón de lado a lado (la tira de la lupa) y quieto sobre uno; luego fija el
-    Shell desde su menú, y abrirlo desde el fijado: el rebote hasta que sale su ventana."""
-    for _ in range(2):
-        shell()
+def revelar(marca):
+    """Saca el dock (el ratón a la raya de abajo) y dice dónde quedó cada cosa."""
+    ir_a(ANCHO // 2, ALTO - 1)
+    sv = esperar(r"\[dock\] se ve: ([^\n]*)", 10, marca)
+    return sitios_dock(sv[-1]) if sv else []
+
+
+def esconder(marca):
+    ir_a(ANCHO // 2, ALTO // 2)
+    esperar(r"\[dock\] se esconde", 10, marca)
+
+
+def dock(v):
+    """El dock: fija el Shell desde su menú; cierra el Shell y lo abre desde el fijado (el rebote hasta que sale su
+    ventana); con otro Shell, la lupa encendida y el ratón de lado a lado."""
     teclear("Ajuste Escritorio/dock.aumento si")
     time.sleep(2)
     marca = len(texto())
-    ir_a(ANCHO // 2, ALTO - 1)
-    sv = esperar(r"\[dock\] se ve: ([^\n]*)", 10, marca)
-    if not sv:
-        return
-    s = sitios_dock(sv[-1])
+    s = revelar(marca)
     if len(s) < 2:
         return
-    x0, y0, x1 = s[0][1], s[0][2], s[-1][1]
-    mover_desde(ANCHO // 2, ALTO - 1, x0 - 40, y0)
-    pasos = (x1 - x0 + 80) // 8
-    tira_moviendo("anim-lupa", 8, pasos)
-    xa = x0 - 40 + 8 * pasos
-    mover_desde(xa, y0, s[-1][1], s[-1][2])
-    capturar("10-dock-lupa", 0.4)
-    mover_desde(s[-1][1], s[-1][2], (s[-2][1] + s[-1][1]) // 2, s[-1][2])
-    capturar("11-dock-lupa-entre", 0.4)
-    # Fijar el último Shell desde su menú.
-    marca = len(texto())
-    mover_desde((s[-2][1] + s[-1][1]) // 2, s[-1][2], s[-1][1], s[-1][2])
+    # El menú del Shell abierto y Fijar.
+    mover_desde(ANCHO // 2, ALTO - 1, s[1][1], s[1][2])
     mandar("mouse_button 2", "mouse_button 0", pausa=0.1)
     f = esperar(r"\[dock\] menú de .*; fijar en \((\d+), (\d+)\)", 10, marca)
     if not f:
         return
     capturar("12-dock-menu", 0.3)
-    mover_desde(s[-1][1], s[-1][2], int(f[-1][0]), int(f[-1][1]))
+    mover_desde(s[1][1], s[1][2], int(f[-1][0]), int(f[-1][1]))
     mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
     if not esperar(r"\[dock\] fija ", 10, marca):
         return
-    # Que se esconda y vuelva a salir, para saber dónde queda el fijado.
-    ir_a(ANCHO // 2, ALTO // 2)
-    esperar(r"\[dock\] se esconde", 10, marca)
+    # Se cierra el Shell (queda el fijado, sin ventanas) y se abre desde el dock: rebota hasta que sale su ventana.
+    esconder(marca)
+    clic(v[0] + 120, max(v[1] - 20, 1))
     marca = len(texto())
-    ir_a(ANCHO // 2, ALTO - 1)
-    sv = esperar(r"\[dock\] se ve: ([^\n]*)", 10, marca)
-    if not sv:
+    teclear("EndShell")
+    if not esperar(r"\[dock\] ventanas: 0", 15, marca):
         return
-    s = sitios_dock(sv[-1])
+    time.sleep(1)
+    marca = len(texto())
+    s = revelar(marca)
     if len(s) < 2:
         return
     mover_desde(ANCHO // 2, ALTO - 1, s[1][1], s[1][2])
@@ -255,6 +252,24 @@ def dock():
     mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
     if esperar(r"\[dock\] .* rebota hasta que abra su ventana", 5, marca):
         tira("anim-rebote", 2.5, cada=0.05)
+    esperar(r"\[shell\] ventana en pantalla", 30, marca)
+    # Otro Shell: tres iconos (el lanzador, el fijado con su ventana y el otro). La lupa, sin salir del dock (fuera se
+    # esconde, y escondido solo lo saca la raya de abajo).
+    shell()
+    esconder(len(texto()))
+    marca = len(texto())
+    s = revelar(marca)
+    if len(s) < 2:
+        return
+    x0, y0, x1 = s[0][1], s[0][2], s[-1][1]
+    mover_desde(ANCHO // 2, ALTO - 1, x0 - 10, y0)
+    pasos = (x1 - x0 + 20) // 6
+    tira_moviendo("anim-lupa", 6, pasos)
+    xa = x0 - 10 + 6 * pasos
+    mover_desde(xa, y0, s[-1][1], s[-1][2])
+    capturar("10-dock-lupa", 0.4)
+    mover_desde(s[-1][1], s[-1][2], (s[-2][1] + s[-1][1]) // 2, s[-1][2])
+    capturar("11-dock-lupa-entre", 0.4)
 
 
 def principal():
@@ -354,7 +369,7 @@ def principal():
         teclear("Ajuste Escritorio/discos.mostrar si", intro=False)
         mandar("sendkey ret")
         tira("anim-aparecer", 2.0)
-        dock()
+        dock(v)
         # La señal de que acabó (la última línea de pruebas/capturas_discos.txt).
         teclear("Ajuste Escritorio/discos.opacidad 81")
     apuntar("hecho")
