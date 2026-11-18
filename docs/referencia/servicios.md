@@ -599,27 +599,47 @@ Diferencias con el servicio de archivos:
 Pendiente: los HDF (fase 3), escribir con la capa de cambios (fase 2), quién monta qué (hoy, quien tenga la llave del
 canal) y un nombre de aparato (`IMG0:`) cuando haya `dos.library`.
 
-## Fondo de escritorio (S10c, C3)
+## Fondo de escritorio (S10c, C3; rama `fondos`)
 
-`usuario/src/bin/fondo.rs` pinta un PNG de `C/Fondos/` en la capa de fondo de layer-shell (tiene el poder de
-escritorio), escalado para cubrir la pantalla (lo que sobra se recorta por igual a cada lado), y saca de él el color
-semilla del tema (`kit::semilla`, el método de Material). Al arrancar pone el que dice `C/Prefs/fondo` (una línea con
-el nombre; si no hay, `ondas.png`). Si la imagen no se puede leer o no se entiende, no pone nada (se ve el color liso
-del compositor) o se queda la de antes. Lo que se deja: 32 MB de fichero y 16 millones de píxeles; más es "demasiado
-grande", sin leerlo. En una pantalla de más de 4 MB (lo que mide un objeto de memoria), va en franjas, una capa cada
-una. Llaves: 1 "ventanas", 2 "archivos", 3 su canal "fondo".
+`usuario/src/bin/fondo.rs` pinta cada pantalla (`wl_output`; hasta 4) en la capa de fondo de layer-shell (tiene el
+poder de escritorio): un PNG con su ajuste (llenar, encajar, centrar, mosaico o estirar), un fondo animado hecho aquí
+(`animado:aurora`, `luciernagas`, `nieve`, `respira`) o un PNG de paleta con sus colores girando (trozo `tEXt`
+`DashOS-ciclos`, `kit::fondos::ciclos`), y encima, si se pide, un efecto. Saca de lo que pone el color semilla del tema
+(`kit::semilla`). Al cambiar, transición (fundido, barrido, círculo desde un punto, disolver). Lo que se deja: 32 MB de
+fichero y 16 millones de píxeles. Cada pantalla va en franjas de 4 MB como mucho (un objeto de memoria), una capa cada
+una. Llaves: 1 "ventanas", 2 "archivos", 3 "sesiones", 4 "red-estado", 5 su canal "fondo".
 
-Por su canal solo le habla el centro de control (el nombre lo da `inicio`), en texto y con una llave para la respuesta:
+Lo que se pone lo dice `Escritorio/fondo` de `ENV:` (en uso) y `ENVARC:` (guardado), texto `clave = valor`
+(`kit::fondos::ajustes`): `fondo`, `oscuro`, `fondo-<pantalla>`, `oscuro-<pantalla>`, `ajuste`, `color`, `transicion`,
+`duracion`, `pase` (minutos), `carpeta`, `efecto`, `cpu` (tope, % de un núcleo). `fondo` lo vigila (avisos de cambio) y
+lo aplica en marcha; lo escribe su herramienta (por `sesiones`, `ESCRIBIR_ENV` y `GUARDAR_ENV`: es de sus
+`AJUSTES_PROPIOS`) y la orden `Fondo`. Sin él (antes de entrar nadie), `C/Prefs/fondo` (una línea con el nombre de un
+PNG de `Fondos/`; si no hay, `ondas.png`), y al entrar se escribe en `ENV:` con eso. `ENV:Escritorio/fondo-pide`
+(`pide = abrir|cerrar|siguiente <marca>`) es lo que pide la orden `Fondo` (abrir la herramienta, el siguiente del pase).
 
-| Pedido | Qué hace |
-|---|---|
-| `poner <nombre>` | Pone `Fondos/<nombre>`. No lo guarda: si sale bien, lo guarda el centro en `Prefs/fondo` |
-| `semilla` | Dice el fondo de ahora |
+Por su canal le hablan el centro de control y `guardian` (el nombre lo da `inicio`), en texto y con una llave para la
+respuesta:
+
+| Pedido | Quién | Qué hace |
+|---|---|---|
+| `poner <nombre>` | centro | Pone `Fondos/<nombre>` en todas las pantallas (y lo apunta en `ENV:` si lo hay); el centro lo guarda en `Prefs/fondo` |
+| `semilla` | centro | Dice el fondo de ahora (de la primera pantalla) |
+| `guardado` | centro | Pone lo de los ajustes (si no es ya lo que se ve) |
+| `abrir`, `cerrar` | centro | La herramienta de fondos (una capa encima de todo) |
+| `siguiente` | centro | El siguiente de la carpeta del pase |
+| `monitor` | centro | El panel del monitor relee sus ajustes |
+| `bloqueo` | `guardian` | El fondo de la pantalla de bloqueo, pequeño y desenfocado: estado, ancho y alto, y una llave solo para leer |
+
+El centro, a su vez, atiende `abrir fondos` en su canal (el panel rápido, la barra) y se lo pasa a `fondo`.
 
 La respuesta: estado (i32: 0 bien; -1 pedido malo o de otro; -2 no se lee el fichero; -3 no se entiende la imagen; -4
 demasiado grande; -5 sin memoria; -6 sin pantalla; -7 no hay fondo), la semilla (ARGB; 0 si la imagen no tiene ningún
-color que valga, como una gris), ancho, alto y los milisegundos que costó (u32 cada uno). Tras `semilla`, detrás, el
-nombre del fondo que se ve.
+color que valga, como una gris), ancho, alto y los milisegundos que costó (u32 cada uno). Tras `semilla` y `guardado`,
+detrás, el nombre del fondo que se ve (sin `Home:Fondos/`).
+
+El compositor (rama `fondos`) no da el aviso de `frame` a una capa de fondo que no se ve: tapada por superficies opacas
+seguras (búfer sin alfa, o ventana maximizada), con la pantalla apagada (Blanker) o bloqueada. Lo da cuando se vuelve a
+ver. Un fondo animado que pinta un cuadro por aviso se para solo.
 
 Los colores del fondo los reparte el compositor (`dashos_tema_v1`, versión 2): el centro calcula una vez los dos
 esquemas (claro y oscuro) de la semilla, los da con la petición `esquema` y pone el tema; a quien enlazó la versión 2

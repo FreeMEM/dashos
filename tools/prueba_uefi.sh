@@ -2504,6 +2504,11 @@ fi
 if [ -n "${DISCOS_CAPTURAS:-}" ]; then
     python3 -I "$(dirname "$0")/guion_discos.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$DISCOS_CAPTURAS" >/dev/null 2>&1 &
 fi
+# Rama `fondos`: con FONDOS_CAPTURAS=prefijo, `tools/guion_fondos.py` entra, cambia de fondo con cada transición, abre la
+# herramienta de fondos y pone cada fondo animado, con capturas y lo que gasta cada uno (`make arranque-virt-fondos`).
+if [ -n "${FONDOS_CAPTURAS:-}" ]; then
+    python3 -I "$(dirname "$0")/guion_fondos.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$FONDOS_CAPTURAS" >/dev/null 2>&1 &
+fi
 # El Shell nativo en pantalla: con SHELL_CAPTURAS=prefijo, `tools/guion_shell.py` entra, abre el Shell desde el
 # lanzador, teclea en él y lo captura en cada momento (`make arranque-virt-shell`).
 if [ -n "${SHELL_CAPTURAS:-}" ]; then

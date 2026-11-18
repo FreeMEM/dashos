@@ -415,6 +415,7 @@ fn simbolo_sonido(nivel: u32, silencio: bool) -> Simbolo {
 fn icono_de(l: &mut Lienzo, id: &str, r: Rect, e: &Estado, color: Color, _fondo: Color) {
     let s = match id {
         "ajustes" => simbolo::SETTINGS,
+        "fondos" => simbolo::PALETTE,
         "bloquear" => simbolo::LOCK,
         "apagar" => simbolo::POWER_SETTINGS_NEW,
         "editar" if e.editando => simbolo::CHECK,
@@ -1253,6 +1254,14 @@ fn principal() -> u64 {
                                     est.deshacer.clear();
                                     est.detalle = None;
                                     println!("  [panel] a editar");
+                                }
+                                "fondos" => {
+                                    // Rama `fondos`: la herramienta de fondos (la abre `fondo`, por el centro) y se cierra.
+                                    let r = dashos::canal_escribir(CENTRO, b"abrir fondos", &[]);
+                                    abierto = false;
+                                    cerrar(&mut c, &mut est, false);
+                                    println!("  [panel] abre la herramienta de fondos: {}", r);
+                                    continue;
                                 }
                                 "ajustes" => {
                                     // Abre Ajustes en el centro de control (sin esperar a que se cierre) y se cierra.

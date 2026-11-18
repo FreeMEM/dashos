@@ -70,6 +70,8 @@ pub const CATALOGO: &[Def] = &[
     d("bateria", "battery", "Batería", Tipo::Mosaico, 4, false),
     d("disco", "diskUsage", "Disco", Tipo::Mosaico, 4, false),
     d("programas", "runningApps", "Programas abiertos", Tipo::Mosaico, 4, false),
+    // Rama `fondos`: abre la herramienta de fondos (en DMS, el fondo va en el Dash; aquí, también en el centro de control).
+    d("fondos", "wallpaper", "Fondos", Tipo::Accion, 1, true),
 ];
 
 /// El índice en el catálogo de un nombre (el de DashOS o el de DMS, sin distinguir mayúsculas).

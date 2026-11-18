@@ -34,6 +34,8 @@ pub const TYPE: &str = "FROM/M,NUMBER/S,HEX/S";
 pub const USUARIO: &str = "ACCION,NOMBRE,MAS/M,UID/K/N";
 pub const VERSION: &str = "";
 pub const WAIT: &str = "TIME/N,SEC=SECS/S,MIN=MINS/S";
+/// Rama `fondos`: el fondo de escritorio (`ordenes/src/base/fondo.rs`).
+pub const FONDO: &str = "QUE,VALOR,PANTALLA/K,OSCURO/S,CLARO/S,GUARDAR/S";
 
 /// Las de base, por su nombre.
 pub const BASE: &[(&str, &str)] = &[
@@ -49,6 +51,7 @@ pub const BASE: &[(&str, &str)] = &[
     ("Dir", DIR),
     ("Echo", ECHO),
     ("Filenote", FILENOTE),
+    ("Fondo", FONDO),
     ("Info", INFO),
     ("List", LIST),
     ("MakeDir", MAKEDIR),

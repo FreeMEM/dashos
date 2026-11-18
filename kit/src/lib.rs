@@ -11,6 +11,7 @@ pub mod lienzo;
 pub mod menus;
 pub mod objetos;
 pub mod color;
+pub mod fondos;
 pub mod iconos;
 pub mod imagen;
 pub mod png;

@@ -90,7 +90,7 @@ fn buscar(nombre: &str) -> Result<(String, String, Option<&'static Conocido>), S
 }
 
 /// El fichero `camino` entero (por sus capas): `Ok(None)` si no está.
-fn leer(o: &mut Orden, camino: &str) -> Result<Option<Vec<u8>>, i32> {
+pub(crate) fn leer(o: &mut Orden, camino: &str) -> Result<Option<Vec<u8>>, i32> {
     match o.s.leer_entero(camino, MAX) {
         Ok(b) => Ok(Some(b)),
         Err(a::NO_EXISTE) => Ok(None),
@@ -122,7 +122,7 @@ fn capa(o: &Orden, asignacion: &str) -> Option<String> {
 
 /// Escribe `bytes` en el fichero `fichero` de la primera capa de `asignacion`, creando los cajones que falten. El
 /// camino escrito.
-fn escribir(o: &mut Orden, asignacion: &str, fichero: &str, bytes: &[u8]) -> Result<String, String> {
+pub(crate) fn escribir(o: &mut Orden, asignacion: &str, fichero: &str, bytes: &[u8]) -> Result<String, String> {
     let base = capa(o, asignacion).ok_or_else(|| alloc::format!("{}: no está en la tabla de nombres", asignacion))?;
     let camino = alloc::format!("{}/{}", base, fichero);
     // Los cajones de delante.

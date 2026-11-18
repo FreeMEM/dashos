@@ -194,6 +194,79 @@ def enorme():
     return b"\x89PNG\r\n\x1a\n" + trozo(b"IHDR", cab) + trozo(b"IDAT", zlib.compress(bytes(1000))) + trozo(b"IEND", b"")
 
 
+def paleta_mar(ancho=640, alto=400):
+    """Rama `fondos`: un fondo de paleta animada ("color cycling" de Deluxe Paint), hecho aquí: un atardecer sobre el
+    mar a 640 × 400 con 256 colores. El cielo, el sol y las olas de cerca están quietos; el agua junto al horizonte
+    (colores 64 a 79) y el reflejo del sol (80 a 95) giran, y las estrellas (96 a 103) titilan. Lo que gira es poco
+    (un 12 % de la pantalla): cada cuadro compone poco. Los tramos van en el trozo de texto `DashOS-ciclos` (lo lee
+    `kit::fondos::ciclos`)."""
+    pal = [(0, 0, 0)] * 256
+    # El cielo: 48 tonos de violeta oscuro a naranja (0 a 47).
+    arriba, medio, abajo = (20, 12, 48), (120, 40, 110), (250, 150, 80)
+    for i in range(48):
+        t = i / 47
+        a, b, u = (arriba, medio, t * 2) if t < 0.5 else (medio, abajo, t * 2 - 1)
+        pal[i] = tuple(round(a[k] + (b[k] - a[k]) * u) for k in range(3))
+    pal[48], pal[49] = (255, 230, 150), (255, 200, 110)  # el sol y su borde
+    pal[50] = (30, 20, 40)  # la costa
+    for i in range(8):
+        u = 0.5 - 0.5 * math.cos(i / 8 * 2 * math.pi)
+        pal[51 + i] = (round(18 + 30 * u), round(28 + 45 * u), round(70 + 70 * u))
+    # El agua: 16 azules que suben y bajan (un ciclo suave).
+    for i in range(16):
+        u = 0.5 - 0.5 * math.cos(i / 16 * 2 * math.pi)
+        pal[64 + i] = (round(20 + 40 * u), round(30 + 60 * u), round(80 + 90 * u))
+    # El reflejo del sol: 16 de naranja oscuro a casi blanco.
+    for i in range(16):
+        u = 0.5 - 0.5 * math.cos(i / 16 * 2 * math.pi)
+        pal[80 + i] = (round(140 + 115 * u), round(70 + 150 * u), round(40 + 110 * u))
+    # Las estrellas: 8 brillos.
+    for i in range(8):
+        u = 0.5 - 0.5 * math.cos(i / 8 * 2 * math.pi)
+        v = round(60 + 195 * u)
+        pal[96 + i] = (v, v, min(255, v + 20))
+    horizonte = alto * 55 // 100
+    cx, cy, r = ancho // 2, horizonte - alto // 12, alto // 9
+    filas = bytearray()
+    estado = 12345
+    for y in range(alto):
+        filas.append(0)
+        for x in range(ancho):
+            if y < horizonte:
+                d2 = (x - cx) ** 2 + (y - cy) ** 2
+                if d2 <= r * r:
+                    c = 48 if d2 <= (r - 3) ** 2 else 49
+                else:
+                    # El cielo, con un tramado ordenado entre dos tonos.
+                    t = y / horizonte * 47
+                    base = int(t)
+                    c = min(47, base + (1 if (t - base) > ((x * 7 + y * 3) % 8) / 8 else 0))
+                    estado = (estado * 1103515245 + 12345) & 0x7FFFFFFF
+                    if y < horizonte * 2 // 3 and estado % 997 == 0:
+                        c = 96 + (x + y) % 8
+                # La costa, a la izquierda.
+                if y > horizonte - 18 - (x // 9) % 7 and x < ancho // 3 - (y % 5):
+                    c = 50
+            else:
+                prof = y - horizonte
+                # El reflejo: una columna que se abre con la distancia.
+                ancho_r = r // 3 + prof // 3
+                ola = (x // (5 + prof // 15) + prof // 2 + (prof * prof) // 90) % 16
+                if abs(x - cx) < ancho_r - (ola % 5) * (2 + prof // 20) and ola % 4 != 0:
+                    c = 80 + (prof // 2 + abs(x - cx) // 5) % 16
+                elif prof < alto // 22:
+                    # Junto al horizonte, el agua brilla (gira).
+                    c = 64 + (x // (6 + prof // 12) + prof // 2 + (prof * prof) // 90) % 16
+                else:
+                    # Más cerca, olas quietas: ocho azules fijos (51 a 58), del mismo ciclo de tonos.
+                    c = 51 + ((x // (6 + prof // 12) + prof // 2 + (prof * prof) // 90) % 16) // 2
+            filas.append(c)
+    cab = struct.pack(">IIBBBBB", ancho, alto, 8, 3, 0, 0, 0)
+    texto = b"DashOS-ciclos\x0064-79 6\n80-95 10 atras\n96-103 3"
+    return (b"\x89PNG\r\n\x1a\n" + trozo(b"IHDR", cab) + trozo(b"PLTE", b"".join(bytes(c) for c in pal))
+            + trozo(b"tEXt", texto) + trozo(b"IDAT", zlib.compress(bytes(filas), 9)) + trozo(b"IEND", b""))
+
+
 FONDOS = {"ondas.png": ondas, "atardecer.png": atardecer, "rota.png": rota, "enorme.png": enorme}
 # Los que se ven: sus píxeles, para `cubrir_en`.
 PIXELES = {"ondas.png": ondas_px, "atardecer.png": atardecer_px}

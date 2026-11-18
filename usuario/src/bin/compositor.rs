@@ -881,6 +881,7 @@ fn principal() -> u64 {
     // E8: cuadros, microsegundos componiendo, píxeles dañados y desde cuándo se cuenta.
     let mut primera_ventana = false;
     let mut medida = (0u64, 0u64, 0u64, dashos::ahora_us());
+    let mut cpu_medida = dashos::cpu_tiempo(0).max(0) as u64;
     let mut cuadros_total = 0u64;
     let mut arrastre: Option<(u64, u64)> = None;
     loop {
@@ -1298,9 +1299,18 @@ fn principal() -> u64 {
             medida.2 += danos.iter().map(|r| (r.w as u64) * (r.h as u64)).sum::<u64>();
         }
         if t0 >= medida.3 + 10_000_000 {
+            // Rama `fondos`: y la CPU de todo el compositor (llamada 52, su grupo), en milésimas de un núcleo.
+            let cpu = dashos::cpu_tiempo(0).max(0) as u64;
             if medida.0 > 0 {
-                println!("  [compositor] en 10 s: {} cuadros, {} ms componiendo, {} kpx", medida.0, medida.1 / 1000, medida.2 / 1000);
+                println!(
+                    "  [compositor] en 10 s: {} cuadros, {} ms componiendo, {} kpx; CPU {}‰ de un núcleo",
+                    medida.0,
+                    medida.1 / 1000,
+                    medida.2 / 1000,
+                    cpu.saturating_sub(cpu_medida) * 1000 / (t0 - medida.3).max(1)
+                );
             }
+            cpu_medida = cpu;
             medida = (0, 0, 0, t0);
         }
         for (cl, aviso, ms) in avisos {

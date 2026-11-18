@@ -1568,7 +1568,6 @@ impl<M: Memorias> Escena<M> {
         let yo = self.clientes.get_mut(&cliente).unwrap();
         let e = yo.capas[&id].actual;
         let antes = rect_de(yo, sup);
-        self.danos.extend(antes);
         let medida = yo.superficies[&sup].bufer.and_then(|b| yo.shm.pixeles(b)).map(|(_, b)| (b.ancho as i32, b.alto as i32));
         let s = yo.superficies.get_mut(&sup).unwrap();
         match medida {
@@ -1587,7 +1586,14 @@ impl<M: Memorias> Escena<M> {
                     // Otro sitio (H5: el área cambió tras su primer configure): se dice otra vez dónde.
                     self.capas_colocadas.push((cliente, x, y));
                 }
-                self.danos.extend(rect_de(yo, sup));
+                // Rama `fondos`: solo si se movió o cambió de medida. Si no, lo que cambió de dentro ya lo dañó `aplicar`
+                // (un búfer nuevo, entero; el mismo, lo que diga el cliente): antes cada commit de una capa la repintaba
+                // entera, y un fondo animado (dos franjas de 1 Mpx) hacía componer toda la pantalla en cada cuadro.
+                let ahora = rect_de(yo, sup);
+                if antes != ahora {
+                    self.danos.extend(antes);
+                    self.danos.extend(ahora);
+                }
                 // Teclado exclusivo en las capas de arriba: se lo lleva mientras se vea (una pantalla de entrada).
                 if e.teclado == 1 && e.capa >= 2 && self.teclado != Some((cliente, sup)) && !self.oculto(cliente) {
                     let mut ev = Vec::new();
@@ -1597,6 +1603,7 @@ impl<M: Memorias> Escena<M> {
             }
             None => {
                 s.sitio = None;
+                self.danos.extend(antes);
                 self.capas.retain(|x| *x != (cliente, sup));
                 if self.teclado == Some((cliente, sup)) {
                     // La capa se va de la pantalla pero sigue: se le dice que pierde el teclado (antes, nada).
@@ -2169,7 +2176,13 @@ impl<M: Memorias> Escena<M> {
             }
         }
         // Los avisos de frame: de lo que está en pantalla, se haya dañado o no (el cliente espera su turno).
-        for &(c, id, _, _) in &capas {
+        // Rama `fondos`: una capa de fondo que no se ve (tapada por ventanas opacas o maximizadas, con la pantalla
+        // apagada o bloqueada) no recibe el suyo hasta que se vea: un fondo animado se para solo y no gasta nada.
+        let retener: Vec<bool> = (0..capas.len()).map(|k| self.fondo_sin_ver(&capas, k)).collect();
+        for (k, &(c, id, _, _)) in capas.iter().enumerate() {
+            if retener[k] {
+                continue;
+            }
             if let Some(s) = self.clientes.get_mut(&c).and_then(|cli| cli.superficies.get_mut(&id)) {
                 for aviso in s.avisos.drain(..) {
                     avisar(c, aviso, ms);
@@ -2178,6 +2191,63 @@ impl<M: Memorias> Escena<M> {
         }
         danos
     }
+
+    /// Rama `fondos`: si la capa `k` de `capas` (de abajo arriba) es de fondo y no se ve nada de ella: la pantalla
+    /// apagada o bloqueada, o tapada por lo de encima que es opaco seguro (un búfer sin alfa, o una ventana maximizada,
+    /// que el kit pinta entera). Lo que queda a la vista, si es menos de 1024 píxeles (una esquina redondeada) y poco de
+    /// la capa, no cuenta.
+    fn fondo_sin_ver(&self, capas: &[(Cliente, u32, i32, i32)], k: usize) -> bool {
+        let (c, id, _, _) = capas[k];
+        let Some(cli) = self.clientes.get(&c) else { return false };
+        let de_fondo = cli.superficies.get(&id).and_then(|s| s.capa).and_then(|x| cli.capas.get(&x)).is_some_and(|x| x.actual.capa == 0);
+        if !de_fondo {
+            return false;
+        }
+        if self.cx.oscuro || self.bloqueo.is_some() {
+            return true;
+        }
+        let Some(r) = rect_de(cli, id) else { return false };
+        let mut quedan: Vec<Rect> = alloc::vec![r];
+        for &(c2, id2, _, _) in &capas[k + 1..] {
+            let Some(cli2) = self.clientes.get(&c2) else { continue };
+            let opaca = cli2.superficies.get(&id2).and_then(|s| s.bufer).and_then(|b| cli2.shm.pixeles(b)).is_some_and(|(_, b)| b.formato == crate::shm::XRGB8888);
+            let maximizada = cli2.superficies.get(&id2).and_then(|s| s.rol).and_then(|r| cli2.xdg.get(&r)).is_some_and(|x| x.antes_de_maximizar.is_some() && x.emergente.is_none());
+            let tapa = if maximizada { decoracion::ventana_de(cli2, id2) } else if opaca { rect_de(cli2, id2) } else { None };
+            let Some(t) = tapa else { continue };
+            quedan = quedan.into_iter().flat_map(|q| restar(q, t)).collect();
+            if quedan.is_empty() {
+                return true;
+            }
+            if quedan.len() > 256 {
+                return false;
+            }
+        }
+        let (visto, total) = (quedan.iter().map(|q| q.w as i64 * q.h as i64).sum::<i64>(), r.w as i64 * r.h as i64);
+        visto < 1024 && visto * 4 < total
+    }
+}
+
+/// Rama `fondos`: lo que queda de `a` quitándole `b` (hasta cuatro rectángulos).
+pub fn restar(a: Rect, b: Rect) -> Vec<Rect> {
+    let c = a.cruce(b);
+    if c.vacio() {
+        return alloc::vec![a];
+    }
+    let mut v = Vec::with_capacity(4);
+    // Arriba y abajo, a todo lo ancho; izquierda y derecha, en la franja del cruce.
+    if c.y > a.y {
+        v.push(Rect { x: a.x, y: a.y, w: a.w, h: c.y - a.y });
+    }
+    if c.y + c.h < a.y + a.h {
+        v.push(Rect { x: a.x, y: c.y + c.h, w: a.w, h: a.y + a.h - c.y - c.h });
+    }
+    if c.x > a.x {
+        v.push(Rect { x: a.x, y: c.y, w: c.x - a.x, h: c.h });
+    }
+    if c.x + c.w < a.x + a.w {
+        v.push(Rect { x: c.x + c.w, y: c.y, w: a.x + a.w - c.x - c.w, h: c.h });
+    }
+    v
 }
 
 /// La sombra de una ventana (Material 3, elevación baja): 4 abajo, difuminada en `SOMBRA_BORROSA`, con las esquinas de

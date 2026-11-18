@@ -639,6 +639,9 @@ SYS_FICHEROS = [
     # La barra de DMS (docs/bitacoras/dms-barra.md): la barra del escritorio del usuario en shiva (sus barConfigs de
     # DMS, sin nada que no sea de la barra), para `Ajuste DMS SYS:Prefs/Presets/DMS/shiva.json`.
     ("Prefs/Presets/DMS/shiva.json", open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "usuario", "pruebas", "dms-barra-shiva.json"), "rb").read()),
+    # Rama `fondos`: los fondos del sistema (`SYS:Fondos`), hechos aquí: el atardecer sobre el mar con la paleta
+    # animada ("color cycling", 8 KB). Los fondos animados que no son imágenes no ocupan disco (`animado:aurora`).
+    ("Fondos/mar.png", fondos_prueba.paleta_mar()),
 ]
 
 

@@ -48,8 +48,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [archivos] comprobado al arrancar: 1 problemas; reparado, quedan 0
 # A7: la memoria de la caché de páginas, creada al arrancar (24 MB).
 ~│   [archivos] caché de páginas: 48 trozos de 512 KB creados
-# S8 (rama paq): con `Paquetes/`, el cajón de lo instalado con Paq para todos.
-~│   [ficheros] raíz (22 entradas, fin bien): C/ Classes/ DeCarla/ Devs/ Estado/ Fonts/ Imagenes/ L/ LEEME.txt Libs/ Locale/ Paquetes/ Prefs/ Programas/ Rexx/ S/ Storage/ System/ Tools/ Utilities/ WBStartup/ Work/
+# S8 (rama paq): con `Paquetes/`, el cajón de lo instalado con Paq para todos. Rama `fondos`: y `Fondos/` (SYS:Fondos).
+~│   [ficheros] raíz (23 entradas, fin bien): C/ Classes/ DeCarla/ Devs/ Estado/ Fondos/ Fonts/ Imagenes/ L/ LEEME.txt Libs/ Locale/ Paquetes/ Prefs/ Programas/ Rexx/ S/ Storage/ System/ Tools/ Utilities/ WBStartup/ Work/
 ~│   [ficheros] LEEME.txt (19 bytes): "DashOS lee RedoxFS"
 # A3 (docs/REVISION_LOOP.md): buscar, leer y cerrar en un viaje.
 ~│   [ficheros] A3 leer por nombre: bien

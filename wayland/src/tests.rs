@@ -1160,6 +1160,83 @@ mod ventanas {
         }
     }
 
+    /// Rama `fondos`: una capa de fondo tapada por una ventana opaca maximizada, con la pantalla apagada o bloqueada no
+    /// recibe su aviso de `frame` (el fondo animado se para); al destaparse, sí, y no se pierde ninguno.
+    #[test]
+    fn fondo_tapado_sin_avisos() {
+        use crate::tablas::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
+        let mut escena = Escena::new(Mem::default(), 0);
+        let mut pantalla = vec![0u32; 16 * 16];
+        escena.componer(&mut pantalla, 16, 16, 16, 0, &mut |_, _, _| {});
+        let mut fondo = Conexion::new();
+        let mut e = Escritor::new();
+        e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(1).texto(Some("wl_compositor")).uint(6).uint(3).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(2).texto(Some("wl_shm")).uint(1).uint(4).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(5).texto(Some("zwlr_layer_shell_v1")).uint(4).uint(30).fin();
+        e.empezar(3, wl_compositor::req::CREATE_SURFACE).uint(31).fin();
+        e.empezar(30, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(32).uint(31).uint(0).uint(0).texto(Some("fondo")).fin();
+        e.empezar(32, zwlr_layer_surface_v1::req::SET_ANCHOR).uint(15).fin();
+        e.empezar(32, zwlr_layer_surface_v1::req::SET_EXCLUSIVE_ZONE).int(-1).fin();
+        e.empezar(31, wl_surface::req::COMMIT).fin();
+        let ev = mandar(&mut escena, &mut fondo, 9, &e);
+        let conf = ev.iter().find(|x| (x.0, x.1) == (32, zwlr_layer_surface_v1::ev::CONFIGURE)).expect("sin configure");
+        let mut e = Escritor::new();
+        e.empezar(32, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(u32::from_le_bytes(conf.2[..4].try_into().unwrap())).fin();
+        e.empezar(4, wl_shm::req::CREATE_POOL).uint(33).llave(72).int(16 * 16 * 4).fin();
+        e.empezar(33, wl_shm_pool::req::CREATE_BUFFER).uint(34).int(0).int(16).int(16).int(64).uint(XRGB8888).fin();
+        e.empezar(31, wl_surface::req::ATTACH).uint(34).int(0).int(0).fin();
+        e.empezar(31, wl_surface::req::FRAME).uint(100).fin();
+        e.empezar(31, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut fondo, 9, &e);
+        assert!(fondo.roto.is_none(), "{:?}", fondo.roto);
+        let avisos = |escena: &mut Escena<Mem>, pantalla: &mut Vec<u32>| {
+            let mut v = Vec::new();
+            escena.componer(pantalla, 16, 16, 16, 0, &mut |c, a, _| v.push((c, a)));
+            v
+        };
+        assert_eq!(avisos(&mut escena, &mut pantalla), vec![(9, 100)], "a la vista: su aviso");
+        // Una ventana opaca (XRGB), maximizada: tapa el fondo entero.
+        let mut a = Conexion::new();
+        abrir(&mut escena, &mut a, 1, 70);
+        let mut fuera = Vec::new();
+        escena.maximizar_esta((1, 7), true, &mut fuera);
+        let pedir = |escena: &mut Escena<Mem>, fondo: &mut Conexion, id: u32| {
+            let mut e = Escritor::new();
+            e.empezar(31, wl_surface::req::FRAME).uint(id).fin();
+            e.empezar(31, wl_surface::req::COMMIT).fin();
+            mandar(escena, fondo, 9, &e);
+        };
+        pedir(&mut escena, &mut fondo, 101);
+        let v = avisos(&mut escena, &mut pantalla);
+        assert!(!v.contains(&(9, 101)), "tapado y le llegó el aviso: {:?}", v);
+        assert!(!avisos(&mut escena, &mut pantalla).contains(&(9, 101)));
+        // Se va la ventana: llega el que esperaba.
+        escena.adios(1);
+        assert!(avisos(&mut escena, &mut pantalla).contains(&(9, 101)), "destapado y sin su aviso");
+        escena.componer(&mut pantalla, 16, 16, 16, 0, &mut |_, _, _| {});
+        // Un commit de la capa con el mismo búfer y un daño pequeño: se compone eso, no la capa entera.
+        let mut e = Escritor::new();
+        e.empezar(31, wl_surface::req::ATTACH).uint(34).int(0).int(0).fin();
+        e.empezar(31, wl_surface::req::DAMAGE_BUFFER).int(2).int(3).int(4).int(5).fin();
+        e.empezar(31, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut fondo, 9, &e);
+        let danos = escena.componer(&mut pantalla, 16, 16, 16, 0, &mut |_, _, _| {});
+        assert_eq!(danos, vec![Rect { x: 2, y: 3, w: 4, h: 5 }], "la capa entera en cada commit");
+        // La pantalla apagada (Blanker): tampoco; al encenderse, sí.
+        escena.cx.oscuro = true;
+        pedir(&mut escena, &mut fondo, 102);
+        assert!(!avisos(&mut escena, &mut pantalla).contains(&(9, 102)));
+        escena.cx.oscuro = false;
+        assert!(avisos(&mut escena, &mut pantalla).contains(&(9, 102)));
+        // Restar rectángulos (lo que queda a la vista).
+        let r = |x, y, w, h| Rect { x, y, w, h };
+        assert_eq!(restar(r(0, 0, 10, 10), r(20, 20, 5, 5)), vec![r(0, 0, 10, 10)]);
+        assert!(restar(r(0, 0, 10, 10), r(-5, -5, 30, 30)).is_empty());
+        let trozos = restar(r(0, 0, 10, 10), r(3, 3, 4, 4));
+        assert_eq!(trozos.iter().map(|t| t.w * t.h).sum::<i32>(), 100 - 16);
+    }
+
     /// Una capa de la barra: cliente `c`, objetos 30 a 34, con tamaño, anclas, zona y márgenes; si cabe en la memoria
     /// de prueba, con su búfer. Devuelve el tamaño de su configure.
     fn capa(escena: &mut Escena<Mem>, con: &mut Conexion, c: Cliente, tam: (u32, u32), anclas: u32, zona: i32, margenes: [i32; 4]) -> (u32, u32) {
