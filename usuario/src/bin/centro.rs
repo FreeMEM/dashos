@@ -1837,6 +1837,11 @@ fn lineas_dock(d: &dock_ajustes::Dock, o: &dock_ajustes::Osd, k: &discos_ajustes
         trf(148, "Aviso de Bloq Mayús: {}", &[&si_no(o.mayusculas)]),
         trf(162, "Aumento al pasar el ratón: {}", &[&if d.aumento { alloc::format!("{} %", d.escala_aumento) } else { String::from(si_no(false)) }]),
         trf(163, "El aumento aparta a los vecinos: {}", &[&si_no(d.aumento_expandir)]),
+        trf(164, "Al abrir un programa: {}", &[&match d.al_abrir {
+            dock_ajustes::AlAbrir::Latido => tr(165, "su punto late"),
+            dock_ajustes::AlAbrir::Rebote => tr(166, "el icono rebota"),
+            dock_ajustes::AlAbrir::Nada => tr(167, "nada"),
+        }]),
         // Los discos del escritorio (el panel del Workbench, `ENV:Escritorio/discos`).
         trf(150, "Discos del escritorio: {}", &[&si_no(k.mostrar)]),
         trf(151, "Discos: {}", &[&match (k.lado, k.altura) {
@@ -1861,8 +1866,8 @@ fn lineas_dock(d: &dock_ajustes::Dock, o: &dock_ajustes::Osd, k: &discos_ajustes
 /// Cambia la fila `k` de Ajustes > Dock (la opción siguiente), en `ENV:` (sobre lo que había: los comentarios se quedan)
 /// y guardado; el dock vigila `ENV:` y lo aplica en marcha. Lo que pasó, para la consola.
 fn cambiar_dock(d: &mut dock_ajustes::Dock, o: &mut dock_ajustes::Osd, discos: &mut discos_ajustes::Discos, k: usize) -> Option<String> {
-    if k >= 14 {
-        return cambiar_discos(discos, k - 14);
+    if k >= 15 {
+        return cambiar_discos(discos, k - 15);
     }
     use dock_ajustes::*;
     let siguiente = |v: &[i32], x: i32| v[(v.iter().position(|&y| y == x).map_or(0, |i| i + 1)) % v.len()];
@@ -1934,6 +1939,14 @@ fn cambiar_dock(d: &mut dock_ajustes::Dock, o: &mut dock_ajustes::Osd, discos: &
         }
         13 => {
             d.aumento_expandir = !d.aumento_expandir;
+            false
+        }
+        14 => {
+            d.al_abrir = match d.al_abrir {
+                AlAbrir::Latido => AlAbrir::Rebote,
+                AlAbrir::Rebote => AlAbrir::Nada,
+                AlAbrir::Nada => AlAbrir::Latido,
+            };
             false
         }
         _ => return None,
