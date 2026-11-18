@@ -223,3 +223,10 @@ disco de pruebas no cambia. La capa de los discos: 248 × 300 × 4 = 290 KB con 
   sus propias ventanas).
 - Avisar al montar o desmontar: hoy solo pasa al entrar y salir la sesión (Home: y RAM:), que sería un aviso en cada
   entrada; se deja para cuando haya volúmenes extraíbles.
+
+## Decisiones del usuario (2026-11-18)
+
+- Los discos como están: panel flotante arriba a la derecha, tarjetas con icono, nombre, libre y barra ("Me gusta
+  como has puesto los discos así").
+- El rebote al abrir de macOS, no ("ya un poco antiguo"): de serie, el punto de abierto aparece y late suave hasta que
+  sale la ventana (como GNOME/Windows 11); el rebote queda solo como opción en Ajustes > Dock, apagada de serie.
