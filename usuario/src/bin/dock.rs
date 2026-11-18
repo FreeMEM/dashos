@@ -47,6 +47,11 @@ mod dock_modelo;
 mod osd_modelo;
 #[path = "../icono_programa.rs"]
 mod icono_programa;
+#[path = "../dock_vivo.rs"]
+#[allow(dead_code)]
+mod dock_vivo;
+#[path = "../cpu_propia.rs"]
+mod cpu_propia;
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -147,6 +152,14 @@ struct Muelle {
     /// El elemento bajo el ratón.
     encima: Option<usize>,
     desplegado: bool,
+    /// Rama dock-discos: la lupa, los rebotes de lo que se abre, arrastrar un fijado, los indicadores, el largo del cuerpo
+    /// (con su muelle) y desde cuándo se ve (la burbuja espera 250 ms solo al aparecer, como DMS).
+    lupa: dock_vivo::Lupa,
+    rebotes: Vec<dock_vivo::Rebote>,
+    arrastre: Option<dock_vivo::Arrastre>,
+    indicadores: dock_vivo::Indicadores,
+    cuerpo: muelle::Muelle,
+    visto_desde: u64,
 }
 
 impl Muelle {
@@ -175,6 +188,8 @@ struct Menu {
     encima: Option<usize>,
     hoja: Option<Lamina>,
     listo: bool,
+    /// La entrada: 75 ms con OutQuart, de 0 a 255 de opacidad (`DockContextMenuBase`).
+    aparece: muelle::Tramo,
 }
 
 /// La burbuja con el nombre.
@@ -213,6 +228,8 @@ struct Estado {
     medio: Fuente,
     /// La letra de los iconos sin imagen y de la insignia (se pinta con el estado prestado).
     letra: core::cell::RefCell<Fuente>,
+    /// El botón izquierdo pulsado sobre un elemento (dock, elemento): se abre al soltar, o se arrastra si es un fijado.
+    pulsado: Option<(usize, usize)>,
 }
 
 fn caja_a_rect(c: Caja) -> Rect {
@@ -452,6 +469,23 @@ fn cambiar_fijado(aj: &mut ajustes::Dock, programa: &str, fijar: bool) -> String
     alloc::format!("en ENV: {} ({} bytes); guardado: {}", usado, texto.len(), guardado)
 }
 
+/// Rama dock-discos: los fijados en otro orden (tras arrastrar uno), en `ENV:` y guardado, como `cambiar_fijado`.
+fn ordenar_fijados(aj: &mut ajustes::Dock, nuevo: Vec<String>) -> String {
+    use kit::idioma::texto::Ajustes;
+    aj.fijados = nuevo;
+    let antes = leer_ajuste(ajustes::FICHERO_DOCK).ok().flatten();
+    let mut x = antes.as_deref().and_then(|b| Ajustes::leer(b).ok()).unwrap_or_else(|| {
+        let mut x = Ajustes::nuevo();
+        x.comentar(ajustes::CABECERA_DOCK);
+        x
+    });
+    let _ = x.poner("fijados", &aj.fijados.join(", "));
+    let texto = x.texto();
+    let usado = escribir_env(ajustes::FICHERO_DOCK, texto.as_bytes());
+    let guardado = if usado == 0 { guardar_en_envarc(ajustes::FICHERO_DOCK) } else { -1 };
+    alloc::format!("en ENV: {} ({} bytes); guardado: {}", usado, texto.len(), guardado)
+}
+
 /// La vigilancia de `ENV:` y `ENV:Escritorio` (avisos de cambio por la puerta), y el temporizador de reintentar.
 struct Vigila {
     ids: [u32; 2],
@@ -635,6 +669,35 @@ fn glifo(l: &mut Lienzo, x: i32, y: i32, lado: i32, g: Glifo, color: Color) {
 
 /// El dock de `m` en su búfer (`w` × `h`): el cuerpo, los elementos con su saltito y su indicador, desplazado por el
 /// deslizamiento.
+/// La celda `c` crecida a `escala` milésimas, pegada al borde de la pantalla (la lupa crece hacia dentro, como DMS con su
+/// `transformOrigin` en el borde) y centrada a lo largo.
+fn escalar(c: Caja, escala: i64, borde: ajustes::Borde) -> Caja {
+    if escala == 1000 {
+        return c;
+    }
+    let (w, h) = ((c.w as i64 * escala / 1000) as i32, (c.h as i64 * escala / 1000) as i32);
+    match borde {
+        ajustes::Borde::Abajo => Caja { x: c.x + (c.w - w) / 2, y: c.y + c.h - h, w, h },
+        ajustes::Borde::Arriba => Caja { x: c.x + (c.w - w) / 2, y: c.y, w, h },
+        ajustes::Borde::Derecha => Caja { x: c.x + c.w - w, y: c.y + (c.h - h) / 2, w, h },
+        ajustes::Borde::Izquierda => Caja { x: c.x, y: c.y + (c.h - h) / 2, w, h },
+    }
+}
+
+/// Escala por `a` (0 a 255) la opacidad de todo el búfer (va premultiplicado: los cuatro canales).
+fn atenuar(px: &mut [u32], a: u32) {
+    if a >= 255 {
+        return;
+    }
+    for p in px.iter_mut() {
+        let c = *p;
+        if c != 0 {
+            let e = |s: u32| (((c >> s) & 0xff) * a / 255) << s;
+            *p = e(24) | e(16) | e(8) | e(0);
+        }
+    }
+}
+
 fn pintar_dock(px: &mut [u32], w: i32, h: i32, e: &Estado, m: &Muelle, ahora: u64) {
     px.fill(0);
     let aj = &e.aj;
@@ -647,8 +710,23 @@ fn pintar_dock(px: &mut [u32], w: i32, h: i32, e: &Estado, m: &Muelle, ahora: u6
     }
     let (ox, oy) = (sx * d, sy * d);
     let mover = |c: Caja, dx: i32, dy: i32| Caja { x: c.x + ox + dx, y: c.y + oy + dy, ..c };
+    // Rama dock-discos: la lupa (cuánto crece cada uno y, si aparta, cuánto se mueve), el cuerpo que cambia de largo con
+    // su muelle, el arrastre de un fijado y el rebote de lo que se abre.
+    let vertical = aj.posicion.vertical();
+    let a_lo_largo = |c: &Caja| if vertical { c.y + c.h / 2 } else { c.x + c.w / 2 };
+    let centros: Vec<Option<i32>> = m.items.iter().zip(&m.disp.celdas).map(|(it, c)| (c.w > 0 && it.tipo != Tipo::Separador).then(|| a_lo_largo(c))).collect();
+    let escalas = dock_vivo::escalas(aj, &centros, m.lupa.cursor, m.lupa.valor(ahora));
+    let (aparte, crece) = if aj.aumento && aj.aumento_expandir {
+        let largos: Vec<i32> = m.disp.celdas.iter().map(|c| if c.w == 0 { 0 } else if vertical { c.h } else { c.w }).collect();
+        dock_vivo::apartar(&largos, &escalas, m.disp.crecer)
+    } else {
+        (alloc::vec![0; m.items.len()], 0)
+    };
+    let largo_cuerpo = if aj.modo == ajustes::Modo::Compacto { m.cuerpo.entero().max(0) + crece } else if vertical { m.disp.cuerpo.h } else { m.disp.cuerpo.w };
     if !m.items.is_empty() {
-        let cuerpo = mover(m.disp.cuerpo, 0, 0);
+        let c0 = m.disp.cuerpo;
+        let c0 = if vertical { Caja { y: c0.y + (c0.h - largo_cuerpo) / 2, h: largo_cuerpo, ..c0 } } else { Caja { x: c0.x + (c0.w - largo_cuerpo) / 2, w: largo_cuerpo, ..c0 } };
+        let cuerpo = mover(c0, 0, 0);
         l.redondeado(caja_a_rect(cuerpo), aj.radio, con_opacidad(t.superficie, aj.opacidad * 255 / 100));
         if aj.borde {
             let papel = match aj.color_borde {
@@ -667,12 +745,34 @@ fn pintar_dock(px: &mut [u32], w: i32, h: i32, e: &Estado, m: &Muelle, ahora: u6
         if celda.w == 0 {
             continue;
         }
-        // El saltito, hacia dentro de la pantalla.
-        let s = m.vista.salto(&it.clave, ahora);
-        let c = mover(celda, -sx * s, -sy * s);
+        // El saltito y el rebote, hacia dentro de la pantalla; a lo largo, lo que aparta la lupa y el arrastre.
+        // El rebote sube lo que deja el hueco de la capa para el saltito (`animationHeadroom`, el 35 % del icono).
+        let s = m.vista.salto(&it.clave, ahora) + m.rebotes.iter().find(|r| r.clave == it.clave).map_or(0, |r| r.altura(ahora, 2 * m.disp.cabecera));
+        let mut largo = aparte.get(k).copied().unwrap_or(0);
+        if let Some(a) = m.arrastre.as_ref().filter(|a| a.activo)
+            && it.fijado
+            && let Some(p) = aj.fijados.iter().position(|f| f == &it.programa)
+        {
+            largo += a.desplazado(p, ahora);
+        }
+        let (lx, ly) = if vertical { (0, largo) } else { (largo, 0) };
+        let celda = Caja { x: celda.x + lx, y: celda.y + ly, ..celda };
+        let escala = escalas.get(k).copied().unwrap_or(1000);
+        // Lo que sube (saltito, rebote) y lo que crece (lupa), sin salirse de la capa: lo que se saliera no se vería.
+        let traves = if vertical { m.disp.capa.ancho } else { m.disp.capa.alto };
+        let desde_borde = if vertical { if sx > 0 { m.disp.capa.ancho - celda.x - celda.w } else { celda.x } } else if sy > 0 { m.disp.capa.alto - celda.y - celda.h } else { celda.y };
+        let crecido = (aj.iconos as i64 * escala / 1000) as i32;
+        let s = s.clamp(0, (traves - desde_borde - crecido).max(0));
+        let c = mover(escalar(celda, escala, aj.posicion), -sx * s, -sy * s);
         let r = caja_a_rect(c);
+        let lado = (aj.iconos as i64 * escala / 1000) as i32;
+        // El que se arrastra, con el fondo y el filo del primario (`DockAppButton` al arrastrar).
+        if m.arrastre.as_ref().is_some_and(|a| a.activo && a.programa == it.programa) && it.fijado {
+            l.redondeado(Rect::new(r.x - 2, r.y - 2, r.w + 4, r.h + 4), radio_icono + 2, con_opacidad(t.primario, 46));
+            l.borde(Rect::new(r.x - 2, r.y - 2, r.w + 4, r.h + 4), radio_icono + 2, 2, t.primario);
+        }
         match it.tipo {
-            Tipo::Lanzador => icono_apps(&mut l, r, aj.iconos - 4, t.sobre_superficie),
+            Tipo::Lanzador => icono_apps(&mut l, r, lado - 4, t.sobre_superficie),
             Tipo::Separador => {
                 let largo = aj.iconos / 2;
                 let rr = if aj.posicion.vertical() { Rect::new(c.x + (c.w - largo) / 2, c.y + (c.h - 2) / 2, largo, 2) } else { Rect::new(c.x + (c.w - 2) / 2, c.y + (c.h - largo) / 2, 2, largo) };
@@ -696,7 +796,6 @@ fn pintar_dock(px: &mut [u32], w: i32, h: i32, e: &Estado, m: &Muelle, ahora: u6
                 }
             }
             _ => {
-                let lado = aj.iconos;
                 match icono_programa::icono(&it.programa, lado as u32) {
                     Some(ic) if ic.px.len() == (ic.lado * ic.lado) as usize => {
                         for y in 0..ic.lado as i32 {
@@ -715,10 +814,28 @@ fn pintar_dock(px: &mut [u32], w: i32, h: i32, e: &Estado, m: &Muelle, ahora: u6
                         e.letra(&mut l, r, &ini, tam, t.primario);
                     }
                 }
-                for (p, activo) in dock_modelo::indicador(aj, it, celda) {
-                    let p = mover(p, -sx * s, -sy * s);
+                // El indicador: el del activo se alarga y se acorta (75 ms), y el último punto crece al salir.
+                let (largo_activo, nace) = m.indicadores.de(&it.clave, ahora);
+                let puntos = dock_modelo::indicador(aj, it, celda);
+                let n = puntos.len();
+                let con_largo = puntos.iter().position(|p| p.1).or(if largo_activo > 1000 { Some(0) } else { None });
+                for (j, (p, activo)) in puntos.into_iter().enumerate() {
+                    let mut p = mover(p, -sx * s, -sy * s);
+                    if con_largo == Some(j) {
+                        let base = if activo { if vertical { p.h / 3 } else { p.w / 3 } } else if vertical { p.h } else { p.w };
+                        let nuevo = (base as i64 * largo_activo / 1000) as i32;
+                        p = if vertical { Caja { y: p.y + (p.h - nuevo) / 2, h: nuevo, ..p } } else { Caja { x: p.x + (p.w - nuevo) / 2, w: nuevo, ..p } };
+                    }
+                    if j + 1 == n && nace != 1000 {
+                        let (w, h) = ((p.w as i64 * nace / 1000) as i32, (p.h as i64 * nace / 1000) as i32);
+                        p = Caja { x: p.x + (p.w - w) / 2, y: p.y + (p.h - h) / 2, w, h };
+                    }
+                    if p.w <= 0 || p.h <= 0 {
+                        continue;
+                    }
                     let rr = caja_a_rect(p);
-                    l.redondeado(rr, p.w.min(p.h) / 2, if activo { t.primario } else { t.sobre_variante_superficie });
+                    let primario = activo || (con_largo == Some(j) && largo_activo > 2000);
+                    l.redondeado(rr, p.w.min(p.h) / 2, if primario { t.primario } else { t.sobre_variante_superficie });
                 }
             }
         }
@@ -938,7 +1055,26 @@ impl Estado {
             let libre = (0..MAX_SALIDAS as u32).find(|n| !self.muelles.iter().any(|m| m.base == BASE_DOCK + 10 * n)).unwrap_or(0);
             let base = BASE_DOCK + 10 * libre;
             let disp = dock_modelo::disponer(&self.aj, &[], false, self.pantalla(s));
-            let m = Muelle { salida: s, base, va: VA + ((libre as usize + 1) << 32), hoja: None, bufer: (0, 0), configurado: false, items: Vec::new(), disp: disp.clone(), vista: Vista::nueva(ahora, disp.escondido), visto: false, encima: None, desplegado: false };
+            let m = Muelle {
+                salida: s,
+                base,
+                va: VA + ((libre as usize + 1) << 32),
+                hoja: None,
+                bufer: (0, 0),
+                configurado: false,
+                items: Vec::new(),
+                disp: disp.clone(),
+                vista: Vista::nueva(ahora, disp.escondido),
+                visto: false,
+                encima: None,
+                desplegado: false,
+                lupa: dock_vivo::Lupa::nueva(),
+                rebotes: Vec::new(),
+                arrastre: None,
+                indicadores: dock_vivo::Indicadores::default(),
+                cuerpo: dock_vivo::muelle_cuerpo(muelle::BASE_MS > 0),
+                visto_desde: 0,
+            };
             e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(m.sup()).fin();
             e.empezar(CAPAS, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(m.capa()).uint(m.sup()).uint(self.salidas[s].objeto).uint(2).texto(Some("dock")).fin();
             self.muelles.push(m);
@@ -949,6 +1085,26 @@ impl Estado {
             m.items = dock_modelo::construir(&self.aj, &self.ventanas, None);
             m.disp = dock_modelo::disponer(&self.aj, &m.items, m.desplegado, pantalla);
             m.encima = None;
+            m.arrastre = None;
+            // El cuerpo va a su largo nuevo con el muelle (la primera vez, salta).
+            let largo = if self.aj.posicion.vertical() { m.disp.cuerpo.h } else { m.disp.cuerpo.w };
+            if m.cuerpo.destino == 0 {
+                m.cuerpo.saltar(largo as i64 * muelle::UNO);
+            } else {
+                m.cuerpo.ir(largo as i64 * muelle::UNO);
+            }
+            // Los indicadores: el punto de una ventana nueva crece; el del activo se alarga.
+            let puntos: Vec<(String, usize, bool)> = m.items.iter().filter(|it| it.con_indicador()).map(|it| (it.clave.clone(), it.puntos().len(), it.activo())).collect();
+            m.indicadores.poner(&puntos, ahora, muelle::BASE_MS > 0);
+            // El rebote de lo que se abrió acaba cuando sale su ventana.
+            for r in m.rebotes.iter_mut().filter(|r| r.hasta.is_none()) {
+                if let Some(it) = m.items.iter().find(|it| it.clave == r.clave)
+                    && (it.abierto || !it.ventanas.is_empty())
+                {
+                    r.hasta = Some(ahora);
+                    println!("  [dock] {} ya tiene ventana: el rebote acaba", it.programa);
+                }
+            }
             let cp = m.disp.capa;
             e.empezar(m.capa(), zwlr_layer_surface_v1::req::SET_SIZE).uint(if cp.anclas & 12 == 12 { 0 } else { cp.ancho as u32 }).uint(if cp.anclas & 3 == 3 { 0 } else { cp.alto as u32 }).fin();
             e.empezar(m.capa(), zwlr_layer_surface_v1::req::SET_ANCHOR).uint(cp.anclas).fin();
@@ -1159,7 +1315,7 @@ impl Estado {
             nombres.join(" · "),
             fijar.map_or(String::new(), |(fx, fy)| alloc::format!("; fijar en ({}, {})", fx, fy))
         );
-        self.menu = Some(Menu { muelle: i, programa: it.programa.clone(), elemento: it, opciones, filas, tam: (w, h), encima: None, hoja: None, listo: false });
+        self.menu = Some(Menu { muelle: i, programa: it.programa.clone(), elemento: it, opciones, filas, tam: (w, h), encima: None, hoja: None, listo: false, aparece: muelle::Tramo::quieto(255 * muelle::UNO) });
         let aj = self.aj.clone();
         self.muelles[i].vista.poner_menu(true, &aj, dashos::ahora_us());
         self.cerrar_burbuja(c);
@@ -1181,7 +1337,9 @@ impl Estado {
             return;
         }
         if let Some(h) = hoja.as_mut() {
-            pintar_menu(h.px((m.tam.0 * m.tam.1) as usize), m, &self.aj, &self.tema, &mut self.fuente);
+            let px = h.px((m.tam.0 * m.tam.1) as usize);
+            pintar_menu(px, m, &self.aj, &self.tema, &mut self.fuente);
+            atenuar(px, (m.aparece.valor(dashos::ahora_us()) / muelle::UNO).clamp(0, 255) as u32);
         }
         m.hoja = hoja;
         mostrar(&mut e, SUP_MENU, BUFER_MENU, m.tam.0, m.tam.1);
@@ -1286,6 +1444,17 @@ impl Estado {
         println!("  [dock] lanza Programas/{}: {} (proceso {})", programa, estado, pid);
     }
 
+    /// Rama dock-discos: el icono de lo que se abre bota hasta que sale su ventana (como macOS; DMS no lo hace).
+    fn rebotar(&mut self, i: usize, it: &Elemento) {
+        if muelle::BASE_MS == 0 {
+            return;
+        }
+        let m = &mut self.muelles[i];
+        m.rebotes.retain(|r| r.clave != it.clave);
+        m.rebotes.push(dock_vivo::Rebote::nuevo(&it.clave, dashos::ahora_us()));
+        println!("  [dock] {} rebota hasta que abra su ventana", it.programa);
+    }
+
     /// `handleLeftClick`.
     fn clic(&mut self, c: &mut Cliente, i: usize, k: usize) {
         let it = self.muelles[i].items[k].clone();
@@ -1296,7 +1465,10 @@ impl Estado {
                 c.mandar(&e);
                 println!("  [dock] pide el lanzador");
             }
-            Tipo::Fijado => self.abrir_programa(c, &it.programa),
+            Tipo::Fijado => {
+                self.abrir_programa(c, &it.programa);
+                self.rebotar(i, &it);
+            }
             Tipo::Ventana => {
                 if let Some((id, _)) = it.ventanas.first() {
                     println!("  [dock] trae la ventana {} ({})", id, it.programa);
@@ -1304,7 +1476,10 @@ impl Estado {
                 }
             }
             Tipo::Grupo => match it.ventanas.len() {
-                0 => self.abrir_programa(c, &it.programa),
+                0 => {
+                    self.abrir_programa(c, &it.programa);
+                    self.rebotar(i, &it);
+                }
                 1 => {
                     println!("  [dock] trae la ventana {} ({})", it.ventanas[0].0, it.programa);
                     self.activar(c, it.ventanas[0].0);
@@ -1463,6 +1638,7 @@ fn principal() -> u64 {
         fuente: Fuente::regular(),
         medio: Fuente::medium(),
         letra: core::cell::RefCell::new(Fuente::medium()),
+        pulsado: None,
     };
     let mut vigila = Vigila { ids: [0; 2], temporizador: 0 };
     vigila.armar(puerta);
@@ -1472,6 +1648,7 @@ fn principal() -> u64 {
     let mut hostil_hasta = tabla.buscar("dock-prueba").map(|_| dashos::ahora_us() + 120_000_000);
     // Dónde está el puntero.
     let (mut sobre, mut px, mut py) = (0u32, 0i32, 0i32);
+    let mut cpu = cpu_propia::CpuPropia::new("dock");
     let mut lista_dicha = false;
     loop {
         let ahora = dashos::ahora_us();
@@ -1481,10 +1658,14 @@ fn principal() -> u64 {
         }
         // El plazo: un cuadro si algo se mueve; si no, lo siguiente que toque.
         let mut plazo = 1_000_000u64;
-        let animando = est.muelles.iter().any(|m| m.vista.desliz.en_marcha || m.vista.saltando(ahora) || m.vista.se_ve(&est.aj, ahora) != m.visto) || est.osd.escala.en_marcha || est.osd.que.as_ref().is_some_and(|_| !est.osd.opacidad.acabado(ahora));
+        let animando = est.muelles.iter().any(|m| m.vista.desliz.en_marcha || m.vista.saltando(ahora) || m.vista.se_ve(&est.aj, ahora) != m.visto || vivo(m, ahora))
+            || est.osd.escala.en_marcha
+            || est.osd.que.as_ref().is_some_and(|_| !est.osd.opacidad.acabado(ahora))
+            || est.menu.as_ref().is_some_and(|m| m.listo && !m.aparece.acabado(ahora));
         if animando {
             plazo = CUADRO_US;
         }
+        cpu.vuelta(animando);
         for m in &est.muelles {
             if let Some(h) = m.vista.gracia_hasta {
                 plazo = plazo.min(h.saturating_sub(ahora).max(1));
@@ -1526,10 +1707,18 @@ fn principal() -> u64 {
             let saltos_antes = m.vista.saltos.len();
             // Un salto que se movía en el cuadro de antes (también si acabó entre medias: falta pintarlo donde quedó).
             let saltaba = m.vista.saltando(ahora.saturating_sub(paso));
+            // Rama dock-discos: lo que se movía en el cuadro de antes también se pinta donde quedó.
+            let vivia = vivo(m, ahora.saturating_sub(paso));
             m.vista.avanzar(ahora, paso, aj.iconos);
+            m.cuerpo.avanzar(paso);
+            m.indicadores.avanzar(paso);
+            m.rebotes.retain(|r| !r.acabado(ahora.saturating_sub(paso)));
             let cambia_vista = ve != m.visto;
             if cambia_vista {
                 m.visto = ve;
+                if ve {
+                    m.visto_desde = ahora;
+                }
             }
             // tecla-pegada: solo si algo se movió. Antes, con cualquier salto en la lista (un icono arriba, quieto, con
             // el ratón encima o tras esconderse), se repintaba a cada vuelta; y cada commit trae un aviso del
@@ -1538,7 +1727,9 @@ fn principal() -> u64 {
                 || m.vista.desliz.entero() != antes
                 || saltaba
                 || m.vista.saltando(ahora)
-                || m.vista.saltos.len() != saltos_antes;
+                || m.vista.saltos.len() != saltos_antes
+                || vivia
+                || vivo(m, ahora);
             if cambia_vista {
                 if ve {
                     // Dónde queda cada cosa (para las pruebas: el guion pulsa ahí).
@@ -1574,6 +1765,12 @@ fn principal() -> u64 {
             if est.muelles.get(i).is_some_and(|m| m.encima == Some(k) && m.visto) && est.menu.is_none() {
                 est.abrir_burbuja(&mut c, i, k);
             }
+        }
+        if let Some(m) = est.menu.as_ref()
+            && m.listo
+            && !m.aparece.acabado(ahora.saturating_sub(paso))
+        {
+            est.repintar_menu(&mut c);
         }
         let juntadas = est.osd.juntadas;
         let (anima_osd, cerrar_osd) = est.osd.avanzar(ahora, paso);
@@ -1734,6 +1931,9 @@ fn principal() -> u64 {
                 e.empezar(CAPA_MENU, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(palabra(0)).fin();
                 c.mandar(&e);
                 if let Some(m) = est.menu.as_mut() {
+                    if !m.listo {
+                        m.aparece = muelle::Tramo::quieto(0).hacia(dashos::ahora_us(), 255 * muelle::UNO, if muelle::BASE_MS > 0 { 75_000 } else { 0 }, muelle::Curva::SalidaCuartica);
+                    }
                     m.listo = true;
                 }
                 est.repintar_menu(&mut c);
@@ -1769,14 +1969,33 @@ fn principal() -> u64 {
                     let dentro = sobre == est.muelles[i].sup();
                     let m = &mut est.muelles[i];
                     m.vista.poner_raton(dentro, &aj, ahora);
+                    // La lupa sigue al ratón a lo largo; el arrastre de un fijado, también.
+                    let a_lo_largo = if aj.posicion.vertical() { py } else { px };
+                    let lupa = m.lupa.mover(&aj, if dentro && m.visto && m.arrastre.as_ref().is_none_or(|a| !a.activo) { Some(a_lo_largo) } else { None }, ahora);
+                    let mut arrastra = false;
+                    if dentro && let Some(a) = m.arrastre.as_mut() {
+                        let antes_activo = a.activo;
+                        arrastra = a.mover(a_lo_largo, aj.iconos + aj.separacion, ahora, muelle::BASE_MS > 0);
+                        if a.activo && !antes_activo {
+                            println!("  [dock] arrastra {} (fijado {})", a.programa, a.desde + 1);
+                        }
+                    }
+                    if lupa || arrastra {
+                        est.pintar(&mut c, i, false);
+                    }
+                    let m = &mut est.muelles[i];
                     let encima = if dentro && m.visto { m.disp.en(px, py).filter(|&k| m.items[k].tipo != Tipo::Separador) } else { None };
                     if encima != m.encima {
                         m.encima = encima;
                         let clave = encima.map(|k| m.items[k].clave.clone());
                         m.vista.encima_de(clave.as_deref(), aj.iconos, ahora, muelle::BASE_MS > 0);
                         est.cerrar_burbuja(&mut c);
-                        if let Some(k) = encima {
-                            est.burbuja_en = Some((i, k, ahora + dock_modelo::ESPERA_BURBUJA_US));
+                        // La burbuja sale en el acto al pasar de un icono a otro; solo espera 250 ms al aparecer el dock
+                        // (DMS). Arrastrando, ninguna.
+                        if let Some(k) = encima
+                            && est.muelles[i].arrastre.as_ref().is_none_or(|a| !a.activo)
+                        {
+                            est.burbuja_en = Some((i, k, ahora.max(est.muelles[i].visto_desde + dock_modelo::ESPERA_BURBUJA_US)));
                         }
                         est.pintar(&mut c, i, false);
                     }
@@ -1792,6 +2011,26 @@ fn principal() -> u64 {
                         m.encima = fila;
                         est.repintar_menu(&mut c);
                     }
+                }
+            }
+            // Soltar el izquierdo: deja lo arrastrado en su sitio nuevo, o abre lo pulsado (si sigue debajo).
+            (PUNTERO, wl_pointer::ev::BUTTON) if palabra(3) == 0 && palabra(2) == BOTON_IZQUIERDO => {
+                let Some((i, k)) = est.pulsado.take() else { continue };
+                let arrastre = est.muelles.get_mut(i).and_then(|m| m.arrastre.take());
+                if let Some(a) = arrastre.filter(|a| a.activo) {
+                    match a.soltar(&est.aj.fijados) {
+                        Some(nuevo) => {
+                            let lista = nuevo.join(", ");
+                            let r = ordenar_fijados(&mut est.aj, nuevo);
+                            println!("  [dock] ordena los fijados: {}; {}", lista, r);
+                        }
+                        None => println!("  [dock] {} vuelve a su sitio", a.programa),
+                    }
+                    est.rehacer(&mut c);
+                    continue;
+                }
+                if est.muelles.get(i).is_some_and(|m| m.sup() == sobre && m.visto && m.disp.en(px, py) == Some(k)) {
+                    est.clic(&mut c, i, k);
                 }
             }
             (PUNTERO, wl_pointer::ev::BUTTON) if palabra(3) == 1 => {
@@ -1813,7 +2052,19 @@ fn principal() -> u64 {
                 }
                 let Some(k) = k else { continue };
                 match boton {
-                    BOTON_IZQUIERDO => est.clic(&mut c, i, k),
+                    // El izquierdo abre al soltar (como DMS); un fijado pulsado 500 ms y movido, se arrastra.
+                    BOTON_IZQUIERDO => {
+                        est.pulsado = Some((i, k));
+                        let it = &est.muelles[i].items[k];
+                        if it.fijado
+                            && let Some(p) = est.aj.fijados.iter().position(|f| f == &it.programa)
+                        {
+                            let a_lo_largo = if est.aj.posicion.vertical() { py } else { px };
+                            let n = est.aj.fijados.len();
+                            let programa = it.programa.clone();
+                            est.muelles[i].arrastre = Some(dock_vivo::Arrastre::nuevo(&programa, p, a_lo_largo, dashos::ahora_us(), n));
+                        }
+                    }
                     BOTON_DERECHO => est.abrir_menu(&mut c, i, k),
                     BOTON_CENTRAL => est.clic_central(&mut c, i, k),
                     _ => {}
@@ -1826,6 +2077,16 @@ fn principal() -> u64 {
             _ => {}
         }
     }
+}
+
+/// Rama dock-discos: si algo de lo nuevo se mueve en el dock `m` (la lupa, el cuerpo, los indicadores, un rebote o un
+/// arrastre). Solo entonces se pide otro cuadro: quieto, el dock no se repinta.
+fn vivo(m: &Muelle, ahora: u64) -> bool {
+    m.lupa.animando(ahora)
+        || m.cuerpo.en_marcha
+        || m.indicadores.animando(ahora)
+        || m.rebotes.iter().any(|r| !r.acabado(ahora))
+        || m.arrastre.as_ref().is_some_and(|a| a.animando(ahora))
 }
 
 fn dentro_de_alguno(est: &Estado, sup: u32) -> bool {

@@ -321,9 +321,10 @@ DashOS en marcha con 4 núcleos.
 ~│   [workbench] raíces: SYS: solo para leer 0, Home: 0, Work: 0; RAM: la pone sesiones al entrar
 ~│   [workbench] lo ajeno: listar el cajón de sesiones -12, abrir su registro -12; listar DeCarla -12, abrir su fichero -12; crear por SYS: -12; ".." desde Home: no se abre: bien
 ~│   [workbench] nombres raros: 1 sin enseñar en Home:, 1 en SYS:Imagenes; "..", "a/b", "x:y" no se buscan: bien
-# Sus iconos, en una capa de abajo (una columna a la derecha, bajo la barra); el de Home, con la sesión de Ana abierta.
-~│   [compositor] capa de workbench en (696, 40)
-~│   [workbench] en pantalla: 104x560, icono de SYS en (
+# Sus discos, en una capa de abajo (rama dock-discos: un panel flotante de 248 de ancho, arriba a la derecha, a 12 de
+# los bordes y bajo la barra; antes, una columna de iconos de 104 de alto entero); Home y RAM, con la sesión de Ana.
+~│   [compositor] capa de workbench en (540, 52)
+~│   [workbench] en pantalla: 248x
 ~│   [workbench] icono de Home en (
 ~│   [workbench] icono de RAM en (
 ~│   [workbench] icono de Work en (

@@ -446,9 +446,48 @@ Notice when switching workspace: {}
 MSG_148
 Caps Lock notice: {}
 ; Aviso de Bloq Mayús: {}
-MSG_149
-The dock and the on-screen notices, as in DMS. Enter changes a row.
-; El dock y los avisos en pantalla, como en DMS. Intro cambia una fila.
+MSG_150
+Desktop disks: {}
+; Discos del escritorio: {}
+MSG_151
+Disks: {}
+; Discos: {}
+MSG_152
+on the right, in the middle
+; a la derecha, en el centro
+MSG_153
+on the left, in the middle
+; a la izquierda, en el centro
+MSG_154
+Disk size: {}
+; Tamaño de los discos: {}
+MSG_155
+small
+; pequeño
+MSG_156
+medium
+; mediano
+MSG_157
+large
+; grande
+MSG_158
+Disk opacity: {} %
+; Opacidad de los discos: {} %
+MSG_159
+Used space of each disk: {}
+; Espacio usado de cada disco: {}
+MSG_160
+Disk animations: {}
+; Animaciones de los discos: {}
+MSG_162
+Magnify on hover: {}
+; Aumento al pasar el ratón: {}
+MSG_163
+Magnifying pushes the neighbours aside: {}
+; El aumento aparta a los vecinos: {}
+MSG_161
+The dock, the on-screen notices and the desktop disks, as in DMS. Enter changes a row.
+; El dock, los avisos en pantalla y los discos del escritorio, como en DMS. Intro cambia una fila.
 MSG_200
 Notifications
 ; Avisos

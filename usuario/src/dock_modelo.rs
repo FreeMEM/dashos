@@ -312,6 +312,9 @@ pub struct Disposicion {
     pub escondido: i32,
     /// El hueco para el saltito de los iconos (`animationHeadroom`).
     pub cabecera: i32,
+    /// Lo que puede crecer el dock a lo largo con la lupa (rama dock-discos): sin apartar, lo que sobresale el icono de
+    /// los extremos; apartando (`magnificationExpand`), lo que se alarga el cuerpo como mucho (`expansionLimit`).
+    pub crecer: i32,
 }
 
 impl Disposicion {
@@ -353,7 +356,12 @@ pub fn disponer(aj: &Dock, items: &[Elemento], desplegado: bool, pantalla: (i32,
     let largo_cuerpo = if compacto { (fila + aj.relleno * 2).min(disponible) } else { disponible };
     // La capa: a lo largo, lo que recibe el ratón (`dockMouseArea`: el cuerpo y el relleno de los lados); en modo
     // barra, de lado a lado.
-    let largo_capa = if compacto { (largo_cuerpo + aj.relleno * 2).min(largo_pantalla).max(1) } else { largo_pantalla.max(1) };
+    // Con la lupa, la capa deja sitio a lo largo para lo que crece (sin cambiar de tamaño a cada cuadro).
+    let escala = if aj.aumento { (aj.escala_aumento as i32 * 10).clamp(1050, 2000) } else { 1000 };
+    let sobresale = (escala - 1000) * aj.iconos / 1000;
+    let crecer_quiere = if !aj.aumento || !compacto { 0 } else if aj.aumento_expandir { 3 * sobresale } else { sobresale };
+    let crecer = crecer_quiere.min((disponible - largo_cuerpo - aj.relleno * 2).max(0));
+    let largo_capa = if compacto { (largo_cuerpo + aj.relleno * 2 + crecer).min(largo_pantalla).max(1) } else { largo_pantalla.max(1) };
     let ancla_borde = match aj.posicion {
         Borde::Arriba => 1,
         Borde::Abajo => 2,
@@ -409,6 +417,7 @@ pub fn disponer(aj: &Dock, items: &[Elemento], desplegado: bool, pantalla: (i32,
         // `hideDistance`: `motionThickness` + 10.
         escondido: superficie + 10,
         cabecera,
+        crecer,
     }
 }
 

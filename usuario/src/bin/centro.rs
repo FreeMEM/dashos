@@ -72,6 +72,10 @@ mod avisos_ajustes;
 #[path = "../dock_ajustes.rs"]
 #[allow(dead_code)]
 mod dock_ajustes;
+// Rama dock-discos: los discos del escritorio (el panel del Workbench), en la misma página.
+#[path = "../discos_ajustes.rs"]
+#[allow(dead_code)]
+mod discos_ajustes;
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -1768,14 +1772,21 @@ fn cambiar_panel(aj: &mut monitor::Ajustes, k: usize) -> Option<String> {
 
 /// S27, Ajustes > Dock: los ajustes del dock y de los avisos en pantalla en uso (`ENV:Escritorio/dock` y `osd`, o los
 /// guardados, o lo de serie). Lo que no se entiende queda de serie, como en el dock.
-fn leer_dock() -> (dock_ajustes::Dock, dock_ajustes::Osd) {
+fn leer_dock() -> (dock_ajustes::Dock, dock_ajustes::Osd, discos_ajustes::Discos) {
     let pares = |f: &str| -> Vec<(String, String)> {
         leer_ajuste(f).ok().and_then(|b| kit::idioma::texto::Ajustes::leer(&b).ok()).map_or(Vec::new(), |x| x.todos().map(|(c, v)| (String::from(c), String::from(v))).collect())
     };
     let d = pares(dock_ajustes::FICHERO_DOCK);
     let o = pares(dock_ajustes::FICHERO_OSD);
-    (dock_ajustes::Dock::de_pares(d.iter().map(|(c, v)| (c.as_str(), v.as_str()))).0, dock_ajustes::Osd::de_pares(o.iter().map(|(c, v)| (c.as_str(), v.as_str()))).0)
+    let k = pares(discos_ajustes::FICHERO);
+    (
+        dock_ajustes::Dock::de_pares(d.iter().map(|(c, v)| (c.as_str(), v.as_str()))).0,
+        dock_ajustes::Osd::de_pares(o.iter().map(|(c, v)| (c.as_str(), v.as_str()))).0,
+        discos_ajustes::Discos::de_pares(k.iter().map(|(c, v)| (c.as_str(), v.as_str()))).0,
+    )
 }
+
+const OPACIDADES_DISCOS: [u32; 5] = [100, 90, 80, 66, 50];
 
 const ICONOS_DOCK: [i32; 5] = [32, 40, 48, 56, 64];
 const OPACIDADES_DOCK: [u32; 5] = [100, 90, 80, 66, 50];
@@ -1804,7 +1815,7 @@ fn nombre_pos_osd(p: dock_ajustes::PosOsd) -> &'static str {
 }
 
 /// Las filas de Ajustes > Dock.
-fn lineas_dock(d: &dock_ajustes::Dock, o: &dock_ajustes::Osd) -> Vec<String> {
+fn lineas_dock(d: &dock_ajustes::Dock, o: &dock_ajustes::Osd, k: &discos_ajustes::Discos) -> Vec<String> {
     let indicador = match d.indicador {
         dock_ajustes::Indicador::Circulo => tr(133, "un punto"),
         dock_ajustes::Indicador::Linea => tr(134, "una raya"),
@@ -1824,12 +1835,35 @@ fn lineas_dock(d: &dock_ajustes::Dock, o: &dock_ajustes::Osd) -> Vec<String> {
         trf(146, "Enseñar siempre el valor: {}", &[&si_no(o.siempre_valor)]),
         trf(147, "Aviso al cambiar de espacio de trabajo: {}", &[&si_no(o.espacio)]),
         trf(148, "Aviso de Bloq Mayús: {}", &[&si_no(o.mayusculas)]),
+        trf(162, "Aumento al pasar el ratón: {}", &[&if d.aumento { alloc::format!("{} %", d.escala_aumento) } else { String::from(si_no(false)) }]),
+        trf(163, "El aumento aparta a los vecinos: {}", &[&si_no(d.aumento_expandir)]),
+        // Los discos del escritorio (el panel del Workbench, `ENV:Escritorio/discos`).
+        trf(150, "Discos del escritorio: {}", &[&si_no(k.mostrar)]),
+        trf(151, "Discos: {}", &[&match (k.lado, k.altura) {
+            (discos_ajustes::Lado::Derecha, discos_ajustes::Altura::Arriba) => tr(72, "arriba a la derecha"),
+            (discos_ajustes::Lado::Derecha, discos_ajustes::Altura::Centro) => tr(152, "a la derecha, en el centro"),
+            (discos_ajustes::Lado::Derecha, discos_ajustes::Altura::Abajo) => tr(74, "abajo a la derecha"),
+            (discos_ajustes::Lado::Izquierda, discos_ajustes::Altura::Arriba) => tr(71, "arriba a la izquierda"),
+            (discos_ajustes::Lado::Izquierda, discos_ajustes::Altura::Centro) => tr(153, "a la izquierda, en el centro"),
+            (discos_ajustes::Lado::Izquierda, discos_ajustes::Altura::Abajo) => tr(73, "abajo a la izquierda"),
+        }]),
+        trf(154, "Tamaño de los discos: {}", &[&match k.tamano {
+            discos_ajustes::Tamano::Pequeno => tr(155, "pequeño"),
+            discos_ajustes::Tamano::Mediano => tr(156, "mediano"),
+            discos_ajustes::Tamano::Grande => tr(157, "grande"),
+        }]),
+        trf(158, "Opacidad de los discos: {} %", &[&k.opacidad]),
+        trf(159, "Espacio usado de cada disco: {}", &[&si_no(k.espacio)]),
+        trf(160, "Animaciones de los discos: {}", &[&si_no(k.animaciones)]),
     ]
 }
 
 /// Cambia la fila `k` de Ajustes > Dock (la opción siguiente), en `ENV:` (sobre lo que había: los comentarios se quedan)
 /// y guardado; el dock vigila `ENV:` y lo aplica en marcha. Lo que pasó, para la consola.
-fn cambiar_dock(d: &mut dock_ajustes::Dock, o: &mut dock_ajustes::Osd, k: usize) -> Option<String> {
+fn cambiar_dock(d: &mut dock_ajustes::Dock, o: &mut dock_ajustes::Osd, discos: &mut discos_ajustes::Discos, k: usize) -> Option<String> {
+    if k >= 14 {
+        return cambiar_discos(discos, k - 14);
+    }
     use dock_ajustes::*;
     let siguiente = |v: &[i32], x: i32| v[(v.iter().position(|&y| y == x).map_or(0, |i| i + 1)) % v.len()];
     let del_osd = match k {
@@ -1888,6 +1922,20 @@ fn cambiar_dock(d: &mut dock_ajustes::Dock, o: &mut dock_ajustes::Osd, k: usize)
             o.mayusculas = !o.mayusculas;
             true
         }
+        // El aumento: no, 130 % (lo de DMS), 160 % y 115 %.
+        12 => {
+            (d.aumento, d.escala_aumento) = match (d.aumento, d.escala_aumento) {
+                (false, _) => (true, 130),
+                (true, 130) => (true, 160),
+                (true, 160) => (true, 115),
+                _ => (false, d.escala_aumento),
+            };
+            false
+        }
+        13 => {
+            d.aumento_expandir = !d.aumento_expandir;
+            false
+        }
         _ => return None,
     };
     let (fichero, cabecera, pares) = if del_osd { (FICHERO_OSD, CABECERA_OSD, o.a_pares()) } else { (FICHERO_DOCK, CABECERA_DOCK, d.a_pares()) };
@@ -1903,6 +1951,49 @@ fn cambiar_dock(d: &mut dock_ajustes::Dock, o: &mut dock_ajustes::Osd, k: usize)
     let usado = escribir_env(fichero, x.texto().as_bytes());
     let guardado = if usado.is_ok() { guardar_en_envarc(fichero) } else { -1 };
     Some(alloc::format!("{}: en ENV: {}; guardado: {}", fichero, usado.map_or_else(|e| e, |n| alloc::format!("{} bytes", n)), guardado))
+}
+
+/// Cambia la fila `k` de los discos del escritorio (de Ajustes > Dock): como `cambiar_dock`, en `ENV:Escritorio/discos`
+/// y guardado; el Workbench vigila `ENV:` y lo aplica en marcha.
+fn cambiar_discos(d: &mut discos_ajustes::Discos, k: usize) -> Option<String> {
+    use discos_ajustes::*;
+    match k {
+        0 => d.mostrar = !d.mostrar,
+        1 => {
+            // Por las seis esquinas y lados: arriba, en el centro y abajo a la derecha; luego a la izquierda.
+            (d.lado, d.altura) = match (d.lado, d.altura) {
+                (Lado::Derecha, Altura::Arriba) => (Lado::Derecha, Altura::Centro),
+                (Lado::Derecha, Altura::Centro) => (Lado::Derecha, Altura::Abajo),
+                (Lado::Derecha, Altura::Abajo) => (Lado::Izquierda, Altura::Arriba),
+                (Lado::Izquierda, Altura::Arriba) => (Lado::Izquierda, Altura::Centro),
+                (Lado::Izquierda, Altura::Centro) => (Lado::Izquierda, Altura::Abajo),
+                (Lado::Izquierda, Altura::Abajo) => (Lado::Derecha, Altura::Arriba),
+            }
+        }
+        2 => {
+            d.tamano = match d.tamano {
+                Tamano::Pequeno => Tamano::Mediano,
+                Tamano::Mediano => Tamano::Grande,
+                Tamano::Grande => Tamano::Pequeno,
+            }
+        }
+        3 => d.opacidad = OPACIDADES_DISCOS[OPACIDADES_DISCOS.iter().position(|&x| x == d.opacidad).map_or(0, |i| i + 1) % OPACIDADES_DISCOS.len()],
+        4 => d.espacio = !d.espacio,
+        5 => d.animaciones = !d.animaciones,
+        _ => return None,
+    }
+    let antes = leer_ajuste(FICHERO).ok();
+    let mut x = antes.as_deref().and_then(|b| kit::idioma::texto::Ajustes::leer(b).ok()).unwrap_or_else(|| {
+        let mut x = kit::idioma::texto::Ajustes::nuevo();
+        x.comentar(CABECERA);
+        x
+    });
+    for (c, v) in &d.a_pares() {
+        let _ = x.poner(c, v);
+    }
+    let usado = escribir_env(FICHERO, x.texto().as_bytes());
+    let guardado = if usado.is_ok() { guardar_en_envarc(FICHERO) } else { -1 };
+    Some(alloc::format!("{}: en ENV: {}; guardado: {}", FICHERO, usado.map_or_else(|e| e, |n| alloc::format!("{} bytes", n)), guardado))
 }
 
 /// Las filas de la lista: "programa · servicio". Sin '|', que separa las filas (un nombre así no lo da `inicio`).
@@ -2341,7 +2432,7 @@ fn ventana_dentro(categoria: usize, ce: &mut Centro, respuestas: &mut Vec<u32>, 
     // S27, oleada 3: los avisos y el centro de control, como estén en uso.
     let mut aj_avisos = leer_ajustes_avisos().unwrap_or(avisos_ajustes::Ajustes::DE_SERIE);
     let mut cc = leer_cc().unwrap_or_else(|_| cc_rejilla::Rejilla::de_serie());
-    let (mut aj_dock, mut aj_osd) = leer_dock();
+    let (mut aj_dock, mut aj_osd, mut aj_discos) = leer_dock();
     let poner = |i: &mut Interfaz, cat: usize, lista: &[(String, String)], reg: &[String]| {
         let (explicacion, contenido) = if cat == PERMISOS {
             (tr(87, "Lo que cada programa puede usar. Quitarlo lo revoca ya."), filas(lista))
@@ -2366,7 +2457,7 @@ fn ventana_dentro(categoria: usize, ce: &mut Centro, respuestas: &mut Vec<u32>, 
         } else if cat == PANEL_CC {
             (tr(237, "Qué sale en el panel rápido y en qué orden. Intro cambia el ancho o añade; se ve ya."), reg.join("|"))
         } else if cat == DOCK {
-            (tr(149, "El dock y los avisos en pantalla, como en DMS. Intro cambia una fila."), reg.join("|"))
+            (tr(161, "El dock, los avisos en pantalla y los discos del escritorio, como en DMS. Intro cambia una fila."), reg.join("|"))
         } else {
             (tr(94, "El sistema."), reg.join("|"))
         };
@@ -2433,7 +2524,7 @@ fn ventana_dentro(categoria: usize, ce: &mut Centro, respuestas: &mut Vec<u32>, 
     } else if cat == PANEL_CC {
         lineas_registro = lineas_cc(&cc);
     } else if cat == DOCK {
-        lineas_registro = lineas_dock(&aj_dock, &aj_osd);
+        lineas_registro = lineas_dock(&aj_dock, &aj_osd, &aj_discos);
     } else if cat != PERMISOS {
         lineas_registro = acerca();
     }
@@ -2702,8 +2793,8 @@ fn ventana_dentro(categoria: usize, ce: &mut Centro, respuestas: &mut Vec<u32>, 
                             lineas_cc(&cc)
                         }
                         DOCK => {
-                            (aj_dock, aj_osd) = leer_dock();
-                            lineas_dock(&aj_dock, &aj_osd)
+                            (aj_dock, aj_osd, aj_discos) = leer_dock();
+                            lineas_dock(&aj_dock, &aj_osd, &aj_discos)
                         }
                         _ => acerca(),
                     };
@@ -2868,8 +2959,8 @@ fn ventana_dentro(categoria: usize, ce: &mut Centro, respuestas: &mut Vec<u32>, 
                 Some("elegir") if cat == DOCK => {
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
                     let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
-                    if let Some(r) = usize::try_from(v).ok().and_then(|k| cambiar_dock(&mut aj_dock, &mut aj_osd, k)) {
-                        lineas_registro = lineas_dock(&aj_dock, &aj_osd);
+                    if let Some(r) = usize::try_from(v).ok().and_then(|k| cambiar_dock(&mut aj_dock, &mut aj_osd, &mut aj_discos, k)) {
+                        lineas_registro = lineas_dock(&aj_dock, &aj_osd, &aj_discos);
                         println!("  [centro] Dock: {}; {}", lineas_registro[v as usize], r);
                         i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
                         cambio = true;

@@ -2499,6 +2499,11 @@ fi
 if [ -n "${DMS_CAPTURAS:-}" ]; then
     python3 -I "$(dirname "$0")/guion_dms.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$DMS_CAPTURAS" >/dev/null 2>&1 &
 fi
+# Los discos del escritorio (rama dock-discos): con DISCOS_CAPTURAS=prefijo, `tools/guion_discos.py` entra y los
+# captura (quietos, el ratón encima, la onda, el menú, Información, el explorador y los ajustes en marcha).
+if [ -n "${DISCOS_CAPTURAS:-}" ]; then
+    python3 -I "$(dirname "$0")/guion_discos.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$DISCOS_CAPTURAS" >/dev/null 2>&1 &
+fi
 # El Shell nativo en pantalla: con SHELL_CAPTURAS=prefijo, `tools/guion_shell.py` entra, abre el Shell desde el
 # lanzador, teclea en él y lo captura en cada momento (`make arranque-virt-shell`).
 if [ -n "${SHELL_CAPTURAS:-}" ]; then

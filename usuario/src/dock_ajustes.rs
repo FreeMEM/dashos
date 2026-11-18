@@ -150,6 +150,8 @@ pub struct Dock {
     pub aumento: bool,
     pub escala_aumento: u32,
     pub perfil_aumento: PerfilAumento,
+    /// `magnificationExpand`: los que crecen apartan a los vecinos y el dock se alarga.
+    pub aumento_expandir: bool,
     pub clic_central: ClicCentral,
     /// `showOnFullscreen`.
     pub pantalla_completa: bool,
@@ -190,6 +192,7 @@ impl Dock {
             aumento: false,
             escala_aumento: 130,
             perfil_aumento: PerfilAumento::Parabolico,
+            aumento_expandir: false,
             clic_central: ClicCentral::Cerrar,
             pantalla_completa: false,
             fijados: Vec::new(),
@@ -420,6 +423,7 @@ impl Dock {
                 "aumento" => match si_no(v) { Some(b) => d.aumento = b, None => mal(&mut p) },
                 "escala_aumento" => if let Some(n) = numero(clave, v, 105, 160, &mut p) { d.escala_aumento = n as u32 },
                 "perfil_aumento" => if let Some(x) = palabra!(clave, v, p, "parabolico" => PerfilAumento::Parabolico, "parabólico" => PerfilAumento::Parabolico, "coseno" => PerfilAumento::Coseno, "gauss" => PerfilAumento::Gauss) { d.perfil_aumento = x },
+                "aumento_expandir" => match si_no(v) { Some(b) => d.aumento_expandir = b, None => mal(&mut p) },
                 "clic_central" => if let Some(x) = palabra!(clave, v, p, "cerrar" => ClicCentral::Cerrar, "abrir" => ClicCentral::Abrir) { d.clic_central = x },
                 "pantalla_completa" => match si_no(v) { Some(b) => d.pantalla_completa = b, None => mal(&mut p) },
                 "fijados" => {
@@ -468,6 +472,7 @@ impl Dock {
             ("aumento", s(self.aumento)),
             ("escala_aumento", self.escala_aumento.to_string()),
             ("perfil_aumento", match self.perfil_aumento { PerfilAumento::Parabolico => "parabolico", PerfilAumento::Coseno => "coseno", PerfilAumento::Gauss => "gauss" }.to_string()),
+            ("aumento_expandir", s(self.aumento_expandir)),
             ("clic_central", match self.clic_central { ClicCentral::Cerrar => "cerrar", ClicCentral::Abrir => "abrir" }.to_string()),
             ("pantalla_completa", s(self.pantalla_completa)),
             ("fijados", self.fijados.join(", ")),
@@ -486,7 +491,7 @@ opacidad (transparency): 0-100 %. radio: el de las esquinas.\n\
 autoocultar (autoHide), ocultar_con_ventanas (smartAutoHide), agrupar (groupByApp), separar_fijados (separatePinnedAndRunningApps): sí o no.\n\
 indicador (indicatorStyle): circulo, linea o ninguno. borde, color_borde (texto, primario, secundario), opacidad_borde, grosor_borde.\n\
 lanzador (launcherEnabled). max_fijados y max_abiertos (maxVisibleApps, maxVisibleRunningApps; 0 sin límite). insignia_desbordado.\n\
-aumento, escala_aumento (105-160), perfil_aumento (parabolico, coseno, gauss). clic_central: cerrar o abrir. pantalla_completa.\n\
+aumento (magnification), escala_aumento (105-160), perfil_aumento (parabolico, coseno, gauss), aumento_expandir (magnificationExpand). clic_central: cerrar o abrir. pantalla_completa.\n\
 fijados: los programas fijados, por su nombre en Programas, separados por comas.";
 
 impl Osd {

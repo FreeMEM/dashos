@@ -297,8 +297,34 @@ MSG_147 (147//)
 Aviso al cambiar de espacio de trabajo: {}
 MSG_148 (148//)
 Aviso de Bloq Mayús: {}
-MSG_149 (149//)
-El dock y los avisos en pantalla, como en DMS. Intro cambia una fila.
+MSG_150 (150//)
+Discos del escritorio: {}
+MSG_151 (151//)
+Discos: {}
+MSG_152 (152//)
+a la derecha, en el centro
+MSG_153 (153//)
+a la izquierda, en el centro
+MSG_154 (154//)
+Tamaño de los discos: {}
+MSG_155 (155//)
+pequeño
+MSG_156 (156//)
+mediano
+MSG_157 (157//)
+grande
+MSG_158 (158//)
+Opacidad de los discos: {} %
+MSG_159 (159//)
+Espacio usado de cada disco: {}
+MSG_160 (160//)
+Animaciones de los discos: {}
+MSG_161 (161//)
+El dock, los avisos en pantalla y los discos del escritorio, como en DMS. Intro cambia una fila.
+MSG_162 (162//)
+Aumento al pasar el ratón: {}
+MSG_163 (163//)
+El aumento aparta a los vecinos: {}
 MSG_200 (200//)
 Avisos
 MSG_201 (201//)
