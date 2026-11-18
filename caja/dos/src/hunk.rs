@@ -123,7 +123,9 @@ fn cargar_en<C: Caja + ?Sized>(c: &mut C, datos: &[u8], segs: &mut Vec<Seg>) -> 
                 l.saltar_largos(n)?;
             }
             HUNK_CODE | HUNK_DATA | HUNK_BSS => {
-                if actual.is_some() || siguiente >= segs.len() {
+                // Un hunk que empieza sin el HUNK_END del anterior lo acaba (lo hace AmigaDOS: así vienen los
+                // ejecutables comprimidos, como el de OctaMED SoundStudio: el descompresor sin su HUNK_END).
+                if siguiente >= segs.len() {
                     return Err(ERROR_BAD_HUNK);
                 }
                 let n = l.l32()? & 0x3FFF_FFFF;

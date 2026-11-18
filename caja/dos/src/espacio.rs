@@ -16,7 +16,7 @@ use alloc::vec::Vec;
 
 use crate::errores::*;
 use crate::estructuras::*;
-use crate::fs::{Asa, Datos, ErrorFs, LARGO_CAMINO, SistemaArchivos};
+use crate::fs::{Asa, Datos, ErrorFs, LARGO_CAMINO, SistemaArchivos, Tipo};
 use crate::nombres::{self, Paso, clave_latin1, partir};
 use crate::*;
 
@@ -92,6 +92,65 @@ impl<F: SistemaArchivos> Dos<F> {
             E::Io(n) => n,
             E::Mal(f) => f.codigo(),
         })
+    }
+
+    /// Lo que hay en el cajón `ruta` (con sus asignaciones múltiples: todo lo de todos sus sitios, sin repetir
+    /// nombres): nombre, si es un cajón y su tamaño, como mucho `max` entradas. Para el pedidor de ficheros de
+    /// asl.library nativa. Sin ruta (`""` con el cajón actual).
+    pub fn listar_cajon<C: Caja>(&mut self, c: &mut C, ruta: &[u8], max: usize) -> Result<Vec<(Vec<u8>, bool, u64)>, u32> {
+        let codigo = |e: E| match e {
+            E::Io(n) => n,
+            E::Mal(f) => f.codigo(),
+        };
+        let sitios = self.sitios(c, ruta).map_err(codigo)?;
+        let mut v: Vec<(Vec<u8>, bool, u64)> = Vec::new();
+        let mut alguno = false;
+        let mut primer_error = ERROR_OBJECT_NOT_FOUND;
+        for s in &sitios {
+            let (asa, d) = match self.abrir_sitio(s) {
+                Ok(x) => x,
+                Err(e) => {
+                    primer_error = codigo(de_fs(e, Op::Leer));
+                    continue;
+                }
+            };
+            if d.tipo != Tipo::Cajon {
+                let _ = self.fs.cerrar(asa);
+                primer_error = ERROR_OBJECT_WRONG_TYPE;
+                continue;
+            }
+            alguno = true;
+            let mut desde = 0;
+            loop {
+                let Ok(p) = self.fs.listar(asa, desde) else { break };
+                for e in p.entradas {
+                    let n = e.nombre.into_bytes();
+                    if v.len() < max && !v.iter().any(|(x, _, _)| x.eq_ignore_ascii_case(&n)) {
+                        v.push((n, e.datos.tipo == Tipo::Cajon, e.datos.tamano));
+                    }
+                }
+                match p.siguiente {
+                    Some(s) if v.len() < max => desde = s,
+                    _ => break,
+                }
+            }
+            let _ = self.fs.cerrar(asa);
+        }
+        if !alguno {
+            return Err(primer_error);
+        }
+        Ok(v)
+    }
+
+    /// Los volúmenes y las asignaciones (sin `:`), para el pedidor de ficheros ("Volúmenes"): primero los volúmenes.
+    pub fn nombres_de_dispositivos(&self) -> Vec<(Vec<u8>, bool)> {
+        let mut v: Vec<(Vec<u8>, bool)> = self.volumenes.iter().map(|x| (x.nombre.clone(), true)).collect();
+        for n in self.nombres.values() {
+            if let Nombre::Asignacion(a) = n {
+                v.push((a.nombre.clone(), false));
+            }
+        }
+        v
     }
 
     // --- Volúmenes ---
