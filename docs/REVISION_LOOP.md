@@ -2374,3 +2374,9 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   la entrada" antes de que el Shell cree a Berta (carrera de dos pruebas) y "[ajustes] el campo dice: DashOSa" (una
   "a" de fondo del guion entra en el campo). Las dos son del guion de pruebas, no del sistema; arreglo encargado.
   Salidas en ~/recuperar/geosian-7d/salida_av_lista_entrada.txt y salida_av_dashosa.txt.
+- **Unidas `sonido-pro` y el latido del dock (2026-11-18)**: grafo de sonido E1 con mezclador por programa, ecualizador,
+  limitador y espacial; ventana Sonido, OSD de volumen, visualizador, sonidos del sistema y protocolo de medios; el
+  dock ya no rebota al abrir, late el indicador (decisión del usuario). Choques en `centro.rs` y el `Makefile`
+  (ajustes de discos y de sonido), resueltos dejando los dos. Tanda en fusion-fondo ef5c89a0: 12 de 12 y shell,
+  menus, dms, cuentas y sonido bien. Pendiente del usuario: tema Cristal al 70 %, tic del volumen apagado, AHI 6 dB
+  más bajo (se recomienda subirlo).
