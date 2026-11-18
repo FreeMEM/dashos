@@ -15,7 +15,7 @@ Uso (lo lanza `tools/prueba_uefi.sh` con DISCOS_CAPTURAS=prefijo; `make capturas
    sin la barra del espacio, pequeño, en el centro (PREFIJO.9-compacto); luego, lo de serie. Al final, esconderlos y
    sacarlos otra vez: la tira de cuadros de su entrada (PREFIJO.anim-aparecer-NN).
 6. El dock: el menú del Shell (PREFIJO.12-dock-menu) y Fijar; se cierra el Shell y se abre desde el fijado (la tira
-   del rebote, PREFIJO.anim-rebote-NN); con otro Shell y la lupa encendida (`Ajuste Escritorio/dock.aumento si`), el
+   del latido, PREFIJO.anim-al-abrir-NN); con otro Shell y la lupa encendida (`Ajuste Escritorio/dock.aumento si`), el
    ratón de lado a lado (PREFIJO.anim-lupa-NN), sobre un icono (PREFIJO.10-dock-lupa) y entre dos (PREFIJO.11-...).
 
 Cada captura queda también en PNG. Lo que hace, con la hora, en PREFIJO.guion.txt.
@@ -235,7 +235,8 @@ def dock(v):
     mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
     if not esperar(r"\[dock\] fija ", 10, marca):
         return
-    # Se cierra el Shell (queda el fijado, sin ventanas) y se abre desde el dock: rebota hasta que sale su ventana.
+    # Se cierra el Shell (queda el fijado, sin ventanas) y se abre desde el dock: su punto late (o rebota, según
+    # `al_abrir`) hasta que sale su ventana.
     esconder(marca)
     clic(v[0] + 120, max(v[1] - 20, 1))
     marca = len(texto())
@@ -250,8 +251,10 @@ def dock(v):
     mover_desde(ANCHO // 2, ALTO - 1, s[1][1], s[1][2])
     marca = len(texto())
     mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
-    if esperar(r"\[dock\] .* rebota hasta que abra su ventana", 5, marca):
-        tira("anim-rebote", 2.5, cada=0.05)
+    # El ratón al lanzador (dentro del dock, que no se esconda) para que no tape el punto.
+    mandar("mouse_move -44 0", pausa=0)
+    if esperar(r"\[dock\] .* (?:late|rebota) hasta que abra su ventana", 5, marca):
+        tira("anim-al-abrir", 2.5, cada=0.05)
     esperar(r"\[shell\] ventana en pantalla", 30, marca)
     # Otro Shell: tres iconos (el lanzador, el fijado con su ventana y el otro). La lupa, sin salir del dock (fuera se
     # esconde, y escondido solo lo saca la raya de abajo).

@@ -97,6 +97,25 @@ pub enum ClicCentral {
     Abrir,
 }
 
+/// Rama dock-discos: qué hace el icono de un programa mientras se abre desde el dock (decisión del usuario,
+/// 2026-11-18: de serie, el punto de abierto late, como GNOME y Windows 11; el rebote de macOS, solo si se elige).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AlAbrir {
+    Latido,
+    Rebote,
+    Nada,
+}
+
+impl AlAbrir {
+    pub fn nombre(self) -> &'static str {
+        match self {
+            AlAbrir::Latido => "latido",
+            AlAbrir::Rebote => "rebote",
+            AlAbrir::Nada => "nada",
+        }
+    }
+}
+
 /// `magnificationProfile`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PerfilAumento {
@@ -152,6 +171,8 @@ pub struct Dock {
     pub perfil_aumento: PerfilAumento,
     /// `magnificationExpand`: los que crecen apartan a los vecinos y el dock se alarga.
     pub aumento_expandir: bool,
+    /// Rama dock-discos: lo que se ve mientras se abre un programa desde el dock (no está en DMS).
+    pub al_abrir: AlAbrir,
     pub clic_central: ClicCentral,
     /// `showOnFullscreen`.
     pub pantalla_completa: bool,
@@ -193,6 +214,7 @@ impl Dock {
             escala_aumento: 130,
             perfil_aumento: PerfilAumento::Parabolico,
             aumento_expandir: false,
+            al_abrir: AlAbrir::Latido,
             clic_central: ClicCentral::Cerrar,
             pantalla_completa: false,
             fijados: Vec::new(),
@@ -424,6 +446,7 @@ impl Dock {
                 "escala_aumento" => if let Some(n) = numero(clave, v, 105, 160, &mut p) { d.escala_aumento = n as u32 },
                 "perfil_aumento" => if let Some(x) = palabra!(clave, v, p, "parabolico" => PerfilAumento::Parabolico, "parabólico" => PerfilAumento::Parabolico, "coseno" => PerfilAumento::Coseno, "gauss" => PerfilAumento::Gauss) { d.perfil_aumento = x },
                 "aumento_expandir" => match si_no(v) { Some(b) => d.aumento_expandir = b, None => mal(&mut p) },
+                "al_abrir" => if let Some(x) = palabra!(clave, v, p, "latido" => AlAbrir::Latido, "rebote" => AlAbrir::Rebote, "nada" => AlAbrir::Nada) { d.al_abrir = x },
                 "clic_central" => if let Some(x) = palabra!(clave, v, p, "cerrar" => ClicCentral::Cerrar, "abrir" => ClicCentral::Abrir) { d.clic_central = x },
                 "pantalla_completa" => match si_no(v) { Some(b) => d.pantalla_completa = b, None => mal(&mut p) },
                 "fijados" => {
@@ -473,6 +496,7 @@ impl Dock {
             ("escala_aumento", self.escala_aumento.to_string()),
             ("perfil_aumento", match self.perfil_aumento { PerfilAumento::Parabolico => "parabolico", PerfilAumento::Coseno => "coseno", PerfilAumento::Gauss => "gauss" }.to_string()),
             ("aumento_expandir", s(self.aumento_expandir)),
+            ("al_abrir", self.al_abrir.nombre().to_string()),
             ("clic_central", match self.clic_central { ClicCentral::Cerrar => "cerrar", ClicCentral::Abrir => "abrir" }.to_string()),
             ("pantalla_completa", s(self.pantalla_completa)),
             ("fijados", self.fijados.join(", ")),
@@ -491,7 +515,8 @@ opacidad (transparency): 0-100 %. radio: el de las esquinas.\n\
 autoocultar (autoHide), ocultar_con_ventanas (smartAutoHide), agrupar (groupByApp), separar_fijados (separatePinnedAndRunningApps): sí o no.\n\
 indicador (indicatorStyle): circulo, linea o ninguno. borde, color_borde (texto, primario, secundario), opacidad_borde, grosor_borde.\n\
 lanzador (launcherEnabled). max_fijados y max_abiertos (maxVisibleApps, maxVisibleRunningApps; 0 sin límite). insignia_desbordado.\n\
-aumento (magnification), escala_aumento (105-160), perfil_aumento (parabolico, coseno, gauss), aumento_expandir (magnificationExpand). clic_central: cerrar o abrir. pantalla_completa.\n\
+aumento (magnification), escala_aumento (105-160), perfil_aumento (parabolico, coseno, gauss), aumento_expandir (magnificationExpand).\n\
+al_abrir (no está en DMS): latido (el punto de abierto late hasta que sale la ventana), rebote o nada. clic_central: cerrar o abrir. pantalla_completa.\n\
 fijados: los programas fijados, por su nombre en Programas, separados por comas.";
 
 impl Osd {
@@ -579,6 +604,20 @@ mod pruebas {
         let o = Osd::de_serie();
         assert_eq!(o.posicion, PosOsd::ArribaCentro);
         assert!(o.siempre_valor && o.volumen && o.mayusculas && !o.espacio);
+    }
+
+    #[test]
+    fn al_abrir_de_serie_latido() {
+        assert_eq!(Dock::de_serie().al_abrir, AlAbrir::Latido);
+        let (d, p) = leer("al_abrir = REBOTE\n");
+        assert_eq!((d.al_abrir, p.len()), (AlAbrir::Rebote, 0));
+        let (d, p) = leer("al_abrir = saltito\n");
+        assert_eq!(d.al_abrir, AlAbrir::Latido);
+        assert_eq!(p, [Problema::NoVale("al_abrir".into())]);
+        let mut d = Dock::de_serie();
+        d.al_abrir = AlAbrir::Nada;
+        let pares = d.a_pares();
+        assert_eq!(Dock::de_pares(pares.iter().map(|(c, v)| (*c, v.as_str()))).0.al_abrir, AlAbrir::Nada);
     }
 
     #[test]

@@ -131,7 +131,8 @@ y los ajustes de DMS v2.1.2. "Hecha" quiere decir que está en DashOS (antes de 
 | Qué | Cómo (de DMS salvo lo dicho) |
 |---|---|
 | Lupa | Escala = 1 + (M − 1)·f(d/R)·p; M = `escala_aumento` (1,05 a 2), R = 1,8 / 2,2 / 2,5 iconos (parabólica, gauss, coseno), f = 1 − u², ½(1 + cos πu) o (e^(−3u²) − e^(−3))/(1 − e^(−3)) en enteros; p entra en 50 ms con OutCubic y sale en 75 ms con InCubic. Crece desde el borde de la pantalla. Sin apartar, los vecinos se solapan; con `aumento_expandir`, cada uno se ensancha y aparta a los demás, y el cuerpo crece hasta su tope. La capa deja ese sitio de antemano (no cambia de tamaño a cada cuadro) |
-| Rebote al abrir un programa | Propio (DMS no lo tiene; es el de macOS): el icono bota lo que deja el hueco de la capa para el saltito (el 35 % del icono), 560 ms cada bote, hasta que sale su ventana (acaba el bote que lleva) o 5 botes. Lo que sube y lo que crece con la lupa se recortan para no salirse de la capa (en la primera vuelta de capturas el icono subía de más y no se veía) |
+| Latido al abrir un programa (de serie) | Decisión del usuario (2026-11-18), en vez del rebote: mientras se abre (aún sin ventana), su punto de abierto sale en el primario y late suave, de 90 a 255 de opacidad y del 80 al 100 % de tamaño, 1,2 s cada latido con la curva `standard` de DMS en cada mitad, hasta que sale la ventana (entonces el punto de verdad sigue, sin volver a crecer) o 10 s (deja de latir y se va). Ajuste `al_abrir` (latido, rebote o nada) en `ENV:Escritorio/dock` y una fila en Ajustes > Dock ("Al abrir un programa") |
+| Rebote al abrir un programa (opción) | Propio (DMS no lo tiene; es el de macOS): el icono bota lo que deja el hueco de la capa para el saltito (el 35 % del icono), 560 ms cada bote, hasta que sale su ventana (acaba el bote que lleva) o 5 botes. Lo que sube y lo que crece con la lupa se recortan para no salirse de la capa (en la primera vuelta de capturas el icono subía de más y no se veía) |
 | Indicador | El del activo se alarga o acorta en 75 ms con OutCubic (DMS); el punto de una ventana nueva crece desde nada con el muelle expresivo (propio: DMS lo pone sin animar) |
 | Reordenar | El arrastrado sigue al ratón con el fondo y el filo del primario; los demás van a su hueco en 250 ms con `expressiveDefaultSpatial` (0,38, 1,21, 0,22, 1: se pasa y vuelve) |
 | El cuerpo | Cambia de largo con el muelle "fast" de 75 ms cuando entra o sale un elemento (DMS) |
@@ -175,8 +176,7 @@ de 128 colores, solo en el disco de la prueba): `shiva.1-discos` (quietos), `2-e
 grande), `9-compacto` (en el centro, pequeño, sin la barra), y del dock `10-dock-lupa` y `11-dock-lupa-entre` (la
 lupa sobre un icono y entre dos) y `12-dock-menu`. GIF: `discos-aparecer.gif` (el panel entra y las tarjetas tras él),
 `discos-entrar-sesion.gif` (al entrar Ana; la pantalla de entrada tapa casi toda la animación), `dock-lupa.gif` (el
-ratón de lado a lado por el dock) y `dock-rebote.gif` (el Shell fijado, abierto desde el dock, bota hasta que sale su
-ventana). Los GIF son tiras de `screendump` de QEMU cada 50-70 ms: van a saltos, no a 60 cuadros por segundo.
+ratón de lado a lado por el dock) y `dock-latido.gif` (el Shell fijado, abierto desde el dock). Los GIF son tiras de `screendump` de QEMU cada 50-70 ms: van a saltos, no a 60 cuadros por segundo.
 El guion de las capturas es `tools/guion_discos.py` (`make capturas-discos`, con `DMS_SHIVA=1`, `DASHOS_PANTALLA`,
 `DASHOS_FONDO_EXTRA` y `DASHOS_PREFS` como `arranque-virt-dms`). El fondo no siempre sale (el programa `fondo`
 arranca antes que el servicio de archivos: lo apuntó `union-dms`); en las vueltas en que no salió, el fondo es azul.
@@ -210,8 +210,7 @@ disco de pruebas no cambia. La capa de los discos: 248 × 300 × 4 = 290 KB con 
 2. **Los ajustes de los discos en Ajustes > Dock** (seis filas al final): no hay una categoría "Escritorio". Una
    categoría nueva tras Acerca de choca con el plazo del guion (lo apuntó `union-dms`).
 3. **El menú de un disco**: Abrir e Información. "Expulsar" no sale: ningún volumen de hoy se puede expulsar.
-4. **El rebote al abrir** un programa desde el dock es de DashOS (de macOS), no de DMS. Se quita con las animaciones
-   apagadas (`BASE_MS`) o, si se quiere, con un ajuste propio.
+4. (Resuelto el 2026-11-18: de serie, el latido; el rebote, opción.)
 5. **Home: con el icono `carpeta-casa`** (la colección no tiene un disco con casa).
 
 ## Lo que no se hizo
@@ -223,3 +222,27 @@ disco de pruebas no cambia. La capa de los discos: 248 × 300 × 4 = 290 KB con 
   sus propias ventanas).
 - Avisar al montar o desmontar: hoy solo pasa al entrar y salir la sesión (Home: y RAM:), que sería un aviso en cada
   entrada; se deja para cuando haya volúmenes extraíbles.
+
+## El latido al abrir (2026-11-18, tras las decisiones del usuario)
+
+- `dock_vivo.rs`: `Latido` (su punto en cada momento, `None` al acabar) y `al_abrir` (qué se pone en marcha según el
+  ajuste; sin animaciones, nada). Pruebas: que empieza en lo bajo, sube a medio latido y vuelve; que entre dos cuadros
+  seguidos nunca salta más de 20 de opacidad; que para a los 10 s o al salir la ventana; reloj absurdo; de serie el
+  latido; rebote y nada según el ajuste; sin animaciones, nada que mover. `dock_ajustes.rs`: `al_abrir` (de serie
+  latido, lo que no vale se dice y queda de serie, ida y vuelta).
+- El dock solo pide cuadros mientras late (`vivo`); al acabar, se quita y no se repinta más.
+- Ajustes > Dock: fila 14, "Al abrir un programa: su punto late / el icono rebota / nada" (catálogo 164-167, con el
+  inglés); las de los discos pasan a 15-20.
+- Pruebas: las de PC (`dock_vivo` 29, `dock_ajustes` 12), `make prueba`, `make arranque-virt-dms` y
+  `make arranque-virt-escritorio`: BIEN a la primera. En QEMU el Shell abre en menos de un segundo: late un rato corto
+  y "ya tiene ventana: deja de latir". El tope de 10 s solo se ha probado en el PC.
+- GIF: `dock-latido.gif` en la carpeta de las capturas (el Shell fijado, abierto desde el dock). El Shell sale en unos
+  200 ms: el punto que late se ve en un solo cuadro antes de que salga el de verdad; un latido entero no se ha visto en
+  QEMU. (`dock-rebote.gif` se quitó: ya no es lo de serie.)
+
+## Decisiones del usuario (2026-11-18)
+
+- Los discos como están: panel flotante arriba a la derecha, tarjetas con icono, nombre, libre y barra ("Me gusta
+  como has puesto los discos así").
+- El rebote al abrir de macOS, no ("ya un poco antiguo"): de serie, el punto de abierto aparece y late suave hasta que
+  sale la ventana (como GNOME/Windows 11); el rebote queda solo como opción en Ajustes > Dock, apagada de serie.

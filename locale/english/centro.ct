@@ -485,6 +485,18 @@ Magnify on hover: {}
 MSG_163
 Magnifying pushes the neighbours aside: {}
 ; El aumento aparta a los vecinos: {}
+MSG_164
+When a program opens: {}
+; Al abrir un programa: {}
+MSG_165
+its dot pulses
+; su punto late
+MSG_166
+the icon bounces
+; el icono rebota
+MSG_167
+nothing
+; nada
 MSG_161
 The dock, the on-screen notices and the desktop disks, as in DMS. Enter changes a row.
 ; El dock, los avisos en pantalla y los discos del escritorio, como en DMS. Intro cambia una fila.

@@ -234,6 +234,71 @@ impl Rebote {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// El latido al abrir (de serie; decisión del usuario del 2026-11-18, en vez del rebote): mientras el programa se abre,
+// su punto de abierto sale y late suave (opacidad y un poco el tamaño), como GNOME y Windows 11, hasta que sale la
+// ventana; si tarda más de `MAX_LATIDO_US`, deja de latir y se va. Cada medio latido va con la curva `standard` de
+// Material 3 que usa DMS (`Anims.standard`), subiendo y bajando.
+
+/// Lo que dura un latido entero (subir y bajar) y lo que late como mucho.
+pub const LATIDO_US: u64 = 1_200_000;
+pub const MAX_LATIDO_US: u64 = 10_000_000;
+/// La opacidad (de 0 a 255) y el tamaño (en milésimas) en lo bajo y en lo alto del latido.
+pub const LATIDO_OPACIDAD: (i64, i64) = (90, 255);
+pub const LATIDO_TAMANO: (i64, i64) = (800, 1000);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Latido {
+    pub clave: String,
+    pub desde: u64,
+    /// Cuando salió su ventana: el latido acaba ahí (el punto de verdad sigue).
+    pub hasta: Option<u64>,
+}
+
+impl Latido {
+    pub fn nuevo(clave: &str, ahora: u64) -> Latido {
+        Latido { clave: clave.to_string(), desde: ahora, hasta: None }
+    }
+
+    pub fn acabado(&self, ahora: u64) -> bool {
+        self.hasta.is_some_and(|h| ahora >= h) || ahora >= self.desde.saturating_add(MAX_LATIDO_US)
+    }
+
+    /// Cómo se ve el punto ahora: opacidad (0 a 255) y tamaño (en milésimas); `None` si ya no late. Empieza en lo
+    /// bajo, sube y baja.
+    pub fn punto(&self, ahora: u64) -> Option<(u32, i64)> {
+        if self.acabado(ahora) {
+            return None;
+        }
+        let t = ahora.saturating_sub(self.desde) % LATIDO_US;
+        let medio = LATIDO_US / 2;
+        let (fase, sube) = if t < medio { (t, true) } else { (t - medio, false) };
+        let f = Curva::Estandar.en((fase as i64) * UNO / medio as i64);
+        let f = if sube { f } else { UNO - f };
+        let entre = |(a, b): (i64, i64)| a + (b - a) * f / UNO;
+        Some((entre(LATIDO_OPACIDAD) as u32, entre(LATIDO_TAMANO)))
+    }
+}
+
+/// Lo que se pone en marcha al abrir un programa desde el dock, según el ajuste (`al_abrir`) y si hay animaciones.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AlAbrirVivo {
+    Latido(Latido),
+    Rebote(Rebote),
+    Nada,
+}
+
+pub fn al_abrir(aj: &Dock, clave: &str, ahora: u64, animar: bool) -> AlAbrirVivo {
+    if !animar {
+        return AlAbrirVivo::Nada;
+    }
+    match aj.al_abrir {
+        ajustes::AlAbrir::Latido => AlAbrirVivo::Latido(Latido::nuevo(clave, ahora)),
+        ajustes::AlAbrir::Rebote => AlAbrirVivo::Rebote(Rebote::nuevo(clave, ahora)),
+        ajustes::AlAbrir::Nada => AlAbrirVivo::Nada,
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // El indicador: el del elemento activo se alarga (75 ms, OutCubic, como `DockAppButton`) y el punto de una ventana
 // nueva crece desde nada (con el muelle expresivo: se pasa un poco y vuelve).
 
@@ -538,6 +603,47 @@ mod pruebas {
         assert_eq!(r.altura(u64::MAX, 40), 0);
         let r = Rebote { clave: "x".into(), desde: u64::MAX - 5, hasta: None };
         assert!(r.altura(u64::MAX - 1, 40) >= 0);
+    }
+
+    #[test]
+    fn el_latido_late_y_para() {
+        let l = Latido::nuevo("Shell", 1_000);
+        // Empieza en lo bajo, sube a lo alto a medio latido y vuelve.
+        assert_eq!(l.punto(1_000), Some((90, 800)));
+        assert_eq!(l.punto(1_000 + LATIDO_US / 2 - 1).map(|p| p.0 >= 250), Some(true));
+        let (a, t) = l.punto(1_000 + LATIDO_US / 2).unwrap();
+        assert!(a <= 255 && t <= 1000);
+        assert_eq!(l.punto(1_000 + LATIDO_US), Some((90, 800)));
+        // Suave: entre dos cuadros seguidos, nunca un salto grande.
+        let mut antes = l.punto(1_000).unwrap().0 as i64;
+        for k in 1..(2 * LATIDO_US / 16_667) {
+            let a = l.punto(1_000 + k * 16_667).unwrap().0 as i64;
+            assert!((a - antes).abs() <= 20, "salto de {} a {} en el cuadro {}", antes, a, k);
+            antes = a;
+        }
+        // Se para a los 10 s si no sale la ventana, o cuando sale.
+        assert!(l.punto(1_000 + MAX_LATIDO_US).is_none());
+        assert!(l.acabado(1_000 + MAX_LATIDO_US));
+        let mut l = l;
+        l.hasta = Some(2_000_000);
+        assert!(l.punto(1_999_999).is_some() && l.punto(2_000_000).is_none());
+        // Reloj hacia atrás o absurdo: no se rompe.
+        assert!(l.punto(0).is_some());
+        assert!(Latido::nuevo("x", u64::MAX - 3).punto(u64::MAX).is_some() || Latido::nuevo("x", u64::MAX - 3).acabado(u64::MAX));
+    }
+
+    #[test]
+    fn al_abrir_segun_el_ajuste() {
+        let mut aj = Dock::de_serie();
+        assert_eq!(aj.al_abrir, ajustes::AlAbrir::Latido, "de serie, el latido");
+        assert!(matches!(al_abrir(&aj, "a", 5, true), AlAbrirVivo::Latido(_)));
+        aj.al_abrir = ajustes::AlAbrir::Rebote;
+        assert!(matches!(al_abrir(&aj, "a", 5, true), AlAbrirVivo::Rebote(_)));
+        aj.al_abrir = ajustes::AlAbrir::Nada;
+        assert_eq!(al_abrir(&aj, "a", 5, true), AlAbrirVivo::Nada);
+        // Sin animaciones, nada que mover (ni que repintar).
+        aj.al_abrir = ajustes::AlAbrir::Latido;
+        assert_eq!(al_abrir(&aj, "a", 5, false), AlAbrirVivo::Nada);
     }
 
     #[test]

@@ -159,6 +159,8 @@ struct Muelle {
     /// (con su muelle) y desde cuándo se ve (la burbuja espera 250 ms solo al aparecer, como DMS).
     lupa: dock_vivo::Lupa,
     rebotes: Vec<dock_vivo::Rebote>,
+    /// Lo que se está abriendo con el latido (de serie): su punto late hasta que sale la ventana.
+    latidos: Vec<dock_vivo::Latido>,
     arrastre: Option<dock_vivo::Arrastre>,
     indicadores: dock_vivo::Indicadores,
     cuerpo: muelle::Muelle,
@@ -817,6 +819,22 @@ fn pintar_dock(px: &mut [u32], w: i32, h: i32, e: &Estado, m: &Muelle, ahora: u6
                         e.letra(&mut l, r, &ini, tam, t.primario);
                     }
                 }
+                // El latido: mientras se abre (aún sin ventana), su punto sale y late.
+                if let Some((alfa, tam)) = m.latidos.iter().find(|x| x.clave == it.clave).and_then(|x| x.punto(ahora))
+                    && !it.con_indicador()
+                {
+                    let mut abierto = it.clone();
+                    abierto.abierto = true;
+                    if abierto.tipo == Tipo::Grupo {
+                        abierto.ventanas = alloc::vec![(0, false)];
+                    }
+                    for (p, _) in dock_modelo::indicador(aj, &abierto, celda) {
+                        let p = mover(p, -sx * s, -sy * s);
+                        let (w, h) = ((p.w as i64 * tam / 1000) as i32, (p.h as i64 * tam / 1000) as i32);
+                        let p = Caja { x: p.x + (p.w - w) / 2, y: p.y + (p.h - h) / 2, w: w.max(1), h: h.max(1) };
+                        l.redondeado(caja_a_rect(p), p.w.min(p.h) / 2, con_opacidad(t.primario, alfa));
+                    }
+                }
                 // El indicador: el del activo se alarga y se acorta (75 ms), y el último punto crece al salir.
                 let (largo_activo, nace) = m.indicadores.de(&it.clave, ahora);
                 let puntos = dock_modelo::indicador(aj, it, celda);
@@ -1073,6 +1091,7 @@ impl Estado {
                 desplegado: false,
                 lupa: dock_vivo::Lupa::nueva(),
                 rebotes: Vec::new(),
+                latidos: Vec::new(),
                 arrastre: None,
                 indicadores: dock_vivo::Indicadores::default(),
                 cuerpo: dock_vivo::muelle_cuerpo(muelle::BASE_MS > 0),
@@ -1096,9 +1115,23 @@ impl Estado {
             } else {
                 m.cuerpo.ir(largo as i64 * muelle::UNO);
             }
+            // El latido de lo que se abría acaba cuando sale su ventana; su punto ya estaba a la vista: no crece otra vez.
+            let mut ya_latia = Vec::new();
+            for l in m.latidos.iter_mut().filter(|l| l.hasta.is_none()) {
+                if let Some(it) = m.items.iter().find(|it| it.clave == l.clave)
+                    && (it.abierto || !it.ventanas.is_empty())
+                {
+                    l.hasta = Some(ahora);
+                    ya_latia.push(l.clave.clone());
+                    println!("  [dock] {} ya tiene ventana: deja de latir", it.programa);
+                }
+            }
             // Los indicadores: el punto de una ventana nueva crece; el del activo se alarga.
             let puntos: Vec<(String, usize, bool)> = m.items.iter().filter(|it| it.con_indicador()).map(|it| (it.clave.clone(), it.puntos().len(), it.activo())).collect();
             m.indicadores.poner(&puntos, ahora, muelle::BASE_MS > 0);
+            for p in m.indicadores.puntos.iter_mut().filter(|p| ya_latia.contains(&p.clave)) {
+                p.nace.saltar(1000 * muelle::UNO);
+            }
             // El rebote de lo que se abrió acaba cuando sale su ventana.
             for r in m.rebotes.iter_mut().filter(|r| r.hasta.is_none()) {
                 if let Some(it) = m.items.iter().find(|it| it.clave == r.clave)
@@ -1452,15 +1485,23 @@ impl Estado {
         println!("  [dock] lanza Programas/{}: {} (proceso {})", programa, estado, pid);
     }
 
-    /// Rama dock-discos: el icono de lo que se abre bota hasta que sale su ventana (como macOS; DMS no lo hace).
-    fn rebotar(&mut self, i: usize, it: &Elemento) {
-        if muelle::BASE_MS == 0 {
-            return;
-        }
+    /// Rama dock-discos: lo que se ve mientras se abre un programa desde el dock (`al_abrir`, no está en DMS): de serie,
+    /// su punto de abierto late hasta que sale la ventana (como GNOME y Windows 11); o el icono bota (macOS); o nada.
+    fn al_abrir(&mut self, i: usize, it: &Elemento) {
         let m = &mut self.muelles[i];
         m.rebotes.retain(|r| r.clave != it.clave);
-        m.rebotes.push(dock_vivo::Rebote::nuevo(&it.clave, dashos::ahora_us()));
-        println!("  [dock] {} rebota hasta que abra su ventana", it.programa);
+        m.latidos.retain(|l| l.clave != it.clave);
+        match dock_vivo::al_abrir(&self.aj, &it.clave, dashos::ahora_us(), muelle::BASE_MS > 0) {
+            dock_vivo::AlAbrirVivo::Latido(l) => {
+                m.latidos.push(l);
+                println!("  [dock] {} late hasta que abra su ventana", it.programa);
+            }
+            dock_vivo::AlAbrirVivo::Rebote(r) => {
+                m.rebotes.push(r);
+                println!("  [dock] {} rebota hasta que abra su ventana", it.programa);
+            }
+            dock_vivo::AlAbrirVivo::Nada => {}
+        }
     }
 
     /// `handleLeftClick`.
@@ -1475,7 +1516,7 @@ impl Estado {
             }
             Tipo::Fijado => {
                 self.abrir_programa(c, &it.programa);
-                self.rebotar(i, &it);
+                self.al_abrir(i, &it);
             }
             Tipo::Ventana => {
                 if let Some((id, _)) = it.ventanas.first() {
@@ -1486,7 +1527,7 @@ impl Estado {
             Tipo::Grupo => match it.ventanas.len() {
                 0 => {
                     self.abrir_programa(c, &it.programa);
-                    self.rebotar(i, &it);
+                    self.al_abrir(i, &it);
                 }
                 1 => {
                     println!("  [dock] trae la ventana {} ({})", it.ventanas[0].0, it.programa);
@@ -1750,6 +1791,12 @@ fn principal() -> u64 {
             m.cuerpo.avanzar(paso);
             m.indicadores.avanzar(paso);
             m.rebotes.retain(|r| !r.acabado(ahora.saturating_sub(paso)));
+            let antes_latidos = m.latidos.len();
+            m.latidos.retain(|l| !l.acabado(ahora.saturating_sub(paso)) || l.hasta.is_some());
+            if m.latidos.len() < antes_latidos {
+                println!("  [dock] deja de latir: no abrió ventana en {} s", dock_vivo::MAX_LATIDO_US / 1_000_000);
+            }
+            m.latidos.retain(|l| !l.acabado(ahora.saturating_sub(paso)));
             let cambia_vista = ve != m.visto;
             if cambia_vista {
                 m.visto = ve;
@@ -2125,6 +2172,7 @@ fn vivo(m: &Muelle, ahora: u64) -> bool {
         || m.cuerpo.en_marcha
         || m.indicadores.animando(ahora)
         || m.rebotes.iter().any(|r| !r.acabado(ahora))
+        || m.latidos.iter().any(|l| !l.acabado(ahora))
         || m.arrastre.as_ref().is_some_and(|a| a.animando(ahora))
 }
 
