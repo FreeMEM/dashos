@@ -1,0 +1,17 @@
+[package]
+name = "dashos-caja-icono"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "icon.library y workbench.library nativas de la caja Amiga (S4): los .info (clásicos, NewIcons, los de color de OS 3.5 y los PNG), los tooltypes, los iconos de serie y los objetos App del Workbench"
+
+[lib]
+name = "caja_icono"
+path = "src/lib.rs"
+
+[dependencies]
+caja_exec = { package = "dashos-caja-exec", path = "../exec" }
+# Los ficheros, por las funciones de dos de la caja (`por_dos`): así pasan por su guardia.
+caja_dos = { package = "dashos-caja-dos", path = "../dos" }
+# El PNG y el zlib (los iconos PNG y el trozo ARGB de OS4).
+kit = { package = "dashos-kit", path = "../../kit" }

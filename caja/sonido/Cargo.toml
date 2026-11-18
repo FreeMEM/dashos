@@ -1,0 +1,14 @@
+[package]
+name = "dashos-caja-sonido"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "ahi.device y audio.device nativos de la caja Amiga (S19, fase 2): el pegamento entre exec y el corazón de audiodevice"
+
+[lib]
+name = "caja_sonido"
+path = "src/lib.rs"
+
+[dependencies]
+caja_exec = { package = "dashos-caja-exec", path = "../exec" }
+audiodevice = { package = "dashos-audiodevice", path = "../../audiodevice" }

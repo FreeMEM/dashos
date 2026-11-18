@@ -256,3 +256,73 @@ fn muestras_muy_cortas() {
     let esperado = 1000.0 * 2.0 * 124.0 / RELOJ_PAL as f64 * F as f64;
     assert!((n as f64 - esperado).abs() <= 1.5, "{n} y {esperado}");
 }
+
+/// Una memoria de prueba: `bytes` desde la dirección `desde`; lo demás no se puede leer.
+pub(crate) struct MemPrueba {
+    pub desde: u32,
+    pub bytes: core::cell::RefCell<Vec<u8>>,
+}
+
+impl Memoria for MemPrueba {
+    fn leer(&self, dir: u32, buf: &mut [u8]) -> bool {
+        let b = self.bytes.borrow();
+        let Some(i) = dir.checked_sub(self.desde) else { return false };
+        let i = i as usize;
+        match b.get(i..i + buf.len()) {
+            Some(s) => {
+                buf.copy_from_slice(s);
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+#[test]
+fn muestras_de_fuera_se_leen_al_mezclar() {
+    // Una escritura sin copiar: 4 muestras en la "memoria chip" de quien llama, con un reloj de 48 MHz y período
+    // 1.000 (una muestra por cuadro).
+    let mem = MemPrueba { desde: 0x1000, bytes: core::cell::RefCell::new(vec![64, 64, 64, 64]) };
+    let mut d = AudioDevice::nuevo(48_000 * 1000, F);
+    let k = llave_de(asignar(&mut d, 1, &[1], 0, ADIOF_NOWAIT));
+    let mut p = escribir(2, 1, k, vec![], 1000, 64, 0, 0);
+    p.fuera = Some((0x1000, 4));
+    d.pedir(p);
+    assert!(d.avisos().is_empty());
+    let mut s = vec![[0i16; 2]; 10];
+    d.mezclar_con(&mut s, &mem);
+    assert_eq!(s[0], [64 * 64 * 2, 0]);
+    // El programa cambia las muestras mientras suenan: se oye lo nuevo.
+    mem.bytes.borrow_mut().copy_from_slice(&[-32i8 as u8; 4]);
+    d.mezclar_con(&mut s, &mem);
+    assert_eq!(s[0], [-32 * 64 * 2, 0]);
+    // Sin memoria (o fuera de ella), silencio y sin pánico.
+    d.mezclar(&mut s);
+    assert_eq!(s[0], [0, 0]);
+    let mut q = escribir(3, 1, k, vec![], 1000, 64, 1, 0);
+    q.fuera = Some((0xFFFF_FFF0, 0xFFFF));
+    d.pedir(q);
+    d.mezclar_con(&mut s, &mem);
+    // Una escritura de fuera más corta que 2 bytes, mal.
+    let mut r = escribir(4, 1, k, vec![1, 2, 3], 1000, 64, 1, 0);
+    r.fuera = Some((0x1000, 1));
+    d.pedir(r);
+    assert!(d.avisos().contains(&Aviso::Hecha { id: 4, error: IOERR_BADLENGTH, unidad: 1, llave: k }));
+}
+
+#[test]
+fn avisos_con_su_cuadro() {
+    // Reloj de 48 MHz y período 1.000: una muestra por cuadro. 10 muestras, 1 ciclo: acaba con el cuadro 10.
+    let mut d = AudioDevice::nuevo(48_000 * 1000, F);
+    let k = llave_de(asignar(&mut d, 1, &[1], 0, ADIOF_NOWAIT));
+    d.pedir(escribir(2, 1, k, vec![1; 10], 1000, 64, 1, 0));
+    let _ = mezclar(&mut d, 4);
+    d.pedir(escribir(3, 1, k, vec![1; 10], 1000, 64, 1, 0));
+    assert!(d.avisos_con_cuadro().is_empty());
+    let _ = mezclar(&mut d, 100);
+    assert_eq!(d.avisos_con_cuadro(), vec![(Aviso::Hecha { id: 2, error: 0, unidad: 1, llave: k }, 10), (Aviso::Hecha { id: 3, error: 0, unidad: 1, llave: k }, 20)]);
+    assert_eq!(d.mezclados(), 104);
+    // Lo que acaba al pedirlo, con los mezclados hasta entonces.
+    d.pedir(orden(4, CMD_FLUSH, 1, k, 0));
+    assert_eq!(d.avisos_con_cuadro(), vec![(Aviso::Hecha { id: 4, error: 0, unidad: 1, llave: k }, 104)]);
+}

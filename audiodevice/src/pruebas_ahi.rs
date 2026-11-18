@@ -171,3 +171,63 @@ fn ahi_device_seguido_y_en_orden() {
     d.mezclar(&mut s);
     assert_eq!(s[0], [0, 200]);
 }
+
+#[test]
+fn sonidos_de_fuera_se_leen_al_mezclar() {
+    use crate::pruebas::MemPrueba;
+    // 4 cuadros mono de 16 bits en big-endian en la memoria de quien llama (AHIST_DYNAMICSAMPLE).
+    let mem = MemPrueba { desde: 0x2000, bytes: core::cell::RefCell::new([1000i16; 4].iter().flat_map(|v| v.to_be_bytes()).collect()) };
+    let mut a = Ahi::nuevo(F, 1, 1, None);
+    a.cargar(0, Muestras::fuera(AHIST_M16S, 0x2000, 4).unwrap()).unwrap();
+    assert!(Muestras::fuera(77, 0, 1).is_err());
+    a.frecuencia(0, F, AHISF_IMM).unwrap();
+    a.volumen(0, UNO as i32, 0, AHISF_IMM).unwrap();
+    a.sonido(0, 0, 0, 0, AHISF_IMM).unwrap();
+    a.tocar(true);
+    let mut s = vec![[0i16; 2]; 2];
+    a.mezclar_con(&mut s, &mem);
+    assert_eq!(s[0], [1000, 0]);
+    // El programa lo cambia: se oye lo nuevo en la mezcla siguiente.
+    mem.bytes.borrow_mut().copy_from_slice(&[-500i16; 4].iter().flat_map(|v| v.to_be_bytes()).collect::<Vec<u8>>());
+    a.mezclar_con(&mut s, &mem);
+    assert_eq!(s[0], [-500, 0]);
+    // Estéreo de 8 bits y 32 bits.
+    let m8 = MemPrueba { desde: 0, bytes: core::cell::RefCell::new(vec![10, 0xF6]) };
+    let mut b = Ahi::nuevo(F, 1, 1, None);
+    b.cargar(0, Muestras::fuera(AHIST_S8S, 0, 1).unwrap()).unwrap();
+    b.frecuencia(0, F, AHISF_IMM).unwrap();
+    b.volumen(0, UNO as i32, UNO / 2, AHISF_IMM).unwrap();
+    b.sonido(0, 0, 0, 0, AHISF_IMM).unwrap();
+    b.tocar(true);
+    b.mezclar_con(&mut s[..1], &m8);
+    assert_eq!(s[0], [10 << 7, -10 << 7]);
+    // Fuera de la memoria (o sin memoria): silencio, sin pánico.
+    b.mezclar(&mut s[..1]);
+    assert_eq!(s[0], [0, 0]);
+    let mut c = Ahi::nuevo(F, 1, 1, None);
+    c.cargar(0, Muestras::fuera(AHIST_S32S, 0xFFFF_FFF0, 0x1000_0000).unwrap()).unwrap();
+    c.frecuencia(0, F, AHISF_IMM).unwrap();
+    c.volumen(0, UNO as i32, 0, AHISF_IMM).unwrap();
+    c.sonido(0, 0, 0x0FFF_FFF0, 0, AHISF_IMM).unwrap();
+    c.tocar(true);
+    c.mezclar_con(&mut s, &mem);
+    assert_eq!(s[0], [0, 0]);
+    assert_eq!(tamano_cuadro(AHIST_S32S), Some(8));
+    assert_eq!(tamano_cuadro(5), None);
+}
+
+#[test]
+fn ahi_device_dice_el_cuadro_en_que_acaba() {
+    let mut d = AhiDevice::nuevo(F, 1);
+    let w = |id, n: usize| EscrituraAhi { id, muestras: Muestras::Mono(vec![1; n]), frecuencia: F, volumen: UNO as i32, paneo: 0 };
+    d.escribir(0, w(1, 100)).unwrap();
+    d.escribir(0, w(2, 50)).unwrap();
+    // En un solo trozo de 240 cuadros: la 1 acaba con el cuadro 100 y la 2 con el 150.
+    let mut s = vec![[0i16; 2]; 240];
+    d.mezclar(&mut s);
+    assert_eq!(d.hechas_con_cuadro(), vec![(1, 100), (2, 150)]);
+    assert_eq!(d.mezclados(), 240);
+    d.escribir(0, w(3, 10)).unwrap();
+    d.abortar(3);
+    assert_eq!(d.hechas_con_cuadro(), vec![(3, 240)]);
+}
