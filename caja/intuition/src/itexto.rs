@@ -4,7 +4,8 @@
 //!
 //! - DrawImage copia: cada punto es la pluma que sale de sus planos, sin mirar el modo ni las plumas del RastPort.
 //!   El plano `p` del RastPort sale del plano siguiente de `ImageData` si `PlanePick` tiene el bit `p`; si no, del bit
-//!   `p` de `PlaneOnOff`. Sin datos (`PlanePick` 0), un rectángulo de una pluma. Sigue `NextImage`.
+//!   `p` de `PlaneOnOff`. Sin datos (`PlanePick` 0), un rectángulo de una pluma. Sigue `NextImage`. Una imagen BOOPSI
+//!   (`Depth` -1) no se pinta aquí (hace falta `DrawImageState`), y como mucho 1024 x 1024.
 //! - DrawBorder: cada borde, una línea por sus `Count` puntos con su pluma y su modo. El RastPort queda como estaba,
 //!   también su posición.
 //! - PrintIText: cada texto con sus plumas, su modo y su fuente (o la del RastPort), con la línea base en
@@ -101,7 +102,15 @@ impl<C: Compositor> CajaGrafica<C> {
             let y0 = y + ex.l16(im + image::TOPEDGE)? as i16 as i32;
             let ancho = (ex.l16(im + image::WIDTH)? as i16).max(0) as u32;
             let alto = (ex.l16(im + image::HEIGHT)? as i16).max(0) as u32;
-            let hondo = (ex.l16(im + image::DEPTH)? as i16).max(0) as u32;
+            let hondo = ex.l16(im + image::DEPTH)? as i16;
+            if hondo < 0 {
+                return Err(Fallo::NoImplementada { n: 0 });
+            }
+            let hondo = hondo as u32;
+            if ancho > 1024 || alto > 1024 {
+                im = ex.l32(im + image::NEXTIMAGE)?;
+                continue;
+            }
             let datos = ex.l32(im + image::IMAGEDATA)?;
             let pick = ex.l8(im + image::PLANEPICK)?;
             let onoff = ex.l8(im + image::PLANEONOFF)?;

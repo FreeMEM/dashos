@@ -59,6 +59,8 @@ mod menus;
 mod pantallas;
 mod publicas;
 mod requester;
+mod pedidor;
+pub use pedidor::AccionAsl;
 mod tema;
 mod vigia;
 
@@ -172,6 +174,10 @@ pub struct CajaGrafica<C: Compositor> {
     /// Los requesters de `EasyRequestArgs` abiertos (uno por tarea) y sus títulos (ventana, cadena, largo).
     requesters: Vec<requester::Requester>,
     requester_titulos: Vec<(u32, u32, u32)>,
+    /// Los pedidores de ficheros de asl.library nativa (`pedidor.rs`), uno por tarea.
+    pedidores: Vec<pedidor::Pedidor>,
+    /// Los requesters clásicos puestos con `Request` (ventana, requester): la ventana no atiende al ratón dentro.
+    bloqueos: Vec<(u32, u32)>,
     avisos: Vec<Aviso>,
 }
 
@@ -194,6 +200,8 @@ impl<C: Compositor> CajaGrafica<C> {
             version_tema: 0,
             requesters: Vec::new(),
             requester_titulos: Vec::new(),
+            pedidores: Vec::new(),
+            bloqueos: Vec::new(),
             avisos: Vec::new(),
         };
         c.instalar_graphics(ex)?;

@@ -39,7 +39,9 @@ impl<M: Memoria> Exec<M> {
         let mut fin_anterior = abajo;
         let mut vueltas = 0;
         while c != 0 {
-            let largo = self.l32(c + memchunk::MC_BYTES)?;
+            // Un enlace basura cerca de $FFFFFFFF (lo dejó un programa) es una lista rota, no un desbordamiento.
+            let Some(dl) = c.checked_add(memchunk::MC_BYTES) else { return Err(Fallo::ListaRota { dir: c }) };
+            let largo = self.l32(dl)?;
             let bien = c % 8 == 0
                 && c >= fin_anterior
                 && largo != 0

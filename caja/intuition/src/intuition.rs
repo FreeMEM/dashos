@@ -867,6 +867,7 @@ impl<C: Compositor> CajaGrafica<C> {
     /// contestar hacen que la ventana quede pendiente (su memoria y su `WindowPort` siguen vivos) hasta que los
     /// conteste. Cerrar dos veces, o una que no es, da un aviso.
     pub fn close_window<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32) -> Result<(), Fallo> {
+        self.bloqueos.retain(|&(x, _)| x != w);
         self.ventana(w)?;
         self.gadtools_ventana_cerrada(w);
         self.boopsi_ventana_cerrada(w);
@@ -1012,6 +1013,7 @@ impl<C: Compositor> CajaGrafica<C> {
     /// Cierra las ventanas de una tarea que se va a matar. La caja lo llama antes de `Exec::matar_tarea`.
     pub fn tarea_muerta<M: Memoria>(&mut self, ex: &mut Exec<M>, t: u32) {
         self.requesters_tarea_muerta(ex, t);
+        self.pedidores_tarea_muerta(ex, t);
         let ws: Vec<u32> = self.intui.ventanas.iter().filter(|(_, v)| v.tarea == t).map(|(w, _)| *w).collect();
         for w in ws {
             if let Err(f) = self.close_window(ex, w) {

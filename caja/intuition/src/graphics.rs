@@ -104,7 +104,7 @@ impl Mapa {
 }
 
 /// Una fuente leída de su `struct TextFont`.
-struct Fuente {
+pub(crate) struct Fuente {
     alto: u32,
     ancho: u32,
     base: u32,
@@ -933,7 +933,7 @@ impl<C: Compositor> CajaGrafica<C> {
 
     // --- Texto y fuentes ---
 
-    fn leer_fuente<M: Memoria>(&self, ex: &Exec<M>, f: u32) -> Result<Fuente, Fallo> {
+    pub(crate) fn leer_fuente<M: Memoria>(&self, ex: &Exec<M>, f: u32) -> Result<Fuente, Fallo> {
         if f == 0 {
             return Err(Fallo::FuenteMala { dir: 0 });
         }

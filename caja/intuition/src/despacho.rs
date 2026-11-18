@@ -17,6 +17,7 @@ macro_rules! filas {
 filas!(G;
     BLTBITMAP = "BltBitMap", BLTTEMPLATE = "BltTemplate", CLEAREOL = "ClearEOL", CLEARSCREEN = "ClearScreen",
     TEXTLENGTH = "TextLength", TEXT = "Text", SETFONT = "SetFont", OPENFONT = "OpenFont", CLOSEFONT = "CloseFont",
+    ADDFONT = "AddFont", REMFONT = "RemFont",
     ASKSOFTSTYLE = "AskSoftStyle", SETSOFTSTYLE = "SetSoftStyle", LOADRGB4 = "LoadRGB4",
     INITRASTPORT = "InitRastPort", MOVE = "Move", DRAW = "Draw", RECTFILL = "RectFill", WRITEPIXEL = "WritePixel",
     READPIXEL = "ReadPixel", SETRAST = "SetRast", SCROLLRASTER = "ScrollRaster", SCROLLRASTERBF = "ScrollRasterBF",
@@ -60,11 +61,15 @@ filas!(I;
     REFRESHGLIST = "RefreshGList", REFRESHGADGETS = "RefreshGadgets", ONGADGET = "OnGadget", OFFGADGET = "OffGadget",
     ITEMADDRESS = "ItemAddress", ONMENU = "OnMenu", OFFMENU = "OffMenu", OPENSCREENTAGLIST = "OpenScreenTagList",
     OPENSCREEN = "OpenScreen", CLOSESCREEN = "CloseScreen", GETDEFAULTPUBSCREEN = "GetDefaultPubScreen",
-    INTUITEXTLENGTH = "IntuiTextLength", EASYREQUESTARGS = "EasyRequestArgs",
+    INTUITEXTLENGTH = "IntuiTextLength", EASYREQUESTARGS = "EasyRequestArgs", AUTOREQUEST = "AutoRequest",
+    PRINTITEXT = "PrintIText", GETPREFS = "GetPrefs", GETDEFPREFS = "GetDefPrefs", MODIFYPROP = "ModifyProp",
+    NEWMODIFYPROP = "NewModifyProp", DRAWIMAGE = "DrawImage", DISPLAYALERT = "DisplayAlert",
+    TIMEDDISPLAYALERT = "TimedDisplayAlert", INITREQUESTER = "InitRequester", REQUEST = "Request",
+    ENDREQUEST = "EndRequest",
     PUBSCREENSTATUS = "PubScreenStatus", LOCKPUBSCREENLIST = "LockPubScreenList",
     UNLOCKPUBSCREENLIST = "UnlockPubScreenList", NEXTPUBSCREEN = "NextPubScreen", SETDEFAULTPUBSCREEN = "SetDefaultPubScreen",
     SETPUBSCREENMODES = "SetPubScreenModes", LOCKIBASE = "LockIBase", UNLOCKIBASE = "UnlockIBase", REPORTMOUSE = "ReportMouse", DOUBLECLICK = "DoubleClick",
-    DRAWIMAGE = "DrawImage", DRAWBORDER = "DrawBorder", PRINTITEXT = "PrintIText",
+    DRAWBORDER = "DrawBorder",
 );
 
 /// Las funciones que devuelven -1 al fallar.
@@ -81,6 +86,12 @@ impl<C: Compositor> CajaGrafica<C> {
         if n == self.numeros.intuition + EASYREQUESTARGS as u16 {
             // Bloquea a la tarea hasta que pulsen un botón (requester.rs).
             return self.easy_request(ex, r);
+        }
+        if n == self.numeros.intuition + AUTOREQUEST as u16 {
+            return self.auto_request(ex, r);
+        }
+        if n == self.numeros.intuition + DISPLAYALERT as u16 || n == self.numeros.intuition + TIMEDDISPLAYALERT as u16 {
+            return self.display_alert(ex, r);
         }
         if let Some(f) = self.es_gadtools(n) {
             match self.llamar_gadtools(ex, f, r) {
@@ -242,6 +253,23 @@ impl<C: Compositor> CajaGrafica<C> {
                 0
             }
             OPENFONT => self.open_font(ex, a[0])?,
+            // AddFont(textFont)(a1): a la lista de fuentes del sistema (la que mira OpenFont); RemFont la quita. Una
+            // fuente que no se puede leer entera, o que ya está en la lista, no entra.
+            ADDFONT => {
+                self.leer_fuente(ex, a[1])?;
+                if ex.nodos(self.gfx.base + crate::estructuras::gfxbase::TEXTFONTS)?.contains(&a[1]) {
+                    return Err(Fallo::FuenteMala { dir: a[1] });
+                }
+                ex.add_head(self.gfx.base + crate::estructuras::gfxbase::TEXTFONTS, a[1])?;
+                0
+            }
+            REMFONT => {
+                if !ex.nodos(self.gfx.base + crate::estructuras::gfxbase::TEXTFONTS)?.contains(&a[1]) {
+                    return Err(Fallo::FuenteMala { dir: a[1] });
+                }
+                ex.remove(a[1])?;
+                0
+            }
             CLOSEFONT => {
                 self.close_font(ex, a[1])?;
                 0
@@ -521,10 +549,59 @@ impl<C: Compositor> CajaGrafica<C> {
                 ex.e32(w + crate::estructuras::window::FLAGS, f)?;
                 Ok(0)
             }
-            // DrawImage, DrawBorder y PrintIText(rp, x, left, top)(a0/a1/d0/d1): `itexto.rs`.
-            DRAWIMAGE => hecho(self.draw_image(ex, a[0], a[1], d[0] as i32, d[1] as i32)),
+            // PrintIText, DrawImage y DrawBorder(rp, x, left, top)(a0/a1/d0/d1): `itexto.rs`.
+            PRINTITEXT => hecho(self.print_i_text(ex, a[0], a[1], w(0), w(1))),
+            GETPREFS | GETDEFPREFS => self.get_prefs(ex, a[0], d[0]),
+            // InitRequester(req)(a0): la estructura Requester (112 bytes) a cero.
+            INITREQUESTER => {
+                ex.tramo(a[0], 112)?;
+                for k in 0..28 {
+                    ex.e32(a[0] + 4 * k, 0)?;
+                }
+                Ok(0)
+            }
+            // Request(req, window)(a0/a1): el requester se pone en la ventana (que deja de atender al ratón dentro) y,
+            // si la ventana lo pidió, recibe IDCMP_REQSET; EndRequest lo quita (IDCMP_REQCLEAR). Lo que dibuje el
+            // requester (sus gadgets y su borde) aún no se pinta: MUI lo usa sin nada dentro, para "ocupado".
+            REQUEST => {
+                ex.tramo(a[0], 112)?;
+                self.ventana(a[1])?;
+                if self.bloqueos.len() >= 256 || self.bloqueos.contains(&(a[1], a[0])) {
+                    return Ok(0);
+                }
+                self.bloqueos.push((a[1], a[0]));
+                let n = ex.l16(a[1] + crate::estructuras::window::REQCOUNT)?;
+                ex.e16(a[1] + crate::estructuras::window::REQCOUNT, n.saturating_add(1))?;
+                let _ = self.enviar(ex, a[1], crate::estructuras::idcmp::REQSET, 0, 0)?;
+                Ok(1)
+            }
+            ENDREQUEST => {
+                let Some(k) = self.bloqueos.iter().position(|&b| b == (a[1], a[0])) else { return Ok(0) };
+                self.bloqueos.remove(k);
+                let n = ex.l16(a[1] + crate::estructuras::window::REQCOUNT)?;
+                ex.e16(a[1] + crate::estructuras::window::REQCOUNT, n.saturating_sub(1))?;
+                let _ = self.enviar(ex, a[1], crate::estructuras::idcmp::REQCLEAR, 0, 0)?;
+                Ok(0)
+            }
             DRAWBORDER => hecho(self.draw_border(ex, a[0], a[1], d[0] as i32, d[1] as i32)),
-            PRINTITEXT => hecho(self.print_i_text(ex, a[0], a[1], d[0] as i32, d[1] as i32)),
+            DRAWIMAGE => hecho(self.draw_image(ex, a[0], a[1], w(0), w(1))),
+            // ModifyProp y NewModifyProp(gadget, window, req, flags, horizPot, vertPot, horizBody, vertBody[, n]):
+            // los valores nuevos a su PropInfo (gadget->SpecialInfo). Los gadgets de proporción clásicos aún no se
+            // pintan (solo los de GadTools y BOOPSI): se apunta el valor, como pide el programa.
+            MODIFYPROP | NEWMODIFYPROP => {
+                ex.tramo(a[0], 38)?;
+                let pi = ex.l32(a[0] + 34)?;
+                if pi == 0 {
+                    return Err(Fallo::Exec(caja_exec::Fallo::PunteroNulo));
+                }
+                ex.tramo(pi, 22)?;
+                ex.e16(pi, d[0] as u16)?;
+                ex.e16(pi + 2, d[1] as u16)?;
+                ex.e16(pi + 4, d[2] as u16)?;
+                ex.e16(pi + 6, d[3] as u16)?;
+                ex.e16(pi + 8, d[4] as u16)?;
+                Ok(0)
+            }
             INTUITEXTLENGTH => {
                 let t = ex.l32(a[0].wrapping_add(12))?;
                 Ok(ex.cadena(t)?.len() as u32 * crate::fuente::ANCHO)

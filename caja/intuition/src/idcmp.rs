@@ -155,6 +155,9 @@ impl<C: Compositor> CajaGrafica<C> {
             if self.requesters.iter().any(|q| q.w == w) {
                 self.dibujar_requester(ex, w);
             }
+            if self.es_pedidor(w) {
+                self.dibujar_pedidor(ex, w);
+            }
         }
     }
 
@@ -174,7 +177,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 ex.e16(w + win::TOPEDGE, y as u16)?;
                 self.enviar(ex, w, idcmp::CHANGEWINDOW, 0, 0)
             }
-            Evento::Cerrar => match self.requester_cerrar(ex, w) {
+            Evento::Cerrar => match self.requester_cerrar(ex, w).or_else(|| self.pedidor_cerrado(ex, w)) {
                 Some(r) => r,
                 None => self.enviar(ex, w, idcmp::CLOSEWINDOW, 0, 0),
             },
@@ -243,6 +246,18 @@ impl<C: Compositor> CajaGrafica<C> {
             && let Some(r) = self.requester_boton(ex, w, x, y, pulsado)
         {
             return r;
+        }
+        if boton == BTN_LEFT && self.es_pedidor(w) {
+            let (s, us) = self.intui.hora;
+            let ahora = s as u64 * 1_000_000 + us as u64;
+            if let Some(r) = self.pedidor_boton(ex, w, x, y, pulsado, ahora) {
+                return r;
+            }
+        }
+        // Con un requester clásico puesto (`Request`: MUI lo pone mientras el programa está ocupado), dentro de la
+        // ventana no se atiende al ratón; los bordes (mover, cerrar) sí.
+        if self.bloqueos.iter().any(|&(x, _)| x == w) && g.zona(x, y).is_none() {
+            return Ok(false);
         }
         match boton {
             BTN_LEFT if pulsado => match g.zona(x, y) {
@@ -332,6 +347,12 @@ impl<C: Compositor> CajaGrafica<C> {
                 Some(_) => None,
                 None => teclado::caracter_por_defecto(codigo, self.intui.calif),
             };
+            if self.es_pedidor(w)
+                && let Some(r) = self.pedidor_tecla(ex, w, crudo.map(|(c, _)| c), ch)
+            {
+                self.intui.calif.bits = base;
+                return r;
+            }
             if let Some(r) = self.gadget_tecla(ex, w, crudo.map(|(c, _)| c), ch) {
                 self.intui.calif.bits = base;
                 return r;
