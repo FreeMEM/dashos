@@ -60,6 +60,13 @@ use kit::tema::{apagado, Tema};
 use kit::texto::Fuente;
 use cc_rejilla::{Puesto, Rejilla, Tipo};
 use volumen_osd::Volumen;
+#[path = "../sonido_estado.rs"]
+mod sonido_estado;
+/// El protocolo del sonido: las constantes (de la biblioteca) y el estado con textos y listas.
+mod sonido_p {
+    pub use crate::sonido_estado::*;
+    pub use dashos::protocolo::sonido::*;
+}
 use ventana_cliente::*;
 use wayland::tablas::{
     dashos_tema_v1, wl_buffer, wl_compositor, wl_display, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface, zwlr_layer_shell_v1,
@@ -100,6 +107,11 @@ const ALTO_FILA: i32 = 56;
 const BOTON_IZQUIERDO: u32 = 0x110;
 /// La marca de la puerta por la que el centro de control le da su configuración.
 const MARCA_CC: u64 = 0x4343_4647_0000_0001;
+/// Rama sonido-pro: el estado del servicio de sonido (el grafo: por dónde sale, qué suena), en una memoria del panel.
+/// Rama sonido-pro: lejos de lo demás del programa (la barra tiene el Dash en VA + 10 << 32, y el estado del sonido
+/// estuvo ahí: al cerrar el Dash, su memoria se quitaba y la barra caía al leer el estado).
+const VA_SONIDO: usize = 0x68_0000_0000;
+const MARCA_SONIDO: u64 = 0x534f_4e49_444f_0002;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Accion {
@@ -160,13 +172,44 @@ fn con_detalle(id: &str) -> bool {
     matches!(id, "red" | "no_molestar" | "salida")
 }
 
-/// Las filas del detalle de cada mosaico (el de "no molestar": sus plazos, como `CcDurationActions`).
-fn filas_detalle(id: &str) -> usize {
+/// Las filas del detalle de cada mosaico (el de "no molestar": sus plazos, como `CcDurationActions`; el de la salida
+/// de sonido: por dónde sale, los programas que suenan y abrir la ventana "Sonido").
+fn filas_detalle(id: &str, est: &Estado) -> usize {
     match id {
         "no_molestar" => PLAZOS.len(),
-        "red" | "salida" => 2,
+        "red" => 2,
+        "salida" => 2 + flujos_panel(est).len(),
         _ => 0,
     }
+}
+
+/// Los flujos que se enseñan en el detalle de la salida (como mucho cuatro).
+fn flujos_panel(est: &Estado) -> Vec<sonido_p::Nodo> {
+    est.sonido.as_ref().map(|e| e.flujos().take(4).cloned().collect()).unwrap_or_default()
+}
+
+/// Rama sonido-pro: un sonido del sistema (el servicio decide si suena: tema, silencio y "no molestar").
+fn sonar(evento: u32) {
+    let b: Vec<u8> = [sonido_p::SONAR, evento].iter().flat_map(|w| w.to_le_bytes()).collect();
+    dashos::canal_escribir(SONIDO, &b, &[]);
+}
+
+/// Un volumen del servicio (1,0 = 65.536) en milésimas.
+fn sonido_vista_mil(v: u32) -> i32 {
+    ((v as i64 * 1000 + 32_768) / 65_536).min(4000) as i32
+}
+
+/// Lee el estado del servicio de sonido de su memoria (con su cerrojo de secuencia).
+fn leer_sonido(palabras: &mut [u32]) -> Option<sonido_p::Estado> {
+    for _ in 0..4 {
+        for (i, x) in palabras.iter_mut().enumerate() {
+            *x = unsafe { core::ptr::read_volatile((VA_SONIDO + 4 * i) as *const u32) };
+        }
+        if let Some(e) = sonido_p::leer(palabras) {
+            return Some(e);
+        }
+    }
+    None
 }
 
 const PLAZOS: [(&str, u32); 5] = [("Durante 15 minutos", 15), ("Durante 30 minutos", 30), ("Durante 1 hora", 60), ("Durante 2 horas", 120), ("Hasta que lo quites", 0)];
@@ -203,7 +246,7 @@ fn disponer(est: &Estado) -> Disposicion {
         d.alto = y + 40 + RELLENO;
         return d;
     }
-    let extra = est.detalle.filter(|_| !est.editando).and_then(|k| cc.puestos().get(k).map(|p| (k, 8 + 72 + filas_detalle(p.def().id) as i32 * ALTO_FILA_DETALLE + 8)));
+    let extra = est.detalle.filter(|_| !est.editando).and_then(|k| cc.puestos().get(k).map(|p| (k, 8 + 72 + filas_detalle(p.def().id, est) as i32 * ALTO_FILA_DETALLE + 8)));
     let c = cc_rejilla::colocar(cc, extra);
     for k in 0..c.n {
         let b = c.cajas[k];
@@ -236,7 +279,7 @@ fn disponer(est: &Estado) -> Disposicion {
             let debajo = d.cajas.iter().filter(|(c, _)| c.y < r.y + r.h + 1).map(|(c, _)| c.y + c.h).max().unwrap_or(r.y + r.h);
             let tarjeta = Rect::new(RELLENO, debajo + 8, w, ext - 16);
             d.zonas.push((Rect::new(tarjeta.x + tarjeta.w - 16 - 32, tarjeta.y + 16, 32, 32), Accion::CerrarDetalle));
-            for i in 0..filas_detalle(cc.puestos[k].def().id) {
+            for i in 0..filas_detalle(cc.puestos[k].def().id, est) {
                 d.zonas.push((Rect::new(tarjeta.x + 8, tarjeta.y + 64 + i as i32 * ALTO_FILA_DETALLE, tarjeta.w - 16, ALTO_FILA_DETALLE), Accion::Fila(i)));
             }
             d.detalle = Some(tarjeta);
@@ -339,6 +382,8 @@ struct Estado {
     menu: bool,
     /// Los Material Symbols del panel (kit::iconos), con su caché (rama `iconos`).
     simbolos: Simbolos,
+    /// Rama sonido-pro: lo último leído del servicio de sonido.
+    sonido: Option<sonido_p::Estado>,
 }
 
 /// Un Material Symbol de 24 centrado en `r` (los de los mosaicos, los botones y el menú de apagado).
@@ -605,7 +650,15 @@ fn pintar(px: &mut [u32], ancho: i32, alto: i32, e: &Estado, d: &Disposicion, fu
                 alloc::format!("Estado: {}", estado_de("red", e).1),
                 if e.red == 2 { alloc::format!("Dirección: {}.{}.{}.{}", e.ip[0], e.ip[1], e.ip[2], e.ip[3]) } else { String::from("Dirección: ninguna") },
             ],
-            "salida" => alloc::vec![String::from("Salida general"), alloc::format!("Volumen: {}", estado_de("salida", e).1)],
+            "salida" => {
+                let mut v = alloc::vec![alloc::format!("Sale por {} · {}", e.sonido.as_ref().map_or("—", |s| s.nombre_defecto()), estado_de("salida", e).1)];
+                for f in flujos_panel(e) {
+                    let pc = (sonido_vista_mil(f.volumen[0]) + 5) / 10;
+                    v.push(alloc::format!("{} · {} %{}", sonido_p::nombre_visible(&f.nombre), pc, if f.silencio { " · en silencio" } else { "" }));
+                }
+                v.push(String::from("Abrir el mezclador Sonido…"));
+                v
+            }
             "no_molestar" => PLAZOS.iter().map(|p| String::from(p.0)).collect(),
             _ => Vec::new(),
         };
@@ -835,6 +888,17 @@ fn decir_sitios(e: &Estado, d: &Disposicion, abierto_ahora: bool) {
                 let mas = desde_la_esquina(d, Rect::new(p.x + p.w + 4, p.y, 0, p.h));
                 println!("  [panel] volumen: menos a ({}, {}), más a ({}, {})", menos.0, menos.1, mas.0, mas.1);
             }
+            // Rama sonido-pro: la salida de sonido (su cuerpo abre el detalle con los programas y el mezclador).
+            if let Some((x, y)) = puesto("salida").and_then(|k| zona(Accion::Cuerpo(k))) {
+                println!("  [panel] salida a ({}, {})", x, y);
+            }
+        }
+        // Rama sonido-pro: con el detalle de la salida abierto, sus filas (la última abre la ventana "Sonido").
+        if e.detalle.and_then(|k| e.cc.puestos().get(k).map(|p| p.def().id)) == Some("salida") {
+            let n = 2 + flujos_panel(e).len();
+            if let (Some((x, y)), Some((ax, ay))) = (zona(Accion::Fila(n - 1)), zona(Accion::Fila(0))) {
+                println!("  [panel] detalle de la salida: {} filas; el mezclador a ({}, {}), sus ajustes a ({}, {})", n, x, y, ax, ay);
+            }
         }
         return;
     }
@@ -915,7 +979,20 @@ fn principal() -> u64 {
         persona: String::new(),
         menu: false,
         simbolos: Simbolos::new(),
+        sonido: None,
     };
+    // Rama sonido-pro: el estado del sonido, en una memoria nuestra que rellena el servicio (y una puerta, que no usa).
+    let mut palabras_sonido = alloc::vec![0u32; sonido_p::TAM_ESTADO / 4];
+    {
+        let m = dashos::memoria_crear(sonido_p::TAM_ESTADO);
+        let puerta_sonido = c.puerta_extra(MARCA_SONIDO);
+        if (m as i32) > 0 && dashos::memoria_proyectar(m, VA_SONIDO, true) == 0 && puerta_sonido != 0 {
+            let copia = dashos::llave_duplicar(m, dashos::LEER | dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
+            dashos::canal_escribir(SONIDO, &sonido_p::SUSCRIBIR.to_le_bytes(), &[copia.max(0) as u32, puerta_sonido]);
+        }
+    }
+    let mut general_visto: Option<u32> = None;
+    let mut nm_dicho: Option<bool> = None;
     // S27, oleada 2: lo último que se dijo al compositor del estado (para la barra) y cuándo toca preguntar a la red.
     let mut estado_dicho: Option<(u32, u32, u32)> = None;
     let mut proxima_red = 0u64;
@@ -983,6 +1060,27 @@ fn principal() -> u64 {
                     pintar_o_pedir(&mut c, &est, configurado, &mut pedido, &mut buferes, &mut visto, &mut fuente, &mut medio, false, false);
                 }
             }
+        }
+        // Rama sonido-pro: lo que dice el servicio de sonido. Si el volumen de la salida lo cambió otro (la ventana
+        // "Sonido"), el panel lo toma: así la barra y el OSD dicen lo mismo.
+        if let Some(es) = leer_sonido(&mut palabras_sonido) {
+            if let Some(m) = es.mezcla_de(es.defecto) {
+                let v = m.volumen[0];
+                if general_visto.is_some_and(|g| g != v) {
+                    let nivel = ((sonido_vista_mil(v) + 5) / 10).clamp(0, 100) as u32;
+                    if nivel != est.volumen.efectivo() && !est.volumen.silencio {
+                        est.volumen.poner(nivel);
+                    }
+                }
+                general_visto = Some(v);
+            }
+            est.sonido = Some(es);
+        }
+        // Rama sonido-pro: el "no molestar", también al sonido (calla los sonidos del sistema).
+        if Some(est.no_molestar.0) != nm_dicho {
+            nm_dicho = Some(est.no_molestar.0);
+            let b: Vec<u8> = [sonido_p::NO_MOLESTAR, est.no_molestar.0 as u32].iter().flat_map(|w| w.to_le_bytes()).collect();
+            dashos::canal_escribir(SONIDO, &b, &[]);
         }
         decir_estado(&mut c, &est, &mut estado_dicho);
         // Se espera como mucho hasta que toque preguntar otra vez a la red. (S27: el OSD del volumen lo enseña el dock,
@@ -1142,6 +1240,7 @@ fn principal() -> u64 {
                                     abierto = false;
                                     cerrar(&mut c, &mut est, true);
                                     println!("  [panel] bloquear");
+                            sonar(sonido_p::SON_BLOQUEO);
                                     continue;
                                 }
                                 "apagar" => {
@@ -1180,6 +1279,30 @@ fn principal() -> u64 {
                         }
                     }
                     Accion::CerrarDetalle => est.detalle = None,
+                    Accion::Fila(i) if est.detalle.map(&id) == Some("salida") => {
+                        // Rama sonido-pro: un programa, su silencio; la última, abrir la ventana "Sonido".
+                        let flujos = flujos_panel(&est);
+                        if i == 0 {
+                            // La primera (por dónde sale): Ajustes > Sonido.
+                            let r = dashos::canal_escribir(CENTRO, b"abrir sonido", &[]);
+                            println!("  [panel] abre Ajustes > Sonido: {}", r);
+                            abierto = false;
+                            cerrar(&mut c, &mut est, false);
+                            cambia = false;
+                        } else if i == flujos.len() + 1 {
+                            dashos::canal_escribir(SONIDO, &sonido_p::VENTANA.to_le_bytes(), &[]);
+                            println!("  [panel] abre la ventana Sonido");
+                            abierto = false;
+                            cerrar(&mut c, &mut est, false);
+                            cambia = false;
+                        } else if let Some(f) = i.checked_sub(1).and_then(|k| flujos.get(k)) {
+                            let b: Vec<u8> = [sonido_p::NODO_SILENCIO, f.id, !f.silencio as u32].iter().flat_map(|w| w.to_le_bytes()).collect();
+                            dashos::canal_escribir(SONIDO, &b, &[]);
+                            println!("  [panel] {}: {}", sonido_p::nombre_visible(&f.nombre), if f.silencio { "suena" } else { "en silencio" });
+                        } else {
+                            cambia = false;
+                        }
+                    }
                     Accion::Fila(i) => {
                         if est.detalle.map(&id) == Some("no_molestar") && let Some(&(texto, min)) = PLAZOS.get(i) {
                             if let Some(nm) = no_molestar(Some((true, min))) {
@@ -1198,6 +1321,7 @@ fn principal() -> u64 {
                         let Some(modo) = ENERGIA[i].1 else {
                             cerrar(&mut c, &mut est, true);
                             println!("  [panel] bloquear");
+                            sonar(sonido_p::SON_BLOQUEO);
                             continue;
                         };
                         cerrar(&mut c, &mut est, false);

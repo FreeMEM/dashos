@@ -26,6 +26,7 @@ pub mod protocolo {
     pub mod red;
     pub mod selector;
     pub mod sesiones;
+    pub mod sonido;
     /// S35: virtio por mensajes, entre un conductor de DashOS y el servicio de un dominio de controladores.
     pub mod virtio_msg;
     /// S35: prestar un aparato USB, entre el xHCI de DashOS y el servicio de un dominio de controladores.

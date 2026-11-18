@@ -575,7 +575,60 @@ fn sonido(memoria: u32) -> bool {
         println!("  [hostil] sonido: el flujo no pide muestras ({:?})", r);
     }
     escribir(SONIDO, &12u32.to_le_bytes(), &[]);
-    vivo
+    vivo && sonido_pro(memoria, m)
+}
+
+/// Rama sonido-pro: lo que solo puede el mezclador (el volumen, el silencio y la salida de otro, los efectos con valores
+/// absurdos, ver el estado, mandar órdenes a otro programa, sonidos del sistema), lo que suena con basura, y mil flujos.
+/// Después, abrir un flujo más tiene que seguir funcionando: el servicio sigue.
+fn sonido_pro(memoria: u32, anillo: u32) -> bool {
+    let palabras = |w: &[u32]| -> alloc::vec::Vec<u8> { w.iter().flat_map(|x| x.to_le_bytes()).collect() };
+    // El volumen de otro (los nodos 1 a 3: los primeros de alguien), su silencio, su salida, la salida del sistema.
+    for id in 1..4u32 {
+        escribir(SONIDO, &palabras(&[21, id, 0, 0]), &[]);
+    }
+    escribir(SONIDO, &palabras(&[22, 1, 1]), &[]);
+    escribir(SONIDO, &palabras(&[23, 1, 2]), &[]);
+    escribir(SONIDO, &palabras(&[24, 1]), &[]);
+    // Efectos con valores absurdos y un período que no existe.
+    escribir(SONIDO, &palabras(&[25, 0x100, i32::MAX as u32]), &[]);
+    escribir(SONIDO, &palabras(&[26, u32::MAX]), &[]);
+    // Ver el estado (con una memoria), mandar a otro programa, un sonido del sistema, abrir la ventana del mezclador.
+    let estado = dashos::llave_duplicar(memoria, dashos::LEER | dashos::ESCRIBIR | dashos::TRANSFERIR, 0) as u32;
+    let (lectura, suyo, copia) = canal_respuesta();
+    escribir(SONIDO, &palabras(&[20]), &[estado, suyo]);
+    escribir(SONIDO, &palabras(&[31, 1, 1]), &[]);
+    escribir(SONIDO, &palabras(&[40, 1]), &[]);
+    escribir(SONIDO, &palabras(&[27]), &[]);
+    // Lo que suena, con largos que no caben y con texto que no es UTF-8.
+    escribir(SONIDO, &palabras(&[30, 1, 7, 0, 0, u32::MAX, 5]), &[]);
+    let mut malo = palabras(&[30, 9, 0xff, 0, 0, 4, 0]);
+    malo.extend_from_slice(&[0xff, 0xfe, 0xc0, 0x80]);
+    escribir(SONIDO, &malo, &[]);
+    // Mil flujos (el mismo anillo, proyectado una vez por cada uno que se acepte): el servicio para en su tope.
+    let abrir = palabras(&[10, 0, 1, 48_000]);
+    let mut pedidos = 0;
+    let (avisos, extremo) = dashos::canal_crear();
+    for _ in 0..1000 {
+        let m = dashos::llave_duplicar(anillo, dashos::LEER | dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
+        let c = dashos::llave_duplicar(extremo, dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
+        if m <= 0 || c <= 0 || !escribir(SONIDO, &abrir, &[m as u32, c as u32]) {
+            break;
+        }
+        pedidos += 1;
+    }
+    for i in 0..8u32 {
+        escribir(SONIDO, &palabras(&[12, i]), &[]);
+    }
+    dashos::cerrar(lectura);
+    dashos::cerrar(copia);
+    dashos::cerrar(avisos);
+    dashos::cerrar(extremo);
+    // Sigue: el volumen general a lo de siempre (que no le toca) tiene que seguir llegando sin cortar nada; y que
+    // `hostil` pueda volver a abrir uno (sus flujos se cerraron).
+    let sigue = escribir(SONIDO, &palabras(&[13, 1.0f32.to_bits()]), &[]);
+    println!("  [hostil] sonido: {} flujos pedidos, el servicio sigue: {}", pedidos, si(sigue));
+    sigue
 }
 
 /// Conecta con el compositor; devuelve (lectura, copia de escritura).

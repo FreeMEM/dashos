@@ -27,6 +27,9 @@
 
 extern crate alloc;
 
+#[path = "../sonido_estado.rs"]
+#[allow(dead_code)]
+mod sonido_estado;
 #[path = "../ventana_cliente.rs"]
 #[allow(dead_code)]
 mod ventana_cliente;
@@ -1034,7 +1037,12 @@ impl Estado {
     fn tam_osd(&mut self) -> (i32, i32) {
         let Some(q) = self.osd.que.clone() else { return (1, 1) };
         let pantalla = self.pantalla(0);
-        let ancho_texto = (self.medio.medir(&q.etiqueta(), 14).ancho, self.medio.medir("0", 14).ancho);
+        // Rama sonido-pro: en el del volumen, lo que mide el nombre de la salida (12, como lo pinta).
+        let primero = match &q {
+            Que::Volumen { salida, .. } if !salida.is_empty() => self.fuente.medir(salida, 12).ancho,
+            _ => self.medio.medir(&q.etiqueta(), 14).ancho,
+        };
+        let ancho_texto = (primero, self.medio.medir("0", 14).ancho);
         let (w, h) = osd_modelo::medir(&q, &self.osd_aj, pantalla, ancho_texto);
         (w + 2 * osd_modelo::SOMBRA, h + 2 * osd_modelo::SOMBRA)
     }
@@ -1382,6 +1390,24 @@ fn texto_arg(cuerpo: &[u8], m: &wayland::Message, i: usize) -> String {
     }
 }
 
+/// Rama sonido-pro: la memoria del estado del sonido.
+/// Rama sonido-pro: lejos de lo demás del programa (la barra tiene el Dash en VA + 10 << 32, y el estado del sonido
+/// estuvo ahí: al cerrar el Dash, su memoria se quitaba y la barra caía al leer el estado).
+const VA_SONIDO: usize = 0x68_0000_0000;
+
+/// El nombre de la salida del sistema, del estado del sonido (vacío si no se sabe).
+fn salida_de_sonido(w: &mut [u32]) -> String {
+    for _ in 0..4 {
+        for (i, x) in w.iter_mut().enumerate() {
+            *x = unsafe { core::ptr::read_volatile((VA_SONIDO + 4 * i) as *const u32) };
+        }
+        if let Some(e) = sonido_estado::leer(w) {
+            return e.nodo(e.defecto).map(|n| n.nombre.clone()).unwrap_or_default();
+        }
+    }
+    String::new()
+}
+
 fn principal() -> u64 {
     dashos::monton::con_nombre(&"dock");
     let tabla = dashos::llaves::Tabla::leer();
@@ -1391,6 +1417,17 @@ fn principal() -> u64 {
     if let Some(l) = tabla.buscar("archivos") {
         LLAVE_ARCHIVOS.store(l, core::sync::atomic::Ordering::Relaxed);
     }
+    // Rama sonido-pro: el estado del servicio de sonido, para decir en el OSD del volumen por dónde suena. El extremo
+    // para despertarle no se usa (el servicio solo despierta al mezclador): se da uno de un canal que se cierra.
+    let sonido_visto = tabla.buscar("sonido").is_some_and(|l| {
+        let m = dashos::memoria_crear(dashos::protocolo::sonido::TAM_ESTADO);
+        let (lectura, extremo) = dashos::canal_crear();
+        dashos::cerrar(lectura);
+        let ok = (m as i32) > 0 && dashos::memoria_proyectar(m, VA_SONIDO, true) == 0;
+        let copia = if ok { dashos::llave_duplicar(m, dashos::LEER | dashos::ESCRIBIR | dashos::TRANSFERIR, 0) } else { -1 };
+        ok && copia > 0 && dashos::canal_escribir(l, &dashos::protocolo::sonido::SUSCRIBIR.to_le_bytes(), &[copia as u32, extremo]) == 0
+    });
+    let mut sonido_palabras = alloc::vec![0u32; if sonido_visto { dashos::protocolo::sonido::TAM_ESTADO / 4 } else { 0 }];
     let Some((mut c, puerta)) = Cliente::conectar_con_puerta(MARCA_TIMBRE) else {
         println!("  [dock] sin compositor");
         return 1;
@@ -1686,7 +1723,9 @@ fn principal() -> u64 {
                 let (nivel, silencio, tecla) = (palabra(0).min(100), palabra(1) != 0, palabra(2) != 0);
                 let primero = est.volumen.is_none();
                 est.volumen = Some((nivel, silencio));
-                let q = Que::Volumen { nivel, silencio };
+                // Rama sonido-pro: con el nombre de la salida del sistema, si se sabe.
+                let salida = if sonido_visto { salida_de_sonido(&mut sonido_palabras) } else { String::new() };
+                let q = Que::Volumen { nivel, silencio, salida };
                 if tecla {
                     est.ensenar_osd(&mut c, q);
                 } else if est.osd.poner(q.clone()) {

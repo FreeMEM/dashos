@@ -73,3 +73,14 @@ dock_to_bottom  contorno
 # El desplegable del kit (kit/src/controles.rs)
 arrow_drop_down contorno
 arrow_drop_up   contorno
+
+# El sonido (rama sonido-pro): el mezclador, los controles de medios y el visualizador
+play_arrow      lleno
+pause           lleno
+skip_next       lleno
+skip_previous   lleno
+graphic_eq      contorno
+equalizer       contorno
+mic_off         contorno
+spatial_audio_off contorno
+speed           contorno

@@ -45,7 +45,8 @@ pub const ESCALA_ENTRADA: i64 = UNO * 92 / 100;
 /// Lo que se enseña.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Que {
-    Volumen { nivel: u32, silencio: bool },
+    /// Rama sonido-pro: con `salida`, el nombre de por dónde suena (vacío: como antes, solo el icono).
+    Volumen { nivel: u32, silencio: bool, salida: String },
     /// Cuando haya quien lleve el brillo (hoy no hay servicio: `BrightnessOSD` queda listo).
     Brillo { nivel: u32 },
     Mayusculas { activo: bool },
@@ -150,8 +151,13 @@ pub fn medir(que: &Que, a: &AjustesOsd, pantalla: (i32, i32), ancho_texto: (i32,
             if a.posicion.vertical() {
                 (ALTO_OSD, ALTO_NIVEL_VERTICAL.min(sh - ESPACIO_M * 2).max(ALTO_OSD))
             } else {
-                // `osdValueReserve`: con el icono del final (siempre en estos dos), 56.
-                ((ANCHO_NIVEL + BOTON_M).min(sw - ESPACIO_M * 2).max(ALTO_OSD), BOTON_S + ESPACIO_S * 2)
+                // `osdValueReserve`: con el icono del final (siempre en estos dos), 56. Rama sonido-pro: con el nombre
+                // de la salida, lo que mide (`ancho_texto.0`) y 12 más, antes del icono.
+                let extra = match que {
+                    Que::Volumen { salida, .. } if !salida.is_empty() && !a.siempre_valor => ancho_texto.0.clamp(0, 240) + ESPACIO_M,
+                    _ => 0,
+                };
+                ((ANCHO_NIVEL + BOTON_M + extra).min(sw - ESPACIO_M * 2).max(ALTO_OSD), BOTON_S + ESPACIO_S * 2)
             }
         }
         Que::Mayusculas { .. } => (ALTO_OSD, ALTO_OSD),
@@ -208,13 +214,21 @@ fn glifo_nivel(que: &Que) -> Glifo {
     }
 }
 
+/// Rama sonido-pro: lo que se deja para el nombre de la salida (lo que pasa de la medida sin él), en horizontal.
+fn nombre_salida(que: &Que, a: &AjustesOsd, w: i32) -> i32 {
+    match que {
+        Que::Volumen { salida, .. } if !salida.is_empty() && !a.siempre_valor && !a.posicion.vertical() => (w - (ANCHO_NIVEL + BOTON_M)).max(0),
+        _ => 0,
+    }
+}
+
 /// `OsdLevelRow`: el icono tonal (primario con su glifo en sobre-primario), el deslizador y, al final, el valor (con
 /// `siempre_valor`) o el icono de la salida.
 fn fila_nivel(que: &Que, a: &AjustesOsd, (w, h): (i32, i32)) -> Vec<Pieza> {
     let rz = a.redondez;
     let vertical = a.posicion.vertical();
     let (nivel, texto) = match que {
-        Que::Volumen { nivel, silencio } => (if *silencio { 0 } else { *nivel }, que.etiqueta()),
+        Que::Volumen { nivel, silencio, .. } => (if *silencio { 0 } else { *nivel }, que.etiqueta()),
         Que::Brillo { nivel } => (*nivel, que.etiqueta()),
         _ => (0, String::new()),
     };
@@ -240,7 +254,7 @@ fn fila_nivel(que: &Que, a: &AjustesOsd, (w, h): (i32, i32)) -> Vec<Pieza> {
         (relleno, y, w - relleno * 2, (h - y - extremo - valor).max(0))
     } else {
         let x = extremo + icono + entre;
-        (x, 0, (w - extremo * 2 - icono - entre - valor).max(0), h)
+        (x, 0, (w - extremo * 2 - icono - entre - valor - nombre_salida(que, a, w)).max(0), h)
     };
     let largo = if vertical { sh } else { sw };
     // `DSlider`: el tirador de 4 recorre `largo - 4`; la pista llena hasta 6 antes, la vacía desde 6 después.
@@ -276,6 +290,11 @@ fn fila_nivel(que: &Que, a: &AjustesOsd, (w, h): (i32, i32)) -> Vec<Pieza> {
     }
     // Al final: el valor (12, medium, en el primario) o el icono de la salida.
     let (vx, vy) = if vertical { ((w - icono) / 2, h - extremo - icono) } else { (w - extremo - icono, (h - icono) / 2) };
+    // Rama sonido-pro: el nombre de la salida, entre el deslizador y su icono.
+    let ns = nombre_salida(que, a, w);
+    if !vertical && ns > 0 && let Que::Volumen { salida, .. } = que {
+        p.push(Pieza::Texto { x: vx - ns, y: vy, w: ns - 4, h: icono, texto: salida.clone(), tam: 12, papel: Papel::SobreSuperficie, centrado: false });
+    }
     if a.siempre_valor {
         p.push(Pieza::Texto { x: vx - 4, y: vy, w: icono + 8, h: icono, texto, tam: 12, papel: Papel::Primario, centrado: true });
     } else {
@@ -398,7 +417,7 @@ mod pruebas {
     #[test]
     fn el_volumen_de_shiva() {
         let a = AjustesOsd::de_serie();
-        let q = Que::Volumen { nivel: 40, silencio: false };
+        let q = Que::Volumen { nivel: 40, silencio: false, salida: String::new() };
         let tam = medir(&q, &a, (1920, 1080), (0, 0));
         assert_eq!(tam, (320, 56));
         // Arriba en el centro, a 12 de lo que deja la barra (la barra de DashOS: 40).
@@ -421,7 +440,7 @@ mod pruebas {
         let mut a = AjustesOsd::de_serie();
         for (pos, _) in ajustes::POSICIONES_OSD {
             a.posicion = pos;
-            for q in [Que::Volumen { nivel: 100, silencio: true }, Que::Brillo { nivel: 0 }, Que::Mayusculas { activo: true }, Que::Espacio { numero: 9 }] {
+            for q in [Que::Volumen { nivel: 100, silencio: true, salida: String::new() }, Que::Brillo { nivel: 0 }, Que::Mayusculas { activo: true }, Que::Espacio { numero: 9 }] {
                 for pantalla in [(1920, 1080), (800, 600), (200, 150)] {
                     let tam = medir(&q, &a, pantalla, (120, 8));
                     let (x, y) = sitio(&a, tam, (0, 0, pantalla.0, pantalla.1));
@@ -435,17 +454,17 @@ mod pruebas {
             }
         }
         a.posicion = PosOsd::IzquierdaCentro;
-        assert_eq!(medir(&Que::Volumen { nivel: 1, silencio: false }, &a, (1920, 1080), (0, 0)), (60, 352));
+        assert_eq!(medir(&Que::Volumen { nivel: 1, silencio: false, salida: String::new() }, &a, (1920, 1080), (0, 0)), (60, 352));
     }
 
     #[test]
     fn rafaga_y_tiempos() {
         let a = AjustesOsd::de_serie();
         let mut e = Estado::default();
-        assert_eq!(e.ensenar(Que::Volumen { nivel: 50, silencio: false }, &a, 0), Cambio::Nuevo);
+        assert_eq!(e.ensenar(Que::Volumen { nivel: 50, silencio: false, salida: String::new() }, &a, 0), Cambio::Nuevo);
         // Mil teclas seguidas: el mismo OSD, alargado.
         for k in 1..1000u64 {
-            assert_eq!(e.ensenar(Que::Volumen { nivel: (50 + k % 50) as u32, silencio: false }, &a, k * 1000), Cambio::Repintar);
+            assert_eq!(e.ensenar(Que::Volumen { nivel: (50 + k % 50) as u32, silencio: false, salida: String::new() }, &a, k * 1000), Cambio::Repintar);
         }
         assert_eq!(e.juntadas, 1000);
         let mut t = 999_000;
@@ -466,8 +485,8 @@ mod pruebas {
         assert_eq!(e.ensenar(Que::Espacio { numero: 2 }, &a, t), Cambio::Nada);
         assert_eq!(e.ensenar(Que::Mayusculas { activo: true }, &a, t), Cambio::Nuevo);
         // Otro tipo mientras se ve: lo sustituye.
-        assert_eq!(e.ensenar(Que::Volumen { nivel: 3, silencio: false }, &a, t + 1000), Cambio::Repintar);
-        assert_eq!(e.que, Some(Que::Volumen { nivel: 3, silencio: false }));
+        assert_eq!(e.ensenar(Que::Volumen { nivel: 3, silencio: false, salida: String::new() }, &a, t + 1000), Cambio::Repintar);
+        assert_eq!(e.que, Some(Que::Volumen { nivel: 3, silencio: false, salida: String::new() }));
     }
 
     #[test]
@@ -489,7 +508,7 @@ mod pruebas {
     fn hostil_niveles_y_relojes() {
         let a = AjustesOsd::de_serie();
         let mut e = Estado::default();
-        e.ensenar(Que::Volumen { nivel: u32::MAX, silencio: false }, &a, u64::MAX - 10);
+        e.ensenar(Que::Volumen { nivel: u32::MAX, silencio: false, salida: String::new() }, &a, u64::MAX - 10);
         let p = piezas(e.que.as_ref().unwrap(), &a, (320, 56));
         assert!(!p.is_empty());
         e.avanzar(0, u64::MAX);

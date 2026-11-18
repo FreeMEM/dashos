@@ -349,3 +349,31 @@ MSG_238 (238//)
 Subir
 MSG_239 (239//)
 Bajar
+MSG_900 (900//)
+Sonido
+MSG_901 (901//)
+para tocar (64 cuadros, 1,3 ms)
+MSG_902 (902//)
+ahorro (1.024 cuadros, 21 ms)
+MSG_903 (903//)
+normal (256 cuadros, 5,3 ms)
+MSG_904 (904//)
+Abrir la ventana Sonido: el mezclador, el ecualizador y el visualizador
+MSG_905 (905//)
+Tema de los sonidos del sistema: {}
+MSG_906 (906//)
+Sonidos del sistema: {}
+MSG_907 (907//)
+Volumen de los sonidos: {} %
+MSG_908 (908//)
+Ecualizador: {}
+MSG_909 (909//)
+Limitador (la salida nunca satura): {}
+MSG_910 (910//)
+Sonido espacial: {}
+MSG_911 (911//)
+Latencia: {}
+MSG_912 (912//)
+Probar el sonido de aviso
+MSG_913 (913//)
+Los sonidos del sistema, los efectos de la salida y la latencia. Intro cambia una fila; suena ya.

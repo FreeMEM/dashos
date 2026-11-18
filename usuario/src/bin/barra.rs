@@ -63,6 +63,9 @@ mod barra_menus;
 mod barra_config;
 #[path = "../barra_widgets.rs"]
 mod barra_widgets;
+#[path = "../sonido_estado.rs"]
+#[allow(dead_code)]
+mod sonido_estado;
 use barra_config::{Barra as CfgBarra, Config, Posicion};
 use barra_widgets::{accion, curva, disponer, pintar, que_quepa, Accion, Datos, Disposicion, Sitio, Vista, DURA_RAPIDA_US, RAPIDA};
 // S27, oleada 3: los emergentes y el centro de avisos, como en DMS.
@@ -113,7 +116,17 @@ const ARCHIVOS: u32 = 2;
 const SESIONES: u32 = 3;
 /// Trasfondo: el centro de control, para abrir el monitor del sistema ("abrir monitor").
 const CENTRO: u32 = 4;
-const AVISOS: u32 = 5;
+/// Rama sonido-pro: con "sonido" (que se nombra antes que "avisos"), la de los avisos pasa a la 6. Las dos se buscan por
+/// su nombre; estos números, por si la tabla no los trae.
+const AVISOS: u32 = 6;
+const SONIDO: u32 = 5;
+/// El estado del servicio de sonido (lo que suena, el espectro), en una memoria de la barra.
+/// Rama sonido-pro: lejos de lo demás del programa (la barra tiene el Dash en VA + 10 << 32, y el estado del sonido
+/// estuvo ahí: al cerrar el Dash, su memoria se quitaba y la barra caía al leer el estado).
+const VA_SONIDO: usize = 0x68_0000_0000;
+const MARCA_SONIDO: u64 = 0x534f_4e49_444f_0003;
+/// Cada cuánto se mueve el visualizador mientras algo suena (DMS: 25 por segundo).
+const VIZ_US: u64 = 40_000;
 /// La marca de la puerta por la que el servicio de avisos toca el timbre.
 const MARCA_TIMBRE: u64 = 0x4156_4953_0000_0001;
 /// S27: la marca de la puerta por la que el centro de control le da los ajustes de los avisos.
@@ -1040,6 +1053,19 @@ fn inst_menus(b: &Barra, bs: &Barras) -> Option<usize> {
     bs.inst.iter().position(|i| i.salida == principal && cfg_de(b, i).is_some_and(|cb| cb.posicion == Posicion::Arriba && cb.zonas.iter().flatten().any(|w| w.id == "menus" && w.activo)))
 }
 
+/// Rama sonido-pro: lee el estado del servicio de sonido de su memoria (con su cerrojo de secuencia).
+fn leer_sonido(w: &mut [u32]) -> Option<sonido_estado::Estado> {
+    for _ in 0..4 {
+        for (i, x) in w.iter_mut().enumerate() {
+            *x = unsafe { core::ptr::read_volatile((VA_SONIDO + 4 * i) as *const u32) };
+        }
+        if let Some(e) = sonido_estado::leer(w) {
+            return Some(e);
+        }
+    }
+    None
+}
+
 /// Pinta una capa (si ya tiene búfer).
 fn pintar_inst(c: &mut Cliente, b: &Barra, bs: &mut Barras, k: usize, fuente: &mut Fuente, medio: &mut Fuente) {
     let menus = inst_menus(b, bs) == Some(k);
@@ -1185,7 +1211,27 @@ fn principal() -> u64 {
     let mut uso_dicho = false;
     // Los avisos (S27, oleada 3: emergentes y centro, como en DMS): se suscribe con la puerta. Lo que ya hubiera no sale
     // como emergente, solo cuenta para la campana.
-    let mut avs = avisos_vista::Vista::new(AVISOS, CENTRO, esperar);
+    let avisos_llave = dashos::llaves::buscar("avisos").unwrap_or(AVISOS);
+    let sonido_llave = dashos::llaves::buscar("sonido").unwrap_or(SONIDO);
+    let mut avs = avisos_vista::Vista::new(avisos_llave, CENTRO, esperar);
+    // Rama sonido-pro: el estado del sonido (lo que suena y su espectro), en una memoria nuestra.
+    let mut sonido_palabras = alloc::vec![0u32; dashos::protocolo::sonido::TAM_ESTADO / 4];
+    let mut sonido_latido = 0u32;
+    let mut medio_id = 0u32;
+    let mut proximo_viz = 0u64;
+    let mut avisos_sonados = 0u32;
+    let mut viz_us = (0u64, 0u64);
+    let sonido_mira = {
+        use dashos::protocolo::sonido as sp;
+        let m = dashos::memoria_crear(sp::TAM_ESTADO);
+        let pu = c.puerta_extra(MARCA_SONIDO);
+        if (m as i32) > 0 && dashos::memoria_proyectar(m, VA_SONIDO, true) == 0 && pu != 0 {
+            let copia = dashos::llave_duplicar(m, dashos::LEER | dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
+            dashos::canal_escribir(sonido_llave, &sp::SUSCRIBIR.to_le_bytes(), &[copia.max(0) as u32, pu]) == 0
+        } else {
+            false
+        }
+    };
     if puerta != 0 {
         avs.suscribir(&mut c, puerta);
         b.d.sin_leer = avs.sin_leer;
@@ -1222,10 +1268,17 @@ fn principal() -> u64 {
     loop {
         let ahora_us = dashos::ahora_us();
         let animando = anima_espacio.is_some() || bs.inst.iter().any(|i| i.pulso.is_some());
+        // Rama sonido-pro: lo que suena y el visualizador. Se lee el estado del sonido en cada vuelta (es una copia de
+        // memoria); con algo sonando y el widget en alguna barra, se repinta cada `VIZ_US` y se dice al servicio que se
+        // mira el espectro (su latido). Sin nada que suene, nada se mueve ni se calcula.
+        let viz_activo = sonido_mira && b.d.medio.as_ref().is_some_and(|m| m.2) && b.cfg.barras.iter().any(|cb| cb.activa && cb.visible && cb.zonas.iter().flatten().any(|w| w.id == "musica" && w.activo));
         let mut plazo = hasta_el_minuto().min(avs.plazo_us()).min(if dash.as_ref().is_some_and(|d| d.animando()) { 16_000 } else { u64::MAX });
         plazo = plazo.min(proxima_medida.saturating_sub(ahora_us).max(1));
         if animando {
             plazo = plazo.min(16_000);
+        }
+        if viz_activo {
+            plazo = plazo.min(proximo_viz.saturating_sub(ahora_us).max(1));
         }
         if let Some(t) = bs.inst.iter().filter_map(|i| i.ocultar_en).min() {
             plazo = plazo.min(t.saturating_sub(ahora_us).max(1));
@@ -1257,6 +1310,54 @@ fn principal() -> u64 {
                 }
             }
             pintar_todas(&mut c, &b, &mut bs, &mut fuente, &mut medio);
+        }
+        // Rama sonido-pro: un aviso nuevo en pantalla suena (el servicio calla con "no molestar" o sin sonidos).
+        if avs.emergentes_salidos != avisos_sonados {
+            avisos_sonados = avs.emergentes_salidos;
+            let b2: Vec<u8> = [dashos::protocolo::sonido::SONAR, dashos::protocolo::sonido::SON_AVISO].iter().flat_map(|w| w.to_le_bytes()).collect();
+            dashos::canal_escribir(sonido_llave, &b2, &[]);
+        }
+        if sonido_mira {
+            let ahora = dashos::ahora_us();
+            let es = leer_sonido(&mut sonido_palabras);
+            let nuevo = es.as_ref().and_then(|e| e.medios.first()).map(|m| (m.titulo.clone(), m.artista.clone(), m.estado == dashos::protocolo::sonido::MED_SUENA));
+            medio_id = es.as_ref().and_then(|e| e.medios.first()).map_or(0, |m| m.id);
+            let mut repintar = false;
+            if nuevo != b.d.medio {
+                if let Some((t, a, suena)) = &nuevo {
+                    println!("  [barra] música: {} • {}{}", t, a, if *suena { "" } else { " (en pausa)" });
+                }
+                b.d.medio = nuevo;
+                repintar = true;
+            }
+            if viz_activo && ahora >= proximo_viz {
+                proximo_viz = ahora + VIZ_US;
+                // El latido: que el servicio calcule el espectro mientras se ve.
+                sonido_latido = sonido_latido.wrapping_add(1);
+                unsafe { core::ptr::write_volatile((VA_SONIDO + 4 * dashos::protocolo::sonido::W_LATIDO) as *mut u32, sonido_latido) };
+                // Las 24 bandas del servicio en 6 barras (de 4 en 4, la mayor), con la escala de raíz de DMS (ya viene).
+                if let Some(e) = &es {
+                    for k in 0..6 {
+                        let v = e.bandas.iter().skip(k * 4).take(4).copied().max().unwrap_or(0) as i32;
+                        b.d.viz[k] = (b.d.viz[k] + v) / 2;
+                    }
+                }
+                repintar = true;
+            } else if !viz_activo && b.d.viz != [0; 6] {
+                b.d.viz = [0; 6];
+                repintar = true;
+            }
+            if repintar {
+                let t0 = dashos::ahora_us();
+                pintar_todas(&mut c, &b, &mut bs, &mut fuente, &mut medio);
+                if viz_activo {
+                    viz_us.0 += dashos::ahora_us() - t0;
+                    viz_us.1 += 1;
+                    if viz_us.1 == 250 {
+                        println!("  [barra] visualizador: 250 cuadros, {} us de media por cuadro", viz_us.0 / viz_us.1);
+                    }
+                }
+            }
         }
         // Autoocultar: las que se fue el ratón hace su retardo, fuera.
         let ahora = dashos::ahora_us();
@@ -1792,6 +1893,14 @@ fn principal() -> u64 {
                                 dash = dash_reloj::Dash::abrir(&mut c, &reloj(), ancho_principal(&bs), actuales, persona, (b.d.cpu, b.d.memoria));
                             }
                         },
+                        // Rama sonido-pro: los botones de la música, al programa que suena (por el servicio).
+                        Accion::Medio(n) if medio_id != 0 => {
+                            use dashos::protocolo::sonido as sp;
+                            let orden = [sp::ORDEN_ANTERIOR, sp::ORDEN_REPRODUCIR_PAUSAR, sp::ORDEN_SIGUIENTE][(n as usize).clamp(1, 3) - 1];
+                            let b2: Vec<u8> = [sp::MEDIOS_ORDEN, medio_id, orden].iter().flat_map(|w| w.to_le_bytes()).collect();
+                            dashos::canal_escribir(sonido_llave, &b2, &[]);
+                            println!("  [barra] música: botón {}", n);
+                        }
                         Accion::Avisos if avs.activo => {
                             avs.alternar_centro(&mut c, &b.tema, &mut avisos_vista::Letras { f: &mut fuente, m: &mut medio }, &reloj());
                             b.d.historial_abierto = avs.centro_abierto();

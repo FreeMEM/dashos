@@ -41,6 +41,9 @@ mod ventana_cliente;
 #[path = "../preguntas_ficheros.rs"]
 #[allow(dead_code)]
 mod preguntas_ficheros;
+#[path = "../sonido_estado.rs"]
+#[allow(dead_code)]
+mod sonido_estado;
 #[path = "../bloqueo_vista.rs"]
 mod bloqueo_vista;
 use bloqueo_vista as bv;
@@ -2255,6 +2258,8 @@ struct Alrededor {
     /// El primario del esquema oscuro del tema: el reloj sobre el fondo velado (oscuro) se lee con cualquier tema.
     primario_oscuro: kit::lienzo::Color,
     simbolos: kit::iconos::Simbolos,
+    /// Rama sonido-pro: lo que suena (en la de bloqueo, como DMS): su número, "título • artista" y si suena.
+    medio: Option<(u32, String, bool)>,
 }
 
 /// Lo que dejan ver los avisos en la pantalla de bloqueo (`protocolo::avisos::resumen_bloqueo`).
@@ -2267,7 +2272,7 @@ struct ResumenAvisos {
 
 impl Alrededor {
     fn nuevo() -> Alrededor {
-        Alrededor { fondo: None, hora: None, minuto: u64::MAX, estado: None, avisos: None, bloq_mayus: false, primario_oscuro: Tema::OSCURO.primario, simbolos: kit::iconos::Simbolos::new() }
+        Alrededor { fondo: None, hora: None, minuto: u64::MAX, estado: None, avisos: None, bloq_mayus: false, primario_oscuro: Tema::OSCURO.primario, simbolos: kit::iconos::Simbolos::new(), medio: None }
     }
 
     /// El color del contenido (el texto, el estado) y el apagado: blanco sobre el fondo velado (como DMS,
@@ -2349,6 +2354,79 @@ fn fondo_de_bloqueo() -> Option<(alloc::vec::Vec<u32>, usize, usize)> {
     dashos::memoria_quitar(VA_FONDO);
     dashos::cerrar(ll[0]);
     Some((px, w, h))
+}
+
+/// Rama sonido-pro: la llave del servicio de sonido, que se pide a `sesiones` la primera vez (`guardian` va antes que el
+/// servicio en `inicio`: si la nombrara, lo serviría él), y la memoria de su estado. 0 si no se da.
+static SONIDO_LLAVE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+/// Rama sonido-pro: lejos de lo demás del programa (la barra tiene el Dash en VA + 10 << 32, y el estado del sonido
+/// estuvo ahí: al cerrar el Dash, su memoria se quitaba y la barra caía al leer el estado).
+const VA_SONIDO: usize = 0x68_0000_0000;
+
+fn sonido_llave() -> u32 {
+    use core::sync::atomic::Ordering;
+    let l = SONIDO_LLAVE.load(Ordering::Relaxed);
+    if l != 0 {
+        return l;
+    }
+    let nombre = b"sonido";
+    let mut p = [0u8; 12 + 6];
+    p[0..4].copy_from_slice(&dashos::protocolo::sesiones::SERVICIO.to_le_bytes());
+    p[4..8].copy_from_slice(&(nombre.len() as u32).to_le_bytes());
+    p[12..].copy_from_slice(nombre);
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut r = [0u8; 4];
+    let mut ll = [0u32; 1];
+    let (n, k, _) = if dashos::canal_escribir(SESIONES, &p, &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut ll, 500_000) } else { (-1, 0, 0) };
+    dashos::cerrar(lectura);
+    if n != 4 || i32::from_le_bytes(r) != 0 || k != 1 {
+        return 0;
+    }
+    // Su estado, en una memoria nuestra (el extremo para despertarnos no se usa: se da uno de un canal cerrado).
+    let m = dashos::memoria_crear(dashos::protocolo::sonido::TAM_ESTADO);
+    let (lec, ext) = dashos::canal_crear();
+    dashos::cerrar(lec);
+    if (m as i32) <= 0 || dashos::memoria_proyectar(m, VA_SONIDO, true) != 0 {
+        return 0;
+    }
+    let copia = dashos::llave_duplicar(m, dashos::LEER | dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
+    if copia <= 0 || dashos::canal_escribir(ll[0], &dashos::protocolo::sonido::SUSCRIBIR.to_le_bytes(), &[copia as u32, ext]) != 0 {
+        return 0;
+    }
+    SONIDO_LLAVE.store(ll[0], Ordering::Relaxed);
+    ll[0]
+}
+
+/// Lo que suena ahora, si algún programa lo dice (para la pantalla de bloqueo).
+fn medio_de_bloqueo() -> Option<(u32, String, bool)> {
+    if sonido_llave() == 0 {
+        return None;
+    }
+    // El servicio rellena el estado al suscribirse: se le da un momento.
+    let mut w = alloc::vec![0u32; dashos::protocolo::sonido::TAM_ESTADO / 4];
+    for _ in 0..20 {
+        for (i, x) in w.iter_mut().enumerate() {
+            *x = unsafe { core::ptr::read_volatile((VA_SONIDO + 4 * i) as *const u32) };
+        }
+        if let Some(e) = sonido_estado::leer(&w) {
+            return e.medios.first().map(|m| {
+                let texto = if m.artista.is_empty() { m.titulo.clone() } else { alloc::format!("{} • {}", m.titulo, m.artista) };
+                (m.id, texto, m.estado == dashos::protocolo::sonido::MED_SUENA)
+            });
+        }
+        dashos::dormir_us(10_000);
+    }
+    None
+}
+
+/// Rama sonido-pro: la fila de lo que suena, arriba a la izquierda (DMS, `LockStatusRow`): la nota, "título •
+/// artista" y los botones anterior (16), reproducir (24, redondo) y siguiente (16). Devuelve los botones (1, 2, 3).
+fn sitios_medio(fuente: &mut Fuente, texto: &str) -> (Rect, [(Rect, u32); 3]) {
+    let (x0, y0) = (bv::MARGEN_ESTADO, bv::MARGEN_ESTADO - 2);
+    let w = fuente.medir(texto, 16).ancho.min(420);
+    let bx = x0 + 28 + w + 16;
+    let fila = Rect::new(x0 - 4, y0 - 4, bx + 24 + 16 + 24 + 24 + 8 - x0, 32);
+    (fila, [(Rect::new(bx, y0 + 4, 16, 16), 1), (Rect::new(bx + 24, y0, 24, 24), 2), (Rect::new(bx + 24 + 32, y0 + 4, 16, 16), 3)])
 }
 
 /// Lo que dejan ver los avisos en la pantalla de bloqueo: se pide a `sesiones` (`AVISOS_BLOQUEO`), que se lo pasa al
@@ -2459,6 +2537,24 @@ fn pintar(px: &mut [u32], ancho: i32, alto: i32, p: &Pantalla, zona: Rect, fuent
         } else {
             a.simbolos.pintar(&mut l, x, y, tam, kit::iconos::simbolo::LAN, tenue);
             l.trazo(((x + 2) * 8, (y + 2) * 8), ((x + tam - 2) * 8, (y + tam - 2) * 8), 14, tenue);
+        }
+    }
+    // Rama sonido-pro: lo que suena, arriba a la izquierda (solo en la de bloqueo).
+    if let Some((_, texto, suena)) = &a.medio {
+        let (_, botones) = sitios_medio(fuente, texto);
+        let (x0, y0) = (bv::MARGEN_ESTADO, bv::MARGEN_ESTADO - 2);
+        a.simbolos.pintar(&mut l, x0, y0, 20, kit::iconos::simbolo::MUSIC_NOTE_LLENO, contenido);
+        let corto = if fuente.medir(texto, 16).ancho > 420 { alloc::format!("{}…", texto.chars().take(40).collect::<String>()) } else { texto.clone() };
+        fuente.dibujar(&mut l, x0 + 28, y0 + 17, &corto, 16, contenido);
+        for (r, n) in botones {
+            if n == 2 {
+                l.redondeado(r, 12, if *suena { contenido } else { tenue });
+                let s = if *suena { kit::iconos::simbolo::PAUSE_LLENO } else { kit::iconos::simbolo::PLAY_ARROW_LLENO };
+                a.simbolos.centrado(&mut l, r, 16, s, 0xff00_0000);
+            } else {
+                let s = if n == 1 { kit::iconos::simbolo::SKIP_PREVIOUS_LLENO } else { kit::iconos::simbolo::SKIP_NEXT_LLENO };
+                a.simbolos.centrado(&mut l, r, 16, s, contenido);
+            }
         }
     }
     let y = Pantalla::arriba(ancho, alto);
@@ -2823,6 +2919,11 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
     (alrededor.hora, alrededor.minuto) = ahora_local();
     if !entrada {
         alrededor.avisos = avisos_de_bloqueo();
+        // Rama sonido-pro: lo que suena, si algo suena.
+        alrededor.medio = medio_de_bloqueo();
+        if let Some((_, t, suena)) = &alrededor.medio {
+            println!("  [guardian] lo que suena en la pantalla de bloqueo: {}{}", t, if *suena { "" } else { " (en pausa)" });
+        }
     }
     println!(
         "  [guardian] alrededor: {}; hora {}",
@@ -3141,6 +3242,29 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
             (PUNTERO, wl_pointer::ev::LEAVE) => (rx, ry) = (-1, -1),
             // Un clic (el botón izquierdo, al pulsarlo): en una fila, elegirla e Intro; en una caja, a ella; en un botón
             // del pie, su tecla. Mientras se comprueba una contraseña, nada.
+            // Rama sonido-pro: los botones de lo que suena (al programa, por el servicio de sonido).
+            (PUNTERO, wl_pointer::ev::BUTTON)
+                if palabra(2) == 0x110
+                    && palabra(3) == 1
+                    && buf
+                    && alrededor.medio.as_ref().is_some_and(|(_, t, _)| sitios_medio(&mut fuente, t).1.iter().any(|(r, _)| r.contiene(rx, ry))) =>
+            {
+                let (id, texto, suena) = alrededor.medio.clone().unwrap();
+                let (fila, botones) = sitios_medio(&mut fuente, &texto);
+                if let Some(&(_, n)) = botones.iter().find(|(r, _)| r.contiene(rx, ry)) {
+                    use dashos::protocolo::sonido as sp;
+                    let orden = [sp::ORDEN_ANTERIOR, sp::ORDEN_REPRODUCIR_PAUSAR, sp::ORDEN_SIGUIENTE][n as usize - 1];
+                    let b: alloc::vec::Vec<u8> = [sp::MEDIOS_ORDEN, id, orden].iter().flat_map(|w| w.to_le_bytes()).collect();
+                    dashos::canal_escribir(sonido_llave(), &b, &[]);
+                    println!("  [guardian] lo que suena: botón {}", n);
+                    if n == 2 {
+                        alrededor.medio = Some((id, texto, !suena));
+                    } else if let Some(m) = medio_de_bloqueo() {
+                        alrededor.medio = Some(m);
+                    }
+                    extras.push(Rect::new(0, fila.y - 2, ancho, fila.h + 4));
+                }
+            }
             (PUNTERO, wl_pointer::ev::BUTTON) if palabra(2) == 0x110 && palabra(3) == 1 && esperando.is_none() && buf => {
                 match p.en(ancho, alto, rx, ry, &mut fuente) {
                     Some(Pulsado::Fila(i)) => {

@@ -144,6 +144,10 @@ const PERMISOS: &[(&str, &str)] = &[
     ("commodity-prueba", "atajos"),
     ("commodity-prueba", "fondo"),
     ("commodity-prueba", "commodities"),
+    // Rama sonido-pro: Ajustes > Sonido le dice al servicio los ajustes guardados y abre la ventana "Sonido".
+    ("centro", "sonido"),
+    // Y la pantalla de bloqueo, lo que suena (como DMS) y sus botones.
+    ("guardian", "sonido"),
 ];
 const CAMINO_PERMISOS: &[u8] = b"Estado/Servicios/sesiones/permisos";
 /// Permisos concedidos por el usuario, a la vez, y preguntas sin contestar.

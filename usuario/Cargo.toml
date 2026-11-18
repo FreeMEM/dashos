@@ -520,3 +520,17 @@ name = "menus-prueba"
 path = "src/bin/menus_prueba.rs"
 test = false
 required-features = ["ventanas"]
+
+# La ventana "Sonido" (rama sonido-pro): el mezclador, el visualizador y los efectos.
+[[bin]]
+name = "mezclador"
+path = "src/bin/mezclador.rs"
+test = false
+required-features = ["ventanas"]
+
+# Un reproductor de prueba que suena y dice lo que suena (rama sonido-pro).
+[[bin]]
+name = "melodia"
+path = "src/bin/melodia.rs"
+test = false
+required-features = ["sonido"]

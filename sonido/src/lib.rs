@@ -17,6 +17,12 @@
 
 extern crate alloc;
 
+pub mod efectos;
+pub mod espectro;
+pub mod grafo;
+pub mod mates;
+pub mod sonidos;
+
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
@@ -70,7 +76,7 @@ pub type Cuadro = [i32; 2];
 /// 1,0 en una muestra.
 pub const UNO: i32 = 32_768;
 /// 1,0 en un volumen.
-const UNO_VOL: i64 = 65_536;
+pub const UNO_VOL: i64 = 65_536;
 
 fn leer_muestra(m: Muestra, b: &[u8]) -> i32 {
     match m {
@@ -105,23 +111,23 @@ pub fn a_i16(c: Cuadro) -> [i16; 2] {
 /// El remuestreo lineal: `pos` es dónde cae la siguiente muestra de salida entre `previo` y el primero de la cola (de
 /// 0 a 1), y avanza `paso` cuadros de entrada por cada uno de salida.
 /// `pos` y `paso`, con 32 bits de fracción (1 << 32 es un cuadro de entrada).
-struct Remuestreo {
+pub(crate) struct Remuestreo {
     previo: Cuadro,
     pos: u64,
-    nominal: u64,
-    paso: u64,
+    pub(crate) nominal: u64,
+    pub(crate) paso: u64,
 }
 
 const UN_CUADRO: u64 = 1 << 32;
 
 impl Remuestreo {
-    fn nuevo(entrada: u32, salida: u32) -> Remuestreo {
+    pub(crate) fn nuevo(entrada: u32, salida: u32) -> Remuestreo {
         let nominal = ((entrada as u64) << 32) / salida as u64;
         Remuestreo { previo: [0; 2], pos: 0, nominal, paso: nominal }
     }
 
     /// El siguiente cuadro de salida, o `None` si a la cola le faltan cuadros (sin gastar nada).
-    fn siguiente(&mut self, cola: &mut VecDeque<Cuadro>) -> Option<Cuadro> {
+    pub(crate) fn siguiente(&mut self, cola: &mut VecDeque<Cuadro>) -> Option<Cuadro> {
         while self.pos >= UN_CUADRO {
             self.previo = cola.pop_front()?;
             self.pos -= UN_CUADRO;
@@ -158,7 +164,7 @@ struct Flujo {
 }
 
 /// Lo que cabe en la cola de un flujo: un segundo de su entrada.
-fn cabida(f: &Formato) -> usize {
+pub(crate) fn cabida(f: &Formato) -> usize {
     f.frecuencia as usize
 }
 
@@ -173,7 +179,7 @@ pub struct Mezclador {
 }
 
 /// Un volumen de 0 a 4 (o NaN, que es 0) a coma fija.
-fn a_volumen(v: f32) -> i64 {
+pub fn a_volumen(v: f32) -> i64 {
     if v.is_nan() { 0 } else { (v.clamp(0.0, 4.0) * UNO_VOL as f32) as i64 }
 }
 

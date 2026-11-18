@@ -63,6 +63,9 @@ demo = ["uso", "linux"]
 # Con `virt`: un dominio de controladores (S35, paso 2; `make arranque-virt-dominio`): el kernel y el initramfs del
 # dominio de red (fuera de git, de target/dominio/); su aparato, un adaptador de red USB que le presta el xHCI.
 dominio = ["virt"]
+# Rama sonido-pro: la imagen de usar con un reproductor de prueba (`melodia`) que suena desde el arranque, para ver y
+# capturar el mezclador, el visualizador y los controles de medios (`make arranque-virt-sonido`).
+sonido_demo = ["uso"]
 
 # El build.rs comprime los programas del paquete de arranque (LZ4, formato de bloque); el kernel no depende de nada.
 [build-dependencies]

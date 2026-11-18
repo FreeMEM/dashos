@@ -45,6 +45,9 @@ pub struct Datos {
     pub procesos_abierto: bool,
     /// Lo que miden los menús del programa (0: no hay en la barra).
     pub ancho_menus: i32,
+    /// Rama sonido-pro: lo que suena (título, artista, si suena) y las seis barras del visualizador (0 a 1000).
+    pub medio: Option<(String, String, bool)>,
+    pub viz: [i32; 6],
 }
 
 /// Un sitio de la barra: zona, widget y, en los espacios, el número del espacio (0, el widget entero).
@@ -65,6 +68,8 @@ pub enum Accion {
     Procesos,
     /// S27 (dms-avisos): el reloj abre el Dash.
     Reloj,
+    /// Rama sonido-pro: los botones de la música (1 anterior, 2 reproducir o pausar, 3 siguiente).
+    Medio(u32),
     Nada,
 }
 
@@ -154,6 +159,7 @@ pub fn accion(d: &Disposicion, s: Sitio) -> Accion {
         Some("avisos") => Accion::Avisos,
         Some("cpu" | "memoria" | "disco") => Accion::Procesos,
         Some("reloj") => Accion::Reloj,
+        Some("musica") if s.sub > 0 => Accion::Medio(s.sub as u32),
         _ => Accion::Nada,
     }
 }
@@ -238,6 +244,14 @@ fn largo(w: &Widget, d: &Datos, m: &Medidas, vertical: bool, f: &mut Fuente, med
     };
     Some(match id {
         "lanzador" | "avisos" => (cuadrado, String::new()),
+        // Rama sonido-pro (DMS, `Media.qml`): el visualizador (20), "título • artista" (hasta 180) y tres botones
+        // (20, 24, 20) con 4 entre cada cosa. Sin nada que suene, no se ve.
+        "musica" => {
+            let (titulo, artista, _) = d.medio.as_ref().filter(|_| !vertical)?;
+            let texto = if artista.is_empty() { titulo.clone() } else { alloc::format!("{} • {}", titulo, artista) };
+            let texto = que_quepa(f, &texto, m.letra, 180);
+            (2 * m.pad + 20 + 4 + f.medir(&texto, m.letra).ancho + 4 + 20 + 4 + 24 + 4 + 20, texto)
+        }
         "espacios" => {
             let ns = espacios_que_se_ven(w, d);
             let mut l = 0;
@@ -381,6 +395,17 @@ pub fn disponer(b: &Barra, d: &Datos, ancho: i32, alto: i32, f: &mut Fuente, med
             let mut p = Pieza { sitio: Sitio { z: z as u8, k: k as u8, sub: 0 }, id, r, sin_pildora: matches!(id, "espaciador" | "separador" | "menus"), celdas: Vec::new(), texto };
             if id == "menus" {
                 menus = Some(if vertical { r } else { Rect::new(r.x, tira.y, r.w, tira.h) });
+            }
+            if id == "musica" {
+                // Los tres botones, desde la derecha: siguiente (20), reproducir (24) y anterior (20).
+                let cy = r.y + r.h / 2;
+                let x3 = r.x + r.w - m.pad - 20;
+                let x2 = x3 - 4 - 24;
+                let x1 = x2 - 4 - 20;
+                for (n, x, lado) in [(1u32, x1, 20), (2, x2, 24), (3, x3, 20)] {
+                    let marca = Rect::new(x, cy - lado / 2, lado, lado);
+                    p.celdas.push((Rect::new(x - 2, r.y, lado + 4, r.h), marca, n));
+                }
             }
             if id == "espacios" {
                 let mut x = m.pad;
@@ -648,6 +673,26 @@ pub fn pintar(px: &mut [u32], ancho: i32, alto: i32, c: &Config, b: &Barra, d: &
                 }
                 if !p.texto.is_empty() && !vertical {
                     f.dibujar(&mut l, x0 + a, base(y0, p.r.h, tam), &p.texto, tam, tinta);
+                }
+            }
+            "musica" => {
+                // El visualizador: seis barras de 2 con 2 de hueco en una caja de 20 × 24, de 3 a 22 de alto,
+                // centradas, en el primario (como `viz_bars.frag` de DMS).
+                let caja = Rect::new(x0 + m.pad, centro_y - 12, 20, 24);
+                for (i, &v) in d.viz.iter().enumerate() {
+                    let h = 3 + v.clamp(0, 1000) * 19 / 1000;
+                    l.redondeado(Rect::new(caja.x + 1 + i as i32 * 3, centro_y - h / 2, 2, h), 1, t.primario);
+                }
+                f.dibujar(&mut l, caja.x + 24, base(y0, p.r.h, tam), &p.texto, tam, tinta);
+                let suena = d.medio.as_ref().is_some_and(|m| m.2);
+                for &(_, marca, n) in &p.celdas {
+                    match n {
+                        2 => {
+                            l.redondeado(marca, if suena { marca.w / 2 } else { 8 }, t.primario);
+                            sim.centrado(&mut l, marca, 14, if suena { simbolo::PAUSE_LLENO } else { simbolo::PLAY_ARROW_LLENO }, t.sobre_primario);
+                        }
+                        _ => sim.centrado(&mut l, marca, 14, if n == 1 { simbolo::SKIP_PREVIOUS_LLENO } else { simbolo::SKIP_NEXT_LLENO }, t.sobre_superficie),
+                    }
                 }
             }
             "separador" => {
