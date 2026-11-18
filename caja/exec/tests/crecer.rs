@@ -254,3 +254,58 @@ fn memoria_baja_llama_a_los_manejadores() {
     assert_eq!(veces, 5);
     assert!(e.tomar_avisos().is_empty(), "{:?}", e.tomar_avisos());
 }
+
+/// Lo que crece hasta las direcciones del chipset ($A0_0000-$FF_FFFF) no se da nunca: un programa que escribe en los
+/// registros de la CIA o de Paula escribe en memoria reservada, no en la de otro.
+#[test]
+fn el_hueco_del_chipset_no_se_da() {
+    let (h0, h1) = caja_exec::HUECO_DEL_CHIPSET;
+    let (mut e, _t) = caja(64 << 20);
+    let mut dados = Vec::new();
+    for _ in 0..40 {
+        let a = e.alloc_mem(1 << 20, 0).unwrap();
+        if a == 0 {
+            break;
+        }
+        dados.push(a);
+        assert!(a + (1 << 20) <= h0 || a >= h1, "un bloque en el hueco del chipset: ${a:x}");
+    }
+    assert!(dados.iter().any(|&a| a >= h1), "la memoria pasa del hueco");
+    // AllocAbs dentro del hueco: no; y lo de allí se puede escribir sin que lo note nadie (memoria de nadie).
+    assert_eq!(e.alloc_abs(16, 0xBF_D400).unwrap(), 0);
+    // No es del sistema (0) ni de la tarea: no cuenta en lo que se mira tras cada programa.
+    assert!(e.bloques_de(0).iter().all(|&(d, _)| !(0xA0_0000..0x100_0000).contains(&d)));
+    e.mem.escribir8(0xBF_D400, 0x12).unwrap();
+    e.mem.escribir8(0xDF_F096, 0x80).unwrap();
+    for &a in &dados {
+        e.free_mem(a, 1 << 20).unwrap();
+    }
+    // Un bloque grande sigue cabiendo (por encima del hueco).
+    let b = e.alloc_mem(20 << 20, 0).unwrap();
+    assert!(b >= h1, "${b:x}");
+    assert!(e.tomar_avisos().is_empty());
+}
+
+/// Los registros de la CIA tienen que existir antes de que un programa escriba en ellos: `cubrir_hasta` hace crecer la
+/// memoria hasta ahí (sin pasar del hueco), reservado para el sistema; y un recurso nativo se encuentra con
+/// `OpenResource` (en su lista) y tiene sus funciones desde -6.
+#[test]
+fn cubrir_hasta_la_cia_y_recurso_nativo() {
+    let (mut e, _t) = caja(64 << 20);
+    assert!(e.cubrir_hasta(0xC0_0000).unwrap());
+    let visible = e.mem.visible;
+    assert!(visible >= 0xC0_0000 && visible <= 0x100_0000, "{visible:x}");
+    e.mem.escribir8(0xBF_D400, 0x37).unwrap();
+    assert_eq!(e.alloc_abs(8, 0xBF_D400).unwrap(), 0, "reservado");
+    // Más allá del tope: no.
+    assert!(!e.cubrir_hasta(0x7000_0000).unwrap());
+    let r = e.crear_recurso_nativo("ciab.resource", 40, &[0x1400, 0x1401, 0x1402, 0x1403]).unwrap();
+    assert_eq!(e.mem.leer16(r - 6).unwrap(), 0xA0FF);
+    assert_eq!(e.mem.leer16(r - 4).unwrap(), 0x1400);
+    assert_eq!(e.mem.leer16(r - 22).unwrap(), 0x1403);
+    assert_eq!(e.ajena(0x1401), Some((r, -12)));
+    // Hostil: un número de exec, o repetido: no.
+    assert!(e.crear_recurso_nativo("x.resource", 1, &[5]).is_err());
+    assert!(e.crear_recurso_nativo("x.resource", 1, &[0x1400]).is_err());
+    assert!(e.crear_recurso_nativo("x.resource", 1, &[]).is_err());
+}

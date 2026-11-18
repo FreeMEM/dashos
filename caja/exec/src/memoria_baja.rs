@@ -204,6 +204,25 @@ impl<M: Memoria> Exec<M> {
     /// acaba donde acaba la región, se recorta (o se quita) hasta donde la memoria pueda soltar (`Memoria::encoger`, a
     /// trozos enteros de los que creció). Devuelve los bytes soltados.
     pub fn encoger(&mut self) -> Result<u32, Fallo> {
+        let mut total = self.encoger_una_vez()?;
+        // Si lo que queda arriba del todo es la reserva del hueco del chipset (`reservar_chipset`), se suelta y se
+        // sigue encogiendo por debajo.
+        for _ in 0..8 {
+            let Some(fin) = self.regiones.iter().map(|r| r.1).max() else { break };
+            let (h0, h1) = crate::HUECO_DEL_CHIPSET;
+            let Some((&dir, b)) = self.bloques.range(h0..h1).find(|(d, b)| *d + b.largo == fin) else { break };
+            let largo = b.largo;
+            self.free_mem(dir, largo)?;
+            let s = self.encoger_una_vez()?;
+            if s == 0 {
+                break;
+            }
+            total += s;
+        }
+        Ok(total)
+    }
+
+    fn encoger_una_vez(&mut self) -> Result<u32, Fallo> {
         let Some(fin) = self.regiones.iter().map(|r| r.1).max() else { return Ok(0) };
         let Some(mh) = self.nodos(self.base + execbase::MEMLIST)?.into_iter().find(|&mh| self.lp(mh + memheader::MH_UPPER) == Ok(fin))
         else {

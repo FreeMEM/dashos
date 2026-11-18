@@ -149,7 +149,51 @@ impl<M: Memoria> Exec<M> {
         if lib == 0 {
             return Ok(false);
         }
+        if self.bases_propias.contains_key(&lib) {
+            return Ok(true);
+        }
         Ok(self.nodos(self.base + execbase::LIBLIST)?.contains(&lib))
+    }
+
+    // --- Bases propias de cada apertura ---
+
+    /// Apunta `base` como una base propia de la biblioteca nativa `lib`: la que su `Open` da a quien la abre (AmiTCP y
+    /// Roadshow dan una a cada `OpenLibrary` de bsdsocket.library). No va a `LibList`; `CloseLibrary` la acepta y llama
+    /// a su `Close` (la entrada -12 de su tabla, que la biblioteca escribe). La memoria es de la biblioteca: la suelta
+    /// ella después de `quitar_base_propia`.
+    pub fn anadir_base_propia(&mut self, lib: u32, base: u32) -> Result<(), Fallo> {
+        if lib == 0 || base == 0 {
+            return Err(Fallo::PunteroNulo);
+        }
+        self.tramo(base, library::TAMANO)?;
+        if self.bases_propias.contains_key(&base) || self.es_biblioteca(base)? {
+            return Err(Fallo::Sospechoso { dir: base });
+        }
+        self.bases_propias.insert(base, lib);
+        Ok(())
+    }
+
+    /// Olvida una base propia: deja de ser una biblioteca y sale de la cuenta de aperturas de toda tarea (así matar a
+    /// una tarea no escribe en ella cuando su memoria ya es de otro). Devuelve si lo era.
+    pub fn quitar_base_propia(&mut self, base: u32) -> bool {
+        if self.bases_propias.remove(&base).is_none() {
+            return false;
+        }
+        for i in self.tareas.values_mut() {
+            i.bibliotecas.retain(|&x| x != base);
+        }
+        true
+    }
+
+    /// La biblioteca de una base propia.
+    pub fn base_propia(&self, base: u32) -> Option<u32> {
+        self.bases_propias.get(&base).copied()
+    }
+
+    /// Código 68k nuevo en `[desde, hasta)` (una tabla de saltos escrita a mano en memoria que pudo ser código): el JIT
+    /// lo debe olvidar (`tomar_codigo_cambiado`).
+    pub fn codigo_nuevo(&mut self, desde: u32, hasta: u32) {
+        self.codigo_cambiado.push((desde, hasta));
     }
 
     // --- Las cuatro entradas de toda biblioteca nativa ---
@@ -562,6 +606,41 @@ impl<M: Memoria> Exec<M> {
         } else {
             self.add_library(lib)?;
         }
+        Ok(lib)
+    }
+
+    /// Un recurso nativo (como `ciab.resource`): una `Library` con su nombre y sus funciones desde -6 (los recursos no
+    /// tienen `Open` ni `Close`), en la lista de recursos de exec (la que mira `OpenResource`). Devuelve su base.
+    pub fn crear_recurso_nativo(&mut self, nombre: &str, version: u16, numeros: &[u16]) -> Result<u32, Fallo> {
+        if numeros.is_empty() || numeros.iter().any(|&n| n <= lvo::ULTIMO_DE_EXEC || self.ajenas.contains_key(&n)) {
+            return Err(Fallo::TablaMala { dir: 0 });
+        }
+        let neg = (numeros.len() as u32 * 6 + 3) & !3;
+        let datos = library::TAMANO;
+        let m = self.reservar(neg + datos + nombre.len() as u32 + 1, memf::PUBLIC | memf::CLEAR, 0)?;
+        let tr = self.reservar(6 * numeros.len() as u32, memf::PUBLIC, 0)?;
+        if m == 0 || tr == 0 {
+            return Err(Fallo::SinSitio);
+        }
+        let lib = m + neg;
+        for (i, &n) in numeros.iter().enumerate() {
+            let k = 1 + i as u32;
+            self.escribir_entrada_nativa(lib - 6 * k, n)?;
+            let t = tr + 6 * i as u32;
+            self.escribir_entrada_nativa(t, n)?;
+            self.trampolines.insert(n, t);
+            self.ajenas.insert(n, (lib, -6 * k as i32));
+        }
+        let pn = lib + datos;
+        self.mem.leer_mut(pn, nombre.len() as u32)?.copy_from_slice(nombre.as_bytes());
+        self.e8(pn + nombre.len() as u32, 0)?;
+        self.e32(lib + node::LN_NAME, pn)?;
+        self.e8(lib + node::LN_TYPE, crate::estructuras::nt::RESOURCE)?;
+        self.e16(lib + library::LIB_NEGSIZE, neg as u16)?;
+        self.e16(lib + library::LIB_POSSIZE, datos as u16)?;
+        self.e16(lib + library::LIB_VERSION, version)?;
+        self.e32(lib + library::LIB_IDSTRING, pn)?;
+        self.enqueue(self.base + execbase::RESOURCELIST, lib)?;
         Ok(lib)
     }
 

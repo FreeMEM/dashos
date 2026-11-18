@@ -31,6 +31,7 @@ pub mod memoria;
 pub mod registros;
 
 mod asignador;
+pub use asignador::{DUENO_CHIPSET, HUECO_DEL_CHIPSET};
 mod bibliotecas;
 pub mod cambio;
 mod charcos;
@@ -373,6 +374,9 @@ pub struct Exec<M: Memoria> {
     pub(crate) cacr: u32,
     /// El aviso de memoria baja de DashOS y los manejadores de los programas (`memoria_baja.rs`).
     pub(crate) memoria_baja: memoria_baja::MemoriaBaja,
+    /// Bases propias de cada apertura de una biblioteca nativa (bsdsocket.library da una a cada `OpenLibrary`):
+    /// base → biblioteca de `LibList`. No están en `LibList`, pero `CloseLibrary` las acepta.
+    pub(crate) bases_propias: BTreeMap<u32, u32>,
 }
 
 /// Las funciones de exec con número nativo propio, en el orden de la tabla.
@@ -408,6 +412,7 @@ impl<M: Memoria> Exec<M> {
             memoria_del_sistema: false,
             cacr: CACR_DE_SERIE,
             memoria_baja: memoria_baja::MemoriaBaja::default(),
+            bases_propias: BTreeMap::new(),
         };
         // La zona del sistema tiene que existir entera, fuera de la página 0.
         let (zs, fz) = config.sistema;

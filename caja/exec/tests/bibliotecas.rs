@@ -415,3 +415,77 @@ fn biblioteca_con_cuenta_propia() {
     e.memoria_del_sistema(false);
     assert_eq!((cerrados, e.mem.leer16(lib + CUENTA).unwrap()), (2, 0));
 }
+
+/// Una base propia por apertura (como bsdsocket.library): su `Open` (nativo, de la biblioteca) da una base que no está en
+/// `LibList`; `CloseLibrary` la acepta y llama a su `Close`; matar a la tarea después de quitarla no la toca.
+#[test]
+fn bases_propias_de_cada_apertura() {
+    let (mut e, t) = caja_con_tarea();
+    let lib = e.crear_biblioteca_nativa("prueba.library", 4, 1, &[900], 34).unwrap();
+    // Su Open y su Close, nativos y suyos.
+    for (d, n) in [(lib - 6, 901u16), (lib - 12, 902u16)] {
+        e.mem.escribir16(d, caja_exec::LINEA_A_NATIVA).unwrap();
+        e.mem.escribir16(d + 2, n).unwrap();
+        e.mem.escribir16(d + 4, 0x4E75).unwrap();
+    }
+    // Una base: su tabla (Open, Close, Expunge, reservada y la función) y la struct Library.
+    let base_nueva = |e: &mut caja_exec::Exec<caja_exec::MemoriaVec>| {
+        let m = e.alloc_mem(32 + library::TAMANO, memf::CLEAR).unwrap();
+        let b = m + 32;
+        for k in 1..=5u32 {
+            let n = e.mem.leer16(lib - 6 * k + 2).unwrap();
+            e.mem.escribir16(b - 6 * k, caja_exec::LINEA_A_NATIVA).unwrap();
+            e.mem.escribir16(b - 6 * k + 2, n).unwrap();
+            e.mem.escribir16(b - 6 * k + 4, 0x4E75).unwrap();
+        }
+        e.mem.escribir16(b + library::LIB_OPENCNT, 1).unwrap();
+        e.codigo_nuevo(m, b);
+        (m, b)
+    };
+    let mut r = Registros::default();
+    r.a[1] = cadena(&mut e, "prueba.library");
+    r.d[0] = 4;
+    let a = llamar(&mut e, "OpenLibrary", &mut r);
+    let Accion::Llamar { destino: Destino::Nativa(901), regs, tras } = a else { panic!("{:?}", a) };
+    assert_eq!(regs.a[6], lib);
+    let (m, b) = base_nueva(&mut e);
+    e.anadir_base_propia(lib, b).unwrap();
+    assert!(e.anadir_base_propia(lib, b).is_err(), "dos veces, no");
+    assert!(e.anadir_base_propia(lib, lib).is_err(), "una de LibList, no");
+    let mut hecho = regs;
+    hecho.d[0] = b;
+    assert_eq!(e.continuar(tras, &hecho, &mut r), Accion::Seguir);
+    assert_eq!(r.d[0], b);
+    assert_eq!(e.base_propia(b), Some(lib));
+    assert!(e.tomar_codigo_cambiado().contains(&(m, b)));
+    // CloseLibrary de la base propia: llama a su Close (902).
+    r.a[1] = b;
+    let a = llamar(&mut e, "CloseLibrary", &mut r);
+    let Accion::Llamar { destino: Destino::Nativa(902), regs, tras } = a else { panic!("{:?}", a) };
+    assert_eq!(regs.a[6], b);
+    assert!(e.quitar_base_propia(b));
+    assert!(!e.quitar_base_propia(b));
+    e.free_mem(m, 32 + library::TAMANO).unwrap();
+    assert_eq!(e.continuar(tras, &regs, &mut r), Accion::Seguir);
+    // Ya no es una biblioteca.
+    r.a[1] = b;
+    assert!(llamar(&mut e, "CloseLibrary", &mut r) == Accion::Seguir);
+    assert!(e.avisos().iter().any(|a| a.fallo == Fallo::BibliotecaDesconocida { dir: b }));
+    e.tomar_avisos();
+    // Otra apertura que la tarea no cierra: la biblioteca la quita (su `tarea_muerta`) y matar a la tarea no escribe
+    // en su memoria, que ya es de otro.
+    let (m2, b2) = base_nueva(&mut e);
+    e.cambiar_dueno(m2, 0);
+    e.anadir_base_propia(lib, b2).unwrap();
+    let mut hecho = Registros::default();
+    hecho.d[0] = b2;
+    e.continuar(Continuacion::AbrirBiblioteca { lib }, &hecho, &mut r);
+    assert!(e.quitar_base_propia(b2));
+    e.free_mem(m2, 32 + library::TAMANO).unwrap();
+    let otro = e.alloc_mem(32 + library::TAMANO, memf::CLEAR).unwrap();
+    assert_eq!(otro, m2, "la memoria se reusa");
+    e.mem.escribir16(b2 + library::LIB_OPENCNT, 7).unwrap();
+    e.cambiar_dueno(otro, 0);
+    e.matar_tarea(t).unwrap();
+    assert_eq!(e.mem.leer16(b2 + library::LIB_OPENCNT).unwrap(), 7, "no se tocó");
+}

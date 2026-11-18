@@ -461,8 +461,10 @@ impl<M: Memoria> Exec<M> {
         Ok(())
     }
 
-    /// Si la tarea vuelve de un bloqueo (la llamada es la repetición). Lo apaga.
-    pub(crate) fn vuelve_de_espera(&mut self, t: u32) -> bool {
+    /// Si la tarea vuelve de un bloqueo (la llamada es la repetición). Lo apaga. Pública para las bibliotecas nativas que
+    /// esperan con `wait` (bsdsocket.library): al acabar su espera lo apagan, o el siguiente `WaitPort` de la tarea se
+    /// creería una repetición.
+    pub fn vuelve_de_espera(&mut self, t: u32) -> bool {
         match self.tareas.get_mut(&t) {
             Some(i) => core::mem::take(&mut i.esperando),
             None => false,
