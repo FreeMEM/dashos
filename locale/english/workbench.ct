@@ -107,3 +107,18 @@ Could not change the comment
 MSG_35
 Could not change the protection
 ; No se pudo cambiar la protección
+MSG_36
+Open
+; Abrir
+MSG_37
+Information
+; Información
+MSG_38
+Disks
+; Discos
+MSG_39
+{} free of {}
+; {} libres de {}
+MSG_40
+not measured
+; sin medir
