@@ -483,13 +483,13 @@ fn delete_dup_y_nombres() {
     // BumpRevision y BumpRevisionLength.
     let (buf, viejo) = (c.memoria(64), c.cadena(b"copy 3 of Programa"));
     assert_eq!(c.f("BumpRevision", &[buf, viejo], &[]), buf);
-    assert_eq!(c.texto(buf), b"copy 4 of Programa");
+    assert_eq!(c.texto(buf), b"Copy_4_of_Programa");
     let largo = c.cadena(b"un nombre de fichero bastante largo");
     c.f("BumpRevision", &[buf, largo], &[]);
     assert_eq!(c.texto(buf).len(), 30);
     assert_eq!(c.f("BumpRevisionLength", &[buf, largo], &[20]), 0);
     assert_eq!(c.f("BumpRevisionLength", &[buf, largo], &[60]), buf);
-    assert_eq!(c.texto(buf), b"copy of un nombre de fichero bastante largo");
+    assert_eq!(c.texto(buf), b"Copy_of_un nombre de fichero bastante largo");
 }
 
 #[test]

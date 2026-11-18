@@ -17,9 +17,19 @@ pub struct Conexion {
     escribe: u32,
 }
 
-fn palabras(p: &[u32]) -> &[u8] {
-    // Un `&[u32]` se puede ver como bytes: misma memoria, alineación menor.
-    unsafe { core::slice::from_raw_parts(p.as_ptr() as *const u8, 4 * p.len()) }
+/// Las palabras de una orden en bytes little-endian, como las lee el servicio (también desde la caja Amiga, que es
+/// big-endian: allí el orden de la memoria no es el del servicio). Como mucho 8 palabras.
+fn palabras<'a>(p: &[u32], buf: &'a mut [u8; 32]) -> &'a [u8] {
+    let n = p.len().min(8);
+    for (i, v) in p[..n].iter().enumerate() {
+        buf[4 * i..4 * i + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    &buf[..4 * n]
+}
+
+/// Lo leído del servicio (little-endian) en palabras de este procesador.
+fn de_le(b: &mut [u32]) {
+    b.iter_mut().for_each(|x| *x = u32::from_le(*x));
 }
 
 /// Manda `ESTADO` y devuelve sus palabras (`protocolo::red::E_*`), o el error.
@@ -29,7 +39,7 @@ pub fn estado(servicio: u32, plazo_us: u64) -> Result<[u32; p::E_PALABRAS], i64>
     let r = if copia <= 0 {
         Err(copia)
     } else {
-        let e = crate::canal_escribir(servicio, palabras(&[p::ESTADO]), &[copia as u32]);
+        let e = crate::canal_escribir(servicio, palabras(&[p::ESTADO], &mut [0; 32]), &[copia as u32]);
         if e != 0 {
             crate::cerrar(copia as u32);
             Err(e)
@@ -38,6 +48,7 @@ pub fn estado(servicio: u32, plazo_us: u64) -> Result<[u32; p::E_PALABRAS], i64>
             let mut ll = [0u32; 8];
             let bytes = unsafe { core::slice::from_raw_parts_mut(b.as_mut_ptr() as *mut u8, 4 * b.len()) };
             let (n, k, _) = crate::canal_leer_plazo(lee, bytes, &mut ll, plazo_us);
+            de_le(&mut b);
             let k = if n >= 0 { k.min(ll.len()) } else { 0 };
             ll[..k].iter().for_each(|&l| {
                 crate::cerrar(l);
@@ -71,6 +82,21 @@ impl Conexion {
         Self::pedir(servicio, &[p::CONECTAR, p::IPV6, puerto as u32, tam as u32, w(0), w(1), w(2), w(3)], va, tam, plazo_us)
     }
 
+    /// Empieza una conexión TCP a `ip:puerto` sin esperar la respuesta (la caja Amiga: `connect` no puede parar a las
+    /// demás tareas 68k): `Pendiente::mirar` dice cuándo está.
+    pub fn empezar(servicio: u32, ip: [u8; 4], puerto: u16, va: usize, tam: usize) -> Result<Pendiente, i32> {
+        let ipw = u32::from_le_bytes(ip);
+        Self::empezar_pedir(servicio, &[p::CONECTAR, p::IPV4, puerto as u32, tam as u32, ipw, 0, 0, 0], va, tam)
+    }
+
+    fn empezar_pedir(servicio: u32, peticion: &[u32], va: usize, tam: usize) -> Result<Pendiente, i32> {
+        let (lee, escribe) = crate::canal_crear();
+        let c = Conexion { servicio, id: 0, va, tam, memoria: 0, lee, escribe };
+        // Con la cola del servicio llena se reintenta un poco (50 ms), como `pedir`.
+        c.mandar(peticion, crate::ahora_us() + 50_000)?;
+        Ok(Pendiente { c: Some(c) })
+    }
+
     /// Manda `peticion` (una orden que se contesta con `R_CONECTAR`) con un canal nuevo para la respuesta y la espera.
     fn pedir(servicio: u32, peticion: &[u32], va: usize, tam: usize, plazo_us: u64) -> Result<Conexion, i32> {
         let (lee, escribe) = crate::canal_crear();
@@ -91,7 +117,7 @@ impl Conexion {
         // espera y se reintenta dentro del plazo. Antes salía en el acto como SIN_DIRECCION y `red-gloton` contaba 50
         // "no" seguidos que no eran el tope.
         loop {
-            let r = crate::canal_escribir(self.servicio, palabras(peticion), &[e as u32]);
+            let r = crate::canal_escribir(self.servicio, palabras(peticion, &mut [0; 32]), &[e as u32]);
             if r == 0 {
                 return Ok(());
             }
@@ -106,40 +132,56 @@ impl Conexion {
 
     /// Espera `R_CONECTAR` hasta `fin` y proyecta la memoria que trae. Si no llega o es un error, suelta el canal.
     fn respuesta(self, fin: u64) -> Result<Conexion, i32> {
-        let c = self;
-        let (va, tam, lee) = (c.va, c.tam, c.lee);
-        let mut b = [0u32; 4];
-        let mut ll = [0u32; 8];
+        let mut c = Some(self);
         loop {
             let ahora = crate::ahora_us();
             if ahora >= fin {
-                c.soltar();
+                c.take().unwrap().soltar();
                 return Err(p::RECHAZADA);
             }
+            if let Some(r) = Self::leer_respuesta(&mut c, fin - ahora) {
+                return r;
+            }
+        }
+    }
+
+    /// Una lectura del canal de respuesta (como mucho `plazo_us`): con `R_CONECTAR`, la conexión (o el error, y el canal
+    /// suelto); sin nada, `None` y `c` sigue.
+    fn leer_respuesta(c: &mut Option<Conexion>, plazo_us: u64) -> Option<Result<Conexion, i32>> {
+        let (va, tam, lee) = {
+            let x = c.as_ref()?;
+            (x.va, x.tam, x.lee)
+        };
+        let mut b = [0u32; 4];
+        let mut ll = [0u32; 8];
+        {
             let bytes = unsafe { core::slice::from_raw_parts_mut(b.as_mut_ptr() as *mut u8, 16) };
-            let (n, k, _) = crate::canal_leer_plazo(lee, bytes, &mut ll, fin - ahora);
+            let (n, k, _) = crate::canal_leer_plazo(lee, bytes, &mut ll, plazo_us.max(1));
+            de_le(&mut b);
             let k = if n >= 0 { k.min(ll.len()) } else { 0 };
             if n >= 12 && b[0] == p::R_CONECTAR {
+                let c = c.take().unwrap();
                 if b[2] as i32 != p::BIEN || k != 1 {
                     ll[..k].iter().for_each(|&l| {
                         crate::cerrar(l);
                     });
                     c.soltar();
-                    return Err(if b[2] as i32 != p::BIEN { b[2] as i32 } else { p::MAL_FORMADO });
+                    return Some(Err(if b[2] as i32 != p::BIEN { b[2] as i32 } else { p::MAL_FORMADO }));
                 }
                 let memoria = ll[0];
                 let tamano = crate::memoria_tamano(memoria);
                 if tamano < (p::DATOS + 2 * tam) as i64 || crate::memoria_proyectar(memoria, va, true) != 0 {
                     crate::cerrar(memoria);
                     c.soltar();
-                    return Err(p::MAL_FORMADO);
+                    return Some(Err(p::MAL_FORMADO));
                 }
-                return Ok(Conexion { id: b[1], memoria, ..c });
+                return Some(Ok(Conexion { id: b[1], memoria, ..c }));
             }
             ll[..k].iter().for_each(|&l| {
                 crate::cerrar(l);
             });
         }
+        None
     }
 
     /// El puerto de este lado y quién es el otro (TCP): su dirección (16 bytes; IPv4 en los 4 primeros), su familia
@@ -166,11 +208,11 @@ impl Conexion {
     }
 
     fn palabra(&self, i: usize) -> u32 {
-        unsafe { read_volatile((self.va + 4 * i) as *const u32) }
+        u32::from_le(unsafe { read_volatile((self.va + 4 * i) as *const u32) })
     }
 
     fn poner(&self, i: usize, v: u32) {
-        unsafe { write_volatile((self.va + 4 * i) as *mut u32, v) }
+        unsafe { write_volatile((self.va + 4 * i) as *mut u32, v.to_le()) }
     }
 
     /// El número de la conexión en el servicio.
@@ -188,7 +230,7 @@ impl Conexion {
         fence(Ordering::SeqCst);
         if self.palabra(p::SERVICIO_ESPERA) != 0 {
             self.poner(p::SERVICIO_ESPERA, 0);
-            crate::canal_escribir(self.servicio, palabras(&[p::AVISO, self.id]), &[]);
+            crate::canal_escribir(self.servicio, palabras(&[p::AVISO, self.id], &mut [0; 32]), &[]);
         }
     }
 
@@ -264,8 +306,27 @@ impl Conexion {
 
     /// Cierra: el servicio manda lo que quede en el anillo de envío y después cierra la conexión.
     pub fn cerrar(self) {
-        crate::canal_escribir(self.servicio, palabras(&[p::CERRAR, self.id]), &[]);
+        crate::canal_escribir(self.servicio, palabras(&[p::CERRAR, self.id], &mut [0; 32]), &[]);
         self.soltar();
+    }
+}
+
+/// Una conexión TCP (o un zócalo UDP) pedida sin esperar (`Conexion::empezar`, `Udp::empezar`).
+pub struct Pendiente {
+    c: Option<Conexion>,
+}
+
+impl Pendiente {
+    /// Mira, sin esperar, si ya contestó el servicio: la conexión, el error, o `None` si aún no.
+    pub fn mirar(&mut self) -> Option<Result<Conexion, i32>> {
+        Conexion::leer_respuesta(&mut self.c, 1)
+    }
+
+    /// Ya no se quiere (si llega la conexión, el servicio la cierra al ver el canal suelto).
+    pub fn abandonar(mut self) {
+        if let Some(c) = self.c.take() {
+            c.soltar();
+        }
     }
 }
 
@@ -341,6 +402,87 @@ pub fn resolver(servicio: u32, nombre: &[u8], familia: u32, servidor: ([u8; 4], 
     r
 }
 
+/// Una consulta de nombre pedida sin esperar (`resolver_empezar`).
+pub struct Resolucion {
+    lee: u32,
+    escribe: u32,
+}
+
+/// Empieza a resolver `nombre` (como `resolver`) sin esperar: `Resolucion::mirar` da la respuesta cuando llegue.
+pub fn resolver_empezar(servicio: u32, nombre: &[u8], familia: u32, servidor: ([u8; 4], u16)) -> Result<Resolucion, i32> {
+    if nombre.len() > p::MAX_NOMBRE {
+        return Err(p::MAL_FORMADO);
+    }
+    let mut m = [0u8; 16 + p::MAX_NOMBRE];
+    for (i, v) in [p::RESOLVER, familia | (servidor.1 as u32) << 16, u32::from_le_bytes(servidor.0), nombre.len() as u32].into_iter().enumerate() {
+        m[4 * i..4 * i + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    m[16..16 + nombre.len()].copy_from_slice(nombre);
+    let (lee, escribe) = crate::canal_crear();
+    let copia = crate::llave_duplicar(escribe, crate::ESCRIBIR | crate::TRANSFERIR, 0);
+    let fin = crate::ahora_us() + 50_000;
+    let mandado = copia > 0
+        && loop {
+            match crate::canal_escribir(servicio, &m[..16 + nombre.len()], &[copia as u32]) {
+                0 => break true,
+                -8 if crate::ahora_us() < fin => crate::dormir_us(2_000),
+                _ => break false,
+            }
+        };
+    if !mandado {
+        if copia > 0 {
+            crate::cerrar(copia as u32);
+        }
+        crate::cerrar(lee);
+        crate::cerrar(escribe);
+        return Err(p::LIMITE);
+    }
+    Ok(Resolucion { lee, escribe })
+}
+
+impl Resolucion {
+    /// La respuesta, si ya llegó (entonces la consulta queda acabada: no se vuelve a mirar); `None` si aún no.
+    pub fn mirar(&mut self) -> Option<Result<Direcciones, i32>> {
+        if self.lee == 0 {
+            return Some(Err(p::NO_EXISTE));
+        }
+        let mut b = [0u8; 20 + 16 * p::MAX_DIRECCIONES];
+        let mut ll = [0u32; 8];
+        let (n, k, _) = crate::canal_leer_plazo(self.lee, &mut b, &mut ll, 1);
+        let k = if n >= 0 { k.min(ll.len()) } else { 0 };
+        ll[..k].iter().for_each(|&l| {
+            crate::cerrar(l);
+        });
+        if n < 20 {
+            return None;
+        }
+        let w = |i: usize| u32::from_le_bytes(b[4 * i..4 * i + 4].try_into().unwrap());
+        let r = if w(0) != p::R_RESOLVER {
+            Err(p::SIN_RESPUESTA)
+        } else if w(1) as i32 != p::BIEN {
+            Err(w(1) as i32)
+        } else {
+            let cuantas = (w(2) as usize).min(p::MAX_DIRECCIONES).min((n as usize - 20) / 16);
+            let mut d = Direcciones { n: cuantas, dirs: [[0; 16]; p::MAX_DIRECCIONES], ttl: w(3), origen: w(4) };
+            for i in 0..cuantas {
+                d.dirs[i].copy_from_slice(&b[20 + 16 * i..36 + 16 * i]);
+            }
+            if cuantas == 0 { Err(p::SIN_NOMBRE) } else { Ok(d) }
+        };
+        self.soltar();
+        Some(r)
+    }
+
+    /// Suelta la consulta (si la respuesta llega después, se pierde).
+    pub fn soltar(&mut self) {
+        if self.lee != 0 {
+            crate::cerrar(self.lee);
+            crate::cerrar(self.escribe);
+            self.lee = 0;
+        }
+    }
+}
+
 /// Un zócalo UDP: datagramas a cualquiera y, de vuelta, de quienes se les envió (o de cualquiera, si se abrió con el
 /// permiso de escuchar).
 pub struct Udp {
@@ -352,6 +494,21 @@ impl Udp {
     /// "red-escuchar" (el permiso de escuchar). La memoria se proyecta en `va`.
     pub fn abrir(servicio: u32, puerto: u16, va: usize, tam: usize, plazo_us: u64) -> Result<Udp, i32> {
         Conexion::pedir(servicio, &[p::UDP, puerto as u32, tam as u32], va, tam, plazo_us).map(|c| Udp { c })
+    }
+
+    /// Lo mismo sin esperar: `Pendiente::mirar` da la `Conexion`, y `Udp::de_conexion` el zócalo.
+    pub fn empezar(servicio: u32, puerto: u16, va: usize, tam: usize) -> Result<Pendiente, i32> {
+        Conexion::empezar_pedir(servicio, &[p::UDP, puerto as u32, tam as u32], va, tam)
+    }
+
+    /// El zócalo de una conexión que llegó de `Udp::empezar`.
+    pub fn de_conexion(c: Conexion) -> Udp {
+        Udp { c }
+    }
+
+    /// Bytes esperando en el anillo de recepción (con sus cabeceras) y sitio en el de envío.
+    pub fn pendiente(&self) -> (usize, usize) {
+        self.c.pendiente()
     }
 
     /// El puerto de este lado.
@@ -474,6 +631,7 @@ impl Oido {
             }
             let bytes = unsafe { core::slice::from_raw_parts_mut(b.as_mut_ptr() as *mut u8, 16) };
             let (n, k, _) = crate::canal_leer_plazo(lee, bytes, &mut ll, fin - ahora);
+            de_le(&mut b);
             let k = if n >= 0 { k.min(ll.len()) } else { 0 };
             ll[..k].iter().for_each(|&l| {
                 crate::cerrar(l);
@@ -497,13 +655,17 @@ impl Oido {
         let (lee, id, va, tam) = (c.lee, c.id, c.va, c.tam);
         let mut b = [0u32; 4];
         let mut ll = [0u32; 8];
+        let mut primera = true;
         loop {
             let ahora = crate::ahora_us();
-            if ahora >= fin {
+            // Con plazo 0 (o ya vencido) se mira una vez sin esperar.
+            if ahora >= fin && !primera {
                 return Ok(None);
             }
+            primera = false;
             let bytes = unsafe { core::slice::from_raw_parts_mut(b.as_mut_ptr() as *mut u8, 16) };
-            let (n, k, _) = crate::canal_leer_plazo(lee, bytes, &mut ll, fin - ahora);
+            let (n, k, _) = crate::canal_leer_plazo(lee, bytes, &mut ll, fin.saturating_sub(ahora).max(1));
+            de_le(&mut b);
             let k = if n >= 0 { k.min(ll.len()) } else { 0 };
             if n >= 12 && b[0] == p::R_CONECTAR && b[1] == id {
                 let c = self.c.take().unwrap();
@@ -517,7 +679,7 @@ impl Oido {
                 let memoria = ll[0];
                 if crate::memoria_tamano(memoria) < (p::DATOS + 2 * tam) as i64 || crate::memoria_proyectar(memoria, va, true) != 0 {
                     crate::cerrar(memoria);
-                    crate::canal_escribir(c.servicio, palabras(&[p::CERRAR, id]), &[]);
+                    crate::canal_escribir(c.servicio, palabras(&[p::CERRAR, id], &mut [0; 32]), &[]);
                     c.soltar();
                     return Err(p::MAL_FORMADO);
                 }

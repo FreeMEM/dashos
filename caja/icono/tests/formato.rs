@@ -158,10 +158,16 @@ fn tooltypes_y_copias() {
     assert!(casa_valor(b"uno | dos", b" dos "));
     assert!(!casa_valor(b"uno|dos", b"do"));
     assert!(casa_valor(b"SOLO", b"solo"));
-    assert_eq!(siguiente_copia(b"Fichero", 30), b"copy of Fichero");
-    assert_eq!(siguiente_copia(b"copy of Fichero", 30), b"copy 2 of Fichero");
-    assert_eq!(siguiente_copia(b"copy 9 of Fichero", 30), b"copy 10 of Fichero");
-    assert_eq!(siguiente_copia(b"copy 99999999999 of X", 40), b"copy of copy 99999999999 of X");
+    // Lo que da el oráculo (caja/pruebas68k/icono.c, Kickstart 40.68).
+    assert_eq!(siguiente_copia(b"Fichero", 30), b"Copy_of_Fichero");
+    assert_eq!(siguiente_copia(b"copy of Fichero", 30), b"Copy_2_of_Fichero");
+    assert_eq!(siguiente_copia(b"copy 2 of Fichero", 30), b"Copy_3_of_Fichero");
+    assert_eq!(siguiente_copia(b"copy 9 of F", 30), b"Copy_10_of_F");
+    assert_eq!(siguiente_copia(b"copy of", 30), b"Copy_of_copy of");
+    assert_eq!(siguiente_copia(b"copy x of F", 30), b"Copy_of_copy x of F");
+    assert_eq!(siguiente_copia(b"Un nombre muy muy largo de treinta", 30), b"Copy_of_Un nombre muy muy larg");
+    assert_eq!(siguiente_copia(b"Copy_2_of_F", 30), b"Copy_3_of_F");
+    assert_eq!(siguiente_copia(b"copy 99999999999 of X", 40), b"Copy_of_copy 99999999999 of X");
     assert_eq!(siguiente_copia(b"un nombre bastante largo de verdad", 30).len(), 30);
 }
 

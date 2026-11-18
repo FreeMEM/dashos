@@ -51,36 +51,42 @@ pub fn casa_valor(tipo: &[u8], valor: &[u8]) -> bool {
     tipo.split(|&c| c == b'|').any(|op| iguales_sin_caja(recortar(op), valor))
 }
 
-const COPIA: &[u8] = b"copy ";
-const DE: &[u8] = b"of ";
 
-/// `BumpRevision`: "copy of X" para X, "copy 2 of X" para "copy of X", "copy N+1 of X" para "copy N of X". Se
-/// recorta a `max` letras (30 en `BumpRevision`).
+/// `BumpRevision` (lo comprobado contra el oráculo, `caja/pruebas68k/icono.c` con el Kickstart 40.68): "Copy_of_X"
+/// para X, y "Copy_<n+1>_of_X" si ya era la copia `n`, escrita con espacios o con rayas ("copy of X", "Copy_3_of_X"...,
+/// sin distinguir mayúsculas). Un número raro (de más de 9 cifras, o 0) no cuenta: "Copy_of_" delante de todo. Como
+/// mucho `max` letras.
 pub fn siguiente_copia(viejo: &[u8], max: usize) -> Vec<u8> {
-    let mut n = 0u32;
+    let sep = |b: u8| b == b' ' || b == b'_';
+    let mut n = 1u32;
     let mut resto = viejo;
-    if viejo.len() >= COPIA.len() && iguales_sin_caja(&viejo[..COPIA.len()], COPIA) {
-        let tras = &viejo[COPIA.len()..];
-        if tras.len() >= DE.len() && iguales_sin_caja(&tras[..DE.len()], DE) {
-            n = 1;
-            resto = &tras[DE.len()..];
-        } else {
-            let cifras = tras.iter().take_while(|c| c.is_ascii_digit()).count();
-            let tras_num = &tras[cifras..];
-            if cifras > 0
-                && cifras <= 9
-                && tras_num.len() > DE.len()
-                && tras_num[0] == b' '
-                && iguales_sin_caja(&tras_num[1..1 + DE.len()], DE)
-            {
-                n = tras[..cifras].iter().fold(0u32, |a, c| a * 10 + (c - b'0') as u32);
-                resto = &tras_num[1 + DE.len()..];
+    if viejo.len() > 5 && viejo[..4].eq_ignore_ascii_case(b"copy") && sep(viejo[4]) {
+        let mut i = 5;
+        let mut num = 0u32;
+        let mut digitos = 0;
+        while i < viejo.len() && viejo[i].is_ascii_digit() && digitos < 9 {
+            num = num * 10 + (viejo[i] - b'0') as u32;
+            i += 1;
+            digitos += 1;
+        }
+        let mut vale = true;
+        if digitos > 0 {
+            if i < viejo.len() && sep(viejo[i]) {
+                i += 1;
+            } else {
+                vale = false;
             }
+        }
+        if vale && viejo.len() > i + 3 && viejo[i..i + 2].eq_ignore_ascii_case(b"of") && sep(viejo[i + 2]) && (digitos == 0 || num >= 1) {
+            n = if digitos == 0 { 1 } else { num };
+            resto = &viejo[i + 3..];
         }
     }
     let mut v = Vec::with_capacity(max + 1);
-    v.extend_from_slice(b"copy ");
-    if n >= 1 {
+    if resto.len() == viejo.len() {
+        v.extend_from_slice(b"Copy_of_");
+    } else {
+        v.extend_from_slice(b"Copy_");
         let mut cifras = Vec::new();
         let mut k = n.saturating_add(1);
         while k > 0 {
@@ -89,9 +95,8 @@ pub fn siguiente_copia(viejo: &[u8], max: usize) -> Vec<u8> {
         }
         cifras.reverse();
         v.extend_from_slice(&cifras);
-        v.push(b' ');
+        v.extend_from_slice(b"_of_");
     }
-    v.extend_from_slice(b"of ");
     v.extend_from_slice(resto);
     v.truncate(max);
     v

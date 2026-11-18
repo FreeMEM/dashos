@@ -77,15 +77,17 @@ fn cajon() -> Lienzo {
     l
 }
 
+/// La herramienta, del tamaño del de la ROM (gadget de 54 x 23, oráculo: `caja/pruebas68k/icono.c`); el dibujo es
+/// nuestro, centrado.
 fn herramienta() -> Lienzo {
-    let mut l = Lienzo::nuevo(32, 20);
+    let mut l = Lienzo::nuevo(54, 22);
     // Una llave: el mango en diagonal y la boca.
     for k in 0..16 {
-        l.caja(4 + k, 15 - k * 3 / 4, 3, 3, 1);
+        l.caja(15 + k, 16 - k * 3 / 4, 3, 3, 1);
     }
-    l.marco(18, 1, 11, 8, 3);
-    l.caja(21, 1, 5, 4, 0);
-    l.caja(21, 4, 5, 1, 1);
+    l.marco(29, 2, 11, 8, 3);
+    l.caja(32, 2, 5, 4, 0);
+    l.caja(32, 5, 5, 1, 1);
     l
 }
 
@@ -126,8 +128,8 @@ pub fn de_serie(tipo: u8) -> Option<Info> {
     i.alto = l.al as u16 + 1;
     i.flags = GFLG_GADGIMAGE | GFLG_GADGHCOMP;
     i.imagen1 = Some(l.planar());
+    // La pila de la herramienta de serie, 0 (oráculo).
     match tipo {
-        WBTOOL => i.pila = 4096,
         WBDISK | WBDRAWER | WBGARBAGE => i.cajon = Some(Cajon::de_serie()),
         _ => {}
     }

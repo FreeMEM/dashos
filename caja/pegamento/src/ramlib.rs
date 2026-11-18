@@ -43,8 +43,9 @@ const RECHAZADAS: [&[u8]; 22] = [
 /// Las de un AmigaOS de verdad que aún no van en la caja: su `Init` llama a funciones privadas de exec (sin
 /// documentar), y el programa que las abriera acabaría ahí. Mejor que no abran: muchos programas siguen sin ellas
 /// (MUI, sin icon.library). Lo que hace falta son nativas. Vistas en el AmigaOS 3.2 (la caja lo dice: "falta:
-/// execPrivate17"). icon.library ya es nativa (`icono.rs`), y lo nativo gana.
-const SIN_SOPORTE: [&[u8]; 4] = [b"icon.library", b"workbench.library", b"asl.library", b"commodities.library"];
+/// execPrivate17"). icon y workbench ya son nativas (`caja/icono`): lo nativo gana y no se piden. commodities.library
+/// de disco usa también una privada (el programa caía): sin nativa aún, no se carga.
+const SIN_SOPORTE: [&[u8]; 2] = [b"asl.library", b"commodities.library"];
 
 /// Dónde dice el usuario que está su AmigaOS (una carpeta del disco de DashOS; DashOS no trae ninguno).
 const PREFS_AMIGAOS: &[u8] = b"SYS:C/Prefs/amigaos";

@@ -47,7 +47,8 @@ pub(crate) fn hay_otras(c: &Caja) -> bool {
 /// Le dice al reloj de la caja si hay varias tareas (entonces mira el turno en su interrupción).
 pub(crate) fn avisar_reloj(c: &Caja) {
     // SEGURIDAD: una función de caja.c que guarda un entero.
-    unsafe { caja_turnos(hay_otras(c) as i32) };
+    // Con sonido, también con una sola tarea: el nivel 6 cada 20 ms deja mezclar aunque el 68k no llame a nada.
+    unsafe { caja_turnos((hay_otras(c) || c.sonido.activo() || c.cias.activo()) as i32) };
 }
 
 /// La interrupción de la caja llegó con la tarea en marcha en modo de usuario, en `pc` con `sr` y su pila en `usp`:
@@ -189,6 +190,16 @@ pub(crate) fn siguiente(r: &mut Registros, anfitriona: Option<(u32, u32)>) -> Si
             }
             continue;
         }
+        // Un gancho de AHI con todas esperando: se ejecuta con la pila de la anfitriona (como BOOPSI).
+        if c.sonido.hay_gancho()
+            && let Some((h, a7)) = anfitriona
+            && c.ex.tareas().contains(&h)
+        {
+            if !crate::sonar(a7) {
+                return Siguiente::Plazo;
+            }
+            continue;
+        }
         if c.ex.listas() > 0 {
             continue;
         }
@@ -199,6 +210,9 @@ pub(crate) fn siguiente(r: &mut Registros, anfitriona: Option<(u32, u32)>) -> Si
         }
         if let Some(p) = proximo {
             hasta = hasta.max(p.saturating_add(maxima));
+        }
+        if c.bsd.hay_esperas() {
+            hasta = hasta.max(plataforma::ahora_us().saturating_add(maxima));
         }
         let ahora = plataforma::ahora_us();
         if ahora > hasta {
@@ -240,6 +254,12 @@ pub(crate) fn quitar_tarea(c: &mut Caja, t: u32, a_la_fuerza: bool) {
     }
     c.gr.tarea_muerta(&mut c.ex, t);
     c.timer.tarea_muerta(t);
+    c.disp.tarea_muerta(t);
+    c.iconos.tarea_muerta(t);
+    c.bsd.tarea_muerta(&mut c.ex, &mut c.red, t);
+    c.sonido.tarea_muerta(t);
+    c.cias.tarea_muerta(t);
+    c.asl.tarea_muerta(t);
     c.dormidas.retain(|&(x, _)| x != t);
     crate::procesos::al_acabar(c, t);
     let r = if a_la_fuerza { c.ex.matar_tarea(t) } else { c.ex.acabar_hija(t) };
