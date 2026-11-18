@@ -102,6 +102,11 @@ prueba: $(PRUEBAS) catalogos
 	cd ../usuario && rustc --edition 2024 --test src/muelle.rs -o target/muelle_pruebas && ./target/muelle_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/dock_ajustes.rs -o target/dock_ajustes_pruebas && ./target/dock_ajustes_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/dock_modelo.rs -o target/dock_modelo_pruebas && ./target/dock_modelo_pruebas -q
+	@# Rama dock-discos: la lupa, el rebote, el indicador y arrastrar del dock; los discos del escritorio (el panel y sus
+	@# ajustes; mil volúmenes, ráfagas de montar y desmontar, bytes al azar).
+	cd ../usuario && rustc --edition 2024 --test src/dock_vivo.rs -o target/dock_vivo_pruebas && ./target/dock_vivo_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/discos_ajustes.rs -o target/discos_ajustes_pruebas && ./target/discos_ajustes_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/discos_modelo.rs -o target/discos_modelo_pruebas && ./target/discos_modelo_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/osd_modelo.rs -o target/osd_modelo_pruebas && ./target/osd_modelo_pruebas -q
 	@# tecla-pegada: cada teclado de arranque lo suyo (dos a la vez, el que se va suelta lo pulsado, informes malos) y la
 	@# cola sin sitio (nunca se tira un soltar; ráfagas).
@@ -204,6 +209,16 @@ arranque-virt-dms: virt-uso $(DISCO_NVME)
 	DASHOS_PREFS="$(or $(DASHOS_PREFS),fondo=atardecer.png)" python3 ../tools/disco_archivos.py target/dms/disco.img $(DASHFS_AR)
 	GUARDAR=$(abspath target/salida_virt_dms.txt) DMS_CAPTURAS=$(abspath target/dms/dms) DMS_ANCHO=$(firstword $(subst x, ,$(or $(DASHOS_PANTALLA),800x600))) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU) -drive file=$(abspath target/dms/disco.img),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_dms.txt 400
 	@cat target/dms/dms.guion.txt
+
+# Los discos del escritorio (rama dock-discos): capturas con la imagen de usar y `tools/guion_discos.py`, en
+# target/discos/. Con el aspecto del usuario, como `arranque-virt-dms` (DASHOS_PANTALLA, DASHOS_FONDO_EXTRA,
+# DASHOS_PREFS y DMS_SHIVA=1). No es una prueba: las líneas de pruebas/capturas_discos.txt solo dicen cuándo acabar.
+capturas-discos: virt-uso $(DISCO_NVME)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_USO)) cargo build --release
+	rm -rf target/discos && mkdir -p target/discos
+	DASHOS_PREFS="$(or $(DASHOS_PREFS),fondo=atardecer.png)" python3 ../tools/disco_archivos.py target/discos/disco.img $(DASHFS_AR)
+	-GUARDAR=$(abspath target/salida_capturas_discos.txt) DISCOS_CAPTURAS=$(abspath target/discos/discos) DMS_ANCHO=$(firstword $(subst x, ,$(or $(DASHOS_PANTALLA),800x600))) DMS_ALTO=$(lastword $(subst x, ,$(or $(DASHOS_PANTALLA),800x600))) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU) -drive file=$(abspath target/discos/disco.img),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/capturas_discos.txt 300
+	@cat target/discos/discos.guion.txt
 
 # La imagen para usar a mano (`tools/qemu_a_mano.sh`): `virt` con `uso`, sin los programas de prueba y con la pantalla
 # de entrada de verdad. No es una prueba: nada la comprueba.

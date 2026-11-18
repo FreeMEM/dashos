@@ -162,6 +162,10 @@ pub enum Curva {
     EnfatizadaFrena,
     /// `Anims.standard`: 0.20, 0.00, 0.00, 1.00.
     Estandar,
+    /// `Easing.InCubic` de Qt (la lupa del dock al salir el ratón).
+    EntradaCubica,
+    /// `Anims.expressiveDefaultSpatial`: 0.38, 1.21, 0.22, 1.00 (se pasa del destino y vuelve; reordenar el dock).
+    ExpresivaEspacial,
 }
 
 impl Curva {
@@ -170,6 +174,7 @@ impl Curva {
             Curva::EnfatizadaAcelera => Some([300, 0, 800, 150]),
             Curva::EnfatizadaFrena => Some([50, 700, 100, 1000]),
             Curva::Estandar => Some([200, 0, 0, 1000]),
+            Curva::ExpresivaEspacial => Some([380, 1210, 220, 1000]),
             _ => None,
         }
     }
@@ -186,6 +191,7 @@ impl Curva {
                 let u = UNO - t;
                 UNO - u * u / UNO * u / UNO
             }
+            Curva::EntradaCubica => t * t / UNO * t / UNO,
             Curva::SalidaCuartica => {
                 let u = UNO - t;
                 let u2 = u * u / UNO;
@@ -313,7 +319,7 @@ mod pruebas {
 
     #[test]
     fn curvas() {
-        for c in [Curva::Lineal, Curva::SalidaCubica, Curva::SalidaCuartica, Curva::EnfatizadaAcelera, Curva::EnfatizadaFrena, Curva::Estandar] {
+        for c in [Curva::Lineal, Curva::SalidaCubica, Curva::SalidaCuartica, Curva::EnfatizadaAcelera, Curva::EnfatizadaFrena, Curva::Estandar, Curva::EntradaCubica] {
             assert_eq!(c.en(0), 0, "{c:?}");
             assert!((c.en(UNO) - UNO).abs() <= 2, "{c:?}: {}", c.en(UNO));
             // Crecen.
@@ -330,6 +336,11 @@ mod pruebas {
         // La que acelera empieza despacio; la que frena, deprisa.
         assert!(Curva::EnfatizadaAcelera.en(UNO / 4) < UNO / 10);
         assert!(Curva::EnfatizadaFrena.en(UNO / 4) > UNO * 7 / 10);
+        assert_eq!(Curva::EntradaCubica.en(UNO / 2), UNO / 8);
+        // La expresiva se pasa del destino (hasta un 10 % más o menos) y acaba en él.
+        let maximo = (0..=64).map(|k| Curva::ExpresivaEspacial.en(k * UNO / 64)).max().unwrap();
+        assert!(maximo > UNO && maximo < UNO * 115 / 100, "{}", maximo);
+        assert!((Curva::ExpresivaEspacial.en(UNO) - UNO).abs() <= 2);
     }
 
     #[test]
