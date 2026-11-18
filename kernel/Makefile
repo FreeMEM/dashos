@@ -205,6 +205,19 @@ arranque-virt-dms: virt-uso $(DISCO_NVME)
 	GUARDAR=$(abspath target/salida_virt_dms.txt) DMS_CAPTURAS=$(abspath target/dms/dms) DMS_ANCHO=$(firstword $(subst x, ,$(or $(DASHOS_PANTALLA),800x600))) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU) -drive file=$(abspath target/dms/disco.img),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_dms.txt 400
 	@cat target/dms/dms.guion.txt
 
+# Rama `fondos` (docs/bitacoras/fondos.md): la herramienta de fondos, las transiciones y los fondos animados en pantalla,
+# con `tools/guion_fondos.py` y la imagen de usar: capturas en target/fondos/ (PNG) y, fuera de git, en
+# ~/recuperar/geosian-7d/fondos-capturas/; y lo que gasta cada fondo animado en reposo (lo dicen `fondo` y el compositor).
+# A 1920 × 1080 con el aspecto del usuario: DASHOS_PANTALLA=1920x1080 FONDOS_SHIVA=1 DASHOS_FONDO_EXTRA=fondo.png.
+FONDOS_FUERA ?= $(HOME)/recuperar/geosian-7d/fondos-capturas
+arranque-virt-fondos: virt-uso $(DISCO_NVME)
+	cd ../uefi && DASHOS_PANTALLA=$(or $(DASHOS_PANTALLA),800x600) DASHOS_NUCLEO=$(abspath $(VIRT_USO)) cargo build --release
+	rm -rf target/fondos && mkdir -p target/fondos
+	DASHOS_PREFS="$(or $(DASHOS_PREFS),fondo=atardecer.png)" python3 ../tools/disco_archivos.py target/fondos/disco.img $(DASHFS_AR)
+	GUARDAR=$(abspath target/salida_virt_fondos.txt) FONDOS_CAPTURAS=$(abspath target/fondos/fondos) FONDOS_ANCHO=$(firstword $(subst x, ,$(or $(DASHOS_PANTALLA),800x600))) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU) -drive file=$(abspath target/fondos/disco.img),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_fondos.txt 900
+	@cat target/fondos/fondos.guion.txt
+	mkdir -p $(FONDOS_FUERA)/$(or $(DASHOS_PANTALLA),800x600) && cp target/fondos/*.png $(FONDOS_FUERA)/$(or $(DASHOS_PANTALLA),800x600)/ 2>/dev/null; true
+
 # La imagen para usar a mano (`tools/qemu_a_mano.sh`): `virt` con `uso`, sin los programas de prueba y con la pantalla
 # de entrada de verdad. No es una prueba: nada la comprueba.
 VIRT_USO := target/kernel8-virt-uso.img

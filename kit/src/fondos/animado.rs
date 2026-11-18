@@ -134,11 +134,12 @@ pub struct Particulas {
 impl Particulas {
     pub fn nuevas(estilo: Estilo, ancho: usize, alto: usize) -> Particulas {
         let (w, h) = (ancho as i32, alto as i32);
-        // Cuántas: según la superficie (1920 × 1080: 48 luciérnagas o 140 copos), con tope.
+        // Cuántas: según la superficie (1920 × 1080: 48 luciérnagas o 57 copos), con tope.
         let area = ancho as u64 * alto as u64;
         let n = match estilo {
             Estilo::Luciernagas => (area / 43_000).clamp(6, 64),
-            Estilo::Nieve => (area / 15_000).clamp(20, 180),
+            // Pocos copos, de buen tamaño: cada uno es un rectángulo que se compone en cada cuadro.
+            Estilo::Nieve => (area / 36_000).clamp(12, 90),
         } as usize;
         let mut z = Azar(0xF1E5_0001 ^ n as u32);
         let radios: &[i32] = match estilo {
@@ -327,11 +328,16 @@ fn colinas(m: &mut Marco, c: u32, y: i32, alto: i32, ondas: i32) {
     }
 }
 
+/// En cuántas tiras se repinta la aurora.
+const TIRAS: usize = 4;
+
 // --- Aurora -----------------------------------------------------------------------------------------------------------
 
-/// Cortinas de luz verde y violeta que ondulan en la parte de arriba. Se pinta la franja del cielo a media resolución
-/// (cada punto calculado tapa 2 × 2) y a pocos cuadros.
+/// Cortinas de luz verde y violeta que ondulan en la parte de arriba. Cada cuadro repinta solo una de `TIRAS` tiras
+/// verticales de esa franja del cielo, por turno (el cielo entero se renueva cada `TIRAS` cuadros): la aurora se mueve
+/// despacio y no se notan las costuras, y cada cuadro compone la cuarta parte.
 pub struct Aurora {
+    turno: usize,
     ancho: i32,
     alto: i32,
     /// Hasta qué fila llega (la franja que se repinta).
@@ -353,7 +359,7 @@ impl Aurora {
                 (sube * (256 - t) * (256 - t) / 65536) as u8
             })
             .collect();
-        Aurora { ancho: w, alto: h, hasta, perfil }
+        Aurora { turno: 0, ancho: w, alto: h, hasta, perfil }
     }
 }
 
@@ -363,7 +369,7 @@ impl Animado for Aurora {
     }
 
     fn intervalo_ms(&self) -> u32 {
-        200
+        60
     }
 
     fn tiene_base(&self) -> bool {
@@ -382,21 +388,28 @@ impl Animado for Aurora {
         let t = (ms % 10_000_000) as i32;
         let w = self.ancho;
         let largo = self.perfil.len() as i32;
+        // La tira de este cuadro (en pares de columnas).
+        let pares = ((w + 1) / 2) as usize;
+        let k = self.turno % TIRAS;
+        self.turno = self.turno.wrapping_add(1);
+        let (c0, c1) = (pares * k / TIRAS, pares * (k + 1) / TIRAS);
         // Por cada par de columnas: dónde está el borde de abajo de la cortina, cuánta luz lleva y su color.
-        let columnas: Vec<(i32, u32, u32)> = (0..(w + 1) / 2)
+        let columnas: Vec<(i32, u32, u32)> = (c0..c1)
             .map(|c| {
+                let c = c as i32;
                 let x = c * 2;
                 let a = x * 4096 / w.max(1);
-                let borde = self.hasta * 6 / 10 + (seno(a * 2 + t / 7) * self.hasta / 9 + seno(a * 5 - t / 5) * self.hasta / 30) / 1024;
-                let luz = ((seno(a * 3 + t / 11) + seno(a * 7 - t / 13) / 2 + 900).max(0) as u32 * 255 / 2500).min(255);
+                let borde = self.hasta * 6 / 10 + (seno(a * 2 + t / 23) * self.hasta / 9 + seno(a * 5 - t / 17) * self.hasta / 30) / 1024;
+                let luz = ((seno(a * 3 + t / 31) + seno(a * 7 - t / 37) / 2 + 900).max(0) as u32 * 255 / 2500).min(255);
                 // Verde casi siempre; violeta donde la segunda onda sube.
-                let violeta = ((seno(a * 2 - t / 17) - 300).max(0) as u32 * 255 / 724).min(255);
+                let violeta = ((seno(a * 2 - t / 47) - 300).max(0) as u32 * 255 / 724).min(255);
                 (borde, luz, mezcla(0xff3c_ffa0, 0xffb0_60ff, violeta))
             })
             .collect();
         for y in 0..self.hasta.min(self.alto) {
             let (b, v) = (base.fila_de(y as usize), vista.fila(y as usize));
-            for (c, &(borde, luz, tinte)) in columnas.iter().enumerate() {
+            for (j, &(borde, luz, tinte)) in columnas.iter().enumerate() {
+                let c = c0 + j;
                 let d = borde - y;
                 let l = if d >= 0 && d < largo && luz > 0 { self.perfil[d as usize] as u32 * luz / 255 * 3 / 4 } else { 0 };
                 for x in [2 * c, 2 * c + 1] {
@@ -406,7 +419,11 @@ impl Animado for Aurora {
                 }
             }
         }
-        alloc::vec![Rect::new(0, 0, w, self.hasta.min(self.alto))]
+        let (x0, x1) = ((2 * c0) as i32, ((2 * c1) as i32).min(w));
+        if x1 <= x0 {
+            return Vec::new();
+        }
+        alloc::vec![Rect::new(x0, 0, x1 - x0, self.hasta.min(self.alto))]
     }
 
     fn shader(&self) -> Option<Shader> {
@@ -494,10 +511,11 @@ struct Entradas { tiempo: f32, medida: vec2<f32>, p: array<vec4<f32>, 2> }
     let fondo = textureLoad(base, vec2<i32>(pos.xy), 0);
     let hasta = e.p[0].x;
     let a = pos.x / e.medida.x * 6.2831853;
+    // El mismo tiempo que la CPU (ms; los divisores pasan sus vueltas de 4096 a radianes).
     let t = e.tiempo * 1000.0;
-    let borde = hasta * 0.6 + (sin(a * 2.0 + t / 1140.0) * hasta / 9.0 + sin(a * 5.0 - t / 815.0) * hasta / 30.0);
-    let luz = clamp((sin(a * 3.0 + t / 1790.0) + sin(a * 7.0 - t / 2120.0) * 0.5 + 0.88) / 2.44, 0.0, 1.0);
-    let violeta = clamp((sin(a * 2.0 - t / 2770.0) - 0.29) / 0.71, 0.0, 1.0);
+    let borde = hasta * 0.6 + (sin(a * 2.0 + t / 14994.0) * hasta / 9.0 + sin(a * 5.0 - t / 11082.0) * hasta / 30.0);
+    let luz = clamp((sin(a * 3.0 + t / 20209.0) + sin(a * 7.0 - t / 24120.0) * 0.5 + 0.88) / 2.44, 0.0, 1.0);
+    let violeta = clamp((sin(a * 2.0 - t / 30639.0) - 0.29) / 0.71, 0.0, 1.0);
     let tinte = mix(vec3<f32>(0.235, 1.0, 0.627), vec3<f32>(0.69, 0.376, 1.0), violeta);
     let d = borde - pos.y;
     let largo = e.medida.y / 3.0;

@@ -258,6 +258,56 @@ pub fn juntar(a: Rect, b: Rect) -> Rect {
     Rect::new(x0, y0, (a.x + a.w).max(b.x + b.w) - x0, (a.y + a.h).max(b.y + b.h) - y0)
 }
 
+/// Junta los daños para que no pasen de `max`, sin cubrir de más: primero los que se tocan o casi (a menos de 8 píxeles);
+/// si aún son muchos, los de cada banda de 64 filas que estén a menos de 96 columnas; y, si ni así, uno por banda. Las
+/// partículas dan decenas de rectángulos pequeños: uno que los cubriera todos haría componer media pantalla.
+pub fn juntar_danos(mut v: Vec<Rect>, max: usize) -> Vec<Rect> {
+    v.retain(|r| !r.vacio());
+    if v.len() <= max {
+        return v;
+    }
+    let cerca = |a: &Rect, b: &Rect, h: i32, w: i32| a.x - w < b.x + b.w && b.x - w < a.x + a.w && a.y - h < b.y + b.h && b.y - h < a.y + a.h;
+    for (h, w) in [(8, 8), (64, 96)] {
+        let mut hecho = true;
+        while hecho && v.len() > max {
+            hecho = false;
+            let mut i = 0;
+            while i < v.len() {
+                let mut j = i + 1;
+                while j < v.len() {
+                    if cerca(&v[i], &v[j], h, w) {
+                        let b = v.swap_remove(j);
+                        v[i] = juntar(v[i], b);
+                        hecho = true;
+                    } else {
+                        j += 1;
+                    }
+                }
+                i += 1;
+            }
+        }
+        if v.len() <= max {
+            return v;
+        }
+    }
+    // Uno por banda de 64 filas.
+    let mut bandas: Vec<(i32, Rect)> = Vec::new();
+    for r in v {
+        let k = r.y.div_euclid(64);
+        match bandas.iter_mut().find(|b| b.0 == k) {
+            Some(b) => b.1 = juntar(b.1, r),
+            None => bandas.push((k, r)),
+        }
+    }
+    let mut out: Vec<Rect> = bandas.into_iter().map(|b| b.1).collect();
+    while out.len() > max.max(1) {
+        let b = out.pop().unwrap();
+        let n = out.len();
+        out[n - 1] = juntar(out[n - 1], b);
+    }
+    out
+}
+
 /// Un generador pequeño de números (xorshift), el mismo en el PC y en DashOS: las animaciones salen iguales.
 #[derive(Clone)]
 pub struct Azar(pub u32);

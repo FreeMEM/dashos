@@ -83,14 +83,16 @@ const CEDEN_RAICES: &[&str] = &["workbench", "explorador"];
 /// Idiomas (paso 4): programas de `inicio` que nacen con el disco en la raíz 1, solo para leer (`RAICES_DE_MAS` de
 /// `inicio`), y a los que `sesiones` pone en la 3, también solo para leer, el `RAM:` de la sesión de su usuario cuando
 /// entra (`ram_entrar`): su tabla de nombres trae `SYS:` y `RAM:`, y por ellos leen `LOCALE:` y `ENV:`.
-const LEEN_IDIOMA: &[&str] = &["centro", "dock"];
+/// Rama `fondos`: también el fondo de escritorio (lee `ENV:Escritorio/fondo` y los fondos de `SYS:Fondos`).
+const LEEN_IDIOMA: &[&str] = &["centro", "dock", "fondo"];
 /// Ajustes en texto: los programas del escritorio que piden guardar un ajuste de `ENV:` en `ENVARC:` (`GUARDAR_ENV`) y
 /// escriben `ENV:` (su raíz de `RAM:`, para leer y escribir): el centro de control, que es la ventana de Ajustes.
 const GUARDAN_AJUSTES: &[&str] = &["centro"];
 /// S27: lo que puede escribir en `ENV:` (`ESCRIBIR_ENV`) y guardar en `ENVARC:` (`GUARDAR_ENV`) cada programa del
 /// escritorio que no es la ventana de Ajustes: solo sus ficheros, uno a uno. El dock, el suyo (los programas fijados
 /// desde su menú). Su raíz de `RAM:` es solo para leer: no escribe `ENV:` por su cuenta.
-const AJUSTES_PROPIOS: &[(&str, &[&str])] = &[("dock", &["Escritorio/dock"])];
+/// Rama `fondos`: el fondo de escritorio, el suyo (lo escribe su herramienta).
+const AJUSTES_PROPIOS: &[(&str, &[&str])] = &[("dock", &["Escritorio/dock"]), ("fondo", &["Escritorio/fondo"])];
 
 /// Si el programa de la ficha `f` puede escribir y guardar el ajuste `fichero`: el centro, cualquiera que valga; los de
 /// `AJUSTES_PROPIOS`, solo los suyos, tal cual (sin `..`, sin `/` de más: se compara el nombre entero).

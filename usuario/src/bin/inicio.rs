@@ -95,6 +95,8 @@ const RAICES_DE_MAS: &[(&str, u8, u8, &str)] = &[
     ("paq", 1, 4, ""),
     // S27: el dock, igual: los ajustes de fábrica (`SYS:Prefs/Env-Archive`) antes de entrar nadie.
     ("dock", 1, 4, ""),
+    // Rama `fondos`: el fondo de escritorio, igual: los fondos del sistema (`SYS:Fondos`), solo para leer.
+    ("fondo", 1, 4, ""),
 ];
 /// Los servicios cuyas llaves reparte `sesiones` (U4): de ellos recibe una copia sin marca, para hacer copias marcadas
 /// con el número de cada programa al que se las da. Del resto (archivos), una con la suya, como cualquier cliente.
@@ -496,7 +498,10 @@ fn principal() -> u64 {
         let cupo = match nombre(nombre_cab) {
             "archivos" => 128 << 20,
             "sesiones" => 512 << 20,
-            "fondo" => 48 << 20,
+            // Rama `fondos`: 96: por pantalla, lo que se ve, la imagen quieta de debajo y, en una transición, la nueva
+            // (8 MB cada una a 1920 × 1080); la herramienta de fondos (su capa, 4,5 MB, y sus miniaturas), y un PNG a
+            // medio leer (hasta una foto 4K, 33 MB, en el montón).
+            "fondo" => 96 << 20,
             // El explorador: sus ventanas (3 MB cada una a 1100 × 720, 8 maximizada en Full HD), las fuentes, un PNG a
             // medio decodificar (hasta 1,5 Mpx) y 64 miniaturas. El Workbench, desde que los cajones los abre el
             // explorador, solo pinta los iconos y la Información: 16, lo de siempre.

@@ -177,26 +177,50 @@ impl Ciclos {
         }
     }
 
+    /// Los daños de cada cuadro: por banda de filas, los tramos de columnas donde algo gira (juntando los que están a
+    /// menos de `JUNTAR` píxeles); con más de `MAX_TRAMOS_BANDA`, uno que los cubra. Así unas estrellas sueltas o el
+    /// reflejo del sol no hacen componer toda la anchura.
     fn medir_bandas(&mut self) {
+        const JUNTAR: usize = 48;
+        const MAX_TRAMOS_BANDA: usize = 12;
         let mut bandas = Vec::new();
         let mut total = 0;
         for b in 0..self.alto.div_ceil(BANDA) {
-            let (mut x0, mut x1, mut y0, mut y1) = (usize::MAX, 0, usize::MAX, 0);
+            let mut tramos: Vec<(usize, usize)> = Vec::new();
+            let (mut y0, mut y1) = (usize::MAX, 0);
             for y in b * BANDA..((b + 1) * BANDA).min(self.alto) {
                 self.tramos_de_fila(y, |a, c, _| {
-                    x0 = x0.min(a);
-                    x1 = x1.max(c);
+                    tramos.push((a, c));
                     y0 = y0.min(y);
                     y1 = y1.max(y + 1);
                     total += c - a;
                 });
             }
-            if x0 < x1 {
-                bandas.push(Rect::new(x0 as i32, y0 as i32, (x1 - x0) as i32, (y1 - y0) as i32));
+            if tramos.is_empty() {
+                continue;
+            }
+            tramos.sort_unstable();
+            let mut juntos: Vec<(usize, usize)> = Vec::new();
+            for (a, c) in tramos {
+                match juntos.last_mut() {
+                    Some(u) if a <= u.1 + JUNTAR => u.1 = u.1.max(c),
+                    _ => juntos.push((a, c)),
+                }
+            }
+            if juntos.len() > MAX_TRAMOS_BANDA {
+                juntos = alloc::vec![(juntos[0].0, juntos.iter().map(|t| t.1).max().unwrap())];
+            }
+            for (a, c) in juntos {
+                bandas.push(Rect::new(a as i32, y0 as i32, (c - a) as i32, (y1 - y0) as i32));
             }
         }
         self.bandas = bandas;
         self.pixeles_que_giran = total;
+    }
+
+    /// Lo que se compone en cada cuadro (la suma de los daños), para medir.
+    pub fn pixeles_por_cuadro(&self) -> usize {
+        self.bandas.iter().map(|r| (r.w * r.h) as usize).sum()
     }
 
     /// La paleta en `ms`, y los pasos de cada tramo.

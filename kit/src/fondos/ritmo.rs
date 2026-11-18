@@ -6,11 +6,15 @@
 //! despacio, y vuelve con margen (sin ir y venir en el borde). Con la pantalla tapada, apagada o bloqueada no hay
 //! cuadros: eso lo decide el compositor (no da el aviso de `frame` a un fondo que no se ve).
 
-/// Por defecto, el 3 % de un núcleo (en milésimas).
-pub const TOPE_DE_SERIE: u32 = 30;
+/// Por defecto, el 5 % de un núcleo (en milésimas), contando lo que se le supone al compositor.
+pub const TOPE_DE_SERIE: u32 = 50;
 /// Lo que se supone que le cuesta al compositor componer un píxel dañado, en milésimas de µs (en QEMU, sin
-/// aceleración; medido en la rama `fondos`: se apunta en la bitácora).
-pub const COMPONER_NS_POR_PX: u64 = 12;
+/// aceleración: de 49 a 99 ns por píxel en las medidas del compositor; se apunta en la bitácora).
+pub const COMPONER_NS_POR_PX: u64 = 90;
+/// Y lo que le cuesta cada cuadro aunque sea pequeño (recorrer las capas, los avisos, copiar a la pantalla): en QEMU,
+/// unos 5 ms (con las luciérnagas, 20 kpx por cuadro, el compositor gastaba 10 ms por cuadro). En una Pi, mucho menos:
+/// el tope se queda corto allí y los animados van más lentos de lo que podrían (pendiente: medirlo en la Pi).
+pub const COMPONER_US_POR_CUADRO: u64 = 5_000;
 /// Lo más lento que va (10 s entre cuadros).
 pub const MAX_INTERVALO_MS: u32 = 10_000;
 
@@ -32,7 +36,7 @@ impl Ritmo {
 
     /// Apunta un cuadro: lo que costó en el fondo (µs de CPU) y los píxeles que dañó.
     pub fn cuadro(&mut self, cpu_us: u64, pixeles: u64) {
-        let c = cpu_us.min(10_000_000) + pixeles.min(1 << 30) * COMPONER_NS_POR_PX / 1000;
+        let c = cpu_us.min(10_000_000) + pixeles.min(1 << 30) * COMPONER_NS_POR_PX / 1000 + if pixeles > 0 { COMPONER_US_POR_CUADRO } else { 0 };
         // Media que sigue (1/8 lo nuevo); el primero, tal cual.
         self.coste_us = if self.cuadros == 0 { c } else { (self.coste_us * 7 + c) / 8 };
         self.cuadros += 1;

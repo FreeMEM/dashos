@@ -555,6 +555,8 @@ const VA_ARCHIVOS: usize = 0x50_0000_0000;
 const PREFS: &str = "Prefs";
 /// C3: el fondo de escritorio que se ve (su nombre en `Fondos/`), al lado.
 const FICHERO_FONDO: &str = "fondo";
+/// Rama `fondos`: los ajustes del fondo de escritorio en texto (los escriben la herramienta de fondos y la orden `Fondo`).
+const FICHERO_FONDO_ENV: &str = "Escritorio/fondo";
 /// S26: el aspecto de los programas de las cajas (el texto de `wayland::aspecto`), al lado.
 const FICHERO_CAJAS: &str = "cajas";
 /// S37: el tema de iconos elegido, `Escritorio/iconos` de `ENV:` y `ENVARC:` (`kit::iconos::freedesktop`).
@@ -1391,6 +1393,8 @@ fn apariencia(ap: &Apariencia, cajas: &Ajuste) -> (Vec<String>, Vec<String>) {
     // S37: los iconos de los ficheros, si el usuario ha instalado algún tema de Linux en `Home:Iconos/` (si no, no hay
     // nada que elegir y no sale): los de DashOS o uno de ellos.
     let temas = temas_iconos();
+    // Rama `fondos`: la herramienta de fondos (al final, para no mover las filas de antes).
+    let herramienta = String::from(tr(240, "Fondos de escritorio: abrir la herramienta…"));
     if !temas.is_empty() {
         let elegido = leer_ajuste(FICHERO_ICONOS).ok().and_then(|b| kit::iconos::freedesktop::eleccion_de(&b));
         l.push(alloc::format!("{}{}", "Iconos: los de DashOS", marca(elegido.is_none())));
@@ -1398,6 +1402,7 @@ fn apariencia(ap: &Apariencia, cajas: &Ajuste) -> (Vec<String>, Vec<String>) {
             l.push(alloc::format!("Iconos: {}{}", nombre, marca(elegido.as_deref() == Some(cajon.as_str()))));
         }
     }
+    l.push(herramienta);
     (l, lista)
 }
 
@@ -3052,6 +3057,11 @@ fn ventana_dentro(categoria: usize, ce: &mut Centro, respuestas: &mut Vec<u32>, 
                             i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
                             cambio = true;
                         }
+                        // Rama `fondos`: la herramienta de fondos (la última fila). La abre `fondo`, encima de todo.
+                        k if k as usize + 1 == lineas_registro.len() && lineas_registro.last().is_some_and(|l| l.starts_with(tr(240, "Fondos de escritorio: abrir la herramienta…"))) => {
+                            let (estado, ..) = al_fondo("abrir");
+                            println!("  [centro] Apariencia: abre la herramienta de fondos: {}", estado);
+                        }
                         // S37: los iconos de los ficheros (los de DashOS o un tema de Linux de `Home:Iconos/`). Va a
                         // `ENV:` y se guarda en `ENVARC:`; el explorador lo lee al prepararse.
                         k if k >= (FILAS_FIJAS + lista_fondos.len()) as i64 => {
@@ -3335,6 +3345,9 @@ struct Vigila {
     temporizador: u32,
     /// Lo último que se dijo de un tema de `ENV:` que no se entiende: no se repite en cada aviso.
     dicho: Option<String>,
+    /// Rama `fondos`: el último `ENV:Escritorio/fondo` visto (si cambia, el fondo es otro y, con la paleta del fondo,
+    /// el tema sale del nuevo).
+    fondo_visto: Option<Vec<u8>>,
 }
 
 /// La llave "yo:centro" (para escribirse a sí mismo), o 0.
@@ -3344,7 +3357,7 @@ fn yo() -> u32 {
 
 impl Vigila {
     fn nueva() -> Vigila {
-        Vigila { ids: [0; 3], temporizador: 0, dicho: None }
+        Vigila { ids: [0; 3], temporizador: 0, dicho: None, fondo_visto: None }
     }
 
     /// Pone las vigilancias que falten (las que se pueden: sin `ENV:` no hay ninguna). Si falta alguna, el temporizador
@@ -3417,6 +3430,31 @@ fn al_cambiar_env(v: &mut Vigila, idioma: &mut Option<idiomas::Idiomas>, uso: &m
     }
     // Acaba de entrar alguien (sale `ENV:`): el fondo que tiene guardado.
     let semilla_al_entrar = if antes[0] == 0 && v.ids[0] != 0 { fondo_al_entrar() } else { None };
+    // Rama `fondos`: otro `Escritorio/fondo` (la herramienta de fondos, la orden `Fondo` o a mano): que `fondo` lo
+    // ponga ("guardado": si ya lo puso, no lo repite) y, con la paleta del fondo, el tema sale del nuevo.
+    let fondo_ahora = leer_ajuste(FICHERO_FONDO_ENV).ok();
+    if semilla_al_entrar.is_some() {
+        v.fondo_visto = fondo_ahora;
+    } else if fondo_ahora.is_some() && fondo_ahora != v.fondo_visto {
+        v.fondo_visto = fondo_ahora;
+        if uso.color == DEL_FONDO {
+            let (estado, semilla, _, _, _, nombre) = al_fondo("guardado");
+            if estado == 0 && semilla != 0 && semilla != uso.semilla() {
+                let mut ap = *uso;
+                match colores_del_fondo(&mut ap, Some(semilla)) {
+                    Ok(()) => {
+                        let puesto = poner_en_compositor(&ap, None, via);
+                        let usado = usar_apariencia(&ap);
+                        println!("  [centro] fondo nuevo ({}): el tema sale de él, semilla {:06x}; en el compositor: {}; en ENV: {:?}", nombre, semilla & 0xff_ffff, if puesto == 0 { "sí" } else { "no" }, usado.is_ok());
+                        if puesto == 0 {
+                            *uso = ap;
+                        }
+                    }
+                    Err(porque) => println!("  [centro] fondo nuevo ({}): {}; se queda el tema", nombre, porque),
+                }
+            }
+        }
+    }
     // El idioma: se carga otra vez sin mirar firmas (el aviso ya dice que cambió).
     if let (Some(tabla), Some(ses)) = (dashos::asignaciones::pedir_tabla(SESIONES), Sesion::abrir()) {
         let nuevo = idiomas::arrancar(&mut PorSesion(&ses), &tabla, &TEXTOS, CATALOGO);
@@ -3680,6 +3718,16 @@ fn atender(m: Mensaje, ce: &mut Centro, via: &mut Option<ConVentana>) -> Option<
     }
     .filter(|_| del_panel);
     let de_la_barra = ce.nombres.get(&marca).is_some_and(|n| n == "barra");
+    // Rama `fondos`: la herramienta de fondos (el panel rápido, la barra, el escritorio): la abre `fondo`.
+    if buf == b"abrir fondos" {
+        let (estado, ..) = al_fondo("abrir");
+        println!("  [centro] abre la herramienta de fondos (lo pide {}): {}", ce.nombres.get(&marca).map_or("alguien", |n| n.as_str()), estado);
+        if k >= 1 {
+            dashos::canal_escribir(ll[0], &estado.to_le_bytes(), &[]);
+        }
+        cerrar_llaves(ll);
+        return None;
+    }
     // Las barras: solo la barra (por el nombre que da `inicio`) se suscribe, con su memoria y su puerta.
     if buf == b"barra suscribir" {
         if de_la_barra && k == 2 {

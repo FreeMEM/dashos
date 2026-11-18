@@ -375,18 +375,20 @@ fn png_paleta(w: usize, h: usize, textos: &[(&[u8], &[u8])]) -> Vec<u8> {
 #[test]
 fn ritmo_con_tope() {
     let mut r = Ritmo::nuevo(30);
-    // Un cuadro de 1 ms de CPU y 10 000 píxeles: a 3 % de un núcleo, uno cada 37 ms como poco.
+    // Un cuadro de 1 ms de CPU y 10 000 píxeles (lo del compositor, por píxel y por cuadro): a 3 % de un núcleo.
     for _ in 0..50 {
         r.cuadro(1000, 10_000);
     }
     let i = r.intervalo(16);
-    assert!(i >= 37 && i <= 40, "{}", i);
+    let coste = 1000 + 10_000 * super::ritmo::COMPONER_NS_POR_PX / 1000 + super::ritmo::COMPONER_US_POR_CUADRO;
+    let esperado = (coste * 1000 / 30 / 1000) as u32;
+    assert!(i >= esperado && i <= esperado + 2, "{} y no {}", i, esperado);
     assert!(r.gasto(16) <= 30);
-    assert_eq!(r.intervalo(500), 500);
+    assert_eq!(r.intervalo(1000), 1000);
     // Ocupada: cuatro veces más despacio, y no vuelve en el borde.
     r.ocio(200);
     assert!(r.ocupada);
-    assert_eq!(r.intervalo(500), 2000);
+    assert_eq!(r.intervalo(1000), 4000);
     r.ocio(300);
     assert!(r.ocupada);
     r.ocio(500);
@@ -411,6 +413,7 @@ fn ajustes_del_fondo() {
     assert_eq!(c.elegir("DASHOS-1", true), "SYS:Fondos/luna.png");
     assert_eq!(c.elegir("dashos-2", true), "animado:aurora");
     assert_eq!((c.ajuste, c.color, c.duracion, c.pase, c.cpu), (Ajuste::Mosaico, 0xff11_2233, 400, 5, 20));
+    assert_eq!(Config::default().cpu, super::ritmo::TOPE_DE_SERIE);
     assert_eq!(c.efecto.as_deref(), Some("nieve"));
     // Escribirlo de nuevo no pierde lo que no es suyo, y se vuelve a leer igual.
     let t = c.a_texto(Some(texto));
@@ -434,5 +437,35 @@ fn ajustes_del_fondo() {
     c.poner(None, false, "SYS:Fondos/y.png");
     assert_eq!(c.elegir("DASHOS-3", true), "Home:Fondos/x.png");
     assert_eq!(c.elegir("DASHOS-3", false), "SYS:Fondos/y.png");
+    // Los dos modos a la vez: el oscuro deja de ser otro.
+    c.poner(None, true, "noche.png");
+    c.poner_los_dos(None, "dia.png");
+    assert_eq!((c.elegir("X", false), c.elegir("X", true)), ("Home:Fondos/dia.png", "Home:Fondos/dia.png"));
+    c.poner_los_dos(Some("DASHOS-3"), "z.png");
+    assert_eq!(c.elegir("DASHOS-3", true), "Home:Fondos/z.png");
     assert!(!ajustes::nombre_vale("animado:fuego") && !ajustes::nombre_vale("") && !ajustes::nombre_vale("a\u{7}b") && !ajustes::nombre_vale("Home:"));
+}
+
+#[test]
+fn juntar_danos_sin_cubrir_de_mas() {
+    // 48 partículas de 21 × 21 repartidas por 1920 × 1080: juntas en como mucho 32, sin pasar de 6 veces su área.
+    let mut z = Azar(3);
+    let v: Vec<Rect> = (0..48).map(|_| Rect::new(z.hasta(1900) as i32, z.hasta(1060) as i32, 21, 21)).collect();
+    let area: i64 = v.iter().map(|r| (r.w * r.h) as i64).sum();
+    let j = juntar_danos(v.clone(), 32);
+    assert!(j.len() <= 32);
+    let area_j: i64 = j.iter().map(|r| (r.w * r.h) as i64).sum();
+    assert!(area_j < area * 6, "{} contra {}", area_j, area);
+    // Todo lo de antes sigue cubierto.
+    for r in &v {
+        for (x, y) in [(r.x, r.y), (r.x + r.w - 1, r.y + r.h - 1)] {
+            assert!(j.iter().any(|d| d.contiene(x, y)));
+        }
+    }
+    // Hostil: mil iguales, vacíos, y un tope de 1.
+    let mil = alloc::vec![Rect::new(5, 5, 3, 3); 1000];
+    assert_eq!(juntar_danos(mil, 4), alloc::vec![Rect::new(5, 5, 3, 3)]);
+    assert!(juntar_danos(alloc::vec![Rect::default(); 10], 2).is_empty());
+    let v: Vec<Rect> = (0..200).map(|k| Rect::new((k * 37) % 1900, (k * 91) % 1000, 5, 5)).collect();
+    assert_eq!(juntar_danos(v, 1).len(), 1);
 }

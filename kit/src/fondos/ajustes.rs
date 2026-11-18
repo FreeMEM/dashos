@@ -14,7 +14,7 @@
 //! pase = 0                           minutos entre fondo y fondo (0, sin pase)
 //! carpeta = Home:Fondos              de dónde salen los del pase
 //! efecto = ninguno                   encima de una imagen: luciernagas, nieve o aurora
-//! cpu = 3                            tope de CPU de un fondo animado, % de un núcleo (de 1 a 50)
+//! cpu = 5                            tope de CPU de un fondo animado, % de un núcleo (de 1 a 50), con el compositor
 //! ```
 //!
 //! Un fondo animado es un nombre `animado:aurora` (y los demás de `animado::NOMBRES`).
@@ -215,6 +215,19 @@ impl Config {
                     }
                 };
                 if oscuro { self.pantallas[i].2 = Some(f) } else { self.pantallas[i].1 = Some(f) }
+            }
+        }
+    }
+
+    /// Pone el fondo de `salida` (o de todas) para los dos modos: el claro, y el oscuro deja de ser otro.
+    pub fn poner_los_dos(&mut self, salida: Option<&str>, fondo: &str) {
+        self.poner(salida, false, fondo);
+        match salida {
+            None => self.oscuro = None,
+            Some(s) => {
+                if let Some(p) = self.pantallas.iter_mut().find(|p| p.0.eq_ignore_ascii_case(s)) {
+                    p.2 = None;
+                }
             }
         }
     }
