@@ -1409,6 +1409,13 @@ fn principal() -> u64 {
         if let Some(d) = dash.as_mut().filter(|d| d.animando()) {
             d.pintar(&mut c, &b.tema, &mut avisos_vista::Letras { f: &mut fuente, m: &mut medio }, &reloj());
         }
+        // Rama sonido-pro: el servicio de sonido despierta a la barra por su puerta cuando cambia lo que suena (el estado
+        // ya se leyó arriba); eso no es de los avisos ni de la configuración.
+        let del_sonido = c.recibidos.iter().filter(|(m, _)| *m == MARCA_SONIDO).count() as u32;
+        if del_sonido > 0 {
+            c.recibidos.retain(|(m, _)| *m != MARCA_SONIDO);
+            c.timbres = c.timbres.saturating_sub(del_sonido);
+        }
         if c.timbres > 0 {
             c.timbres = 0;
             if let Some((vez, texto)) = leer_cfg(bs.vez) {

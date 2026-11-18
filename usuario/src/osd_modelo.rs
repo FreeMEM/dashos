@@ -154,7 +154,7 @@ pub fn medir(que: &Que, a: &AjustesOsd, pantalla: (i32, i32), ancho_texto: (i32,
                 // `osdValueReserve`: con el icono del final (siempre en estos dos), 56. Rama sonido-pro: con el nombre
                 // de la salida, lo que mide (`ancho_texto.0`) y 12 más, antes del icono.
                 let extra = match que {
-                    Que::Volumen { salida, .. } if !salida.is_empty() && !a.siempre_valor => ancho_texto.0.clamp(0, 240) + ESPACIO_M,
+                    Que::Volumen { salida, .. } if !salida.is_empty() => ancho_texto.0.clamp(0, 240) + ESPACIO_M,
                     _ => 0,
                 };
                 ((ANCHO_NIVEL + BOTON_M + extra).min(sw - ESPACIO_M * 2).max(ALTO_OSD), BOTON_S + ESPACIO_S * 2)
@@ -217,7 +217,7 @@ fn glifo_nivel(que: &Que) -> Glifo {
 /// Rama sonido-pro: lo que se deja para el nombre de la salida (lo que pasa de la medida sin él), en horizontal.
 fn nombre_salida(que: &Que, a: &AjustesOsd, w: i32) -> i32 {
     match que {
-        Que::Volumen { salida, .. } if !salida.is_empty() && !a.siempre_valor && !a.posicion.vertical() => (w - (ANCHO_NIVEL + BOTON_M)).max(0),
+        Que::Volumen { salida, .. } if !salida.is_empty() && !a.posicion.vertical() => (w - (ANCHO_NIVEL + BOTON_M)).max(0),
         _ => 0,
     }
 }

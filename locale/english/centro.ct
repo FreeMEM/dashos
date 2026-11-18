@@ -537,11 +537,11 @@ MSG_903
 normal (256 frames, 5.3 ms)
 ; normal (256 cuadros, 5,3 ms)
 MSG_904
-Open the Sound window: the mixer, the equalizer and the visualizer
-; Abrir la ventana Sonido: el mezclador, el ecualizador y el visualizador
+Open the Sound mixer
+; Abrir el mezclador Sonido
 MSG_905
-System sound theme: {}
-; Tema de los sonidos del sistema: {}
+Sound theme: {}
+; Tema de los sonidos: {}
 MSG_906
 System sounds: {}
 ; Sonidos del sistema: {}
@@ -552,8 +552,8 @@ MSG_908
 Equalizer: {}
 ; Ecualizador: {}
 MSG_909
-Limiter (the output never clips): {}
-; Limitador (la salida nunca satura): {}
+Limiter: {}
+; Limitador: {}
 MSG_910
 Spatial sound: {}
 ; Sonido espacial: {}
@@ -564,5 +564,5 @@ MSG_912
 Try the notification sound
 ; Probar el sonido de aviso
 MSG_913
-System sounds, output effects and latency. Enter changes a row; it sounds at once.
-; Los sonidos del sistema, los efectos de la salida y la latencia. Intro cambia una fila; suena ya.
+Sounds, effects and latency. Enter changes a row.
+; Sonidos, efectos y latencia. Intro cambia una fila.

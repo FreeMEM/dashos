@@ -202,7 +202,7 @@ def principal():
     if s2:
         marca = len(texto())
         clic(ANCHO - int(s2[-1][0]), int(s2[-1][1]) + dy)
-        m2 = esperar(r"\[panel\] detalle de la salida: .* sus ajustes a \((\d+), (\d+)\)", 10, marca)
+        m2 = esperar(r"\[panel\] detalle de la salida: .* sus ajustes a \((\d+), (\d+)\)", 25, marca)
         if m2:
             clic(ANCHO - int(m2[-1][0]), int(m2[-1][1]) + dy)
             esperar(r"\[centro\] Sonido en pantalla", 20, marca)

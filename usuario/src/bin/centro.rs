@@ -2031,12 +2031,12 @@ fn lineas_sonido(a: &AjSonido) -> Vec<String> {
         _ => tr(903, "normal (256 cuadros, 5,3 ms)"),
     };
     alloc::vec![
-        String::from(tr(904, "Abrir la ventana Sonido: el mezclador, el ecualizador y el visualizador")),
-        trf(905, "Tema de los sonidos del sistema: {}", &[&TEMAS_SONIDO[a.tema as usize % 3]]),
+        String::from(tr(904, "Abrir el mezclador Sonido")),
+        trf(905, "Tema de los sonidos: {}", &[&TEMAS_SONIDO[a.tema as usize % 3]]),
         trf(906, "Sonidos del sistema: {}", &[&si_no(a.sonidos)]),
         trf(907, "Volumen de los sonidos: {} %", &[&a.volumen_sonidos]),
         trf(908, "Ecualizador: {}", &[&PREAJUSTES_SONIDO[a.preajuste as usize % 8]]),
-        trf(909, "Limitador (la salida nunca satura): {}", &[&si_no(a.limitador)]),
+        trf(909, "Limitador: {}", &[&si_no(a.limitador)]),
         trf(910, "Sonido espacial: {}", &[&ESPACIAL[a.espacial as usize % 3]]),
         trf(911, "Latencia: {}", &[&latencia]),
         String::from(tr(912, "Probar el sonido de aviso")),
@@ -2548,7 +2548,7 @@ fn ventana_dentro(categoria: usize, ce: &mut Centro, respuestas: &mut Vec<u32>, 
         } else if cat == DOCK {
             (tr(149, "El dock y los avisos en pantalla, como en DMS. Intro cambia una fila."), reg.join("|"))
         } else if cat == SONIDO_CAT {
-            (tr(913, "Los sonidos del sistema, los efectos de la salida y la latencia. Intro cambia una fila; suena ya."), reg.join("|"))
+            (tr(913, "Sonidos, efectos y latencia. Intro cambia una fila."), reg.join("|"))
         } else {
             (tr(94, "El sistema."), reg.join("|"))
         };

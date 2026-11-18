@@ -66,7 +66,7 @@ const VA_ESTADO: usize = 0x68_0000_0000;
 const MARCA_PUERTA: u64 = 0x534f_4e49_444f_0001;
 /// Los objetos de cada apertura de la ventana: se cuentan desde aquí, diez por apertura (no se reutilizan números).
 const BASE_OBJETOS: u32 = 200;
-const CUADRO_US: u64 = 33_000;
+const CUADRO_US: u64 = 50_000;
 
 const BOTON_IZQUIERDO: u32 = 0x110;
 
@@ -482,6 +482,16 @@ impl Vista {
         );
     }
 
+    /// Las zonas que cambian en cada cuadro (con un poco de margen para el asa de los deslizadores).
+    fn zonas_vivas(&self) -> Vec<Rect> {
+        let mut v: Vec<Rect> = self.sitios_vu.iter().map(|z| z.1).collect();
+        v.push(self.sitio_espectro);
+        v.push(self.sitio_vu_general);
+        v.extend(self.deslizadores.iter().map(|d| Rect::new(d.1.x - 4, d.1.y, d.1.w + 8, d.1.h)));
+        v.extend(self.bandas_eq.iter().map(|d| Rect::new(d.1.x, d.1.y - 6, d.1.w, d.1.h + 12)));
+        v
+    }
+
     fn zona(&self, x: i32, y: i32) -> Option<Accion> {
         self.zonas.iter().rev().find(|(r, _)| r.contiene(x, y)).map(|z| z.1)
     }
@@ -626,6 +636,7 @@ fn principal() -> u64 {
     let mut ultima_secuencia = 0;
     let mut latido = 0u32;
     let mut cuadros = 0u64;
+    let mut entero = true;
     println!("  [mezclador] listo: espera a que se pida la ventana");
     loop {
         let plazo = if abierta.is_some() { CUADRO_US } else { 1_000_000 };
@@ -655,6 +666,7 @@ fn principal() -> u64 {
                         abierta = Some(a);
                         v.firma = 0;
                         v.sitios_dichos = false;
+                        entero = true;
                         println!("  [mezclador] se abre la ventana Sonido");
                     }
                 }
@@ -761,18 +773,40 @@ fn principal() -> u64 {
                 let mut l = Lienzo::new(&mut fondo, ANCHO, ALTO, ANCHO as usize);
                 v.pintar_fondo(&mut l, &mut pt);
                 v.decir_sitios();
+                entero = true;
             }
         }
         v.espectro.avanzar(dt);
         // El latido: que el servicio sepa que se mira el espectro.
         latido = latido.wrapping_add(1);
         unsafe { write_volatile((VA_ESTADO + 4 * p::W_LATIDO) as *mut u32, latido) };
+        // Lo que se mueve: con el fondo nuevo, todo; si no, solo las zonas vivas (vúmetros, espectro y asas): se copia
+        // del fondo, se pinta encima y solo eso se dice al compositor (componer la ventana entera 30 veces por segundo
+        // le llevaba en QEMU casi todo su tiempo).
         let px = lamina_px.as_mut_slice();
-        px.copy_from_slice(&fondo);
+        let vivas = v.zonas_vivas();
+        if entero {
+            px.copy_from_slice(&fondo);
+        } else {
+            for r in &vivas {
+                for y in r.y.max(0)..(r.y + r.h).min(ALTO) {
+                    let i = (y * ANCHO + r.x.max(0)) as usize;
+                    let j = (y * ANCHO + (r.x + r.w).min(ANCHO)) as usize;
+                    px[i..j].copy_from_slice(&fondo[i..j]);
+                }
+            }
+        }
         let mut l = Lienzo::new(px, ANCHO, ALTO, ANCHO as usize);
         v.pintar_vivo(&mut l);
         let mut e = Escritor::new();
-        e.empezar(a.superficie, wl_surface::req::DAMAGE).int(0).int(0).int(ANCHO).int(ALTO).fin();
+        if entero {
+            e.empezar(a.superficie, wl_surface::req::DAMAGE).int(0).int(0).int(ANCHO).int(ALTO).fin();
+        } else {
+            for r in &vivas {
+                e.empezar(a.superficie, wl_surface::req::DAMAGE).int(r.x).int(r.y).int(r.w).int(r.h).fin();
+            }
+        }
+        entero = false;
         e.empezar(a.superficie, wl_surface::req::COMMIT).fin();
         c.mandar(&e);
         cuadros += 1;

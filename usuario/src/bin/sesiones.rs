@@ -1436,8 +1436,10 @@ fn dar_servicio(dadas: &mut [Option<(u64, usize, u32)>], s: usize, marca: u64, p
         Some(i) if r > 0 => {
             dadas[i] = Some((marca, s, revocador));
             // Su entrada en el directorio del servicio, como hace `inicio` (un permiso del kernel no tiene directorio). A
-            // uno que sigue las sesiones, no: su nombre ya le llegó con `AVISO_PERSONA` al lanzarlo (U6).
-            if !PERMISOS_KERNEL.contains(&REPARTE[s].0) && !SIGUEN_SESIONES.contains(&REPARTE[s].0) {
+            // uno que sigue las sesiones, no: su nombre ya le llegó con `AVISO_PERSONA` al lanzarlo (U6). Rama sonido-pro:
+            // salvo a un programa del sistema (lanzado por `inicio`, marca baja: su nombre es el de `inicio`), que no se
+            // lanzó por aquí y del que el servicio no sabe nada (centro y guardian piden el sonido así).
+            if !PERMISOS_KERNEL.contains(&REPARTE[s].0) && (!SIGUEN_SESIONES.contains(&REPARTE[s].0) || (REPARTE[s].0 == "sonido" && marca < PRIMER_PID_PROPIO)) {
                 let mut dir = [0u8; 24];
                 dir[..8].copy_from_slice(&marca.to_le_bytes());
                 dir[8..].copy_from_slice(programa);

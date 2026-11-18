@@ -142,6 +142,8 @@ struct Suscriptor {
     latido: u32,
     latido_us: u64,
     ventana_dicha: u32,
+    /// La vez de lo que suena que se le dijo (a la barra se la despierta cuando cambia).
+    medios_dichos: u32,
 }
 
 struct MedioP {
@@ -184,11 +186,12 @@ fn recoger(g: &mut Grafo, c: &mut Cliente, tmp: &mut Vec<u8>) {
     }
 }
 
-/// La clase de plazo (S2, A6): hasta 2 ms de CPU cada período de 5,3 ms. Antes pedía 3 (el 56 %), y con el
-/// repartidor del núcleo ya en la clase de plazo (30 %) pasaba del 80 % que admite un núcleo: el kernel lo negaba y el
-/// servicio iba en la justa ("sin clase de plazo"), con vacíos en la salida cuando había carga (se vio en `revision`
-/// también). Con el grafo, un período cuesta de media unos 0,2 ms en QEMU: 2 ms sobran.
-const PLAZO_US: (u64, u64) = (2_000, 5_333);
+/// La clase de plazo (S2, A6): hasta 1,5 ms de CPU cada período de 5,3 ms (28 %). Antes pedía 3 (56 %): con el
+/// repartidor del núcleo en la clase de plazo (30 %) y el controlador (19 %), pasaba del 80 % que admite un núcleo, el
+/// kernel lo negaba y el servicio iba en la justa ("sin clase de plazo"), con vacíos en la salida cuando había carga
+/// (pasaba ya antes del grafo). Con 2 ms lo tenía el servicio y no el controlador. Con el grafo, un período cuesta de
+/// media 0,12 ms en QEMU: sobra.
+const PLAZO_US: (u64, u64) = (1_500, 5_333);
 
 fn a_fijo(v: f32) -> i64 {
     sonido::a_volumen(v)
@@ -241,6 +244,8 @@ struct Servicio {
     subs: Vec<Suscriptor>,
     medios: Vec<MedioP>,
     siguiente_medio: u32,
+    /// Sube cada vez que cambia lo que suena (no la posición): la barra se despierta para enseñarlo.
+    medios_vez: u32,
     ajustes: Ajustes,
     huecos: u64,
     huecos_estado: u64,
@@ -497,6 +502,14 @@ impl Servicio {
                 s.latido = l;
                 s.latido_us = ahora;
             }
+            // Despertar a la barra si cambió lo que suena (su widget de música).
+            if s.nombre == "barra" && s.medios_dichos != self.medios_vez {
+                s.medios_dichos = self.medios_vez;
+                if dashos::canal_escribir(s.aviso, &p::MEDIOS.to_le_bytes(), &[]) == E_CERRADO {
+                    fuera.push(k);
+                    continue;
+                }
+            }
             // Despertar al mezclador si se pidió la ventana (a los demás no les importa: no se les despierta).
             if s.nombre == "mezclador" && s.ventana_dicha != self.ajustes.ventana {
                 s.ventana_dicha = self.ajustes.ventana;
@@ -533,6 +546,7 @@ impl Servicio {
             }
         });
         if self.medios.len() != antes {
+            self.medios_vez = self.medios_vez.wrapping_add(1);
             self.publicar(false);
         }
     }
@@ -566,6 +580,7 @@ fn principal() -> u64 {
         subs: Vec::new(),
         medios: Vec::new(),
         siguiente_medio: 1,
+        medios_vez: 0,
         ajustes: Ajustes {
             defecto: None,
             periodo_modo: p::PERIODO_NORMAL,
@@ -907,7 +922,7 @@ fn principal() -> u64 {
                 }
                 sv.huecos_estado |= 1 << hueco.unwrap();
                 let ventana = sv.ajustes.ventana;
-                sv.subs.push(Suscriptor { marca, nombre: nombre.clone(), va, memoria: llaves[0], aviso: llaves[1], latido: 0, latido_us: 0, ventana_dicha: ventana });
+                sv.subs.push(Suscriptor { marca, nombre: nombre.clone(), va, memoria: llaves[0], aviso: llaves[1], latido: 0, latido_us: 0, ventana_dicha: ventana, medios_dichos: sv.medios_vez });
                 println!("  [sonido] {} mira el estado", nombre);
                 sv.publicar(false);
             }
@@ -1006,6 +1021,9 @@ fn principal() -> u64 {
                     programa: para_mensajes.clone(),
                 };
                 if let Some(m) = sv.medios.iter_mut().find(|m| m.marca == marca) {
+                    if (m.datos.estado, &m.datos.titulo, &m.datos.artista) != (datos.estado, &datos.titulo, &datos.artista) {
+                        sv.medios_vez = sv.medios_vez.wrapping_add(1);
+                    }
                     m.datos = p::Medio { id: m.datos.id, ..datos };
                     if let Some(&l) = llaves.first() {
                         if m.orden != 0 {
@@ -1018,6 +1036,7 @@ fn principal() -> u64 {
                     sv.siguiente_medio += 1;
                     println!("  [sonido] {} dice lo que suena: {} ({})", para_mensajes, datos.titulo, datos.artista);
                     sv.medios.push(MedioP { marca, datos: p::Medio { id, ..datos }, orden: llaves.first().copied().unwrap_or(0) });
+                    sv.medios_vez = sv.medios_vez.wrapping_add(1);
                 } else {
                     cerrar_llaves(&llaves);
                 }
