@@ -1,0 +1,6 @@
+# Forja (del usuario).
+variable traza-amiga -
+lanza AmigaOS:Apps/Forja/Forja
+ventana Forja 300
+espera 150
+marca captura forja

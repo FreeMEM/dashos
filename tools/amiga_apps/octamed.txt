@@ -1,0 +1,7 @@
+# OctaMED SoundStudio 1.03c (freeware desde 1998, Aminet), con sus bibliotecas (reqtools, powerpacker) en LIBS:.
+variable traza-amiga -
+asignaadd LIBS: AmigaOS:Apps/OctamedSS1.03c/Soundstudio/libs
+cajon AmigaOS:Apps/OctamedSS1.03c/Soundstudio
+lanza AmigaOS:Apps/OctamedSS1.03c/Soundstudio/OctaMED
+espera 150
+marca captura octamed

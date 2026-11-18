@@ -1,0 +1,10 @@
+# Hangar (del usuario): su lista (baja el catálogo por la red).
+variable traza-amiga -
+asigna AmiSSL: AmigaOS:AmiSSL
+asignaadd LIBS: AmigaOS:AmiSSL/Libs
+lanza AmigaOS:Apps/Hangar/Hangar
+ventana Hangar 300
+espera 150
+marca captura hangar
+espera 100
+marca captura hangar-2

@@ -1,0 +1,12 @@
+# Un juego freeware clásico de Aminet (AMines 1.2, una ventana de intuition) y el otro buscaminas (Blitz Basic,
+# pantalla propia de intuition).
+variable traza-amiga -
+lanza AmigaOS:Apps/AMines12/AMines
+ventana Mines 200
+espera 100
+marca captura amines
+variable traza-amiga AmiMineSweeper
+cajon AmigaOS:Apps/AmiMineSweeper/AmiMineSweeper
+lanza AmigaOS:Apps/AmiMineSweeper/AmiMineSweeper/AmiMineSweeper
+espera 100
+marca captura amiminesweeper
