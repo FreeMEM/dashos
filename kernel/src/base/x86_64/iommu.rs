@@ -25,8 +25,8 @@
 //!   vector y el núcleo, y qué aparato la puede usar (SVT = 01: su número del PCI entero). Las de formato compatible se
 //!   bloquean (GCMD.CFI a 0). Una tabla para todas las unidades, de `ENTRADAS_IR` entradas; cada entrada es de una
 //!   fuente (aparato y clave). Los avisos de fallos de la propia unidad (FEDATA y FEADDR) no se remapean (5.1).
-//! - AMD-Vi: solo los aparatos que se pasan a una máquina virtual (X11), con una tabla de una entrada por aparato
-//!   (`remapear_interrupciones`). Las de los servicios pasan sin traducir (2.2.5, con IV = 0 en la entrada del aparato).
+//! - AMD-Vi: solo los aparatos que se pasan a una máquina virtual (X11), con una tabla por aparato, de una entrada por
+//!   interrupción suya (X12: las de su MSI-X; `remapear_interrupciones`). Las de los servicios pasan sin traducir (2.2.5, con IV = 0 en la entrada del aparato).
 
 use super::cerrojo::Cerrojo;
 use super::mmio::Ventana;
@@ -505,6 +505,8 @@ fn intel_atender(u: &Unidad, apuntar: &mut dyn FnMut(Fallo)) {
 /// IOAPIC.
 pub const CLAVE_MSI: u32 = 0;
 pub const CLAVE_IOAPIC: u32 = 1 << 16;
+/// Los mensajes de un aparato pasado a una máquina que se remapean, como mucho (X12: los de su MSI-X).
+pub const MAX_REMAPEADAS: usize = 8;
 
 /// VT-d: ¿puede la unidad remapear interrupciones? (ECAP.IR, y su cola de invalidaciones encendida.)
 pub fn puede_remapear(unidad: usize) -> bool {
@@ -1020,18 +1022,22 @@ impl Dominio {
         e.dominios.get(self.0 as usize).and_then(|d| e.unidades.get(d.unidad)).is_some_and(|u| u.tipo == Tipo::Amd || u.ir)
     }
 
-    /// Las interrupciones del aparato (X11), por el remapeo, a `vector` del APIC `destino` (físico), fijas y por flanco.
-    /// Devuelve el mensaje que tiene que mandar el aparato (dirección y dato), o `None` sin remapeo, con un destino que no
-    /// cabe o sin memoria.
+    /// Las interrupciones del aparato (X11), por el remapeo, cada una a su vector de `vectores` del APIC `destino`
+    /// (físico), fijas y por flanco: una por mensaje de su MSI-X (o la de su MSI), como mucho `MAX_REMAPEADAS`. Devuelve
+    /// el mensaje que tiene que mandar el aparato por cada una (dirección y dato), en el mismo orden, o `None` sin
+    /// remapeo, con un destino que no cabe o sin memoria.
     ///
-    /// - VT-d: su entrada en la tabla de remapeo de todo el sistema (`irte_poner`), con la comprobación del origen: solo
-    ///   este aparato la puede usar. El mensaje, en formato remapeable con ese índice. Lo que mande con otro índice (de
-    ///   otra fuente) se bloquea por el origen; en formato compatible, por CFI.
-    /// - AMD-Vi (AMD 48882, 2.2.5.1 y tabla 7): su tabla de remapeo, de una sola entrada (IntTabLen 0): la 0. El aparato
-    ///   manda su MSI con el dato 0 (el índice, bits 10:0) a 0xFEE0_0000. Cualquier otro mensaje que mande (otro dato,
-    ///   por DMA a 0xFEE0_0000) da con una entrada sin RemapEn y se aborta; las NMI, INIT, ExtInt y LINT, también (sus
-    ///   pases a 0).
-    pub fn remapear_interrupciones(self, destino: u32, vector: u8) -> Option<(u64, u32)> {
+    /// - VT-d: una entrada por mensaje en la tabla de remapeo de todo el sistema (`irte_poner`), con la comprobación del
+    ///   origen: solo este aparato las puede usar. Cada mensaje, en formato remapeable con su índice. Lo que mande con
+    ///   otro índice (de otra fuente) se bloquea por el origen; en formato compatible, por CFI.
+    /// - AMD-Vi (AMD 48882, 2.2.5.1 y tabla 7): su tabla de remapeo, de 2^IntTabLen entradas de 32 bits (las justas
+    ///   para `vectores`; las de más, a cero): el mensaje k manda el dato k (el índice, bits 10:0) a 0xFEE0_0000.
+    ///   Cualquier otro mensaje que mande (otro dato, por DMA a 0xFEE0_0000) da con una entrada sin RemapEn o fuera de
+    ///   la tabla y se aborta; las NMI, INIT, ExtInt y LINT, también (sus pases a 0).
+    pub fn remapear_interrupciones(self, destino: u32, vectores: &[u8]) -> Option<Vec<(u64, u32)>> {
+        if vectores.is_empty() || vectores.len() > MAX_REMAPEADAS {
+            return None;
+        }
         let (amd, aparato) = {
             let e = ESTADO.tomar();
             let d = e.dominios.get(self.0 as usize)?;
@@ -1041,9 +1047,14 @@ impl Dominio {
             }
             (u.tipo == Tipo::Amd, d.aparato)
         };
+        let mut mensajes = Vec::new();
+        mensajes.try_reserve_exact(vectores.len()).ok()?;
         if !amd {
-            let i = irte_poner(aparato, CLAVE_MSI | vector as u32, destino, vector, false)?;
-            return Some((direccion_remapeada(i), 0));
+            for &v in vectores {
+                let i = irte_poner(aparato, CLAVE_MSI | v as u32, destino, v, false)?;
+                mensajes.push((direccion_remapeada(i), 0));
+            }
+            return Some(mensajes);
         }
         let mut g = ESTADO.tomar();
         let e = &mut *g;
@@ -1053,19 +1064,27 @@ impl Dominio {
             return None;
         }
         if d.irt == 0 {
-            // Una página entera a cero: alineada a 128 bytes, y lo que haya detrás de la entrada 0 no remapea.
+            // Una página entera a cero: alineada a 128 bytes, y lo que haya detrás de las entradas no remapea.
             d.irt = pagina_nueva(1)?;
         }
-        // La entrada (figura 15): RemapEn (bit 0), IntType 0 (fija), DM 0 (física), Destination (15:8), Vector (23:16).
-        let irte = 1u64 | (destino as u64) << 8 | (vector as u64) << 16;
-        poner_f(d.irt, irte, true);
-        // La palabra 2 de la entrada del aparato (bits 191:128): IV, IntTabLen 0, la tabla (179:134 son sus bits 51:6)
-        // e IntCtl = 10b (bits 189:188). Una escritura de 64 bits y luego las invalidaciones (2.2.2.2).
+        // IntTabLen: la tabla tiene 2^IntTabLen entradas, las justas para todos los mensajes.
+        let largo = vectores.len().next_power_of_two().trailing_zeros() as u64;
+        // Las entradas (figura 15, 32 bits): RemapEn (bit 0), IntType 0 (fija), DM 0 (física), Destination (15:8),
+        // Vector (23:16). De dos en dos, en palabras de 64 bits; las que sobran hasta 2^IntTabLen, a cero.
+        let entrada = |k: usize| vectores.get(k).map_or(0u64, |&v| 1 | (destino as u64) << 8 | (v as u64) << 16);
+        for par in 0..(1usize << largo).div_ceil(2) {
+            poner_f(d.irt + 8 * par as u64, entrada(2 * par) | entrada(2 * par + 1) << 32, true);
+        }
+        for k in 0..vectores.len() {
+            mensajes.push((0xFEE0_0000, k as u32));
+        }
+        // La palabra 2 de la entrada del aparato (bits 191:128): IV, IntTabLen (132:129), la tabla (179:134 son sus
+        // bits 51:6) e IntCtl = 10b (bits 189:188). Una escritura de 64 bits y luego las invalidaciones (2.2.2.2).
         let dte = u.tabla_aparatos + d.aparato as u64 * 32;
-        poner_f(dte + 16, 1 | (d.irt & 0x000F_FFFF_FFFF_FFC0) | 2 << 60, true);
+        poner_f(dte + 16, 1 | largo << 1 | (d.irt & 0x000F_FFFF_FFFF_FFC0) | 2 << 60, true);
         barrera();
         let aparato = d.aparato;
-        (amd_orden(u, [aparato as u64 | 5 << 60, 0]) && amd_invalidar_aparato(u, aparato) && amd_esperar_ordenes(u)).then_some((0xFEE0_0000, 0))
+        (amd_orden(u, [aparato as u64 | 5 << 60, 0]) && amd_invalidar_aparato(u, aparato) && amd_esperar_ordenes(u)).then_some(mensajes)
     }
 
     /// Todas las interrupciones del aparato se abortan. Es como queda un aparato que se ha pasado a una máquina y ya no

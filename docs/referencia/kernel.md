@@ -196,7 +196,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 58 | `memoria_paginas` | `x0` llave de memoria (con escribir; no revocable), `x1` 1 poner, 0 soltar, `x2` primera página, `x3` cuántas (de 1 a 256) | Cuántas páginas quedaron como se pedía, en orden desde la primera (una que ya estaba cuenta). Poner da páginas nuevas a cero, cobradas al grupo del objeto, y se para en la primera que no cabe en su tope o para la que no queda memoria (`E_MEMORIA` si no se pudo ni la primera). Soltar las quita de las proyecciones de quien llama, vacía las TLB y las devuelve al sistema (y sus bytes al grupo). Vale con cualquier objeto de memoria, disperso o no, que no tenga nadie más: si está en otro proceso, en un mensaje, en una vista, en una máquina o tras una llave revocable, o es memoria DMA o una vista, `E_DERECHOS` y no se toca. `E_TAMANO` si el tramo se sale del objeto, `E_ARGUMENTO` con otra operación |
 | 49 | `pagina_cero` | `x0` permiso de página 0 (con escribir), `x1` llave de memoria de una página (con leer; no revocable) | 0. La proyecta en la dirección 0, de solo lectura y sin ejecutar (H4). `E_TIPO` si `x0` no es el permiso, `E_TAMANO` si el objeto no mide una página, `E_ARGUMENTO` si ya hay página 0 o la llave es revocable |
 | 59 | `puertos_permitir` | `x0` llave de puertos de E/S (solo x86) | 0 |
-| 60 | `maquina_aparato` | `x0` vCPU (con escribir), `x1` llave de aparato del PCIe (con escribir), `x2` operación (0 asignar, 1 proyectar una BAR, 2 información de una BAR, 3 leer la configuración, 4 escribirla), `x3` y `x4` según la operación | Solo x86 (X11); en ARM, `E_NO_HAY`. Ver "Pasar un aparato a una máquina" en la sección de x86-64 |
+| 60 | `maquina_aparato` | `x0` vCPU (con escribir), `x1` llave de aparato del PCIe (con escribir), `x2` operación (0 asignar, 1 proyectar una BAR, 2 información de una BAR, 3 leer la configuración, 4 escribirla, 5 una interrupción de su MSI-X), `x3` y `x4` según la operación | Solo x86 (X11); en ARM, `E_NO_HAY`. Ver "Pasar un aparato a una máquina" en la sección de x86-64 |
 
 ### Detalles
 
@@ -660,13 +660,16 @@ mismos límites. Cambian los registros y lo que es de la CPU:
       BAR repuestas). Su dominio de la IOMMU traduce con la memoria del invitado: **la dirección de DMA es la física
       del invitado**, y la memoria que se añada después (`maquina_memoria`) entra también. Su MSI la programa el
       kernel, nunca el invitado; llega al anfitrión como una interrupción de aparato, y la llamada devuelve su llave
-      (0 si no tiene MSI ni MSI-X; de la MSI-X, solo la entrada 0). El monitor la asocia a un canal y la entrega a la
+      (0 si no tiene MSI ni MSI-X). Con MSI-X (X12), una interrupción del anfitrión por cada una de sus primeras
+      entradas, como mucho 8: la llamada devuelve la de la entrada 0, y en los bits 15:8 de `x1` cuántas tiene (1 con
+      MSI); las demás, con la operación 5. El monitor la asocia a un canal y la entrega a la
       vCPU por el bloque de interrupciones, con el vector que haya puesto el invitado en la MSI que el monitor emula.
-      En `x1`, las banderas: 1, sus interrupciones pasan por el remapeo de la IOMMU; 2, se hizo FLR. Con **AMD-Vi**,
-      el aparato tiene una tabla de remapeo de una sola entrada (la suya: dato 0 a 0xFEE0_0000): aunque el invitado
-      le haga escribir por DMA en 0xFEE0_0000 lo que quiera, no llega otra interrupción, y las NMI, INIT, ExtInt y LINT
-      se abortan. Con **VT-d** con remapeo (X11b), su entrada en la tabla de remapeo de todo el sistema, que solo vale
-      para él (se comprueba su número de PCI) y apunta a su vector de siempre; lo que mande con otra entrada, o en
+      En `x1`, las banderas: 1, sus interrupciones pasan por el remapeo de la IOMMU; 2, se hizo FLR; en 15:8, cuántas
+      interrupciones tiene. Con **AMD-Vi**, el aparato tiene su tabla de remapeo con una entrada por interrupción (la
+      k: dato k a 0xFEE0_0000; 2^n entradas, las que sobran a cero): aunque el invitado le haga escribir por DMA en
+      0xFEE0_0000 lo que quiera, no llega otra interrupción que las suyas, y las NMI, INIT, ExtInt y LINT se abortan.
+      Con **VT-d** con remapeo (X11b), una entrada por interrupción en la tabla de remapeo de todo el sistema, que solo
+      vale para él (se comprueba su número de PCI) y apunta a su vector de siempre; lo que mande con otra entrada, o en
       formato compatible, se bloquea y el kernel lo avisa en la consola. Solo con una VT-d sin remapeo (sin ECAP.IR, o
       la DMAR sin INTR_REMAP) la bandera 1 va a 0: el aparato podría mandar al anfitrión cualquier MSI. Con la memoria del invitado y la MSI listas, deja la memoria y el bus master encendidos y la INTx apagada.
       `E_LIMITE` si ya está en una máquina (o sin huecos en la tabla de llaves), `E_ARGUMENTO` si la máquina está
@@ -685,7 +688,12 @@ mismos límites. Cambian los registros y lo que es de la CPU:
       pedir FLR). Lo demás (las BAR, la MSI, la MSI-X, las otras capacidades, lo propio del fabricante) da
       `E_DERECHOS`: lo emula el monitor o se ignora.
 
-    Las 1, 3 y 4 piden el aparato ya en esa máquina (`E_ARGUMENTO` si no). **Al parar la máquina** (`maquina_estado`
+    - **5, una interrupción** (X12): una llave nueva de la interrupción `x3` del aparato (la de la entrada `x3` de su
+      MSI-X; la 0 es la misma que da la operación 0), y en `x1` su número, el que llega en el mensaje de
+      `interrupcion_asociar` (así el monitor sabe qué entrada fue si las asocia todas a un mismo canal). `E_ARGUMENTO`
+      si no la tiene; `E_LIMITE` sin huecos en la tabla de llaves.
+
+    Las 1, 3, 4 y 5 piden el aparato ya en esa máquina (`E_ARGUMENTO` si no). **Al parar la máquina** (`maquina_estado`
     7, o un fallo del invitado) **o al soltarse su última vCPU** (el monitor murió), el kernel espera a que sus vCPU
     salgan del invitado (100 ms como mucho) y suelta el aparato: sin memoria, sin E/S, sin bus master, sin MSI, con su
     dominio vacío (todo su DMA falla) y sus interrupciones abortadas (AMD-Vi). Queda libre para otra máquina. La llave
@@ -733,6 +741,13 @@ mismos límites. Cambian los registros y lo que es de la CPU:
   la `InfoArranque`, como memoria del firmware ("pantalla") y sus medidas ("pantalla-info"), con el mismo formato que
   el `simple-framebuffer` de `virt` (U4). El formato del GOP va al revés que el de ese nodo: 1 (B, G, R en memoria)
   es a8r8g8b8.
+- **El dominio de gráficos** (X12, la imagen `graficos`, `make -C kernel graficos-x86`). Si junto al cargador están
+  `EFI/DashOS/GRAFICOS.BZI` y `GRAFICOS.CPI` (el kernel y el initramfs del dominio, `tools/dominio_graficos.py`), el
+  cargador los lee a una zona con la cabecera "DashGraf" (en `uefi/src/x86_64/vivo.rs`) y la pasa en la
+  `InfoArranque`, versión 3 (campos `graficos` y `graficos_tamano`; el kernel acepta también la 1 y la 2). Con
+  `graficos`, `inicio` da al servicio `dominio-graficos` el permiso de máquinas ("hipervisor"), la primera virtio-gpu
+  como aparato del PCIe para pasarlo a una máquina ("gpu-dominio", tipo 21; ningún servicio del anfitrión la toma) y
+  los dos ficheros en un objeto de datos ("dominio-graficos": el largo de cada uno, u64, y detrás, seguidos).
 - **Registros y memoria del firmware.** `registros_proyectar` solo proyecta lo que está fuera de la RAM, sin caché.
   La memoria del firmware (la pantalla del GOP), fuera de la RAM o en una reserva, como memoria normal: la caché la
   deciden los MTRR del firmware. La memoria DMA va con caché: en un PC el DMA ve la caché de la CPU. Las BAR pueden

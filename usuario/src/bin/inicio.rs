@@ -284,6 +284,7 @@ fn principal() -> u64 {
             11 => "permiso del aviso de memoria",
             12 => "permiso del reloj",
             13 => "puertos de E/S",
+            21 => "aparato del PCIe",
             _ => "?",
         };
         println!("  [inicio]   llave {}: {} de {}", u32_en(p + 20), tipo, nombre(p));
@@ -517,6 +518,8 @@ fn principal() -> u64 {
             // partición nueva abierto para crecerlo (su asignador, para decenas de GB).
             // Y el dominio Linux de x86 con ntfsresize para encoger Windows (S35 en x86): su RAM (128 MB) sale de aquí.
             "instalador" => 320 << 20,
+            // X12: el dominio de gráficos de x86: la RAM del dominio (512 MB) y su kernel y su initramfs.
+            "dominio-graficos" => 576 << 20,
             _ => 16 << 20,
         };
         // De un servicio, inicio guarda una copia de cada llave, con los mismos derechos, para relanzarlo (E6).

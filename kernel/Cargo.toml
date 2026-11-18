@@ -15,6 +15,9 @@ pruebas = []
 # x86-64: PCID encendido (CR4.PCIDE). Apagado de serie hasta probarlo en una CPU de verdad (usuario, 2026-11-15):
 # `make -C kernel arranque-x86 PCID=1` o `prueba-x86 PCID=1`.
 pcid = []
+# x86-64, X12 (G5 de S38): la imagen del dominio de gráficos (`make -C kernel graficos-x86`): la consola y el servicio
+# `dominio-graficos`, que recibe la virtio-gpu (pasada con la IOMMU) y el kernel y el initramfs que deja el cargador.
+graficos = []
 # QEMU virt por UEFI (U3, docs/UEFI_LOOP.md): otra dirección de carga, otro mapa de aparatos, PSCI.
 virt = []
 # La imagen para usar a mano (`make virt-uso`, `tools/qemu_a_mano.sh`): `virt` sin los programas de prueba, y `guardian`

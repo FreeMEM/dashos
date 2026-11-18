@@ -59,10 +59,14 @@ struct InfoArranque {
     /// El GUID de la partición desde la que arrancó el cargador (la ESP del pendrive o del disco), en el orden del disco;
     /// ceros si no se sabe.
     arranque_particion: [u8; 16],
+    /// Desde la versión 3 (X12): el dominio de gráficos de x86 (`EFI/DashOS/GRAFICOS.BZI` y `GRAFICOS.CPI` junto al
+    /// cargador), en una zona con su cabecera ("DashGraf", ver `vivo::graficos`), física y su tamaño; 0 si no están.
+    graficos: u64,
+    graficos_tamano: u64,
 }
 
 const MARCA: u64 = u64::from_le_bytes(*b"DashOS64");
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 
 static mut INFO: InfoArranque = InfoArranque {
     marca: 0,
@@ -84,6 +88,8 @@ static mut INFO: InfoArranque = InfoArranque {
     vivo: 0,
     vivo_tamano: 0,
     arranque_particion: [0; 16],
+    graficos: 0,
+    graficos_tamano: 0,
 };
 
 fn u16_en(b: &[u8], i: usize) -> Option<u16> {
@@ -217,6 +223,7 @@ extern "efiapi" fn principal(imagen: *const c_void, st: *const TablaSistema) -> 
     }
     info.ejecucion = st.servicios_ejecucion as u64;
     vivo::buscar(imagen, bs, info, &mut c);
+    vivo::graficos(imagen, bs, info, &mut c);
     let elf = match leer_elf(NUCLEO) {
         Ok(e) => e,
         Err(motivo) => {

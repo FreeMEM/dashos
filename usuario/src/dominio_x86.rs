@@ -3,8 +3,9 @@
 //! partición de Windows) y corre su vCPU hasta que el invitado dice "dominio: fin ..." o se acaba el plazo. Lo que se
 //! hace con cada salida está en `caja_vmm::x86::maquina` (sin DashOS, probado en el PC).
 //!
-//! Es la pieza común: el instalador la usa para `ntfsresize`; X12 (el dominio de gráficos) y la caja Linux de x86 irán
-//! encima, con sus aparatos.
+//! Es la pieza común: el instalador la usa para `ntfsresize`; X12 (el dominio de gráficos, `dominio_graficos.rs`) va
+//! encima con su GPU pasada (`Dominio::sin_disco` y `correr_con`, con el PCI de `dominio_pci.rs`), y la caja Linux de
+//! x86 irá igual, con sus aparatos.
 
 use alloc::boxed::Box;
 use alloc::format;
@@ -13,6 +14,7 @@ use caja_vmm::memoria::Ram;
 use caja_vmm::virtio::bloque::{Bloque, Bloques};
 use caja_vmm::virtio::mmio::TransporteMmio;
 use caja_vmm::x86::arranque;
+use caja_vmm::x86::apic::Lapic;
 use caja_vmm::x86::maquina::{MaquinaX86, Msr};
 use dashos::maquina::{self, Informe, Interrupciones};
 
@@ -36,9 +38,40 @@ pub struct Dominio {
     salidas: u64,
 }
 
+/// Lo que añade quien usa el dominio a su máquina (X12): puertos y MMIO que atiende él (el PCI y la tabla de MSI-X de
+/// un aparato pasado) y las interrupciones que entrega. Lo que no es suyo, `None`, y sigue a `MaquinaX86`.
+pub trait Extra {
+    /// IN (`escribir` `None`) u OUT de `tam` bytes en `puerto`: `Some(valor leído)` si es suyo (en un OUT, cualquiera).
+    fn puerto(&mut self, puerto: u16, tam: u8, escribir: Option<u64>) -> Option<u64>;
+    /// Una lectura o escritura de MMIO en `dir`: `Some(valor leído)` si es suya.
+    fn mmio(&mut self, dir: u64, tam: u8, escribir: Option<u64>) -> Option<u64>;
+    /// Antes de cada entrada en el invitado: los vectores que quiera entregar, al APIC (`poner_pendiente`).
+    fn antes(&mut self, lapic: &mut Lapic);
+}
+
+/// Sin nada más (el dominio del instalador).
+struct Nada;
+
+impl Extra for Nada {
+    fn puerto(&mut self, _: u16, _: u8, _: Option<u64>) -> Option<u64> {
+        None
+    }
+    fn mmio(&mut self, _: u64, _: u8, _: Option<u64>) -> Option<u64> {
+        None
+    }
+    fn antes(&mut self, _: &mut Lapic) {}
+}
+
 impl Dominio {
     /// Crea la máquina con `ram_mb` de RAM y la arranca hasta su primera instrucción (sin correr aún).
     pub fn nuevo(permiso: u32, ram_mb: u64, bz: &[u8], initrd: &[u8], linea: &str, disco: Box<dyn Bloques>) -> Result<Dominio, String> {
+        let mut d = Self::sin_disco(permiso, ram_mb, bz, initrd, linea)?;
+        d.mq.poner(DISCO, Box::new(TransporteMmio::nuevo(Bloque::nuevo(disco))), PIN_DISCO);
+        Ok(d)
+    }
+
+    /// Como `nuevo`, sin el disco (X12: el dominio de gráficos no tiene).
+    pub fn sin_disco(permiso: u32, ram_mb: u64, bz: &[u8], initrd: &[u8], linea: &str) -> Result<Dominio, String> {
         // La RAM, en trozos de 16 MB (lo más que mide un objeto de memoria), seguidos aquí y en el invitado.
         let tam = ram_mb.div_ceil(16) * (16 << 20);
         let mut trozos: alloc::vec::Vec<u32> = alloc::vec::Vec::new();
@@ -81,17 +114,32 @@ impl Dominio {
                 return Err(format!("maquina_memoria: {}", r));
             }
         }
-        let mut mq = MaquinaX86::nueva();
-        mq.poner(DISCO, Box::new(TransporteMmio::nuevo(Bloque::nuevo(disco))), PIN_DISCO);
+        let mq = MaquinaX86::nueva();
         Ok(Dominio { maquina: m as u32, trozos, mq, mem, inf: Informe::default(), irq: Interrupciones::default(), en_huecos: [0; maquina::LRS], salidas: 0 })
+    }
+
+    /// La llave de su vCPU (para `maquina_aparato` y para patearla desde otro hilo).
+    pub fn vcpu(&self) -> u32 {
+        self.maquina
+    }
+
+    /// Las salidas del invitado hasta ahora.
+    pub fn salidas(&self) -> u64 {
+        self.salidas
     }
 
     /// Corre el invitado hasta que diga "dominio: fin ..." (devuelve esa línea), muera, o pase `plazo_us`. Cada línea de
     /// su consola, a `linea`.
     pub fn correr(&mut self, plazo_us: u64, linea: &mut dyn FnMut(&str)) -> Result<String, String> {
+        self.correr_con(plazo_us, linea, &mut Nada)
+    }
+
+    /// Como `correr`, con lo que añade `extra` a la máquina.
+    pub fn correr_con(&mut self, plazo_us: u64, linea: &mut dyn FnMut(&str), extra: &mut dyn Extra) -> Result<String, String> {
         let hasta = dashos::ahora_us() + plazo_us;
         let mut valor = 0u64;
         loop {
+            extra.antes(&mut self.mq.lapic);
             // Lo que el kernel entregó en la vuelta de antes: en servicio en el APIC.
             for k in 0..maquina::LRS {
                 if self.en_huecos[k] != 0 && self.irq.lr[k] == 0 {
@@ -118,20 +166,23 @@ impl Dominio {
             self.salidas += 1;
             let i = self.inf;
             match r {
-                maquina::LECTURA => match self.mq.leer(i.direccion, i.tamano as u8, &mut self.mem) {
+                maquina::LECTURA => match extra.mmio(i.direccion, i.tamano as u8, None).or_else(|| self.mq.leer(i.direccion, i.tamano as u8, &mut self.mem)) {
                     Some(v) => valor = v,
                     None => {
                         dashos::maquina_aborto(self.maquina);
                     }
                 },
                 maquina::ESCRITURA => {
-                    self.mq.escribir(i.direccion, i.tamano as u8, i.valor, &mut self.mem);
+                    if extra.mmio(i.direccion, i.tamano as u8, Some(i.valor)).is_none() {
+                        self.mq.escribir(i.direccion, i.tamano as u8, i.valor, &mut self.mem);
+                    }
                 }
                 maquina::PUERTO => {
+                    let puerto = i.direccion as u16;
                     if i.x1 == 1 {
-                        valor = self.mq.puerto_leer(i.direccion as u16, i.tamano as u8);
-                    } else {
-                        self.mq.puerto_escribir(i.direccion as u16, i.valor);
+                        valor = extra.puerto(puerto, i.tamano as u8, None).unwrap_or_else(|| self.mq.puerto_leer(puerto, i.tamano as u8));
+                    } else if extra.puerto(puerto, i.tamano as u8, Some(i.valor)).is_none() {
+                        self.mq.puerto_escribir(puerto, i.valor);
                     }
                 }
                 maquina::REGISTRO => match self.mq.msr(i.direccion as u32, if i.x1 == 1 { None } else { Some(i.valor) }) {

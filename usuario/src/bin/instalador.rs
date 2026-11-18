@@ -39,6 +39,7 @@ use instalador::{aplicar, disco::Disco, nvram, plan};
 
 /// El dominio Linux de x86 (la pieza común, `usuario/src/dominio_x86.rs`).
 #[path = "../dominio_x86.rs"]
+#[allow(dead_code)]
 mod dominio_x86;
 
 /// La RAM del dominio de ntfsresize (medido en `docs/bitacoras/x86-dominio.md`).

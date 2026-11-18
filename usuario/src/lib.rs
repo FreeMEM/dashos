@@ -375,6 +375,9 @@ pub mod maquina {
     /// aparato podría mandar cualquier MSI); se le hizo FLR.
     pub const APARATO_REMAPEADAS: u64 = 1;
     pub const APARATO_FLR: u64 = 2;
+    /// X12: en las banderas de `maquina_aparato`, los bits 15:8 dicen cuántas interrupciones tiene el aparato (una por
+    /// entrada de su MSI-X, de las primeras; 1 con MSI).
+    pub const APARATO_VECTORES_DESDE: u32 = 8;
     /// X11, las banderas de una BAR (`maquina_aparato_info`): de 64 bits, prefetchable, de E/S.
     pub const BAR_64: u64 = 1;
     pub const BAR_PREFETCH: u64 = 2;
@@ -576,6 +579,13 @@ pub fn maquina_parar(llave: u32) -> i64 {
 pub fn maquina_aparato(llave: u32, aparato: u32) -> (i64, u64) {
     let (r, b) = llamada(60, [llave as u64, aparato as u64, 0, 0, 0]);
     (r as i64, b)
+}
+
+/// X12: una llave nueva de la interrupción `k` del aparato (ya en la máquina): la de la entrada `k` de su MSI-X. Devuelve
+/// (la llave o un error negativo, su número: el que llega en el mensaje de `interrupcion_asociar`).
+pub fn maquina_aparato_interrupcion(llave: u32, aparato: u32, k: u64) -> (i64, u32) {
+    let (r, n) = llamada(60, [llave as u64, aparato as u64, 5, k, 0]);
+    (r as i64, n as u32)
 }
 
 /// X11: proyecta la BAR `bar` del aparato (ya en la máquina) en la dirección física del invitado `gpa` (sin caché, sin

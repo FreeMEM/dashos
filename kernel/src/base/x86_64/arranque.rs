@@ -36,13 +36,18 @@ pub struct InfoArranque {
     pub vivo_tamano: u64,
     /// El GUID de la partición desde la que arrancó el cargador, en el orden del disco (ceros si no se sabe).
     pub arranque_particion: [u8; 16],
+    /// Desde la versión 3 (X12): el dominio de gráficos de x86, en una zona con su cabecera ("DashGraf"), física y su
+    /// tamaño; 0 si no lo hay.
+    pub graficos: u64,
+    pub graficos_tamano: u64,
 }
 
 const MARCA: u64 = u64::from_le_bytes(*b"DashOS64");
-/// La 1 (sin lo de S32) también vale: lo nuevo queda a cero.
-const VERSION: u32 = 2;
-/// Lo que mide la `InfoArranque` de la versión 1.
+/// La 1 (sin lo de S32) y la 2 (sin lo de X12) también valen: lo nuevo queda a cero.
+const VERSION: u32 = 3;
+/// Lo que mide la `InfoArranque` de la versión 1 y de la 2.
 const TAMANO_V1: usize = 88;
+const TAMANO_V2: usize = 128;
 
 static INFO: AtomicUsize = AtomicUsize::new(0);
 
@@ -57,7 +62,7 @@ pub fn info() -> Option<InfoArranque> {
         return None;
     }
     // Primero lo de la versión 1 (lo que hay seguro); lo de la 2, solo si lo es.
-    let mut i = InfoArranque { marca: 0, version: 0, _relleno: 0, rsdp: 0, mapa: 0, mapa_tamano: 0, mapa_descriptor: 0, mapa_version: 0, _relleno2: 0, pantalla_base: 0, pantalla_tamano: 0, pantalla_ancho: 0, pantalla_alto: 0, pantalla_por_linea: 0, pantalla_formato: 0, ejecucion: 0, vivo: 0, vivo_tamano: 0, arranque_particion: [0; 16] };
+    let mut i = InfoArranque { marca: 0, version: 0, _relleno: 0, rsdp: 0, mapa: 0, mapa_tamano: 0, mapa_descriptor: 0, mapa_version: 0, _relleno2: 0, pantalla_base: 0, pantalla_tamano: 0, pantalla_ancho: 0, pantalla_alto: 0, pantalla_por_linea: 0, pantalla_formato: 0, ejecucion: 0, vivo: 0, vivo_tamano: 0, arranque_particion: [0; 16], graficos: 0, graficos_tamano: 0 };
     let origen = super::mmu::virt(p) as *const u8;
     let destino = &mut i as *mut InfoArranque as *mut u8;
     unsafe { core::ptr::copy_nonoverlapping(origen, destino, TAMANO_V1) };
@@ -65,7 +70,8 @@ pub fn info() -> Option<InfoArranque> {
         return None;
     }
     if i.version >= 2 {
-        unsafe { core::ptr::copy_nonoverlapping(origen, destino, core::mem::size_of::<InfoArranque>()) };
+        let n = if i.version >= 3 { core::mem::size_of::<InfoArranque>() } else { TAMANO_V2 };
+        unsafe { core::ptr::copy_nonoverlapping(origen, destino, n) };
     }
     Some(i)
 }
@@ -78,6 +84,23 @@ pub fn ejecucion() -> Option<u64> {
 /// La zona del pendrive en vivo (física y tamaño), si se arrancó de uno (S32).
 pub fn vivo() -> Option<(u64, u64)> {
     info().filter(|i| i.vivo != 0 && i.vivo_tamano >= 4096 && i.vivo % 4096 == 0).map(|i| (i.vivo, i.vivo_tamano))
+}
+
+/// La zona del dominio de gráficos (física y tamaño), si el cargador la dejó (X12).
+pub fn graficos() -> Option<(u64, u64)> {
+    info().filter(|i| i.graficos != 0 && i.graficos_tamano >= 4096 && i.graficos % 4096 == 0).map(|i| (i.graficos, i.graficos_tamano))
+}
+
+/// Copia `destino.len()` bytes de la zona del dominio de gráficos desde `desde` (X12). Falso si se sale de la zona.
+pub fn graficos_leer(desde: u64, destino: &mut [u8]) -> bool {
+    let Some((zona, tam)) = graficos() else { return false };
+    let Some(fin) = desde.checked_add(destino.len() as u64) else { return false };
+    if fin > tam || !super::mapa::se_ve(zona + desde, destino.len() as u64) {
+        return false;
+    }
+    // Memoria de datos del cargador: el repartidor no la da a nadie, y aquí solo se lee.
+    unsafe { core::ptr::copy_nonoverlapping(super::mmu::virt((zona + desde) as usize) as *const u8, destino.as_mut_ptr(), destino.len()) };
+    true
 }
 
 /// Un tramo del mapa de UEFI con sus atributos (EFI_MEMORY_RUNTIME, las de caché).

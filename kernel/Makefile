@@ -772,6 +772,22 @@ prueba-x86: usuario-x86 firmware-x86 FORCE
 	$(if $(IR_INTEL),echo "~X11: con el remapeo de VT-d$(coma) su MSI llega y otra no bien" >> target/esperados_x86.txt)
 	$(ACCEL_QEMU) $(MAQUINA_IOMMU) GUARDAR=$(abspath target/salida_x86_pruebas.txt) ARQ=x86_64 QEMU_EXTRA="$(EDU_X11) $(if $(IOMMU),$(IOMMU_QEMU) -device nvme$(coma)serial=prueba)" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_x86.txt 150
 
+# X12 (G5 de docs/diseño/S38-gpu-escritorio.md): el dominio de gráficos de x86. La imagen `graficos` (la consola y el
+# servicio `dominio-graficos`) en QEMU q35 con KVM y la IOMMU (IOMMU=intel, por omisión, o amd; con remapeo de
+# interrupciones y kernel-irqchip=split), una virtio-gpu con virgl (`virtio-gpu-gl-pci`, iommu_platform=on) que se pasa
+# al dominio y la VGA de q35 para DashOS; `-display egl-headless`. El dominio (un Linux con DRM y Mesa, fuera de git:
+# `tools/dominio_graficos.py preparar`, en DOMINIO_GRAFICOS) pinta por KMS; `tools/prueba_graficos_x86.py` mira la
+# salida, dos capturas de la GPU por VNC (no negras y distintas) y escribe lo medido. Necesita /dev/kvm con KVM anidado.
+DOMINIO_GRAFICOS ?= $(HOME)/recuperar/dashos-97/dominio-graficos
+NUCLEO_X86_GRAFICOS := target/kernel-x86-graficos.elf
+graficos-x86: FORCE
+	@test -f "$(DOMINIO_GRAFICOS)/bzImage" -a -f "$(DOMINIO_GRAFICOS)/initramfs.cpio" || { echo "Falta el dominio de gráficos en $(DOMINIO_GRAFICOS) (no va en git): python3 tools/dominio_graficos.py preparar"; exit 1; }
+	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86),caja $(RELEVO_PATCH) --bin inicio --bin consola --bin dominio-graficos
+	cargo build $(CARGO_PERFIL) --target x86_64-unknown-none --features graficos$(if $(PCID),$(coma)pcid)
+	$(OBJCOPY_X86) --strip-debug $(ELF_X86) $(NUCLEO_X86_GRAFICOS)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(NUCLEO_X86_GRAFICOS)) cargo build --release --target x86_64-unknown-uefi
+	python3 ../tools/prueba_graficos_x86.py ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi $(DOMINIO_GRAFICOS) --iommu $(or $(IOMMU),intel) --salida target/graficos
+
 # La imagen de usar en x86-64 (`make x86-uso`): el escritorio de `virt-uso` (`kernel/src/inicio_x86_uso.rs`) en QEMU q35
 # con OVMF, en una ventana, con KVM si hay /dev/kvm (SIN_KVM=1 lo quita), una tableta USB y el teclado, el disco de
 # serie (compilado para x86: DASHOS_ARQ=x86_64), la red de usuario de QEMU, el sonido y la pantalla por virtio-gpu

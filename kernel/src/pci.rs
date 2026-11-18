@@ -175,6 +175,46 @@ impl Funcion {
         None
     }
 
+    /// Cuántas entradas tiene su tabla de MSI-X (Table Size + 1), o 0 si no tiene MSI-X.
+    pub fn msix_entradas(&self) -> usize {
+        self.capacidad(CAP_MSIX).map_or(0, |p| ((self.leer(p) >> 16) & 0x7ff) as usize + 1)
+    }
+
+    /// X12: da al aparato varias interrupciones por MSI-X: la entrada k de su tabla escribirá `mensajes[k]` (dirección
+    /// y dato), sin máscara; las demás, enmascaradas. Con la función enmascarada mientras se escriben, y la MSI-X
+    /// encendida al final; apaga la INTx. Falso si no tiene MSI-X, son más que sus entradas o su tabla no se proyecta.
+    pub fn dar_msix(&self, mensajes: &[(u64, u32)]) -> bool {
+        let Some(p) = self.capacidad(CAP_MSIX) else { return false };
+        let n = self.msix_entradas();
+        if mensajes.is_empty() || mensajes.len() > n {
+            return false;
+        }
+        let palabra = self.leer(p);
+        let tabla = self.leer(p + 4);
+        let Some((bar, _)) = self.bar((tabla & 7) as usize) else { return false };
+        let Some(t) = Ventana::nueva(bar + (tabla & !7) as u64, 16 * n as u64) else { return false };
+        // La tabla está en una BAR: la memoria del aparato tiene que estar encendida para escribirla (un aparato
+        // callado no la decodifica y lo escrito se pierde).
+        self.encender(true);
+        self.escribir(p, (palabra & 0x3fff_ffff) | (1 << 30));
+        for k in 0..n {
+            let e = 16 * k;
+            match mensajes.get(k) {
+                Some(&(direccion, dato)) => {
+                    t.escribir32(e + 12, 1);
+                    t.escribir32(e, direccion as u32);
+                    t.escribir32(e + 4, (direccion >> 32) as u32);
+                    t.escribir32(e + 8, dato);
+                    t.escribir32(e + 12, 0);
+                }
+                // PCI Express 6.0, 7.7.2: el bit 0 del control de la entrada, la máscara.
+                None => t.escribir32(e + 12, 1),
+            }
+        }
+        self.escribir(p, (palabra & 0x3fff_ffff) | (1 << 31));
+        true
+    }
+
     /// Da al aparato una interrupción por mensaje: escribirá `dato` en `direccion`. Por MSI-X si la tiene (su primera
     /// entrada, sin máscara; la tabla puede estar en cualquier BAR), si no por MSI (un solo mensaje). Apaga la INTx.
     /// Devuelve qué se usó, o `None` si no tiene ninguna.

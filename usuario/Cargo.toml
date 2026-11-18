@@ -376,6 +376,13 @@ name = "dominio-prueba"
 path = "src/bin/dominio_prueba.rs"
 test = false
 
+# X12 (G5 de S38): el dominio de gráficos de x86, con la GPU pasada por la IOMMU (`make -C kernel graficos-x86`).
+[[bin]]
+name = "dominio-graficos"
+path = "src/bin/dominio_graficos.rs"
+test = false
+required-features = ["caja"]
+
 [[bin]]
 name = "sin-maquina"
 path = "src/bin/sin_maquina.rs"

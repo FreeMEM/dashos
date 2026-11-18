@@ -1748,8 +1748,11 @@ fn maquina_globo(h: u32, op: u64, tabla: u64, n: u64) -> u64 {
 ///   1 proyectar su BAR `a` en la física del invitado `b` (alineada a 4 KB), sin las páginas de MSI-X;
 ///   2 la información de su BAR `a`: el tamaño, y en x1 las banderas (`pasar::BAR_*`);
 ///   3 leer su configuración: `a` el desplazamiento, `b` el tamaño (1, 2 o 4) → el valor;
-///   4 escribirla: `a` el desplazamiento y en sus bits 23:16 el tamaño, `b` el valor. `E_DERECHOS` si no se deja.
-/// Las 1, 3 y 4 piden el aparato ya en esa máquina (si no, `E_ARGUMENTO`).
+///   4 escribirla: `a` el desplazamiento y en sus bits 23:16 el tamaño, `b` el valor. `E_DERECHOS` si no se deja;
+///   5 (X12) una llave nueva de su interrupción `a` (la de la entrada `a` de su MSI-X; la 0 es la misma que da la 0),
+///     y en x1 su número (el que llega en el mensaje de `interrupcion_asociar`). `E_ARGUMENTO` si no la tiene.
+/// Las 1, 3, 4 y 5 piden el aparato ya en esa máquina (si no, `E_ARGUMENTO`). La 0 dice en los bits 15:8 de x1 cuántas
+/// interrupciones tiene (`pasar::VECTORES_DESDE`).
 #[cfg(target_arch = "x86_64")]
 fn maquina_aparato(marco: &mut Marco, h: u32, ha: u32, op: u64, a: u64, b: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
@@ -1802,7 +1805,22 @@ fn maquina_aparato(marco: &mut Marco, h: u32, ha: u32, op: u64, a: u64, b: u64) 
             }
             None => E_ARGUMENTO,
         },
-        3 | 4 if !m.tiene(&ap) => E_ARGUMENTO,
+        3..=5 if !m.tiene(&ap) => E_ARGUMENTO,
+        5 => match ap.interrupcion(a as usize) {
+            Some((i, numero)) => {
+                if proc_.llaves.tomar().huecos() == 0 {
+                    return E_LIMITE;
+                }
+                match proc_.llaves.tomar().instalar(objetos::Llave::nueva(Objeto::Interrupcion(i), objetos::TODOS)) {
+                    Ok(n) => {
+                        marco.poner_x1(numero as u64);
+                        n as u64
+                    }
+                    Err(_) => E_LIMITE,
+                }
+            }
+            None => E_ARGUMENTO,
+        },
         3 => cfg(ap.config_leer(a as usize, b as usize).map(|v| v as u64)),
         4 => cfg(ap.config_escribir((a & 0xfff) as usize, ((a >> 16) & 0xff) as usize, b as u32).map(|()| 0)),
         _ => E_ARGUMENTO,

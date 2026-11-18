@@ -38,9 +38,18 @@ mod uso;
 #[cfg(feature = "uso")]
 use uso::PROGRAMAS;
 
+/// X12 (`graficos`): la consola y el dominio de gráficos de x86 (`usuario/src/bin/dominio_graficos.rs`), con el permiso
+/// de máquinas virtuales, la GPU que se le pasa (la primera virtio-gpu; la pantalla de DashOS es la del GOP) y su kernel
+/// y su initramfs (los deja el cargador, `EFI/DashOS/GRAFICOS.BZI` y `GRAFICOS.CPI`).
+#[cfg(all(feature = "graficos", not(feature = "uso")))]
+static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
+    ("consola", elf!("consola"), &[("registro", REGISTRO), ("serie", PUERTOS)], &[]),
+    ("dominio-graficos", elf!("dominio-graficos"), &[("hipervisor", MAQUINAS), ("gpu-dominio", APARATO_PCI), ("dominio-graficos", DATOS)], &[]),
+];
+
 /// Los servicios que lanza `inicio`, en orden, con los aparatos (por nombre y tipo) y los canales (por nombre) que le
 /// pasa a cada uno: los de ARM (`inicio.rs`) que tienen sus aparatos en un PC.
-#[cfg(not(feature = "uso"))]
+#[cfg(not(any(feature = "uso", feature = "graficos")))]
 static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // La consola (C48), con el registro y los puertos de COM1 (X6).
     ("consola", elf!("consola"), &[("registro", REGISTRO), ("serie", PUERTOS)], &[]),
@@ -103,6 +112,9 @@ const PUERTOS: u32 = 13;
 /// S32: el permiso de las variables de arranque de la NVRAM (llamada 64), para el instalador. El 20, lejos de los que
 /// vayan añadiendo otras ramas.
 const VARIABLES: u32 = 20;
+/// X12: un aparato del PCIe para pasarlo a una máquina virtual (`pasar.rs`, llamada 60).
+#[cfg(feature = "graficos")]
+const APARATO_PCI: u32 = 21;
 /// COM1: la UART 16550 de un PC, ocho puertos desde 0x3F8.
 const COM1: (u32, u32) = (0x3f8, 8);
 const OPCIONAL: u32 = 0x100;
@@ -248,6 +260,24 @@ pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
     if let Some((pantalla, info)) = pantalla_del_gop() {
         apuntar(&mut llaves, "pantalla", FIRMWARE, Llave::nueva(pantalla, DERECHOS));
         apuntar(&mut llaves, "pantalla-info", DATOS, Llave::nueva(info, LEER | crate::objetos::TRANSFERIR));
+    }
+    // X12: la GPU del dominio de gráficos (la primera virtio-gpu) y sus ficheros. El aparato queda reclamado: ningún
+    // servicio del anfitrión lo toma.
+    #[cfg(feature = "graficos")]
+    {
+        if let Some(f) = funciones.iter().find(|f| f.id == 0x1050_1af4) {
+            match crate::pasar::Aparato::nuevo(*f) {
+                Some(ap) => {
+                    kprintln!("graficos: la virtio-gpu de {}:{}.{} es del dominio de gráficos ({} interrupciones)", f.bus, f.aparato, f.funcion, ap.vectores());
+                    apuntar(&mut llaves, "gpu-dominio", APARATO_PCI, Llave::nueva(Objeto::AparatoPci(ap), DERECHOS));
+                }
+                None => kprintln!("graficos: la virtio-gpu no se puede pasar"),
+            }
+        }
+        match graficos_en_memoria() {
+            Some(m) => apuntar(&mut llaves, "dominio-graficos", DATOS, Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), LEER | crate::objetos::TRANSFERIR)),
+            None => kprintln!("graficos: el cargador no dejó el dominio de gráficos (EFI/DashOS/GRAFICOS.BZI y GRAFICOS.CPI)"),
+        }
     }
     let mut con_rtl = false;
     for (nombre, quien, bar, cfg, dma) in APARATOS {
@@ -443,4 +473,41 @@ fn vivo_en_memoria() -> Option<(memoria::Memoria, memoria::Memoria)> {
     }
     kprintln!("vivo: arrancado del pendrive; el sistema ({} KB) en memoria", largo / 1024);
     Some((sistema, original))
+}
+
+/// X12: el kernel y el initramfs del dominio de gráficos que dejó el cargador, en un objeto de memoria con el formato del
+/// dominio de ARM (`inicio.rs`): el largo de cada uno (u64) y detrás, seguidos.
+#[cfg(feature = "graficos")]
+fn graficos_en_memoria() -> Option<memoria::Memoria> {
+    let (_, tam) = crate::base::arranque::graficos()?;
+    let mut cab = [0u8; 40];
+    if !crate::base::arranque::graficos_leer(0, &mut cab) || &cab[..8] != b"DashGraf" {
+        kprintln!("graficos: la zona del cargador no tiene su cabecera");
+        return None;
+    }
+    let u = |o: usize| u64::from_le_bytes(cab[o..o + 8].try_into().unwrap());
+    let (o_bz, n_bz, o_cpio, n_cpio) = (u(8), u(16), u(24), u(32));
+    if [(o_bz, n_bz), (o_cpio, n_cpio)].iter().any(|&(o, n)| o.checked_add(n).is_none_or(|f| f > tam)) {
+        kprintln!("graficos: los ficheros se salen de la zona");
+        return None;
+    }
+    let m = memoria::Memoria::nueva(16 + (n_bz + n_cpio) as usize, &crate::cupo::Cupo::raiz())?;
+    m.escribir(0, &n_bz.to_le_bytes());
+    m.escribir(8, &n_cpio.to_le_bytes());
+    let mut b = alloc::vec![0u8; 1 << 20];
+    let mut destino = 16usize;
+    for (o, n) in [(o_bz, n_bz), (o_cpio, n_cpio)] {
+        let mut hecho = 0u64;
+        while hecho < n {
+            let k = (n - hecho).min(b.len() as u64) as usize;
+            if !crate::base::arranque::graficos_leer(o + hecho, &mut b[..k]) {
+                return None;
+            }
+            m.escribir(destino, &b[..k]);
+            destino += k;
+            hecho += k as u64;
+        }
+    }
+    kprintln!("graficos: el dominio de gráficos en memoria (kernel de {} KB, initramfs de {} KB)", n_bz / 1024, n_cpio / 1024);
+    Some(m)
 }

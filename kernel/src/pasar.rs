@@ -12,10 +12,11 @@
 //!
 //! - **La asigna a una máquina.** FLR si lo admite (con sus BAR repuestas). Su dominio de la IOMMU traduce con la
 //!   memoria del invitado: la dirección de DMA es la física del invitado, y lo que se añada después a la máquina
-//!   (`maquina_memoria`) también entra. Su MSI la programa el kernel, nunca el invitado: llega al anfitrión como una
-//!   interrupción de aparato, cuya llave recibe el monitor; el monitor la entrega a la vCPU como cualquier otra (el
+//!   (`maquina_memoria`) también entra. Su MSI (o sus MSI-X: X12, una por cada una de sus primeras entradas, como mucho
+//!   `MAX_VECTORES`) la programa el kernel, nunca el invitado: cada una llega al anfitrión como una interrupción de
+//!   aparato, cuya llave recibe el monitor; el monitor la entrega a la vCPU como cualquier otra (el
 //!   bloque de interrupciones de X10). Además, sus interrupciones pasan por el remapeo de la IOMMU: con AMD-Vi, una tabla
-//!   de remapeo suya con una sola entrada; con VT-d, su entrada en la tabla de todo el sistema, que solo vale para él
+//!   de remapeo suya con una entrada por mensaje; con VT-d, su entrada en la tabla de todo el sistema, que solo vale para él
 //!   (se comprueba su número de PCI) y apunta a su vector de siempre, con las de formato compatible bloqueadas. Aunque
 //!   el invitado le haga mandar lo que quiera, no puede llevar al anfitrión otra interrupción que la suya. Con una VT-d
 //!   sin remapeo (sin ECAP.IR), el aparato se pasa igual, pero podría mandar cualquiera: la llamada lo dice.
@@ -69,9 +70,14 @@ pub const BAR_64: u64 = 1;
 pub const BAR_PREFETCH: u64 = 2;
 pub const BAR_ES: u64 = 4;
 
-/// En lo que devuelve `asignar`: las interrupciones del aparato pasan por el remapeo de la IOMMU; se hizo FLR.
+/// En lo que devuelve `asignar`: las interrupciones del aparato pasan por el remapeo de la IOMMU; se hizo FLR. En los
+/// bits 15:8, cuántas interrupciones tiene (X12: una por entrada de su MSI-X, como mucho `MAX_VECTORES`; 1 con MSI).
 pub const REMAPEADAS: u64 = 1;
 pub const CON_FLR: u64 = 2;
+pub const VECTORES_DESDE: u32 = 8;
+
+/// Las interrupciones de un aparato pasado, como mucho (X12): las primeras entradas de su MSI-X.
+pub const MAX_VECTORES: usize = crate::base::iommu::MAX_REMAPEADAS;
 
 pub enum ErrorCfg {
     /// Tamaño, alineación o sitio que no valen.
@@ -90,8 +96,11 @@ pub struct Aparato {
     huecos: Vec<(usize, u64, u64)>,
     /// Los registros de las seis BAR y de la ROM como los dejó el firmware: se reponen tras un FLR.
     crudas: [u32; 7],
-    /// Su MSI en el anfitrión: (interrupción, dirección y dato), si tiene MSI o MSI-X.
-    msi: Option<(u32, u64, u32)>,
+    /// Sus MSI en el anfitrión: (interrupción, dirección y dato), una por entrada de su MSI-X (las primeras, como mucho
+    /// `MAX_VECTORES`), o una si solo tiene MSI; ninguna si no tiene.
+    msis: Vec<(u32, u64, u32)>,
+    /// Si las de `msis` van por MSI-X.
+    msix: bool,
     estado: Cerrojo<Estado>,
 }
 
@@ -101,8 +110,10 @@ struct Estado {
     dominio: Option<Dominio>,
     /// Las BAR ya proyectadas en su máquina, un bit por BAR.
     proyectadas: u8,
-    /// El objeto de su interrupción, mientras alguien tenga su llave: si se vuelve a asignar, es el mismo.
-    interrupcion: Weak<Interrupcion>,
+    /// Los objetos de sus interrupciones, mientras alguien tenga su llave: si se vuelve a asignar, son los mismos.
+    interrupciones: Vec<Weak<Interrupcion>>,
+    /// Y mientras está asignado, sujetos aquí (para dar sus llaves con `interrupcion`).
+    activas: Vec<Arc<Interrupcion>>,
 }
 
 const CFG_BAR0: usize = 0x10;
@@ -149,11 +160,23 @@ impl Aparato {
                 huecos.push(((reg & 7) as usize, inicio, fin - inicio));
             }
         }
-        let tiene_msi = f.capacidad(pci::CAP_MSI).is_some() || f.capacidad(pci::CAP_MSIX).is_some();
-        let msi = if tiene_msi { crate::interrupciones::msi() } else { None };
+        // X12: una MSI del anfitrión por cada una de las primeras entradas de su MSI-X (una gráfica, un NVMe: una por
+        // cola); con MSI, una. Las que no se puedan dar, no (al menos la primera).
+        let msix = f.msix_entradas();
+        let cuantas = if msix > 0 { msix.min(MAX_VECTORES) } else if f.capacidad(pci::CAP_MSI).is_some() { 1 } else { 0 };
+        let mut msis = Vec::new();
+        if msis.try_reserve_exact(cuantas).is_err() {
+            return None;
+        }
+        for _ in 0..cuantas {
+            match crate::interrupciones::msi() {
+                Some(m) => msis.push(m),
+                None => break,
+            }
+        }
         f.callar();
-        let estado = Cerrojo::new(Estado { asignado: false, dominio: None, proyectadas: 0, interrupcion: Weak::new() });
-        Arc::try_new(Aparato { f, numero, bars, es, huecos, crudas, msi, estado }).ok()
+        let estado = Cerrojo::new(Estado { asignado: false, dominio: None, proyectadas: 0, interrupciones: Vec::new(), activas: Vec::new() });
+        Arc::try_new(Aparato { f, numero, bars, es, huecos, crudas, msis, msix: msix > 0, estado }).ok()
     }
 
     /// Su número de PCI (bus, aparato y función).
@@ -161,9 +184,23 @@ impl Aparato {
         self.numero
     }
 
-    /// El vector de su MSI en el anfitrión (para las pruebas).
+    /// El vector de su (primera) MSI en el anfitrión (para las pruebas).
     pub fn vector(&self) -> Option<u8> {
-        self.msi.map(|(_, _, dato)| dato as u8)
+        self.msis.first().map(|&(_, _, dato)| dato as u8)
+    }
+
+    /// Cuántas interrupciones tiene (las de `msis`).
+    pub fn vectores(&self) -> usize {
+        self.msis.len()
+    }
+
+    /// X12: la interrupción `k` (la de la entrada `k` de su MSI-X) mientras está asignado, y su número (el que llega en
+    /// el mensaje de `interrupcion_asociar`).
+    pub fn interrupcion(&self, k: usize) -> Option<(Arc<Interrupcion>, u32)> {
+        let e = self.estado.tomar();
+        let i = e.activas.get(k)?.clone();
+        let n = i.intid;
+        Some((i, n))
     }
 
     /// ¿Está ahora en una máquina?
@@ -243,32 +280,40 @@ impl Aparato {
         if !bien {
             return Err(hiper::Error::Memoria);
         }
-        let mut banderas = 0;
+        let mut banderas = (self.msis.len() as u64) << VECTORES_DESDE;
         let mut irq = None;
-        if let Some((intid, direccion, dato)) = self.msi {
+        if let Some(&(_, direccion, _)) = self.msis.first() {
             let destino = ((direccion >> 12) & 0xff) as u32;
-            let como = match d.remapear_interrupciones(destino, dato as u8) {
-                Some((dir, dat)) => {
+            let vectores: Vec<u8> = self.msis.iter().map(|m| m.2 as u8).collect();
+            // Los mensajes que manda el aparato: con remapeo, los que da la IOMMU (con el índice de su entrada; AMD-Vi:
+            // el dato k; VT-d: en la dirección, en formato remapeable); sin él, los del anfitrión tal cual.
+            let mensajes: Vec<(u64, u32)> = match d.remapear_interrupciones(destino, &vectores) {
+                Some(m) => {
                     banderas |= REMAPEADAS;
-                    // El mensaje con el índice de su entrada (AMD-Vi: el dato 0, la única de su tabla; VT-d: en la
-                    // dirección, en formato remapeable).
-                    self.f.dar_msi(dir, dat)
+                    m
                 }
                 // Con remapeo (AMD-Vi, o VT-d con él encendido), si no se pudo (sin memoria o sin entradas), no se pasa.
                 None if d.con_remapeo() => return Err(hiper::Error::Memoria),
                 None => {
                     crate::kprintln!("X11: VT-d sin remapeo de interrupciones (la unidad no lo tiene): el aparato pasado podría mandar cualquier MSI");
-                    self.f.dar_msi(direccion, dato)
+                    self.msis.iter().map(|m| (m.1, m.2)).collect()
                 }
             };
-            if como.is_some() {
+            let bien = if self.msix { self.f.dar_msix(&mensajes) } else { self.f.dar_msi(mensajes[0].0, mensajes[0].1).is_some() };
+            if bien {
                 let mut e = self.estado.tomar();
-                let i = match e.interrupcion.upgrade() {
-                    Some(i) => i,
-                    None => Interrupcion::nueva(intid).ok_or(hiper::Error::Limite)?,
-                };
-                e.interrupcion = Arc::downgrade(&i);
-                irq = Some(i);
+                let mut activas = Vec::new();
+                activas.try_reserve_exact(self.msis.len()).map_err(|_| hiper::Error::Memoria)?;
+                for (k, m) in self.msis.iter().enumerate() {
+                    let i = match e.interrupciones.get(k).and_then(|w| w.upgrade()) {
+                        Some(i) => i,
+                        None => Interrupcion::nueva(m.0).ok_or(hiper::Error::Limite)?,
+                    };
+                    activas.push(i);
+                }
+                e.interrupciones = activas.iter().map(Arc::downgrade).collect();
+                irq = activas.first().cloned();
+                e.activas = activas;
             }
         }
         // Memoria y bus master (lo que deja `dar_msi`); sin INTx nunca.
@@ -291,6 +336,10 @@ impl Aparato {
         }
         e.asignado = false;
         e.proyectadas = 0;
+        // Sus interrupciones se sueltan fuera del cerrojo (soltar la última referencia toma los suyos).
+        let activas = core::mem::take(&mut e.activas);
+        drop(e);
+        drop(activas);
     }
 
     /// Añade a su dominio la memoria que el invitado ve desde `gpa`, recién añadida a `espacio` (`maquina_memoria` con

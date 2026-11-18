@@ -212,3 +212,59 @@ pub(super) fn buscar(imagen: *const c_void, bs: &ServiciosArranque, info: &mut s
         let _ = writeln!(c, "DashOS: con el dominio Linux de x86: kernel de {} KB, initramfs de {} KB", tam_bz / 1024, tam_cpio / 1024);
     }
 }
+
+/// X12: el dominio de gráficos de x86 (`tools/dominio_graficos.py`): si junto al cargador están
+/// `\EFI\DashOS\GRAFICOS.BZI` (su kernel) y `GRAFICOS.CPI` (su initramfs), se leen a una zona de datos del cargador
+/// con esta cabecera, arranque en vivo o no:
+///
+/// | byte | qué |
+/// |---|---|
+/// | 0 | "DashGraf" |
+/// | 8, 16 | el kernel: desde dónde (en la zona) y cuántos bytes |
+/// | 24, 32 | el initramfs |
+pub(super) fn graficos(imagen: *const c_void, bs: &ServiciosArranque, info: &mut super::InfoArranque, c: &mut Consola) {
+    let mut li: *const c_void = core::ptr::null();
+    if (bs.handle_protocol)(imagen, &GUID_IMAGEN, &mut li) != BIEN || li.is_null() {
+        return;
+    }
+    let li = unsafe { &*(li as *const ImagenCargada) };
+    let mut fs: *const c_void = core::ptr::null();
+    if (bs.handle_protocol)(li.dispositivo, &GUID_FS, &mut fs) != BIEN || fs.is_null() {
+        return;
+    }
+    let fs = fs as *const SistemaFicheros;
+    let mut raiz: *const Fichero = core::ptr::null();
+    if (unsafe { (*fs).abrir_volumen })(fs, &mut raiz) != BIEN || raiz.is_null() {
+        return;
+    }
+    let mut b = [0u16; 64];
+    let Some((bz, tam_bz)) = abrir(raiz, ucs2("\\EFI\\DashOS\\GRAFICOS.BZI", &mut b)).filter(|p| p.1 <= 64 << 20) else { return };
+    let Some((cpio, tam_cpio)) = abrir(raiz, ucs2("\\EFI\\DashOS\\GRAFICOS.CPI", &mut b)).filter(|p| p.1 <= 512 << 20) else {
+        (unsafe { (*bz).cerrar })(bz);
+        return;
+    };
+    let pag = |x: u64| x.div_ceil(PAGINA as u64) * PAGINA as u64;
+    let o_bz = PAGINA as u64;
+    let o_cpio = o_bz + pag(tam_bz);
+    let total = o_cpio + pag(tam_cpio);
+    let mut zona = 0u64;
+    if (bs.reservar_paginas)(CUALQUIER_SITIO, DATOS_DEL_CARGADOR, (total / PAGINA as u64) as usize, &mut zona) != BIEN {
+        let _ = writeln!(c, "DashOS: no hay memoria para el dominio de gráficos ({} MB)", total >> 20);
+        return;
+    }
+    unsafe { core::ptr::write_bytes(zona as *mut u8, 0, PAGINA) };
+    if !(leer(bz, zona + o_bz, tam_bz) && leer(cpio, zona + o_cpio, tam_cpio)) {
+        let _ = writeln!(c, "DashOS: no se pudo leer el dominio de gráficos");
+        return;
+    }
+    let cab = zona as *mut u8;
+    let poner = |o: usize, v: u64| unsafe { core::ptr::write_unaligned(cab.add(o) as *mut u64, v) };
+    unsafe { core::ptr::copy_nonoverlapping(b"DashGraf".as_ptr(), cab, 8) };
+    poner(8, o_bz);
+    poner(16, tam_bz);
+    poner(24, o_cpio);
+    poner(32, tam_cpio);
+    info.graficos = zona;
+    info.graficos_tamano = total;
+    let _ = writeln!(c, "DashOS: con el dominio de gráficos: kernel de {} KB, initramfs de {} KB", tam_bz / 1024, tam_cpio / 1024);
+}
