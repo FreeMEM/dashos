@@ -176,8 +176,7 @@ de 128 colores, solo en el disco de la prueba): `shiva.1-discos` (quietos), `2-e
 grande), `9-compacto` (en el centro, pequeño, sin la barra), y del dock `10-dock-lupa` y `11-dock-lupa-entre` (la
 lupa sobre un icono y entre dos) y `12-dock-menu`. GIF: `discos-aparecer.gif` (el panel entra y las tarjetas tras él),
 `discos-entrar-sesion.gif` (al entrar Ana; la pantalla de entrada tapa casi toda la animación), `dock-lupa.gif` (el
-ratón de lado a lado por el dock) y `dock-rebote.gif` (el Shell fijado, abierto desde el dock, bota hasta que sale su
-ventana). Los GIF son tiras de `screendump` de QEMU cada 50-70 ms: van a saltos, no a 60 cuadros por segundo.
+ratón de lado a lado por el dock) y `dock-latido.gif` (el Shell fijado, abierto desde el dock). Los GIF son tiras de `screendump` de QEMU cada 50-70 ms: van a saltos, no a 60 cuadros por segundo.
 El guion de las capturas es `tools/guion_discos.py` (`make capturas-discos`, con `DMS_SHIVA=1`, `DASHOS_PANTALLA`,
 `DASHOS_FONDO_EXTRA` y `DASHOS_PREFS` como `arranque-virt-dms`). El fondo no siempre sale (el programa `fondo`
 arranca antes que el servicio de archivos: lo apuntó `union-dms`); en las vueltas en que no salió, el fondo es azul.
@@ -237,7 +236,9 @@ disco de pruebas no cambia. La capa de los discos: 248 × 300 × 4 = 290 KB con 
 - Pruebas: las de PC (`dock_vivo` 29, `dock_ajustes` 12), `make prueba`, `make arranque-virt-dms` y
   `make arranque-virt-escritorio`: BIEN a la primera. En QEMU el Shell abre en menos de un segundo: late un rato corto
   y "ya tiene ventana: deja de latir". El tope de 10 s solo se ha probado en el PC.
-- GIF: `dock-latido.gif` en la carpeta de las capturas (el Shell fijado, abierto desde el dock).
+- GIF: `dock-latido.gif` en la carpeta de las capturas (el Shell fijado, abierto desde el dock). El Shell sale en unos
+  200 ms: el punto que late se ve en un solo cuadro antes de que salga el de verdad; un latido entero no se ha visto en
+  QEMU. (`dock-rebote.gif` se quitó: ya no es lo de serie.)
 
 ## Decisiones del usuario (2026-11-18)
 
