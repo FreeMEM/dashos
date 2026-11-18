@@ -173,6 +173,19 @@ Dos líneas a la vez (decisión 4 de S30):
     - Los HPET (ámbito de tipo 4) no se apuntan: el kernel no usa sus interrupciones. Si se usan, irán como los IOAPIC.
     - Una sola unidad en QEMU: lo de varias unidades (unas con remapeo y otras sin él) está escrito y sin probar.
     - Sin interrupciones entregadas sin salir (posted interrupts, IM = 1 en la entrada).
+  - [x] X12 **El dominio de gráficos con una GPU de QEMU** (G5 de S38, 2026-11-18): un Linux mínimo en una máquina de
+    DashOS recibe la `virtio-gpu-gl-pci` (virgl) pasada con la IOMMU y pinta por KMS con Mesa; `make -C kernel
+    graficos-x86` (KVM, IOMMU=intel o amd). X11 ampliada a varias MSI-X. Lo que queda abierto:
+    - Solo la GPU de QEMU. Una Intel o AMD de verdad (G8) pedirá: la tabla de MSI-X en la página de otros registros
+      (hoy no se proyecta esa página y el monitor no reenvía), las RMRR de la integrada de Intel, BAR de VRAM por
+      encima de 4 GB (el monitor las pone por debajo), la ROM, la VGA heredada y más escrituras de configuración
+      (energía, Link Control).
+    - El dominio solo pinta un plasma y un cuadrado; el escritorio de DashOS compuesto allí espera al protocolo y al
+      servidor de composición (G3 y G4, de otra sesión) y a la memoria compartida sin copia (X13).
+    - El monitor emula el APIC: cada interrupción de la GPU, cada EOI y cada salida pasan por él (9 salidas y 3
+      interrupciones por cuadro). Sin AVIC/APICv ni interrupciones entregadas sin salir.
+    - Como mucho 8 interrupciones por aparato; sin MSI-X compartida con otros registros ni la entrada 0 de una MSI
+      que pida varios mensajes.
 - [ ] X7 **Caja Amiga en x86** con el intérprete de RelevoJIT (necesita R3 y la caja Amiga en `main`).
 - [ ] X8 **La caja con el JIT** de RelevoJIT (necesita R6).
 - [ ] X9 **Un PC de verdad**, arrancando desde USB (necesita la máquina; decisión 5 de S30).
@@ -1024,3 +1037,78 @@ Comprobado: `make -C kernel arranque-x86` (virtio-net) BIEN; `arranque-x86 RED_X
 ARM `make -C kernel prueba` BIEN (con las 9 pruebas del intérprete). `cargo clippy` de `rtl-red` sin avisos. **Sin
 probar en la tarjeta**: estos cambios no han pasado aún por la RTL8125B de shiva (`RED_X86=vfio`, la lanza el
 coordinador).
+
+
+### 2026-11-18 — X12: el dominio de gráficos con la virtio-gpu de QEMU (G5 de S38)
+
+Hecho (sala limpia: la especificación de PCI Local Bus 3.0 (3.2.2.3.2, 6.1, 6.2.5), la de PCI Express 6.0 (7.7.1 y
+7.7.2), la de la IOMMU de AMD 48882 (2.2.2.1 y 2.2.5) y la de VT-d (5.1, 9.10), el RFC 6143 de VNC y las interfaces
+públicas de EGL, GLES 2, GBM y libdrm. Linux y Mesa se compilan y se ejecutan, no se leen; para entender por qué no
+llegaban las interrupciones se usaron las trazas de QEMU, no su código):
+
+- **Kernel (X11 ampliada).** Un aparato pasado tiene una interrupción del anfitrión por cada una de las primeras
+  entradas de su MSI-X (como mucho 8), cada una remapeada: con AMD-Vi, su tabla de 2^n entradas (la k, dato k); con
+  VT-d, una entrada por mensaje. `maquina_aparato` dice cuántas (bits 15:8 de x1) y la operación 5 da la llave de cada
+  una y su número (el del mensaje de `interrupcion_asociar`). `Funcion::dar_msix` programa la tabla del aparato: con la
+  memoria del aparato encendida antes (callado, la tabla no se decodifica y lo escrito se perdía: así las tres
+  interrupciones nunca llegaban). Al soltarlo, igual que antes.
+- **Cargador.** `InfoArranque` versión 3: si junto al cargador están `EFI/DashOS/GRAFICOS.BZI` y `GRAFICOS.CPI`, van en
+  una zona "DashGraf". La imagen `graficos` (`inicio_x86.rs`) da al servicio `dominio-graficos` el permiso de máquinas,
+  la primera virtio-gpu como aparato del PCIe (tipo 21; ningún servicio la toma) y los dos ficheros.
+- **El monitor.** `usuario/src/dominio_x86.rs` (la pieza del instalador) gana `Dominio::sin_disco`, `vcpu`, `salidas`
+  y `correr_con` con el rasgo `Extra` (puertos, MMIO e interrupciones de quien lo usa); `nuevo` y `correr` siguen
+  igual, y el instalador no cambia (solo un `allow(dead_code)`). `usuario/src/dominio_pci.rs`: el bus 0 por
+  0xCF8/0xCFC con un puente (1b36:0008) y el aparato en 00:01.0; sus BAR ya puestas desde 0xC000_0000 (se miden con
+  unos, se proyectan al encender la memoria); su MSI-X con el tamaño de tabla de las interrupciones del kernel, su
+  control, su tabla y su PBA emulados (esa página no se proyecta); su MSI si no tiene MSI-X. Un hilo escucha las
+  interrupciones (todas en un canal), las apunta como pendientes y patea a la vCPU; antes de entrar, las sin máscara
+  van al APIC del invitado. `usuario/src/bin/dominio_graficos.rs`: el servicio (512 MB de RAM para el dominio; su
+  tope de grupo, 576 MB, en `inicio.rs`).
+- **El invitado** (fuera de git, `tools/dominio_graficos.py preparar` en `~/recuperar/dashos-97/dominio-graficos/`):
+  Linux 7.3.4 con tinyconfig + `caja-linux/dominios/x86_graficos.config` (PCI por el mecanismo 1 sin ACPI, MSI, DRM y
+  virtio-gpu; bzImage de 1,1 MB). Mesa 26.2.7 con solo virgl, sin LLVM, GLES 2 y GBM; libdrm 2.4.134; zlib 1.4; la
+  toolchain de x86-64 con musl de Bootlin 2026.08-1 (musl dinámica, libstdc++). Sumas comprobadas; Mesa y libdrm
+  además con su firma GPG (Eric Engestrom y Simon Ser). initramfs de 23 MB sin comprimir. El /init
+  (`caja-linux/dominios/graficos_dominio.c`) monta /dev, /proc y /sys, abre `card0`, pinta con GLES 2 un plasma que
+  cambia entero en cada cuadro y un cuadrado que gira, cambia de búfer con `drmModePageFlip`, comprueba un píxel
+  contra la cuenta en la CPU y dice cuadros y CPU por cuadro (getrusage).
+- **La prueba.** `make -C kernel graficos-x86` (`tools/prueba_graficos_x86.py`): q35 con KVM, `kernel-irqchip=split`,
+  `intel-iommu,intremap=on` o `amd-iommu,dma-remap=on,intremap=on`, la VGA de q35 para DashOS y
+  `virtio-gpu-gl-pci,iommu_platform=on` para el dominio, `-display egl-headless`. Mira la salida en orden, que no haya
+  fallos de DMA ni interrupciones bloqueadas, y dos capturas de la GPU del dominio por VNC con medio segundo entre
+  ellas (no negras y distintas). Con egl-headless el `screendump` de QMP no tiene superficie ("no surface"); el VNC sí
+  recibe los cuadros: `tools/vnc_captura.py`, un cliente RFB mínimo sin programas de fuera. Antes, fuera de DashOS,
+  `tools/dominio_graficos.py qemu` (el mismo invitado en QEMU con la misma GPU): BIEN.
+
+Medido en shiva (Ryzen 9 9955HX, Radeon integrada detrás de virgl), 20 s pintando a 1280x720, mismo invitado:
+
+| | Cuadros por segundo | CPU del programa por cuadro (en el dominio) | CPU de DashOS por cuadro (todos los núcleos) |
+|---|---|---|---|
+| Linux en QEMU con KVM, sin DashOS | 75,0 | 0,137 ms | — |
+| DashOS, VT-d | 75,0 | 0,108 y 0,124 ms (dos vueltas) | 0,55 y 0,60 ms (0,58 sin lo de reposo, 2,1 ms/s) |
+| DashOS, AMD-Vi | 75,0 | 0,110 ms | 0,56 ms (0,54 sin lo de reposo) |
+
+- 75 cuadros por segundo es el refresco de la pantalla de la virtio-gpu (el cambio de búfer espera al anterior).
+- Por cuadro, 9 salidas del invitado y 3 interrupciones de la GPU (todas por el monitor). La CPU de DashOS (lo que no
+  está ocioso, sumando los 4 núcleos) incluye la vCPU del dominio: 0,55 ms por cuadro son un 4 % de un núcleo a 75 Hz.
+  La de virgl en QEMU (el PC) no se mide.
+- Del servicio en marcha al primer cuadro en pantalla: 650 a 680 ms (RAM, kernel, Mesa y EGL). La prueba entera, 25 s.
+- `GL_RENDERER virgl (AMD Ryzen 9 9955HX ... radeonsi)`, OpenGL ES 3.2; el píxel comprobado, diferencia 0.
+
+Comprobado: `make -C kernel graficos-x86` BIEN con `IOMMU=intel` (dos veces) y con `IOMMU=amd`; `make -C kernel
+prueba-x86` BIEN sin IOMMU, con `IOMMU=intel` y con `IOMMU=amd` (la X11 de antes, con el `edu` y su MSI, sigue);
+`make -C kernel arranque-x86` BIEN a la segunda (la primera, 2 chasquidos en el sonido, con la carga en 4,5: el
+intermitente conocido); `make -C kernel prueba-instalar-x86` BIEN (46 de 46); `python3 tools/prueba_instalador.py
+encoger-sintetico` BIEN (8 de 8: el dominio de ntfsresize, con `dominio_x86.rs` cambiado, sigue); ARM `make -C kernel
+prueba` BIEN.
+
+Lo que se vio por el camino:
+
+- Sin ACPI el kernel del invitado no encuentra la INTx ("can't find IRQ for PCI INT A; probably buggy MP table"): da
+  igual, va por MSI-X. Avisa también de dos MSR que el monitor no tiene (RDMSR 0x3B, TSC_ADJUST; WRMSR 0xC001001F, de
+  AMD) y sigue.
+- Las BAR de la virtio-gpu en el anfitrión: la 1 (la tabla de MSI-X, sola en su página) y la 4 de 16 KB a 64 bits,
+  que q35 pone en 0x3800_0000_0000.
+
+No comprobado: una GPU de verdad (G8); VT-x (pegaso); TCG (la prueba pide KVM); el escritorio de DashOS compuesto en
+el dominio (G3, G4, X13). Lo que queda, en la tarea X12.
