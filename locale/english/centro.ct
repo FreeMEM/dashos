@@ -563,3 +563,45 @@ Up
 MSG_239
 Down
 ; Bajar
+MSG_900
+Sound
+; Sonido
+MSG_901
+for playing (64 frames, 1.3 ms)
+; para tocar (64 cuadros, 1,3 ms)
+MSG_902
+saving (1,024 frames, 21 ms)
+; ahorro (1.024 cuadros, 21 ms)
+MSG_903
+normal (256 frames, 5.3 ms)
+; normal (256 cuadros, 5,3 ms)
+MSG_904
+Open the Sound mixer
+; Abrir el mezclador Sonido
+MSG_905
+Sound theme: {}
+; Tema de los sonidos: {}
+MSG_906
+System sounds: {}
+; Sonidos del sistema: {}
+MSG_907
+Volume of the sounds: {} %
+; Volumen de los sonidos: {} %
+MSG_908
+Equalizer: {}
+; Ecualizador: {}
+MSG_909
+Limiter: {}
+; Limitador: {}
+MSG_910
+Spatial sound: {}
+; Sonido espacial: {}
+MSG_911
+Latency: {}
+; Latencia: {}
+MSG_912
+Try the notification sound
+; Probar el sonido de aviso
+MSG_913
+Sounds, effects and latency. Enter changes a row.
+; Sonidos, efectos y latencia. Intro cambia una fila.

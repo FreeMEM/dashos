@@ -80,3 +80,11 @@ de virtio-sound en QEMU `virt`, probado con el WAV que escribe QEMU.
   - Pendiente: quién puede pedir la clase de plazo (S6; hoy cualquiera, acotado al 80 % de cada núcleo). Mezclar en
     coma flotante por software es caro: enteros en coma fija o la FPU (los programas se compilan sin ella) cuando
     haya más flujos. La resolución de los temporizadores sigue en 10 ms.
+
+### 2026-11-18 (rama `sonido-pro`)
+
+- El servicio pasa de mezclador a grafo (S19b, E1), con la ventana "Sonido", efectos, visualizador, sonidos del sistema
+  y controles de medios: `docs/bitacoras/sonido-pro.md`. La mezcla de A1 (`Mezclador`) sigue en `sonido/src/lib.rs` y
+  sus pruebas; el servicio usa `sonido/src/grafo.rs`.
+- A6 otra vez: el servicio pedía 3 ms de plazo y el kernel ya no se lo daba (con el repartidor también en la clase de
+  plazo, el núcleo pasaba del 80 %): iba en la justa y había vacíos. Ahora pide 1,5 ms.

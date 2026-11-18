@@ -562,6 +562,8 @@ pub struct Vista {
     pub ajustes: Ajustes,
     /// "No molestar" a mano (del servicio) y los segundos que le quedaban al leerlo (0 sin plazo), y cuándo se leyó.
     pub no_molestar: bool,
+    /// Rama sonido-pro: cuántos emergentes han salido (la barra suena el sonido de aviso cuando sube).
+    pub emergentes_salidos: u32,
     nm_quedan: (u32, u64),
     visto_hasta: u32,
     /// El ancho de la pantalla (lo que mide la barra).
@@ -586,6 +588,7 @@ impl Vista {
             version: 0,
             ajustes: Ajustes::DE_SERIE,
             no_molestar: false,
+            emergentes_salidos: 0,
             nm_quedan: (0, 0),
             visto_hasta: 0,
             ancho_pantalla: 1920,
@@ -923,6 +926,7 @@ impl Vista {
         }
         println!("  [barra] emergente {} de {}: \"{}\", {}, {} ms; en su capa: {}", e.a.numero, e.a.de(), e.a.titulo(), self.ajustes.posicion.nombre(),
             e.dura_ms, sitios);
+        self.emergentes_salidos = self.emergentes_salidos.wrapping_add(1);
         self.abrir_capa_e(c);
         self.pintar_e(c, t, le, reloj);
     }

@@ -202,16 +202,19 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // "avisos" para enseñar las notificaciones (S10).
     #[cfg(feature = "virt")]
     // Trasfondo: también "centro", para abrir el monitor del sistema desde su desplegable de procesos.
-    ("barra", programa!("barra"), &[], &["ventanas", "sesiones", "archivos", "centro", "avisos"]),
+    // Rama sonido-pro: también "sonido": lo que suena (el widget de música, con su visualizador y sus botones). Su llave
+    // va antes que la de "avisos" (el sonido se nombra antes): las dos se buscan por su nombre.
+    ("barra", programa!("barra"), &[], &["ventanas", "sesiones", "archivos", "centro", "sonido", "avisos"]),
     // S27: el dock y los avisos en pantalla (OSD), como los de DMS. Las capas y la lista de ventanas por su nombre;
     // "sesiones" para lanzar lo fijado (como quien está delante, solo de `Programas/`) y la tabla de nombres, y
     // "archivos" para leer y vigilar sus ajustes de `ENV:`.
     // En la imagen de las pruebas, también el canal "dock-prueba" (de nadie más): con él, el dock hace su prueba hostil
-    // de los ajustes (escribir y guardar los que no son suyos).
+    // de los ajustes (escribir y guardar los que no son suyos). Rama sonido-pro: también "sonido" (el OSD del volumen
+    // dice por qué salida suena); el dock busca sus llaves por el nombre.
     #[cfg(all(feature = "virt", not(feature = "uso")))]
-    ("dock", programa!("dock"), &[], &["ventanas", "sesiones", "archivos", "dock-prueba"]),
+    ("dock", programa!("dock"), &[], &["ventanas", "sesiones", "archivos", "sonido", "dock-prueba"]),
     #[cfg(all(feature = "virt", feature = "uso"))]
-    ("dock", programa!("dock"), &[], &["ventanas", "sesiones", "archivos"]),
+    ("dock", programa!("dock"), &[], &["ventanas", "sesiones", "archivos", "sonido"]),
     // S10: la prueba hostil de los avisos: un programa cualquiera con la llave.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
     ("avisador", programa!("avisador"), &[], &["avisos"]),
@@ -368,6 +371,13 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("dominio", programa!("dominio"), &[("dominio-linux", DATOS)], &["sesiones", "dominio-red", "dominio-control", "usb-dominio", "avisos"]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", programa!("medir-fs"), &[], &["archivos"]),
+    // Rama sonido-pro: la ventana "Sonido" (el mezclador), que vive sin ventana hasta que se pide (el panel, Ajustes, la
+    // barra: orden VENTANA del servicio). Con "sonido" mira el estado y mezcla. Al final, para no cambiar las marcas de
+    // los de antes. Y en la imagen de las capturas del sonido, un reproductor de prueba que suena desde el arranque.
+    #[cfg(feature = "virt")]
+    ("mezclador", programa!("mezclador"), &[], &["ventanas", "sonido"]),
+    #[cfg(feature = "sonido_demo")]
+    ("melodia", programa!("melodia"), &[], &["sonido"]),
     #[cfg(feature = "medir")]
     ("medir", programa!("medir"), &[("medir", DATOS)], &[]),
 ];

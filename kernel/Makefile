@@ -220,6 +220,28 @@ capturas-discos: virt-uso $(DISCO_NVME)
 	-GUARDAR=$(abspath target/salida_capturas_discos.txt) DISCOS_CAPTURAS=$(abspath target/discos/discos) DMS_ANCHO=$(firstword $(subst x, ,$(or $(DASHOS_PANTALLA),800x600))) DMS_ALTO=$(lastword $(subst x, ,$(or $(DASHOS_PANTALLA),800x600))) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU) -drive file=$(abspath target/discos/disco.img),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/capturas_discos.txt 300
 	@cat target/discos/discos.guion.txt
 
+# Rama sonido-pro (docs/bitacoras/sonido-pro.md): el mezclador, el visualizador y los controles de medios en pantalla,
+# con la imagen de usar y un reproductor de prueba (`melodia`) que suena desde el arranque. `tools/guion_sonido.py`
+# entra como Ana (con DMS_SHIVA=1, el aspecto de shiva), abre el detalle de la salida en el centro de control y de ahí
+# la ventana "Sonido", cambia el ecualizador y pausa la música, con una captura en cada momento (target/sonido/*.png;
+# y en $(SONIDO_FUERA), fuera de git). Lo que suena, en target/sonido/sonido.wav (con el antes y el después del
+# ecualizador, que el guion apunta en su .guion.txt). A 1920 × 1080: DASHOS_PANTALLA=1920x1080, y el fondo del
+# usuario con DASHOS_FONDO_EXTRA=... DASHOS_PREFS="apariencia=oscuro fondo;fondo=...".
+VIRT_SONIDO := target/kernel8-virt-sonido.img
+SONIDO_FUERA ?= $(HOME)/recuperar/geosian-7d/sonido-pro-capturas
+SONIDO_CAPTURAS := 1-panel-salida 2-mezclador 3-mezclador-graves 4-mezclador-pausa 5-osd-volumen 6-ajustes-sonido 7-bloqueo-musica
+arranque-virt-sonido: usuario $(DISCO_NVME) FORCE
+	cargo build $(CARGO_PERFIL) --features virt,uso,sonido_demo
+	$(OBJCOPY) -O binary $(ELF) $(VIRT_SONIDO)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_SONIDO)) cargo build --release
+	rm -rf target/sonido && mkdir -p target/sonido
+	DASHOS_PREFS="$(or $(DASHOS_PREFS),fondo=atardecer.png)" python3 ../tools/disco_archivos.py target/sonido/disco.img $(DASHFS_AR)
+	GUARDAR=$(abspath target/salida_virt_sonido.txt) SONIDO_CAPTURAS=$(abspath target/sonido/sonido) DMS_ANCHO=$(firstword $(subst x, ,$(or $(DASHOS_PANTALLA),800x600))) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU) -drive file=$(abspath target/sonido/disco.img),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv -audiodev wav,id=snd0,path=$(abspath target/sonido/sonido.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_sonido.txt 400
+	@cat target/sonido/sonido.guion.txt
+	for c in $(SONIDO_CAPTURAS); do test -s target/sonido/sonido.$$c.png || { echo "FALTA la captura $$c"; exit 1; }; done
+	mkdir -p $(SONIDO_FUERA) && for c in $(SONIDO_CAPTURAS); do cp target/sonido/sonido.$$c.png $(SONIDO_FUERA)/$$c.png; done
+	-python3 ../tools/sonido_partir.py target/sonido/sonido.wav target/sonido/sonido.guion.txt $(SONIDO_FUERA)
+
 # La imagen para usar a mano (`tools/qemu_a_mano.sh`): `virt` con `uso`, sin los programas de prueba y con la pantalla
 # de entrada de verdad. No es una prueba: nada la comprueba.
 VIRT_USO := target/kernel8-virt-uso.img

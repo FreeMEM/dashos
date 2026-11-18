@@ -52,6 +52,35 @@ def nivel(x, hz, ritmo):
     return 2 * math.hypot(re, im) / len(x) / 32768
 
 
+def limite_tonos(ritmo):
+    return 2 * math.pi * (1000 * 0.25 + 600 * 0.2) / ritmo * 32768 * 1.15
+
+
+def sonidos_del_sistema(x, ritmo):
+    """Rama sonido-pro: tras los tonos, lo que suene son sonidos del sistema (sintetizados en `sonido/src/sonidos.rs`).
+    Cada uno empieza y acaba en silencio y no salta más que la suma de las pendientes de sus parciales (12.000, como
+    su prueba de PC); el limitador no los deja pasar de -1 dB. Devuelve cuántos y los fallos."""
+    fallos, n, dentro, k, ultimo = [], 0, False, 0, 0
+    for i in range(1, len(x)):
+        if x[i] != 0:
+            if not dentro:
+                n += 1
+                dentro = True
+                if abs(x[i]) > 2000:
+                    fallos.append(f"un sonido del sistema empieza de golpe ({x[i]}) en {i / ritmo:.2f} s tras los tonos")
+            ultimo = i
+            if abs(x[i] - x[i - 1]) > 12000:
+                k += 1
+            if abs(x[i]) > 29300:
+                fallos.append(f"un sonido del sistema pasa de -1 dB ({x[i]}) en {i / ritmo:.2f} s tras los tonos")
+                break
+        elif dentro and i - ultimo > ritmo // 20:
+            dentro = False
+    if k:
+        fallos.append(f"{k} saltos de más de 12.000 en los sonidos del sistema")
+    return n, fallos
+
+
 def comprobar(ruta):
     ritmo, izq, der = leer(ruta)
     fallos = []
@@ -75,12 +104,16 @@ def comprobar(ruta):
             fallos.append(f"el tono de {nombre} tiene huecos: ventanas {lista}")
     if any(abs(x - y) > 2 for x, y in zip(izq, der)):
         fallos.append("la izquierda y la derecha no son iguales")
-    # El salto más grande de una suma de senos: 2π(f1·A1 + f2·A2)/ritmo, en muestras de 16 bits, con margen.
-    limite = 2 * math.pi * (1000 * 0.25 + 600 * 0.2) / ritmo * 32768 * 1.15
-    saltos = [i for i in range(1, len(izq)) if abs(izq[i] - izq[i - 1]) > limite]
+    # El salto más grande de una suma de senos: 2π(f1·A1 + f2·A2)/ritmo, en muestras de 16 bits, con margen. Rama
+    # sonido-pro: solo donde suenan los tonos (y medio segundo más, por el fundido): después pueden sonar los sonidos del
+    # sistema (avisos, bloqueo), que se miden aparte.
+    fin_tonos = (max(con_a + con_b) + 6) * v if con_a or con_b else len(izq)
+    saltos = [i for i in range(1, min(fin_tonos, len(izq))) if abs(izq[i] - izq[i - 1]) > limite_tonos(ritmo)]
     if saltos:
         fallos.append(f"{len(saltos)} saltos (chasquidos), el primero en el cuadro {saltos[0]}")
-    resumen = f"1 kHz en {len(con_a)} ventanas, 600 Hz en {len(con_b)}, juntos en {len(juntos)}, sin huecos ni chasquidos"
+    sistema, fallos_sistema = sonidos_del_sistema(izq[fin_tonos:], ritmo)
+    fallos += fallos_sistema
+    resumen = f"1 kHz en {len(con_a)} ventanas, 600 Hz en {len(con_b)}, juntos en {len(juntos)}, sin huecos ni chasquidos; {sistema} sonidos del sistema después, sin chasquidos"
     return ritmo, fallos, resumen
 
 

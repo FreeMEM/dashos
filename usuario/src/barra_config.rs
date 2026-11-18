@@ -152,7 +152,8 @@ pub const REGISTRO: &[Ficha] = &[
         ..ficha("reloj", "clock", "Reloj", "La hora y la fecha", "schedule", 1)
     },
     Ficha { falta: Some("no hay servicio del tiempo"), ..ficha("tiempo", "weather", "El tiempo", "El tiempo que hace", "wb_sunny", 1) },
-    Ficha { falta: Some("no hay servicio de música"), ..ficha("musica", "music", "Música", "Lo que suena y sus botones", "music_note", 1) },
+    // Rama sonido-pro: lo que dicen los programas al servicio de sonido, con el visualizador y sus botones.
+    ficha("musica", "music", "Música", "Lo que suena, su visualizador y sus botones", "music_note", 1),
     Ficha { falta: Some("no hay historial del portapapeles"), ..ficha("portapapeles", "clipboard", "Portapapeles", "El historial de lo copiado", "content_paste", 2) },
     Ficha { opciones: &[MINIMO], ..ficha("cpu", "cpuUsage", "CPU", "Cuánto trabaja el procesador; un clic, los procesos", "memory", 2) },
     Ficha { opciones: &[MINIMO, si_no("gb", "showInGb", "En GB", false)], ..ficha("memoria", "memUsage", "Memoria", "La memoria en uso; un clic, los procesos", "developer_board", 2) },

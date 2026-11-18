@@ -1,0 +1,22 @@
+# Rama sonido-pro (`make arranque-virt-sonido`, `tools/guion_sonido.py`): con la imagen de usar y `melodia`, que suena
+# desde el arranque y dice lo que suena, entra Ana, abre el detalle de la salida en el centro de control y de ahí la
+# ventana "Sonido"; cambia el ecualizador a "Graves", pausa la música y la vuelve a poner.
+~│   [sonido] salida por virtio-sonido: 8 ranuras de 256 cuadros a 48 kHz
+~│   [sonido] melodia abre un flujo: I16, 2 canales, 48000 Hz
+~│   [sonido] melodia dice lo que suena: Amanecer en Kickstart (DashOS)
+~│   [sonido] mezclador mira el estado
+~│   [sonido] panel mira el estado
+~│   [guardian] entra Ana
+~│   [panel] abre la ventana Sonido
+~│   [mezclador] se abre la ventana Sonido
+~│   [mezclador] ventana Sonido en pantalla: 1 flujos (Melodía), 1 salidas, espectro de 24 bandas
+~│   [mezclador] ecualizador: Graves
+~│   [sonido] mezclador manda reproducir o pausar a melodia
+~│   [melodia] orden 1: en pausa
+~│   [melodia] orden 1: suena
+# El OSD del volumen (dice por dónde suena), Ajustes > Sonido (desde el detalle de la salida) y la pantalla de bloqueo
+# con lo que suena (como DMS).
+~│   [panel] abre Ajustes > Sonido: 0
+~│   [centro] Sonido en pantalla
+~│   [guardian] lo que suena en la pantalla de bloqueo: Amanecer en Kickstart • DashOS
+~│   [guardian] desbloqueado

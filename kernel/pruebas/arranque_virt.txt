@@ -149,6 +149,12 @@ DashOS en marcha con 4 núcleos.
 ~│   [sonido] tono-a ya no está: su flujo sale con fundido
 ~│   [sonido] tono-a: flujo cerrado
 ~│   [sonido] tono-b: flujo cerrado
+# Rama sonido-pro (S19b, E1): el motor es un grafo (flujos, mezcla de la salida, efectos y salida); la ventana "Sonido"
+# (el mezclador) y el panel miran su estado.
+~│   [sonido] el grafo: flujos -> mezcla -> eq -> espacial -> limitador -> Altavoces, en cuantos de 256
+~│   [sonido] mezclador mira el estado
+~│   [sonido] panel mira el estado
+~│   [sonido] latencia de la salida: media 
 # R1 (docs/REVISION_LOOP.md): un cliente hostil manda mensajes vacíos y cientos de mensajes con 8 llaves a archivos, al
 # sonido y al compositor; cada uno tiene que seguir contestando a una petición normal.
 ~│   [hostil] A14 hora: bien
@@ -157,6 +163,16 @@ DashOS en marcha con 4 núcleos.
 # R6: el hostil es otro usuario (1001), encerrado en C/: no sale, no entra en C/Privado, no escribe lo ajeno.
 ~│   [hostil] archivos, permisos: bien
 ~│   [hostil] A7 préstamos: bien
+# Rama sonido-pro: lo del mezclador no lo toca cualquiera (el volumen de otro, efectos absurdos, ver el estado, mandar a
+# otro programa, sonidos del sistema), lo que suena con basura no entra y mil flujos paran en el tope de un programa.
+~│   [sonido] hostil quiere tocar el mezclador: no le toca
+~│   [sonido] hostil quiere ver el estado: no le toca
+~│   [sonido] hostil quiere mandar a otro programa: no le toca
+~│   [sonido] hostil pide un sonido del sistema: no le toca
+~│   [sonido] hostil pide abrir la ventana del sonido: no le toca
+~│   [sonido] hostil: lo que suena no vale
+~│   [sonido] hostil: tope de 8 flujos; no se abren más
+~flujos pedidos, el servicio sigue: sí
 ~│   [hostil] sonido sigue: sí
 # S10c: el tema del sistema no lo cambia cualquiera.
 ~│   [hostil] compositor: poner el tema sin ser el centro da error: sí; el tema sigue: sí

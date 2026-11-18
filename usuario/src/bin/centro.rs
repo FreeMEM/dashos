@@ -145,12 +145,14 @@ const CATEGORIAS: &[(&str, &str)] = &[
     ("panel", "Centro de control"),
     // Unión de `dms-dock`: también tras Acerca de.
     ("dock", "Dock"),
+    // Rama sonido-pro: también tras Acerca de.
+    ("sonido", "Sonido"),
 ];
 /// El icono de cada categoría (Material Symbols, en el orden de `CATEGORIAS`).
 const ICONOS_CATEGORIAS: [kit::iconos::Simbolo; CATEGORIAS.len()] = {
     use kit::iconos::simbolo as m;
     // Unión de union-dms: Cuentas, Barra, Avisos, Centro de control y Dock, tras Acerca de.
-    [m::KEY, m::SHIELD, m::HARD_DRIVE, m::MONITOR, m::PALETTE, m::MONITOR_HEART, m::DASHBOARD, m::INFO, m::MANAGE_ACCOUNTS, m::TOOLBAR, m::NOTIFICATIONS, m::TUNE, m::DOCK_TO_BOTTOM]
+    [m::KEY, m::SHIELD, m::HARD_DRIVE, m::MONITOR, m::PALETTE, m::MONITOR_HEART, m::DASHBOARD, m::INFO, m::MANAGE_ACCOUNTS, m::TOOLBAR, m::NOTIFICATIONS, m::TUNE, m::DOCK_TO_BOTTOM, m::VOLUME_UP]
 };
 /// El nombre que se ve de la categoría `k` de `CATEGORIAS`, en el idioma del usuario (el de la tabla es el de la
 /// consola, siempre en castellano).
@@ -170,6 +172,7 @@ fn nombre_categoria(k: usize) -> &'static str {
         10 => tr(200, "Avisos"),
         11 => tr(201, "Centro de control"),
         12 => tr(126, "Dock"),
+        13 => tr(900, "Sonido"),
         _ => "",
     }
 }
@@ -184,6 +187,8 @@ const CUENTAS: usize = 8;
 const BARRA_CAT: usize = 9;
 /// S27: Ajustes > Dock.
 const DOCK: usize = 12;
+/// Rama sonido-pro: Ajustes > Sonido.
+const SONIDO_CAT: usize = 13;
 const FICHERO_MONITOR: &str = "monitor";
 /// Cada cuánto se vuelve a medir con el monitor a la vista.
 const CADA_MONITOR_US: u64 = 2_000_000;
@@ -1996,6 +2001,175 @@ fn cambiar_discos(d: &mut discos_ajustes::Discos, k: usize) -> Option<String> {
     Some(alloc::format!("{}: en ENV: {}; guardado: {}", FICHERO, usado.map_or_else(|e| e, |n| alloc::format!("{} bytes", n)), guardado))
 }
 
+/// Rama sonido-pro, Ajustes > Sonido: lo que se guarda en `ENV:Sonido` (texto de ajustes, como los demás) y se le dice
+/// al servicio de sonido al arrancar y al cambiar. El mezclador (la ventana "Sonido") cambia lo mismo en marcha; aquí
+/// se elige lo que queda.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct AjSonido {
+    tema: u32,
+    sonidos: bool,
+    volumen_sonidos: u32,
+    preajuste: u32,
+    limitador: bool,
+    espacial: u32,
+    latencia: u32,
+}
+
+const FICHERO_SONIDO: &str = "Sonido";
+const CABECERA_SONIDO: &str = "Los ajustes del sonido (Ajustes > Sonido). Los lee el centro al arrancar y se los da al servicio.";
+const TEMAS_SONIDO: [&str; 3] = ["Cristal", "Suave", "Retro"];
+const PREAJUSTES_SONIDO: [&str; 8] = ["Plano", "Graves", "Agudos", "Voz", "Rock", "Electrónica", "Clásica", "Noche"];
+const ESPACIAL: [&str; 3] = ["apagado", "ensanchar", "auriculares"];
+const LATENCIAS: [&str; 3] = ["normal", "para tocar", "ahorro"];
+const VOLUMENES_SONIDOS: [u32; 5] = [100, 70, 50, 30, 10];
+
+impl AjSonido {
+    const DE_SERIE: AjSonido = AjSonido { tema: 0, sonidos: true, volumen_sonidos: 70, preajuste: 0, limitador: true, espacial: 0, latencia: 0 };
+
+    fn de_pares<'a>(pares: impl Iterator<Item = (&'a str, &'a str)>) -> AjSonido {
+        let mut a = AjSonido::DE_SERIE;
+        let indice = |lista: &[&str], v: &str| lista.iter().position(|x| x.eq_ignore_ascii_case(v)).map(|i| i as u32);
+        for (c, v) in pares {
+            match c {
+                "tema" => a.tema = indice(&TEMAS_SONIDO, v).unwrap_or(a.tema),
+                "sonidos" => a.sonidos = v != "no",
+                "volumen_sonidos" => a.volumen_sonidos = v.parse::<u32>().map_or(a.volumen_sonidos, |x| x.min(100)),
+                "ecualizador" => a.preajuste = indice(&PREAJUSTES_SONIDO, v).unwrap_or(a.preajuste),
+                "limitador" => a.limitador = v != "no",
+                "espacial" => a.espacial = indice(&ESPACIAL, v).unwrap_or(a.espacial),
+                "latencia" => a.latencia = indice(&LATENCIAS, v).unwrap_or(a.latencia),
+                _ => {}
+            }
+        }
+        a
+    }
+
+    fn a_pares(&self) -> Vec<(&'static str, String)> {
+        let sn = |b: bool| String::from(if b { "si" } else { "no" });
+        alloc::vec![
+            ("tema", String::from(TEMAS_SONIDO[self.tema as usize % 3])),
+            ("sonidos", sn(self.sonidos)),
+            ("volumen_sonidos", alloc::format!("{}", self.volumen_sonidos)),
+            ("ecualizador", String::from(PREAJUSTES_SONIDO[self.preajuste as usize % 8])),
+            ("limitador", sn(self.limitador)),
+            ("espacial", String::from(ESPACIAL[self.espacial as usize % 3])),
+            ("latencia", String::from(LATENCIAS[self.latencia as usize % 3])),
+        ]
+    }
+}
+
+fn leer_sonido() -> AjSonido {
+    let x = leer_ajuste(FICHERO_SONIDO).ok().and_then(|b| kit::idioma::texto::Ajustes::leer(&b).ok());
+    match x {
+        Some(x) => AjSonido::de_pares(x.todos()),
+        None => AjSonido::DE_SERIE,
+    }
+}
+
+/// La llave del servicio de sonido, que se pide a `sesiones` la primera vez (el centro no la trae de `inicio`: se
+/// nombraría antes que el servicio y lo serviría él). 0 si no se da.
+static LLAVE_SONIDO: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+fn llave_sonido() -> u32 {
+    let l = LLAVE_SONIDO.load(Ordering::Relaxed);
+    if l != 0 {
+        return l;
+    }
+    use dashos::protocolo::sesiones as s;
+    let nombre = b"sonido";
+    let mut p = [0u8; 12 + 6];
+    p[0..4].copy_from_slice(&s::SERVICIO.to_le_bytes());
+    p[4..8].copy_from_slice(&(nombre.len() as u32).to_le_bytes());
+    p[12..].copy_from_slice(nombre);
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut r = [0u8; 4];
+    let mut ll = [0u32; 1];
+    let (n, k, _) = if dashos::canal_escribir(SESIONES, &p, &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut ll, 3_000_000) } else { (-1, 0, 0) };
+    dashos::cerrar(lectura);
+    if n == 4 && i32::from_le_bytes(r) == 0 && k == 1 {
+        LLAVE_SONIDO.store(ll[0], Ordering::Relaxed);
+        println!("  [centro] sesiones le da el sonido");
+        return ll[0];
+    }
+    println!("  [centro] sin la llave del sonido ({})", if n == 4 { i32::from_le_bytes(r) } else { n as i32 });
+    0
+}
+
+/// Dice al servicio de sonido los ajustes (al arrancar y al cambiar alguno).
+fn usar_sonido(a: &AjSonido) -> bool {
+    use dashos::protocolo::sonido as sp;
+    let l = llave_sonido();
+    if l == 0 {
+        return false;
+    }
+    let mandar = |w: &[u32]| {
+        let b: Vec<u8> = w.iter().flat_map(|x| x.to_le_bytes()).collect();
+        dashos::canal_escribir(l, &b, &[]) == 0
+    };
+    let mut ok = mandar(&[sp::SONIDOS, a.tema, !a.sonidos as u32, a.volumen_sonidos]);
+    ok &= mandar(&[sp::EFECTO, sp::EF_EQ_PREAJUSTE, a.preajuste]);
+    ok &= mandar(&[sp::EFECTO, sp::EF_LIMITADOR, a.limitador as u32]);
+    ok &= mandar(&[sp::EFECTO, sp::EF_ESPACIAL_MODO, a.espacial]);
+    ok &= mandar(&[sp::PERIODO, a.latencia]);
+    ok
+}
+
+/// Las filas de Ajustes > Sonido.
+fn lineas_sonido(a: &AjSonido) -> Vec<String> {
+    let latencia = match a.latencia {
+        1 => tr(901, "para tocar (64 cuadros, 1,3 ms)"),
+        2 => tr(902, "ahorro (1.024 cuadros, 21 ms)"),
+        _ => tr(903, "normal (256 cuadros, 5,3 ms)"),
+    };
+    alloc::vec![
+        String::from(tr(904, "Abrir el mezclador Sonido")),
+        trf(905, "Tema de los sonidos: {}", &[&TEMAS_SONIDO[a.tema as usize % 3]]),
+        trf(906, "Sonidos del sistema: {}", &[&si_no(a.sonidos)]),
+        trf(907, "Volumen de los sonidos: {} %", &[&a.volumen_sonidos]),
+        trf(908, "Ecualizador: {}", &[&PREAJUSTES_SONIDO[a.preajuste as usize % 8]]),
+        trf(909, "Limitador: {}", &[&si_no(a.limitador)]),
+        trf(910, "Sonido espacial: {}", &[&ESPACIAL[a.espacial as usize % 3]]),
+        trf(911, "Latencia: {}", &[&latencia]),
+        String::from(tr(912, "Probar el sonido de aviso")),
+    ]
+}
+
+/// Cambia la fila `k` de Ajustes > Sonido (la opción siguiente) y lo guarda y lo dice al servicio. La 0 abre la ventana
+/// "Sonido" y la última suena el aviso. Lo que pasó, para la consola.
+fn cambiar_sonido(a: &mut AjSonido, k: usize) -> Option<String> {
+    use dashos::protocolo::sonido as sp;
+    match k {
+        0 | 8 => {
+            let l = llave_sonido();
+            let w: &[u32] = if k == 0 { &[sp::VENTANA] } else { &[sp::SONAR, sp::SON_AVISO] };
+            let b: Vec<u8> = w.iter().flat_map(|x| x.to_le_bytes()).collect();
+            let r = if l != 0 { dashos::canal_escribir(l, &b, &[]) } else { -1 };
+            return Some(alloc::format!("{}: {}", if k == 0 { "abrir la ventana Sonido" } else { "probar el aviso" }, r));
+        }
+        1 => a.tema = (a.tema + 1) % 3,
+        2 => a.sonidos = !a.sonidos,
+        3 => a.volumen_sonidos = VOLUMENES_SONIDOS[(VOLUMENES_SONIDOS.iter().position(|&v| v == a.volumen_sonidos).map_or(0, |i| i + 1)) % VOLUMENES_SONIDOS.len()],
+        4 => a.preajuste = (a.preajuste + 1) % 8,
+        5 => a.limitador = !a.limitador,
+        6 => a.espacial = (a.espacial + 1) % 3,
+        7 => a.latencia = (a.latencia + 1) % 3,
+        _ => return None,
+    }
+    let antes = leer_ajuste(FICHERO_SONIDO).ok();
+    let mut x = antes.as_deref().and_then(|b| kit::idioma::texto::Ajustes::leer(b).ok()).unwrap_or_else(|| {
+        let mut x = kit::idioma::texto::Ajustes::nuevo();
+        x.comentar(CABECERA_SONIDO);
+        x
+    });
+    for (c, v) in a.a_pares() {
+        let _ = x.poner(c, &v);
+    }
+    let usado = escribir_env(FICHERO_SONIDO, x.texto().as_bytes());
+    let guardado = if usado.is_ok() { guardar_en_envarc(FICHERO_SONIDO) } else { -1 };
+    let dicho = usar_sonido(a);
+    Some(alloc::format!("{}: en ENV: {}; guardado: {}; al sonido: {}", FICHERO_SONIDO, usado.map_or_else(|e| e, |n| alloc::format!("{} bytes", n)), guardado, if dicho { "sí" } else { "no" }))
+}
+
 /// Las filas de la lista: "programa · servicio". Sin '|', que separa las filas (un nombre así no lo da `inicio`).
 /// Sin nada concedido, una fila que lo dice (Quitar no hace nada en ella: no hay qué).
 fn filas(lista: &[(String, String)]) -> String {
@@ -2433,6 +2607,12 @@ fn ventana_dentro(categoria: usize, ce: &mut Centro, respuestas: &mut Vec<u32>, 
     let mut aj_avisos = leer_ajustes_avisos().unwrap_or(avisos_ajustes::Ajustes::DE_SERIE);
     let mut cc = leer_cc().unwrap_or_else(|_| cc_rejilla::Rejilla::de_serie());
     let (mut aj_dock, mut aj_osd, mut aj_discos) = leer_dock();
+    // Rama sonido-pro: los ajustes del sonido guardados, al servicio (al arrancar el centro: así quedan tras reiniciar).
+    let mut aj_sonido = leer_sonido();
+    if aj_sonido != AjSonido::DE_SERIE {
+        let dicho = usar_sonido(&aj_sonido);
+        println!("  [centro] los ajustes del sonido guardados, al servicio: {}", if dicho { "sí" } else { "no" });
+    }
     let poner = |i: &mut Interfaz, cat: usize, lista: &[(String, String)], reg: &[String]| {
         let (explicacion, contenido) = if cat == PERMISOS {
             (tr(87, "Lo que cada programa puede usar. Quitarlo lo revoca ya."), filas(lista))
@@ -2458,6 +2638,8 @@ fn ventana_dentro(categoria: usize, ce: &mut Centro, respuestas: &mut Vec<u32>, 
             (tr(237, "Qué sale en el panel rápido y en qué orden. Intro cambia el ancho o añade; se ve ya."), reg.join("|"))
         } else if cat == DOCK {
             (tr(161, "El dock, los avisos en pantalla y los discos del escritorio, como en DMS. Intro cambia una fila."), reg.join("|"))
+        } else if cat == SONIDO_CAT {
+            (tr(913, "Sonidos, efectos y latencia. Intro cambia una fila."), reg.join("|"))
         } else {
             (tr(94, "El sistema."), reg.join("|"))
         };
@@ -2525,6 +2707,8 @@ fn ventana_dentro(categoria: usize, ce: &mut Centro, respuestas: &mut Vec<u32>, 
         lineas_registro = lineas_cc(&cc);
     } else if cat == DOCK {
         lineas_registro = lineas_dock(&aj_dock, &aj_osd, &aj_discos);
+    } else if cat == SONIDO_CAT {
+        lineas_registro = lineas_sonido(&aj_sonido);
     } else if cat != PERMISOS {
         lineas_registro = acerca();
     }
@@ -2796,6 +2980,10 @@ fn ventana_dentro(categoria: usize, ce: &mut Centro, respuestas: &mut Vec<u32>, 
                             (aj_dock, aj_osd, aj_discos) = leer_dock();
                             lineas_dock(&aj_dock, &aj_osd, &aj_discos)
                         }
+                        SONIDO_CAT => {
+                            aj_sonido = leer_sonido();
+                            lineas_sonido(&aj_sonido)
+                        }
                         _ => acerca(),
                     };
                     println!("  [centro] {}: {}", CATEGORIAS[cat].1, lineas_registro.join("; "));
@@ -2952,6 +3140,16 @@ fn ventana_dentro(categoria: usize, ce: &mut Centro, respuestas: &mut Vec<u32>, 
                         CAMBIO_AVISOS.store(true, Ordering::Relaxed);
                         lineas_registro = lineas_avisos(&aj_avisos);
                         println!("  [centro] Avisos: {}; {}", lineas_registro[k], r);
+                        i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                        cambio = true;
+                    }
+                }
+                Some("elegir") if cat == SONIDO_CAT => {
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                    let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
+                    if let Some(r) = usize::try_from(v).ok().and_then(|k| cambiar_sonido(&mut aj_sonido, k)) {
+                        lineas_registro = lineas_sonido(&aj_sonido);
+                        println!("  [centro] Sonido: {}; {}", lineas_registro[v as usize], r);
                         i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
                         cambio = true;
                     }

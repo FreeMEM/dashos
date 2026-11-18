@@ -2526,6 +2526,12 @@ if [ -n "${MENUS_CAPTURAS:-}" ]; then
     python3 -I "$(dirname "$0")/guion_menus.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$MENUS_CAPTURAS" >/dev/null 2>&1 &
     MENUS_PID=$!
 fi
+# Rama sonido-pro: con SONIDO_CAPTURAS=prefijo, `tools/guion_sonido.py` (`make arranque-virt-sonido`): el mezclador,
+# el visualizador y los controles de medios, con capturas.
+if [ -n "${SONIDO_CAPTURAS:-}" ]; then
+    python3 -I "$(dirname "$0")/guion_sonido.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$SONIDO_CAPTURAS" >/dev/null 2>&1 &
+    SONIDO_PID=$!
+fi
 # Rama cuentas-2: con CUENTAS_CAPTURAS=prefijo, `tools/guion_cuentas.py` (`make arranque-virt-cuentas`).
 if [ -n "${CUENTAS_CAPTURAS:-}" ]; then
     python3 -I "$(dirname "$0")/guion_cuentas.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$CUENTAS_CAPTURAS" >/dev/null 2>&1 &

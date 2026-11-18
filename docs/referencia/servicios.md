@@ -633,31 +633,60 @@ escuchan la caja Amiga (sus plumas de Material) y, por el puente, el agente `das
 centro pone al arrancar la apariencia guardada y el aspecto de las cajas (`Prefs/apariencia`, `Prefs/cajas`); la de
 serie es la paleta del fondo, claro, y todo como DashOS.
 
-## Sonido (S19, A4)
+## Sonido (S19, A4; grafo de S19b, E1)
 
 El servicio "sonido" lee el canal "sonido"; el controlador de virtio-sound y los programas le escriben con copias
-marcadas, y `inicio` le dice de quién es cada marca. Mensajes de palabras de 32 bits (little-endian):
+marcadas, y `inicio` le dice de quién es cada marca. Mensajes de palabras de 32 bits (little-endian); los números, en
+`usuario/src/protocolo/sonido.rs`:
 
 | Orden | Quién | Datos | Llaves |
 |-------|-------|-------|--------|
 | 1 `SALIDA` | solo "virtio-sonido" | ranuras (1 a 64), cuadros por período (16 a 4096), ritmo (48.000) | la memoria de la salida |
 | 2 `TIC` | el controlador | | |
-| 10 `ABRIR` | un programa | muestra (0 enteros de 16 bits, 1 de 32, 2 coma flotante), canales (1 o 2), ritmo (8.000 a 192.000) | la memoria del anillo y el extremo de escritura de un canal del programa |
-| 11 `VOLUMEN` | el programa | izquierdo y derecho, como `f32` (0 a 4) | |
-| 12 `CERRAR` | el programa | | |
+| 10 `ABRIR` | un programa (hasta 8 flujos; 64 en total) | muestra (0 enteros de 16 bits, 1 de 32, 2 coma flotante), canales (1 o 2), ritmo (8.000 a 192.000) | la memoria del anillo y el extremo de escritura de un canal del programa |
+| 11 `VOLUMEN` | el programa | izquierdo y derecho, como `f32` (0 a 4); y el índice del flujo (sin él, el primero) | |
+| 12 `CERRAR` | el programa | el índice del flujo (sin él, el primero) | |
+| 13 `GENERAL` | "panel", "mezclador", "centro" | el volumen de la salida del sistema, `f32` | |
+| 20 `SUSCRIBIR` | "panel", "mezclador", "centro", "barra", "dock", "guardian" | | una memoria de 16 KB (el estado) y un extremo por donde despertarle |
+| 21 `NODO_VOLUMEN` | el mezclador ("panel", "mezclador", "centro") | nodo, izquierdo y derecho (`f32`) | |
+| 22 `NODO_SILENCIO` | el mezclador | nodo, 0 o 1 | |
+| 23 `NODO_SALIDA` | el mezclador | flujo, salida (fundido cruzado) | |
+| 24 `POR_DEFECTO` | el mezclador | salida | |
+| 25 `EFECTO` | el mezclador | qué (`EF_*`), valor (se recorta a su rango) | |
+| 26 `PERIODO` | el mezclador | 0 normal (256), 1 para tocar (64), 2 ahorro (1024) | |
+| 27 `VENTANA` | "panel", "centro", "barra", "dock" | (abre la ventana "Sonido") | |
+| 30 `MEDIOS` | un programa (lo suyo) | estado, capacidades, posición y duración en ms, largo del título (hasta 95) y del artista (hasta 63), y los textos (UTF-8) | opcional: el extremo por donde le llegan las órdenes |
+| 31 `MEDIOS_ORDEN` | los que pueden suscribirse | medio, orden (1 reproducir o pausar, 2 siguiente, 3 anterior) | |
+| 32 `MEDIOS_FIN` | el programa | | |
+| 40 `SONAR` | "panel", "mezclador", "centro", "barra", "dock", "guardian", "avisos", "sesiones" | evento (1 aviso, 2 bloqueo, 3 error, 4 conectar, 5 desconectar, 6 volumen, 7 entrar) | |
+| 41 `SONIDOS` | el mezclador | tema (0 Cristal, 1 Suave, 2 Retro), silenciados, volumen (0 a 100) | |
+| 42 `NO_MOLESTAR` | solo "panel" | 0 o 1 | |
+
+Lo que no es de quien lo manda se rechaza y se dice en el registro ("no le toca"); nunca se contesta.
+
+**El grafo** (`sonido/src/grafo.rs`): cada flujo es un nodo; cada salida, una cadena mezcla → ecualizador → espacial →
+limitador → salida. Corre en cuantos (el período del modo, sin pasar del del aparato) en orden topológico; las
+conexiones nuevas o quitadas, en rampa de un cuanto. El volumen de la salida es el de su mezcla.
+
+**El estado** (para el mezclador): la memoria del suscriptor, que el servicio rellena unas 30 veces por segundo (cada 6
+tics) y al momento cuando algo cambia; la disposición, en `protocolo/sonido.rs` (`W_*`). Se lee con su cerrojo de
+secuencia (impar mientras se escribe; `usuario/src/sonido_estado.rs`). El suscriptor sube `W_LATIDO` mientras enseña
+el espectro: si no lo sube en 0,6 s, el servicio deja de calcularlo. Al mezclador (y solo a él) se le despierta por su
+extremo cuando alguien pide `VENTANA`.
 
 **La salida** (del controlador): cabecera de palabras (escritos, leídos, ranuras, cuadros) y las ranuras desde el
 byte 64, cada una un período en estéreo de 16 bits. El servicio mueve "escritos" y el controlador "leídos". Con cada
-`TIC` (un búfer que devolvió el aparato) el servicio mezcla hasta tener 4 períodos por delante; si al controlador no
-le queda ninguno, suena silencio y lo cuenta como vacío.
+`TIC` (un búfer que devolvió el aparato) el servicio corre el grafo hasta tener los períodos de delante del modo (4
+normal, 2 para tocar, 8 ahorro); si al controlador no le queda ninguno, suena silencio y lo cuenta como vacío.
 
 **El anillo** de un programa (`usuario/src/sonido_cliente.rs`): cabecera de palabras (cabeza: bytes escritos; cola:
 bytes leídos; tamaño de los datos, potencia de dos) y los datos desde el byte 64. El programa mueve la cabeza y el
-servicio la cola. El servicio no se fía de la cabecera: lo disponible no pasa del tamaño. Un flujo por programa.
+servicio la cola. El servicio no se fía de la cabecera: lo disponible no pasa del tamaño.
 
 Cuando el anillo baja de la mitad, el servicio escribe 4 bytes en el canal del programa para despertarlo (una vez
 hasta que la cabeza se mueva). Si ese canal está cerrado, el programa murió: su flujo sale con un fundido de 5 ms. Al
-`CERRAR`, el servicio suena lo que quede en el anillo y quita el flujo.
+`CERRAR`, el servicio suena lo que quede en el anillo y quita el flujo. Por ese mismo canal le llegan las órdenes de
+`MEDIOS_ORDEN` (8 bytes: 31 y la orden), si lo dio con `MEDIOS`.
 
 ## Red (S13)
 
