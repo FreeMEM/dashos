@@ -17,10 +17,11 @@ usuario_inicio:
 1:  jmp 1b
 usuario_fin:
 
-// Intenta leer la memoria del kernel (el mapa lineal, 1 MB físico): tiene que morir él y seguir el sistema.
+// Intenta leer la memoria del kernel (el mapa lineal, 64 MB físicos: donde se carga): tiene que morir él y seguir el
+// sistema.
     .globl usuario_malo_inicio, usuario_malo_fin
 usuario_malo_inicio:
-    movabs rbx, 0xffffff8000100000
+    movabs rbx, 0xffffff8004000000
     mov rax, qword ptr [rbx]
     mov edi, 1
     mov eax, 2

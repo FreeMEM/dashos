@@ -1,5 +1,5 @@
 //! Elige el guion de enlace según la placa (U3): la Pi carga el kernel en 0x80000 y el cargador UEFI de QEMU `virt`,
-//! en 0x40200000. En x86-64 (S30, X1), `enlace_x86.ld`: el cargador UEFI lo pone en 0x100000.
+//! en 0x40200000. En x86-64 (S30, X1), `enlace_x86.ld`: el cargador UEFI lo pone en 0x4000000 (64 MB).
 fn main() {
     let x86 = std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86_64");
     let guion = if x86 {
@@ -22,7 +22,7 @@ fn main() {
         firmware_rtl8125(&dir);
         if std::env::var_os("CARGO_FEATURE_USO").is_some() {
             // La imagen de usar de x86 (`make x86-uso`) lleva todo el escritorio: sin comprimir no cabe por debajo de lo
-            // que ocupa OVMF desde 8 MB (el kernel de x86 se carga en 1 MB). Sus programas, como los de ARM.
+            // que ocupa OVMF desde 8 MB (el kernel de x86 se cargaba en 1 MB; desde el 2026-11-22, en 64 MB). Sus programas, como los de ARM.
             comprimir_programas(&dir, "src/inicio_x86_uso.rs", "x86_64-unknown-none");
         }
     }

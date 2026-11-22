@@ -8,8 +8,9 @@
 //! virtuales: si alguien pide una caja, no hay programa que la sirva y no se cuelga nada. También fuera lo que en
 //! `virt` sirve solo a las pruebas (`disco`, `ficheros`, los tonos, `hostil`...) y la GPU de la Pi.
 //!
-//! Los programas van comprimidos con LZ4, como en ARM (`build.rs`): el kernel de x86 se carga en 1 MB y, con todos sin
+//! Los programas van comprimidos con LZ4, como en ARM (`build.rs`): el kernel de x86 se cargaba en 1 MB y, con todos sin
 //! comprimir (más de 6 MB), pisaba lo que OVMF tiene ocupado desde 8 MB.
+//! Desde la unión de `revision` del 2026-11-22 ni así cabía (7,5 MB): se carga en 64 MB (`enlace_x86.ld`).
 
 use super::{DATOS, FIRMWARE, INTERRUPCION, MAQUINAS, OPCIONAL, PERMISO_DMA, PLAZO, REGISTRO, REGISTROS, RELOJ, PUERTOS, VARIABLES};
 

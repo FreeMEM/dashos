@@ -30,7 +30,8 @@ import time
 qmp_ruta, serie, carpeta = sys.argv[1], sys.argv[2], sys.argv[3]
 total = float(sys.argv[4]) if len(sys.argv) > 4 else 600
 inicio = time.time()
-ANCHO, ALTO = 1280, 720
+# El tamaño de la pantalla, el de PANTALLA (como `qemu_x86_a_mano.sh`); los sitios fijos de abajo son de 1280x720.
+ANCHO, ALTO = map(int, os.environ.get("PANTALLA", "1280x720").split("x"))
 os.makedirs(carpeta, exist_ok=True)
 
 

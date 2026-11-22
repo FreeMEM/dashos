@@ -44,7 +44,7 @@ C12: canales lanzados bien
 │   memoria compartida: cambiado por el consumidor
 C13: memoria compartida lanzada bien
 X4: syscall y sysret conservan los registros bien
-~Proceso: excepción 14 (fallo de página (#PF)) en 0x40000a (CR2 0xffffff8000100000, código 0x4); se termina
+~Proceso: excepción 14 (fallo de página (#PF)) en 0x40000a (CR2 0xffffff8004000000, código 0x4); se termina
 ~Proceso: excepción 14 (fallo de página (#PF)) en 0x400000 (CR2 0x600000, código 0x4); se termina
 │   el otro proceso sigue entero
 X4: un proceso no lee la memoria del kernel ni la de otro proceso bien

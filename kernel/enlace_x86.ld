@@ -1,7 +1,9 @@
 /* DashOS: guion de enlace del kernel en x86-64 (S30, X1 y X2).
  *
- * El cargador UEFI (uefi/src/x86_64.rs) pone cada segmento en su dirección física (la de AT, desde 1 MB, que OVMF deja
- * libre) y salta a la entrada en su dirección física. Las direcciones virtuales son las de la imagen del kernel en los
+ * El cargador UEFI (uefi/src/x86_64.rs) pone cada segmento en su dirección física (la de AT, desde 64 MB) y salta a la
+ * entrada en su dirección física. Antes era 1 MB, pero la imagen de usar llegó a 7,5 MB y OVMF tiene ocupado desde
+ * 8 MB (y en 16 MB descomprime su firmware): en 64 MB está libre. El cargador no reubica: si un firmware tuviera
+ * ocupado este tramo, lo dice y no arranca. Las direcciones virtuales son las de la imagen del kernel en los
  * 2 GB de arriba (IMAGEN + física): el modelo de código "kernel" de x86-64 las quiere ahí. arranque.s entra con la
  * proyección 1:1 del firmware, pone las tablas de arranque y salta arriba.
  */
@@ -9,7 +11,7 @@ ENTRY(_start)
 IMAGEN = 0xFFFFFFFF80000000;
 SECTIONS
 {
-    . = IMAGEN + 0x100000;
+    . = IMAGEN + 0x4000000;
     __kernel_inicio = .;
     .text : AT(ADDR(.text) - IMAGEN) { KEEP(*(.text.arranque)) *(.text .text.*) }
     . = ALIGN(4096);
