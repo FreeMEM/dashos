@@ -1,11 +1,16 @@
-//! Los registros del 68k que recibe una función nativa, y cómo salen de la copia que hace el JIT.
+//! Los registros del 68k que recibe una función nativa, y cómo salen de la copia que hace el JIT de Emu68.
+//!
+//! Desde X7 (la interfaz de motor, caja/motor.h) las funciones nativas reciben `Registros` tal cual; la copia de
+//! Emu68 la convierte su motor (caja/motor_emu68.c). `desde_jit` y `hacia_jit` quedan para las pruebas.
 //!
 //! El parche de la llamada nativa (`patches/emu68/0002-llamada-nativa-linea-a.patch`) llama a
 //! `dashos_native_call(uint64_t *regs, uint32_t index)` con `regs` apuntando a una copia de x0..x30. Los registros
 //! del 68k viven fijos en registros ARM: D0-D7 en x19-x26, A0-A4 en x13-x17, A5 en x27, A6 en x28 y A7 en x29.
 //! Al volver, el JIT los recarga de esa copia.
 
-/// D0-D7 y A0-A7 de una tarea 68k.
+/// D0-D7 y A0-A7 de una tarea 68k. Es el `motor_regs` de C (caja/motor.h, X7): así los reciben las funciones
+/// nativas, sea cual sea el motor que ejecuta el 68k.
+#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Registros {
     pub d: [u32; 8],

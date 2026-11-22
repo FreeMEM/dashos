@@ -1,0 +1,68 @@
+/*
+    DashOS, X7 (paso 2; S31, sección 3): la interfaz de motor de la caja Amiga. La caja (caja.c, y las bibliotecas de
+    Rust de pegamento/) no sabe qué ejecuta el 68k: lo que necesita de él pasa por aquí. Hoy, Emu68 en ARM
+    (motor_emu68.c); en x86, RelevoJIT.
+
+    Una sola CPU 68k para toda la caja: las tareas de exec cambian de registros dentro de una llamada nativa, no son
+    hilos. Las direcciones del 68k son las del proceso (base 0).
+*/
+#ifndef DASHOS_MOTOR_H
+#define DASHOS_MOTOR_H
+
+#include <stdint.h>
+
+/* Los registros que ve una función nativa: D0-D7 y A0-A7. Es el `Registros` de Rust (caja/exec/src/registros.rs,
+   #[repr(C)]): las funciones de pegamento/ los reciben así, sin saber del motor. */
+typedef struct motor_regs {
+    uint32_t d[8];
+    uint32_t a[8];
+} motor_regs;
+
+/* --- Lo que la caja da al motor --- */
+
+/* Una llamada nativa: el 68k ejecutó "$A0FF <índice>" (la tabla de saltos de una biblioteca). Con los registros en
+   `r`; lo que cambie en ellos, el 68k lo ve al volver. */
+void caja_nativa(motor_regs *r, uint32_t indice);
+
+/* --- Lo que el motor da a la caja --- */
+
+/* Lo que dice al arrancar ("JIT de Emu68 en un proceso de usuario big-endian"...). */
+const char *motor_nombre(void);
+/* Prepara el motor (su memoria de código, su estado). 0 bien; si no, un código distinto de 0 (ya dicho con di). */
+int motor_iniciar(void);
+/* Ejecuta el 68k desde `pc`, en modo de usuario y sin máscara de interrupciones, con D0 = `d0`, A0 = `a0`,
+   A6 = `a6`, A7 = USP = `a7`, ISP = MSP = `super` y VBR = `vbr` (el resto a 0, la FPU a NaN), hasta que vuelve a la
+   dirección 0. */
+void motor_arrancar(uint32_t pc, uint32_t a7, uint32_t a6, uint32_t a0, uint32_t d0, uint32_t super, uint32_t vbr);
+/* Desde una función nativa: ejecuta el 68k desde `pc` con los registros de `r` y con este SR y estas pilas (A7 en
+   r->a[7] es la de ese SR), hasta que vuelve a la dirección 0. Deja en `r` los D y A del final, y el resto del estado
+   (PC, SR, pilas, VBR) como estaba antes: la función nativa sigue donde estaba. */
+void motor_anidado(uint32_t pc, motor_regs *r, uint32_t sr, uint32_t usp, uint32_t isp, uint32_t msp);
+/* El estado del 68k que corre, desde una función nativa. */
+uint32_t motor_sr(void);
+void motor_pilas(uint32_t *usp, uint32_t *isp, uint32_t *msp);
+void motor_poner_usp(uint32_t usp);
+/* D0 al acabar motor_arrancar. */
+uint32_t motor_d0(void);
+/* Desde cualquier hilo: la interrupción de nivel 7 (la NMI: corta el programa) o la de nivel 6 (la de la caja). */
+void motor_cortar(void);
+void motor_interrumpir(void);
+/* Desde la función nativa de la interrupción de nivel 6: atendida. */
+void motor_interrupcion_atendida(void);
+/* Olvida todo lo traducido: entre programas, con el 68k parado. */
+void motor_olvidar(void);
+/* Lo mismo desde una función nativa (CacheClearU, SetFunction): menos lo que se está ejecutando. */
+void motor_olvidar_en_nativa(void);
+/* Cuántos bloques traducidos tiene (para las pruebas). */
+uint32_t motor_unidades(void);
+/* S28: dónde tiene el motor lo suyo (su estado y su código traducido, para escribir y para ejecutar): la caja
+   comprueba que nada de eso está al alcance del 68k (por encima de 4 GB). */
+#define MOTOR_ZONAS 3
+void motor_zonas(uintptr_t z[MOTOR_ZONAS]);
+/* Escribe los registros del 68k en la consola (cuando una prueba sale mal). */
+void motor_volcar(void);
+/* La coma flotante del 68k para pegamento/ (multitarea): FP0-FP7 (64 bits), FPSR, FPIAR y FPCR en v[0..10]. */
+void caja_fp_leer(uint64_t *v);
+void caja_fp_poner(const uint64_t *v);
+
+#endif

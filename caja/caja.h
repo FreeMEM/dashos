@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "motor.h"
 
 /* La memoria del 68k: empieza con 4 MB y crece según la pidan sus programas (caja_ampliar_ram), hasta el tope de su
    ajuste (Prefs/cajas, `memoria amiga`; de serie, 256 MB). Las direcciones del 68k son direcciones reales del proceso. */
@@ -55,14 +56,28 @@ static inline int en_ram68k(uint32_t a, uint32_t n)
     return a >= M68K_RAM && n <= largo && a - M68K_RAM <= largo - n;
 }
 
-/* Registros del 68k en la copia de x0..x30 que deja el JIT (EMIT_lineA, parche 0002). */
-#define R_D(n) (19 + (n))
-#define R_A(n) ((n) < 5 ? 13 + (n) : 22 + (n))
-static inline uint32_t lee_r(uint64_t *regs, int r) { return (uint32_t)regs[r]; }
-static inline void pon_r(uint64_t *regs, int r, uint32_t v) { regs[r] = v; }
-
-/* Lo que dice la caja: "  [caja-amiga] ..." */
+/* Lo que dice la caja: "  [caja-amiga] ..."; y un carácter suelto (la salida de los motores). */
 void di(const char *formato, ...);
+void caja_pon_c(void *data, char c);
+
+/* Las llamadas al sistema de DashOS (docs/referencia/kernel.md), para la caja y sus motores. */
+long caja_sc(long n, long a, long b, long c, long d, long e);
+#define SC_ESCRIBIR          1
+#define SC_SALIR             2
+#define SC_CERRAR            6
+#define SC_MEMORIA_CREAR     7
+#define SC_MEMORIA_PROYECTAR 8
+#define SC_MEMORIA_QUITAR    21
+#define SC_DORMIR            30
+#define SC_HILO_CREAR        40
+#define SC_HILO_UNIR         41
+#define SC_ESPERAR           42
+#define SC_PROCESO_SALIR     44
+#define SC_PAGINA_CERO       49
+#define E_ARGUMENTO          (-1L)
+#define P_LEER     1
+#define P_ESCRIBIR 3
+#define P_EJECUTAR 5
 
 /* --- Las bibliotecas nativas: exec, dos, graphics e intuition, en Rust (pegamento/, crates de caja/). --- */
 /* Monta exec en la memoria del 68k (con ExecBase en la dirección 4, escrita por la proyección `pagina0` de la página
@@ -71,7 +86,7 @@ uint32_t caja_rust_arrancar(uint32_t ram, uint32_t largo, uint64_t pagina0, uint
                             uint32_t chip);
 uint32_t caja_dosbase(void);
 /* Una llamada nativa: 0 bien, 1 nadie tiene ese número (D0 = -1), 2 hay que cortar el programa. */
-int caja_llamada(uint64_t *regs, uint32_t n);
+int caja_llamada(motor_regs *regs, uint32_t n);
 uint32_t caja_alloc_mem(uint32_t bytes, uint32_t atributos);
 void caja_free_mem(uint32_t dir, uint32_t bytes);
 uint32_t caja_bloques(uint32_t dueno);
@@ -101,15 +116,15 @@ void caja_cuentas_anidadas(uint32_t *hechas, uint32_t *no, uint32_t *excepciones
    es suyo (guarda sus registros, corre otra y deja los de la otra en regs: 0, o 1 si hay que cortar el programa); y
    dejar lista la dueña de un nivel cuando se cierran los de encima. */
 uint32_t caja_tarea_en_marcha(void);
-int caja_aparcar_en_vuelta(uint64_t *regs, uint32_t vuelta);
+int caja_aparcar_en_vuelta(motor_regs *regs, uint32_t vuelta);
 void caja_desaparcar(uint32_t t);
 /* Una tarea cae por una excepción sin tc_TrapCode (en modo de usuario, por `caida`, con su número en `vector`): si es
    la del programa, 0 (el programa acaba). Si es otra, la caja la quita, corre otra y deja sus registros en regs: 1. */
-int caja_caida(uint64_t *regs, uint32_t vector);
+int caja_caida(motor_regs *regs, uint32_t vector);
 /* La interrupción de la caja llegó con una tarea en modo de usuario (en `pc`, con `sr` y su pila en `usp`): si acabó
    su turno y hay otra, la caja le quita el testigo (guarda su CCR y su PC en su pila, para el RTR_SUELTO) y deja en
    regs los registros de la siguiente: 1. Si no, 0. */
-int caja_turno(uint64_t *regs, uint32_t usp, uint32_t pc, uint32_t sr, uint32_t rtr);
+int caja_turno(motor_regs *regs, uint32_t usp, uint32_t pc, uint32_t sr, uint32_t rtr);
 /* Si hay varias tareas: el reloj de la caja levanta su interrupción cada cuadro para mirar el turno. */
 void caja_turnos(int si);
 /* Desde el último programa: cambios de tarea, tareas acabadas y aparcadas en la vuelta de un nivel (y las pone a 0). */
@@ -124,7 +139,8 @@ int caja_ejecutar_68k(uint32_t pc, uint32_t *r, int usuario);
 #define ANIDADA_ACABADO  1   /* el programa acabó dentro (o se cortó): hay que deshacer todo */
 #define ANIDADA_TOPE     2   /* demasiados niveles: no se ejecuta */
 #define ANIDADA_PILA     3   /* la pila 68k de quien llama no vale: no se ejecuta */
-/* El JIT olvida lo traducido, desde una función nativa (CacheClearU, SetFunction): menos lo que se está ejecutando. */
+/* El JIT olvida lo traducido, desde una función nativa (CacheClearU, SetFunction): menos lo que se está ejecutando
+   (motor_olvidar_en_nativa). */
 void caja_jit_olvidar(void);
 /* 1 si alguien ha pedido Ctrl-C para el programa (y lo apaga). */
 int caja_tomar_ctrl_c(void);

@@ -36,7 +36,7 @@ MATH := $(basename $(notdir $(wildcard $(EMU68)/src/math/*.c)))
 
 OBJS := $(JIT_C:%=$(B)/%.o) $(JIT_CXX:%=$(B)/%.o) $(MATH:%=$(B)/math_%.o) \
 	$(B)/RegisterAllocator64.o $(B)/ExecutionLoop.o $(B)/emu68_context.o \
-	$(B)/caja.o $(B)/hunk.o $(B)/entrada.o $(B)/programas.o
+	$(B)/caja.o $(B)/motor_emu68.o $(B)/hunk.o $(B)/entrada.o $(B)/programas.o
 
 # La pila del ELF (64 KB, la de siempre) solo se usa al empezar: entrada.S pasa enseguida a una por encima de 4 GB.
 all: $(B)/caja-amiga
@@ -56,6 +56,8 @@ $(B)/math_%.o: $(EMU68)/src/math/%.c | $(B)
 $(B)/emu68_context.o: ../jit-host/emu68_context.c | $(B)
 	$(CC) $(CFLAGS) $(M68K_FIXED) -c $< -o $@
 $(B)/caja.o: caja.c | $(B)
+	$(CC) $(CFLAGS) -c $< -o $@
+$(B)/motor_emu68.o: motor_emu68.c | $(B)
 	$(CC) $(CFLAGS) -c $< -o $@
 $(B)/hunk.o: hunk.c | $(B)
 	$(CC) $(CFLAGS) -c $< -o $@

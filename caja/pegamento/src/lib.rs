@@ -1501,18 +1501,16 @@ fn atender_boopsi(a7: u32) -> bool {
 /// de `caja()` a través de `ejecutar_68k` y pide otra después.
 ///
 /// # Safety
-/// `regs` tiene que apuntar a 31 `u64` que se puedan leer y escribir (la copia de los registros del JIT).
+/// `regs` tiene que apuntar a unos `Registros` (`motor_regs` de caja/motor.h) que se puedan leer y escribir.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn caja_llamada(regs: *mut u64, n: u32) -> i32 {
-    // SEGURIDAD: lo garantiza quien llama (el parche 0002 deja la copia en la pila del JIT).
-    let x = unsafe { core::slice::from_raw_parts_mut(regs, caja_exec::registros::X_TOTAL) };
-    let Some(mut r) = Registros::desde_jit(x) else {
+pub unsafe extern "C" fn caja_llamada(regs: *mut Registros, n: u32) -> i32 {
+    if regs.is_null() {
         return C_RECHAZADA;
-    };
-    let n = n as u16;
-    let res = llamada(n, &mut r);
-    r.hacia_jit(x);
-    res
+    }
+    // SEGURIDAD: lo garantiza quien llama (caja_nativa, con los del motor); sin copiarlos: es la llamada de cada
+    // función nativa, y la copia se notaba en los cambios de tarea.
+    let r = unsafe { &mut *regs };
+    llamada(n as u16, r)
 }
 
 /// Lo primero de la función `n`: la de exec, o `Ajena` (la sigue `avanzar`).
@@ -1813,14 +1811,17 @@ pub extern "C" fn caja_tarea_en_marcha() -> u32 {
 /// registros en `regs`. 0, o 1 si hay que cortar el programa.
 ///
 /// # Safety
-/// `regs` tiene que apuntar a la copia de 31 registros del JIT.
+/// `regs` tiene que apuntar a unos `Registros` que se puedan leer y escribir.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn caja_aparcar_en_vuelta(regs: *mut u64, vuelta: u32) -> i32 {
-    // SEGURIDAD: lo garantiza quien llama (dashos_native_call, con la copia del JIT).
-    let x = unsafe { core::slice::from_raw_parts_mut(regs, caja_exec::registros::X_TOTAL) };
-    let Some(mut r) = Registros::desde_jit(x) else { return 1 };
+pub unsafe extern "C" fn caja_aparcar_en_vuelta(regs: *mut Registros, vuelta: u32) -> i32 {
+    if regs.is_null() {
+        return 1;
+    }
+    // SEGURIDAD: lo garantiza quien llama (caja_nativa, con los del motor).
+    let mut r = unsafe { *regs };
     let v = multitarea::aparcar_en_vuelta(&mut r, vuelta);
-    r.hacia_jit(x);
+    // SEGURIDAD: como arriba.
+    unsafe { *regs = r };
     v
 }
 
@@ -1843,12 +1844,14 @@ pub unsafe extern "C" fn caja_cuentas_tareas(cambios: *mut u32, acabadas: *mut u
 /// anidados abiertos, se quita y corre otra (sus registros, en `regs`): 1. Si no, 0: el programa acaba.
 ///
 /// # Safety
-/// `regs` tiene que apuntar a la copia de 31 registros del JIT.
+/// `regs` tiene que apuntar a unos `Registros` que se puedan leer y escribir.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn caja_caida(regs: *mut u64, vector: u32) -> i32 {
-    // SEGURIDAD: lo garantiza quien llama (dashos_native_call, con la copia del JIT).
-    let x = unsafe { core::slice::from_raw_parts_mut(regs, caja_exec::registros::X_TOTAL) };
-    let Some(mut r) = Registros::desde_jit(x) else { return 0 };
+pub unsafe extern "C" fn caja_caida(regs: *mut Registros, vector: u32) -> i32 {
+    if regs.is_null() {
+        return 0;
+    }
+    // SEGURIDAD: lo garantiza quien llama (caja_nativa, con los del motor).
+    let mut r = unsafe { *regs };
     let Some(c) = caja() else { return 0 };
     let t = c.ex.tarea_actual();
     if t == 0 || t == c.principal || !c.ex.tareas().contains(&t) || multitarea::tiene_nivel(t) {
@@ -1860,7 +1863,8 @@ pub unsafe extern "C" fn caja_caida(regs: *mut u64, vector: u32) -> i32 {
     recoger_avisos(c);
     match multitarea::siguiente(&mut r, None) {
         multitarea::Siguiente::Lista => {
-            r.hacia_jit(x);
+            // SEGURIDAD: como arriba.
+            unsafe { *regs = r };
             1
         }
         multitarea::Siguiente::Plazo => 0,
@@ -1871,14 +1875,17 @@ pub unsafe extern "C" fn caja_caida(regs: *mut u64, vector: u32) -> i32 {
 /// en `regs`): 1. Si no, 0.
 ///
 /// # Safety
-/// `regs` tiene que apuntar a la copia de 31 registros del JIT.
+/// `regs` tiene que apuntar a unos `Registros` que se puedan leer y escribir.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn caja_turno(regs: *mut u64, usp: u32, pc: u32, sr: u32, rtr: u32) -> i32 {
-    // SEGURIDAD: lo garantiza quien llama (dashos_native_call, con la copia del JIT).
-    let x = unsafe { core::slice::from_raw_parts_mut(regs, caja_exec::registros::X_TOTAL) };
-    let Some(mut r) = Registros::desde_jit(x) else { return 0 };
+pub unsafe extern "C" fn caja_turno(regs: *mut Registros, usp: u32, pc: u32, sr: u32, rtr: u32) -> i32 {
+    if regs.is_null() {
+        return 0;
+    }
+    // SEGURIDAD: lo garantiza quien llama (caja_nativa, con los del motor).
+    let mut r = unsafe { *regs };
     if multitarea::turno_por_reloj(&mut r, usp, pc, sr, rtr) {
-        r.hacia_jit(x);
+        // SEGURIDAD: como arriba.
+        unsafe { *regs = r };
         1
     } else {
         0

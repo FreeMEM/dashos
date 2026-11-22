@@ -201,7 +201,15 @@ Dos líneas a la vez (decisión 4 de S30):
     - GLES 2 pide paso = ancho × 4; el compositor aún no la usa (G3 y G4: el protocolo de escena y el servidor).
     - El aviso al dominio de un cuadro nuevo va por la memoria (el dominio la mira cada 200 µs mientras espera): una
       interrupción hacia el invitado lo quitaría.
-- [ ] X7 **Caja Amiga en x86** con el intérprete de RelevoJIT (necesita R3 y la caja Amiga en `main`).
+- [ ] X7 **Caja Amiga en x86** con RelevoJIT. En cuatro pasos (2026-11-22, alcance aprobado por jefe-dash; S31,
+  secciones 2 y 3):
+  - [x] 1. RelevoJIT, lo que pide la caja (rama `motor-caja` de RelevoJIT, f74486e): entrada anidada desde las
+    funciones de línea A y F, base 0 (`RELEVO_OPT_BASE_ZERO`), `relevo_invalidate_all` y la carrera del aviso.
+  - [x] 2. La interfaz de motor en `caja/` (`caja/motor.h`): Emu68 detrás de ella (`caja/motor_emu68.c`), sin
+    cambiar lo que hace en ARM. Las funciones nativas de Rust reciben `motor_regs` (`Registros`, `#[repr(C)]`).
+  - [ ] 3. La caja para x86: `motor_relevo`, la plataforma (llamadas al sistema, reloj, orden de bytes de
+    `lee32`/`pon32`), el pegamento para `x86_64-unknown-none` y su Makefile.
+  - [ ] 4. La caja en `x86-uso` y en `arranque-x86`, con un programa Amiga que abra su ventana; medir contra Emu68.
 - [ ] X8 **La caja con el JIT** de RelevoJIT (necesita R6).
 - [ ] X9 **Un PC de verdad**, arrancando desde USB (necesita la máquina; decisión 5 de S30).
 
@@ -1172,3 +1180,28 @@ la imagen de usar de x86 arranca en 1920x1080 con KVM (capturas en `~/recuperar/
 `make -C kernel prueba-instalar-x86` (el pendrive en vivo, con el kernel en 64 MB) BIEN, 46 de 46.
 No comprobado: un PC de verdad con el kernel en 64 MB; el tope de memoria del programa `graficos-cliente` (el de serie)
 con ventanas grandes.
+
+### 2026-11-22 — X7, pasos 1 y 2: RelevoJIT para la caja y la interfaz de motor
+
+- **Paso 1** (RelevoJIT, rama `motor-caja`, f74486e; su `docs/BITACORA.md`): entrada anidada, base 0,
+  `relevo_invalidate_all` y la carrera del aviso. `make test` bien; `prueba-x86` con `RELEVO_DIR` bien y el banco igual.
+- **Paso 2** (rama `motor` de DashOS, desde `par`): `caja/motor.h` y `caja/motor_emu68.c`. Lo cosido a Emu68 sale de
+  `caja.c` tal cual: su estado, `MainLoop` y su anidado (con las unidades fijadas), el SR y las pilas en v21, `INTF`,
+  olvidar lo traducido, la FPU y el arranque del JIT. `caja.c` queda con lo común: `caja_nativa` (lo que era
+  `dashos_native_call`), los niveles anidados sobre `motor_anidado`, el arranque sobre `motor_arrancar` y las pruebas.
+  Las cuatro entradas de Rust (`caja_llamada`, `caja_aparcar_en_vuelta`, `caja_caida`, `caja_turno`) reciben
+  `Registros` (`#[repr(C)]`, el `motor_regs` de C) en vez de la copia x0..x30 de Emu68; `caja_llamada` sin copiarlos.
+  `caja_sc` y `caja_pon_c` pasan a ser de la caja para los motores (las llamadas al sistema siguen siendo de ARM: paso 3).
+
+Comprobado en ARM, `make -C kernel arranque-virt` (TCG), contra una vuelta de referencia en `par` el mismo día:
+
+- La caja, todas sus pruebas bien en las cuatro vueltas. Una vez `ventana.exe` se cerró sola a los 40 s (el clic del
+  guion no llegó; la prueba acepta las dos cosas); en las otras tres, con su gadget, como en la referencia.
+- Tres de las cuatro vueltas se pararon en "[ram] Ana: avisos hostiles" (llegan 16 de 63 timbres): el intermitente
+  apuntado en `docs/bitacoras/dock-discos.md`, con la misma cifra, del servicio de archivos y no de la caja. La
+  referencia, una sola vuelta, no lo dio. La tercera vuelta, entera en verde.
+- Tiempos de la caja: la suma de sus pruebas de 100 ms o más, 51,19 s en la referencia y 51,30 s con el motor (la
+  mejor de dos; casi todo es esperar al guion). Más lentos: los cambios de tarea (`procesos-e`, 20.002 cambios: 129 ms
+  en la referencia; 142 y 151 con la copia de registros en C y en Rust; 136 ms, un 5 %, sin la de Rust) y `procesos-b`
+  (759 ms; 846 y 870; 817, un 8 %). Es la conversión entre la copia de Emu68 y `motor_regs` en cada llamada nativa
+  (unos 117 ns más por llamada en TCG). Lo demás, dentro del ruido.
