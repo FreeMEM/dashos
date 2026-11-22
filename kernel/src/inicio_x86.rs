@@ -44,7 +44,10 @@ use uso::PROGRAMAS;
 #[cfg(all(feature = "graficos", not(feature = "uso")))]
 static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("consola", elf!("consola"), &[("registro", REGISTRO), ("serie", PUERTOS)], &[]),
-    ("dominio-graficos", elf!("dominio-graficos"), &[("hipervisor", MAQUINAS), ("gpu-dominio", APARATO_PCI), ("dominio-graficos", DATOS)], &[]),
+    // X13: nombra "graficos" antes que nadie (lo sirve: la ventana compartida); `graficos-cliente`, su prueba, le pone
+    // una ventana y la pinta cuadro a cuadro.
+    ("dominio-graficos", elf!("dominio-graficos"), &[("hipervisor", MAQUINAS), ("gpu-dominio", APARATO_PCI), ("dominio-graficos", DATOS)], &["graficos"]),
+    ("graficos-cliente", elf!("graficos-cliente"), &[], &["graficos"]),
 ];
 
 /// Los servicios que lanza `inicio`, en orden, con los aparatos (por nombre y tipo) y los canales (por nombre) que le

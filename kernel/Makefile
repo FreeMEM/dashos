@@ -909,7 +909,7 @@ DOMINIO_GRAFICOS ?= $(HOME)/recuperar/dashos-97/dominio-graficos
 NUCLEO_X86_GRAFICOS := target/kernel-x86-graficos.elf
 graficos-x86: FORCE
 	@test -f "$(DOMINIO_GRAFICOS)/bzImage" -a -f "$(DOMINIO_GRAFICOS)/initramfs.cpio" || { echo "Falta el dominio de gráficos en $(DOMINIO_GRAFICOS) (no va en git): python3 tools/dominio_graficos.py preparar"; exit 1; }
-	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86),caja $(RELEVO_PATCH) --bin inicio --bin consola --bin dominio-graficos
+	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86),caja $(RELEVO_PATCH) --bin inicio --bin consola --bin dominio-graficos --bin graficos-cliente
 	cargo build $(CARGO_PERFIL) --target x86_64-unknown-none --features graficos$(if $(PCID),$(coma)pcid)
 	$(OBJCOPY_X86) --strip-debug $(ELF_X86) $(NUCLEO_X86_GRAFICOS)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(NUCLEO_X86_GRAFICOS)) cargo build --release --target x86_64-unknown-uefi

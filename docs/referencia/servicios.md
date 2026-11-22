@@ -990,6 +990,30 @@ servidor de QEMU, que también contesta a la MAC del invitado, y le da la 10.0.2
 Los invitados de prueba de `usuario/invitados/*.s` y sus hostiles siguen corriendo antes de Linux. Bitácora:
 `docs/bitacoras/caja-linux.md`.
 
+## Ventana compartida con el dominio de gráficos (X13, x86)
+
+El servicio `dominio-graficos` (`usuario/src/bin/dominio_graficos.rs`, imagen `graficos` de x86) sirve el canal
+"graficos": un programa le da la memoria de una ventana y el dominio de gráficos (un Linux con la GPU pasada) la lee tal
+cual, sin copia, para subirla a la GPU. El protocolo, las constantes y la disposición de la página de control están en
+`usuario/src/protocolo/compartida.rs`; el lado del dominio, en `caja-linux/dominios/graficos_dominio.c`.
+
+- `PONER` `[1, ancho, alto, paso, formato]` con dos llaves: el objeto de memoria (leer y escribir; `maquina_memoria` lo
+  pide así) y el lado de escribir de un canal propio para las respuestas. Responde `[1, ranura]` o `[1, código]` con un
+  código negativo: `E_LIMITE` sin ranura libre o sin sitio en la ventana, `E_ARGUMENTO` si las medidas no caben en el
+  objeto, o el error de `maquina_memoria`.
+- `LISTO` `[2, ranura, secuencia baja, secuencia alta]`: el cuadro está escrito. Hasta el `VISTO` de esa secuencia, el
+  programa no toca su memoria (el dominio la lee mientras).
+- `ACABAR` `[3, ranura]`: no habrá más cuadros.
+- `VISTO` `[4, ranura, secuencia baja, secuencia alta]`, por el canal de respuestas: el dominio subió ese cuadro.
+
+La memoria se proyecta en la física del invitado desde `VENTANA_GPA` (0xA000_0000, 256 MB): la página de control (64 KB)
+y cada búfer en su sitio alineado a 2 MB. El dominio la ve por /dev/mem (está fuera de su e820) con caché. Tras apuntar
+lo visto, el dominio escribe en el puerto 0x5F0 (el timbre): el monitor avisa entonces con `VISTO`.
+
+Limitaciones: 16 ranuras y 256 MB en total; un búfer no se quita ni se reusa su sitio (no hay forma de sacar memoria
+de una máquina en marcha); el dominio la ve también para escribir; GLES 2 pide `paso` = `ancho` × 4. La prueba,
+`graficos-cliente` en `make -C kernel graficos-x86`.
+
 ## Caja Amiga (H4, H5)
 
 `caja/` (C, con el JIT de Emu68, y `caja/pegamento/`, Rust): un proceso big-endian que ejecuta programas 68k con exec,

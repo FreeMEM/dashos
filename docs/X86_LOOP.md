@@ -186,6 +186,21 @@ Dos líneas a la vez (decisión 4 de S30):
       interrupciones por cuadro). Sin AVIC/APICv ni interrupciones entregadas sin salir.
     - Como mucho 8 interrupciones por aparato; sin MSI-X compartida con otros registros ni la entrada 0 de una MSI
       que pida varios mensajes.
+  - [x] X13 **Memoria compartida sin copia con el dominio** (G6 de S38, 2026-11-22): la ventana compartida
+    (`dashos::protocolo::compartida`). Un programa de DashOS da la memoria de una ventana al servicio `dominio-graficos`
+    por el canal "graficos"; el servicio la proyecta tal cual en la física del invitado (`maquina_memoria`, que ya
+    existía) y el dominio la lee por /dev/mem y la sube a la GPU. Una página de control con 16 ranuras (secuencia lista
+    y vista), y un timbre (un OUT al puerto 0x5F0) para avisar sin que nadie mire la memoria en bucle. Probado en
+    `make -C kernel graficos-x86` con `graficos-cliente` (300 cuadros de 640x480). Lo que queda abierto:
+    - Quitar un búfer: no hay forma de sacar memoria de una máquina en marcha; las ranuras y su sitio no se reusan
+      (16 y 256 MB en total).
+    - El dominio ve la memoria también para escribir (`maquina_memoria` la pide con escribir): proyectarla solo para
+      leer en la EPT/NPT.
+    - La subida a la GPU sigue copiando dentro del dominio (glTexSubImage2D con virgl: 0,24 ms por cuadro de 640x480).
+      Importar la memoria como textura sin copia (dmabuf) es la otra mitad de G6, con una GPU de verdad.
+    - GLES 2 pide paso = ancho × 4; el compositor aún no la usa (G3 y G4: el protocolo de escena y el servidor).
+    - El aviso al dominio de un cuadro nuevo va por la memoria (el dominio la mira cada 200 µs mientras espera): una
+      interrupción hacia el invitado lo quitaría.
 - [ ] X7 **Caja Amiga en x86** con el intérprete de RelevoJIT (necesita R3 y la caja Amiga en `main`).
 - [ ] X8 **La caja con el JIT** de RelevoJIT (necesita R6).
 - [ ] X9 **Un PC de verdad**, arrancando desde USB (necesita la máquina; decisión 5 de S30).
@@ -1112,3 +1127,47 @@ Lo que se vio por el camino:
 
 No comprobado: una GPU de verdad (G8); VT-x (pegaso); TCG (la prueba pide KVM); el escritorio de DashOS compuesto en
 el dominio (G3, G4, X13). Lo que queda, en la tarea X12.
+
+### 2026-11-22 — Unión de `revision` en x86, el kernel en 64 MB y X13
+
+Lo pidió el usuario el 2026-11-22 (por jefe-dash): llevar x86 y ARM a la par y seguir con X12 y lo que venga. Rama `par`
+(desde `x86`, en `.worktrees/x86`), sin subir.
+
+- **Unión de `revision`** (5f57eaf5, 116 commits) en x86 (1f593ca9, 76), commit fafb6044. Once ficheros con conflicto,
+  casi todos de juntar las dos cosas. Lo que no era juntar:
+  - La acción de tanda "instalar": en x86 instalaba DashOS en el disco (S32, con un número de plan) y en `revision`
+    instala un paquete (S8, Paq). La de S32 pasa a "instalar-sistema", al final de la lista (las de Paq no cambian de
+    número). Cambian `tanda.rs`, `sesiones.rs`, la orden `Instalar` y el programa `instalar`.
+  - El sonido: `revision` rehízo el servicio (el grafo). Lo de X5c se lleva encima: el primer controlador que manda
+    `SALIDA` ("virtio-sonido" o "hda") es el que suena, y solo sus tics marcan el ritmo.
+  - `xhci_comun.rs`: la barrera de antes del bit de ciclo, por `dashos::barrera::escrituras` (en `revision` era un
+    `dmb` de ARM a pelo).
+  - La imagen de usar de x86 (`inicio_x86_uso.rs`) con lo nuevo de `virt` con `uso`: `paq`, `dock` y `mezclador`;
+    `guardian` con "fondo", `barra` con "sonido" y `panel` con "avisos". `build.rs` busca `paq` en
+    `ordenes/target/<destino>` (antes, solo el de ARM).
+  - `arranque_x86.txt`: la raíz del disco de serie trae `Fondos/` y `Paquetes/`.
+- **El kernel de x86 en 64 MB** (14acca09). Con todo lo de ARM, la imagen de usar mide 7,5 MB y no arrancaba: el
+  cargador no podía reservar de 1 MB a 8,5 MB (OVMF tiene ocupado desde 8 MB; en 16 MB descomprime su firmware). En
+  64 MB está libre. Las tablas del arranque ya veían el primer GB: solo cambian `enlace_x86.ld` y la prueba X4 que lee
+  el kernel por el mapa lineal.
+- **X13**: la ventana compartida (arriba, en la tarea). Escrito con la interfaz de `maquina_memoria` (ya existía) y,
+  del lado del dominio, las interfaces públicas de Linux (/dev/mem, `ioperm`/`outl` de musl) y GLES 2.
+
+Medido en shiva con KVM, la prueba `graficos-cliente` (640x480, XRGB8888, 300 cuadros):
+
+| | VT-d | AMD-Vi |
+|---|---|---|
+| Cuadros vistos y bien (en memoria los 300, en pantalla 10) | 300, 0 mal | 300, 0 mal |
+| El dominio lee la memoria compartida | 1589 a 1939 MB/s (con caché) | — |
+| De "listo" a "visto" (subir, pintar y esperar el refresco de 75 Hz), media y peor | 19,7 y 29,7 ms | 19,7 y 29,8 ms |
+| Subir el cuadro a la GPU en el dominio (glTexSubImage2D con virgl) | 0,23 a 0,24 ms | 0,24 ms |
+| Pintar el cuadro en DashOS (el programa) | 0,41 ms | 0,41 ms |
+
+La CPU de DashOS por cuadro del plasma (lo de X12) salió entre 0,99 y 1,17 ms (antes, 0,55 a 0,69): con el timbre y
+sin él igual, y con la máquina a una carga media de 16 (otras sesiones compilando). No vale para comparar; hay que
+medirlo con el PC quieto.
+
+Comprobado: `make -C kernel prueba` (ARM) BIEN; `prueba-x86`, `arranque-x86`, `graficos-x86` (IOMMU=intel y amd) BIEN;
+la imagen de usar de x86 arranca en 1920x1080 con KVM (capturas en `~/recuperar/registros/dashos-x86-2026-11-22/`).
+No comprobado: `prueba-instalar-x86` y el pendrive (el kernel en 64 MB) ni un PC de verdad; el tope de memoria del
+programa `graficos-cliente` (el de serie) con ventanas grandes.

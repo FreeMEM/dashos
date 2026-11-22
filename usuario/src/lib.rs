@@ -27,6 +27,8 @@ pub mod vigilar;
 pub mod protocolo {
     pub mod archivos;
     pub mod avisos;
+    /// X13: la ventana compartida sin copia entre los programas y el dominio de gráficos.
+    pub mod compartida;
     pub mod comprobar;
     pub mod pantallas;
     pub mod red;

@@ -14,6 +14,13 @@
  *    cuadros, el tiempo y la CPU del programa por cuadro (getrusage: lo suyo y lo del kernel del dominio en sus
  *    llamadas; no las interrupciones);
  *  - comprueba un píxel del último cuadro (glReadPixels) contra la cuenta del sombreador hecha aquí;
+ *  - X13, si la línea del kernel trae dashos.compartida=<dirección>,<tamaño>: la ventana compartida con DashOS (la
+ *    memoria de un programa de DashOS proyectada en el dominio, sin copia; `usuario/src/protocolo/compartida.rs`). Por
+ *    /dev/mem ve la página de control y el búfer de la ranura 0; cada vez que DashOS dice que hay un cuadro nuevo
+ *    (su secuencia), comprueba unos píxeles en la memoria compartida contra la cuenta de su dibujo, lo sube a una
+ *    textura, lo pinta encima del fondo, lo cambia a la pantalla y apunta lo visto. Cada 30, comprueba también un píxel
+ *    de la pantalla. Tras apuntar cada cuadro visto, toca el timbre (un OUT al puerto 0x5F0) para que DashOS avise al
+ *    programa. Acaba a los 3 s sin cuadros nuevos (o si DashOS marca la ranura como acabada);
  *  - "dominio: fin graficos <código>" (0 si todo bien), sync y apaga. Sin ACPI el kernel no sabe apagar y se para; el
  *    último cuadro se queda en la pantalla.
  *
@@ -28,6 +35,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+#include <sys/io.h>
+#include <sys/mman.h>
 #include <sys/mount.h>
 #include <sys/reboot.h>
 #include <sys/resource.h>
@@ -78,6 +88,24 @@ static double cpu_propia(void) {
     struct rusage r;
     getrusage(RUSAGE_SELF, &r);
     return r.ru_utime.tv_sec + r.ru_utime.tv_usec / 1e6 + r.ru_stime.tv_sec + r.ru_stime.tv_usec / 1e6;
+}
+
+/* El valor de `nombre` en la línea del kernel (en `b`, hasta el espacio), o NULL. */
+static char *de_la_linea(const char *nombre, char *b, int largo) {
+    int f = open("/proc/cmdline", O_RDONLY);
+    if (f < 0)
+        return NULL;
+    int n = read(f, b, largo - 1);
+    close(f);
+    if (n <= 0)
+        return NULL;
+    b[n] = 0;
+    char *p = strstr(b, nombre);
+    if (!p)
+        return NULL;
+    p += strlen(nombre);
+    p[strcspn(p, " \n")] = 0;
+    return p;
 }
 
 /* La orden: dashos.graficos=<segundos>. */
@@ -260,6 +288,244 @@ static void buscar_pantalla(void) {
     drmModeFreeResources(res);
 }
 
+/* El cuadro pintado, a la pantalla por KMS: el primero con drmModeSetCrtc, los demás con drmModePageFlip, esperando a
+ * que se vea. 0 si bien; 6 si algo falló (ya dicho). */
+static struct gbm_bo *anterior;
+
+static int mostrar(EGLDisplay d, EGLSurface s, struct gbm_surface *sup, int primero) {
+    drmEventContext ev = {.version = 2, .page_flip_handler = al_cambiar};
+    if (!eglSwapBuffers(d, s)) {
+        decir("eglSwapBuffers: 0x%x", eglGetError());
+        return 6;
+    }
+    struct gbm_bo *bo = gbm_surface_lock_front_buffer(sup);
+    uint32_t id = bo ? fb_de(bo) : 0;
+    if (!id) {
+        decir("sin búfer de pantalla");
+        return 6;
+    }
+    if (primero) {
+        if (drmModeSetCrtc(fd, crtc, id, 0, 0, &conector, 1, &modo)) {
+            decir("drmModeSetCrtc: %s", strerror(errno));
+            return 6;
+        }
+    } else {
+        cambio_pendiente = 1;
+        if (drmModePageFlip(fd, crtc, id, DRM_MODE_PAGE_FLIP_EVENT, &cambio_pendiente)) {
+            decir("drmModePageFlip: %s", strerror(errno));
+            return 6;
+        }
+        while (cambio_pendiente) {
+            struct pollfd pf = {.fd = fd, .events = POLLIN};
+            if (poll(&pf, 1, 3000) <= 0) {
+                decir("el cambio de búfer no llega");
+                return 6;
+            }
+            drmHandleEvent(fd, &ev);
+        }
+    }
+    if (anterior)
+        gbm_surface_release_buffer(sup, anterior);
+    anterior = bo;
+    return 0;
+}
+
+/* --- X13: la ventana compartida con DashOS (`usuario/src/protocolo/compartida.rs`, la misma disposición) --- */
+
+#define MAGIA 0x4D485344u /* "DSHM" */
+#define RANURAS_DESDE 0x40
+#define CONTROL 0x10000
+#define PUERTO_AVISO 0x5f0 /* el timbre: tras apuntar lo visto, el número de la ranura */
+
+struct ranura {
+    uint32_t estado; /* 0 libre, 1 puesta, 2 acabada */
+    uint32_t ancho, alto, paso;
+    uint64_t desplazamiento, tamano;
+    uint64_t secuencia; /* el último cuadro listo (lo escribe DashOS) */
+    uint64_t visto;     /* el último subido (lo escribe el dominio) */
+    uint32_t formato;   /* 0: bytes R, G, B, A; 1: B, G, R, A (XRGB8888 de DashOS) */
+    uint32_t relleno;
+    uint64_t subir_us; /* lo que llevó subirlos, sumado (lo escribe el dominio, para medir) */
+};
+
+/* El dibujo de prueba de `graficos-cliente` (`usuario/src/bin/graficos_cliente.rs`, `dibujo`): bloques de 16 x 16 que
+ * cambian con el cuadro `k`, como XRGB8888. */
+static uint32_t dibujo(uint32_t x, uint32_t y, uint64_t k) {
+    uint32_t bx = x / 16, by = y / 16, kk = (uint32_t)k;
+    uint32_t r = (bx * 7 + kk * 3) & 255, g = (by * 11 + kk * 5) & 255, b = ((bx ^ by) * 13 + kk) & 255;
+    return 0xff000000u | r << 16 | g << 8 | b;
+}
+
+static const char *vs_ventana = "attribute vec2 pos;\n"
+                                "uniform float esc;\n"
+                                "varying vec2 uv;\n"
+                                "void main() { uv = vec2(0.5 + pos.x * 0.5, 0.5 - pos.y * 0.5); gl_Position = vec4(pos * esc, 0.0, 1.0); }\n";
+static const char *fs_ventana = "precision mediump float;\n"
+                                "varying vec2 uv;\n"
+                                "uniform sampler2D tex;\n"
+                                "uniform float bgra;\n"
+                                "void main() { vec4 c = texture2D(tex, uv); gl_FragColor = vec4(mix(c.rgb, c.bgr, bgra), 1.0); }\n";
+
+/* Lo que mide la ventana en la pantalla (de -ESC a ESC en las dos direcciones). */
+#define ESC 0.7f
+
+/* La columna o fila de la pantalla (contando desde abajo en y) que cae en la textura en `quiere` (de 0 a 1), lejos del
+ * borde de un bloque; y el texel que le toca. */
+static void punto(int pantalla, int texeles, float quiere, int abajo, int *p, int *texel) {
+    for (int d = 0; d < 64; d++) {
+        float n0 = (quiere * 2 - 1) * ESC;
+        if (abajo)
+            n0 = -n0;
+        int c = (int)((n0 + 1) / 2 * pantalla) + d;
+        float n = ((c + 0.5f) / pantalla * 2 - 1) / ESC;
+        float u = abajo ? 0.5f - n * 0.5f : 0.5f + n * 0.5f;
+        int t = (int)(u * texeles);
+        if (t % 16 >= 3 && t % 16 <= 12) {
+            *p = c;
+            *texel = t;
+            return;
+        }
+    }
+    *p = pantalla / 2;
+    *texel = texeles / 2;
+}
+
+static int compartida(EGLDisplay d, EGLSurface s, struct gbm_surface *sup, GLuint p_fondo, GLint u_t, double t_arranque) {
+    char linea[2048];
+    char *v = de_la_linea("dashos.compartida=", linea, sizeof linea);
+    if (!v)
+        return 0;
+    uint64_t base = strtoull(v, &v, 0), tam = *v == ',' ? strtoull(v + 1, NULL, 0) : 0;
+    if (!base || tam < CONTROL) {
+        decir("compartida: la línea no vale");
+        return 8;
+    }
+    int mem = open("/dev/mem", O_RDWR | O_CLOEXEC);
+    volatile uint8_t *control = mem < 0 ? MAP_FAILED : mmap(NULL, CONTROL, PROT_READ | PROT_WRITE, MAP_SHARED, mem, base);
+    if (control == MAP_FAILED) {
+        decir("compartida: no se ve la página de control en %#llx: %s", (unsigned long long)base, strerror(errno));
+        return 8;
+    }
+    if (*(volatile uint32_t *)control != MAGIA) {
+        decir("compartida: la página de control no es de DashOS (%#x)", *(volatile uint32_t *)control);
+        return 8;
+    }
+    struct ranura *r = (struct ranura *)(control + RANURAS_DESDE);
+    double espera = ahora();
+    while (__atomic_load_n(&r->estado, __ATOMIC_ACQUIRE) == 0) {
+        if (ahora() - espera > 60) {
+            decir("compartida: nadie pone una ventana en 60 s");
+            return 9;
+        }
+        usleep(1000);
+    }
+    uint32_t ancho = r->ancho, alto = r->alto, paso = r->paso, formato = r->formato;
+    uint64_t desp = r->desplazamiento, largo = r->tamano;
+    if (paso != ancho * 4 || (uint64_t)paso * alto > largo || desp < CONTROL || desp + largo > tam || desp % 4096) {
+        decir("compartida: la ranura 0 no vale (%ux%u, paso %u, %llu bytes en +%#llx)", ancho, alto, paso, (unsigned long long)largo, (unsigned long long)desp);
+        return 9;
+    }
+    if (ioperm(PUERTO_AVISO, 4, 1)) {
+        decir("compartida: sin el puerto del timbre: %s", strerror(errno));
+        return 9;
+    }
+    const uint8_t *px = mmap(NULL, largo, PROT_READ, MAP_SHARED, mem, base + desp);
+    if (px == MAP_FAILED) {
+        decir("compartida: no se ve el búfer: %s", strerror(errno));
+        return 9;
+    }
+    decir("compartida: ventana de %ux%u (formato %u) en %#llx, %.0f ms tras pedirla", ancho, alto, formato, (unsigned long long)(base + desp), (ahora() - espera) * 1000);
+    /* Cuánto cuesta leer la memoria compartida (si el dominio la viera sin caché, aquí se notaría). */
+    uint8_t *copia = malloc(largo);
+    double t = ahora();
+    for (int i = 0; i < 4; i++)
+        memcpy(copia, px, largo);
+    double mbs = 4.0 * largo / (ahora() - t) / 1e6;
+    free(copia);
+    decir("compartida: leer el búfer compartido, %.0f MB/s", mbs);
+
+    GLuint p = programa(vs_ventana, fs_ventana);
+    GLint u_esc = glGetUniformLocation(p, "esc"), u_bgra = glGetUniformLocation(p, "bgra");
+    GLuint tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, ancho, alto, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    static const GLfloat quad[] = {-1, -1, 1, -1, -1, 1, 1, 1};
+    int sx, sy, tx, ty;
+    punto(modo.hdisplay, ancho, 0.53f, 0, &sx, &tx);
+    punto(modo.vdisplay, alto, 0.48f, 1, &sy, &ty);
+    const uint32_t muestras[5][2] = {{0, 0}, {ancho - 1, 0}, {0, alto - 1}, {ancho - 1, alto - 1}, {ancho / 2 + 5, alto / 2 + 5}};
+
+    int cuadros = 0, en_memoria = 0, en_pantalla = 0, mal = 0;
+    double subir = 0, subir_cpu = 0, cpu0 = cpu_propia(), t0 = ahora(), ultimo = ahora();
+    uint64_t visto = 0;
+    for (;;) {
+        uint64_t k = __atomic_load_n(&r->secuencia, __ATOMIC_ACQUIRE);
+        if (k == visto) {
+            if (__atomic_load_n(&r->estado, __ATOMIC_ACQUIRE) == 2 || (cuadros && ahora() - ultimo > 3) || ahora() - ultimo > 60)
+                break;
+            usleep(200);
+            continue;
+        }
+        ultimo = ahora();
+        /* Lo que dice la memoria compartida, sin copiarla: el cuadro k tal cual lo dejó DashOS. */
+        for (int i = 0; i < 5; i++) {
+            uint32_t x = muestras[i][0], y = muestras[i][1];
+            uint32_t hay = *(const volatile uint32_t *)(px + (uint64_t)y * paso + 4 * x), quiere = dibujo(x, y, k);
+            if (hay != quiere) {
+                if (mal < 5)
+                    decir("compartida: cuadro %llu, (%u, %u) en memoria: %#x, esperado %#x", (unsigned long long)k, x, y, hay, quiere);
+                mal++;
+            }
+        }
+        en_memoria++;
+        double a = ahora(), ac = cpu_propia();
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, ancho, alto, GL_RGBA, GL_UNSIGNED_BYTE, px);
+        subir += ahora() - a;
+        subir_cpu += cpu_propia() - ac;
+        glUseProgram(p_fondo);
+        glUniform1f(u_t, (float)(ahora() - t_arranque));
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, quad);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        glUseProgram(p);
+        glUniform1f(u_esc, ESC);
+        glUniform1f(u_bgra, formato == 1 ? 1.0f : 0.0f);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        if (cuadros % 30 == 0) {
+            unsigned char c[4] = {0};
+            glReadPixels(sx, sy, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, c);
+            uint32_t q = dibujo(tx, ty, k);
+            int dr = abs((int)((q >> 16) & 255) - c[0]), dg = abs((int)((q >> 8) & 255) - c[1]), db = abs((int)(q & 255) - c[2]);
+            if (dr > 2 || dg > 2 || db > 2) {
+                if (mal < 5)
+                    decir("compartida: cuadro %llu, pantalla (%d, %d) = texel (%d, %d): %u %u %u, esperado %u %u %u", (unsigned long long)k, sx, sy, tx, ty, c[0], c[1], c[2], (q >> 16) & 255, (q >> 8) & 255, q & 255);
+                mal++;
+            }
+            en_pantalla++;
+        }
+        int e = mostrar(d, s, sup, 0);
+        if (e)
+            return e;
+        cuadros++;
+        visto = k;
+        r->subir_us = (uint64_t)(subir * 1e6);
+        __atomic_store_n(&r->visto, k, __ATOMIC_RELEASE);
+        outl(0, PUERTO_AVISO);
+    }
+    double tiempo = ultimo - t0, cpu = cpu_propia() - cpu0;
+    if (!cuadros) {
+        decir("compartida: ningún cuadro en 60 s");
+        return 10;
+    }
+    decir("compartida: %d cuadros de %ux%u en %.0f ms, %d comprobados en memoria y %d en pantalla, %d mal; subir %.3f ms por cuadro (CPU %.3f ms); CPU del programa %.3f ms por cuadro", cuadros, ancho, alto, tiempo * 1000, en_memoria, en_pantalla, mal, subir * 1000 / cuadros, subir_cpu * 1000 / cuadros, cpu * 1000 / cuadros);
+    return mal ? 10 : 0;
+}
+
 int main(void) {
     mkdir("/dev", 0755);
     mkdir("/proc", 0555);
@@ -334,8 +600,6 @@ int main(void) {
     glEnableVertexAttribArray(0);
     float aspecto = (float)modo.vdisplay / modo.hdisplay;
 
-    drmEventContext ev = {.version = 2, .page_flip_handler = al_cambiar};
-    struct gbm_bo *anterior = NULL;
     int cuadros = 0, cuadros_ultimo = 0, codigo = 0;
     double t0 = 0, t_ultimo = 0, cpu0 = 0;
     float t_ult = 0;
@@ -359,46 +623,8 @@ int main(void) {
         glUniform2f(u_esc, 0.25f * aspecto, 0.25f);
         glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, cuadro);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        if (!eglSwapBuffers(d, s)) {
-            decir("eglSwapBuffers: 0x%x", eglGetError());
-            codigo = 6;
+        if ((codigo = mostrar(d, s, sup, !cuadros)))
             break;
-        }
-        struct gbm_bo *bo = gbm_surface_lock_front_buffer(sup);
-        uint32_t id = bo ? fb_de(bo) : 0;
-        if (!id) {
-            decir("sin búfer de pantalla");
-            codigo = 6;
-            break;
-        }
-        if (!cuadros) {
-            if (drmModeSetCrtc(fd, crtc, id, 0, 0, &conector, 1, &modo)) {
-                decir("drmModeSetCrtc: %s", strerror(errno));
-                codigo = 6;
-                break;
-            }
-        } else {
-            cambio_pendiente = 1;
-            if (drmModePageFlip(fd, crtc, id, DRM_MODE_PAGE_FLIP_EVENT, &cambio_pendiente)) {
-                decir("drmModePageFlip: %s", strerror(errno));
-                codigo = 6;
-                break;
-            }
-            while (cambio_pendiente) {
-                struct pollfd pf = {.fd = fd, .events = POLLIN};
-                if (poll(&pf, 1, 3000) <= 0) {
-                    decir("el cambio de búfer no llega");
-                    codigo = 6;
-                    break;
-                }
-                drmHandleEvent(fd, &ev);
-            }
-            if (codigo)
-                break;
-        }
-        if (anterior)
-            gbm_surface_release_buffer(sup, anterior);
-        anterior = bo;
         cuadros++;
         if (cuadros == 1)
             decir("pintando %ux%u por KMS (%.0f ms desde el /init)", modo.hdisplay, modo.vdisplay, (ahora() - t_arranque) * 1000);
@@ -437,6 +663,8 @@ int main(void) {
               medidos / tiempo, cpu * 1000, cpu * 1000 / medidos);
         /* Lo último a la vista: el cuadro que se pintó al final (el de la comprobación no se cambia a la pantalla). */
     }
+    if (!codigo)
+        codigo = compartida(d, s, sup, p_fondo, u_t, t_arranque);
     apagar(codigo);
     return 0;
 }

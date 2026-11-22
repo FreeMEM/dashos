@@ -394,6 +394,11 @@ test = false
 required-features = ["caja"]
 
 [[bin]]
+name = "graficos-cliente"
+path = "src/bin/graficos_cliente.rs"
+test = false
+
+[[bin]]
 name = "sin-maquina"
 path = "src/bin/sin_maquina.rs"
 test = false

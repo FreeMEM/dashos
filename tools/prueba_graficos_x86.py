@@ -45,6 +45,13 @@ ESPERADOS = [
     "[dominio-graficos] medida:",
     "[dominio-graficos] dominio: fin graficos 0",
 ]
+# X13, la ventana compartida: el programa de prueba y el dominio, cada uno en su orden (van mezclados).
+COMPARTIDA = [
+    ["[dominio-graficos] ventana compartida en 0xa0000000 del invitado", "[graficos-cliente] ventana de 640x480 en la ranura 0",
+     "[graficos-cliente] 300 de 300 cuadros vistos por el dominio", "[dominio-graficos] ventana compartida: 1 búferes puestos, 300 cuadros listos"],
+    ["dominio: compartida: ventana de 640x480 (formato 1)", "dominio: compartida: leer el búfer compartido",
+     "dominio: compartida: 300 cuadros de 640x480", "dominio: fin graficos 0"],
+]
 MALOS = ("fallo de DMA", "interrupción bloqueada", "Kernel panic", "[dominio-graficos] MAL", "[dominio-graficos] aviso")
 OVMF = "/usr/share/edk2/x64/OVMF_CODE.4m.fd"
 OVMF_VARS = "/usr/share/edk2/x64/OVMF_VARS.4m.fd"
@@ -103,6 +110,11 @@ def main():
                     capturas.append(sal / f"captura-{k}.png")
                     capturar(vnc, capturas[-1])
                     time.sleep(0.5)
+            # X13: una más con la ventana compartida en pantalla (para verla; no se compara).
+            if len(capturas) == 2 and "dominio: compartida: ventana de" in texto:
+                time.sleep(1)
+                capturas.append(sal / "captura-compartida.png")
+                capturar(vnc, capturas[-1])
             if "[dominio-graficos] dominio: fin " in texto or "[dominio-graficos] MAL" in texto or "Kernel panic" in texto:
                 time.sleep(1)
                 break
@@ -125,14 +137,28 @@ def main():
             bien = False
             break
         i += 1
+    for grupo in COMPARTIDA:
+        i = 0
+        for e in grupo:
+            while i < len(lineas) and e not in lineas[i]:
+                i += 1
+            if i == len(lineas):
+                print(f'MAL: falta (en orden) "{e}"')
+                bien = False
+                break
+            i += 1
+    for l in lineas:
+        if "dominio: compartida: " in l and " mal;" in l and " 0 mal;" not in l:
+            print("MAL:", l.strip())
+            bien = False
     for m in MALOS:
         for l in lineas:
             if m in l:
                 print("MAL:", l.strip())
                 bien = False
                 break
-    if len(capturas) == 2 and all(c.exists() for c in capturas):
-        na, nb, distintas = mirar(*capturas)
+    if len(capturas) >= 2 and all(c.exists() for c in capturas[:2]):
+        na, nb, distintas = mirar(*capturas[:2])
         print(f"capturas de la GPU del dominio: {capturas[0]} y {capturas[1]}: no negras {na} y {nb}; distintas {distintas}")
         bien &= na and nb and distintas
     else:
@@ -140,7 +166,8 @@ def main():
         bien = False
     for l in lineas:
         if "dominio: cuadros " in l and " en " in l or "[dominio-graficos] medida:" in l or "arrancado y pintando" in l \
-                or "[dominio-graficos] GPU" in l or "GL_RENDERER" in l or "salidas del invitado;" in l:
+                or "[dominio-graficos] GPU" in l or "GL_RENDERER" in l or "salidas del invitado;" in l \
+                or "compartida" in l or "[graficos-cliente]" in l:
             print(" ", l.strip())
     print(f"graficos-x86 ({a.iommu}): {'BIEN' if bien else 'MAL'} en {time.time() - t0:.0f} s; la salida en {serie}")
     sys.exit(0 if bien else 1)
