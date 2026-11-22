@@ -207,9 +207,13 @@ Dos líneas a la vez (decisión 4 de S30):
     funciones de línea A y F, base 0 (`RELEVO_OPT_BASE_ZERO`), `relevo_invalidate_all` y la carrera del aviso.
   - [x] 2. La interfaz de motor en `caja/` (`caja/motor.h`): Emu68 detrás de ella (`caja/motor_emu68.c`), sin
     cambiar lo que hace en ARM. Las funciones nativas de Rust reciben `motor_regs` (`Registros`, `#[repr(C)]`).
-  - [ ] 3. La caja para x86: `motor_relevo`, la plataforma (llamadas al sistema, reloj, orden de bytes de
-    `lee32`/`pon32`), el pegamento para `x86_64-unknown-none` y su Makefile.
-  - [ ] 4. La caja en `x86-uso` y en `arranque-x86`, con un programa Amiga que abra su ventana; medir contra Emu68.
+  - [x] 3. La caja para x86: `motor_relevo`, la plataforma (llamadas al sistema, reloj, orden de bytes de
+    `lee32`/`pon32`), el pegamento para `x86_64-unknown-none` y su Makefile. Prueba: `make -C kernel caja-x86`.
+  - [ ] 4. Medir contra Emu68 (en máquinas de verdad: aquí ARM va por TCG y x86 por KVM) y, con el guion largo en x86,
+    la caja dentro de `arranque-x86`. Mirado el 2026-11-22: metida en `arranque-x86`, su ventana se queda el teclado y
+    falta "[ventana] tecla 30 recibida" (el guion corto de x86 manda la "a" a ciegas); y salió "[ficheros] memoria: ...
+    sin memoria MAL" (no está en lo esperado de x86: sin saber si ya salía antes). Queda en su prueba, `caja-x86`. En la
+    imagen de usar, como en ARM, fuera de momento (corre sus programas de prueba).
 - [ ] X8 **La caja con el JIT** de RelevoJIT (necesita R6).
 - [ ] X9 **Un PC de verdad**, arrancando desde USB (necesita la máquina; decisión 5 de S30).
 
