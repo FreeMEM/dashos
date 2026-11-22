@@ -1169,5 +1169,6 @@ medirlo con el PC quieto.
 
 Comprobado: `make -C kernel prueba` (ARM) BIEN; `prueba-x86`, `arranque-x86`, `graficos-x86` (IOMMU=intel y amd) BIEN;
 la imagen de usar de x86 arranca en 1920x1080 con KVM (capturas en `~/recuperar/registros/dashos-x86-2026-11-22/`).
-No comprobado: `prueba-instalar-x86` y el pendrive (el kernel en 64 MB) ni un PC de verdad; el tope de memoria del
-programa `graficos-cliente` (el de serie) con ventanas grandes.
+`make -C kernel prueba-instalar-x86` (el pendrive en vivo, con el kernel en 64 MB) BIEN, 46 de 46.
+No comprobado: un PC de verdad con el kernel en 64 MB; el tope de memoria del programa `graficos-cliente` (el de serie)
+con ventanas grandes.
