@@ -1,0 +1,15 @@
+# X7: la caja Amiga en x86-64 (`make -C kernel caja-x86`): el mismo proceso de la caja que en ARM, con RelevoJIT (su
+# intérprete) en vez de Emu68. Lo básico de sus pruebas: el 68k suma y escribe por la dos.library nativa, la línea A, exec
+# y dos sobre el servicio de archivos y un ejecutable hunk.
+DashOS: arranque por UEFI en x86-64
+~│   [caja-amiga] Intérprete de RelevoJIT en un proceso de usuario de x86-64
+~│   [caja-amiga] hola desde un programa 68k, por la dos.library nativa
+~│   [caja-amiga] suma de 1 a 100000 en el 68k: 705082704
+~│   [caja-amiga] el 68k dio 705082704 (esperado 705082704) con 4 llamadas nativas
+~│   [caja-amiga] línea A desconocida: excepción 10 del 68k, 1 rechazada, 1 llamada buena: bien
+~│   [caja-amiga] exec, dos, graphics e intuition nativas (Rust): ExecBase $
+~│   [caja-amiga] saludo.exe acabó con 0 (vector -1), 7 llamadas nativas
+# La tanda entera, hasta la prueba 9: el 68k escribe en la página 0 y el kernel termina la caja, como en ARM.
+~│   [caja-amiga] el 68k escribe en la dirección 4 (ExecBase), en la página 0 de solo lectura: la caja tiene que morir
+~se termina
+~│   [inicio] caja-amiga acabó: clase 2, código 0

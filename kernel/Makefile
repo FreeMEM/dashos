@@ -915,6 +915,19 @@ graficos-x86: FORCE
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(NUCLEO_X86_GRAFICOS)) cargo build --release --target x86_64-unknown-uefi
 	python3 ../tools/prueba_graficos_x86.py ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi $(DOMINIO_GRAFICOS) --iommu $(or $(IOMMU),intel) --salida target/graficos
 
+# X7: la caja Amiga de x86-64 (`caja/build-x86/caja-amiga`, con el intérprete de RelevoJIT) con sus programas de
+# prueba: la imagen `caja` (la consola, el compositor, el disco NVMe, el servicio de archivos y la caja) en QEMU q35, y
+# lo que dice la caja contra pruebas/caja_x86.txt. RelevoJIT, de RELEVO_DIR (su rama motor-caja, aún sin subir).
+NUCLEO_X86_CAJA := target/kernel-x86-caja.elf
+caja-x86: firmware-x86 $(DISCO_NVME) FORCE
+	$(MAKE) -C ../caja x86 $(if $(RELEVO_DIR),RELEVO_DIR=$(abspath $(RELEVO_DIR)))
+	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86) $(RELEVO_PATCH) --bin inicio --bin consola --bin compositor --bin nvme --bin archivos
+	cargo build $(CARGO_PERFIL) --target x86_64-unknown-none --features caja$(if $(PCID),$(coma)pcid)
+	$(OBJCOPY_X86) --strip-debug $(ELF_X86) $(NUCLEO_X86_CAJA)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(NUCLEO_X86_CAJA)) cargo build --release --target x86_64-unknown-uefi
+	cp pruebas/caja_x86.txt target/esperados_caja_x86.txt
+	$(ACCEL_QEMU) GUARDAR=$(abspath target/salida_caja_x86.txt) ARQ=x86_64 QEMU_EXTRA="-drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_caja_x86.txt $(or $(TIEMPO_X86),300)
+
 # La imagen de usar en x86-64 (`make x86-uso`): el escritorio de `virt-uso` (`kernel/src/inicio_x86_uso.rs`) en QEMU q35
 # con OVMF, en una ventana, con KVM si hay /dev/kvm (SIN_KVM=1 lo quita), una tableta USB y el teclado, el disco de
 # serie (compilado para x86: DASHOS_ARQ=x86_64), la red de usuario de QEMU, el sonido y la pantalla por virtio-gpu

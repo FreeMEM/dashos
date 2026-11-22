@@ -53,6 +53,10 @@ void motor_interrupcion_atendida(void);
 void motor_olvidar(void);
 /* Lo mismo desde una función nativa (CacheClearU, SetFunction): menos lo que se está ejecutando. */
 void motor_olvidar_en_nativa(void);
+/* La memoria del 68k cambió: [desde, hasta) pasa a ser RAM (`ram`) o deja de serlo (antes de quitarla). La caja la
+   amplía y la encoge (caja_ampliar_ram, caja_encoger_ram); un motor que no mira la MMU del proceso (Emu68) no hace
+   nada. */
+void motor_memoria(uint32_t desde, uint32_t hasta, int ram);
 /* Cuántos bloques traducidos tiene (para las pruebas). */
 uint32_t motor_unidades(void);
 /* S28: dónde tiene el motor lo suyo (su estado y su código traducido, para escribir y para ejecutar): la caja

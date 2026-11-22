@@ -50,9 +50,21 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("graficos-cliente", elf!("graficos-cliente"), &[], &["graficos"]),
 ];
 
+/// X7 (`caja`): la caja Amiga de x86 (`caja/build-x86/caja-amiga`, con RelevoJIT) con lo que necesita para sus
+/// programas de prueba: el compositor (sus ventanas Amiga), el disco y el servicio de archivos (SYS:). Sus llaves, como
+/// en ARM: 1 el permiso de página 0, 2 "ventanas" y 3 "archivos".
+#[cfg(all(feature = "caja", not(any(feature = "uso", feature = "graficos"))))]
+static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
+    ("consola", elf!("consola"), &[("registro", REGISTRO), ("serie", PUERTOS)], &[]),
+    ("compositor", elf!("compositor"), &[("pantalla", FIRMWARE), ("pantalla-info", DATOS)], &["ventanas"]),
+    ("nvme", elf!("nvme"), &[("dma-nvme", PERMISO_DMA), ("nvme", REGISTROS), ("nvme", INTERRUPCION | OPCIONAL)], &["disco"]),
+    ("archivos", elf!("archivos"), &[], &["disco", "archivos"]),
+    ("caja-amiga", include_bytes!("../../caja/build-x86/caja-amiga"), &[("pagina0", PAGINA_CERO)], &["ventanas", "archivos"]),
+];
+
 /// Los servicios que lanza `inicio`, en orden, con los aparatos (por nombre y tipo) y los canales (por nombre) que le
 /// pasa a cada uno: los de ARM (`inicio.rs`) que tienen sus aparatos en un PC.
-#[cfg(not(any(feature = "uso", feature = "graficos")))]
+#[cfg(not(any(feature = "uso", feature = "graficos", feature = "caja")))]
 static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // La consola (C48), con el registro y los puertos de COM1 (X6).
     ("consola", elf!("consola"), &[("registro", REGISTRO), ("serie", PUERTOS)], &[]),
@@ -110,6 +122,8 @@ const APAGAR: u32 = 10;
 const AVISO_MEMORIA: u32 = 11;
 /// El permiso de poner la hora del calendario (S13): para `hora`.
 const RELOJ: u32 = 12;
+/// El permiso de página 0 (llamada 49), para la caja Amiga (X7): el mismo número que en `inicio.rs`.
+const PAGINA_CERO: u32 = 9;
 /// Puertos de E/S (X6): los de COM1, para la consola. Era el 12 antes de unir `revision`, donde el 12 es el del reloj.
 const PUERTOS: u32 = 13;
 /// S32: el permiso de las variables de arranque de la NVRAM (llamada 64), para el instalador. El 20, lejos de los que
@@ -348,6 +362,7 @@ pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
     apuntar(&mut llaves, "apagar", APAGAR, Llave::nueva(Objeto::PermisoApagar, DERECHOS));
     apuntar(&mut llaves, "memoria", AVISO_MEMORIA, Llave::nueva(Objeto::PermisoMemoria, DERECHOS));
     apuntar(&mut llaves, "reloj", RELOJ, Llave::nueva(Objeto::PermisoReloj, DERECHOS));
+    apuntar(&mut llaves, "pagina0", PAGINA_CERO, Llave::nueva(Objeto::PermisoPaginaCero, DERECHOS));
     // S32: arrancado de un pendrive en vivo. El sistema, en memoria ("vivo", para `disco-vivo`, que lo sirve como disco:
     // lo que se cambie se pierde al apagar), la zona entera tal como la dejó el cargador ("vivo-original", de solo
     // lectura, para el instalador: el sistema sin tocar, el cargador y el plan sin manos) y el permiso de las variables

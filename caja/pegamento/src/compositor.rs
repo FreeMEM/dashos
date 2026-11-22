@@ -1023,11 +1023,12 @@ impl Compositor for CompositorWayland {
         // SEGURIDAD: el búfer de la ventana está proyectado en `v.va` con al menos ancho·f × alto·f × 4 bytes (lo creó
         // `crear_bufer` con este tamaño) y solo se quita al soltarlo, tras lo cual `v` ya no lo apunta.
         let dst = unsafe { slice::from_raw_parts_mut(v.va as *mut u32, anf * alf) };
-        // XRGB8888 de Wayland es un u32 en little-endian: sus bytes, dados la vuelta en la caja.
-        let d = escala::ampliar(pix, ancho, alto, f, dano, dst, u32::swap_bytes);
+        // XRGB8888 de Wayland es un u32 en little-endian: en la caja de ARM (big-endian), con los bytes dados la vuelta; en
+        // la de x86 (X7), tal cual.
+        let d = escala::ampliar(pix, ancho, alto, f, dano, dst, u32::to_le);
         if f > 1 && !textos.is_empty() {
             let letras = self.letras.get_or_insert_with(LetrasKit::nuevas);
-            nitido::componer(letras, textos, pix, ancho, alto, f, dano, dst, u32::swap_bytes);
+            nitido::componer(letras, textos, pix, ancho, alto, f, dano, dst, u32::to_le);
         }
         if d.vacio() {
             self.mandar(&e);

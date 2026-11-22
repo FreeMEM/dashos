@@ -1215,3 +1215,35 @@ No es de la caja ni de x86. En `make -C kernel arranque-virt` (ARM, TCG), con la
 `ram` dio "llegan 16 timbres" (de 63) en 3 de 5 vueltas el 2026-11-22 (las tres con la rama `motor`; la de referencia,
 en `par`, una sola vuelta, bien). Es la misma cifra que apunta `docs/bitacoras/dock-discos.md` (16 de 63 en los 300 ms
 que espera la prueba, con otras QEMU en marcha). Sin mirar la causa: para la sesión del servicio de archivos.
+
+### 2026-11-22 — X7, paso 3: la caja Amiga en x86-64 con el intérprete de RelevoJIT
+
+Rama `motor`. Lo mismo que en ARM (`caja.c`, `hunk.c`, las bibliotecas de Rust de `pegamento/`) compilado para x86-64,
+con otro motor y otra plataforma debajo:
+
+- **`caja/motor_relevo.c`**: RelevoJIT (rama `motor-caja`, enlazado en `pegamento/` como dependencia de x86) con su
+  intérprete, un 68040 con FPU, base 0. Su mapa de páginas: la RAM del 68k (y lo que crece o encoge, por
+  `motor_memoria`, nuevo en la interfaz; Emu68 no hace nada) y, en los primeros 64 KB, una página del anfitrión que hace
+  el acceso de verdad (ExecBase en la dirección 4; escribir ahí mata la caja, como en ARM). La llamada nativa es su
+  línea A; los niveles anidados, su entrada anidada; la interrupción de la caja, el nivel 6, y la NMI, el 7. La FPU se
+  convierte entre 80 bits y double para `pegamento/` (pendiente: guardar la extendida entre cambios de tarea).
+- **La plataforma**: `caja_sc` con `syscall`, el reloj con el TSC (su frecuencia, de rdi al arrancar, para C y para
+  `dashos::FRECUENCIA`), `entrada_x86.S` (las `R_X86_64_RELATIVE`), y `lee16`/`lee32`/`pon16`/`pon32` dan la vuelta a los
+  bytes donde el proceso es little-endian. Lo que en ARM da Emu68 (`support.c` lleva ensamblador de ARM): `caja/x86/`
+  (formato, `memcpy`, `memset`, `memmove`, `bzero` y el cerrojo de TLSF); `tlsf.c` de Emu68 con el parche 0016 (su
+  parada de error era `wfe`).
+- **Rust**: `pegamento/` para `x86_64-unknown-none` (PIE) sin cambios en las bibliotecas; solo el volcado de píxeles al
+  compositor, que daba la vuelta siempre (`u32::swap_bytes`) y ahora escribe en little-endian (`u32::to_le`: en ARM, lo
+  mismo que antes).
+- **`make -C caja x86`** (`build-x86/caja-amiga`) y **`make -C kernel caja-x86`**: la imagen `caja` (opción nueva del
+  kernel: consola, compositor, NVMe, archivos y la caja, con su permiso de página 0, que `inicio_x86.rs` da ahora en todas
+  las imágenes) en QEMU q35, contra `pruebas/caja_x86.txt`. RelevoJIT sale de `RELEVO_DIR` (por omisión, su worktree
+  `motor-caja`) hasta que esa rama esté en GitHub.
+
+Resultado (TCG): la tanda entera de la caja, la misma que en ARM, sin ninguna línea MAL: el 68k suma y escribe por la
+dos.library nativa, la línea A, el vigilante corta un bucle sin fin con la NMI, el cargador hunk y su prueba hostil, una
+ventana Amiga en el compositor de DashOS, `hostil.exe` y el Enforcer, los siete virus de laboratorio y la guardia de
+ficheros, `actualiza.exe`, los programas de Dash (texto, ventana, Ctrl-C, trampas, GadTools, ReAction), BOOPSI, ramlib,
+cybergraphics, la multitarea (20.002 cambios de tarea en 133 ms) y, al final, la caja muere al escribir en la página 0
+("caja-amiga acabó: clase 2"). Igual que en ARM: `ventana.exe` y la ventana de Dash se cierran solas por tiempo (en esta
+imagen no hay guion que pulse su gadget).

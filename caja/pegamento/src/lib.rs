@@ -289,6 +289,18 @@ fn escribir_latin1(datos: &[u8]) {
     }
 }
 
+// X7: RelevoJIT, el motor de x86 (../motor_relevo.c llama a su interfaz de C); sin nombrarlo, no se enlazaría.
+#[cfg(target_arch = "x86_64")]
+use relevo as _;
+
+/// X7, x86: la frecuencia del TSC que el kernel dio a la caja al arrancar (entrada_x86.S), para `dashos::ahora_us`: la
+/// caja no arranca por `programa!`, que es quien la guarda en los programas de Rust.
+#[cfg(target_arch = "x86_64")]
+#[unsafe(no_mangle)]
+pub extern "C" fn caja_rust_frecuencia(f: u64) {
+    dashos::FRECUENCIA.store(f, core::sync::atomic::Ordering::Relaxed);
+}
+
 // --- Arranque ---
 
 /// Monta exec (la memoria del 68k es `[ram, ram + largo)`, la zona del sistema `[sistema, fin_sistema)` y lo

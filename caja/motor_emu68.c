@@ -119,6 +119,7 @@ int motor_iniciar(void)
 }
 
 uint32_t motor_unidades(void) { return m68k.JIT_UNIT_COUNT; }
+void motor_memoria(uint32_t desde, uint32_t hasta, int ram) { (void)desde; (void)hasta; (void)ram; }
 void motor_zonas(uintptr_t z[MOTOR_ZONAS]) { z[0] = (uintptr_t)&m68k; z[1] = JIT_RW; z[2] = JIT_RX; }
 uint32_t motor_d0(void) { return m68k.D[0].u32; }
 void motor_volcar(void) { M68K_PrintContext(&m68k); }

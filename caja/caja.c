@@ -41,6 +41,17 @@
 
 /* --- Llamadas al sistema de DashOS (docs/referencia/kernel.md) --- */
 
+#if defined(__x86_64__)
+/* x86-64 (X7): rax el número; rdi, rsi, rdx, r10 y r8 los argumentos; el resultado en rax (syscall pisa rcx y r11). */
+long caja_sc(long n, long a, long b, long c, long d, long e)
+{
+    register long r10 __asm__("r10") = d;
+    register long r8 __asm__("r8") = e;
+    long r = n;
+    __asm__ volatile("syscall" : "+a"(r), "+D"(a), "+S"(b), "+d"(c), "+r"(r10), "+r"(r8) :: "rcx", "r11", "memory");
+    return r;
+}
+#else
 long caja_sc(long n, long a, long b, long c, long d, long e)
 {
     register long x8 __asm__("x8") = n;
@@ -52,16 +63,46 @@ long caja_sc(long n, long a, long b, long c, long d, long e)
     __asm__ volatile("svc #0" : "+r"(x0), "+r"(x1) : "r"(x8), "r"(x2), "r"(x3), "r"(x4) : "memory");
     return x0;
 }
+#endif
 #define sc caja_sc
 
 #define LLAVE_PAGINA0 1   /* la llave 1 de la caja: el permiso de página 0 que le da `inicio` */
 
+#if defined(__x86_64__)
+/* La frecuencia del TSC: la da el kernel en rdi al arrancar (entrada_x86.S la guarda aquí). */
+uint64_t caja_frecuencia_tsc;
+/* Y la de la biblioteca de Rust (dashos::FRECUENCIA), que no arranca por su `programa!` (pegamento/). */
+void caja_rust_frecuencia(uint64_t f);
+
+static uint64_t ahora_us(void)
+{
+    uint32_t bajo, alto;
+    __asm__ volatile("lfence; rdtsc" : "=a"(bajo), "=d"(alto));
+    uint64_t t = (uint64_t)alto << 32 | bajo, f = caja_frecuencia_tsc;
+    return f ? t / f * 1000000 + t % f * 1000000 / f : 0;
+}
+
+static inline uintptr_t pila_de_ahora(void)
+{
+    uintptr_t sp;
+    __asm__ volatile("mov %%rsp, %0" : "=r"(sp));
+    return sp;
+}
+#else
 static uint64_t ahora_us(void)
 {
     uint64_t t, f;
     __asm__ volatile("isb; mrs %0, cntvct_el0; mrs %1, cntfrq_el0" : "=r"(t), "=r"(f));
     return f ? t / f * 1000000 + t % f * 1000000 / f : 0;   /* sin división de 128 bits (no hay libgcc) */
 }
+
+static inline uintptr_t pila_de_ahora(void)
+{
+    uintptr_t sp;
+    __asm__ volatile("mov %0, sp" : "=r"(sp));
+    return sp;
+}
+#endif
 
 /* --- Salida por la consola de DashOS --- */
 
@@ -160,6 +201,7 @@ uint32_t caja_ampliar_ram(uint32_t minimo, uint32_t tope)
         fin += n;
         quiero -= n;
     }
+    if (fin > m68k_ram_fin) motor_memoria(m68k_ram_fin, (uint32_t)fin, 1);
     __atomic_store_n(&m68k_ram_fin, (uint32_t)fin, __ATOMIC_RELEASE);
     return (uint32_t)fin;
 }
@@ -176,6 +218,7 @@ uint32_t caja_encoger_ram(uint32_t desde)
         n--;
     }
     if (n == n_crecidos) return (uint32_t)fin;
+    motor_memoria((uint32_t)fin, m68k_ram_fin, 0);
     __atomic_store_n(&m68k_ram_fin, (uint32_t)fin, __ATOMIC_RELEASE);
     while (n_crecidos > n) {
         n_crecidos--;
@@ -763,8 +806,7 @@ extern char __caja_imagen[], __caja_fin[];
 int caja_main(void);
 static uint32_t caja_fuera_del_68k(uint32_t *bajas, int *antes, uint32_t *ms, uint32_t *trozos)
 {
-    uintptr_t sp;
-    __asm__ volatile("mov %0, sp" : "=r"(sp));
+    uintptr_t sp = pila_de_ahora();
     uintptr_t z[MOTOR_ZONAS];
     motor_zonas(z);
     const uintptr_t suyas[] = {
@@ -907,6 +949,9 @@ static void manda_ctrl_c(uint64_t us)
 
 int caja_main(void)
 {
+#if defined(__x86_64__)
+    caja_rust_frecuencia(caja_frecuencia_tsc);
+#endif
     di("%s (H4; X7: la interfaz de motor)\n", motor_nombre());
     if (proyecta(M68K_RAM, M68K_RAM_LEN, P_ESCRIBIR) <= 0 || proyecta(MONTON, MONTON_LEN, P_ESCRIBIR) <= 0
         || proyecta(MONTON_RUST, MONTON_RUST_LEN, P_ESCRIBIR) <= 0) {

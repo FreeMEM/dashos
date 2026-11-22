@@ -44,10 +44,26 @@ uint32_t caja_ampliar_ram(uint32_t minimo, uint32_t tope);
 #define N_CAIDA         0xff02
 
 static inline void pon8(uintptr_t a, uint8_t v) { *(volatile uint8_t *)a = v; }
-static inline void pon16(uintptr_t a, uint16_t v) { *(volatile uint16_t *)a = v; }   /* el proceso es big-endian */
-static inline void pon32(uintptr_t a, uint32_t v) { *(volatile uint32_t *)a = v; }
-static inline uint16_t lee16(uintptr_t a) { return *(volatile uint16_t *)a; }
-static inline uint32_t lee32(uintptr_t a) { return *(volatile uint32_t *)a; }
+/* La memoria del 68k es big-endian. En ARM el proceso de la caja también lo es; en x86 (X7) no: se da la vuelta. */
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define CAJA_BE16(v) (v)
+#define CAJA_BE32(v) (v)
+#else
+#define CAJA_BE16(v) __builtin_bswap16(v)
+#define CAJA_BE32(v) __builtin_bswap32(v)
+#endif
+static inline void pon16(uintptr_t a, uint16_t v) { *(volatile uint16_t *)a = CAJA_BE16(v); }
+static inline void pon32(uintptr_t a, uint32_t v) { *(volatile uint32_t *)a = CAJA_BE32(v); }
+static inline uint16_t lee16(uintptr_t a) { return CAJA_BE16(*(volatile uint16_t *)a); }
+static inline uint32_t lee32(uintptr_t a) { return CAJA_BE32(*(volatile uint32_t *)a); }
+
+/* Los bits del SR del 68k que mira la caja (en ARM también los da M68k.h de Emu68). */
+#ifndef SR_S
+#define SR_S 0x2000
+#endif
+#ifndef SR_M
+#define SR_M 0x1000
+#endif
 
 /* ¿Está [a, a + n) dentro de la memoria del 68k? */
 static inline int en_ram68k(uint32_t a, uint32_t n)

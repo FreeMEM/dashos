@@ -1,0 +1,69 @@
+From: DashOS
+Subject: [PATCH] tlsf: la parada de error tambien fuera de ARM (la caja Amiga de x86-64)
+
+DashOS, X7: la caja de x86-64 usa el montón TLSF de Emu68; sus paradas de error eran wfe, que solo existe en ARM.
+
+---
+diff --git a/src/tlsf.c b/src/tlsf.c
+index 1ebccbf..5b6f2da 100644
+--- a/src/tlsf.c
++++ b/src/tlsf.c
+@@ -9,6 +9,13 @@
+ #include "tlsf.h"
+ #include "spinlock.h"
+ 
++/* DashOS (patches/emu68/0016): este montón lo usa también la caja Amiga de x86-64, que no tiene wfe. */
++#if defined(__aarch64__)
++#define TLSF_PARAR() asm volatile("wfe")
++#else
++#define TLSF_PARAR() asm volatile("pause")
++#endif
++
+ #undef USE_MACROS
+ 
+ /*
+@@ -204,7 +211,7 @@ static inline __attribute__((always_inline)) uintptr_t GET_SIZE(bhdr_t *b)
+         kprintf("ERROR! GET_SIZE block %p with size=%p\n", b, size);
+         kprintf("  caller %p\n", __builtin_return_address(0));
+ 
+-        while (1) asm volatile("wfe");
++        while (1) TLSF_PARAR();
+     }
+     return size;
+ }
+@@ -218,7 +225,7 @@ static inline __attribute__((always_inline)) void SET_SIZE(bhdr_t *b, uintptr_t
+ {
+     if (size > 0xffffffff) {
+         kprintf("ERROR! SET_SIZE on block %p with size=%p\n", b, size);
+-        while (1) asm volatile("wfe");
++        while (1) TLSF_PARAR();
+     }
+     b->header.length = GET_FLAGS(b) | size;
+ }
+@@ -227,7 +234,7 @@ static inline __attribute__((always_inline)) void SET_SIZE_AND_FLAGS(bhdr_t *b,
+ {
+     if (size > 0xffffffff) {
+         kprintf("ERROR! SET_SIZE_AND_FLAGS on block %p with size=%p\n", b, size);
+-        while (1) asm volatile("wfe");
++        while (1) TLSF_PARAR();
+     }
+     b->header.length = size | flags;
+ }
+@@ -426,7 +433,7 @@ static inline __attribute__((always_inline)) void MERGE(bhdr_t *b1, bhdr_t *b2)
+     if (unlikely(new_size > 0xffffffff)) {
+         kprintf("[TLSF] ERROR! MERGE overflow: b1=%p (%p) + b2=%p (%p)\n", 
+                 b1, GET_SIZE(b1), b2, GET_SIZE(b2));
+-        while (1) asm volatile("wfe");
++        while (1) TLSF_PARAR();
+     }
+     
+     SET_SIZE(b1, new_size);
+@@ -593,7 +600,7 @@ void tlsf_free(void *t, void *ptr)
+     if (unlikely(FREE_BLOCK(fb))) {
+         kprintf("[TLSF] ERROR! Double-free detected on block %p\n", ptr);
+         kprintf("[TLSF]  caller %p\n", __builtin_return_address(0));
+-        while (1) asm volatile("wfe");
++        while (1) TLSF_PARAR();
+     }
+ 
+     /* Mark block as free */

@@ -78,7 +78,8 @@ DASH_EXES := $(B)/dash/hola.exe $(B)/dash/texto.exe $(B)/dash/texto_gcc.exe $(B)
 	$(B)/dash/interp.exe $(B)/dash/listas.exe $(B)/dash/ctrl_c.exe $(B)/dash/ctrl_c_gcc.exe $(B)/dash/ctrl_c_for.exe \
 	$(B)/dash/trap_ilegal.exe $(B)/dash/trap_divcero.exe $(B)/dash/test_gadtools.exe \
 	$(B)/dash/test_reaction.exe $(B)/dash/test_doc_reaction.exe
-$(B)/programas.o: programas.S pruebas68k/sistema.bin pruebas68k/hola.bin pruebas68k/lineaa.bin pruebas68k/bucle.bin pruebas68k/mala.bin pruebas68k/saludo.exe pruebas68k/ventana.exe pruebas68k/hostil.exe pruebas68k/anidado.exe pruebas68k/gadtools.exe pruebas68k/boopsi.exe pruebas68k/ramlib.exe pruebas68k/capa.exe pruebas68k/glotona.exe pruebas68k/memh.exe pruebas68k/procesos.exe pruebas68k/actualiza.exe pruebas68k/ils.exe pruebas68k/dtprueba.exe pruebas68k/cgx.exe $(MALWARE) $(DASH_EXES) | $(B)
+PROGRAMAS_DEPS := programas.S pruebas68k/sistema.bin pruebas68k/hola.bin pruebas68k/lineaa.bin pruebas68k/bucle.bin pruebas68k/mala.bin pruebas68k/saludo.exe pruebas68k/ventana.exe pruebas68k/hostil.exe pruebas68k/anidado.exe pruebas68k/gadtools.exe pruebas68k/boopsi.exe pruebas68k/ramlib.exe pruebas68k/capa.exe pruebas68k/glotona.exe pruebas68k/memh.exe pruebas68k/procesos.exe pruebas68k/actualiza.exe pruebas68k/ils.exe pruebas68k/dtprueba.exe pruebas68k/cgx.exe $(MALWARE) $(DASH_EXES)
+$(B)/programas.o: $(PROGRAMAS_DEPS) | $(B)
 	$(CC) $(COMMON) -c $< -o $@
 
 define compila_dash
@@ -154,6 +155,54 @@ pruebas-pc:
 	$(MAKE) -C pruebas_hunk
 
 clean:
-	rm -rf $(B) build-pc pegamento/target
+	rm -rf $(B) $(BX) build-pc pegamento/target
 .PHONY: all clean pruebas-pc FORCE
 FORCE:
+
+# --- X7: la caja de x86-64 (make -C caja x86): build-x86/caja-amiga ---
+# El C común (caja.c, hunk.c) con el motor RelevoJIT (motor_relevo.c; su crate va enlazado en pegamento/), la entrada de
+# x86 (entrada_x86.S) y lo que en ARM da Emu68: x86/soporte.c, y tlsf.c de Emu68 con x86/support.h y x86/spinlock.h. Los
+# programas 68k son los de ARM (los de Dash, en build/dash/). Hasta que el commit de RelevoJIT que pide
+# pegamento/Cargo.toml esté en GitHub, se usa su clon (RELEVO_DIR).
+BX := build-x86
+CC_X86 ?= gcc
+RELEVO_DIR ?= $(HOME)/Projects/RelevoJIT/.worktrees/motor-caja
+CFLAGS_X86 := -MMD -MP -ffreestanding -fno-builtin -fno-stack-protector -fno-exceptions -fno-unwind-tables \
+	-fno-asynchronous-unwind-tables -fpie -O2 -fno-tree-loop-distribute-patterns -std=gnu23 \
+	-Ix86 -I. -I$(EMU68)/include -I$(RELEVO_DIR)/include
+OBJS_X86 := $(BX)/caja.o $(BX)/motor_relevo.o $(BX)/hunk.o $(BX)/soporte.o $(BX)/tlsf.o $(BX)/entrada_x86.o \
+	$(BX)/programas.o
+RUST_A_X86 := pegamento/target/x86_64-unknown-none/release/libcaja_pegamento.a
+RELEVO_PATCH := --config 'patch."https://github.com/FreeMEM/RelevoJIT".relevo.path="$(abspath $(RELEVO_DIR))"'
+
+x86: $(BX)/caja-amiga
+
+$(BX)/%.o: %.c Makefile | $(BX)
+	$(CC_X86) $(CFLAGS_X86) -c $< -o $@
+$(BX)/soporte.o: x86/soporte.c Makefile | $(BX)
+	$(CC_X86) $(CFLAGS_X86) -c $< -o $@
+$(BX)/tlsf.o: $(EMU68)/src/tlsf.c Makefile | $(BX)
+	$(CC_X86) $(CFLAGS_X86) -c $< -o $@
+$(BX)/entrada_x86.o: entrada_x86.S Makefile | $(BX)
+	$(CC_X86) $(CFLAGS_X86) -c $< -o $@
+$(BX)/programas.o: $(PROGRAMAS_DEPS) | $(BX)
+	$(CC_X86) $(CFLAGS_X86) -c programas.S -o $@
+$(BX)/pegamento.a: FORCE | $(BX)
+	cd pegamento && cargo build --release --quiet --target x86_64-unknown-none $(RELEVO_PATCH)
+	objcopy --localize-symbol=memcpy --localize-symbol=memset --localize-symbol=memmove $(RUST_A_X86) $@.tmp
+	cmp -s $@.tmp $@ || mv $@.tmp $@
+	rm -f $@.tmp
+
+# Un PIE estático (enlace.ld), como en ARM; solo con reubicaciones R_X86_64_RELATIVE (las aplica entrada_x86.S).
+$(BX)/caja-amiga: $(OBJS_X86) $(BX)/pegamento.a enlace.ld
+	$(CC_X86) -static-pie -nostdlib -nostartfiles -Wl,--build-id=none -Wl,-z,noexecstack -Wl,-z,text \
+		-Wl,-T,enlace.ld -Wl,-Map=$(BX)/caja-amiga.map -o $@.tmp $(OBJS_X86) $(BX)/pegamento.a
+	@if readelf -rW $@.tmp | grep -E '^[0-9a-f]{16} ' | grep -v R_X86_64_RELATIVE; then \
+		echo "La caja de x86 lleva reubicaciones que entrada_x86.S no aplica"; rm -f $@.tmp; exit 1; fi
+	mv $@.tmp $@
+
+$(BX):
+	mkdir -p $(BX)
+
+-include $(OBJS_X86:.o=.d)
+.PHONY: x86

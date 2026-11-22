@@ -6,6 +6,10 @@ target = "aarch64_be-unknown-none-softfloat"
 [unstable]
 build-std = ["core", "alloc", "compiler_builtins"]
 
+# X7: la caja de x86 (make -C caja ARQ=x86_64), con --target x86_64-unknown-none.
+[target.x86_64-unknown-none]
+rustflags = ["-C", "relocation-model=pie"]
+
 [target.aarch64_be-unknown-none-softfloat]
 # PIE: la caja es un PIE estático, por encima de 4 GB (../enlace.ld).
 rustflags = ["-C", "relocation-model=pie"]

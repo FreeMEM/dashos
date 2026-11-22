@@ -24,6 +24,7 @@ jit-host/medidas/build/
 caja-linux/vmm/target/
 caja-linux/vhost-prueba/target/
 caja/build-pc/
+caja/build-x86/
 caja/pruebas68k/*.o
 caja-linux/aspecto/target/
 caja/build-demo/
