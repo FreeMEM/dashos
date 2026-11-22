@@ -16,6 +16,7 @@ pub mod delete;
 pub mod dir;
 pub mod echo;
 pub mod filenote;
+pub mod fondo;
 pub mod info;
 /// S32: el instalador (solo en vivo).
 pub mod instalar;
@@ -44,6 +45,7 @@ pub const BASE: &[(&str, fn(&mut Orden) -> u64)] = &[
     ("Dir", dir::principal),
     ("Echo", echo::principal),
     ("Filenote", filenote::principal),
+    ("Fondo", fondo::principal),
     ("Info", info::principal),
     ("Instalar", instalar::principal),
     ("List", list::principal),
@@ -60,7 +62,7 @@ pub const BASE: &[(&str, fn(&mut Orden) -> u64)] = &[
 
 /// Sus nombres, sin las funciones: para quien solo quiere saber si una orden es de base (el Shell, que no las lleva
 /// dentro).
-pub const NOMBRES: &[&str] = &["Abrir", "Administrar", "Ajuste", "Ask", "Assign", "Cd", "Copy", "Date", "Delete", "Dir", "Echo", "Filenote", "Info", "Instalar", "List", "MakeDir", "Permiso", "Protect", "Registro", "Rename", "Type", "Usuario", "Version", "Wait"];
+pub const NOMBRES: &[&str] = &["Abrir", "Administrar", "Ajuste", "Ask", "Assign", "Cd", "Copy", "Date", "Delete", "Dir", "Echo", "Filenote", "Fondo", "Info", "Instalar", "List", "MakeDir", "Permiso", "Protect", "Registro", "Rename", "Type", "Usuario", "Version", "Wait"];
 
 /// Si `nombre` es una orden de base.
 pub fn es_de_base(nombre: &str) -> bool {

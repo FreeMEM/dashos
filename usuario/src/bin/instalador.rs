@@ -605,7 +605,7 @@ fn principal() -> u64 {
             continue;
         }
         // De `sesiones`, por su llave sin marca: un administrador confirmó el plan de ese número (la tanda
-        // "instalar"). Vale una vez y cinco minutos.
+        // "instalar-sistema"). Vale una vez y cinco minutos.
         if marca == 0 && k == 0 && r == 8 && u32::from_le_bytes(buf[0..4].try_into().unwrap()) == AUTORIZAR {
             let n = u32::from_le_bytes(buf[4..8].try_into().unwrap());
             println!("  [instalador] un administrador confirmó el plan {}", n);

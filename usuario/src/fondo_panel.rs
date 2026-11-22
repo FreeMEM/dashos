@@ -363,6 +363,14 @@ fn archivos_pedir(lectura: u32, orden: u32, asa: u32, x: u64, y: u64, nombre: &s
 
 /// Abre una sesión con `archivos`, hace `f` y la cierra.
 fn con_archivos<R>(f: impl FnOnce(u32) -> R) -> Option<R> {
+    // Una sesión a la vez en todo el programa (rama `fondos`: el hilo de las miniaturas también lee).
+    crate::fondo_lector::CERROJO.tomar();
+    let r = con_archivos_cerrojo(f);
+    crate::fondo_lector::CERROJO.soltar();
+    r
+}
+
+fn con_archivos_cerrojo<R>(f: impl FnOnce(u32) -> R) -> Option<R> {
     let (lectura, suyo) = dashos::canal_crear();
     let mut cab = [0u8; a::CABECERA];
     cab[0..4].copy_from_slice(&a::SESION.to_le_bytes());

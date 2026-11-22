@@ -44,6 +44,10 @@ mod ops;
 mod pintar;
 #[path = "../explorador/iconos.rs"]
 mod iconos;
+#[path = "../explorador/tema_linux.rs"]
+mod tema_linux;
+#[path = "../explorador/iconos_amiga.rs"]
+mod iconos_amiga;
 #[path = "../idiomas.rs"]
 mod idiomas;
 
@@ -626,7 +630,9 @@ impl Pestana {
         let cosas = &self.cosas;
         let elegidos: Vec<(Lugar, String)> = self.sel.elegidos().iter().filter_map(|&i| self.vista.get(i)).filter_map(|&k| cosas.get(k)).map(|c| (c.donde.clone(), c.e.nombre.clone())).collect();
         let cursor = self.sel.cursor.and_then(|i| self.vista.get(i)).and_then(|&k| cosas.get(k)).map(|c| c.e.nombre.clone());
-        let mut v: Vec<usize> = (0..self.cosas.len()).filter(|&i| self.ocultos || !es_oculto(&self.cosas[i].e.nombre)).collect();
+        // En la caja Amiga, los `.info` de otra cosa se esconden como los ocultos (son su icono).
+        let de_otro = if self.ocultos { Vec::new() } else { iconos_amiga::escondidas(&self.cosas) };
+        let mut v: Vec<usize> = (0..self.cosas.len()).filter(|&i| self.ocultos || !(es_oculto(&self.cosas[i].e.nombre) || de_otro[i])).collect();
         if self.busca.is_none() {
             let entradas: Vec<Entrada> = self.cosas.iter().map(|c| c.e.clone()).collect();
             ordenar(&entradas, &mut v, self.orden, self.asc);
@@ -835,6 +841,12 @@ pub struct App {
     pub tema: Tema,
     pub regular: Fuente,
     pub medio: Fuente,
+    /// Los símbolos de la interfaz (Material Symbols) y la colección de iconos de DashOS, con sus cachés.
+    pub simbolos: kit::iconos::Simbolos,
+    pub iconos: kit::iconos::coleccion::Iconos,
+    /// S37: el tema de iconos de Linux elegido en Ajustes (vacío: los de DashOS) y sus iconos ya pintados.
+    tema_linux: Vec<kit::iconos::freedesktop::TemaIconos>,
+    pub iconos_linux: iconos::DelTema,
     ventanas: Vec<Ventana>,
     siguiente_id: u32,
     abiertas: u32,
@@ -856,6 +868,8 @@ pub struct App {
     pub arrastre: Option<Arrastre>,
     /// Las miniaturas de los PNG (por lugar y nombre): `None` si no se pudo.
     pub miniaturas: BTreeMap<(Lugar, String), Option<kit::imagen::Imagen>>,
+    /// Los iconos `.info` de la caja Amiga (`explorador/iconos_amiga.rs`).
+    pub iconos_amiga: iconos_amiga::IconosAmiga,
     /// Cuánto ocupa el disco: (tamaño, libre).
     pub disco: (u64, u64),
     contexto: Option<Contexto>,
@@ -2286,6 +2300,7 @@ pub fn preparar(app: &mut App) {
     comprobar_nombres(app);
     preparar_papelera(app);
     app.disco_libre();
+    app.cargar_tema_iconos();
     println!("  [explorador] listo: espera a que el Workbench le pida abrir algo");
 }
 
@@ -2461,6 +2476,10 @@ fn principal() -> u64 {
         tema: Tema::CLARO,
         regular: Fuente::regular(),
         medio: Fuente::medium(),
+        simbolos: kit::iconos::Simbolos::new(),
+        iconos: kit::iconos::coleccion::Iconos::new(),
+        tema_linux: Vec::new(),
+        iconos_linux: BTreeMap::new(),
         ventanas: Vec::new(),
         siguiente_id: PRIMER_ID,
         abiertas: 0,
@@ -2479,6 +2498,7 @@ fn principal() -> u64 {
         siguiente_trabajo: 0,
         arrastre: None,
         miniaturas: BTreeMap::new(),
+        iconos_amiga: Default::default(),
         disco: (0, 0),
         contexto: None,
         quienes: BTreeMap::new(),

@@ -66,6 +66,9 @@ fn comprimir_programas(dir: &str, fuente: &str, destino: &str) {
             format!("{}/../caja/build/{}", dir, nombre)
         } else if nombre == "dash-ventana" {
             format!("{}/../build/{}", dir, nombre)
+        } else if nombre == "paq" {
+            // S8: el servicio de paquetes está en `ordenes/` (con la orden `Paq`, que comparte su biblioteca).
+            format!("{}/../ordenes/target/{}/release/{}", dir, destino, nombre)
         } else {
             format!("{}/{}", usuario, nombre)
         };

@@ -27,3 +27,5 @@ caja/build-pc/
 caja/pruebas68k/*.o
 caja-linux/aspecto/target/
 caja/build-demo/
+third_party/pkg2/
+third_party/docs/

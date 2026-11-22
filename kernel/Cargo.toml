@@ -26,6 +26,9 @@ uso = ["virt"]
 # S10, los menús de los programas (`make arranque-virt-menus`, docs/bitacoras/menus.md): la imagen de usar con la prueba
 # de kit-c (`dash-ventana`), para verla con los menús dentro de la ventana y en la barra.
 menus = ["uso"]
+# Rama cuentas-2, las cuentas en pantalla (`make arranque-virt-cuentas`): la imagen de usar, con `guardian` escribiendo los
+# códigos de recuperación en la consola (un canal más, "codigos"), para que su guion los teclee.
+cuentas = ["uso"]
 # La Raspberry Pi 3 (P3, docs/MULTITAREA_LOOP.md): periféricos en 0x3F000000 y el controlador de interrupciones de la
 # BCM2836 (QA7) en lugar del GIC. Sin `virt`.
 pi3 = []
@@ -64,8 +67,11 @@ linux = []
 # caja/build-demo): sus programas esperan a que alguien los mire.
 demo = ["uso", "linux"]
 # Con `virt`: un dominio de controladores (S35, paso 2; `make arranque-virt-dominio`): el kernel y el initramfs del
-# dominio de red (fuera de git, de target/dominio/) y la e1000 de QEMU, que se le presta sin IOMMU (solo en QEMU).
+# dominio de red (fuera de git, de target/dominio/); su aparato, un adaptador de red USB que le presta el xHCI.
 dominio = ["virt"]
+# Rama sonido-pro: la imagen de usar con un reproductor de prueba (`melodia`) que suena desde el arranque, para ver y
+# capturar el mezclador, el visualizador y los controles de medios (`make arranque-virt-sonido`).
+sonido_demo = ["uso"]
 
 # El build.rs comprime los programas del paquete de arranque (LZ4, formato de bloque); el kernel no depende de nada.
 [build-dependencies]

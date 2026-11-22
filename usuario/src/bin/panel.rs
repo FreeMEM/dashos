@@ -2,36 +2,36 @@
 //! `panel` de `dashos_tema_v1`) en una capa arriba a la derecha, y no se lleva el teclado de otra ventana sin un clic
 //! (teclado "a demanda"). Sigue el tema del sistema, como lo demás.
 //!
-//! Los mosaicos (`panel_mosaicos`, compartido con el centro de control):
-//! - Modo oscuro. No pone el tema él: se lo pide al centro ("modo oscuro" o "modo claro" por su canal, que solo se lo
-//!   acepta a `panel`), que es quien lo guarda.
-//! - Bloquear: como Super+L, por la petición `bloquear` de `dashos_tema_v1`, que el compositor solo le acepta a él.
-//! - Volumen general: "−" y "+" de 10 en 10 %, por la orden `GENERAL` del servicio de sonido (solo se la acepta a él).
+//! S27, oleada 3 (`docs/diseño/S27-escritorio-dms.md`): el centro de control configurable de DMS (`controlCenterWidgets`;
+//! portado de DankMaterialShell v2.1.2, `Modules/ControlCenter/*` y `Common/GridLayout.js`, MIT, copyright (c) 2025
+//! Avenge Media LLC; aviso entero en `docs/licencias/DankMaterialShell-MIT.txt`). Una rejilla de 8 columnas de 64 con
+//! huecos de 8 (600 de ancho) donde cada mosaico tiene su ancho y su alto (`cc_rejilla`): el usuario, botones de icono
+//! (ajustes, bloquear, apagar, editar), deslizadores (volumen, brillo) y mosaicos con su caja de icono y dos líneas (red,
+//! salida de sonido, modo oscuro, no molestar...). Un clic en la caja del icono enciende o apaga; en el cuerpo, abre el
+//! detalle bajo su fila (red, salida, no molestar con sus plazos). Lo que DashOS aún no lleva (brillo, Bluetooth,
+//! micrófono, modo noche...) sale apagado. Lo de serie es lo del escritorio del usuario en shiva.
 //!
-//! El modo de edición (como el de DMS): con "Editar", cada mosaico se puede subir, bajar o quitar, y los quitados se
-//! vuelven a poner (al final). Con "Hecho" (o al cerrar el panel) se guarda, si cambió: también por el centro
-//! ("panel guardar ..."), que lo guarda en `C/Prefs/panel`. Al arrancar se lo pide ("panel leer"); si el centro no
-//! contesta, los de serie, y lo vuelve a pedir al abrir.
+//! La configuración la lee y la guarda el centro de control (`ENV:Escritorio/centro-control`, en texto): el panel se la
+//! pide al arrancar dándole una puerta ("cc vigilar"), y el centro se la da por ella cada vez que cambie (en Ajustes, con
+//! la orden `Ajuste` o a mano), así que cambia en caliente. El modo de edición (como DMS): un marco en cada mosaico con
+//! antes, después y quitar (DMS los mueve arrastrando), y una tira con Añadir (la lista de lo que falta), Deshacer,
+//! Descartar y Terminar; al terminar, o al cerrar, el centro lo guarda ("cc guardar").
 //!
 //! El panel mide lo que su contenido: al cambiar, pide otro tamaño a la capa y pinta en un búfer de esa altura (dos
 //! búferes sobre la misma memoria, uno visto y el otro para el tamaño nuevo).
 //!
-//! S27, oleada 2 (`docs/diseño/S27-escritorio-dms.md`): el panel es el centro de control al estilo de DMS. Arriba, quién
-//! está delante (lo dice `sesiones`, `DELANTE`) y cuánto lleva encendido, con Editar y Bloquear. Debajo, los
-//! deslizadores del volumen (con el silencio y los botones de 10 en 10) y del brillo (apagado: aún no hay quien lo
-//! lleve). Y una rejilla de dos columnas de mosaicos con su icono en un cuadrado redondeado: la red (lo que dice el
-//! servicio de red, `ESTADO`), el modo oscuro y bloquear, en el orden guardado. El estado de la red y del volumen se lo
-//! dice al compositor (petición `estado` de `dashos_tema_v1`), que se lo pasa a la barra para su píldora.
+//! S27, oleada 2: quién está delante (lo dice `sesiones`, `DELANTE`) va en el mosaico del usuario; el estado de la red y
+//! del volumen se lo dice al compositor (petición `estado` de `dashos_tema_v1`), que se lo pasa a la barra.
 //!
-//! El menú de apagado (decisión del usuario del 2026-11-13): el botón de la derecha de la cabecera cambia los controles
-//! por cuatro filas: Apagar, Reiniciar y Cerrar sesión, que se piden a `sesiones` (`APAGAR`: solo se lo acepta al panel,
+//! El menú de apagado (decisión del usuario del 2026-11-13): el botón de apagar cambia la rejilla por cuatro filas: Apagar, Reiniciar y Cerrar sesión, que se piden a `sesiones` (`APAGAR`: solo se lo acepta al panel,
 //! y con otras sesiones abiertas pregunta antes con `guardian`), y Bloquear, como el botón del candado.
 //!
 //! El estado de la red llega por "red-estado", que solo da eso (decisión del usuario del 2026-11-13): el panel no tiene
 //! la llave de "red", que es el permiso de red. Al arrancar comprueba que con la suya no se abre una conexión.
 //!
 //! Llaves: 1 el canal "ventanas" (con el poder de escritorio, para la capa), 2 "sesiones", 3 "red-estado" (desde
-//! trasfondo, la red se lanza antes que el fondo), 4 "centro" y 5 "sonido".
+//! trasfondo, la red se lanza antes que el fondo), 4 "centro", 5 "sonido" y "avisos" (S27: el "no molestar"; se busca por
+//! su nombre).
 
 #![no_std]
 #![no_main]
@@ -41,20 +41,32 @@ extern crate alloc;
 #[path = "../ventana_cliente.rs"]
 #[allow(dead_code)]
 mod ventana_cliente;
-#[path = "../panel_mosaicos.rs"]
+#[path = "../cc_rejilla.rs"]
 #[allow(dead_code)]
-mod panel_mosaicos;
+mod cc_rejilla;
+#[path = "../dms_medidas.rs"]
+#[allow(dead_code)]
+mod dms_medidas;
 #[path = "../volumen_osd.rs"]
+#[allow(dead_code)]
 mod volumen_osd;
 
 use alloc::string::String;
 use alloc::vec::Vec;
 use dashos::println;
+use kit::iconos::{simbolo, Simbolo, Simbolos};
 use kit::lienzo::{Color, Lienzo, Rect};
 use kit::tema::{apagado, Tema};
 use kit::texto::Fuente;
-use panel_mosaicos::{Orden, MAX_TEXTO, MOSAICOS};
-use volumen_osd::{Osd, Volumen};
+use cc_rejilla::{Puesto, Rejilla, Tipo};
+use volumen_osd::Volumen;
+#[path = "../sonido_estado.rs"]
+mod sonido_estado;
+/// El protocolo del sonido: las constantes (de la biblioteca) y el estado con textos y listas.
+mod sonido_p {
+    pub use crate::sonido_estado::*;
+    pub use dashos::protocolo::sonido::*;
+}
 use ventana_cliente::*;
 use wayland::tablas::{
     dashos_tema_v1, wl_buffer, wl_compositor, wl_display, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface, zwlr_layer_shell_v1,
@@ -78,27 +90,12 @@ const CAPA: u32 = 21;
 const TEMA: u32 = 22;
 /// El segundo búfer (el primero es `BUFER`), para cambiar de altura sin soltar el que se ve.
 const BUFER_2: u32 = 23;
-/// S27: el aviso del volumen en pantalla (OSD): su superficie, su capa, su búfer y su memoria (solo mientras se ve).
-const SUP_OSD: u32 = 24;
-const CAPA_OSD: u32 = 25;
-const BUFER_OSD: u32 = 26;
-const POOL_OSD: u32 = 27;
-const VA_OSD: usize = VA + (1 << 32);
-/// Una píldora de 320 × 56, abajo en el centro, a 24 del borde.
-const ANCHO_OSD: i32 = 320;
-const ALTO_OSD: i32 = 56;
-const ABAJO_OSD: i32 = 24;
-const ANCHO: i32 = 440;
-/// Lo más alto que se pinta (la memoria es para esto).
-const ALTO_MAX: i32 = 520;
-/// La distancia a los bordes de arriba y de la derecha.
+/// El panel mide lo que su rejilla (`cc_rejilla::ancho_panel`: 600 con 8 columnas); la memoria, para lo más grande.
+const ANCHO_MAX: i32 = cc_rejilla::ancho_panel(cc_rejilla::MAX_COLUMNAS);
+const ALTO_MAX: i32 = 900;
+/// La distancia a los bordes de arriba y de la derecha, y el relleno de dentro (`PopoutMetrics.contentPadding`).
 const MARGEN: i32 = 8;
-/// Lo de arriba: quién está delante (o, editando, el título) y los botones Editar (o Hecho) y Bloquear.
-const CABECERA: i32 = 76;
-const BOTON_CABECERA: Rect = Rect { x: ANCHO - 16 - 40 - 8 - 40 - 8 - 88, y: 18, w: 88, h: 40 };
-const BOTON_BLOQUEAR: Rect = Rect { x: ANCHO - 16 - 40 - 8 - 40, y: 18, w: 40, h: 40 };
-/// El botón del menú de apagado, a la derecha del todo.
-const BOTON_APAGADO: Rect = Rect { x: ANCHO - 16 - 40, y: 18, w: 40, h: 40 };
+const RELLENO: i32 = cc_rejilla::RELLENO;
 /// Las filas del menú de apagado: lo que pone y la orden de `sesiones` (`None`: bloquear, como el candado).
 const ENERGIA: [(&str, Option<u32>); 4] = [
     ("Apagar", Some(dashos::protocolo::sesiones::MODO_APAGAR)),
@@ -106,137 +103,203 @@ const ENERGIA: [(&str, Option<u32>); 4] = [
     ("Cerrar sesión", Some(dashos::protocolo::sesiones::MODO_SALIR)),
     ("Bloquear", None),
 ];
-/// Los deslizadores: filas de 56 a lo ancho.
-const ALTO_DESLIZADOR: i32 = 56;
-/// Los mosaicos de la rejilla: dos columnas, de 64 de alto, con 8 entre ellos.
-const ALTO_CELDA: i32 = 64;
-const ANCHO_CELDA: i32 = (ANCHO - 32 - 8) / 2;
-/// Los mosaicos: a lo ancho, de 64 de alto, con 8 entre uno y otro.
-const X: i32 = 16;
-const W: i32 = ANCHO - 32;
-/// En edición, cada fila de 56, con sus botones de icono de 40 a la derecha.
 const ALTO_FILA: i32 = 56;
-const ICONO: i32 = 40;
 const BOTON_IZQUIERDO: u32 = 0x110;
-/// Los mosaicos, por su sitio en `MOSAICOS`.
-const OSCURO: usize = 0;
-const BLOQUEAR: usize = 1;
-const VOLUMEN: usize = 2;
+/// La marca de la puerta por la que el centro de control le da su configuración.
+const MARCA_CC: u64 = 0x4343_4647_0000_0001;
+/// Rama sonido-pro: el estado del servicio de sonido (el grafo: por dónde sale, qué suena), en una memoria del panel.
+/// Rama sonido-pro: lejos de lo demás del programa (la barra tiene el Dash en VA + 10 << 32, y el estado del sonido
+/// estuvo ahí: al cerrar el Dash, su memoria se quitaba y la barra caía al leer el estado).
+const VA_SONIDO: usize = 0x68_0000_0000;
+const MARCA_SONIDO: u64 = 0x534f_4e49_444f_0002;
 
-/// Lo que hace un clic en cada sitio.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Accion {
-    Editar,
-    Hecho,
-    /// Un mosaico (por su sitio en `MOSAICOS`), fuera de edición.
-    Mosaico(usize),
-    VolumenMenos,
-    VolumenMas,
-    /// El altavoz del deslizador: pone o quita el silencio.
+    /// El cuerpo de un mosaico (por su puesto en la rejilla): su detalle, o encender y apagar si no tiene.
+    Cuerpo(usize),
+    /// La caja de su icono: encender y apagar.
+    Icono(usize),
+    /// El botón del deslizador del volumen (el silencio) y su pista.
     Silencio,
-    /// Un clic en la pista del volumen: el nivel de donde cae.
     Pista,
-    /// En edición, por el puesto en el orden.
+    /// El detalle abierto: cerrarlo, o una de sus filas.
+    CerrarDetalle,
+    Fila(usize),
+    /// Una fila del menú de apagado (por su sitio en `ENERGIA`).
+    Energia(usize),
+    /// Edición (como DMS): mover antes o después (DMS lo hace arrastrando), quitar; la tira de abajo; y la lista para
+    /// añadir (por su sitio en el catálogo).
     Subir(usize),
     Bajar(usize),
     Quitar(usize),
-    /// Volver a poner un quitado (por su sitio en `MOSAICOS`).
+    Anadir,
+    Deshacer,
+    Descartar,
+    Hecho,
     Poner(usize),
-    /// Abrir o cerrar el menú de apagado.
-    MenuApagado,
-    /// Una fila del menú de apagado (por su sitio en `ENERGIA`).
-    Energia(usize),
+    Volver,
 }
 
-/// Dónde va cada cosa, según el orden y si se edita. Lo usan el pintado y los clics: no se desalinean.
+/// Dónde va cada cosa. Lo usan el pintado y los clics: no se desalinean.
 struct Disposicion {
+    ancho: i32,
     alto: i32,
-    /// Los mosaicos o filas que se ven: (dónde, mosaico, quitado).
-    filas: Vec<(Rect, usize, bool)>,
-    /// Los sitios donde un clic hace algo.
+    /// La caja de cada puesto (ya en el panel) y si su fila es pequeña.
+    cajas: Vec<(Rect, bool)>,
     zonas: Vec<(Rect, Accion)>,
-    /// En edición, dónde va el rótulo "Quitados" (su línea base).
-    rotulo: i32,
-    /// El deslizador del brillo (fuera de edición).
-    brillo: Rect,
+    /// El detalle abierto (su tarjeta) y la tira de edición.
+    detalle: Option<Rect>,
+    tira: Option<Rect>,
 }
 
-/// La red no es uno de los mosaicos guardados (`panel_mosaicos`): va siempre la primera de la rejilla.
-const MOSAICO_RED: usize = usize::MAX;
-
-/// La pista del deslizador del volumen dentro de su fila: tras el altavoz y antes de "−" y "+".
-fn pista_volumen(r: Rect) -> Rect {
-    Rect::new(r.x + 56, r.y + (r.h - 16) / 2, r.w - 56 - 2 * (ICONO + 4) - 16, 16)
+/// La pista de un deslizador de una fila (`CcSliderRow`): tras el botón de 48 y 8 de hueco, de 32 de alto.
+fn pista_de(r: Rect) -> Rect {
+    Rect::new(r.x + 48 + 8, r.y + (r.h - 32) / 2, r.w - 48 - 8 - 4, 32)
 }
 
-fn disponer(orden: &Orden, editando: bool, menu: bool) -> Disposicion {
-    let mut d = Disposicion { alto: 0, filas: Vec::new(), zonas: Vec::new(), rotulo: 0, brillo: Rect::new(0, 0, 0, 0) };
-    d.zonas.push((BOTON_CABECERA, if editando { Accion::Hecho } else { Accion::Editar }));
-    // Los botones de icono, desde la derecha, con 4 entre uno y otro.
-    let icono = |r: Rect, k: i32| Rect::new(r.x + r.w - 8 - ICONO - k * (ICONO + 4), r.y + (r.h - ICONO) / 2, ICONO, ICONO);
-    if !editando {
-        d.zonas.push((BOTON_BLOQUEAR, Accion::Mosaico(BLOQUEAR)));
-        d.zonas.push((BOTON_APAGADO, Accion::MenuApagado));
-        let mut y = CABECERA;
-        if menu {
-            // El menú de apagado: una fila por cosa, en vez de los controles.
-            for i in 0..ENERGIA.len() {
-                let r = Rect::new(X, y, W, ALTO_FILA);
-                d.zonas.push((r, Accion::Energia(i)));
-                y += ALTO_FILA + 8;
-            }
-            d.alto = y + 8;
-            return d;
+/// La caja del icono de un mosaico (48, a 8 del borde de su cuerpo).
+fn caja_icono(r: Rect) -> Rect {
+    Rect::new(r.x + 8, r.y + (r.h - 48) / 2, 48, 48)
+}
+
+/// Un mosaico "compacto" (DMS): de 2 columnas o menos y una fila: solo el icono.
+fn compacto(p: &Puesto) -> bool {
+    p.w2 <= 4 && p.h2 <= 2
+}
+
+/// Si un mosaico se enciende y se apaga con su icono (y abre su detalle con el cuerpo).
+fn con_detalle(id: &str) -> bool {
+    matches!(id, "red" | "no_molestar" | "salida")
+}
+
+/// Las filas del detalle de cada mosaico (el de "no molestar": sus plazos, como `CcDurationActions`; el de la salida
+/// de sonido: por dónde sale, los programas que suenan y abrir la ventana "Sonido").
+fn filas_detalle(id: &str, est: &Estado) -> usize {
+    match id {
+        "no_molestar" => PLAZOS.len(),
+        "red" => 2,
+        "salida" => 2 + flujos_panel(est).len(),
+        _ => 0,
+    }
+}
+
+/// Los flujos que se enseñan en el detalle de la salida (como mucho cuatro).
+fn flujos_panel(est: &Estado) -> Vec<sonido_p::Nodo> {
+    est.sonido.as_ref().map(|e| e.flujos().take(4).cloned().collect()).unwrap_or_default()
+}
+
+/// Rama sonido-pro: un sonido del sistema (el servicio decide si suena: tema, silencio y "no molestar").
+fn sonar(evento: u32) {
+    let b: Vec<u8> = [sonido_p::SONAR, evento].iter().flat_map(|w| w.to_le_bytes()).collect();
+    dashos::canal_escribir(SONIDO, &b, &[]);
+}
+
+/// Un volumen del servicio (1,0 = 65.536) en milésimas.
+fn sonido_vista_mil(v: u32) -> i32 {
+    ((v as i64 * 1000 + 32_768) / 65_536).min(4000) as i32
+}
+
+/// Lee el estado del servicio de sonido de su memoria (con su cerrojo de secuencia).
+fn leer_sonido(palabras: &mut [u32]) -> Option<sonido_p::Estado> {
+    for _ in 0..4 {
+        for (i, x) in palabras.iter_mut().enumerate() {
+            *x = unsafe { core::ptr::read_volatile((VA_SONIDO + 4 * i) as *const u32) };
         }
-        // Los deslizadores: el volumen (si se ve su mosaico) y el brillo, siempre (apagado).
-        if orden.vistos().any(|m| m == VOLUMEN) {
-            let r = Rect::new(X, y, W, ALTO_DESLIZADOR);
-            d.filas.push((r, VOLUMEN, false));
-            d.zonas.push((Rect::new(r.x + 4, r.y + 8, ICONO, ICONO), Accion::Silencio));
-            d.zonas.push((pista_volumen(r).dentro(-12), Accion::Pista));
-            d.zonas.push((icono(r, 1), Accion::VolumenMenos));
-            d.zonas.push((icono(r, 0), Accion::VolumenMas));
-            y += ALTO_DESLIZADOR + 8;
+        if let Some(e) = sonido_p::leer(palabras) {
+            return Some(e);
         }
-        d.brillo = Rect::new(X, y, W, ALTO_DESLIZADOR);
-        y += ALTO_DESLIZADOR + 16;
-        // La rejilla: la red primero (no se quita), y los demás mosaicos que se ven, menos el volumen.
-        let mut k = 0;
-        let mut celda = |d: &mut Disposicion, m: usize| {
-            let r = Rect::new(X + (k % 2) * (ANCHO_CELDA + 8), y + (k / 2) * (ALTO_CELDA + 8), ANCHO_CELDA, ALTO_CELDA);
-            d.filas.push((r, m, false));
-            if m != MOSAICO_RED {
-                d.zonas.push((r, Accion::Mosaico(m)));
-            }
-            k += 1;
-        };
-        celda(&mut d, MOSAICO_RED);
-        for m in orden.vistos().filter(|&m| m != VOLUMEN) {
-            celda(&mut d, m);
+    }
+    None
+}
+
+const PLAZOS: [(&str, u32); 5] = [("Durante 15 minutos", 15), ("Durante 30 minutos", 30), ("Durante 1 hora", 60), ("Durante 2 horas", 120), ("Hasta que lo quites", 0)];
+const ALTO_FILA_DETALLE: i32 = 40;
+/// La tira de edición (`CcEditActions`): 56.
+const ALTO_TIRA: i32 = 56;
+
+fn disponer(est: &Estado) -> Disposicion {
+    let cc = &est.cc;
+    let ancho = cc_rejilla::ancho_panel(cc.columnas);
+    let w = ancho - 2 * RELLENO;
+    let mut d = Disposicion { ancho, alto: 0, cajas: Vec::new(), zonas: Vec::new(), detalle: None, tira: None };
+    if est.menu && !est.editando {
+        // El menú de apagado: una fila por cosa, en vez de la rejilla.
+        let mut y = RELLENO;
+        for i in 0..ENERGIA.len() {
+            d.zonas.push((Rect::new(RELLENO, y, w, ALTO_FILA), Accion::Energia(i)));
+            y += ALTO_FILA + 8;
         }
-        let filas = (k as i32 + 1) / 2;
-        d.alto = y + filas * (ALTO_CELDA + 8) + 8;
+        d.alto = y - 8 + RELLENO;
         return d;
     }
-    let mut y = CABECERA;
-    for (p, m) in orden.vistos().enumerate() {
-        let r = Rect::new(X, y, W, ALTO_FILA);
-        d.filas.push((r, m, false));
-        d.zonas.push((icono(r, 2), Accion::Subir(p)));
-        d.zonas.push((icono(r, 1), Accion::Bajar(p)));
-        d.zonas.push((icono(r, 0), Accion::Quitar(p)));
-        y += ALTO_FILA + 8;
+    if est.editando && est.anadiendo {
+        // La lista para añadir (la hoja de DMS): lo que falta, en filas de 48 a dos columnas; y Volver.
+        let faltan: Vec<usize> = (0..cc_rejilla::CATALOGO.len()).filter(|&k| !cc.puestos().iter().any(|p| p.def as usize == k)).collect();
+        let col = (w - 8) / 2;
+        for (i, &k) in faltan.iter().enumerate() {
+            let r = Rect::new(RELLENO + (i as i32 % 2) * (col + 8), RELLENO + 40 + (i as i32 / 2) * 56, col, 48);
+            d.zonas.push((r, Accion::Poner(k)));
+        }
+        let filas = (faltan.len() as i32 + 1) / 2;
+        let y = RELLENO + 40 + filas.max(1) * 56;
+        d.zonas.push((Rect::new(RELLENO, y, 120, 40), Accion::Volver));
+        d.alto = y + 40 + RELLENO;
+        return d;
     }
-    d.rotulo = y + 20;
-    y += 32;
-    let quitados: Vec<usize> = orden.quitados().collect();
-    for &m in &quitados {
-        let r = Rect::new(X, y, W, ALTO_FILA);
-        d.filas.push((r, m, true));
-        d.zonas.push((icono(r, 0), Accion::Poner(m)));
-        y += ALTO_FILA + 8;
+    let extra = est.detalle.filter(|_| !est.editando).and_then(|k| cc.puestos().get(k).map(|p| (k, 8 + 72 + filas_detalle(p.def().id, est) as i32 * ALTO_FILA_DETALLE + 8)));
+    let c = cc_rejilla::colocar(cc, extra);
+    for k in 0..c.n {
+        let b = c.cajas[k];
+        let r = Rect::new(RELLENO + b.x, RELLENO + b.y, b.w, b.h);
+        // Un pequeño en una fila que no lo es: su cuerpo, de 48 y centrado (`bodyInset`).
+        let r = if cc.puestos[k].pequeno && !c.encogido[k] && r.h > cc_rejilla::FILA_PEQUENA { Rect::new(r.x, r.y + (r.h - 48) / 2, r.w, 48) } else { r };
+        d.cajas.push((r, c.encogido[k]));
     }
-    d.alto = if quitados.is_empty() { y + 28 } else { y + 8 };
+    let mut alto = RELLENO + c.alto + RELLENO;
+    if est.editando {
+        for (k, &(r, _)) in d.cajas.iter().enumerate() {
+            // La píldora de botones, arriba a la izquierda: antes, después y quitar (no en "editar"), de 20.
+            let n = if cc.puestos[k].def().id == "editar" { 2 } else { 3 };
+            for (i, a) in [Accion::Subir(k), Accion::Bajar(k), Accion::Quitar(k)].into_iter().take(n).enumerate() {
+                d.zonas.push((Rect::new(r.x + 2 + i as i32 * 20, r.y + 2, 20, 20), a));
+            }
+        }
+        // La tira: Añadir y Deshacer a la izquierda; Descartar y Terminar a la derecha.
+        let t = Rect::new(0, alto, ancho, ALTO_TIRA);
+        d.zonas.push((Rect::new(RELLENO, t.y + 8, 104, 40), Accion::Anadir));
+        d.zonas.push((Rect::new(RELLENO + 112, t.y + 8, 40, 40), Accion::Deshacer));
+        d.zonas.push((Rect::new(ancho - RELLENO - 112 - 8 - 40, t.y + 8, 40, 40), Accion::Descartar));
+        d.zonas.push((Rect::new(ancho - RELLENO - 112, t.y + 8, 112, 40), Accion::Hecho));
+        d.tira = Some(t);
+        alto += ALTO_TIRA;
+    } else {
+        if let Some((k, ext)) = extra {
+            // El detalle: una tarjeta a todo lo ancho bajo la fila del mosaico (lo de debajo ya bajó).
+            let (r, _) = d.cajas[k];
+            let debajo = d.cajas.iter().filter(|(c, _)| c.y < r.y + r.h + 1).map(|(c, _)| c.y + c.h).max().unwrap_or(r.y + r.h);
+            let tarjeta = Rect::new(RELLENO, debajo + 8, w, ext - 16);
+            d.zonas.push((Rect::new(tarjeta.x + tarjeta.w - 16 - 32, tarjeta.y + 16, 32, 32), Accion::CerrarDetalle));
+            for i in 0..filas_detalle(cc.puestos[k].def().id, est) {
+                d.zonas.push((Rect::new(tarjeta.x + 8, tarjeta.y + 64 + i as i32 * ALTO_FILA_DETALLE, tarjeta.w - 16, ALTO_FILA_DETALLE), Accion::Fila(i)));
+            }
+            d.detalle = Some(tarjeta);
+        }
+        for (k, &(r, _)) in d.cajas.iter().enumerate() {
+            let p = cc.puestos[k];
+            match p.def().tipo {
+                Tipo::Deslizador => {
+                    d.zonas.push((Rect::new(r.x, r.y + (r.h - 48) / 2, 48, 48), Accion::Silencio));
+                    d.zonas.push((pista_de(r).dentro(-8), Accion::Pista));
+                }
+                Tipo::Mosaico if !compacto(&p) && con_detalle(p.def().id) => {
+                    d.zonas.push((caja_icono(r), Accion::Icono(k)));
+                    d.zonas.push((r, Accion::Cuerpo(k)));
+                }
+                _ => d.zonas.push((r, Accion::Cuerpo(k))),
+            }
+        }
+    }
+    d.alto = alto.min(ALTO_MAX);
     d
 }
 
@@ -278,32 +341,16 @@ enum Icono {
     Subir,
     Bajar,
     Quitar,
-    Poner,
-    Menos,
 }
 
-/// Un icono de 24 (los de Material: chevrones, cerrar, añadir, quitar) centrado en `r`.
-fn icono(l: &mut Lienzo, r: Rect, i: Icono, color: Color) {
-    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-    match i {
-        Icono::Subir => {
-            trazo(l, (cx - 6, cy + 3), (cx, cy - 3), 2, color);
-            trazo(l, (cx, cy - 3), (cx + 6, cy + 3), 2, color);
-        }
-        Icono::Bajar => {
-            trazo(l, (cx - 6, cy - 3), (cx, cy + 3), 2, color);
-            trazo(l, (cx, cy + 3), (cx + 6, cy - 3), 2, color);
-        }
-        Icono::Quitar => {
-            trazo(l, (cx - 5, cy - 5), (cx + 5, cy + 5), 2, color);
-            trazo(l, (cx + 5, cy - 5), (cx - 5, cy + 5), 2, color);
-        }
-        Icono::Poner => {
-            trazo(l, (cx - 6, cy), (cx + 6, cy), 2, color);
-            trazo(l, (cx, cy - 6), (cx, cy + 6), 2, color);
-        }
-        Icono::Menos => trazo(l, (cx - 6, cy), (cx + 6, cy), 2, color),
-    }
+/// Un icono de 24 (los de Material: chevrones y cerrar) centrado en `r` (rama `iconos`: Material Symbols).
+fn icono(e: &Estado, l: &mut Lienzo, r: Rect, i: Icono, color: Color) {
+    let s = match i {
+        Icono::Subir => simbolo::EXPAND_LESS,
+        Icono::Bajar => simbolo::EXPAND_MORE,
+        Icono::Quitar => simbolo::CLOSE,
+    };
+    simbolo_en(e, l, r, s, color);
 }
 
 /// Un texto centrado a lo ancho de `r`, con la línea base en `base`.
@@ -316,7 +363,15 @@ struct Estado {
     tema: Tema,
     oscuro: bool,
     volumen: Volumen,
-    orden: Orden,
+    /// S27, oleada 3: lo que sale (`controlCenterWidgets`), lo de al entrar en edición, lo que se puede deshacer, si se
+    /// ve la lista para añadir y el detalle abierto (por su puesto).
+    cc: Rejilla,
+    antes: Rejilla,
+    deshacer: Vec<Rejilla>,
+    anadiendo: bool,
+    detalle: Option<usize>,
+    /// "No molestar" (del servicio de avisos) y los segundos que le quedan (0 sin plazo).
+    no_molestar: (bool, u32),
     editando: bool,
     /// Lo que dijo la red: 0 sin servicio, 1 sin dirección, 2 conectada; y la dirección.
     red: u32,
@@ -325,151 +380,172 @@ struct Estado {
     persona: String,
     /// Se ve el menú de apagado en vez de los controles.
     menu: bool,
+    /// Los Material Symbols del panel (kit::iconos), con su caché (rama `iconos`).
+    simbolos: Simbolos,
+    /// Rama sonido-pro: lo último leído del servicio de sonido.
+    sonido: Option<sonido_p::Estado>,
 }
 
-/// El de encendido (24): un arco abierto arriba y una raya que entra por el hueco. El hueco se borra con el color de
-/// `fondo`.
-fn icono_encendido(l: &mut Lienzo, r: Rect, color: Color, fondo: Color) {
-    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-    l.borde(Rect::new(cx - 8, cy - 7, 17, 17), 9, 2, color);
-    l.rellenar(Rect::new(cx - 4, cy - 8, 9, 6), fondo);
-    trazo(l, (cx, cy - 9), (cx, cy - 1), 2, color);
+/// Un Material Symbol de 24 centrado en `r` (los de los mosaicos, los botones y el menú de apagado).
+fn simbolo_en(e: &Estado, l: &mut Lienzo, r: Rect, s: Simbolo, color: Color) {
+    e.simbolos.centrado(l, r, 24, s, color);
 }
 
-/// El de reiniciar (24): un arco abierto arriba a la derecha con la punta de una flecha.
-fn icono_reiniciar(l: &mut Lienzo, r: Rect, color: Color, fondo: Color) {
-    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-    l.borde(Rect::new(cx - 8, cy - 8, 17, 17), 9, 2, color);
-    l.rellenar(Rect::new(cx + 1, cy - 9, 9, 8), fondo);
-    trazo(l, (cx + 1, cy - 8), (cx + 6, cy - 8), 2, color);
-    trazo(l, (cx + 6, cy - 8), (cx + 6, cy - 3), 2, color);
-}
-
-/// El de cerrar sesión (24): media caja a la izquierda y una flecha que sale a la derecha.
-fn icono_salir(l: &mut Lienzo, r: Rect, color: Color) {
-    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-    trazo(l, (cx - 8, cy - 8), (cx - 1, cy - 8), 2, color);
-    trazo(l, (cx - 8, cy - 8), (cx - 8, cy + 8), 2, color);
-    trazo(l, (cx - 8, cy + 8), (cx - 1, cy + 8), 2, color);
-    trazo(l, (cx - 3, cy), (cx + 8, cy), 2, color);
-    trazo(l, (cx + 4, cy - 4), (cx + 8, cy), 2, color);
-    trazo(l, (cx + 4, cy + 4), (cx + 8, cy), 2, color);
-}
-
-/// El candado (24): el cuerpo y el arco.
-fn icono_candado(l: &mut Lienzo, r: Rect, color: Color) {
-    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-    l.redondeado(Rect::new(cx - 7, cy - 2, 14, 10), 2, color);
-    l.recortar(Rect::new(cx - 8, cy - 10, 16, 9));
-    l.borde(Rect::new(cx - 5, cy - 9, 10, 14), 5, 2, color);
-    l.soltar_recorte();
-}
-
-/// La luna del modo oscuro (24): un círculo al que le muerde otro del color del fondo.
-fn icono_luna(l: &mut Lienzo, r: Rect, color: Color, fondo: Color) {
-    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-    l.redondeado(Rect::new(cx - 8, cy - 8, 16, 16), 8, color);
-    l.redondeado(Rect::new(cx - 3, cy - 11, 14, 14), 7, fondo);
-}
-
-/// La red (24): una caja arriba unida a dos abajo (el "lan" de Material); sin red, tachada.
-fn icono_red(l: &mut Lienzo, r: Rect, color: Color, tachada: bool) {
-    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-    l.redondeado(Rect::new(cx - 4, cy - 10, 8, 6), 1, color);
-    l.rellenar(Rect::new(cx - 1, cy - 4, 2, 4), color);
-    l.rellenar(Rect::new(cx - 8, cy, 16, 2), color);
-    l.rellenar(Rect::new(cx - 8, cy + 2, 2, 2), color);
-    l.rellenar(Rect::new(cx + 6, cy + 2, 2, 2), color);
-    l.redondeado(Rect::new(cx - 10, cy + 4, 8, 6), 1, color);
-    l.redondeado(Rect::new(cx + 2, cy + 4, 8, 6), 1, color);
+/// La red ("lan" de Material) centrada en `r`; sin red, tachada (S27): una raya del color, como los "_off" de Material.
+fn icono_red(e: &Estado, l: &mut Lienzo, r: Rect, color: Color, tachada: bool) {
+    simbolo_en(e, l, r, simbolo::LAN, color);
     if tachada {
+        let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
         trazo(l, (cx - 10, cy - 10), (cx + 10, cy + 10), 2, color);
     }
 }
 
-/// El sol del brillo (24): un círculo y ocho rayos.
-fn icono_sol(l: &mut Lienzo, r: Rect, color: Color) {
-    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
-    l.redondeado(Rect::new(cx - 4, cy - 4, 9, 9), 4, color);
-    for (dx, dy) in [(0, -1), (1, -1), (1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1)] {
-        let (a, b) = if dx != 0 && dy != 0 { (5, 7) } else { (7, 9) };
-        trazo(l, (cx + dx * a, cy + dy * a), (cx + dx * b, cy + dy * b), 2, color);
+/// El altavoz de Material para el nivel y el silencio ("volume_off", "volume_mute", "volume_down" o "volume_up").
+fn simbolo_sonido(nivel: u32, silencio: bool) -> Simbolo {
+    match (silencio, nivel) {
+        (true, _) => simbolo::VOLUME_OFF,
+        (false, 0) => simbolo::VOLUME_MUTE,
+        (false, 1..=50) => simbolo::VOLUME_DOWN,
+        _ => simbolo::VOLUME_UP,
     }
 }
 
-/// Un deslizador de fila: el contenedor alto con esquinas de 28, el icono, la pista (activa en el primario y el resto en
-/// el contenedor secundario, de 16 con los extremos redondos, como el deslizador del kit) y el agarre (una barra de 4).
-fn deslizador(l: &mut Lienzo, r: Rect, pista: Rect, valor: u32, activo: bool, t: &Tema) {
-    l.redondeado(r, kit::tema::RADIO_DIALOGO, t.contenedor_alto());
-    let (activa, resto) = if activo { (t.primario, t.contenedor_secundario()) } else { (apagado(t.sobre_superficie), kit::tema::fondo_apagado(t.sobre_superficie)) };
-    let lleno = (pista.w * valor.min(100) as i32 / 100).clamp(0, pista.w);
-    // Hueco de 6 a cada lado del agarre.
-    if lleno > 6 {
-        l.redondeado_lados(Rect::new(pista.x, pista.y, lleno - 6, pista.h), 8, 2, activa);
-    }
-    if pista.w - lleno > 6 {
-        l.redondeado_lados(Rect::new(pista.x + lleno + 6, pista.y, pista.w - lleno - 6, pista.h), 2, 8, resto);
-    }
-    l.redondeado(Rect::new(pista.x + lleno - 2, pista.y - 10, 4, pista.h + 20), 2, activa);
+/// El icono de cada mosaico del catálogo, en `r`, de `color` (y `fondo` para lo que se recorta).
+/// Unión de `iconos`: todos son Material Symbols (el `fondo` ya no hace falta: no se recorta nada).
+fn icono_de(l: &mut Lienzo, id: &str, r: Rect, e: &Estado, color: Color, _fondo: Color) {
+    let s = match id {
+        "ajustes" => simbolo::SETTINGS,
+        "fondos" => simbolo::PALETTE,
+        "bloquear" => simbolo::LOCK,
+        "apagar" => simbolo::POWER_SETTINGS_NEW,
+        "editar" if e.editando => simbolo::CHECK,
+        "editar" => simbolo::EDIT,
+        "volumen" | "salida" => simbolo_sonido(e.volumen.nivel, e.volumen.silencio),
+        "brillo" => simbolo::LIGHT_MODE,
+        "red" => return icono_red(e, l, r, color, e.red != 2),
+        "bluetooth" => simbolo::BLUETOOTH,
+        "entrada" => simbolo::MIC,
+        "oscuro" if e.oscuro => simbolo::DARK_MODE_LLENO,
+        "noche" | "oscuro" => simbolo::DARK_MODE,
+        "no_molestar" => simbolo::DO_NOT_DISTURB_ON,
+        _ => simbolo::GRID_VIEW,
+    };
+    simbolo_en(e, l, r, s, color);
 }
 
-/// Fuera de edición: los deslizadores y la rejilla.
-fn pintar_controles(l: &mut Lienzo, e: &Estado, d: &Disposicion, fuente: &mut Fuente, medio: &mut Fuente) {
+/// Si un mosaico está encendido, y lo que dice debajo de su nombre.
+fn estado_de(id: &str, e: &Estado) -> (bool, String) {
+    match id {
+        "red" => (e.red == 2, String::from(match e.red {
+            2 => "Conectada",
+            1 => "Sin dirección",
+            _ => "Sin red",
+        })),
+        "oscuro" => (e.oscuro, String::from(if e.oscuro { "Encendido" } else { "Apagado" })),
+        "salida" => (!e.volumen.silencio, if e.volumen.silencio { String::from("Silencio") } else { alloc::format!("{} %", e.volumen.nivel) }),
+        "no_molestar" => (e.no_molestar.0, match e.no_molestar {
+            (false, _) => String::from("Apagado"),
+            (true, 0) => String::from("Hasta que lo quites"),
+            (true, s) => alloc::format!("Quedan {} min", s.div_ceil(60)),
+        }),
+        "bluetooth" => (false, String::from("No hay Bluetooth")),
+        "entrada" => (false, String::from("No hay micrófono")),
+        "noche" => (false, String::from("Aún no hay modo noche")),
+        _ => (false, String::from("Aún no disponible")),
+    }
+}
+
+/// Un mosaico de la rejilla, como `CcTile` de DMS: una píldora en el contenedor, la caja del icono (redonda, en el
+/// contenedor más alto; encendida, en el primario con esquinas de 12), el nombre en 16 medium y su estado en 14. Lo que
+/// DashOS aún no lleva, apagado (12 % y 38 %).
+fn pintar_mosaico(l: &mut Lienzo, r: Rect, p: &Puesto, e: &Estado, fuente: &mut Fuente, medio: &mut Fuente) {
     let t = &e.tema;
-    for &(r, m, _) in &d.filas {
-        if m == VOLUMEN {
-            let v = e.volumen;
-            deslizador(l, r, pista_volumen(r), v.efectivo(), !v.silencio, t);
-            icono_altavoz(l, Rect::new(r.x + 12, r.y + 16, 24, 24), v.silencio, v.nivel, t.sobre_superficie);
-            continue;
+    let d = p.def();
+    let radio = dms_medidas::pildora(r.h.min(64));
+    match d.tipo {
+        Tipo::Usuario => {
+            // Quien está delante: su inicial en un círculo del alto del puesto, "nombre" y "DashOS · encendido".
+            l.redondeado(r, radio, t.contenedor());
+            let lado = r.h - 16;
+            let avatar = Rect::new(r.x + 8, r.y + 8, lado, lado);
+            l.redondeado(avatar, lado / 2, t.contenedor_primario);
+            let nombre = if e.persona.is_empty() { "DashOS" } else { e.persona.as_str() };
+            let inicial: String = nombre.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
+            centrado(medio, l, avatar, avatar.y + lado / 2 + 7, &inicial, 20, t.sobre_contenedor_primario);
+            if r.w >= 2 * r.h {
+                let x = avatar.x + lado + 12;
+                let ancho = r.x + r.w - 12 - x;
+                let q = que_quepa(medio, nombre, 16, ancho);
+                medio.dibujar(l, x, r.y + r.h / 2 - 3, &q, 16, t.sobre_superficie);
+                let min = dashos::ahora_us() / 60_000_000;
+                let encendido = if min < 60 { alloc::format!("DashOS · encendido {} min", min) } else { alloc::format!("DashOS · encendido {} h {} min", min / 60, min % 60) };
+                let q = que_quepa(fuente, &encendido, 12, ancho);
+                fuente.dibujar(l, x, r.y + r.h / 2 + 15, &q, 12, t.sobre_variante_superficie);
+            }
         }
-        // Un mosaico: el icono en un cuadrado redondeado (en el primario si está encendido), el nombre y su estado.
-        let encendido = (m == OSCURO && e.oscuro) || (m == MOSAICO_RED && e.red == 2);
-        l.redondeado(r, 20, t.contenedor_alto());
-        let cuadro = Rect::new(r.x + 12, r.y + 12, 40, 40);
-        let (fondo, tinta) = if encendido { (t.primario, t.sobre_primario) } else { (t.contenedor_secundario(), t.sobre_contenedor_secundario()) };
-        l.redondeado(cuadro, 12, fondo);
-        let (titulo, abajo) = match m {
-            MOSAICO_RED => {
-                icono_red(l, cuadro, tinta, e.red != 2);
-                let abajo = match e.red {
-                    2 => alloc::format!("Conectada · {}.{}.{}.{}", e.ip[0], e.ip[1], e.ip[2], e.ip[3]),
-                    1 => String::from("Sin dirección"),
-                    _ => String::from("Sin red"),
-                };
-                ("Red", abajo)
-            }
-            OSCURO => {
-                icono_luna(l, cuadro, tinta, fondo);
-                (MOSAICOS[m].1, String::from(if e.oscuro { "Encendido" } else { "Apagado" }))
-            }
-            _ => {
-                icono_candado(l, cuadro, tinta);
-                (MOSAICOS[m].1, String::from("Super+L"))
-            }
-        };
-        let ancho = r.w - 64 - 12;
-        let titulo = que_quepa(medio, titulo, 14, ancho);
-        medio.dibujar(l, r.x + 64, r.y + 29, &titulo, 14, t.sobre_superficie);
-        let abajo = que_quepa(fuente, &abajo, 12, ancho);
-        fuente.dibujar(l, r.x + 64, r.y + 47, &abajo, 12, t.sobre_variante_superficie);
-    }
-    // Los botones del volumen: de icono, sin fondo dentro de la fila; en el tope, apagados.
-    for &(z, a) in &d.zonas {
-        if matches!(a, Accion::VolumenMenos | Accion::VolumenMas) {
-            let apagado_si = (a == Accion::VolumenMenos && e.volumen.efectivo() == 0) || (a == Accion::VolumenMas && e.volumen.efectivo() == 100);
-            l.redondeado(z, ICONO / 2, if apagado_si { kit::tema::fondo_apagado(t.sobre_superficie) } else { t.contenedor_secundario() });
-            let color = if apagado_si { apagado(t.sobre_superficie) } else { t.sobre_contenedor_secundario() };
-            icono(l, z, if a == Accion::VolumenMenos { Icono::Menos } else { Icono::Poner }, color);
+        Tipo::Accion => {
+            // Un botón de icono en su píldora; apagar, en el color de error.
+            l.redondeado(r, radio, t.contenedor());
+            let color = if d.id == "apagar" { t.error } else { t.primario };
+            icono_de(l, d.id, r, e, color, t.contenedor());
         }
-    }
-    // El brillo: apagado, con el sol y lo que pasa.
-    if d.brillo.w > 0 {
-        let r = d.brillo;
-        let pista = Rect::new(r.x + 56, r.y + (r.h - 16) / 2, r.w - 56 - 140, 16);
-        deslizador(l, r, pista, 100, false, t);
-        icono_sol(l, Rect::new(r.x + 12, r.y + 16, 24, 24), apagado(t.sobre_superficie));
-        fuente.dibujar(l, pista.x + pista.w + 16, r.y + 33, "Sin control aquí", 12, apagado(t.sobre_superficie));
+        Tipo::Deslizador => {
+            // `CcSliderRow` de una fila: el botón de 48 (redondo, en el contenedor) y la pista de 32 con su asa de 44.
+            let disponible = d.disponible;
+            let boton = Rect::new(r.x, r.y + (r.h - 48) / 2, 48, 48);
+            let (fondo, tinta) = if disponible { (t.contenedor_alto(), t.primario) } else { (kit::tema::fondo_apagado(t.sobre_superficie), apagado(t.sobre_superficie)) };
+            l.redondeado(boton, 24, fondo);
+            icono_de(l, d.id, boton, e, tinta, fondo);
+            let pista = pista_de(r);
+            let valor = if d.id == "volumen" { e.volumen.efectivo() as i32 } else { 0 };
+            let lleno = pista.w * valor.clamp(0, 100) / 100;
+            let (activa, resto) = if disponible && !(d.id == "volumen" && e.volumen.silencio) {
+                (t.primario, t.contenedor_secundario())
+            } else {
+                (apagado(t.sobre_superficie), kit::tema::fondo_apagado(t.sobre_superficie))
+            };
+            let rp = dms_medidas::pildora(32);
+            l.redondeado(pista, rp, resto);
+            if lleno > 6 {
+                l.redondeado_lados(Rect::new(pista.x, pista.y, lleno - 4, pista.h), rp, 4, activa);
+            }
+            l.redondeado(Rect::new(pista.x + lleno - 2, pista.y - 6, 4, 44), 2, activa);
+            if !disponible {
+                fuente.dibujar(l, pista.x + 16, pista.y + 21, "Este monitor no deja cambiar el brillo", 12, apagado(t.sobre_superficie));
+            }
+        }
+        Tipo::Mosaico => {
+            let (encendido, abajo) = estado_de(d.id, e);
+            let disponible = d.disponible;
+            let fondo_cuerpo = if disponible { t.contenedor() } else { kit::tema::fondo_apagado(t.sobre_superficie) };
+            l.redondeado(r, radio, fondo_cuerpo);
+            if compacto(p) {
+                // Solo el icono, en su caja si está encendido.
+                let (fondo, tinta) = if encendido { (t.primario, t.sobre_primario) } else { (fondo_cuerpo, if disponible { t.primario } else { apagado(t.sobre_superficie) }) };
+                if encendido {
+                    l.redondeado(r, radio, fondo);
+                }
+                icono_de(l, d.id, r, e, tinta, fondo);
+                return;
+            }
+            let caja = caja_icono(r);
+            let (fondo, tinta) = match (disponible, encendido) {
+                (false, _) => (kit::tema::fondo_apagado(t.sobre_superficie), apagado(t.sobre_superficie)),
+                (true, true) => (t.primario, t.sobre_primario),
+                (true, false) => (t.contenedor_alto(), t.primario),
+            };
+            l.redondeado(caja, if encendido { dms_medidas::radio(16) } else { 24 }, fondo);
+            icono_de(l, d.id, caja, e, tinta, fondo);
+            let x = caja.x + 48 + 12;
+            let ancho = r.x + r.w - 12 - x;
+            let estrecho = r.w < 208;
+            let (t1, t2) = if estrecho { (14, 12) } else { (16, 14) };
+            let (c1, c2) = if disponible { (t.sobre_superficie, t.sobre_variante_superficie) } else { (apagado(t.sobre_superficie), apagado(t.sobre_superficie)) };
+            let q = que_quepa(medio, d.nombre, t1, ancho);
+            medio.dibujar(l, x, r.y + r.h / 2 - 2, &q, t1, c1);
+            let q = que_quepa(fuente, &abajo, t2, ancho);
+            fuente.dibujar(l, x, r.y + r.h / 2 + 16, &q, t2, c2);
+        }
     }
 }
 
@@ -489,132 +565,131 @@ fn que_quepa(f: &mut Fuente, texto: &str, tam: u32, ancho: i32) -> String {
     String::new()
 }
 
-fn pintar(px: &mut [u32], alto: i32, e: &Estado, d: &Disposicion, fuente: &mut Fuente, medio: &mut Fuente) {
-    // Material 3: el panel sobre el contenedor de superficie, con esquinas de 28 (fuera, transparente: el búfer es
-    // ARGB); los mosaicos con esquinas de 20 (las filas de edición, de 16), el encendido en el primario y los demás en
-    // el contenedor alto. En edición, los quitados con un borde y sin fondo.
+/// El panel: la superficie con el radio de las ventanas de shiva (`windowRadius`), y dentro la rejilla, el detalle, el
+/// menú de apagado o, editando, la rejilla con su marco y la tira (o la lista para añadir).
+fn pintar(px: &mut [u32], ancho: i32, alto: i32, e: &Estado, d: &Disposicion, fuente: &mut Fuente, medio: &mut Fuente) {
     let t = &e.tema;
-    px[..(ANCHO * alto) as usize].fill(0);
-    let mut l = Lienzo::new(px, ANCHO, alto, ANCHO as usize);
-    l.redondeado(Rect::new(0, 0, ANCHO, alto), 28, t.contenedor());
-    if e.editando {
-        fuente.dibujar(&mut l, 24, 46, "Editar panel", 22, t.sobre_superficie);
-    } else {
-        // Quién está delante: su inicial en un círculo del contenedor primario, el nombre y cuánto lleva encendido.
-        let avatar = Rect::new(20, 18, 40, 40);
-        l.redondeado(avatar, 20, t.contenedor_primario);
-        let nombre = if e.persona.is_empty() { "DashOS" } else { e.persona.as_str() };
-        let inicial: String = nombre.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
-        centrado(medio, &mut l, avatar, avatar.y + 26, &inicial, 16, t.sobre_contenedor_primario);
-        medio.dibujar(&mut l, 72, 35, nombre, 16, t.sobre_superficie);
-        let min = dashos::ahora_us() / 60_000_000;
-        let encendido = if min < 60 { alloc::format!("Encendido hace {} min", min) } else { alloc::format!("Encendido hace {} h {} min", min / 60, min % 60) };
-        fuente.dibujar(&mut l, 72, 54, &encendido, 12, t.sobre_variante_superficie);
-        // Bloquear: botón de icono tonal. El de apagado, igual; con el menú abierto, lleno.
-        l.redondeado(BOTON_BLOQUEAR, ICONO / 2, t.contenedor_secundario());
-        icono_candado(&mut l, BOTON_BLOQUEAR, t.sobre_contenedor_secundario());
-        let (fondo, tinta) = if e.menu { (t.primario, t.sobre_primario) } else { (t.contenedor_secundario(), t.sobre_contenedor_secundario()) };
-        l.redondeado(BOTON_APAGADO, ICONO / 2, fondo);
-        icono_encendido(&mut l, BOTON_APAGADO, tinta, fondo);
-    }
-    // Editar: botón tonal; Hecho: lleno (lo que se espera que se pulse).
-    let (fondo, texto) = if e.editando { (t.primario, t.sobre_primario) } else { (t.contenedor_secundario(), t.sobre_contenedor_secundario()) };
-    l.redondeado(BOTON_CABECERA, BOTON_CABECERA.h / 2, fondo);
-    centrado(medio, &mut l, BOTON_CABECERA, BOTON_CABECERA.y + 25, if e.editando { "Hecho" } else { "Editar" }, 14, texto);
-    if !e.editando && e.menu {
-        // El menú de apagado: filas como las de edición, con su icono en un cuadrado redondeado.
+    px[..(ancho * alto) as usize].fill(0);
+    let mut l = Lienzo::new(px, ancho, alto, ancho as usize);
+    l.redondeado(Rect::new(0, 0, ancho, alto), dms_medidas::RADIO_VENTANA, t.superficie);
+    l.borde(Rect::new(0, 0, ancho, alto), dms_medidas::RADIO_VENTANA, 1, t.variante_contorno);
+    let zona = |a: Accion| d.zonas.iter().find(|z| z.1 == a).map(|z| z.0);
+    if e.menu && !e.editando {
         for &(r, a) in &d.zonas {
             let Accion::Energia(i) = a else { continue };
-            l.redondeado(r, 16, t.contenedor_alto());
-            let cuadro = Rect::new(r.x + 8, r.y + 8, 40, 40);
-            let (fondo, tinta) = (t.contenedor_secundario(), t.sobre_contenedor_secundario());
-            l.redondeado(cuadro, 12, fondo);
-            match i {
-                0 => icono_encendido(&mut l, cuadro, tinta, fondo),
-                1 => icono_reiniciar(&mut l, cuadro, tinta, fondo),
-                2 => icono_salir(&mut l, cuadro, tinta),
-                _ => icono_candado(&mut l, cuadro, tinta),
+            l.redondeado(r, dms_medidas::pildora(r.h), t.contenedor());
+            let cuadro = Rect::new(r.x + 8, r.y + 4, 48, 48);
+            let (fondo, tinta) = (t.contenedor_alto(), if i == 0 { t.error } else { t.primario });
+            l.redondeado(cuadro, 24, fondo);
+            let s = match i {
+                0 => simbolo::POWER_SETTINGS_NEW,
+                1 => simbolo::RESTART_ALT,
+                2 => simbolo::LOGOUT,
+                _ => simbolo::LOCK,
+            };
+            simbolo_en(e, &mut l, cuadro, s, tinta);
+            medio.dibujar(&mut l, r.x + 68, r.y + 34, ENERGIA[i].0, 16, t.sobre_superficie);
+        }
+        return;
+    }
+    if e.editando && e.anadiendo {
+        medio.dibujar(&mut l, RELLENO, RELLENO + 22, "Añadir al centro de control", 16, t.sobre_superficie);
+        for &(r, a) in &d.zonas {
+            match a {
+                Accion::Poner(k) => {
+                    let def = &cc_rejilla::CATALOGO[k];
+                    l.redondeado(r, dms_medidas::radio(20), t.contenedor());
+                    let caja = Rect::new(r.x + 4, r.y + 4, 40, 40);
+                    l.redondeado(caja, 20, t.contenedor_alto());
+                    icono_de(&mut l, def.id, caja, e, t.primario, t.contenedor_alto());
+                    let texto = if def.disponible { String::from(def.nombre) } else { alloc::format!("{} (aún no)", def.nombre) };
+                    let q = que_quepa(medio, &texto, 14, r.w - 60);
+                    medio.dibujar(&mut l, r.x + 52, r.y + 30, &q, 14, t.sobre_superficie);
+                }
+                Accion::Volver => {
+                    l.redondeado(r, dms_medidas::pildora(40), t.contenedor_secundario());
+                    centrado(medio, &mut l, r, r.y + 25, "Volver", 14, t.sobre_contenedor_secundario());
+                }
+                _ => {}
             }
-            medio.dibujar(&mut l, r.x + 64, r.y + 34, ENERGIA[i].0, 16, t.sobre_superficie);
         }
         return;
     }
-    if !e.editando {
-        pintar_controles(&mut l, e, d, fuente, medio);
-        return;
-    }
-    for &(r, m, quitado) in &d.filas {
-        if quitado {
-            l.borde(r, 16, 1, t.variante_contorno);
-            fuente.dibujar(&mut l, r.x + 16, r.y + 34, MOSAICOS[m].1, 16, t.sobre_variante_superficie);
-        } else {
-            l.redondeado(r, 16, t.contenedor_alto());
-            medio.dibujar(&mut l, r.x + 16, r.y + 34, MOSAICOS[m].1, 16, t.sobre_superficie);
+    for (k, &(r, _)) in d.cajas.iter().enumerate() {
+        pintar_mosaico(&mut l, r, &e.cc.puestos[k], e, fuente, medio);
+        if e.editando {
+            // El marco de edición (`DGridEditChrome`): anillo de 2 en el primario y la píldora de botones.
+            l.borde(r, dms_medidas::pildora(r.h.min(64)), 2, t.primario);
+            let n = if e.cc.puestos[k].def().id == "editar" { 2 } else { 3 };
+            let pildora = Rect::new(r.x + 2, r.y + 2, 20 * n, 20);
+            l.redondeado(pildora, 10, t.contenedor_alto());
+            l.borde(pildora, 10, 1, t.primario);
+            for (i, ic) in [Icono::Subir, Icono::Bajar, Icono::Quitar].into_iter().take(n as usize).enumerate() {
+                let b = Rect::new(pildora.x + i as i32 * 20, pildora.y, 20, 20);
+                let color = if i == 2 { t.error } else { t.sobre_superficie };
+                // Antes y después, de lado (en la rejilla se va hacia la izquierda y la derecha). De 16 en el botón de 20.
+                let s = match ic {
+                    Icono::Subir => simbolo::CHEVRON_LEFT,
+                    Icono::Bajar => simbolo::CHEVRON_RIGHT,
+                    _ => simbolo::CLOSE,
+                };
+                e.simbolos.centrado(&mut l, b, 16, s, color);
+            }
         }
     }
-    medio.dibujar(&mut l, 24, d.rotulo, "Quitados", 14, t.sobre_variante_superficie);
-    if e.orden.quitados().next().is_none() {
-        fuente.dibujar(&mut l, 24, d.rotulo + 26, "Ninguno", 14, t.sobre_variante_superficie);
-    }
-    let n = e.orden.cuantos();
-    for &(z, a) in &d.zonas {
-        let (i, desactivado) = match a {
-            Accion::Subir(p) => (Icono::Subir, p == 0),
-            Accion::Bajar(p) => (Icono::Bajar, p + 1 == n),
-            Accion::Quitar(_) => (Icono::Quitar, false),
-            Accion::Poner(_) => (Icono::Poner, false),
-            _ => continue,
+    if let (Some(tarjeta), Some(k)) = (d.detalle, e.detalle) {
+        // El detalle (`CcDetailBand`): tarjeta con radio xl, el nombre en 16 medium y la cruz de 32; y sus filas.
+        let p = e.cc.puestos[k];
+        l.redondeado(tarjeta, dms_medidas::radio(28), t.contenedor());
+        l.borde(tarjeta, dms_medidas::radio(28), 1, t.variante_contorno);
+        medio.dibujar(&mut l, tarjeta.x + 16, tarjeta.y + 37, p.def().nombre, 16, t.sobre_superficie);
+        if let Some(c) = zona(Accion::CerrarDetalle) {
+            icono(e, &mut l, c, Icono::Quitar, t.sobre_variante_superficie);
+        }
+        let lineas: Vec<String> = match p.def().id {
+            "red" => alloc::vec![
+                alloc::format!("Estado: {}", estado_de("red", e).1),
+                if e.red == 2 { alloc::format!("Dirección: {}.{}.{}.{}", e.ip[0], e.ip[1], e.ip[2], e.ip[3]) } else { String::from("Dirección: ninguna") },
+            ],
+            "salida" => {
+                let mut v = alloc::vec![alloc::format!("Sale por {} · {}", e.sonido.as_ref().map_or("—", |s| s.nombre_defecto()), estado_de("salida", e).1)];
+                for f in flujos_panel(e) {
+                    let pc = (sonido_vista_mil(f.volumen[0]) + 5) / 10;
+                    v.push(alloc::format!("{} · {} %{}", sonido_p::nombre_visible(&f.nombre), pc, if f.silencio { " · en silencio" } else { "" }));
+                }
+                v.push(String::from("Abrir el mezclador Sonido…"));
+                v
+            }
+            "no_molestar" => PLAZOS.iter().map(|p| String::from(p.0)).collect(),
+            _ => Vec::new(),
         };
-        let color = if desactivado { apagado(t.sobre_variante_superficie) } else { t.sobre_variante_superficie };
-        icono(&mut l, z, i, color);
+        for (i, texto) in lineas.iter().enumerate() {
+            let Some(r) = zona(Accion::Fila(i)) else { continue };
+            if p.def().id == "no_molestar" {
+                l.redondeado(r, dms_medidas::radio(12), t.contenedor_alto());
+            }
+            fuente.dibujar(&mut l, r.x + 12, r.y + 26, texto, 14, t.sobre_superficie);
+        }
     }
-}
-
-/// El altavoz de Material (24), centrado en `r`: la caja, la bocina y dos ondas; con el silencio, una cruz en vez de
-/// las ondas. Las ondas, como trozos de un borde redondo recortado a la derecha.
-fn icono_altavoz(l: &mut Lienzo, r: Rect, silencio: bool, nivel: u32, color: Color) {
-    let (cx, cy) = (r.x + r.w / 2 - 4, r.y + r.h / 2);
-    l.redondeado(Rect::new(cx - 7, cy - 3, 5, 7), 1, color);
-    // La bocina: un trapecio, columna a columna, con los bordes suavizados por dos trazos.
-    for i in 0..5 {
-        l.rellenar(Rect::new(cx - 2 + i, cy - 3 - i, 1, 7 + 2 * i), color);
+    if let Some(tira) = d.tira {
+        l.rellenar(Rect::new(0, tira.y, d.ancho, 1), t.variante_contorno);
+        for (a, texto, lleno) in [(Accion::Anadir, "Añadir", false), (Accion::Hecho, "Terminar", true)] {
+            let Some(r) = zona(a) else { continue };
+            let (fondo, tinta) = if lleno { (t.primario, t.sobre_primario) } else { (t.contenedor_secundario(), t.sobre_contenedor_secundario()) };
+            l.redondeado(r, dms_medidas::pildora(40), fondo);
+            centrado(medio, &mut l, r, r.y + 25, texto, 14, tinta);
+        }
+        if let Some(r) = zona(Accion::Deshacer) {
+            l.redondeado(r, 20, t.contenedor_alto());
+            let activo = !e.deshacer.is_empty();
+            let color = if activo { t.sobre_superficie } else { apagado(t.sobre_superficie) };
+            simbolo_en(e, &mut l, r, simbolo::UNDO, color);
+        }
+        if let Some(r) = zona(Accion::Descartar) {
+            l.redondeado(r, 20, t.contenedor_alto());
+            icono(e, &mut l, r, Icono::Quitar, t.sobre_superficie);
+        }
     }
-    trazo(l, (cx - 2, cy - 3), (cx + 2, cy - 7), 1, color);
-    trazo(l, (cx - 2, cy + 3), (cx + 2, cy + 7), 1, color);
-    if silencio {
-        trazo(l, (cx + 6, cy - 3), (cx + 11, cy + 2), 2, color);
-        trazo(l, (cx + 11, cy - 3), (cx + 6, cy + 2), 2, color);
-        return;
-    }
-    l.recortar(Rect::new(cx + 4, r.y, r.w, r.h));
-    if nivel > 0 {
-        l.borde(Rect::new(cx - 1, cy - 4, 9, 9), 5, 2, color);
-    }
-    if nivel > 50 {
-        l.borde(Rect::new(cx - 4, cy - 8, 17, 17), 9, 2, color);
-    }
-    l.soltar_recorte();
-}
-
-/// El OSD del volumen: una píldora en el contenedor más alto (como un menú o una tarjeta elevada de Material 3), con el
-/// altavoz, la pista (activa en el primario, el resto en el contenedor secundario, como el deslizador del kit) y el
-/// valor. El compositor le pone la sombra.
-fn pintar_osd(px: &mut [u32], v: &Volumen, t: &Tema, medio: &mut Fuente) {
-    px.fill(0);
-    let mut l = Lienzo::new(px, ANCHO_OSD, ALTO_OSD, ANCHO_OSD as usize);
-    let r = Rect::new(0, 0, ANCHO_OSD, ALTO_OSD);
-    l.redondeado(r, ALTO_OSD / 2, t.contenedor_alto());
-    icono_altavoz(&mut l, Rect::new(16, 16, 24, 24), v.silencio, v.nivel, t.sobre_superficie);
-    let texto = if v.silencio { String::from("Silencio") } else { alloc::format!("{} %", v.nivel) };
-    let ancho_texto = medio.medir("Silencio", 14).ancho.max(medio.medir("100 %", 14).ancho);
-    let pista = Rect::new(56, (ALTO_OSD - 8) / 2, ANCHO_OSD - 56 - 20 - ancho_texto - 16, 8);
-    l.redondeado(pista, 4, t.contenedor_secundario());
-    let lleno = pista.w * v.efectivo() as i32 / 100;
-    if lleno > 0 {
-        l.redondeado(Rect::new(pista.x, pista.y, lleno.max(8), pista.h), 4, if v.silencio { apagado(t.sobre_superficie) } else { t.primario });
-    }
-    let ancho = medio.medir(&texto, 14).ancho;
-    medio.dibujar(&mut l, ANCHO_OSD - 20 - ancho, ALTO_OSD / 2 + 5, &texto, 14, t.sobre_superficie);
 }
 
 /// S27, oleada 2: el estado de la red (0 sin servicio, 1 sin dirección, 2 conectada) y la dirección, con poco plazo
@@ -725,43 +800,56 @@ fn pedir_modo(oscuro: bool) -> i32 {
     }
 }
 
-/// Los mosaicos guardados, por el centro: (su estado, el orden). Nada si no contesta o contesta algo que no vale.
-fn leer_mosaicos(plazo_us: u64) -> Option<(i32, Orden)> {
-    let mut r = [0u8; 4 + MAX_TEXTO];
-    let n = al_centro(b"panel leer", &mut r, plazo_us)?;
-    if n < 4 {
-        return None;
-    }
-    let estado = i32::from_le_bytes(r[..4].try_into().unwrap());
-    Orden::entender(&r[4..n]).ok().map(|o| (estado, o))
-}
-
-/// Que el centro guarde los mosaicos; su estado (0 si se guardaron).
-fn guardar_mosaicos(orden: &Orden) -> i32 {
-    let mut linea = [0u8; MAX_TEXTO];
-    let n = orden.escribir(&mut linea);
-    let mut p = Vec::from(&b"panel guardar "[..]);
-    p.extend_from_slice(&linea[..n - 1]);
-    let mut r = [0u8; 4];
-    match al_centro(&p, &mut r, 5_000_000) {
-        Some(4) => i32::from_le_bytes(r),
+/// S27, oleada 3: que el centro guarde lo editado (en bytes; él lo escribe en texto en `ENV:` y `ENVARC:`). Su estado
+/// (0 si se guardó).
+fn guardar_cc(r: &Rejilla) -> i32 {
+    let mut m = Vec::from(&b"cc guardar "[..]);
+    let mut b = [0u8; 3 + 6 * cc_rejilla::MAX];
+    let n = r.escribir_bytes(&mut b);
+    m.extend_from_slice(&b[..n]);
+    let mut resp = [0u8; 4];
+    match al_centro(&m, &mut resp, 5_000_000) {
+        Some(4) => i32::from_le_bytes(resp),
         _ => i32::MIN,
     }
 }
 
-fn nombres(orden: &Orden) -> String {
-    let v: Vec<&str> = orden.vistos().map(|m| MOSAICOS[m].0).collect();
+/// Los nombres de lo que se ve, en orden (para las pruebas).
+fn nombres(r: &Rejilla) -> String {
+    let v: Vec<&str> = r.puestos().iter().map(|p| p.def().id).collect();
     if v.is_empty() { String::from("ninguno") } else { v.join(" ") }
 }
 
+/// S27, oleada 3: "no molestar", del servicio de avisos (la llave "avisos"): (puesto, segundos que quedan). Con
+/// `poner`, se pone (con esos minutos; 0 sin plazo) o se quita.
+fn no_molestar(poner: Option<(bool, u32)>) -> Option<(bool, u32)> {
+    use dashos::protocolo::avisos as av;
+    let llave = dashos::llaves::Tabla::leer().buscar("avisos")?;
+    let mut m = [0u8; 12];
+    let (orden, a, b) = match poner {
+        Some((p, min)) => (av::NO_MOLESTAR, p as u32, min),
+        None => (av::ESTADO, 0, 0),
+    };
+    m[0..4].copy_from_slice(&orden.to_le_bytes());
+    m[4..8].copy_from_slice(&a.to_le_bytes());
+    m[8..12].copy_from_slice(&b.to_le_bytes());
+    let (lectura, escritura) = dashos::canal_crear();
+    let mut r = [0u8; av::CABECERA_LEER + 8];
+    let n = if dashos::canal_escribir(llave, &m, &[escritura]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 300_000).0 } else { -1 };
+    dashos::cerrar(lectura);
+    let u = |i: usize| u32::from_le_bytes(r[i..i + 4].try_into().unwrap());
+    (n == r.len() as i64 && u(0) == 0).then(|| (u(16) != 0, u(20)))
+}
+
 /// Un punto del panel visto desde la esquina de arriba a la derecha de la pantalla (para las pruebas).
-fn desde_la_esquina(r: Rect) -> (i32, i32) {
-    (MARGEN + ANCHO - r.x - r.w / 2, MARGEN + r.y + r.h / 2)
+fn desde_la_esquina(d: &Disposicion, r: Rect) -> (i32, i32) {
+    (MARGEN + d.ancho - r.x - r.w / 2, MARGEN + r.y + r.h / 2)
 }
 
 /// Para las pruebas: dónde queda cada botón, desde la esquina de arriba a la derecha de la pantalla.
 fn decir_sitios(e: &Estado, d: &Disposicion, abierto_ahora: bool) {
-    let zona = |a: Accion| d.zonas.iter().find(|z| z.1 == a).map(|z| desde_la_esquina(z.0));
+    let zona = |a: Accion| d.zonas.iter().find(|z| z.1 == a).map(|z| desde_la_esquina(d, z.0));
+    let puesto = |id: &str| e.cc.puestos().iter().position(|p| p.def().id == id);
     if !e.editando && e.menu {
         let filas: Vec<String> = (0..ENERGIA.len())
             .filter_map(|i| zona(Accion::Energia(i)).map(|(x, y)| alloc::format!("{} ({}, {})", ENERGIA[i].0.to_lowercase(), x, y)))
@@ -769,56 +857,83 @@ fn decir_sitios(e: &Estado, d: &Disposicion, abierto_ahora: bool) {
         println!("  [panel] menú de apagado: {}", filas.join(" "));
         return;
     }
-    if !e.editando {
-        let (ex, ey) = desde_la_esquina(BOTON_CABECERA);
-        println!("  [panel] se ven: {}; editar a ({}, {})", nombres(&e.orden), ex, ey);
-        if abierto_ahora {
-            let (ax, ay) = desde_la_esquina(BOTON_APAGADO);
-            println!("  [panel] botón de apagado a ({}, {})", ax, ay);
-            if let Some((x, y)) = zona(Accion::Mosaico(OSCURO)) {
-                println!("  [panel] abierto; mosaico a ({}, {}) de la esquina de arriba a la derecha", x, y);
-            }
-            if let (Some(menos), Some(mas)) = (zona(Accion::VolumenMenos), zona(Accion::VolumenMas)) {
-                println!("  [panel] volumen: menos a ({}, {}), más a ({}, {})", menos.0, menos.1, mas.0, mas.1);
+    // Una línea por cosa (una larga se podría mezclar con lo de otro programa), con el número de esta vez.
+    static VECES: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    if e.editando && e.anadiendo {
+        let n = VECES.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
+        for &(r, a) in &d.zonas {
+            if let Accion::Poner(k) = a {
+                let (x, y) = desde_la_esquina(d, r);
+                println!("  [panel] edición {}: {}: poner ({}, {})", n, cc_rejilla::CATALOGO[k].id, x, y);
             }
         }
         return;
     }
-    // Una línea por fila (una larga se podría mezclar con lo de otro programa), con el número de esta vez.
-    static VECES: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    if !e.editando {
+        let editar = puesto("editar").and_then(|k| zona(Accion::Cuerpo(k))).unwrap_or((0, 0));
+        println!("  [panel] se ven: {}; editar a ({}, {}); {} columnas, {} de alto", nombres(&e.cc), editar.0, editar.1, e.cc.columnas, d.alto);
+        if abierto_ahora {
+            if let Some((x, y)) = puesto("apagar").and_then(|k| zona(Accion::Cuerpo(k))) {
+                println!("  [panel] botón de apagado a ({}, {})", x, y);
+            }
+            if let Some((x, y)) = puesto("red").and_then(|k| zona(Accion::Cuerpo(k))) {
+                println!("  [panel] red a ({}, {})", x, y);
+            }
+            if let Some((x, y)) = puesto("oscuro").and_then(|k| zona(Accion::Cuerpo(k))) {
+                println!("  [panel] abierto; mosaico a ({}, {}) de la esquina de arriba a la derecha", x, y);
+            }
+            // El volumen: dónde poner el 90 % y el 100 % en su pista (lo que antes eran "−" y "+").
+            if let Some(k) = puesto("volumen") {
+                let p = pista_de(d.cajas[k].0);
+                let menos = desde_la_esquina(d, Rect::new(p.x + p.w * 90 / 100 + 1, p.y, 0, p.h));
+                let mas = desde_la_esquina(d, Rect::new(p.x + p.w + 4, p.y, 0, p.h));
+                println!("  [panel] volumen: menos a ({}, {}), más a ({}, {})", menos.0, menos.1, mas.0, mas.1);
+            }
+            // Rama sonido-pro: la salida de sonido (su cuerpo abre el detalle con los programas y el mezclador).
+            if let Some((x, y)) = puesto("salida").and_then(|k| zona(Accion::Cuerpo(k))) {
+                println!("  [panel] salida a ({}, {})", x, y);
+            }
+        }
+        // Rama sonido-pro: con el detalle de la salida abierto, sus filas (la última abre la ventana "Sonido").
+        if e.detalle.and_then(|k| e.cc.puestos().get(k).map(|p| p.def().id)) == Some("salida") {
+            let n = 2 + flujos_panel(e).len();
+            if let (Some((x, y)), Some((ax, ay))) = (zona(Accion::Fila(n - 1)), zona(Accion::Fila(0))) {
+                println!("  [panel] detalle de la salida: {} filas; el mezclador a ({}, {}), sus ajustes a ({}, {})", n, x, y, ax, ay);
+            }
+        }
+        return;
+    }
     let n = VECES.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
-    let (hx, hy) = desde_la_esquina(BOTON_CABECERA);
-    println!("  [panel] edición {}: hecho ({}, {})", n, hx, hy);
-    for (p, m) in e.orden.vistos().enumerate() {
-        let (s, b, q) = (zona(Accion::Subir(p)).unwrap(), zona(Accion::Bajar(p)).unwrap(), zona(Accion::Quitar(p)).unwrap());
-        println!("  [panel] edición {}: {}: subir ({}, {}) bajar ({}, {}) quitar ({}, {})", n, MOSAICOS[m].0, s.0, s.1, b.0, b.1, q.0, q.1);
+    let (hx, hy) = zona(Accion::Hecho).unwrap_or((0, 0));
+    let (ax, ay) = zona(Accion::Anadir).unwrap_or((0, 0));
+    println!("  [panel] edición {}: hecho ({}, {}) añadir ({}, {})", n, hx, hy, ax, ay);
+    for (k, p) in e.cc.puestos().iter().enumerate() {
+        let (s_, b, q) = (zona(Accion::Subir(k)).unwrap_or((0, 0)), zona(Accion::Bajar(k)).unwrap_or((0, 0)), zona(Accion::Quitar(k)).unwrap_or((0, 0)));
+        println!("  [panel] edición {}: {}: subir ({}, {}) bajar ({}, {}) quitar ({}, {})", n, p.def().id, s_.0, s_.1, b.0, b.1, q.0, q.1);
     }
-    for m in e.orden.quitados() {
-        let (x, y) = zona(Accion::Poner(m)).unwrap();
-        println!("  [panel] edición {}: {}: poner ({}, {})", n, MOSAICOS[m].0, x, y);
-    }
+}
+
+/// Lo que le llegó del centro de control por la puerta: su configuración (`CCFG` y la rejilla en bytes).
+fn del_centro(m: &[u8]) -> Option<Rejilla> {
+    m.strip_prefix(b"CCFG").and_then(Rejilla::leer_bytes)
 }
 
 fn principal() -> u64 {
     dashos::monton::con_nombre(&"panel");
     let (mut fuente, mut medio) = (Fuente::regular(), Fuente::medium());
-    // Los mosaicos guardados, antes de nada (al arrancar no hay prisa: nadie ha pulsado aún Super+A).
-    let mut orden = Orden::de_serie();
-    let mut cargado = false;
-    match leer_mosaicos(5_000_000) {
-        Some((estado, o)) => {
-            println!("  [panel] mosaicos: {} (el centro: {})", nombres(&o), estado);
-            orden = o;
-            // Sin servicio de archivos (-2), se vuelve a pedir al abrir.
-            cargado = estado >= 0;
-        }
-        None => println!("  [panel] el centro no dice los mosaicos: los de serie"),
-    }
     println!("  [panel] con la llave del estado de la red, abrir una conexión: {}", if conectar_con_el_estado() { "no se puede (bien)" } else { "MAL" });
-    let Some(mut c) = Cliente::conectar() else {
+    // S27, oleada 3: con una puerta, por la que el centro de control le da su configuración (`controlCenterWidgets`)
+    // cada vez que cambie (en `ENV:`, en Ajustes o editándolo aquí). Hasta que llegue, la de serie.
+    let Some((mut c, puerta)) = Cliente::conectar_con_puerta(MARCA_CC) else {
         println!("  [panel] sin compositor");
         return 1;
     };
+    if puerta != 0 {
+        let (lectura, suyo) = dashos::canal_crear();
+        let r = dashos::canal_escribir(CENTRO, b"cc vigilar", &[suyo, puerta]);
+        dashos::cerrar(lectura);
+        println!("  [panel] pide el centro de control al centro: {}", r);
+    }
     let Some(globales) = c.globales() else { return 2 };
     let global = |n: &str| globales.iter().find(|g| g.1 == n).map(|g| g.0);
     let (Some(gc), Some(gs), Some(ga), Some(gl), Some(gt)) =
@@ -836,8 +951,8 @@ fn principal() -> u64 {
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(5).uint(TEMA).fin();
     e.empezar(ASIENTO, wl_seat::req::GET_POINTER).uint(PUNTERO).fin();
     c.mandar(&e);
-    // La memoria del dibujo, una vez; los búferes, según la altura.
-    let tamano = (ANCHO * ALTO_MAX * 4) as usize;
+    // La memoria del dibujo, una vez; los búferes, según la medida.
+    let tamano = (ANCHO_MAX * ALTO_MAX * 4) as usize;
     let m = dashos::memoria_crear(tamano);
     if (m as i32) <= 0 || dashos::memoria_proyectar(m as u32, VA, true) != 0 {
         println!("  [panel] sin memoria");
@@ -848,56 +963,80 @@ fn principal() -> u64 {
     e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(POOL).llave(copia as u32).int(tamano as i32).fin();
     c.mandar(&e);
     println!("  [panel] en marcha: Super+A lo abre");
-    let mut est = Estado { tema: Tema::CLARO, oscuro: false, volumen: Volumen::new(), orden, editando: false, red: 0, ip: [0; 4], persona: String::new(), menu: false };
+    let cc = Rejilla::de_serie();
+    let mut est = Estado {
+        tema: Tema::CLARO,
+        oscuro: false,
+        volumen: Volumen::new(),
+        cc,
+        antes: cc,
+        deshacer: Vec::new(),
+        anadiendo: false,
+        detalle: None,
+        no_molestar: (false, 0),
+        editando: false,
+        red: 0,
+        ip: [0; 4],
+        persona: String::new(),
+        menu: false,
+        simbolos: Simbolos::new(),
+        sonido: None,
+    };
+    // Rama sonido-pro: el estado del sonido, en una memoria nuestra que rellena el servicio (y una puerta, que no usa).
+    let mut palabras_sonido = alloc::vec![0u32; sonido_p::TAM_ESTADO / 4];
+    {
+        let m = dashos::memoria_crear(sonido_p::TAM_ESTADO);
+        let puerta_sonido = c.puerta_extra(MARCA_SONIDO);
+        if (m as i32) > 0 && dashos::memoria_proyectar(m, VA_SONIDO, true) == 0 && puerta_sonido != 0 {
+            let copia = dashos::llave_duplicar(m, dashos::LEER | dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
+            dashos::canal_escribir(SONIDO, &sonido_p::SUSCRIBIR.to_le_bytes(), &[copia.max(0) as u32, puerta_sonido]);
+        }
+    }
+    let mut general_visto: Option<u32> = None;
+    let mut nm_dicho: Option<bool> = None;
     // S27, oleada 2: lo último que se dijo al compositor del estado (para la barra) y cuándo toca preguntar a la red.
     let mut estado_dicho: Option<(u32, u32, u32)> = None;
     let mut proxima_red = 0u64;
-    // S27: el OSD del volumen (lo que dura y lo juntado), si ya tiene su configure, y su memoria mientras se ve.
-    let mut osd = Osd::default();
-    let mut osd_listo = false;
-    let mut hoja_osd: Option<Lamina> = None;
     let mut abierto = false;
     // Cuántas veces se abrió (con Super+A o con el botón de la barra): para las pruebas.
     let mut veces_abierto = 0u32;
-    // Lo configurado por el compositor (la altura de la capa) y el pedido; 0 si aún nada.
-    let (mut configurado, mut pedido) = (0i32, 0i32);
-    // Los dos búferes: su altura (0 si no está hecho) y cuál se ve.
-    let mut buferes = [(BUFER, 0i32), (BUFER_2, 0i32)];
+    // Lo configurado por el compositor (la medida de la capa) y lo pedido; 0 si aún nada.
+    let (mut configurado, mut pedido) = ((0i32, 0i32), (0i32, 0i32));
+    // Los dos búferes: su medida (0 si no está hecho) y cuál se ve.
+    let mut buferes = [(BUFER, (0i32, 0i32)), (BUFER_2, (0i32, 0i32))];
     let mut visto = 0usize;
-    // Lo que había al entrar en edición, para guardar solo si cambió.
-    let mut antes = est.orden;
     let (mut x, mut y, mut dentro) = (0i32, 0i32, false);
-    // Pinta con la altura configurada (con el búfer de esa altura) o, si el contenido pide otra, pide a la capa ese
-    // tamaño y pinta al llegar su configure.
-    let pintar_o_pedir = |c: &mut Cliente, est: &Estado, configurado: i32, pedido: &mut i32, buferes: &mut [(u32, i32); 2], visto: &mut usize,
+    // Pinta con la medida configurada (con el búfer de esa medida) o, si el contenido pide otra, pide a la capa esa
+    // medida y pinta al llegar su configure.
+    let pintar_o_pedir = |c: &mut Cliente, est: &Estado, configurado: (i32, i32), pedido: &mut (i32, i32), buferes: &mut [(u32, (i32, i32)); 2], visto: &mut usize,
                           fuente: &mut Fuente, medio: &mut Fuente, decir: bool, abierto_ahora: bool| {
-        let d = disponer(&est.orden, est.editando, est.menu);
-        let alto = d.alto.min(ALTO_MAX);
-        if alto != configurado {
-            if *pedido != alto {
-                *pedido = alto;
+        let d = disponer(est);
+        let medida = (d.ancho, d.alto.min(ALTO_MAX));
+        if medida != configurado {
+            if *pedido != medida {
+                *pedido = medida;
                 let mut e = Escritor::new();
-                e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_SIZE).uint(ANCHO as u32).uint(alto as u32).fin();
+                e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_SIZE).uint(medida.0 as u32).uint(medida.1 as u32).fin();
                 e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
                 c.mandar(&e);
             }
             return;
         }
         let mut e = Escritor::new();
-        if buferes[*visto].1 != alto {
-            // El otro búfer, rehecho con esta altura (sobre la misma memoria); el que se veía sigue hasta el commit.
+        if buferes[*visto].1 != medida {
+            // El otro búfer, rehecho con esta medida (sobre la misma memoria); el que se veía sigue hasta el commit.
             let otro = 1 - *visto;
-            if buferes[otro].1 != 0 {
+            if buferes[otro].1 != (0, 0) {
                 e.empezar(buferes[otro].0, wl_buffer::req::DESTROY).fin();
             }
-            e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(buferes[otro].0).int(0).int(ANCHO).int(alto).int(ANCHO * 4).uint(0).fin();
-            buferes[otro].1 = alto;
+            e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(buferes[otro].0).int(0).int(medida.0).int(medida.1).int(medida.0 * 4).uint(0).fin();
+            buferes[otro].1 = medida;
             *visto = otro;
         }
         let px = unsafe { core::slice::from_raw_parts_mut(VA as *mut u32, tamano / 4) };
-        pintar(px, alto, est, &d, fuente, medio);
+        pintar(px, medida.0, medida.1, est, &d, fuente, medio);
         e.empezar(SUPERFICIE, wl_surface::req::ATTACH).uint(buferes[*visto].0).int(0).int(0).fin();
-        e.empezar(SUPERFICIE, wl_surface::req::DAMAGE).int(0).int(0).int(ANCHO).int(alto).fin();
+        e.empezar(SUPERFICIE, wl_surface::req::DAMAGE).int(0).int(0).int(medida.0).int(medida.1).fin();
         e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
         c.mandar(&e);
         if decir {
@@ -918,14 +1057,36 @@ fn principal() -> u64 {
                     _ => String::from("sin servicio"),
                 });
                 (est.red, est.ip) = (red, ip);
-                if abierto && configurado > 0 && !est.editando {
+                if abierto && configurado.1 > 0 && !est.editando {
                     pintar_o_pedir(&mut c, &est, configurado, &mut pedido, &mut buferes, &mut visto, &mut fuente, &mut medio, false, false);
                 }
             }
         }
+        // Rama sonido-pro: lo que dice el servicio de sonido. Si el volumen de la salida lo cambió otro (la ventana
+        // "Sonido"), el panel lo toma: así la barra y el OSD dicen lo mismo.
+        if let Some(es) = leer_sonido(&mut palabras_sonido) {
+            if let Some(m) = es.mezcla_de(es.defecto) {
+                let v = m.volumen[0];
+                if general_visto.is_some_and(|g| g != v) {
+                    let nivel = ((sonido_vista_mil(v) + 5) / 10).clamp(0, 100) as u32;
+                    if nivel != est.volumen.efectivo() && !est.volumen.silencio {
+                        est.volumen.poner(nivel);
+                    }
+                }
+                general_visto = Some(v);
+            }
+            est.sonido = Some(es);
+        }
+        // Rama sonido-pro: el "no molestar", también al sonido (calla los sonidos del sistema).
+        if Some(est.no_molestar.0) != nm_dicho {
+            nm_dicho = Some(est.no_molestar.0);
+            let b: Vec<u8> = [sonido_p::NO_MOLESTAR, est.no_molestar.0 as u32].iter().flat_map(|w| w.to_le_bytes()).collect();
+            dashos::canal_escribir(SONIDO, &b, &[]);
+        }
         decir_estado(&mut c, &est, &mut estado_dicho);
-        // Se espera como mucho hasta que toque quitar el OSD o preguntar otra vez a la red.
-        let hasta = osd.hasta.map_or(proxima_red, |h| h.min(proxima_red));
+        // Se espera como mucho hasta que toque preguntar otra vez a la red. (S27: el OSD del volumen lo enseña el dock,
+        // con el aviso del compositor y el nivel que se le da aquí con `estado`.)
+        let hasta = proxima_red;
         let ev = c.evento_plazo(hasta.saturating_sub(dashos::ahora_us()).max(1));
         let ev = match ev {
             Err(()) => {
@@ -934,23 +1095,30 @@ fn principal() -> u64 {
             }
             Ok(ev) => ev,
         };
-        if let Some(juntadas) = osd.vencido(dashos::ahora_us()) {
-            let mut e = Escritor::new();
-            e.empezar(CAPA_OSD, zwlr_layer_surface_v1::req::DESTROY).fin();
-            e.empezar(SUP_OSD, wl_surface::req::DESTROY).fin();
-            e.empezar(BUFER_OSD, wl_buffer::req::DESTROY).fin();
-            if let Some(h) = hoja_osd.take() {
-                h.soltar(&mut e);
+        // S27, oleada 3: el centro le da la configuración (al pedirla, o porque cambió). Editando, se queda la de aquí.
+        if c.timbres > 0 {
+            c.timbres = 0;
+            match del_centro(&c.ultimo_timbre) {
+                Some(r) if r.columnas != est.cc.columnas || r.puestos() != est.cc.puestos() => {
+                    println!("  [panel] centro de control del centro: {}; {} columnas", nombres(&r), r.columnas);
+                    if !est.editando {
+                        est.cc = r;
+                        est.detalle = None;
+                        if abierto && configurado.1 > 0 {
+                            por_decir = (true, false);
+                            pintar_o_pedir(&mut c, &est, configurado, &mut pedido, &mut buferes, &mut visto, &mut fuente, &mut medio, false, false);
+                        }
+                    }
+                }
+                Some(_) => {}
+                None => println!("  [panel] del centro, algo que no se entiende ({} bytes): nada", c.ultimo_timbre.len()),
             }
-            c.mandar(&e);
-            osd_listo = false;
-            let v = est.volumen;
-            println!("  [panel] OSD cerrado: {} pulsaciones; volumen {}{}", juntadas, v.nivel, if v.silencio { " (silencio)" } else { "" });
         }
         let Some((o, orden_ev, cuerpo)) = ev else { continue };
         let palabra = |i: usize| u32::from_le_bytes(cuerpo[4 * i..4 * i + 4].try_into().unwrap());
-        // Cerrar el panel: si se estaba editando, se acaba la edición y se guarda.
-        let cerrar = |c: &mut Cliente, est: &mut Estado, antes: &Orden, bloquear: bool| {
+        // Cerrar el panel: si se estaba editando, se acaba la edición y se guarda (como DMS: cerrar el panel sale de la
+        // edición y se queda lo hecho).
+        let cerrar = |c: &mut Cliente, est: &mut Estado, bloquear: bool| {
             let mut e = Escritor::new();
             e.empezar(CAPA, zwlr_layer_surface_v1::req::DESTROY).fin();
             e.empezar(SUPERFICIE, wl_surface::req::DESTROY).fin();
@@ -958,10 +1126,12 @@ fn principal() -> u64 {
                 e.empezar(TEMA, dashos_tema_v1::req::BLOQUEAR).fin();
             }
             c.mandar(&e);
+            est.detalle = None;
+            est.anadiendo = false;
             if est.editando {
                 est.editando = false;
-                if est.orden != *antes {
-                    println!("  [panel] mosaicos guardados al cerrar: {}", guardar_mosaicos(&est.orden));
+                if est.cc != est.antes {
+                    println!("  [panel] centro de control guardado al cerrar: {}", guardar_cc(&est.cc));
                 }
             }
         };
@@ -969,27 +1139,24 @@ fn principal() -> u64 {
             (TEMA, dashos_tema_v1::ev::TEMA) => {
                 est.oscuro = palabra(1) != 0;
                 est.tema = Tema::del_sistema(palabra(0) | 0xff00_0000, est.oscuro);
-                if abierto && configurado > 0 {
+                if abierto && configurado.1 > 0 {
                     pintar_o_pedir(&mut c, &est, configurado, &mut pedido, &mut buferes, &mut visto, &mut fuente, &mut medio, false, false);
                 }
             }
             (TEMA, dashos_tema_v1::ev::PANEL) if abierto => {
                 abierto = false;
-                cerrar(&mut c, &mut est, &antes, false);
+                cerrar(&mut c, &mut est, false);
                 println!("  [panel] cerrado");
             }
             (TEMA, dashos_tema_v1::ev::PANEL) => {
-                // Quién está delante, cada vez (puede haber cambiado de persona).
+                // Quién está delante, cada vez (puede haber cambiado de persona), y el "no molestar".
                 let persona = quien_delante();
                 if persona != est.persona {
                     println!("  [panel] delante: {}", if persona.is_empty() { "nadie" } else { &persona });
                     est.persona = persona;
                 }
-                // Si al arrancar el centro no los dijo, otra vez (con poco plazo: el compositor suelta a quien no lee).
-                if !cargado && let Some((estado, o)) = leer_mosaicos(1_000_000) {
-                    println!("  [panel] mosaicos: {} (el centro: {})", nombres(&o), estado);
-                    est.orden = o;
-                    cargado = estado >= 0;
+                if let Some(nm) = no_molestar(None) {
+                    est.no_molestar = nm;
                 }
                 // Arriba a la derecha (anclas 1 arriba y 8 derecha), en la capa de encima (2), con el teclado a demanda (2).
                 // Sin zona propia: el compositor lo pone bajo la barra, si la hay (S10).
@@ -997,12 +1164,13 @@ fn principal() -> u64 {
                 veces_abierto += 1;
                 println!("  [panel] abierto por {}.ª vez", veces_abierto);
                 est.menu = false;
-                (configurado, pedido) = (0, disponer(&est.orden, false, false).alto.min(ALTO_MAX));
+                let d = disponer(&est);
+                (configurado, pedido) = ((0, 0), (d.ancho, d.alto.min(ALTO_MAX)));
                 por_decir = (true, true);
                 let mut e = Escritor::new();
                 e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
                 e.empezar(CAPAS, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(CAPA).uint(SUPERFICIE).uint(0).uint(2).texto(Some("panel")).fin();
-                e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_SIZE).uint(ANCHO as u32).uint(pedido as u32).fin();
+                e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_SIZE).uint(pedido.0 as u32).uint(pedido.1 as u32).fin();
                 e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_ANCHOR).uint(1 | 8).fin();
                 e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_MARGIN).int(MARGEN).int(MARGEN).int(0).int(0).fin();
                 e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_KEYBOARD_INTERACTIVITY).uint(2).fin();
@@ -1013,62 +1181,24 @@ fn principal() -> u64 {
                 let mut e = Escritor::new();
                 e.empezar(CAPA, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(palabra(0)).fin();
                 c.mandar(&e);
-                configurado = palabra(2) as i32;
+                configurado = (palabra(1) as i32, palabra(2) as i32);
+                if configurado.0 == 0 {
+                    configurado.0 = pedido.0;
+                }
                 let (decir, ahora) = por_decir;
                 por_decir = (false, false);
                 pintar_o_pedir(&mut c, &est, configurado, &mut pedido, &mut buferes, &mut visto, &mut fuente, &mut medio, decir, ahora);
             }
             (CAPA, zwlr_layer_surface_v1::ev::CLOSED) => abierto = false,
-            // S27: una tecla del volumen. Se cambia, se manda al servicio de sonido y sale (o se alarga) el OSD. Una
-            // ráfaga solo repinta la misma capa.
+            // S27: una tecla del volumen. Se cambia y se manda al servicio de sonido; el OSD lo enseña el dock.
             (TEMA, dashos_tema_v1::ev::VOLUMEN) => {
                 let paso = palabra(0) as i32;
                 if est.volumen.tecla(paso) {
                     pedir_volumen(est.volumen.efectivo());
                 }
-                if abierto && configurado > 0 && !est.editando {
+                if abierto && configurado.1 > 0 && !est.editando {
                     pintar_o_pedir(&mut c, &est, configurado, &mut pedido, &mut buferes, &mut visto, &mut fuente, &mut medio, false, false);
                 }
-                if osd.pulsacion(dashos::ahora_us()) {
-                    let mut e = Escritor::new();
-                    let Some(hoja) = Lamina::nueva(&mut e, (ANCHO_OSD * ALTO_OSD * 4) as usize, VA_OSD, POOL_OSD) else {
-                        println!("  [panel] sin memoria para el OSD");
-                        osd = Osd::default();
-                        continue;
-                    };
-                    hoja_osd = Some(hoja);
-                    // Abajo en el centro (ancla 2), en la capa de encima de todo (3), sin teclado.
-                    e.empezar(POOL_OSD, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER_OSD).int(0).int(ANCHO_OSD).int(ALTO_OSD).int(ANCHO_OSD * 4).uint(0).fin();
-                    e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUP_OSD).fin();
-                    e.empezar(CAPAS, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(CAPA_OSD).uint(SUP_OSD).uint(0).uint(3).texto(Some("osd")).fin();
-                    e.empezar(CAPA_OSD, zwlr_layer_surface_v1::req::SET_SIZE).uint(ANCHO_OSD as u32).uint(ALTO_OSD as u32).fin();
-                    e.empezar(CAPA_OSD, zwlr_layer_surface_v1::req::SET_ANCHOR).uint(2).fin();
-                    e.empezar(CAPA_OSD, zwlr_layer_surface_v1::req::SET_MARGIN).int(0).int(0).int(ABAJO_OSD).int(0).fin();
-                    e.empezar(CAPA_OSD, zwlr_layer_surface_v1::req::SET_KEYBOARD_INTERACTIVITY).uint(0).fin();
-                    e.empezar(SUP_OSD, wl_surface::req::COMMIT).fin();
-                    c.mandar(&e);
-                    let v = est.volumen;
-                    println!("  [panel] OSD abierto: volumen {}{}", v.nivel, if v.silencio { " (silencio)" } else { "" });
-                } else if osd_listo && let Some(h) = hoja_osd.as_mut() {
-                    pintar_osd(h.px((ANCHO_OSD * ALTO_OSD) as usize), &est.volumen, &est.tema, &mut medio);
-                    let mut e = Escritor::new();
-                    e.empezar(SUP_OSD, wl_surface::req::ATTACH).uint(BUFER_OSD).int(0).int(0).fin();
-                    e.empezar(SUP_OSD, wl_surface::req::DAMAGE).int(0).int(0).int(ANCHO_OSD).int(ALTO_OSD).fin();
-                    e.empezar(SUP_OSD, wl_surface::req::COMMIT).fin();
-                    c.mandar(&e);
-                }
-            }
-            (CAPA_OSD, zwlr_layer_surface_v1::ev::CONFIGURE) if hoja_osd.is_some() => {
-                let mut e = Escritor::new();
-                e.empezar(CAPA_OSD, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(palabra(0)).fin();
-                if let Some(h) = hoja_osd.as_mut() {
-                    pintar_osd(h.px((ANCHO_OSD * ALTO_OSD) as usize), &est.volumen, &est.tema, &mut medio);
-                }
-                e.empezar(SUP_OSD, wl_surface::req::ATTACH).uint(BUFER_OSD).int(0).int(0).fin();
-                e.empezar(SUP_OSD, wl_surface::req::DAMAGE).int(0).int(0).int(ANCHO_OSD).int(ALTO_OSD).fin();
-                e.empezar(SUP_OSD, wl_surface::req::COMMIT).fin();
-                c.mandar(&e);
-                osd_listo = true;
             }
             (PUNTERO, wl_pointer::ev::ENTER) => {
                 dentro = true;
@@ -1076,98 +1206,210 @@ fn principal() -> u64 {
             }
             (PUNTERO, wl_pointer::ev::LEAVE) => dentro = false,
             (PUNTERO, wl_pointer::ev::MOTION) => (x, y) = (palabra(1) as i32 >> 8, palabra(2) as i32 >> 8),
-            (PUNTERO, wl_pointer::ev::BUTTON) if palabra(2) == BOTON_IZQUIERDO && palabra(3) == 1 && dentro && abierto && configurado > 0 => {
-                let d = disponer(&est.orden, est.editando, est.menu);
-                let Some(&(_, accion)) = d.zonas.iter().find(|z| z.0.contiene(x, y)) else { continue };
+            (PUNTERO, wl_pointer::ev::BUTTON) if palabra(2) == BOTON_IZQUIERDO && palabra(3) == 1 && dentro && abierto && configurado.1 > 0 => {
+                let d = disponer(&est);
+                let Some(&(zona, accion)) = d.zonas.iter().find(|z| z.0.contiene(x, y)) else { continue };
                 // Si cambia lo que se ve, se pinta y se dicen los sitios nuevos.
                 let mut cambia = true;
+                let id = |k: usize| est.cc.puestos().get(k).map_or("", |p| p.def().id);
+                // Antes de cambiar algo en edición, se guarda para Deshacer (como mucho 50, como DMS).
+                let editar = |est: &mut Estado| {
+                    est.deshacer.push(est.cc);
+                    if est.deshacer.len() > 50 {
+                        est.deshacer.remove(0);
+                    }
+                };
                 match accion {
-                    Accion::Mosaico(OSCURO) => {
-                        let estado = pedir_modo(!est.oscuro);
-                        println!("  [panel] modo oscuro {}: {}", if est.oscuro { "apagado" } else { "encendido" }, estado);
-                        cambia = false;
+                    Accion::Cuerpo(k) | Accion::Icono(k) => {
+                        let p = est.cc.puestos[k];
+                        let ident = p.def().id;
+                        if !p.def().disponible {
+                            println!("  [panel] {}: aún no está en DashOS", ident);
+                            cambia = false;
+                        } else if matches!(accion, Accion::Cuerpo(_)) && !compacto(&p) && con_detalle(ident) {
+                            est.detalle = if est.detalle == Some(k) { None } else { Some(k) };
+                            println!("  [panel] detalle de {} {}", ident, if est.detalle.is_some() { "abierto" } else { "cerrado" });
+                        } else {
+                            match ident {
+                                "oscuro" => {
+                                    let estado = pedir_modo(!est.oscuro);
+                                    println!("  [panel] modo oscuro {}: {}", if est.oscuro { "apagado" } else { "encendido" }, estado);
+                                    cambia = false;
+                                }
+                                "bloquear" => {
+                                    // Se cierra el panel y se pide el bloqueo: lo hace quien bloquea (`guardian`).
+                                    abierto = false;
+                                    cerrar(&mut c, &mut est, true);
+                                    println!("  [panel] bloquear");
+                            sonar(sonido_p::SON_BLOQUEO);
+                                    continue;
+                                }
+                                "apagar" => {
+                                    est.menu = !est.menu;
+                                    println!("  [panel] menú de apagado {}", if est.menu { "abierto" } else { "cerrado" });
+                                }
+                                "editar" => {
+                                    est.editando = true;
+                                    est.antes = est.cc;
+                                    est.deshacer.clear();
+                                    est.detalle = None;
+                                    println!("  [panel] a editar");
+                                }
+                                "fondos" => {
+                                    // Rama `fondos`: la herramienta de fondos (la abre `fondo`, por el centro) y se cierra.
+                                    let r = dashos::canal_escribir(CENTRO, b"abrir fondos", &[]);
+                                    abierto = false;
+                                    cerrar(&mut c, &mut est, false);
+                                    println!("  [panel] abre la herramienta de fondos: {}", r);
+                                    continue;
+                                }
+                                "ajustes" => {
+                                    // Abre Ajustes en el centro de control (sin esperar a que se cierre) y se cierra.
+                                    let r = dashos::canal_escribir(CENTRO, b"abrir panel", &[]);
+                                    abierto = false;
+                                    cerrar(&mut c, &mut est, false);
+                                    println!("  [panel] abre Ajustes: {}", r);
+                                    continue;
+                                }
+                                "salida" => {
+                                    est.volumen.tecla(0);
+                                    pedir_volumen(est.volumen.efectivo());
+                                    println!("  [panel] volumen {}{}", est.volumen.nivel, if est.volumen.silencio { " (silencio)" } else { "" });
+                                }
+                                "no_molestar" => {
+                                    let nm = no_molestar(Some((!est.no_molestar.0, 0)));
+                                    if let Some(nm) = nm {
+                                        est.no_molestar = nm;
+                                    }
+                                    println!("  [panel] no molestar {}", if est.no_molestar.0 { "puesto" } else { "quitado" });
+                                }
+                                _ => cambia = false,
+                            }
+                        }
                     }
-                    Accion::Mosaico(BLOQUEAR) => {
-                        // Se cierra el panel y se pide el bloqueo: lo hace quien bloquea (`guardian`), como con Super+L.
-                        abierto = false;
-                        cerrar(&mut c, &mut est, &antes, true);
-                        println!("  [panel] bloquear");
-                        continue;
+                    Accion::CerrarDetalle => est.detalle = None,
+                    Accion::Fila(i) if est.detalle.map(&id) == Some("salida") => {
+                        // Rama sonido-pro: un programa, su silencio; la última, abrir la ventana "Sonido".
+                        let flujos = flujos_panel(&est);
+                        if i == 0 {
+                            // La primera (por dónde sale): Ajustes > Sonido.
+                            let r = dashos::canal_escribir(CENTRO, b"abrir sonido", &[]);
+                            println!("  [panel] abre Ajustes > Sonido: {}", r);
+                            abierto = false;
+                            cerrar(&mut c, &mut est, false);
+                            cambia = false;
+                        } else if i == flujos.len() + 1 {
+                            dashos::canal_escribir(SONIDO, &sonido_p::VENTANA.to_le_bytes(), &[]);
+                            println!("  [panel] abre la ventana Sonido");
+                            abierto = false;
+                            cerrar(&mut c, &mut est, false);
+                            cambia = false;
+                        } else if let Some(f) = i.checked_sub(1).and_then(|k| flujos.get(k)) {
+                            let b: Vec<u8> = [sonido_p::NODO_SILENCIO, f.id, !f.silencio as u32].iter().flat_map(|w| w.to_le_bytes()).collect();
+                            dashos::canal_escribir(SONIDO, &b, &[]);
+                            println!("  [panel] {}: {}", sonido_p::nombre_visible(&f.nombre), if f.silencio { "suena" } else { "en silencio" });
+                        } else {
+                            cambia = false;
+                        }
                     }
-                    Accion::Mosaico(_) => cambia = false,
-                    Accion::MenuApagado => {
-                        est.menu = !est.menu;
-                        println!("  [panel] menú de apagado {}", if est.menu { "abierto" } else { "cerrado" });
+                    Accion::Fila(i) => {
+                        if est.detalle.map(&id) == Some("no_molestar") && let Some(&(texto, min)) = PLAZOS.get(i) {
+                            if let Some(nm) = no_molestar(Some((true, min))) {
+                                est.no_molestar = nm;
+                            }
+                            println!("  [panel] no molestar: {}", texto.to_lowercase());
+                            est.detalle = None;
+                        } else {
+                            cambia = false;
+                        }
                     }
                     Accion::Energia(i) => {
                         // Se cierra el panel y se pide (bloquear, como el candado).
                         abierto = false;
                         est.menu = false;
                         let Some(modo) = ENERGIA[i].1 else {
-                            cerrar(&mut c, &mut est, &antes, true);
+                            cerrar(&mut c, &mut est, true);
                             println!("  [panel] bloquear");
+                            sonar(sonido_p::SON_BLOQUEO);
                             continue;
                         };
-                        cerrar(&mut c, &mut est, &antes, false);
+                        cerrar(&mut c, &mut est, false);
                         println!("  [panel] {}: {}", ENERGIA[i].0.to_lowercase(), pedir_apagado(modo));
                         continue;
                     }
-                    Accion::VolumenMenos | Accion::VolumenMas | Accion::Silencio | Accion::Pista => {
-                        match accion {
-                            Accion::Silencio => {
-                                est.volumen.tecla(0);
-                            }
-                            Accion::Pista => {
-                                let r = d.filas.iter().find(|f| f.1 == VOLUMEN).map(|f| pista_volumen(f.0)).unwrap_or(Rect::new(0, 0, 1, 1));
-                                est.volumen.poner(((x - r.x) * 100 / r.w.max(1)).clamp(0, 100) as u32);
-                            }
-                            _ => est.volumen.boton(accion == Accion::VolumenMas),
+                    Accion::Silencio | Accion::Pista => {
+                        if accion == Accion::Silencio {
+                            est.volumen.tecla(0);
+                        } else {
+                            let r = pista_de(Rect::new(zona.x + 8, zona.y + 8, zona.w - 16, zona.h - 16));
+                            let r = Rect::new(zona.x + 8, r.y, zona.w - 16, r.h);
+                            est.volumen.poner(((x - r.x) * 100 / r.w.max(1)).clamp(0, 100) as u32);
                         }
                         pedir_volumen(est.volumen.efectivo());
                         println!("  [panel] volumen {}{}", est.volumen.nivel, if est.volumen.silencio { " (silencio)" } else { "" });
                         pintar_o_pedir(&mut c, &est, configurado, &mut pedido, &mut buferes, &mut visto, &mut fuente, &mut medio, false, false);
                         cambia = false;
                     }
-                    Accion::Editar => {
-                        est.editando = true;
-                        antes = est.orden;
-                        println!("  [panel] a editar");
+                    Accion::Subir(k) | Accion::Bajar(k) | Accion::Quitar(k) => {
+                        let ident = id(k);
+                        let antes = est.cc;
+                        editar(&mut est);
+                        let (hecho, que) = match accion {
+                            Accion::Subir(_) => (k > 0 && est.cc.mover(k, k - 1), "sube"),
+                            Accion::Bajar(_) => (est.cc.mover(k, k + 1), "baja"),
+                            _ => (est.cc.quitar(k), "quita"),
+                        };
+                        if hecho {
+                            println!("  [panel] {} {}", que, ident);
+                        } else {
+                            est.cc = antes;
+                            est.deshacer.pop();
+                        }
+                        cambia = hecho;
+                    }
+                    Accion::Anadir => {
+                        est.anadiendo = true;
+                        println!("  [panel] añadir: la lista");
+                    }
+                    Accion::Volver => est.anadiendo = false,
+                    Accion::Poner(def) => {
+                        editar(&mut est);
+                        cambia = est.cc.anadir(def);
+                        est.anadiendo = false;
+                        if cambia {
+                            println!("  [panel] pone {}", cc_rejilla::CATALOGO[def].id);
+                        }
+                    }
+                    Accion::Deshacer => match est.deshacer.pop() {
+                        Some(r) => {
+                            est.cc = r;
+                            println!("  [panel] deshace");
+                        }
+                        None => cambia = false,
+                    },
+                    Accion::Descartar => {
+                        est.cc = est.antes;
+                        est.editando = false;
+                        est.anadiendo = false;
+                        println!("  [panel] descarta lo editado");
                     }
                     Accion::Hecho => {
                         est.editando = false;
-                        if est.orden != antes {
-                            let guardado = guardar_mosaicos(&est.orden);
-                            cargado = true;
-                            println!("  [panel] hecho: {}; guardado: {}", nombres(&est.orden), guardado);
+                        est.anadiendo = false;
+                        if est.cc != est.antes {
+                            let guardado = guardar_cc(&est.cc);
+                            println!("  [panel] hecho: {}; guardado: {}", nombres(&est.cc), guardado);
                         } else {
                             println!("  [panel] hecho, sin cambios");
                         }
                     }
-                    Accion::Subir(p) | Accion::Bajar(p) | Accion::Quitar(p) => {
-                        let m = est.orden.en(p).unwrap_or(0);
-                        let (hecho, que) = match accion {
-                            Accion::Subir(_) => (est.orden.subir(p), "sube"),
-                            Accion::Bajar(_) => (est.orden.bajar(p), "baja"),
-                            _ => (est.orden.quitar(p), "quita"),
-                        };
-                        cambia = hecho;
-                        if hecho {
-                            println!("  [panel] {} {}", que, MOSAICOS[m].0);
-                        }
-                    }
-                    Accion::Poner(m) => {
-                        cambia = est.orden.poner(m);
-                        if cambia {
-                            println!("  [panel] pone {}", MOSAICOS[m].0);
-                        }
-                    }
                 }
                 if cambia {
-                    let alto = disponer(&est.orden, est.editando, est.menu).alto.min(ALTO_MAX);
-                    if alto == configurado {
+                    let d2 = disponer(&est);
+                    if (d2.ancho, d2.alto.min(ALTO_MAX)) == configurado {
                         pintar_o_pedir(&mut c, &est, configurado, &mut pedido, &mut buferes, &mut visto, &mut fuente, &mut medio, true, false);
                     } else {
-                        // Se pinta y se dice con el configure del tamaño nuevo.
+                        // Se pinta y se dice con el configure de la medida nueva.
                         por_decir = (true, false);
                         pintar_o_pedir(&mut c, &est, configurado, &mut pedido, &mut buferes, &mut visto, &mut fuente, &mut medio, false, false);
                     }

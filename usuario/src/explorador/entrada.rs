@@ -47,7 +47,7 @@ pub fn bucle(app: &mut App) -> u64 {
         }
         if ocupado {
             app.trabajar();
-        } else if !app.una_miniatura() {
+        } else if !app.una_miniatura() && !app.un_icono_linux() && !app.leer_iconos_amiga() {
             // Los avisos que caducan.
             let ahora = dashos::ahora_us();
             for k in 0..app.ventanas.len() {

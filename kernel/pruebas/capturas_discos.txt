@@ -1,0 +1,8 @@
+# Los discos del escritorio (`make capturas-discos`, `tools/guion_discos.py`): no es una prueba; estas líneas solo
+# dicen cuándo ha acabado el guion de las capturas (los ajustes vuelven a lo de serie al final).
+~│   [guardian] entra Ana
+~│   [workbench] discos: entra 
+~│   [workbench] menú de Work: Información
+~│   [workbench] discos: ajustes en marcha: a la vista, a la izquierda, abajo, grande
+~│   [workbench] discos del escritorio: escondidos
+~│   [workbench] discos: ajustes en marcha: a la vista, a la derecha, arriba, mediano, opacidad 81 %

@@ -8,6 +8,8 @@ description = "El puente de Wayland para la caja Linux y el compositor de DashOS
 [dependencies]
 wayland = { package = "dashos-wayland", path = "../wayland" }
 libc = "0.2"
+# Los .desktop y los temas de iconos, sin el kit (plan de iconos, parte 3).
+iconos-cajas = { package = "dashos-iconos-cajas", path = "../iconos-cajas", default-features = false }
 
 [lib]
 name = "dashos_puente"
@@ -20,3 +22,8 @@ path = "src/bin/compositor_pc.rs"
 [[bin]]
 name = "puente"
 path = "src/bin/puente.rs"
+
+# Plan de iconos, parte 3: los programas instalados en el invitado, con su icono.
+[[bin]]
+name = "programas"
+path = "src/bin/programas.rs"

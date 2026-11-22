@@ -9,7 +9,7 @@ las demás pruebas. Con la virtio-gpu de dos cabezas (id "vgpu") ya puesta y Aju
 1. Captura cada cabeza (PREFIJO.cabeza0.ppm y .cabeza1.ppm).
 2. Lleva el cursor de la primera a la segunda (el compositor dice "el cursor pasa a DASHOS-2").
 3. Da a Ajustes el teclado con un clic a la derecha de su título y la lleva a la segunda con Super+Mayúsculas+Derecha.
-4. La maximiza allí (Super+Arriba: 1024x768, sin barra) y captura (PREFIJO.max0.ppm y .max1.ppm).
+4. La maximiza allí (Super+Arriba: 1024x728, bajo la barra de ese monitor) y captura (PREFIJO.max0.ppm y .max1.ppm).
 5. La devuelve (Super+Abajo) y la trae a la primera (Super+Mayúsculas+Izquierda); captura (PREFIJO.vuelta*.ppm).
 6. Cuando `guardian` abre el centro de control (Permisos), baja a Pantallas (Mayúsculas+Tab y tres flechas abajo) y
    captura las dos cabezas (PREFIJO.pantallas0.ppm y .pantallas1.ppm): el centro sale en la del cursor.
@@ -133,7 +133,7 @@ def principal():
         return
     time.sleep(0.5)
     # Antes de cada tecla, el clic en Ajustes: una pregunta o el selector pueden haberle quitado el teclado.
-    if paso("sendkey meta_l-up", "[ajustes] el compositor pide 1024x768", antes=lambda: a_ajustes(texto())):
+    if paso("sendkey meta_l-up", "[ajustes] el compositor pide 1024x728", antes=lambda: a_ajustes(texto())):
         capturar("max")
     paso("sendkey meta_l-down", "[ajustes] vuelve a 360x408", antes=lambda: a_ajustes(texto()))
     time.sleep(0.5)

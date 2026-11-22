@@ -51,7 +51,8 @@ void dash_ui_menu_end(void);
 /* Desde los menús en la barra (todo lo de antes sigue igual):
    - una casilla o una opción (las opciones seguidas, sin separador entre medias, son un grupo); elegirla la cambia, y
      dash_ui_get_value / dash_ui_set_value dicen y ponen si está marcada;
-   - un submenú, un nivel: lo que va entre _sub_begin y _sub_end;
+   - un submenú, un nivel: lo que va entre _sub_begin y _sub_end; uno dentro de otro es un error, como en el Amiga
+     (_sub_begin da 0 y lo que va hasta su _sub_end no se pone);
    - dash_ui_set_enabled también sobre un menú entero o un submenú. */
 int32_t dash_ui_menu_check(const char *titulo, const char *tecla, int32_t id, int32_t marcada);
 int32_t dash_ui_menu_radio(const char *titulo, const char *tecla, int32_t id, int32_t marcada);

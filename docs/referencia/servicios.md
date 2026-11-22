@@ -413,7 +413,9 @@ disco para leer, y si su usuario tiene cuenta, 2 su volumen, 3 su `RAM:` (el vol
 Estados: 0 bien, -1 mal formado, -2 no existe, -3 no es un cajón, -4 es un cajón, -5 asa mala, -6 sin sitio (de asas
 o clientes), -7 error del disco, -8 solo lectura, -9 ya existe, -10 cajón no vacío, -11 disco lleno, -12 protegido
 (sin permiso de escritura, o con "no borrar"; o un volumen cifrado cerrado, o una contraseña que no es), -13 en uso
-(un volumen con algo abierto), -14 sin azar de calidad (para hacer llaves).
+(un volumen con algo abierto), -14 sin azar de calidad (para hacer llaves), -15 sin memoria (la orden necesitaba más
+memoria de la que el servicio tiene ahora: un Argon2 grande, un cajón o un volumen enormes; no se hizo nada y el
+servicio sigue; rama `archivos-memoria`).
 
 Cada asa es de un volumen (FS10): lo que se busca, crea o renombra desde ella queda en el suyo. La asa 0 es la raíz
 del cliente; la orden 21 da la raíz de otro volumen.
@@ -444,14 +446,15 @@ del cliente; la orden 21 da la raíz de otro volumen.
 | 20 volver | Vuelve el volumen de la asa a su instantánea más nueva, que se queda. Lo escrito después se pierde y las asas de todos los clientes en ese volumen dejan de valer, también sus raíces 1 a 15 en él, salvo las que son la raíz del volumen (S28) | asa, nombre | a el volumen |
 | 21 volumen | Abre la raíz del volumen `nombre` (FS10); vacío, la raíz del cliente. Un cifrado cerrado se abre, pero no se lee | nombre | como buscar |
 | 22 volúmenes | Pone en la ventana los volúmenes además del principal: número (8), marcas (1: 1 cifrado, 2 abierto), largo del nombre (1) y el nombre; el siguiente en un múltiplo de 8 | — | a cuántos caben, b cuántos hay, c bytes usados |
-| 23 hacer volumen | Hace un volumen. Cifrado, con su primera contraseña en los b primeros bytes de la ventana (que se borran) y las llaves del azar del kernel (R10); sin azar de calidad, -14. Queda abierto. Con `CON_RECUPERACION` (4) en a, además una ranura con un código de recuperación del azar (`cuentas::codigo_recuperacion`), que se contesta en la ventana (rama `cuentas`) | nombre; a: 0 sin cifrar, 1 cifrado (Argon2 de 16 MiB y 3 pasadas, `Cost::SERVICE`: el de 64 MiB no cabe en el servicio), 2 cifrado con Argon2 barato (pruebas), y 4; b largo de la contraseña | a su número; con 4, b lo que mide el código |
+| 23 hacer volumen | Hace un volumen. Cifrado, con su primera contraseña en los b primeros bytes de la ventana (que se borran) y las llaves del azar del kernel (R10); sin azar de calidad, -14. Queda abierto. Con `CON_RECUPERACION` (4) en a, además una ranura con un código de recuperación del azar (`cuentas::codigo_recuperacion`), que se contesta en la ventana (rama `cuentas`) | nombre; a: 0 sin cifrar, 1 cifrado (Argon2 de 64 MiB y 3 pasadas, `Cost::NORMAL`, el de S6b; con 1, desde el bit 32 (`MEMORIA_ARGON2`) la memoria en MiB, de 1 a 341: más, -1; si no cabe en el servicio, -15), 2 cifrado con Argon2 barato (pruebas), y 4; b largo de la contraseña | a su número; con 4, b lo que mide el código |
 | 24 quitar volumen | Borra un volumen con todo lo que tiene, instantáneas incluidas; no con algo abierto | nombre | — |
-| 25 abrir volumen | Abre un volumen cifrado con una de sus contraseñas, hasta que se cierre. La contraseña va en los b primeros bytes de la ventana, no en el mensaje (A13): el servicio la copia y la borra de la ventana. No se guarda | nombre, b largo de la contraseña (hasta 1.024) | — |
+| 25 abrir volumen | Abre un volumen cifrado con una de sus contraseñas, hasta que se cierre. La contraseña va en los b primeros bytes de la ventana, no en el mensaje (A13): el servicio la copia y la borra de la ventana. No se guarda. Una ranura cuyo coste pasa de los topes (`Cost::is_reasonable`: un disco hostil) no se prueba; si ninguna se pudo probar, -1; si una no cupo en memoria y ninguna otra vale, -15 | nombre, b largo de la contraseña (hasta 1.024) | — |
 | 26 cerrar volumen | Olvida la llave de un volumen cifrado; no con algo abierto | nombre | — |
 | 27 guardar | Crea el fichero `nombre` en el cajón de la asa con lo que hay al principio de la ventana, en una sola transacción, y en el disco al contestar. No lo deja abierto. No sobrescribe | asa, b cuánto (hasta la ventana), nombre | a bytes escritos, b tamaño |
 | 28 leer por nombre | Busca `nombre` desde la asa y lo lee al principio de la ventana, sin dejar asa abierta (A3): buscar, leer y cerrar en un viaje | asa, a desde, b cuánto (hasta la ventana), nombre | a bytes leídos, b fecha, c tamaño total; asa 0 |
 | 29 comprobar clave | Mira si la contraseña es la del volumen cifrado `nombre`, sin abrirlo ni tocarlo (U3: volver de un bloqueo). Solo con el derecho de administrar | b largo de la contraseña (en la ventana, como en 25), nombre | estado: 0 es la suya, -12 no |
 | 40 crecer | Crece el sistema de archivos en uso hasta `a` bytes (S32): una transacción añade los bloques nuevos. Encoger no se hace en uso (es de `dashfs-resize`, sin montar). Solo con el derecho de administrar | a tamaño nuevo en bytes (0: todo el disco; si no es múltiplo de 4096, el múltiplo de antes) | a el tamaño que queda; -1 si es menos que ahora o más que el disco |
+| 42 cambiar la clave | Rama `cuentas-2`: la contraseña nueva de un volumen cifrado sin reescribir sus datos: solo la ranura que abre la de ahora, con la misma llave, una sal nueva y el mismo coste. Con a = 1, lo de ahora es el código de recuperación: se van todas las contraseñas, la nueva es la única y el código se gasta (el nuevo, del azar del kernel, va a la ventana). Solo con el derecho de administrar | a 0 o 1, b largo de la de ahora (32 bits de abajo) y de la nueva (de arriba), las dos en la ventana, nombre | estado: 0, -12 lo de ahora no vale, -14 sin azar; con a = 1, b lo que mide el código nuevo |
 | 41 cuota | El tope del volumen `nombre` (S32; el principal no tiene) y lo que usa: lo suyo y lo que solo ven sus instantáneas. Pasado el tope, lo que lo haría crecer da -11 en ese volumen y en ningún otro; borrar y escribir encima valen siempre. Solo con el derecho de administrar | a tope en bytes (0: sin tope), b 1 para ponerlo (0: solo leer), nombre | a lo que usa, b su tope (bytes; a = 0 si aún no se ha contado) |
 | 31 prestar | Presta las páginas de la caché del fichero (A7): hasta 4 llaves de memoria, solo de leer, de 512 KB cada una, con los trozos seguidos desde el que tiene el byte a. Se leen sin viajes y siguen al día con lo que se escriba. Dejan de valer al cerrar la asa, cuando el cliente pasa de 8 prestadas (las suyas más viejas) y al volver a una instantánea, comprobar, o quitar o cerrar un volumen. Un fichero de menos de 512 KB no se presta (-6): con leer (2). En Rust, `dashos::prestados` | asa, a desde | a el byte donde empieza el primer trozo, b tamaño del fichero, c cuántas llaves; y las llaves |
 | 34 dueño | El dueño y el grupo de lo que tiene la asa, y el usuario de quien pregunta (S10: la Información del Workbench dice de quién es y si se puede cambiar) | asa | a dueño, b grupo, c el usuario del cliente |
@@ -559,8 +562,8 @@ de respuesta:
 | Orden | Quién | Qué |
 |---|---|---|
 | 1 procesos | cualquiera | La lista, por páginas de 7 fichas de 32 bytes (marca, usuario, grupo, nombre). Solo los de su usuario y los del sistema (usuario por debajo de 1000); `guardian`, todos (U6) |
-| 2 matar | cualquiera | Mata el grupo de un proceso del mismo usuario; uno del sistema, -2 (para eso, la acción "matar"); uno de otra persona, -1, como si no existiera (U6) |
-| 3 entrar, 4 salir, 5 volver | `guardian` | Abre o cierra el volumen cifrado del usuario, o comprueba su contraseña sin tocarlo. Entrar o volver con la buena pone su sesión delante; entrar en una ya abierta es volver (U6). Salir con programas suyos vivos, -13. Tras una contraseña mala, tarda 300 ms |
+| 2 matar | cualquiera | Mata el grupo de un proceso del mismo usuario; uno del sistema, -2 (para eso, la acción "matar"); uno de otra persona, -1, como si no existiera (U6). El centro de control y la barra (su monitor de procesos, S27) cierran por la persona de delante |
+| 3 entrar, 4 salir, 5 volver | `guardian` | Abre o cierra el volumen cifrado del usuario, o comprueba su contraseña sin tocarlo. Entrar o volver con la buena pone su sesión delante; entrar en una ya abierta es volver (U6). Salir con programas suyos vivos, -13. Tras una contraseña mala, tarda 300 ms. Rama `cuentas-2`: tras 3 malas seguidas con una cuenta (también las de administrador, de cambiar la contraseña y los códigos de recuperación), espera 5 s, y el doble con cada mala más, hasta 5 min (`cuentas::Esperas`); mientras, no prueba ninguna y contesta -3 con 8 bytes (y los segundos que faltan) |
 | 6 servicio, 7 dejar | cualquiera | La llave de un servicio o de un permiso (`eco`, `plazo`), marcada, revocable y de un solo viaje; o renunciar a ella. Sin permiso, se pregunta a `guardian`; desde una sesión de detrás, -2 sin preguntar (U6). S28: de la caja Amiga, también un permiso **sin llave** (`ejec:`, `icono:`, `guion:` o `disco:` y el programa 68k, con el programa entero y el fichero de detalle): se concede o se pregunta igual, sin llave; contesta el estado y cómo se decidió (`usuario/src/preguntas_ficheros.rs`). Una pregunta a la vez por programa |
 | 8 registro | `guardian` | El registro de seguridad, por páginas |
 | 9 lanzar | `guardian`; la barra y el Workbench (S10) | Un programa del disco, como quien pide o como un usuario que entró; nace con su canal con `sesiones`, su llave de archivos, la del compositor, la del selector de ficheros si es de la persona del selector, sus raíces y su tabla de llaves (ver "La tabla de llaves"). La barra y el Workbench solo lanzan de `Programas/` (un nombre, sin cajones) y el Shell nativo (`System/Shell`), siempre como la persona que está delante; sin nadie delante, -2. Si la petición trae una llave más, es la del canal de arranque del programa (`shell/src/protocolo.rs`; en su tabla de llaves, "arranque"), por donde quien lo lanza le da el cajón actual y los argumentos |
@@ -583,6 +586,12 @@ de respuesta:
 | 83 dar o quitar un permiso | cualquiera, desde la sesión de delante; nunca un programa encerrado | S6b, S36: 1 dar o 0 quitar, el programa y el permiso. Lo confirma el usuario en `guardian` ("+dar" o "+quitar"; el detalle, el programa y el permiso); quitar revoca en el acto. 0, -1 (no existe o no lo tenía) o -2 (no). Rama `admin-desarrollo`: también `desarrollo`, el modo de desarrollo de una aplicación (no da llave ni se pide con 6) |
 | 120 tanda | cualquiera, desde la sesión de delante | S36, decisión 1 (rama `admin-desarrollo`): una lista de acciones de administrador (`usuario/src/tanda.rs`), que es una sola acción. u32 lo que mide la lista; llaves: la de contestar y una memoria (con leer, hasta 64 KB) con la lista en texto, una acción por línea, 4096 bytes y 16 acciones como mucho. `sesiones` la copia al llegar y la lee entera: una línea que no vale, un proceso que no existe o una lista enorme, y no se pregunta ni se hace nada (-1 o -10). Si vale, pregunta a `guardian` ("*tanda"), que pide la lista en llano (121) y la contraseña una vez (15). Se hacen las de la lista, en orden, y se para en la primera que falle. Las de cuentas (rama `cuentas`) se prueban antes sobre una copia: si una no se podría hacer, no se pregunta (estado de `cuentas::Fallo`, -101 en adelante); con una cuenta nueva, `guardian` pide también su contraseña y después enseña su código de recuperación. Contesta 208 bytes (`tanda::Resultado`): estado, hechas, cuántas, en cuál se paró y estado y dato de cada una. Una sin contestar por programa (-3) |
 | 121 lista de una tanda | `guardian` | La tanda (u32 número de la pregunta) en llano, desde el byte que diga (u32): estado, lo que mide, cuántos bytes van, cuántas acciones, el administrador que se propone (16 bytes: la persona de delante si es administradora) y el texto, una línea numerada por acción |
+| 130 cambiar la propia contraseña | cualquiera, desde la sesión de delante; nunca un programa encerrado | Rama `cuentas-2`: u32 largo y el nombre de la cuenta (puede ir vacío). Siempre la de la persona del programa (la de delante, si lo pide el centro); otro nombre, -2 sin preguntar. Pregunta a `guardian` ("*clave"), que pide la de ahora y la nueva dos veces; el programa no ve ninguna. Contesta al acabar: 0, -2 (no), -1 (no es de una persona con cuenta), -3 (ya hay uno sin acabar) |
+| 131 intento de cambiar la contraseña | `guardian` | Número, largos de la de ahora y de la nueva, y las dos (vacías: dijo que no). La cambia el servicio de archivos (42). Contesta 8 bytes: estado (0; -2 la de ahora no es; -3 hay que esperar; -119 la nueva es corta) y segundos de espera; si no es 0 ni "no", la ventana sigue |
+| 132 recuperar | `guardian` | Rama `cuentas-2`, desde la pantalla de entrada: nombre, código de recuperación (como se teclee) y contraseña nueva. Las de antes se van y el código se gasta; contesta 37 bytes: estado, segundos de espera y el código nuevo. Un código malo o una cuenta que no existe, -2, y cuenta como mala |
+| 133 primera cuenta | `guardian`, solo en el primer arranque | Rama `cuentas-2`: sin ninguna cuenta (ni `Estado:Cuentas/usuarios`), crea la primera, administradora, con su volumen cifrado y su código de recuperación (nombre, nombre completo y contraseña). Contesta como 132. Con cuentas, -120 (y al registro) |
+| 134 cuentas de la entrada | `guardian` | Rama `cuentas-2`: las activas (nombre y nombre completo, 64 bytes cada una, 3 por página), cuántas hay y si toca el primer arranque |
+| 135 avisos del bloqueo | `guardian` | S27, oleada 6: lo que se ve de los avisos en la pantalla de bloqueo. `sesiones` lo pasa al servicio de avisos sin marca (`AVISO_RESUMEN`, con la llave de `guardian` y el usuario de delante) y el servicio contesta a `guardian`: cuántos actuales y, si el ajuste `bloqueo` lo deja, de quién (nunca el texto). A otro, o sin nadie delante, -2 |
 | 122 abrir | un programa de una persona con su sesión abierta, que no esté encerrado | S6b, S36 (rama `admin-desarrollo`): lanza un programa de `Programas/` **encerrado** (perfil "aplicación"), como con doble clic: con su identidad, raíces 0 (su cajón, `PROGDIR:`), 1 (`SYS:`, leer) y 10 (`Home:Datos/<programa>`, que se crea si falta y se ve como `Datos:`), sin `Home:`, `RAM:` ni `Work:`, y las asignaciones de la sesión sin la capa del usuario en `C:`, `LIBS:`, `FONTS:` y `CLASSES:`. Si su persona le dio `desarrollo`, además las raíces 11 a 14 (`Home:C`, `Home:Libs`, `Home:Fonts` y `Home:Classes`, solo leer) como `HomeC:`, `HomeLibs:`, `HomeFonts:` y `HomeClasses:`, delante en su asignación; el compositor marca sus ventanas y queda en el registro. Sus ayudantes (40) nacen igual de encerrados. La orden `Abrir`. Contesta como lanzar |
 
 Las negativas (matar, servicio, entrar, lanzar, administrar, bloquear) y los procesos que mueren por un fallo quedan en
@@ -628,27 +637,47 @@ Diferencias con el servicio de archivos:
 Pendiente: los HDF (fase 3), escribir con la capa de cambios (fase 2), quién monta qué (hoy, quien tenga la llave del
 canal) y un nombre de aparato (`IMG0:`) cuando haya `dos.library`.
 
-## Fondo de escritorio (S10c, C3)
+## Fondo de escritorio (S10c, C3; rama `fondos`)
 
-`usuario/src/bin/fondo.rs` pinta un PNG de `C/Fondos/` en la capa de fondo de layer-shell (tiene el poder de
-escritorio), escalado para cubrir la pantalla (lo que sobra se recorta por igual a cada lado), y saca de él el color
-semilla del tema (`kit::semilla`, el método de Material). Al arrancar pone el que dice `C/Prefs/fondo` (una línea con
-el nombre; si no hay, `ondas.png`). Si la imagen no se puede leer o no se entiende, no pone nada (se ve el color liso
-del compositor) o se queda la de antes. Lo que se deja: 32 MB de fichero y 16 millones de píxeles; más es "demasiado
-grande", sin leerlo. En una pantalla de más de 4 MB (lo que mide un objeto de memoria), va en franjas, una capa cada
-una. Llaves: 1 "ventanas", 2 "archivos", 3 su canal "fondo".
+`usuario/src/bin/fondo.rs` pinta cada pantalla (`wl_output`; hasta 4) en la capa de fondo de layer-shell (tiene el
+poder de escritorio): un PNG con su ajuste (llenar, encajar, centrar, mosaico o estirar), un fondo animado hecho aquí
+(`animado:aurora`, `luciernagas`, `nieve`, `respira`) o un PNG de paleta con sus colores girando (trozo `tEXt`
+`DashOS-ciclos`, `kit::fondos::ciclos`), y encima, si se pide, un efecto. Saca de lo que pone el color semilla del tema
+(`kit::semilla`). Al cambiar, transición (fundido, barrido, círculo desde un punto, disolver). Lo que se deja: 32 MB de
+fichero y 16 millones de píxeles. Cada pantalla va en franjas de 4 MB como mucho (un objeto de memoria), una capa cada
+una. Llaves: 1 "ventanas", 2 "archivos", 3 "sesiones", 4 "red-estado", 5 su canal "fondo".
 
-Por su canal solo le habla el centro de control (el nombre lo da `inicio`), en texto y con una llave para la respuesta:
+Lo que se pone lo dice `Escritorio/fondo` de `ENV:` (en uso) y `ENVARC:` (guardado), texto `clave = valor`
+(`kit::fondos::ajustes`): `fondo`, `oscuro`, `fondo-<pantalla>`, `oscuro-<pantalla>`, `ajuste`, `color`, `transicion`,
+`duracion`, `pase` (minutos), `carpeta`, `efecto`, `cpu` (tope, % de un núcleo). `fondo` lo vigila (avisos de cambio) y
+lo aplica en marcha; lo escribe su herramienta (por `sesiones`, `ESCRIBIR_ENV` y `GUARDAR_ENV`: es de sus
+`AJUSTES_PROPIOS`) y la orden `Fondo`. Sin él (antes de entrar nadie), `C/Prefs/fondo` (una línea con el nombre de un
+PNG de `Fondos/`; si no hay, `ondas.png`), y al entrar se escribe en `ENV:` con eso. `ENV:Escritorio/fondo-pide`
+(`pide = abrir|cerrar|siguiente <marca>`) es lo que pide la orden `Fondo` (abrir la herramienta, el siguiente del pase).
 
-| Pedido | Qué hace |
-|---|---|
-| `poner <nombre>` | Pone `Fondos/<nombre>`. No lo guarda: si sale bien, lo guarda el centro en `Prefs/fondo` |
-| `semilla` | Dice el fondo de ahora |
+Por su canal le hablan el centro de control y `guardian` (el nombre lo da `inicio`), en texto y con una llave para la
+respuesta:
+
+| Pedido | Quién | Qué hace |
+|---|---|---|
+| `poner <nombre>` | centro | Pone `Fondos/<nombre>` en todas las pantallas (y lo apunta en `ENV:` si lo hay); el centro lo guarda en `Prefs/fondo` |
+| `semilla` | centro | Dice el fondo de ahora (de la primera pantalla) |
+| `guardado` | centro | Pone lo de los ajustes (si no es ya lo que se ve) |
+| `abrir`, `cerrar` | centro | La herramienta de fondos (una capa encima de todo) |
+| `siguiente` | centro | El siguiente de la carpeta del pase |
+| `monitor` | centro | El panel del monitor relee sus ajustes |
+| `bloqueo` | `guardian` | El fondo de la pantalla de bloqueo, pequeño y desenfocado: estado, ancho y alto, y una llave solo para leer |
+
+El centro, a su vez, atiende `abrir fondos` en su canal (el panel rápido, la barra) y se lo pasa a `fondo`.
 
 La respuesta: estado (i32: 0 bien; -1 pedido malo o de otro; -2 no se lee el fichero; -3 no se entiende la imagen; -4
 demasiado grande; -5 sin memoria; -6 sin pantalla; -7 no hay fondo), la semilla (ARGB; 0 si la imagen no tiene ningún
-color que valga, como una gris), ancho, alto y los milisegundos que costó (u32 cada uno). Tras `semilla`, detrás, el
-nombre del fondo que se ve.
+color que valga, como una gris), ancho, alto y los milisegundos que costó (u32 cada uno). Tras `semilla` y `guardado`,
+detrás, el nombre del fondo que se ve (sin `Home:Fondos/`).
+
+El compositor (rama `fondos`) no da el aviso de `frame` a una capa de fondo que no se ve: tapada por superficies opacas
+seguras (búfer sin alfa, o ventana maximizada), con la pantalla apagada (Blanker) o bloqueada. Lo da cuando se vuelve a
+ver. Un fondo animado que pinta un cuadro por aviso se para solo.
 
 Los colores del fondo los reparte el compositor (`dashos_tema_v1`, versión 2): el centro calcula una vez los dos
 esquemas (claro y oscuro) de la semilla, los da con la petición `esquema` y pone el tema; a quien enlazó la versión 2
@@ -662,7 +691,7 @@ escuchan la caja Amiga (sus plumas de Material) y, por el puente, el agente `das
 centro pone al arrancar la apariencia guardada y el aspecto de las cajas (`Prefs/apariencia`, `Prefs/cajas`); la de
 serie es la paleta del fondo, claro, y todo como DashOS.
 
-## Sonido (S19, A4)
+## Sonido (S19, A4; grafo de S19b, E1)
 
 El controlador de virtio-sound (`usuario/src/bin/virtio_sonido.rs`) pone en cada cola la entrada 0 de la tabla de
 MSI-X (`queue_msix_vector`, virtio 1.2, 4.1.4.3): es la única que prepara el kernel. Con INTx no cuenta. En x86 (X5)
@@ -680,29 +709,58 @@ tras un parón hay más búferes que llenar que períodos tiene el servicio, le 
 de poner silencio. Pendiente: la entrada (micrófono), el volumen por el amplificador, los avisos de clavija
 (auriculares que se enchufan), HDMI y los códecs que necesiten arreglos propios. Sin probar en una máquina de verdad.
 
-El servicio "sonido" lee el canal "sonido"; el controlador (virtio-sound o, desde X5c, HDA) y los programas le escriben con copias
-marcadas, y `inicio` le dice de quién es cada marca. Mensajes de palabras de 32 bits (little-endian):
+El servicio "sonido" lee el canal "sonido"; el controlador (virtio-sound o, desde X5c, HDA) y los programas le escriben
+con copias marcadas, y `inicio` le dice de quién es cada marca. Mensajes de palabras de 32 bits (little-endian); los
+números, en `usuario/src/protocolo/sonido.rs`:
 
 | Orden | Quién | Datos | Llaves |
 |-------|-------|-------|--------|
 | 1 `SALIDA` | solo "virtio-sonido" o "hda" (el primero que la mande; sus tics son los que cuentan) | ranuras (1 a 64), cuadros por período (16 a 4096), ritmo (48.000) | la memoria de la salida |
 | 2 `TIC` | el controlador | | |
-| 10 `ABRIR` | un programa | muestra (0 enteros de 16 bits, 1 de 32, 2 coma flotante), canales (1 o 2), ritmo (8.000 a 192.000) | la memoria del anillo y el extremo de escritura de un canal del programa |
-| 11 `VOLUMEN` | el programa | izquierdo y derecho, como `f32` (0 a 4) | |
-| 12 `CERRAR` | el programa | | |
+| 10 `ABRIR` | un programa (hasta 8 flujos; 64 en total) | muestra (0 enteros de 16 bits, 1 de 32, 2 coma flotante), canales (1 o 2), ritmo (8.000 a 192.000) | la memoria del anillo y el extremo de escritura de un canal del programa |
+| 11 `VOLUMEN` | el programa | izquierdo y derecho, como `f32` (0 a 4); y el índice del flujo (sin él, el primero) | |
+| 12 `CERRAR` | el programa | el índice del flujo (sin él, el primero) | |
+| 13 `GENERAL` | "panel", "mezclador", "centro" | el volumen de la salida del sistema, `f32` | |
+| 20 `SUSCRIBIR` | "panel", "mezclador", "centro", "barra", "dock", "guardian" | | una memoria de 16 KB (el estado) y un extremo por donde despertarle |
+| 21 `NODO_VOLUMEN` | el mezclador ("panel", "mezclador", "centro") | nodo, izquierdo y derecho (`f32`) | |
+| 22 `NODO_SILENCIO` | el mezclador | nodo, 0 o 1 | |
+| 23 `NODO_SALIDA` | el mezclador | flujo, salida (fundido cruzado) | |
+| 24 `POR_DEFECTO` | el mezclador | salida | |
+| 25 `EFECTO` | el mezclador | qué (`EF_*`), valor (se recorta a su rango) | |
+| 26 `PERIODO` | el mezclador | 0 normal (256), 1 para tocar (64), 2 ahorro (1024) | |
+| 27 `VENTANA` | "panel", "centro", "barra", "dock" | (abre la ventana "Sonido") | |
+| 30 `MEDIOS` | un programa (lo suyo) | estado, capacidades, posición y duración en ms, largo del título (hasta 95) y del artista (hasta 63), y los textos (UTF-8) | opcional: el extremo por donde le llegan las órdenes |
+| 31 `MEDIOS_ORDEN` | los que pueden suscribirse | medio, orden (1 reproducir o pausar, 2 siguiente, 3 anterior) | |
+| 32 `MEDIOS_FIN` | el programa | | |
+| 40 `SONAR` | "panel", "mezclador", "centro", "barra", "dock", "guardian", "avisos", "sesiones" | evento (1 aviso, 2 bloqueo, 3 error, 4 conectar, 5 desconectar, 6 volumen, 7 entrar) | |
+| 41 `SONIDOS` | el mezclador | tema (0 Cristal, 1 Suave, 2 Retro), silenciados, volumen (0 a 100) | |
+| 42 `NO_MOLESTAR` | solo "panel" | 0 o 1 | |
+
+Lo que no es de quien lo manda se rechaza y se dice en el registro ("no le toca"); nunca se contesta.
+
+**El grafo** (`sonido/src/grafo.rs`): cada flujo es un nodo; cada salida, una cadena mezcla → ecualizador → espacial →
+limitador → salida. Corre en cuantos (el período del modo, sin pasar del del aparato) en orden topológico; las
+conexiones nuevas o quitadas, en rampa de un cuanto. El volumen de la salida es el de su mezcla.
+
+**El estado** (para el mezclador): la memoria del suscriptor, que el servicio rellena unas 30 veces por segundo (cada 6
+tics) y al momento cuando algo cambia; la disposición, en `protocolo/sonido.rs` (`W_*`). Se lee con su cerrojo de
+secuencia (impar mientras se escribe; `usuario/src/sonido_estado.rs`). El suscriptor sube `W_LATIDO` mientras enseña
+el espectro: si no lo sube en 0,6 s, el servicio deja de calcularlo. Al mezclador (y solo a él) se le despierta por su
+extremo cuando alguien pide `VENTANA`.
 
 **La salida** (del controlador): cabecera de palabras (escritos, leídos, ranuras, cuadros) y las ranuras desde el
 byte 64, cada una un período en estéreo de 16 bits. El servicio mueve "escritos" y el controlador "leídos". Con cada
-`TIC` (un búfer que devolvió el aparato) el servicio mezcla hasta tener 4 períodos por delante; si al controlador no
-le queda ninguno, suena silencio y lo cuenta como vacío.
+`TIC` (un búfer que devolvió el aparato) el servicio corre el grafo hasta tener los períodos de delante del modo (4
+normal, 2 para tocar, 8 ahorro); si al controlador no le queda ninguno, suena silencio y lo cuenta como vacío.
 
 **El anillo** de un programa (`usuario/src/sonido_cliente.rs`): cabecera de palabras (cabeza: bytes escritos; cola:
 bytes leídos; tamaño de los datos, potencia de dos) y los datos desde el byte 64. El programa mueve la cabeza y el
-servicio la cola. El servicio no se fía de la cabecera: lo disponible no pasa del tamaño. Un flujo por programa.
+servicio la cola. El servicio no se fía de la cabecera: lo disponible no pasa del tamaño.
 
 Cuando el anillo baja de la mitad, el servicio escribe 4 bytes en el canal del programa para despertarlo (una vez
 hasta que la cabeza se mueva). Si ese canal está cerrado, el programa murió: su flujo sale con un fundido de 5 ms. Al
-`CERRAR`, el servicio suena lo que quede en el anillo y quita el flujo.
+`CERRAR`, el servicio suena lo que quede en el anillo y quita el flujo. Por ese mismo canal le llegan las órdenes de
+`MEDIOS_ORDEN` (8 bytes: 31 y la orden), si lo dio con `MEDIOS`.
 
 ## Red (S13)
 
@@ -868,6 +926,28 @@ El servicio de notificaciones, solo en `virt` por ahora. Canal "avisos"; el prot
   10 por minuto).
 - Guarda 50, como mucho 8 de cada programa. Lo de una persona con su sesión detrás no sale hasta que vuelve.
 - Leer, marcar como leídos y borrar: solo la barra.
+- S27 (oleada 3, el modelo de DMS): `AVISAR_CON` añade el número de un aviso propio que sustituye (0 si es nuevo) y
+  hasta 4 acciones (identificador de hasta 16 bytes, `a-z A-Z 0-9 _ - .`, sin repetir, y etiqueta de hasta 24); la de
+  identificador `default` es la del clic en el cuerpo. Con una segunda llave (un canal suyo), el programa oye las que se
+  pulsen (`ACCION_PULSADA`: número e identificador); en Rust, `avisos_cliente::avisar_con` y `oir_accion`. Sustituir
+  un aviso de otro programa: -2. Acciones mal hechas: -1.
+- Un aviso es "actual" hasta que se descarta (`DESCARTAR`, `DESCARTAR_TODO`) y sigue en el historial hasta que se quita
+  (`QUITAR`, `BORRAR_TODO`) o caduca (los días de `ENV:Escritorio/avisos`, 7 de serie). `LEER` con un tercer u32 a 1
+  da solo los actuales. `ACCION`, `LEER_ACCIONES`: solo la barra.
+- "No molestar" (`NO_MOLESTAR`: puesto y minutos, 0 sin plazo; `ESTADO`): la barra y el panel. Es estado de la sesión,
+  como en DMS; el horario va en los ajustes.
+- `AJUSTES` (los de `ENV:Escritorio/avisos` en bytes, `avisos_ajustes.rs`): solo la barra, que se los da el centro de
+  control por una puerta suya ("avisos vigilar"). La cabecera de las respuestas lleva la versión de los ajustes y del
+  "no molestar": si cambia, la barra los vuelve a pedir (`LEER_AJUSTES`, `ESTADO`).
+
+## Centro de control configurable (S27)
+
+`ENV:Escritorio/centro-control`, en texto (`cc_rejilla.rs`): `columnas` (4 a 12, 8 de serie) y `mosaicos` (como
+`controlCenterWidgets` de DMS: "nombre ancho[xalto] [pequeño] [@columna:fila]", separados por comas; también con los
+nombres de DMS). Lo lee y lo guarda el centro (`centro`); el panel le da una puerta ("cc vigilar", solo el panel) y
+recibe por ella `CCFG` y la rejilla en bytes cada vez que cambia; lo editado en el panel se guarda con "cc guardar" y
+los bytes (solo el panel; el centro lo escribe en `ENV:` y, por `sesiones`, en `ENVARC:`). Los ajustes de los avisos
+van igual a la barra ("avisos vigilar", `AVAJ`).
 
 ## Caja Linux (H9)
 

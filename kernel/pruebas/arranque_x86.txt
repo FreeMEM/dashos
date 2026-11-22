@@ -70,7 +70,7 @@ DashOS en marcha (x86-64)
 ~│   [disco-sata] disco 1: anillo: 16 lecturas, escribir y releer en orden y un rechazo: bien
 ~│   [disco-sata] 2 discos; el 2 no existe: bien
 ~│   [archivos] RedoxFS abierto: 7168 KB,
-~│   [ficheros] raíz (21 entradas, fin bien): C/ Classes/ DeCarla/ Devs/ Estado/ Fonts/ Imagenes/ L/ LEEME.txt Libs/ Locale/ Prefs/ Programas/ Rexx/ S/ Storage/ System/ Tools/ Utilities/ WBStartup/ Work/
+~│   [ficheros] raíz (23 entradas, fin bien): C/ Classes/ DeCarla/ Devs/ Estado/ Fondos/ Fonts/ Imagenes/ L/ LEEME.txt Libs/ Locale/ Paquetes/ Prefs/ Programas/ Rexx/ S/ Storage/ System/ Tools/ Utilities/ WBStartup/ Work/
 ~│   [ficheros] LEEME.txt (19 bytes): "DashOS lee RedoxFS"
 ~│   [ficheros] C/grande.txt: 313890 bytes, 25000 líneas: bien
 ~│   [ficheros] datos: bien; volumen: 7168 KB,

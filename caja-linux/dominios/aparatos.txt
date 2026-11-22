@@ -1,0 +1,14 @@
+# Qué aparato USB va a qué dominio de controladores (S35, "Cómo llegan los aparatos al dominio"). Se decide solo, por
+# el identificador del aparato: el usuario no elige nada. Una línea por aparato o por clase:
+#
+#   <dominio> <fabricante>:<producto>              un aparato concreto (en hexadecimal)
+#   <dominio> interfaz <clase>/<subclase>[/<protocolo>]   cualquiera cuya primera interfaz sea de esa clase
+#
+# Lo que no sale aquí no se presta: se queda en DashOS (o sin controlador). Va en la imagen del sistema, junto al
+# kernel del dominio; lo lee el servicio `dominio` al arrancar.
+
+# El dominio de red: adaptadores de red USB de clase.
+red 0525:a4a2               # el usb-net de QEMU (CDC Ethernet y RNDIS)
+red interfaz 02/06          # CDC Ethernet (ECM)
+red interfaz e0/01/03       # RNDIS
+red interfaz 02/02/ff       # RNDIS, como lo anuncian algunos

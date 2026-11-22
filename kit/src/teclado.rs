@@ -171,6 +171,11 @@ impl Teclado {
         Teclado { mapa, mayus: 0, altgr: false, alt: false, bloq_mayus: false, muerta: None }
     }
 
+    /// Si Bloq Mayús está puesto (lo que ha visto este teclado: las pulsaciones de la tecla que le llegaron).
+    pub fn bloq_mayus(&self) -> bool {
+        self.bloq_mayus
+    }
+
     pub fn mapa(&self) -> &'static Mapa {
         self.mapa
     }

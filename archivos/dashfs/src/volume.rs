@@ -11,7 +11,7 @@
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::{fmt, mem, ops, slice};
 use endian_num::Le;
-use syscall::error::{EBUSY, EEXIST, EINVAL, ENOENT, Error, Result};
+use syscall::error::{EBUSY, EEXIST, EINVAL, ENOENT, ENOMEM, Error, Result};
 
 use crate::casefold::Names;
 use crate::seal::{Cost, SlotKind, VOLUME_ENCRYPTED, VolumeCipher, VolumeKeys};
@@ -633,12 +633,22 @@ impl<D: Disk> Transaction<'_, D> {
             self.delete_snapshot(snapshot.name())?;
         }
         self.write_dead()?;
+        // DashOS (rama `archivos-memoria`): la lista de un volumen enorme puede no caber; entonces ENOMEM y el
+        // volumen sigue como estaba (la transacción se suelta sin escribir).
         let mut blocks = Vec::new();
+        let mut no_memory = false;
         let root = self.header.tree;
         self.tree_blocks(root, &mut |addr| {
+            if no_memory || blocks.try_reserve(1).is_err() {
+                no_memory = true;
+                return false;
+            }
             blocks.push(addr);
             true
         })?;
+        if no_memory {
+            return Err(Error::new(ENOMEM));
+        }
         for addr in blocks {
             unsafe { self.deallocate(&mut FsCtx, addr) };
         }
@@ -777,6 +787,78 @@ impl<D: Disk> Transaction<'_, D> {
             .add(kind, password, salt, cost, cipher.master())?;
         self.write_volume_keys(volume, keys)?;
         Ok(slot)
+    }
+
+    /// DashOS (S6b, branch `cuentas-2`): changes the password `old` of a volume for `new`, without touching its data
+    /// nor its key: the slot that `old` opens wraps the same key again, with `new`, a new salt and the same cost. It
+    /// needs the volume neither locked nor unlocked. EACCES if `old` is not one of its passwords (a recovery code is not:
+    /// that is `recover_volume`). Both copies of the key block change in the same transaction: a power cut leaves the old
+    /// password or the new one, never none.
+    pub fn change_volume_password(&mut self, id: u64, old: &[u8], new: &[u8], salt: [u8; 16]) -> Result<()> {
+        if new.is_empty() {
+            return Err(Error::new(EINVAL));
+        }
+        let volume = self.volume_by_id(id)?;
+        let mut keys = self.volume_keys(&volume)?;
+        let (mut master, slot) = keys.data().unwrap(old)?;
+        let found = {
+            let slots = keys.data().slots;
+            slots[slot]
+        };
+        let r = if found.kind() != SlotKind::Password {
+            Err(Error::new(syscall::error::EACCES))
+        } else {
+            keys.data_mut()
+                .remove(slot)
+                .and_then(|_| keys.data_mut().add(SlotKind::Password, new, salt, found.cost(), &master))
+                .map(|_| ())
+        };
+        master.fill(0);
+        r?;
+        self.write_volume_keys(volume, keys)
+    }
+
+    /// DashOS (S6b, branch `cuentas-2`): with the recovery code `code`, a new password when the old one was forgotten.
+    /// Every password goes (whoever knew one no longer opens it), `new` is the only one, and the code is spent:
+    /// `new_code` takes its place (the next one, written on paper again). Same cost as the code's slot. EACCES if `code`
+    /// is not its recovery code (a password is not).
+    pub fn recover_volume(
+        &mut self,
+        id: u64,
+        code: &[u8],
+        new: &[u8],
+        new_code: &[u8],
+        salts: [[u8; 16]; 2],
+    ) -> Result<()> {
+        if new.is_empty() || new_code.is_empty() {
+            return Err(Error::new(EINVAL));
+        }
+        let volume = self.volume_by_id(id)?;
+        let mut keys = self.volume_keys(&volume)?;
+        let (mut master, slot) = keys.data().unwrap(code)?;
+        let found = {
+            let slots = keys.data().slots;
+            slots[slot]
+        };
+        let r = (|| {
+            if found.kind() != SlotKind::Recovery {
+                return Err(Error::new(syscall::error::EACCES));
+            }
+            let slots = keys.data().slots;
+            for (i, s) in slots.iter().enumerate() {
+                if s.kind() == SlotKind::Password || i == slot {
+                    keys.data_mut().remove(i)?;
+                }
+            }
+            keys.data_mut()
+                .add(SlotKind::Password, new, salts[0], found.cost(), &master)?;
+            keys.data_mut()
+                .add(SlotKind::Recovery, new_code, salts[1], found.cost(), &master)?;
+            Ok(())
+        })();
+        master.fill(0);
+        r?;
+        self.write_volume_keys(volume, keys)
     }
 
     /// Empties a slot of the keys of a volume; the last one cannot go (the volume could not be opened again).

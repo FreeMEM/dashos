@@ -17,6 +17,8 @@ use shell::protocolo as p;
 use shell::{patron, ruta};
 
 pub mod base;
+/// `Paq` (S8): la orden y el servicio. Aparte de `base`: no va en `C/Ordenes` (lleva las firmas y el gzip).
+pub mod paq;
 
 pub const SESIONES: u32 = 1;
 pub const ARCHIVOS: u32 = 2;
@@ -92,6 +94,7 @@ pub fn texto_error(e: i32) -> &'static str {
         a::LLENO => "el disco está lleno",
         a::PROTEGIDO => "está protegido",
         a::EN_USO => "está en uso",
+        a::SIN_MEMORIA => "no hay memoria para hacerlo",
         asig::BUCLE => "la asignación lleva a sí misma",
         asig::NO_CABE => "el nombre es demasiado largo",
         _ => "error",
@@ -102,14 +105,21 @@ pub fn texto_error(e: i32) -> &'static str {
 pub struct Archivos {
     lectura: u32,
     tam: usize,
+    /// La llave del servicio (la 2 en las órdenes; otra en un servicio que lanza `inicio`, como `paq`).
+    llave: u32,
 }
 
 impl Archivos {
     pub fn abrir() -> Option<Archivos> {
+        Archivos::abrir_por(ARCHIVOS)
+    }
+
+    /// Con el servicio de archivos en la llave `llave`.
+    pub fn abrir_por(llave: u32) -> Option<Archivos> {
         let (lectura, suyo) = dashos::canal_crear();
         let mut m = [0u8; a::CABECERA];
         m[0..4].copy_from_slice(&a::SESION.to_le_bytes());
-        if dashos::canal_escribir(ARCHIVOS, &m, &[suyo]) != 0 {
+        if dashos::canal_escribir(llave, &m, &[suyo]) != 0 {
             dashos::cerrar(lectura);
             dashos::cerrar(suyo);
             return None;
@@ -122,7 +132,7 @@ impl Archivos {
             return None;
         }
         let tam = (u64::from_le_bytes(r[8..16].try_into().unwrap()) as usize).clamp(4096, a::VENTANA_MAX);
-        Some(Archivos { lectura, tam })
+        Some(Archivos { lectura, tam, llave })
     }
 
     pub fn ventana_mut(&mut self) -> &mut [u8] {
@@ -144,7 +154,7 @@ impl Archivos {
         let mut r = [0u8; 32];
         let mut intentos = 0;
         loop {
-            let e = dashos::canal_escribir(ARCHIVOS, &m[..32 + nombre.len()], &[]);
+            let e = dashos::canal_escribir(self.llave, &m[..32 + nombre.len()], &[]);
             if e == 0 {
                 break;
             }
@@ -198,6 +208,34 @@ impl Sistema {
         // De serie, `Home:` si hay; si no, `SYS:`.
         let actual = if tabla.buscar(b"Home").is_some() { "Home:" } else { "SYS:" };
         Some(Sistema { fs, tabla, actual: String::from(actual), zona: None })
+    }
+
+    /// Con un cliente y una tabla de nombres propios (un servicio, que no pide la suya a `sesiones`).
+    pub fn con(fs: Archivos, tabla: Tabla, actual: &str) -> Sistema {
+        Sistema { fs, tabla, actual: String::from(actual), zona: None }
+    }
+
+    /// Lo que mide la ventana del servicio: lo más que se guarda de una vez (`guardar`).
+    pub fn ventana(&self) -> usize {
+        self.fs.tam
+    }
+
+    /// Un fichero nuevo con `datos`, de una sola orden del servicio (`GUARDAR`: crearlo y escribirlo es una
+    /// transacción): o queda entero o no queda. `YA_EXISTE` si ya hay uno; `SIN_SITIO` si no cabe en la ventana.
+    pub fn guardar(&mut self, camino: &str, datos: &[u8]) -> Result<(), i32> {
+        if datos.len() > self.fs.tam {
+            return Err(a::SIN_SITIO);
+        }
+        let r = self.ruta(camino)?;
+        let (cajon, nombre) = ruta::partir(&r);
+        if nombre.is_empty() {
+            return Err(a::MAL_FORMADO);
+        }
+        let (asa, _) = self.abrir(&cajon)?;
+        self.fs.ventana_mut()[..datos.len()].copy_from_slice(datos);
+        let x = self.fs.orden(a::GUARDAR, asa, 0, datos.len() as u64, nombre.as_bytes());
+        self.cerrar(asa);
+        bien(x).map(|_| ())
     }
 
     /// La zona horaria del sistema (`SYS:Prefs/zona`), leída una vez. `None` si no está, no se deja leer o no está en

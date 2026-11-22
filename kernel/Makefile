@@ -81,20 +81,44 @@ prueba: $(PRUEBAS) catalogos
 	cd ../shell && cargo test --quiet
 	cd ../archivos/herramientas && cargo test --quiet --release
 	cd ../kit && cargo test --quiet
+	@# Los iconos de las cajas: los .info de cada formato, hostiles y mil mutados; los .desktop y los temas.
+	cd ../iconos-cajas && cargo test --quiet
 	cd ../caja-linux/vmm && cargo test --quiet
 	$(MAKE) -C ../caja/pruebas_hunk
 	mkdir -p target && rustc --edition 2024 --test src/rp1.rs -o target/rp1_pruebas && ./target/rp1_pruebas -q
-	cd ../usuario && mkdir -p target && rustc --edition 2024 --test src/panel_mosaicos.rs -o target/panel_mosaicos_pruebas && ./target/panel_mosaicos_pruebas -q
+	cd ../usuario && mkdir -p target && rustc --edition 2024 --test src/cc_rejilla.rs -o target/cc_rejilla_pruebas && ./target/cc_rejilla_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/lanzables.rs -o target/lanzables_pruebas && ./target/lanzables_pruebas -q
+	@# centro-vivo: la cola fija entre hilos (la del canal del centro y la del fondo).
+	cd ../usuario && rustc --edition 2024 --test src/anillo.rs -o target/anillo_pruebas && ./target/anillo_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/terminal.rs -o target/terminal_pruebas && ./target/terminal_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/protocolo/avisos.rs -o target/avisos_pruebas && ./target/avisos_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/avisos_ajustes.rs -o target/avisos_ajustes_pruebas && ./target/avisos_ajustes_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/dms_medidas.rs -o target/dms_medidas_pruebas && ./target/dms_medidas_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/calendario.rs -o target/calendario_pruebas && ./target/calendario_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/cortafuegos_caja.rs -o target/cortafuegos_caja_pruebas && ./target/cortafuegos_caja_pruebas -q
 	@# X5c: el intérprete del firmware del PHY de la RTL8125 (ficheros sintéticos y un aparato falso).
 	cd ../usuario && rustc --edition 2024 --test src/rtl8125_fw.rs -o target/rtl8125_fw_pruebas && ./target/rtl8125_fw_pruebas -q
-	@# S27: el volumen y el OSD del panel, la lista del lanzador y la fecha de la barra.
+	@# S27: el volumen del panel, la lista del lanzador y la fecha de la barra.
 	cd ../usuario && rustc --edition 2024 --test src/volumen_osd.rs -o target/volumen_osd_pruebas && ./target/volumen_osd_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/lanzador_lista.rs -o target/lanzador_lista_pruebas && ./target/lanzador_lista_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/reloj.rs -o target/reloj_pruebas && ./target/reloj_pruebas -q
+	@# S27, la barra de DMS: el modelo de las barras, el importador de settings.json y su lector de JSON (hostiles incluidos).
+	cd ../usuario && rustc --edition 2024 --test src/json_mini.rs -o target/json_mini_pruebas && ./target/json_mini_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/barra_config.rs -o target/barra_config_pruebas && ./target/barra_config_pruebas -q
+	@# S27, el dock y los OSD como los de DMS: muelles y curvas, ajustes en texto (fichero malo, bytes al azar), lo que
+	@# lleva el dock y dónde (mil ventanas, ráfagas, monitor que no existe) y los OSD (posiciones, ráfagas, relojes raros).
+	cd ../usuario && rustc --edition 2024 --test src/muelle.rs -o target/muelle_pruebas && ./target/muelle_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/dock_ajustes.rs -o target/dock_ajustes_pruebas && ./target/dock_ajustes_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/dock_modelo.rs -o target/dock_modelo_pruebas && ./target/dock_modelo_pruebas -q
+	@# Rama dock-discos: la lupa, el rebote, el indicador y arrastrar del dock; los discos del escritorio (el panel y sus
+	@# ajustes; mil volúmenes, ráfagas de montar y desmontar, bytes al azar).
+	cd ../usuario && rustc --edition 2024 --test src/dock_vivo.rs -o target/dock_vivo_pruebas && ./target/dock_vivo_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/discos_ajustes.rs -o target/discos_ajustes_pruebas && ./target/discos_ajustes_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/discos_modelo.rs -o target/discos_modelo_pruebas && ./target/discos_modelo_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/osd_modelo.rs -o target/osd_modelo_pruebas && ./target/osd_modelo_pruebas -q
+	@# tecla-pegada: cada teclado de arranque lo suyo (dos a la vez, el que se va suelta lo pulsado, informes malos) y la
+	@# cola sin sitio (nunca se tira un soltar; ráfagas).
+	cd ../usuario && rustc --edition 2024 --test src/hid_teclas.rs -o target/hid_teclas_pruebas && ./target/hid_teclas_pruebas -q
 	@# S13, segunda parte: DNS (respuestas falsas, nombres en bucle, cortadas), SNTP, las zonas horarias y el cortafuegos de entrada.
 	cd ../usuario && rustc --edition 2024 --test src/dns.rs -o target/dns_pruebas && ./target/dns_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/sntp.rs -o target/sntp_pruebas && ./target/sntp_pruebas -q
@@ -103,6 +127,8 @@ prueba: $(PRUEBAS) catalogos
 	cd ../usuario && rustc --edition 2024 --test src/protocolo/archivos.rs -o target/protocolo_archivos_pruebas && ./target/protocolo_archivos_pruebas -q
 	@# S35, paso 2: virtio por mensajes entre virtio-red y el servicio de un dominio (mensajes malos, colas fuera de la ventana).
 	cd ../usuario && rustc --edition 2024 --test src/protocolo/virtio_msg.rs -o target/virtio_msg_pruebas && ./target/virtio_msg_pruebas -q
+	@# S35, paso 2 con USB: el protocolo del aparato prestado entre el xHCI y el servicio del dominio.
+	cd ../usuario && rustc --edition 2024 --test src/protocolo/usb_prestado.rs -o target/usb_prestado_pruebas && ./target/usb_prestado_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/cortafuegos.rs -o target/cortafuegos_pruebas && ./target/cortafuegos_pruebas -q
 	@# Trasfondo nativo: las cuentas del monitor (contadores raros, procesos que nacen y mueren) y sus ajustes.
 	cd ../usuario && rustc --edition 2024 --test src/monitor.rs -o target/monitor_pruebas && ./target/monitor_pruebas -q
@@ -169,18 +195,77 @@ RED_HUB := -netdev user,id=red0,restrict=on,hostfwd=tcp:127.0.0.1:$$RED_PUERTO-1
 RED_QEMU := $(RED_HUB) -device virtio-net-pci,netdev=red4,disable-legacy=on,mac=$(RED_MAC),romfile=
 
 # Al final, el guion pulsa Reiniciar en el menú de apagado del panel y se espera al segundo arranque (REINICIO,
-# pruebas/arranque_virt_reinicio.txt; decisión del usuario del 2026-11-13).
+# pruebas/arranque_virt_reinicio.txt; decisión del usuario del 2026-11-13). 900 s (antes 720): con las ramas de DMS y
+# de los iconos unidas, el guion hace también el dock, los avisos, el Dash y los iconos de la caja Amiga, y no llegaba
+# al último paso (el selector desde `guarda`).
 arranque-virt: virt $(DISCO_NVME)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT)) cargo build --release
 	rm -f target/explorador*.ppm target/captura.ppm target/amiga.ppm target/dash.ppm target/dash-nativo.ppm target/dash-nativo-pregunta.ppm target/gadtools.ppm target/gadtools-menu.ppm target/gadtools-dash.ppm target/requester.ppm target/reaction.ppm target/reaction.orig.ppm target/sonido.wav $(RED)/qemu.sock $(RED)/pc.sock $(RED)/qemu2.sock $(RED)/vecino.sock target/u6.ana.ppm target/u6.carla.ppm
 	mkdir -p $(RED)
 	python3 -I ../tools/red_basura.py $(RED) $(RED_MAC) 300 & BASURA=$$!; $(RED_ANTES); \
-	GUARDAR=$(abspath target/salida_virt.txt) CAPTURA=$(abspath target/captura.ppm) CAPTURA_AMIGA=$(abspath target/amiga.ppm) CAPTURA_DASH=$(abspath target/dash.ppm) CAPTURA_DASHOS=$(abspath target/dash-nativo.ppm) CAPTURA_GT=$(abspath target/gadtools.ppm) CAPTURA_GT_MENU=$(abspath target/gadtools-menu.ppm) CAPTURA_GT_DASH=$(abspath target/gadtools-dash.ppm) CAPTURA_REQ=$(abspath target/requester.ppm) CAPTURA_RA=$(abspath target/reaction) CAPTURA_EXPLORADOR=$(abspath target/explorador) CAPTURA_U6=$(abspath target/u6) CAPTURA_MONITOR=$(abspath target/monitor) REINICIO=$(abspath pruebas/arranque_virt_reinicio.txt) TECLAS=1 MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv -audiodev wav,id=snd0,path=$(abspath target/sonido.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0 $(RED_QEMU)" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt.txt $(or $(TIEMPO_VIRT),600); \
+	GUARDAR=$(abspath target/salida_virt.txt) CAPTURA=$(abspath target/captura.ppm) CAPTURA_AMIGA=$(abspath target/amiga.ppm) CAPTURA_DASH=$(abspath target/dash.ppm) CAPTURA_DASHOS=$(abspath target/dash-nativo.ppm) CAPTURA_GT=$(abspath target/gadtools.ppm) CAPTURA_GT_MENU=$(abspath target/gadtools-menu.ppm) CAPTURA_GT_DASH=$(abspath target/gadtools-dash.ppm) CAPTURA_REQ=$(abspath target/requester.ppm) CAPTURA_RA=$(abspath target/reaction) CAPTURA_EXPLORADOR=$(abspath target/explorador) CAPTURA_U6=$(abspath target/u6) CAPTURA_MONITOR=$(abspath target/monitor) REINICIO=$(abspath pruebas/arranque_virt_reinicio.txt) TECLAS=1 MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv -audiodev wav,id=snd0,path=$(abspath target/sonido.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0 $(RED_QEMU)" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt.txt $(or $(TIEMPO_VIRT),900); \
 	R=$$?; $(RED_DESPUES); exit $$R
 	python3 ../tools/disco_archivos.py --comprobar $(DISCO_NVME) $(VER)
 	python3 ../tools/captura_ventanas.py target/captura.ppm
 	python3 ../tools/sonido_wav.py target/sonido.wav
 	python3 ../tools/captura_cambio.py target/u6.ana.ppm target/u6.carla.ppm
+
+# S27, oleada 3 (docs/bitacoras/dms-avisos.md): las capturas de los avisos, el Dash del reloj y el centro de control,
+# con la imagen de usar y `tools/guion_dms.py` (entra Ana, avisa, abre cada cosa). A 1920 × 1080 y con el aspecto del
+# usuario: DASHOS_PANTALLA=1920x1080 DASHOS_FONDO_EXTRA=fondo.png DASHOS_PREFS="apariencia=oscuro fondo;fondo=fondo.png"
+# (el fondo, fuera de git). Las capturas, en target/dms/ (PNG). Rama `centro-vivo`: su disco, con un fondo guardado
+# (sin DASHOS_PREFS, atardecer.png), que sale al entrar Ana aunque `fondo` arranque antes que el servicio de archivos.
+arranque-virt-dms: virt-uso $(DISCO_NVME)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_USO)) cargo build --release
+	rm -rf target/dms && mkdir -p target/dms
+	DASHOS_PREFS="$(or $(DASHOS_PREFS),fondo=atardecer.png)" python3 ../tools/disco_archivos.py target/dms/disco.img $(DASHFS_AR)
+	GUARDAR=$(abspath target/salida_virt_dms.txt) DMS_CAPTURAS=$(abspath target/dms/dms) DMS_ANCHO=$(firstword $(subst x, ,$(or $(DASHOS_PANTALLA),800x600))) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU) -drive file=$(abspath target/dms/disco.img),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_dms.txt 400
+	@cat target/dms/dms.guion.txt
+
+# Los discos del escritorio (rama dock-discos): capturas con la imagen de usar y `tools/guion_discos.py`, en
+# target/discos/. Con el aspecto del usuario, como `arranque-virt-dms` (DASHOS_PANTALLA, DASHOS_FONDO_EXTRA,
+# DASHOS_PREFS y DMS_SHIVA=1). No es una prueba: las líneas de pruebas/capturas_discos.txt solo dicen cuándo acabar.
+capturas-discos: virt-uso $(DISCO_NVME)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_USO)) cargo build --release
+	rm -rf target/discos && mkdir -p target/discos
+	DASHOS_PREFS="$(or $(DASHOS_PREFS),fondo=atardecer.png)" python3 ../tools/disco_archivos.py target/discos/disco.img $(DASHFS_AR)
+	-GUARDAR=$(abspath target/salida_capturas_discos.txt) DISCOS_CAPTURAS=$(abspath target/discos/discos) DMS_ANCHO=$(firstword $(subst x, ,$(or $(DASHOS_PANTALLA),800x600))) DMS_ALTO=$(lastword $(subst x, ,$(or $(DASHOS_PANTALLA),800x600))) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU) -drive file=$(abspath target/discos/disco.img),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/capturas_discos.txt 300
+	@cat target/discos/discos.guion.txt
+
+# Rama sonido-pro (docs/bitacoras/sonido-pro.md): el mezclador, el visualizador y los controles de medios en pantalla,
+# con la imagen de usar y un reproductor de prueba (`melodia`) que suena desde el arranque. `tools/guion_sonido.py`
+# entra como Ana (con DMS_SHIVA=1, el aspecto de shiva), abre el detalle de la salida en el centro de control y de ahí
+# la ventana "Sonido", cambia el ecualizador y pausa la música, con una captura en cada momento (target/sonido/*.png;
+# y en $(SONIDO_FUERA), fuera de git). Lo que suena, en target/sonido/sonido.wav (con el antes y el después del
+# ecualizador, que el guion apunta en su .guion.txt). A 1920 × 1080: DASHOS_PANTALLA=1920x1080, y el fondo del
+# usuario con DASHOS_FONDO_EXTRA=... DASHOS_PREFS="apariencia=oscuro fondo;fondo=...".
+VIRT_SONIDO := target/kernel8-virt-sonido.img
+SONIDO_FUERA ?= $(HOME)/recuperar/geosian-7d/sonido-pro-capturas
+SONIDO_CAPTURAS := 1-panel-salida 2-mezclador 3-mezclador-graves 4-mezclador-pausa 5-osd-volumen 6-ajustes-sonido 7-bloqueo-musica
+arranque-virt-sonido: usuario $(DISCO_NVME) FORCE
+	cargo build $(CARGO_PERFIL) --features virt,uso,sonido_demo
+	$(OBJCOPY) -O binary $(ELF) $(VIRT_SONIDO)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_SONIDO)) cargo build --release
+	rm -rf target/sonido && mkdir -p target/sonido
+	DASHOS_PREFS="$(or $(DASHOS_PREFS),fondo=atardecer.png)" python3 ../tools/disco_archivos.py target/sonido/disco.img $(DASHFS_AR)
+	GUARDAR=$(abspath target/salida_virt_sonido.txt) SONIDO_CAPTURAS=$(abspath target/sonido/sonido) DMS_ANCHO=$(firstword $(subst x, ,$(or $(DASHOS_PANTALLA),800x600))) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU) -drive file=$(abspath target/sonido/disco.img),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv -audiodev wav,id=snd0,path=$(abspath target/sonido/sonido.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_sonido.txt 400
+	@cat target/sonido/sonido.guion.txt
+	for c in $(SONIDO_CAPTURAS); do test -s target/sonido/sonido.$$c.png || { echo "FALTA la captura $$c"; exit 1; }; done
+	mkdir -p $(SONIDO_FUERA) && for c in $(SONIDO_CAPTURAS); do cp target/sonido/sonido.$$c.png $(SONIDO_FUERA)/$$c.png; done
+	-python3 ../tools/sonido_partir.py target/sonido/sonido.wav target/sonido/sonido.guion.txt $(SONIDO_FUERA)
+
+# Rama `fondos` (docs/bitacoras/fondos.md): la herramienta de fondos, las transiciones y los fondos animados en pantalla,
+# con `tools/guion_fondos.py` y la imagen de usar: capturas en target/fondos/ (PNG) y, fuera de git, en
+# ~/recuperar/geosian-7d/fondos-capturas/; y lo que gasta cada fondo animado en reposo (lo dicen `fondo` y el compositor).
+# A 1920 × 1080 con el aspecto del usuario: DASHOS_PANTALLA=1920x1080 FONDOS_SHIVA=1 DASHOS_FONDO_EXTRA=fondo.png.
+FONDOS_FUERA ?= $(HOME)/recuperar/geosian-7d/fondos-capturas
+arranque-virt-fondos: virt-uso $(DISCO_NVME)
+	cd ../uefi && DASHOS_PANTALLA=$(or $(DASHOS_PANTALLA),800x600) DASHOS_NUCLEO=$(abspath $(VIRT_USO)) cargo build --release
+	rm -rf target/fondos && mkdir -p target/fondos
+	DASHOS_PREFS="$(or $(DASHOS_PREFS),fondo=atardecer.png)" python3 ../tools/disco_archivos.py target/fondos/disco.img $(DASHFS_AR)
+	GUARDAR=$(abspath target/salida_virt_fondos.txt) FONDOS_CAPTURAS=$(abspath target/fondos/fondos) FONDOS_ANCHO=$(firstword $(subst x, ,$(or $(DASHOS_PANTALLA),800x600))) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU) -drive file=$(abspath target/fondos/disco.img),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_fondos.txt 900
+	@cat target/fondos/fondos.guion.txt
+	mkdir -p $(FONDOS_FUERA)/$(or $(DASHOS_PANTALLA),800x600) && cp target/fondos/*.png $(FONDOS_FUERA)/$(or $(DASHOS_PANTALLA),800x600)/ 2>/dev/null; true
 
 # La imagen para usar a mano (`tools/qemu_a_mano.sh`): `virt` con `uso`, sin los programas de prueba y con la pantalla
 # de entrada de verdad. No es una prueba: nada la comprueba.
@@ -205,6 +290,21 @@ arranque-virt-shell: virt-uso $(DISCO_NVME)
 	for c in $(SHELL_CAPTURAS); do test -s target/shell/shell.$$c.png || { echo "FALTA la captura $$c"; exit 1; }; done
 	mkdir -p ../capturas-agente && for c in $(SHELL_CAPTURAS); do cp target/shell/shell.$$c.png ../capturas-agente/shell-$$c.png; done
 
+# Plan de iconos, parte 3 (docs/bitacoras/iconos-cajas.md): la imagen de usar con una copia del disco de pruebas.
+# `tools/guion_iconos.py` entra como Ana, abre el explorador y mira los .info de la caja Amiga (uno de cada formato, el
+# volumen, los escondidos y la lista), con capturas (target/iconos/iconos.*.png y, fuera de git,
+# ~/recuperar/geosian-7d/iconos-cajas-capturas/).
+ICONOS_CAPTURAS := 01-iconos 02-elegido 03-volumen 04-ocultos 05-lista
+ICONOS_FUERA ?= $(HOME)/recuperar/geosian-7d/iconos-cajas-capturas
+arranque-virt-iconos: virt-uso $(DISCO_NVME)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_USO)) cargo build --release
+	rm -rf target/iconos && mkdir -p target/iconos
+	cp --reflink=auto $(DISCO_NVME) target/iconos/disco.img
+	GUARDAR=$(abspath target/salida_virt_iconos.txt) ICONOS_CAPTURAS=$(abspath target/iconos/iconos) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU) -drive file=$(abspath target/iconos/disco.img),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_iconos.txt 400
+	@cat target/iconos/iconos.guion.txt
+	for c in $(ICONOS_CAPTURAS); do test -s target/iconos/iconos.$$c.png || { echo "FALTA la captura $$c"; exit 1; }; done
+	mkdir -p $(ICONOS_FUERA) && for c in $(ICONOS_CAPTURAS); do cp target/iconos/iconos.$$c.png $(ICONOS_FUERA)/explorador-$$c.png; done
+
 # S10, los menús de los programas (docs/bitacoras/menus.md): la imagen de usar con la prueba de kit-c (`dash-ventana`)
 # y una copia del disco de pruebas. `tools/guion_menus.py` entra como Ana y mira los menús del Shell (el kit nativo) y
 # de `dash-ventana` (kit-c) dentro de la ventana; los pasa a la barra con `Ajuste menus barra` (tecleado en el Shell),
@@ -212,7 +312,8 @@ arranque-virt-shell: virt-uso $(DISCO_NVME)
 # (target/menus/menus.*.png; y en ~/recuperar/geosian-7d/menus-pulido-capturas/, fuera de git).
 VIRT_MENUS := target/kernel8-virt-menus.img
 MENUS_CAPTURAS := 01-kitc-dentro 02-kitc-dentro-abierto 03-shell-dentro 04-shell-dentro-abierto 05-barra-shell 06-barra-shell-abierto 07-barra-elegido 08-barra-boton-derecho 09-barra-kitc 10-barra-kitc-abierto 11-kitc-elegido 12-dentro-otra-vez 13-f10 \
-	14-shell-teclas 15-kitc-teclas-fin 16-kitc-rueda 17-barra-submenu-teclas 18-barra-largo-rueda 19-barra-submenu-rueda 20-clic-que-cierra 21-cambia-desplegado 22-dentro-submenu-teclas 23-dentro-largo-rueda 24-ventana-cerrada
+	14-shell-teclas 15-kitc-teclas-fin 16-kitc-rueda 17-barra-submenu-teclas 18-barra-largo-rueda 19-barra-submenu-rueda 20-clic-que-cierra 21-cambia-desplegado 22-dentro-submenu-teclas 23-dentro-largo-rueda 24-ventana-cerrada \
+	25-kitc-ver 26-kitc-submenu 27-ajustes-abierta-menus-barra
 MENUS_FUERA ?= $(HOME)/recuperar/geosian-7d/menus-pulido-capturas
 arranque-virt-menus: usuario $(DISCO_NVME) FORCE
 	cargo build $(CARGO_PERFIL) --features virt,uso,menus
@@ -224,6 +325,27 @@ arranque-virt-menus: usuario $(DISCO_NVME) FORCE
 	@cat target/menus/menus.guion.txt
 	for c in $(MENUS_CAPTURAS); do test -s target/menus/menus.$$c.png || { echo "FALTA la captura $$c"; exit 1; }; done
 	mkdir -p $(MENUS_FUERA) && for c in $(MENUS_CAPTURAS); do cp target/menus/menus.$$c.png $(MENUS_FUERA)/$$c.png; done
+
+# Rama cuentas-2, las cuentas en pantalla (docs/bitacoras/cuentas-2.md): la imagen de usar con `cuentas` (`guardian`
+# escribe los códigos de recuperación en la consola) y un disco de pruebas sin cuentas (primer arranque).
+# `tools/guion_cuentas.py`: el asistente crea a Eva (un nombre reservado primero: no), Ajustes > Cuentas crea a Fran, lo
+# pone en un grupo, lo borra y lo devuelve, y cambia la contraseña de Eva; al cerrar su sesión, la pantalla de entrada
+# con la lista, y Fran entra con su código de recuperación (uno malo primero); al cerrar la de Fran, vuelve Eva. Con una captura en cada momento (target/cuentas/cuentas.*.png; y en
+# ~/recuperar/geosian-7d/cuentas-2-capturas/, fuera de git).
+VIRT_CUENTAS := target/kernel8-virt-cuentas.img
+CUENTAS_CAPTURAS := 01-asistente 02-asistente-reservado 03-codigo-primera 04-ajustes-cuentas 05-tanda-nueva 06-codigo-fran \
+	07-cuentas-fran 08-borrada 09-mi-contrasena 10-entrada-lista 11-olvide 12-codigo-malo 13-codigo-nuevo 14-entrada-otra-vez 15-entrada-clave
+CUENTAS_FUERA ?= $(HOME)/recuperar/geosian-7d/cuentas-2-capturas
+arranque-virt-cuentas: usuario $(DISCO_NVME) FORCE
+	cargo build $(CARGO_PERFIL) --features virt,uso,cuentas
+	$(OBJCOPY) -O binary $(ELF) $(VIRT_CUENTAS)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_CUENTAS)) cargo build --release
+	rm -rf target/cuentas && mkdir -p target/cuentas
+	python3 ../tools/disco_archivos.py --sin-cuentas target/cuentas/disco.img $(DASHFS_AR)
+	GUARDAR=$(abspath target/salida_virt_cuentas.txt) CUENTAS_CAPTURAS=$(abspath target/cuentas/cuentas) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU) -drive file=$(abspath target/cuentas/disco.img),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_cuentas.txt 900
+	@cat target/cuentas/cuentas.guion.txt
+	for c in $(CUENTAS_CAPTURAS); do test -s target/cuentas/cuentas.$$c.png || { echo "FALTA la captura $$c"; exit 1; }; done
+	mkdir -p $(CUENTAS_FUERA) && for c in $(CUENTAS_CAPTURAS); do cp target/cuentas/cuentas.$$c.png $(CUENTAS_FUERA)/$$c.png; done
 
 # La caja Linux (H9, docs/bitacoras/caja-linux.md): la misma imagen de `virt` en una QEMU virt con virtualization=on,
 # sin disco ni USB. EDK2 y el cargador entran en EL2: el kernel deja ahí el trozo del hipervisor y el servicio
@@ -266,23 +388,28 @@ arranque-virt-linux: usuario FORCE
 	@# La captura de la terminal, fuera de git (capturas-agente/ está en .git/info/exclude).
 	mkdir -p ../capturas-agente && cp target/caja-terminal.png ../capturas-agente/caja-linux-terminal.png 2>/dev/null || true
 
-# Un dominio de controladores (S35, paso 2; docs/bitacoras/dominio-red.md): la imagen de `virt` con `dominio`, en QEMU
-# con virtualization=on. La red de DashOS no tiene virtio-net-pci: tiene una e1000 que DashOS presta (sin IOMMU, solo
-# en QEMU) a un Linux mínimo en una máquina virtual (`dominio`); ese Linux la lleva y devuelve a DashOS una virtio-net
-# por mensajes, que lleva `virtio-red` de siempre. La e1000 está en el concentrador con la red de usuario de QEMU (DHCP
-# y el eco del PC en 10.0.2.100:7, con restrict=on: nada sale del PC) y el vecino de prueba (`tools/red_vecino.py`,
-# 10.0.2.53). `dominio-prueba` hace DHCP, ecos TCP y UDP, y relanza el dominio en modos hostiles (oferta falsa,
-# descriptores que no son suyos, leer fuera de su memoria, colgarse y morir a media transferencia). El kernel y el
-# initramfs del dominio, fuera de git: `tools/dominio_red.py preparar` (DOMINIO_IMAGE, DOMINIO_INITRD). Con el disco de
-# las pruebas (NVMe): así `sesiones` escribe el registro común, donde quedan las caídas del dominio, y la prueba lo lee.
-DOMINIO_DIR ?= $(HOME)/recuperar/geosian-7d/dominio-red
+# Un dominio de controladores (S35, paso 2; docs/bitacoras/dominio-red.md y dominio-usb.md): la imagen de `virt` con
+# `dominio`, en QEMU con virtualization=on. La red de DashOS no tiene virtio-net-pci: tiene un adaptador de red USB
+# (el usb-net de QEMU, en el puerto 3 del xHCI, junto al teclado y el ratón) que el xHCI de DashOS presta por USB/IP a
+# un Linux mínimo en una máquina virtual (`dominio`); ese Linux lo lleva con su controlador (cdc_ether) y devuelve a
+# DashOS una virtio-net por mensajes, que lleva `virtio-red` de siempre. El adaptador está en el concentrador con la red
+# de usuario de QEMU (DHCP y el eco del PC en 10.0.2.100:7, con restrict=on: nada sale del PC) y el vecino de prueba
+# (`tools/red_vecino.py`, 10.0.2.53). `dominio-prueba` hace DHCP, ecos TCP y UDP, y relanza el dominio en modos
+# hostiles (oferta falsa, USB/IP falso o enorme, otro aparato, tormenta de peticiones, basura en el flujo, colgarse y
+# morir a media transferencia), pide desenchufar y enchufar el adaptador (lo hace `tools/guion_dominio_usb.py` por el
+# monitor de QEMU), mata al conductor y lo hace caer tres veces seguidas (el aviso). El kernel y el initramfs del
+# dominio, fuera de git: `tools/dominio_red.py preparar usb` (DOMINIO_IMAGE, DOMINIO_INITRD). Con el disco de las
+# pruebas (NVMe): así `sesiones` escribe el registro común, donde quedan las caídas y la consola del dominio, y la prueba
+# lo lee.
+DOMINIO_DIR ?= $(HOME)/recuperar/geosian-7d/dominio-usb
 DOMINIO_IMAGE ?= $(DOMINIO_DIR)/Image
 DOMINIO_INITRD ?= $(DOMINIO_DIR)/initramfs.cpio
 VIRT_DOMINIO := target/kernel8-virt-dominio.img
-RED_DOMINIO := -netdev user,id=red0,restrict=on,guestfwd=tcp:10.0.2.100:7-cmd:$(abspath ../tools/red_eco.py) -netdev dgram,id=red5,local.type=unix,local.path=$(RED)/qemu2.sock,remote.type=unix,remote.path=$(RED)/vecino.sock -netdev hubport,id=red6,hubid=0,netdev=red5 -netdev hubport,id=red2,hubid=0,netdev=red0 -netdev hubport,id=red4,hubid=0 -device e1000,netdev=red4,mac=$(RED_MAC),romfile=
+ADAPTADOR_USB := usb-net,netdev=red4,mac=$(RED_MAC),bus=xhci.0,port=3,id=usbred
+RED_DOMINIO := -netdev user,id=red0,restrict=on,guestfwd=tcp:10.0.2.100:7-cmd:$(abspath ../tools/red_eco.py) -netdev dgram,id=red5,local.type=unix,local.path=$(RED)/qemu2.sock,remote.type=unix,remote.path=$(RED)/vecino.sock -netdev hubport,id=red6,hubid=0,netdev=red5 -netdev hubport,id=red2,hubid=0,netdev=red0 -netdev hubport,id=red4,hubid=0 $(USB_QEMU) -device $(ADAPTADOR_USB)
 arranque-virt-dominio: usuario $(DISCO_NVME) FORCE
-	@test -f "$(DOMINIO_IMAGE)" || { echo "Falta el kernel del dominio (DOMINIO_IMAGE=$(DOMINIO_IMAGE)): no va en git; tools/dominio_red.py preparar"; exit 1; }
-	@test -f "$(DOMINIO_INITRD)" || { echo "Falta el initramfs del dominio (DOMINIO_INITRD=$(DOMINIO_INITRD)): tools/dominio_red.py preparar"; exit 1; }
+	@test -f "$(DOMINIO_IMAGE)" || { echo "Falta el kernel del dominio (DOMINIO_IMAGE=$(DOMINIO_IMAGE)): no va en git; tools/dominio_red.py preparar usb"; exit 1; }
+	@test -f "$(DOMINIO_INITRD)" || { echo "Falta el initramfs del dominio (DOMINIO_INITRD=$(DOMINIO_INITRD)): tools/dominio_red.py preparar usb"; exit 1; }
 	mkdir -p target/dominio
 	cp "$(DOMINIO_IMAGE)" target/dominio/Image
 	cp "$(DOMINIO_INITRD)" target/dominio/initrd
@@ -292,9 +419,9 @@ arranque-virt-dominio: usuario $(DISCO_NVME) FORCE
 	rm -f $(RED)/qemu2.sock $(RED)/vecino.sock
 	mkdir -p $(RED)
 	python3 -I ../tools/red_vecino.py $(RED) $(RED_MAC) 900 & VECINO=$$!; \
-	GUARDAR=$(abspath target/salida_virt_dominio.txt) MEMORIA=3G MAQUINA=highmem=off,virtualization=on QEMU_EXTRA="-device ramfb -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv $(RED_DOMINIO)" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_dominio.txt $(or $(TIEMPO_DOMINIO),900); \
+	DOMINIO_USB="$(ADAPTADOR_USB)" GUARDAR=$(abspath target/salida_virt_dominio.txt) MEMORIA=3G MAQUINA=highmem=off,virtualization=on QEMU_EXTRA="-device ramfb -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv $(RED_DOMINIO)" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_dominio.txt $(or $(TIEMPO_DOMINIO),900); \
 	R=$$?; kill $$VECINO 2>/dev/null; exit $$R
-	grep -E "\[(dominio|dominio-prueba|virtio-red)\]" target/salida_virt_dominio.txt | grep -vE "linux: \[ " || true
+	grep -E "\[(dominio|dominio-prueba|virtio-red|xhci)\]" target/salida_virt_dominio.txt | grep -vE "linux: \[ |tecla|ratón" || true
 
 # Arch Linux ARM en la caja Linux (H9, docs/bitacoras/caja-linux.md): la Image de Image-arch (tinyconfig con lo que
 # pide systemd), sin initramfs, y el disco de Arch como NVMe: una GPT con la partición de DashOS (en ella, el RedoxFS de
@@ -793,7 +920,8 @@ graficos-x86: FORCE
 # serie (compilado para x86: DASHOS_ARQ=x86_64), la red de usuario de QEMU, el sonido y la pantalla por virtio-gpu
 # (x86-gpu). Lo arranca `tools/qemu_x86_a_mano.sh` (PANTALLA=ANCHOxALTO, SONIDO_X86=hda|virtio, GPU_X86=virtio|vga,
 # VENTANA=gtk|sdl|none). No es una prueba: nada la comprueba. Sin la caja Linux ni la caja Amiga (aún no van en x86).
-SERVICIOS_X86_USO := inicio consola compositor xhci nvme ahci disco-vivo instalador instalar archivos comprobador eco sesiones red virtio-red fondo centro guardian imagen sonido avisos barra virtio-sonido hda selector panel explorador workbench hora virtio-gpu
+SERVICIOS_X86_USO := inicio consola compositor xhci nvme ahci disco-vivo instalador instalar archivos comprobador eco sesiones red virtio-red fondo centro guardian imagen sonido avisos barra virtio-sonido hda selector panel explorador workbench hora virtio-gpu dock mezclador
+# (`paq`, el servicio de paquetes, sale de `ordenes/`, que se compila entero aquí debajo.)
 # Los programas que van en el disco (`tools/disco_archivos.py`), también de x86.
 DISCO_PROGRAMAS_X86 := hola pide cambio ram avisa guarda espera blanker nocapslock
 FUNCIONES_X86_USO := archivos,ventanas,sonido,red,imagenes,ordenes,caja

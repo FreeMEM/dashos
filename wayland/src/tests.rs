@@ -581,6 +581,105 @@ mod composicion {
         assert_eq!(px(350, 300), mezclar(0x8000_0080, 0xFF33_6699));
     }
 
+    /// S37 (la GPU en el escritorio): lo que cuesta componer por CPU a 1920 x 1080 en los casos que importan para un
+    /// fondo animado: la pantalla entera (un fondo que cambia entero cada cuadro), con y sin sombras; solo una zona del
+    /// fondo; una letra; y una ventana que se arrastra. Un fondo XRGB a pantalla completa y cuatro ventanas: dos XRGB,
+    /// una ARGB opaca con esquinas redondeadas (como las del kit) y una ARGB a medias. Se mide en el PC:
+    /// `cargo test --release -- --ignored medir_componer_1080 --nocapture`.
+    #[test]
+    #[ignore]
+    fn medir_componer_1080() {
+        extern crate std;
+        let (w, h) = (1920i32, 1080i32);
+        let mut escena = Escena::new(Compartida::default(), 0xFF20_4060);
+        let mut cons: Vec<Conexion> = (0..5).map(|_| Conexion::new()).collect();
+        cliente(&mut escena, &mut cons[0], 1, 70, w, h, 0xFF30_5070, XRGB8888);
+        cliente(&mut escena, &mut cons[1], 2, 71, 800, 600, 0xFFFF_0000, XRGB8888);
+        cliente(&mut escena, &mut cons[2], 3, 72, 700, 500, 0xFF00_8040, XRGB8888);
+        cliente(&mut escena, &mut cons[3], 4, 73, 900, 650, 0xFF33_6699, ARGB8888);
+        cliente(&mut escena, &mut cons[4], 5, 74, 500, 350, 0x8000_0080, ARGB8888);
+        // Las esquinas de la ARGB opaca, transparentes en un radio de 16 (como el kit).
+        {
+            let mut m = escena.memorias.0.borrow_mut();
+            let v = m.get_mut(&73).unwrap();
+            let (vw, vh, r) = (900i32, 650i32, 16i32);
+            for y in 0..vh {
+                for x in 0..vw {
+                    let cx = if x < r { r - x } else if x >= vw - r { x - (vw - r) + 1 } else { 0 };
+                    let cy = if y < r { r - y } else if y >= vh - r { y - (vh - r) + 1 } else { 0 };
+                    if cx * cx + cy * cy > r * r {
+                        let i = ((y * vw + x) * 4) as usize;
+                        v[i..i + 4].copy_from_slice(&0u32.to_le_bytes());
+                    }
+                }
+            }
+        }
+        escena.colocar(1, 7, 0, 0);
+        escena.colocar(2, 7, 100, 80);
+        escena.colocar(3, 7, 1100, 120);
+        escena.colocar(4, 7, 500, 350);
+        escena.colocar(5, 7, 1300, 650);
+        let mut pantalla = vec![0u32; (w * h) as usize];
+        let mut medir = |escena: &mut Escena<Compartida>, nombre: &str, vueltas: u32, danar: &mut dyn FnMut(&mut Escena<Compartida>, u32)| {
+            // Una vuelta de calentamiento, y la mediana de las vueltas.
+            danar(escena, 0);
+            escena.componer(&mut pantalla, w, h, w as usize, 0, &mut |_, _, _| {});
+            let mut t: Vec<u128> = Vec::new();
+            for i in 0..vueltas {
+                danar(escena, i + 1);
+                let t0 = std::time::Instant::now();
+                escena.componer(&mut pantalla, w, h, w as usize, 0, &mut |_, _, _| {});
+                t.push(t0.elapsed().as_micros());
+            }
+            t.sort_unstable();
+            let med = t[t.len() / 2];
+            std::println!(
+                "S37 componer 1920x1080, {nombre}: mediana {med} µs, mejor {} µs, peor {} µs; a 60 cuadros, {:.0} % de un núcleo",
+                t[0],
+                t[t.len() - 1],
+                med as f64 * 60.0 / 10_000.0
+            );
+        };
+        let todo = Rect { x: 0, y: 0, w, h };
+        escena.sombras = true;
+        medir(&mut escena, "pantalla entera, 4 ventanas, con sombras", 60, &mut |e, _| e.danos.push(todo));
+        escena.sombras = false;
+        medir(&mut escena, "pantalla entera, 4 ventanas, sin sombras", 60, &mut |e, _| e.danos.push(todo));
+        escena.sombras = true;
+        medir(&mut escena, "una zona del fondo de 256x256 (sin ventanas encima)", 300, &mut |e, _| {
+            e.danos.push(Rect { x: 1500, y: 200, w: 256, h: 256 })
+        });
+        medir(&mut escena, "cuatro zonas del fondo de 256x256", 300, &mut |e, _| {
+            for (x, y) in [(20, 700), (1500, 200), (950, 20), (40, 950)] {
+                e.danos.push(Rect { x, y, w: 256, h: 256 })
+            }
+        });
+        medir(&mut escena, "una letra (10x20) en la ventana ARGB", 1000, &mut |e, _| {
+            e.danos.push(Rect { x: 700, y: 500, w: 10, h: 20 })
+        });
+        // Arrastrar la ventana roja: 8 píxeles a la derecha por cuadro; se daña donde estaba y donde está, con su sombra.
+        medir(&mut escena, "arrastrar una ventana de 800x600", 60, &mut |e, i| {
+            let x = 100 + 8 * (i as i32 % 50);
+            let de = |x: i32| Rect { x: x - 14, y: 80 - 14, w: 800 + 28, h: 600 + 32 };
+            e.danos.push(de(x - 8));
+            e.colocar(2, 7, x, 80);
+            e.danos.push(de(x));
+        });
+        // Sin ventanas: solo el fondo, entero, cada cuadro (un fondo animado a pantalla completa con todo minimizado).
+        for c in 2..=5 {
+            escena.adios(c);
+        }
+        medir(&mut escena, "solo el fondo, pantalla entera", 60, &mut |e, _| e.danos.push(todo));
+        // Lo mínimo que cuesta tocar la pantalla entera: copiar 8 MB.
+        let origen = vec![0x1234_5678u32; (w * h) as usize];
+        let t0 = std::time::Instant::now();
+        for _ in 0..60 {
+            pantalla.copy_from_slice(&origen);
+            core::hint::black_box(&pantalla);
+        }
+        std::println!("S37 copiar 1920x1080 (8 MB) de un búfer a otro: {} µs", t0.elapsed().as_micros() / 60);
+    }
+
     #[test]
     fn adjuntar_algo_que_no_es_un_bufer() {
         let mut escena = Escena::new(Compartida::default(), 0);
@@ -790,6 +889,50 @@ mod ventanas {
         escena.componer(&mut pantalla, 100, 60, 100, 0, &mut |_, _, _| {});
         assert_eq!(pantalla[41 * 100 + 41], 0xFF11_1111);
         assert_eq!(pantalla[5 * 100 + 5], 0xFF12_3456);
+    }
+
+    /// S27, oleada 6 (la pantalla de bloqueo de DMS), hostil: con la sesión bloqueada, nadie pinta encima de la pantalla
+    /// de bloqueo ni oye lo que se teclea en ella. Ni una capa de arriba con el teclado que ya estaba antes de bloquear,
+    /// ni una ventana y una capa de arriba con el teclado (exclusivo) abiertas después, del tamaño de la pantalla y con
+    /// otro color: no se ven, no toman el teclado, y las teclas y el ratón van solo a la pantalla de bloqueo.
+    #[test]
+    fn bloqueado_nadie_pinta_encima_ni_oye_las_teclas() {
+        let mut escena = Escena::new(Mem::default(), 0);
+        let mut pantalla = vec![0u32; 100 * 60];
+        escena.componer(&mut pantalla, 100, 60, 100, 0, &mut |_, _, _| {});
+        // Lo de los malos, en otro color (la pantalla de bloqueo es 0x11).
+        for llave in [70, 83, 84] {
+            escena.memorias.0.insert(llave, vec![0x77; 1 << 16]);
+        }
+        let mut antes = Conexion::new();
+        capa_con_teclado(&mut escena, &mut antes, 3, (100, 60), ARRIBA | IZQUIERDA, -1, [0; 4], 1);
+        assert_eq!(escena.teclado, Some((3, 31)), "la capa de antes tenía el teclado");
+        let mut b = Conexion::new();
+        bloquear(&mut escena, &mut b, 9);
+        pantalla_de_bloqueo(&mut escena, &mut b, 9, 80);
+        let mut ventana = Conexion::new();
+        abrir(&mut escena, &mut ventana, 1, 70);
+        let mut encima = Conexion::new();
+        capa_con_teclado(&mut escena, &mut encima, 4, (100, 60), ARRIBA | IZQUIERDA, -1, [0; 4], 1);
+        assert!(ventana.roto.is_none() && encima.roto.is_none());
+        assert_eq!(escena.raices(), [(9, 42)], "solo la pantalla de bloqueo");
+        assert_eq!(escena.teclado, Some((9, 42)), "el teclado, de la pantalla de bloqueo");
+        assert!(!escena.puede_tomar_teclado(1) && !escena.puede_tomar_teclado(3) && !escena.puede_tomar_teclado(4));
+        escena.componer(&mut pantalla, 100, 60, 100, 0, &mut |_, _, _| {});
+        assert!(pantalla.iter().all(|&p| p == 0xFF11_1111), "algo de otro se ve encima de la pantalla de bloqueo");
+        // Una contraseña tecleada (las letras y el Intro) y el ratón: solo a la pantalla de bloqueo.
+        escena.pendientes.clear();
+        let mut a_quien = Vec::new();
+        for uso in [0x04u8, 0x05, 0x06, 0x28] {
+            for pulsada in [true, false] {
+                a_quien.extend(escena.tecla(uso, pulsada).into_iter().map(|x| x.0));
+            }
+        }
+        a_quien.extend(escena.raton(10, 10, 1).into_iter().map(|x| x.0));
+        a_quien.extend(escena.raton(0, 0, 0).into_iter().map(|x| x.0));
+        a_quien.extend(escena.pendientes.drain(..).map(|x| x.0));
+        assert!(!a_quien.is_empty(), "las teclas no llegaron a nadie");
+        assert!(a_quien.iter().all(|&c| c == 9), "le llegó entrada a otro: {:?}", a_quien);
     }
 
     /// G6: dmabuf (ya enlazado). Objetos: 50 linux_dmabuf, 51 feedback, 52 params, 53 búfer (16 x 16, lineal, llave 90).
@@ -1015,6 +1158,83 @@ mod ventanas {
         for y in [0, 17, 18, 19, 20, 21, 39] {
             assert_eq!(pantalla[y * 200 + 100] & 0xff_ffff, 0x11_1111, "en y = {y}");
         }
+    }
+
+    /// Rama `fondos`: una capa de fondo tapada por una ventana opaca maximizada, con la pantalla apagada o bloqueada no
+    /// recibe su aviso de `frame` (el fondo animado se para); al destaparse, sí, y no se pierde ninguno.
+    #[test]
+    fn fondo_tapado_sin_avisos() {
+        use crate::tablas::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
+        let mut escena = Escena::new(Mem::default(), 0);
+        let mut pantalla = vec![0u32; 16 * 16];
+        escena.componer(&mut pantalla, 16, 16, 16, 0, &mut |_, _, _| {});
+        let mut fondo = Conexion::new();
+        let mut e = Escritor::new();
+        e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(1).texto(Some("wl_compositor")).uint(6).uint(3).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(2).texto(Some("wl_shm")).uint(1).uint(4).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(5).texto(Some("zwlr_layer_shell_v1")).uint(4).uint(30).fin();
+        e.empezar(3, wl_compositor::req::CREATE_SURFACE).uint(31).fin();
+        e.empezar(30, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(32).uint(31).uint(0).uint(0).texto(Some("fondo")).fin();
+        e.empezar(32, zwlr_layer_surface_v1::req::SET_ANCHOR).uint(15).fin();
+        e.empezar(32, zwlr_layer_surface_v1::req::SET_EXCLUSIVE_ZONE).int(-1).fin();
+        e.empezar(31, wl_surface::req::COMMIT).fin();
+        let ev = mandar(&mut escena, &mut fondo, 9, &e);
+        let conf = ev.iter().find(|x| (x.0, x.1) == (32, zwlr_layer_surface_v1::ev::CONFIGURE)).expect("sin configure");
+        let mut e = Escritor::new();
+        e.empezar(32, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(u32::from_le_bytes(conf.2[..4].try_into().unwrap())).fin();
+        e.empezar(4, wl_shm::req::CREATE_POOL).uint(33).llave(72).int(16 * 16 * 4).fin();
+        e.empezar(33, wl_shm_pool::req::CREATE_BUFFER).uint(34).int(0).int(16).int(16).int(64).uint(XRGB8888).fin();
+        e.empezar(31, wl_surface::req::ATTACH).uint(34).int(0).int(0).fin();
+        e.empezar(31, wl_surface::req::FRAME).uint(100).fin();
+        e.empezar(31, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut fondo, 9, &e);
+        assert!(fondo.roto.is_none(), "{:?}", fondo.roto);
+        let avisos = |escena: &mut Escena<Mem>, pantalla: &mut Vec<u32>| {
+            let mut v = Vec::new();
+            escena.componer(pantalla, 16, 16, 16, 0, &mut |c, a, _| v.push((c, a)));
+            v
+        };
+        assert_eq!(avisos(&mut escena, &mut pantalla), vec![(9, 100)], "a la vista: su aviso");
+        // Una ventana opaca (XRGB), maximizada: tapa el fondo entero.
+        let mut a = Conexion::new();
+        abrir(&mut escena, &mut a, 1, 70);
+        let mut fuera = Vec::new();
+        escena.maximizar_esta((1, 7), true, &mut fuera);
+        let pedir = |escena: &mut Escena<Mem>, fondo: &mut Conexion, id: u32| {
+            let mut e = Escritor::new();
+            e.empezar(31, wl_surface::req::FRAME).uint(id).fin();
+            e.empezar(31, wl_surface::req::COMMIT).fin();
+            mandar(escena, fondo, 9, &e);
+        };
+        pedir(&mut escena, &mut fondo, 101);
+        let v = avisos(&mut escena, &mut pantalla);
+        assert!(!v.contains(&(9, 101)), "tapado y le llegó el aviso: {:?}", v);
+        assert!(!avisos(&mut escena, &mut pantalla).contains(&(9, 101)));
+        // Se va la ventana: llega el que esperaba.
+        escena.adios(1);
+        assert!(avisos(&mut escena, &mut pantalla).contains(&(9, 101)), "destapado y sin su aviso");
+        escena.componer(&mut pantalla, 16, 16, 16, 0, &mut |_, _, _| {});
+        // Un commit de la capa con el mismo búfer y un daño pequeño: se compone eso, no la capa entera.
+        let mut e = Escritor::new();
+        e.empezar(31, wl_surface::req::ATTACH).uint(34).int(0).int(0).fin();
+        e.empezar(31, wl_surface::req::DAMAGE_BUFFER).int(2).int(3).int(4).int(5).fin();
+        e.empezar(31, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut fondo, 9, &e);
+        let danos = escena.componer(&mut pantalla, 16, 16, 16, 0, &mut |_, _, _| {});
+        assert_eq!(danos, vec![Rect { x: 2, y: 3, w: 4, h: 5 }], "la capa entera en cada commit");
+        // La pantalla apagada (Blanker): tampoco; al encenderse, sí.
+        escena.cx.oscuro = true;
+        pedir(&mut escena, &mut fondo, 102);
+        assert!(!avisos(&mut escena, &mut pantalla).contains(&(9, 102)));
+        escena.cx.oscuro = false;
+        assert!(avisos(&mut escena, &mut pantalla).contains(&(9, 102)));
+        // Restar rectángulos (lo que queda a la vista).
+        let r = |x, y, w, h| Rect { x, y, w, h };
+        assert_eq!(restar(r(0, 0, 10, 10), r(20, 20, 5, 5)), vec![r(0, 0, 10, 10)]);
+        assert!(restar(r(0, 0, 10, 10), r(-5, -5, 30, 30)).is_empty());
+        let trozos = restar(r(0, 0, 10, 10), r(3, 3, 4, 4));
+        assert_eq!(trozos.iter().map(|t| t.w * t.h).sum::<i32>(), 100 - 16);
     }
 
     /// Una capa de la barra: cliente `c`, objetos 30 a 34, con tamaño, anclas, zona y márgenes; si cabe en la memoria
@@ -2128,8 +2348,12 @@ mod entrada {
         // Super+2: el 2 se ve, la ventana del 1 ya no (ni tiene el teclado), y el 2 no llega a nadie.
         escena.tecla(0xE3, true);
         let ev = escena.tecla(0x1F, true);
-        assert!(!ev.iter().any(|x| matches!(x.1, Entrada::Tecla { .. })), "{ev:?}");
-        assert!(ev.contains(&(1, Entrada::TecladoSale { superficie: 7 })), "{ev:?}");
+        assert!(!ev.iter().any(|x| matches!(x.1, Entrada::Tecla { codigo: 3, .. })), "{ev:?}");
+        // tecla-pegada: la ventana que se va recibe el soltar de Super (que le llegó pulsada) antes de perder el teclado.
+        assert!(
+            ev.ends_with(&[(1, Entrada::Tecla { codigo: 125, pulsada: false }), (1, Entrada::Mods { pulsados: 0 }), (1, Entrada::TecladoSale { superficie: 7 })]),
+            "{ev:?}"
+        );
         escena.tecla(0x1F, false);
         escena.tecla(0xE3, false);
         assert_eq!(escena.espacio, 2);
@@ -2258,6 +2482,18 @@ mod entrada {
         let ev = suscribir(&mut escena, &mut tarde, 6);
         let est = ev.iter().find(|x| x.1 == dashos_tema_v1::ev::ESTADO).expect("al suscribirse");
         assert_eq!(est.2, [2u32.to_le_bytes(), 100u32.to_le_bytes(), 1u32.to_le_bytes()].concat());
+        // S27, oleada 6: la pantalla de bloqueo (`ven_estado`) lo recibe también, al suscribirse y cuando cambia; pero
+        // no es una barra: ni el título ni los espacios. Un programa cualquiera suscrito no recibe nada.
+        escena.ven_estado.push(8);
+        let mut bloqueo = Conexion::new();
+        let ev = suscribir(&mut escena, &mut bloqueo, 8);
+        assert!(ev.iter().any(|x| x.1 == dashos_tema_v1::ev::ESTADO), "la pantalla de bloqueo, al suscribirse");
+        assert!(!ev.iter().any(|x| x.1 == dashos_tema_v1::ev::TITULO || x.1 == dashos_tema_v1::ev::ESPACIOS));
+        let mut e = Escritor::new();
+        e.empezar(60, dashos_tema_v1::req::ESTADO).uint(0).uint(30).uint(0).fin();
+        mandar(&mut escena, &mut panel, 3, &e);
+        let a_quien: Vec<Cliente> = core::mem::take(&mut escena.avisos_estado).into_iter().map(|x| x.0).collect();
+        assert!(a_quien.contains(&8) && a_quien.contains(&5) && !a_quien.contains(&2), "{:?}", a_quien);
     }
 
     /// S27: al cerrar la ventana que tiene el teclado, el teclado pasa a la de arriba que queda (antes se quedaba sin

@@ -568,13 +568,14 @@ fn principal() -> u64 {
         }
         // Lo que no cupo en la cola del compositor, primero (E4).
         entrada.reintentar();
-        for h in hids.iter_mut().flatten() {
+        for (k, h) in hids.iter_mut().enumerate() {
+            let Some(h) = h else { continue };
             let teclado = h.teclado;
             if let Ok(Some(i)) = u.leer_interrupcion(&mut h.entrada) {
                 let mut copia = [0u8; 16];
                 let n = i.len().min(16);
                 copia[..n].copy_from_slice(&i[..n]);
-                if teclado { entrada.teclado(&copia[..n]) } else { entrada.raton(&copia[..n]) }
+                if teclado { entrada.teclado(k as u32, &copia[..n]) } else { entrada.raton(&copia[..n]) }
             }
         }
     }

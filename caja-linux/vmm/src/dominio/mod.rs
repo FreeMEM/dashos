@@ -3,14 +3,17 @@
 //! virtio. Los papeles se invierten: el dominio pone el aparato y DashOS es el conductor.
 //!
 //! - [`canal`]: el aparato propio por el que el dominio sabe lo que pide el conductor y se avisan los dos.
-//! - [`pci`]: el PCIe del dominio con el aparato prestado (paso intermedio, solo en QEMU: sin IOMMU).
+//! - [`usbip`]: el servidor de USB/IP del aparato USB prestado, por el tubo (el camino de DashOS: vale sin IOMMU).
+//! - [`pci`]: el PCIe del dominio con un aparato PCI prestado. Fue el paso intermedio (la e1000 de QEMU, sin IOMMU) y
+//!   ya no lo usa el servicio: vuelve con IOMMU (S35, paso 4).
 //!
 //! El mapa del dominio (direcciones físicas del invitado): las de la caja Linux para el GIC y el PL011
-//! ([`crate::disposicion`]), y las de aquí. La zona de DMA del aparato prestado va en su dirección de bus (la que use el
-//! aparato), y los registros del aparato en su física: el servicio comprueba que no pisen nada.
+//! ([`crate::disposicion`]), y las de aquí. Con un aparato PCI, la zona de DMA del aparato va en su dirección de bus
+//! (la que use el aparato) y sus registros en su física: el servicio comprueba que no pisen nada.
 
 pub mod canal;
 pub mod pci;
+pub mod usbip;
 
 use alloc::format;
 
@@ -20,6 +23,8 @@ use crate::fdt::EscritorFdt;
 /// del aparato (memoria DMA de DashOS, en el primer GB de la RAM de `virt`, de 1 a 2 GB) va en su dirección de bus y
 /// no puede pisarla.
 pub const RAM: u64 = 0x8000_0000;
+/// La RAM del dominio sin aparato PCI (sin zona de DMA que respetar): en el primer GB de RAM de `virt`.
+pub const RAM_SIN_PCI: u64 = 0x4000_0000;
 /// La ventana (las colas y búferes del conductor de DashOS, que el servicio pone cuando se los da el conductor): 1 MB,
 /// justo detrás de la RAM.
 pub const TAM_VENTANA: u64 = 1 << 20;
@@ -58,12 +63,19 @@ pub fn colocar(dma: (u64, u64), tam_ram: u64) -> u64 {
 /// Lo que el árbol de dispositivos del dominio lleva además de lo de la caja Linux.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Extra {
-    /// Dónde está su RAM (`colocar`); la ventana va detrás.
+    /// Dónde está su RAM (`colocar`, o `RAM_SIN_PCI`); la ventana va detrás, y el tubo detrás de la ventana.
     pub ram: u64,
     pub tam_ram: u64,
-    /// La zona de DMA del aparato prestado (dirección de bus, tamaño): `restricted-dma-pool`.
+    /// Lo que mide el tubo de USB/IP ([`usbip::TAM_TUBO`]), o 0 si no hay aparato USB.
+    pub tubo: u64,
+    /// Un aparato PCI prestado (ya no lo usa el servicio): su zona de DMA (dirección de bus, tamaño), como
+    /// `restricted-dma-pool`, y su BAR 0 (física, tamaño), la ventana de memoria del PCIe del dominio.
+    pub pci: Option<Pci>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Pci {
     pub dma: (u64, u64),
-    /// La BAR 0 del aparato prestado (física, tamaño): la ventana de memoria del PCIe del dominio.
     pub bar: (u64, u64),
 }
 
@@ -72,32 +84,49 @@ impl Extra {
     pub fn ventana(&self) -> u64 {
         self.ram + self.tam_ram
     }
+
+    /// Dónde ve el dominio el tubo (si lo hay).
+    pub fn tubo(&self) -> u64 {
+        self.ventana() + TAM_VENTANA
+    }
 }
 
-/// Las regiones de RAM del dominio para su nodo `memory`: la suya con la ventana detrás, y la zona de DMA. La ventana y
-/// la zona van además en `reserved-memory` (`nodos`): Linux no las reparte.
+/// Las regiones de RAM del dominio para su nodo `memory`: la suya con la ventana y el tubo detrás, y la zona de DMA si
+/// hay aparato PCI. La ventana, el tubo y la zona van además en `reserved-memory` (`nodos`): Linux no las reparte.
 pub fn memoria(e: &Extra) -> alloc::vec::Vec<(u64, u64)> {
-    alloc::vec![(e.ram, e.tam_ram + TAM_VENTANA), e.dma]
+    let mut v = alloc::vec![(e.ram, e.tam_ram + TAM_VENTANA + e.tubo)];
+    if let Some(p) = e.pci {
+        v.push(p.dma);
+    }
+    v
 }
 
-/// Escribe los nodos del dominio: las zonas reservadas (la ventana, y la de DMA como `restricted-dma-pool`), el canal
-/// (`dashos,canal-dominio`) y el PCIe (`pci-host-ecam-generic`, bus 0, con la BAR del aparato como única ventana de
-/// memoria, su INTA en `SPI_PCI` y la zona de DMA como `memory-region`). Sigue las vinculaciones de Devicetree de
-/// Linux (`reserved-memory`, `shared-dma-pool`, `host-generic-pci`, `pci`), leídas como especificación.
+/// Escribe los nodos del dominio: las zonas reservadas (la ventana, el tubo y, con PCI, la de DMA como
+/// `restricted-dma-pool`), el canal (`dashos,canal-dominio`) y, con PCI, el PCIe (`pci-host-ecam-generic`, bus 0, con la
+/// BAR del aparato como única ventana de memoria, su INTA en `SPI_PCI` y la zona de DMA como `memory-region`). Sigue
+/// las vinculaciones de Devicetree de Linux (`reserved-memory`, `shared-dma-pool`, `host-generic-pci`, `pci`), leídas
+/// como especificación.
 pub fn nodos(f: &mut EscritorFdt, ph_gic: u32, e: &Extra) {
     let ph_dma = f.nuevo_phandle();
     f.nodo("reserved-memory");
     f.prop_u32("#address-cells", 2);
     f.prop_u32("#size-cells", 2);
     f.prop_vacia("ranges");
-    f.nodo(&format!("dma@{:x}", e.dma.0));
-    f.prop_textos("compatible", &["restricted-dma-pool"]);
-    f.prop_reg("reg", &[e.dma]);
-    f.prop_u32("phandle", ph_dma);
-    f.fin_nodo();
+    if let Some(p) = e.pci {
+        f.nodo(&format!("dma@{:x}", p.dma.0));
+        f.prop_textos("compatible", &["restricted-dma-pool"]);
+        f.prop_reg("reg", &[p.dma]);
+        f.prop_u32("phandle", ph_dma);
+        f.fin_nodo();
+    }
     f.nodo(&format!("ventana@{:x}", e.ventana()));
     f.prop_reg("reg", &[(e.ventana(), TAM_VENTANA)]);
     f.fin_nodo();
+    if e.tubo > 0 {
+        f.nodo(&format!("tubo@{:x}", e.tubo()));
+        f.prop_reg("reg", &[(e.tubo(), e.tubo)]);
+        f.fin_nodo();
+    }
     f.fin_nodo();
 
     f.nodo(&format!("canal@{:x}", CANAL));
@@ -106,6 +135,7 @@ pub fn nodos(f: &mut EscritorFdt, ph_gic: u32, e: &Extra) {
     f.prop_celdas("interrupts", &[0, SPI_CANAL, 4]);
     f.fin_nodo();
 
+    let Some(p) = e.pci else { return };
     f.nodo(&format!("pcie@{:x}", ECAM));
     f.prop_textos("compatible", &["pci-host-ecam-generic"]);
     f.prop_texto("device_type", "pci");
@@ -115,7 +145,7 @@ pub fn nodos(f: &mut EscritorFdt, ph_gic: u32, e: &Extra) {
     f.prop_reg("reg", &[(ECAM, pci::TAM_REGION)]);
     // Una ventana de memoria de 32 bits (0x0200_0000; 64 bits, 0x0300_0000), con las mismas direcciones en el bus y
     // en la CPU: la BAR está donde está de verdad.
-    let (b, t) = e.bar;
+    let (b, t) = p.bar;
     let espacio = if b >> 32 != 0 { 0x0300_0000 } else { 0x0200_0000 };
     // Y el espacio de puertos (0x0100_0000), de 64 KB, en `PUERTOS`.
     f.prop_celdas(
@@ -160,7 +190,7 @@ mod pruebas {
 
     #[test]
     fn arbol_del_dominio() {
-        let e = Extra { ram: colocar((0x4400_0000, 0x20_0000), 24 << 20), tam_ram: 24 << 20, dma: (0x4400_0000, 0x20_0000), bar: (0x1004_0000, 0x2_0000) };
+        let e = Extra { ram: colocar((0x4400_0000, 0x20_0000), 24 << 20), tam_ram: 24 << 20, tubo: 0, pci: Some(Pci { dma: (0x4400_0000, 0x20_0000), bar: (0x1004_0000, 0x2_0000) }) };
         assert_eq!(e.ram, 0x4420_0000);
         let mut c = disposicion::config(24 << 20, 1, 0, "console=ttyAMA0".into(), None);
         c.memoria = memoria(&e);
@@ -189,5 +219,21 @@ mod pruebas {
             let s = p.wait_with_output().unwrap();
             assert!(s.status.success(), "{}", String::from_utf8_lossy(&s.stderr));
         }
+    }
+
+    #[test]
+    fn arbol_del_dominio_usb() {
+        let e = Extra { ram: RAM_SIN_PCI, tam_ram: 24 << 20, tubo: usbip::TAM_TUBO, pci: None };
+        let mut c = disposicion::config(24 << 20, 1, 0, "console=ttyAMA0".into(), None);
+        c.memoria = memoria(&e);
+        c.rtc = None;
+        assert_eq!(c.memoria, alloc::vec![(RAM_SIN_PCI, (24 << 20) + TAM_VENTANA + usbip::TAM_TUBO)]);
+        let dtb = generar_dtb_con(&c, &|f, gic| nodos(f, gic, &e));
+        let t = leer(&dtb);
+        assert!(!t.iter().any(|(r, _, _)| r.starts_with("pcie") || r.contains("dma@")));
+        let tubo = t.iter().find(|(r, n, _)| r == "reserved-memory/tubo@41900000" && n == "reg").expect("el tubo").2.clone();
+        assert_eq!(tubo[..8], 0x4190_0000u64.to_be_bytes());
+        assert_eq!(tubo[8..16], usbip::TAM_TUBO.to_be_bytes());
+        assert!(t.iter().any(|(r, _, _)| r == "canal@b000000"));
     }
 }

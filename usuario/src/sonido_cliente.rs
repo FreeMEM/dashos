@@ -14,6 +14,10 @@ use core::sync::atomic::{fence, Ordering};
 pub const ABRIR: u32 = 10;
 pub const VOLUMEN: u32 = 11;
 pub const CERRAR: u32 = 12;
+/// Lo que suena y las órdenes del mezclador (los mismos números que `dashos::protocolo::sonido`; aquí sin usar la
+/// biblioteca, que en los tonos de prueba, sin montón, no enlazaría).
+pub const MEDIOS: u32 = 30;
+pub const MEDIOS_ORDEN: u32 = 31;
 pub const I16: u32 = 0;
 pub const I32: u32 = 1;
 pub const F32: u32 = 2;
@@ -24,6 +28,18 @@ pub struct Flujo {
     aviso: u32,
     va: usize,
     tam: u32,
+    /// Otra copia del extremo por el que se le despierta: la que se da al servicio con `anunciar`, para que le lleguen
+    /// por el mismo canal las órdenes del mezclador (reproducir, pausar...). 0 si ya se dio.
+    ordenes: u32,
+}
+
+/// Lo que llega por el canal del flujo.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Llega {
+    /// El servicio pide más muestras.
+    Muestras,
+    /// Una orden del mezclador para lo que suena (`ORDEN_*` de `dashos::protocolo::sonido`).
+    Orden(u32),
 }
 
 fn palabra(va: usize, i: usize) -> u32 {
@@ -44,6 +60,7 @@ pub fn abrir(canal: u32, muestra: u32, canales: u32, frecuencia: u32, va: usize,
     poner(va, 1, 0);
     poner(va, 2, tam as u32);
     let (aviso, suyo) = dashos::canal_crear();
+    let ordenes = dashos::llave_duplicar(suyo, dashos::ESCRIBIR | dashos::TRANSFERIR, 0).max(0) as u32;
     let peticion: [u32; 4] = [ABRIR, muestra, canales, frecuencia];
     let bytes = unsafe { core::slice::from_raw_parts(peticion.as_ptr() as *const u8, 16) };
     // Una copia de la memoria: la proyección de aquí sigue con la llave propia.
@@ -51,7 +68,7 @@ pub fn abrir(canal: u32, muestra: u32, canales: u32, frecuencia: u32, va: usize,
     if copia <= 0 || dashos::canal_escribir(canal, bytes, &[copia as u32, suyo]) != 0 {
         return None;
     }
-    Some(Flujo { canal, aviso, va, tam: tam as u32 })
+    Some(Flujo { canal, aviso, va, tam: tam as u32, ordenes })
 }
 
 impl Flujo {
@@ -85,11 +102,50 @@ impl Flujo {
         }
     }
 
-    /// Duerme hasta que el servicio pida más muestras.
+    /// Duerme hasta que el servicio pida más muestras (o llegue una orden, que se pierde: quien las quiera, `esperar_algo`).
     pub fn esperar(&self) {
+        let _ = self.esperar_algo();
+    }
+
+    /// Duerme hasta que el servicio pida más muestras o el mezclador mande una orden.
+    pub fn esperar_algo(&self) -> Llega {
         let mut b = [0u8; 8];
         let mut ll = [0u32; 1];
-        dashos::canal_leer(self.aviso, &mut b, &mut ll);
+        let (n, k) = dashos::canal_leer(self.aviso, &mut b, &mut ll);
+        for &l in &ll[..(k as usize).min(1)] {
+            dashos::cerrar(l);
+        }
+        let w = |i: usize| u32::from_le_bytes([b[4 * i], b[4 * i + 1], b[4 * i + 2], b[4 * i + 3]]);
+        if n == 8 && w(0) == MEDIOS_ORDEN {
+            Llega::Orden(w(1))
+        } else {
+            Llega::Muestras
+        }
+    }
+
+    /// Dice al servicio lo que suena (lo ve el mezclador, la barra y la pantalla de bloqueo): estado (`MED_*`), lo que
+    /// se puede pedir (`PUEDE_*`), posición y duración en ms, título y artista (se cortan a 95 y 63 bytes). La primera
+    /// vez va con el extremo por el que llegarán las órdenes.
+    pub fn anunciar(&mut self, estado: u32, capacidades: u32, posicion_ms: u32, duracion_ms: u32, titulo: &str, artista: &str) {
+        let corta = |t: &str, max: usize| -> usize {
+            let mut f = t.len().min(max);
+            while !t.is_char_boundary(f) {
+                f -= 1;
+            }
+            f
+        };
+        let (lt, la) = (corta(titulo, 95), corta(artista, 63));
+        // Sin montón (los tonos de prueba no tienen): en un búfer fijo.
+        let mut b = [0u8; 28 + 95 + 63];
+        for (i, w) in [MEDIOS, estado, capacidades, posicion_ms, duracion_ms, lt as u32, la as u32].iter().enumerate() {
+            b[4 * i..4 * i + 4].copy_from_slice(&w.to_le_bytes());
+        }
+        b[28..28 + lt].copy_from_slice(&titulo.as_bytes()[..lt]);
+        b[28 + lt..28 + lt + la].copy_from_slice(&artista.as_bytes()[..la]);
+        let ll: &[u32] = if self.ordenes != 0 { &[self.ordenes] } else { &[] };
+        if dashos::canal_escribir(self.canal, &b[..28 + lt + la], ll) == 0 {
+            self.ordenes = 0;
+        }
     }
 
     pub fn volumen(&self, izquierdo: f32, derecho: f32) {

@@ -1,0 +1,39 @@
+# Las barras del escritorio (Ajustes > Barra; la orden `ImportarDMS`). Este fichero manda.
+# El modelo es el de DankMaterialShell (barConfigs). Cada zona: widgets separados por comas; -nombre, apagado;
+# nombre(opción=valor ...), con sus opciones. Lo que falta vale lo de serie.
+barras = principal
+radios = 38
+radio_ventanas = 3
+estilo = expresivo
+formato_fecha = dddd, MMMM d
+principal-nombre = Main Bar
+principal-activa = sí
+principal-visible = sí
+principal-posicion = arriba
+principal-monitores = todos
+principal-ultimo_monitor = sí
+principal-espaciado = 4
+principal-relleno = 4
+principal-hueco = 0
+principal-opacidad = 100
+principal-opacidad_widgets = 100
+principal-sin_fondo = no
+principal-esquinas_rectas = no
+principal-pegada = no
+principal-borde = no
+principal-borde_color = texto
+principal-borde_opacidad = 100
+principal-borde_grosor = 1
+principal-contorno = no
+principal-contorno_color = primario
+principal-contorno_opacidad = 100
+principal-contorno_grosor = 1
+principal-letra = 100
+principal-iconos = 100
+principal-estilo = pildoras
+principal-autoocultar = no
+principal-retardo = 250
+principal-sombra = 0
+principal-izquierda = lanzador(logo=sistema), espacios(numeros ocupados borde), ventana, menus
+principal-centro = musica, reloj, tiempo, avisos
+principal-derecha = bandeja, portapapeles, cpu, memoria, temperatura, temperatura_gpu, bateria, estado, actualizaciones, apagado

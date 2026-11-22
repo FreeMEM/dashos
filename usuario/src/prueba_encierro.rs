@@ -449,6 +449,41 @@ pub fn tanda(arch: &Archivos, t: &Tabla) -> u64 {
     let hacer = arch.orden(a::HACER_VOLUMEN, 0, 2 | a::CON_RECUPERACION, 14, b"Intrusa").e;
     let quitar = arch.orden(a::QUITAR_VOLUMEN, 0, 0, 0, b"Carla").e;
     paso(format_args!("hacer un volumen o quitar el de Carla sin administrar: {} y {}", hacer, quitar), hacer == a::PROTEGIDO && quitar == a::PROTEGIDO);
+    // 7. Rama `cuentas-2`: lo de la pantalla de entrada solo lo pide `guardian` (recuperar con un código, crear la primera
+    // cuenta, la lista de cuentas); cambiar la contraseña de otra cuenta no llega a preguntarse; y cambiar la de un volumen
+    // directamente al servicio de archivos pide el derecho de administrar, que no tiene.
+    let estado_de = |m: &[u8]| -> i32 {
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 256];
+        let n = if dashos::canal_escribir(SESIONES, m, &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 10_000_000).0 } else { -1 };
+        dashos::cerrar(lectura);
+        if n >= 4 { i32::from_le_bytes(r[0..4].try_into().unwrap()) } else { i32::MIN }
+    };
+    let con_textos = |orden: u32, textos: &[&[u8]]| -> Vec<u8> {
+        let mut m = Vec::from(orden.to_le_bytes());
+        for t in textos {
+            m.extend_from_slice(&(t.len() as u32).to_le_bytes());
+        }
+        for t in textos {
+            m.extend_from_slice(t);
+        }
+        m
+    };
+    let recuperar = estado_de(&con_textos(s::RECUPERAR, &[b"Carla", b"AAAA-AAAA-AAAA-AAAA-AAAA-AAAA", b"la de la intrusa"]));
+    let primera = estado_de(&con_textos(s::PRIMERA_CUENTA, &[b"Intrusa", b"", b"clave de la intrusa"]));
+    let lista = estado_de(&con_textos(s::CUENTAS_ENTRADA, &[]));
+    let otra = estado_de(&con_textos(s::CLAVE_PROPIA, &[b"Carla"]));
+    let respuesta = estado_de(&con_textos(s::RESPUESTA_CLAVE, &[b"", b"x", b"clave de la intrusa"]));
+    paso(
+        format_args!("cuentas-2: recuperar {}, crear la primera {}, la lista {}, la contraseña de Carla {}, contestar por guardian {}", recuperar, primera, lista, otra, respuesta),
+        [recuperar, primera, lista, otra].iter().all(|&e| e == s::PROTEGIDO) && respuesta == i32::MIN,
+    );
+    let v = arch.ventana();
+    v[..24].copy_from_slice(b"clave de Carlaotra suya!");
+    let cambiar = arch.orden(a::CAMBIAR_CLAVE, 0, 0, 14 | 10 << 32, b"Carla").e;
+    let con_codigo = arch.orden(a::CAMBIAR_CLAVE, 0, a::CON_CODIGO, 14 | 10 << 32, b"Carla").e;
+    v[..24].fill(0);
+    paso(format_args!("cuentas-2: cambiar la contraseña del volumen de Carla sin administrar: {} y {}", cambiar, con_codigo), cambiar == a::PROTEGIDO && con_codigo == a::PROTEGIDO);
     // Lo suyo, fuera (sin administrador: es de su persona).
     let mut m = [0u8; 12];
     m[0..4].copy_from_slice(&s::MATAR.to_le_bytes());

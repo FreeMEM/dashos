@@ -62,6 +62,9 @@ pub mod atr {
     /// La fila visible de una lista que tiene el ratón encima (-1 o sin poner, ninguna; 0, la primera que se ve): ahí va
     /// la capa de estado de Material 3. La pone `Interfaz` al mover el ratón.
     pub const ENCIMA: Atr = 19;
+    /// Los iconos de las filas de una lista (la de navegación de Ajustes): un Material Symbol por opción, por su
+    /// trazado (`kit::iconos::simbolo::X.trazado()`), separados por `|` como las `OPCIONES`; uno vacío, sin icono.
+    pub const ICONOS: Atr = 20;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

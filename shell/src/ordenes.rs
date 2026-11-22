@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 pub const ABRIR: &str = "PROGRAMA/A,ESPERAR/S";
 pub const ADMINISTRAR: &str = "ACCION/M,DESDE/K";
 /// Ajustes en texto (`docs/bitacoras/ajustes-texto.md`): leer y poner un ajuste suelto.
-pub const AJUSTE: &str = "NOMBRE,VALOR,GUARDAR/S,LISTA/S";
+pub const AJUSTE: &str = "NOMBRE,VALOR,GUARDAR/S,LISTA/S,DMS/K";
 pub const ASK: &str = "PROMPT/A";
 pub const ASSIGN: &str = "NAME,TARGET/M,LIST/S,ADD/S,PREPEND/S,REMOVE/S";
 pub const CD: &str = "DIR";
@@ -36,6 +36,8 @@ pub const TYPE: &str = "FROM/M,NUMBER/S,HEX/S";
 pub const USUARIO: &str = "ACCION,NOMBRE,MAS/M,UID/K/N";
 pub const VERSION: &str = "";
 pub const WAIT: &str = "TIME/N,SEC=SECS/S,MIN=MINS/S";
+/// Rama `fondos`: el fondo de escritorio (`ordenes/src/base/fondo.rs`).
+pub const FONDO: &str = "QUE,VALOR,PANTALLA/K,OSCURO/S,CLARO/S,GUARDAR/S";
 
 /// Las de base, por su nombre.
 pub const BASE: &[(&str, &str)] = &[
@@ -51,6 +53,7 @@ pub const BASE: &[(&str, &str)] = &[
     ("Dir", DIR),
     ("Echo", ECHO),
     ("Filenote", FILENOTE),
+    ("Fondo", FONDO),
     ("Info", INFO),
     ("Instalar", INSTALAR),
     ("List", LIST),

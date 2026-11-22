@@ -15,7 +15,11 @@
   PC a otro.
 
 Uso: disco_archivos.py SALIDA DASHFS_AR
+     disco_archivos.py --sin-cuentas SALIDA DASHFS_AR
      disco_archivos.py --comprobar DISCO VER
+
+Con --sin-cuentas (rama cuentas-2, `make arranque-virt-cuentas`), el mismo disco sin `Estado/Cuentas/usuarios` ni
+`grupos` (el cajón, sí, de `sesiones`): un primer arranque, en el que nadie puede entrar hasta crear la primera cuenta.
 
 Con --comprobar, tras la prueba en QEMU, mira con `ver` (archivos/herramientas) que el disco tiene lo que escribió
 el cliente `ficheros` (FS4) y nada más: lo escrito por DashOS está de verdad en el disco. Y que el comprobador (FS8)
@@ -32,6 +36,8 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fondos_prueba  # noqa: E402
+import repo_paq  # noqa: E402
+import iconos_amiga_prueba  # noqa: E402
 
 # Los programas del disco son de la arquitectura de la imagen: de ARM, o de x86-64 con DASHOS_ARQ=x86_64 (`make
 # x86-uso`).
@@ -65,6 +71,13 @@ SALUDO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "caja", 
 CAJA_ICONO = bytes([0xE3, 0x10, 0, 1]) + bytes(74) + b"saludo\0"
 CAJA_GUION = b"; el arranque de la caja Amiga\nsaludo\n"
 CAJA_ADF = b"DOS\0" + bytes(11 * 512 - 4)
+# Plan de iconos, parte 3: los `.info` de prueba (`tools/iconos_amiga_prueba.py`, uno de cada formato y uno roto) que
+# enseña el explorador. El volumen con su `Disk.info` y el cajón `Iconos` con el suyo (los dos se esconden: son de otra
+# cosa); dentro, un `.info` suelto por formato (sueltos se ven, cada uno con su icono). Sin los ficheros de cada uno: el
+# disco va justo (A15).
+_ICONOS = iconos_amiga_prueba.iconos()
+CAJA_ICONOS = [("", "Disk.info", _ICONOS["Disk.info"]), ("", "Iconos.info", _ICONOS["Cajon.info"])] + \
+    [("Iconos", n + ".info", _ICONOS[n + ".info"]) for n in ("Brillo", "Cristal", "Estrella", "Programa", "Roto")]
 # S28: un ejecutable que actualiza `actualiza.exe` (un programa honrado; la guardia pregunta): una cabecera hunk vacía
 # con la versión en los 4 últimos bytes. La prueba lo deja en la versión 4 (tres vueltas con permiso).
 CAJA_VIEJO = struct.pack(">8I", 0x3F3, 0, 0, 0, 0, 0, 0, 1)
@@ -144,6 +157,14 @@ SHELL = os.path.join(ORDENES_BIN, "shell")
 ORDENES = os.path.join(ORDENES_BIN, "ordenes")
 SUELTAS = ["Abrir", "Administrar", "Ask", "Assign", "Cd", "Copy", "Date", "Delete", "Dir", "Echo", "Filenote", "Info", "List", "MakeDir", "Permiso",
            "Protect", "Registro", "Rename", "Type", "Usuario", "Version", "Wait"] if os.environ.get("DASHOS_ORDENES_SUELTAS") else []
+
+
+# S8 (rama `paq`): la orden `Paq`, siempre suelta (`C/Paq`): lleva las firmas y el gzip, que no van en `C/Ordenes`.
+PAQ = os.path.join(ORDENES_BIN, "orden-paq")
+# El cajón de los paquetes de todos (`Paquetes:`), del servicio `paq` (usuario 2): lo demás solo lo lee. Trae lo que
+# deja una transacción cortada (un cajón a medio desempaquetar y el cerrojo), que el servicio barre al arrancar.
+PAQUETES_UID = "2:2"
+PAQUETES_CORTADO = "Paquetes/Paq/Almacen/letras/0-0.9-1.nuevo"
 
 
 def orden(nombre):
@@ -374,6 +395,14 @@ PRUEBA_SHELL = "\n".join([
     "Wait 1",
     "Ajuste idioma español",
     "Wait 1",
+    "; S27, oleada 3: los avisos y el centro de control, a mano: el centro los aplica en marcha (a la barra y al panel).",
+    "Ajuste Escritorio/avisos.posicion abajo-derecha",
+    "Wait 1",
+    'Ajuste Escritorio/centro-control.mosaicos "usuario 8, volumen 4, red 4, editar 1 pequeño"',
+    "Wait 1",
+    "Ajuste Escritorio/avisos.posicion arriba-centro",
+    "Delete ENV:Escritorio/centro-control QUIET",
+    "Wait 1",
     "; S10, los menús de los programas (docs/bitacoras/menus.md): Ajuste menus, que el centro aplica en marcha (el",
     "; compositor lo dice a todos). Lo hostil: un sitio que no existe, y cien cambios seguidos a mano: queda el último.",
     "Ajuste menus arriba",
@@ -383,6 +412,15 @@ PRUEBA_SHELL = "\n".join([
     *['Echo >ENV:Escritorio/menus "sitio = ' + ("barra" if k % 2 == 0 else "dentro") + '"' for k in range(100)],
     "Wait 2",
     "Ajuste menus",
+    "; La barra de DMS (docs/bitacoras/dms-barra.md): un cambio que no mueve nada (el reloj, con la fecha delante), que la",
+    "; barra aplica en marcha por el centro; y el importador de settings.json, con un fichero que no es JSON y otro que",
+    "; no es de DMS (no se cambia nada). Al acabar, sin el fichero: la barra de serie otra vez.",
+    'Ajuste Escritorio/barra.principal-centro "reloj(orden=fecha)"',
+    "Wait 1",
+    "Ajuste DMS SYS:C/frio.bin",
+    "Ajuste DMS LOCALE:Countries/españa.country",
+    "Delete ENV:Escritorio/barra QUIET",
+    "Wait 1",
     "Delete ENVARC:Escritorio ALL QUIET",
     "; S10, Commodities: Exchange como orden (el alias de serie, a SYS:Tools/Commodities/Exchange). Ana no tiene ninguna",
     "; en marcha (la de la prueba es del sistema): la lista vacía, los ajustes, y una que no existe.",
@@ -518,6 +556,60 @@ PRUEBA_SHELL = "\n".join([
     "Usuario CREAR Dora",
     "Usuario CREAR Dora",
     "Usuario",
+    "; Rama cuentas-2: cambiar la propia contraseña (la ventana del sistema pide la de ahora y la nueva dos veces; esta",
+    "; orden no ve ninguna). La de ahora mal y luego bien; de vuelta a la de siempre; dos nuevas distintas y Esc: no se",
+    "; cambia. La de otra cuenta no llega a preguntarse.",
+    "Usuario CLAVE",
+    "Usuario CLAVE Ana",
+    "Usuario CLAVE",
+    "Usuario CLAVE Carla",
+    "; S8 (rama paq): Paq. Los repositorios y las claves (texto en SYS:Estado/Paq), buscar e instalar para todos: el",
+    "; plan es una tanda de acciones de administrador (la ventana del sistema lo enseña entero y pide la contraseña una",
+    "; vez; la teclea el guion) y lo hace el servicio paq. Actualizar (el repositorio publica saludo 1.1: se copia su",
+    "; índice nuevo), volver a la generación de antes, quitar (se lleva letras, que ya no hace falta) y limpiar.",
+    "Paq Repos",
+    "Paq Claves",
+    "Paq Buscar salu",
+    "Paq Instalar saludo",
+    "Execute Paquetes:Saludo/Saludo",
+    "Paq Info saludo",
+    "Copy SYS:Work/Repos/prueba-2/#? Work:Repos/prueba/aarch64-dashos QUIET",
+    "Paq Actualizar",
+    "Execute Paquetes:Saludo/Saludo",
+    "Paq Volver",
+    "Execute Paquetes:Saludo/Saludo",
+    "Paq Quitar saludo",
+    "If EXISTS Paquetes:Saludo",
+    '  Echo "MAL: queda Paquetes:Saludo"',
+    "Else",
+    '  Echo "Paquetes:Saludo quitado"',
+    "EndIf",
+    "Paq Generaciones",
+    "Paq Limpiar",
+    "Paq Generaciones",
+    "; Lo de cada uno (Home:Paquetes), sin administrador: lo hace la orden, con los permisos de Ana. Con alias en inglés.",
+    "Paq install saludo HOME",
+    "Execute Home:Paquetes/Saludo/Saludo",
+    "Paq in circulo-a HOME",
+    "Paq gen HOME",
+    "Paq rm saludo circulo-a HOME",
+    "; Lo hostil: rutas que se salen (.. y /), un enlace, escribir en el cajón de otro paquete, un paquete cambiado",
+    "; tras firmar el índice, uno que pide lo que no hay, uno de un repositorio mal firmado; nada se instala.",
+    "Paq Instalar fuera HOME",
+    "Paq Instalar absoluto HOME",
+    "Paq Instalar enlace HOME",
+    "Paq Instalar vecino HOME",
+    "Paq Instalar cambiado HOME",
+    "Paq Instalar imposible HOME",
+    "Paq Instalar ajeno HOME",
+    "Paq Instalar noexiste",
+    "Paq gen HOME",
+    "Delete Home:Paquetes ALL QUIET",
+    "; Un programa sin permiso (el Shell de Ana) no escribe en Paquetes: ni en lo de Paq; y con la contraseña mala, nada.",
+    "Echo >Paquetes:intruso hola",
+    "Delete Paquetes:Paq/Generaciones/4",
+    "Paq Instalar letras",
+    "Paq Generaciones",
     "; Se deja todo como estaba.",
     "Cd Home:",
     "Assign Prueba: REMOVE",
@@ -540,9 +632,19 @@ SYS_FICHEROS = [
     # usuario (`Home:Prefs/Env-Archive`). Lo mira la prueba `ram`.
     ("Prefs/Env-Archive/Sys/idioma", b"es\n"),
     ("Prefs/Env-Archive/Sys/teclado", b"es\n"),
+    # S27, oleada 3: el centro de control de fábrica, roto (un mosaico repetido y otro que no existe; la basura, en las
+    # pruebas de PC): el centro se queda el de serie (el del escritorio de shiva) hasta que el panel o Ajustes guarden
+    # uno en el `ENVARC:` de Ana.
+    ("Prefs/Env-Archive/Escritorio/centro-control", b"# Roto a proposito (la prueba): se queda el de serie.\nmosaicos = volumen 4, volumen 4, nube 2\n"),
     # Un complemento de serie del Shell: unos alias. Los de cada usuario van en su `Home:S/Shell-Complementos`.
     ("S/Shell-Complementos/alias", "; Alias de serie del Shell. Los tuyos, en Home:S/Shell-Complementos.\nAlias ll List\nAlias la Dir ALL\nAlias md MakeDir\nAlias Exchange SYS:Tools/Commodities/Exchange\n".encode()),
     ("S/Prueba-Shell", PRUEBA_SHELL),
+    # La barra de DMS (docs/bitacoras/dms-barra.md): la barra del escritorio del usuario en shiva (sus barConfigs de
+    # DMS, sin nada que no sea de la barra), para `Ajuste DMS SYS:Prefs/Presets/DMS/shiva.json`.
+    ("Prefs/Presets/DMS/shiva.json", open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "usuario", "pruebas", "dms-barra-shiva.json"), "rb").read()),
+    # Rama `fondos`: los fondos del sistema (`SYS:Fondos`), hechos aquí: el atardecer sobre el mar con la paleta
+    # animada ("color cycling", 8 KB). Los fondos animados que no son imágenes no ocupan disco (`animado:aurora`).
+    ("Fondos/mar.png", fondos_prueba.paleta_mar()),
 ]
 
 
@@ -630,6 +732,7 @@ if sys.argv[1] in ("--comprobar", "--comprobar-basico"):
         "C/ cajón",
         # El Shell nativo: sus órdenes, en SYS:C, y el programa, en SYS:System.
         f"C/Ordenes {os.path.getsize(ORDENES)}",
+        f"C/Paq {os.path.getsize(PAQ)}",
         *[f"C/{n} {os.path.getsize(orden(n))}" for n in SUELTAS],
         f"System/Shell {os.path.getsize(SHELL)}",
         # El explorador de archivos: su papelera en Home (vacía al acabar: lo tirado se restauró), la carpeta que crea
@@ -640,16 +743,15 @@ if sys.argv[1] in ("--comprobar", "--comprobar-basico"):
         # C3: los fondos de escritorio de prueba (`tools/fondos_prueba.py`).
         "C/Fondos/ cajón",
         *[f"C/Fondos/{n} {os.path.getsize(os.path.join(FONDOS, n))}" for n in sorted(fondos_prueba.FONDOS)],
+        *([f"C/Fondos/{os.path.basename(os.environ['DASHOS_FONDO_EXTRA'])} {os.path.getsize(os.environ['DASHOS_FONDO_EXTRA'])}"] if os.environ.get("DASHOS_FONDO_EXTRA") else []),
         "C/Prefs/ cajón",
         # Ajustes en texto: la apariencia ya no va aquí, sino en ENV:/ENVARC:Escritorio/apariencia (un solo sitio): en
         # C/Prefs no tiene que estar.
         # La escala de las ventanas Amiga, que pone el guion con la fila de Apariencia: "general dashos" y
         # "escala amiga 1".
         "C/Prefs/cajas 48",
-        # C2: los mosaicos del panel rápido, como los dejó el panel (los de serie).
         # C3: el fondo que se quedó, el último que se puso desde el centro.
         "C/Prefs/fondo 14",
-        "C/Prefs/panel 24",
         "C/Privado/ cajón",
         # S10: el comentario y el bit de archivado que puso el Workbench (Información, como Ana).
         "C/Privado/datos.bin 614400",
@@ -679,6 +781,8 @@ if sys.argv[1] in ("--comprobar", "--comprobar-basico"):
         f"{CAJA}/C/viejo 32",
         f"{CAJA}/Discos/ cajón",
         f"{CAJA}/Discos/disco.adf {len(CAJA_ADF)}",
+        f"{CAJA}/Iconos/ cajón",
+        *[f"{CAJA}/{s + '/' if s else ''}{n} {len(d)}" for s, n, d in CAJA_ICONOS],
         # T: y ENV: de la caja (los crea al arrancar si faltan).
         f"{CAJA}/Env/ cajón",
         f"{CAJA}/Libs/ cajón",
@@ -729,20 +833,18 @@ if sys.argv[1] in ("--comprobar", "--comprobar-basico"):
     ]
     hola = subprocess.run([ver, disco, desde, "Escrito/hola.txt"], check=True, capture_output=True).stdout
     grande = subprocess.run([ver, disco, desde, "C/grande.txt"], check=True, capture_output=True).stdout
-    panel = subprocess.run([ver, disco, desde, "C/Prefs/panel"], check=True, capture_output=True).stdout
     # FS8: y nada roto, ni un bloque perdido.
     comprobado = subprocess.run([ver, disco, desde, "--comprobar"], capture_output=True, text=True).stdout
     fallos = []
     if not basico and fondo != b"atardecer.png\n":
         fallos.append(f"C/Prefs/fondo: {fondo!r}")
-    # C2: los mosaicos del panel. Rotos al empezar; el panel quitó Bloquear y lo volvió a poner en su sitio: los de serie.
-    if not basico and panel != b"oscuro bloquear volumen\n":
-        fallos.append(f"C/Prefs/panel: {panel!r}")
     # A14: lo que DashOS escribió lleva la hora del reloj de la placa (en QEMU, la de este PC, en UTC): de esta prueba,
     # no de 1970 ni del futuro.
     fecha = subprocess.run([ver, disco, desde, "--fecha", "Escrito/hola.txt"], capture_output=True, text=True).stdout.split()
     ahora = int(time.time())
-    if not basico and (len(fecha) != 2 or not all(ahora - 600 <= int(f) <= ahora for f in fecha)):
+    # La prueba dura hasta 15 min y su reinicio (`TIEMPO_VIRT`, 900 s desde union-dms) y hola.txt se escribe al
+    # principio: con 600 s, una pasada entera ya no cabía (tecla-pegada, la primera que llegó hasta aquí tras la unión).
+    if not basico and (len(fecha) != 2 or not all(ahora - 1800 <= int(f) <= ahora for f in fecha)):
         fallos.append(f"Escrito/hola.txt con fecha {fecha} (ahora {ahora})")
     # U6: el registro de seguridad de `sesiones`, en su cajón: la cuenta (8 bytes) y un anillo de entradas de 40 (tipo,
     # estado, quién y qué). Tiene que tener los tres intentos del hostil (matar, la llave de un servicio y entrar).
@@ -774,6 +876,9 @@ if sys.argv[1] in ("--comprobar", "--comprobar-basico"):
             fallos.append(f"{secreto!r} en claro en el disco")
     if comprobado != "sin problemas\n":
         fallos.append(f"comprobación: {comprobado.strip()}")
+    # S8 (rama `paq`): lo de Paq se mira aparte (abajo): `Paquetes/`, el repositorio de pruebas y `Estado/Paq`.
+    arbol_paq = [l for l in arbol if l.startswith(("Paquetes/", "Work/Repos/", "Estado/Paq/"))]
+    arbol = [l for l in arbol if l not in arbol_paq]
     # Paso 2 de la caja Amiga: el AmigaOS del usuario (con DASHOS_AMIGAOS) no es parte de lo que se compara.
     arbol = [l for l in arbol if not l.startswith("Amiga/") and not l.startswith(("C/Prefs/amigaos ", "C/Prefs/programas-amiga "))]
     if basico:
@@ -796,17 +901,20 @@ if sys.argv[1] in ("--comprobar", "--comprobar-basico"):
         # ahora, en texto, una línea por hecho, sin letras de control; con lo que se espera de la prueba.
         regs = {l.split(" ")[0][len(REGISTROS) + 1:]: l for l in arbol_entero if l.startswith(REGISTROS + "/")}
         leer_reg = lambda n: subprocess.run([ver, disco, desde, f"{REGISTROS}/{n}"], capture_output=True).stdout
-        if set(regs) != {"", "seguridad", "sistema", "programas", "programas.1"}:
+        # `dominio-red` (rama dominio-red, el cuarto fichero del registro común) sale si el dominio de red apuntó algo.
+        if not {"", "seguridad", "sistema", "programas", "programas.1"} <= set(regs) <= {"", "seguridad", "sistema", "programas", "programas.1", "dominio-red"}:
             fallos.append(f"Estado/Registros: {sorted(regs)}")
         elif leer_reg("programas.1") != REGISTRO_VIEJO:
             fallos.append("Estado/Registros/programas.1 no es lo de antes de rotar")
         else:
             hora = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ|arranque\+\d+\.\d{3}s) \S+ \S+ \S+ .+$")
-            texto = {n: leer_reg(n).decode("utf-8", errors="replace") for n in ("seguridad", "sistema", "programas")}
+            texto = {n: leer_reg(n).decode("utf-8", errors="replace") for n in ("seguridad", "sistema", "programas", "dominio-red") if n in regs}
             for n, t in texto.items():
                 # Cada línea, de las que da `registro::linea`: como mucho 384 bytes con su salto.
                 malas = [l for l in t.split("\n")[:-1] if not hora.match(l) or any(ord(c) < 32 or 0x7f <= ord(c) < 0xa0 for c in l) or len(l.encode()) > 383]
-                if malas or not t.endswith("\n"):
+                # (Vacío vale: `dominio-red` se crea con el registro aunque el dominio no apunte nada; los otros tienen
+                # sus líneas pedidas más abajo.)
+                if malas or (t and not t.endswith("\n")):
                     fallos.append(f"Estado/Registros/{n}: líneas que no valen: {malas[:3]}")
             for n, quiere in [("seguridad", " hostil Carla permiso no se da \"eco\""), ("seguridad", " pide sistema permiso se da \"eco\""),
                               ("seguridad", " pide Ana permiso se quita \"eco\""), ("seguridad", "no escribe lo concedido de Ana"),
@@ -814,7 +922,11 @@ if sys.argv[1] in ("--comprobar", "--comprobar-basico"):
                               ("programas", " Shell Ana programa hola desde el guion del Shell: una prueba"),
                               ("programas", " Shell Ana programa ?[2J?[31mrojo"), ("programas", " Shell Ana registro "),
                               ("sistema", " caja-amiga Ana guardia niega "), ("sistema", " pide sistema memoria topa con su tope"),
-                              ("programas", " Shell Ana programa larga larga ")]:
+                              ("programas", " Shell Ana programa larga larga "),
+                              # S27: el dock solo escribe y guarda su fichero de ajustes; lo ajeno, negado y apuntado.
+                              ("seguridad", " dock Ana ajustes no escribe ENV:Escritorio/menus (estado -2)"),
+                              ("seguridad", " dock Ana ajustes no guarda ENV:Sys/locale en ENVARC: (estado -2)"),
+                              ("seguridad", " dock Ana ajustes no escribe ENV:Prefs/Red/hora (estado -2)")]:
                 if quiere not in texto[n]:
                     fallos.append(f"Estado/Registros/{n}: falta {quiere!r}")
 
@@ -822,6 +934,8 @@ if sys.argv[1] in ("--comprobar", "--comprobar-basico"):
         # malas), y nada más en su cajón. Y el volumen de Berta abre con su contraseña y con su código de recuperación (el
         # que enseñó `guardian`; en las pruebas lo escribe en la consola), y no con otra: en una copia del disco, con
         # `duenos`, que es lo que abre volúmenes cifrados desde Linux.
+        # Rama cuentas-2: `guardian` recupera después a Berta con ese código: su contraseña es "nueva de Berta" y su código,
+        # el segundo que escribe; ni la de antes ni el primer código (gastado) la abren.
         cuentas = sorted(l.split(" ")[0] for l in arbol_entero if l.startswith(CUENTAS + "/"))
         if cuentas != [CUENTAS + "/", CUENTAS + "/grupos", CUENTAS + "/usuarios"]:
             fallos.append(f"{CUENTAS}: {cuentas}")
@@ -831,18 +945,45 @@ if sys.argv[1] in ("--comprobar", "--comprobar-basico"):
                 fallos.append(f"{CUENTAS}/{n}: {hay!r}")
         salida = os.path.join(os.path.dirname(os.path.abspath(disco)), "salida_virt.txt")
         codigo = re.findall(r"el código de recuperación de Berta es ([A-Z0-9-]{29})", open(salida, errors="replace").read()) if os.path.exists(salida) else []
-        if len(codigo) != 1:
-            fallos.append(f"el código de recuperación de Berta en la consola: {codigo}")
+        if len(codigo) != 2 or codigo[0] == codigo[1]:
+            fallos.append(f"los códigos de recuperación de Berta en la consola: {codigo}")
         else:
             with tempfile.TemporaryDirectory() as t:
                 copia = os.path.join(t, "disco.img")
                 with open(copia, "wb") as f:
                     f.write(open(disco, "rb").read())
                 duenos = os.path.join(os.path.dirname(ver), "duenos")
-                for clave, abre in (("clave de Berta", True), (codigo[0], True), ("clave de Ana", False), (codigo[0].replace("-", ""), False)):
+                for clave, abre in (("nueva de Berta", True), (codigo[1], True), ("clave de Berta", False), (codigo[0], False),
+                                    ("clave de Ana", False), (codigo[1].replace("-", ""), False)):
                     r = subprocess.run([duenos, copia, str(1 << 20), "1002:1002", "Berta"], input=(clave + "\n").encode(), capture_output=True)
                     if (r.returncode == 0) != abre:
-                        fallos.append(f"el volumen de Berta con {'su contraseña' if clave == 'clave de Berta' else repr(clave)}: {r.returncode}")
+                        fallos.append(f"el volumen de Berta con {clave!r}: {r.returncode}")
+
+        # S8 (rama `paq`): Paquetes: como lo deja la prueba del Shell. Lo barrido al arrancar (el cajón a medias y el
+        # cerrojo), fuera; ningún cajón a la vista (saludo se quitó, con letras); las generaciones 3 (volver: saludo 1.0 y
+        # letras) y 4 (vacía), que es la que manda, tras Limpiar; en el almacén, solo lo de la 3 (saludo 1.1 se limpió).
+        # Nada fuera de su sitio (el intruso del Shell no está). Y el índice del repositorio, el de la serie 2.
+        nombres_paq = sorted(l.split(" ")[0] for l in arbol_paq if l.startswith("Paquetes/"))
+        quiere_paq = sorted([
+            "Paquetes/", "Paquetes/Paq/", "Paquetes/Paq/Almacen/", "Paquetes/Paq/Almacen/letras/", "Paquetes/Paq/Almacen/letras/0-1.0-1/",
+            "Paquetes/Paq/Almacen/letras/0-1.0-1/abc", "Paquetes/Paq/Almacen/letras/0-1.0-1.pkg", "Paquetes/Paq/Almacen/letras/0-1.0-1.readme",
+            "Paquetes/Paq/Almacen/saludo/", "Paquetes/Paq/Almacen/saludo/0-1.0-1/", "Paquetes/Paq/Almacen/saludo/0-1.0-1/LEEME",
+            "Paquetes/Paq/Almacen/saludo/0-1.0-1/Saludo", "Paquetes/Paq/Almacen/saludo/0-1.0-1.pkg", "Paquetes/Paq/Almacen/saludo/0-1.0-1.readme",
+            "Paquetes/Paq/Asignaciones", "Paquetes/Paq/Generaciones/", "Paquetes/Paq/Generaciones/3", "Paquetes/Paq/Generaciones/4",
+            "Paquetes/Paq/Series",
+        ])
+        if nombres_paq != quiere_paq:
+            fallos.append(f"Paquetes: {nombres_paq}")
+        gen4 = subprocess.run([ver, disco, desde, "Paquetes/Paq/Generaciones/4"], capture_output=True).stdout.decode(errors="replace")
+        if not gen4.startswith("PKG-GENERATION 1\nGeneration: 4\n") or "Package:" in gen4:
+            fallos.append(f"Paquetes/Paq/Generaciones/4: {gen4!r}")
+        gen3 = subprocess.run([ver, disco, desde, "Paquetes/Paq/Generaciones/3"], capture_output=True).stdout.decode(errors="replace")
+        if "Package: saludo 1.0-1 prueba explicit\n" not in gen3 or "Package: letras 1.0-1 prueba dependency\n" not in gen3:
+            fallos.append(f"Paquetes/Paq/Generaciones/3: {gen3!r}")
+        ix = subprocess.run([ver, disco, desde, "Work/Repos/prueba/aarch64-dashos/index.gz"], capture_output=True).stdout
+        ix2 = subprocess.run([ver, disco, desde, "Work/Repos/prueba-2/index.gz"], capture_output=True).stdout
+        if not ix or ix != ix2:
+            fallos.append("Work/Repos/prueba: el índice no es el de la serie 2")
 
         informe = subprocess.run([ver, disco, desde, "C/informe.txt"], capture_output=True).stdout
         if informe != "segunda versión\n".encode():
@@ -887,6 +1028,9 @@ if sys.argv[1] in ("--comprobar", "--comprobar-basico"):
     print("BIEN: el disco tras la prueba, leído en Linux")
     sys.exit(0)
 
+sin_cuentas = sys.argv[1] == "--sin-cuentas"
+if sin_cuentas:
+    del sys.argv[1]
 salida, ar = sys.argv[1], sys.argv[2]
 with tempfile.TemporaryDirectory() as t:
     raiz = os.path.join(t, "raiz")
@@ -938,6 +1082,8 @@ with tempfile.TemporaryDirectory() as t:
     cuentas = os.path.join(raiz, *CUENTAS.split("/"))
     os.makedirs(cuentas)
     for nombre, datos in (("usuarios", CUENTAS_USUARIOS), ("grupos", CUENTAS_GRUPOS)):
+        if sin_cuentas:
+            continue
         with open(os.path.join(cuentas, nombre), "wb") as f:
             f.write(datos)
         os.chmod(os.path.join(cuentas, nombre), 0o644)
@@ -963,13 +1109,22 @@ with tempfile.TemporaryDirectory() as t:
                                ("C", "viejo", CAJA_VIEJO),
                                ("S", "Startup-Sequence", CAJA_GUION), ("Discos", "disco.adf", CAJA_ADF),
                                ("", "datos.txt", b"datos de la caja\n"),
-                               *[("Libs", n, d) for n, d in CAJA_LIBS]]:
+                               *[("Libs", n, d) for n, d in CAJA_LIBS], *CAJA_ICONOS]:
         os.makedirs(os.path.join(caja, sub), exist_ok=True)
         with open(os.path.join(caja, sub, nombre), "wb") as f:
             f.write(datos)
     os.chmod(caja, 0o700)
+    # S8 (rama `paq`): el repositorio de pruebas (`tools/repo_paq.py`, en `Work/Repos`), la lista y la clave
+    # (`Estado/Paq`), y `Paquetes/` con lo que deja una transacción cortada.
+    repo_paq.hacer(raiz)
+    os.makedirs(os.path.join(raiz, *PAQUETES_CORTADO.split("/")))
+    with open(os.path.join(raiz, *PAQUETES_CORTADO.split("/"), "abc"), "wb") as f:
+        f.write(b"a medias\n")
+    os.makedirs(os.path.join(raiz, "Paquetes", "Paq", "Generaciones"))
+    with open(os.path.join(raiz, "Paquetes", "Paq", "Cerrojo"), "wb") as f:
+        f.write(b"tanda de antes de apagar; arranque 0; desde 0\n")
     # El Shell nativo y sus órdenes.
-    for destino, origen in [(("System", "Shell"), SHELL), (("C", "Ordenes"), ORDENES)] + [(("C", n), orden(n)) for n in SUELTAS]:
+    for destino, origen in [(("System", "Shell"), SHELL), (("C", "Ordenes"), ORDENES), (("C", "Paq"), PAQ)] + [(("C", n), orden(n)) for n in SUELTAS]:
         with open(os.path.join(raiz, *destino), "wb") as f:
             f.write(open(origen, "rb").read())
         os.chmod(os.path.join(raiz, *destino), 0o755)
@@ -1008,11 +1163,6 @@ with tempfile.TemporaryDirectory() as t:
     # 0700 y ficheros 0600, que el hostil no ve.
     prefs = os.path.join(raiz, "C", "Prefs")
     os.makedirs(prefs)
-    # C2: los mosaicos del panel rápido, rotos: uno repetido y uno que no existe (la basura, en las pruebas de PC). El centro y el
-    # panel se quedan los de serie; al guardar, el centro lo reescribe.
-    with open(os.path.join(prefs, "panel"), "wb") as f:
-        f.write(b"volumen volumen nube\n")
-    os.chmod(os.path.join(prefs, "panel"), 0o600)
     os.chmod(prefs, 0o700)
     # C3: los fondos de escritorio de prueba, hechos aquí (`tools/fondos_prueba.py`, guardados junto al disco para no
     # rehacerlos): ondas.png y atardecer.png, que se ven; rota.png (un byte cambiado: su CRC no cuadra) y enorme.png
@@ -1024,6 +1174,11 @@ with tempfile.TemporaryDirectory() as t:
     for n in fondos_prueba.FONDOS:
         with open(os.path.join(raiz, "C", "Fondos", n), "wb") as f:
             f.write(open(os.path.join(hechos, n), "rb").read())
+    # S27: con DASHOS_FONDO_EXTRA=imagen.png, un fondo más (para las capturas con el fondo del usuario: nunca en git).
+    extra = os.environ.get("DASHOS_FONDO_EXTRA")
+    if extra:
+        with open(os.path.join(raiz, "C", "Fondos", os.path.basename(extra)), "wb") as f:
+            f.write(open(extra, "rb").read())
     with open(os.path.join(prefs, "fondo"), "w") as f:
         f.write("enorme.png\n")
     os.chmod(os.path.join(prefs, "fondo"), 0o600)
@@ -1031,6 +1186,24 @@ with tempfile.TemporaryDirectory() as t:
     # la apariencia, el aspecto de las cajas) para las capturas del aspecto. "\n" en el contenido es un salto de línea.
     for par in filter(None, os.environ.get("DASHOS_PREFS", "").split(";")):
         nombre, _, contenido = par.partition("=")
+        if nombre == "barra":
+            # La barra de DMS: un perfil de `usuario/pruebas` (perfil-barra-<nombre>.txt) como la de fábrica
+            # (`SYS:Prefs/Env-Archive/Escritorio/barra`), para las capturas.
+            escritorio = os.path.join(raiz, "Prefs", "Env-Archive", "Escritorio")
+            os.makedirs(escritorio, exist_ok=True)
+            perfil = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "usuario", "pruebas", f"perfil-barra-{contenido}.txt")
+            with open(os.path.join(escritorio, "barra"), "wb") as f:
+                f.write(open(perfil, "rb").read())
+            continue
+        if nombre == "fondo_de":
+            # Un fondo de fuera (para las capturas; nunca en git): se copia a C/Fondos y se pone.
+            os.makedirs(os.path.join(raiz, "C", "Fondos"), exist_ok=True)
+            destino = os.path.basename(contenido)
+            with open(os.path.join(raiz, "C", "Fondos", destino), "wb") as f:
+                f.write(open(contenido, "rb").read())
+            with open(os.path.join(prefs, "fondo"), "w") as f:
+                f.write(destino + "\n")
+            continue
         if nombre not in ("apariencia", "fondo", "cajas", "panel"):
             raise SystemExit(f"DASHOS_PREFS: {nombre} no es un Prefs del centro")
         if nombre == "apariencia":
@@ -1120,6 +1293,7 @@ with tempfile.TemporaryDirectory() as t:
     subprocess.run([duenos, fs, "0", "1:1", "camino=" + REGISTROS], check=True)
     subprocess.run([duenos, fs, "0", "1:1", "camino=" + CUENTAS], check=True)
     subprocess.run([duenos, fs, "0", "1001:1001", "camino=DeCarla"], check=True)
+    subprocess.run([duenos, fs, "0", PAQUETES_UID, "camino=Paquetes"], check=True)
     # A10: un daño que la comprobación encuentra y la reparación arregla (los enlaces de LEEME.txt, 7 en vez de 1).
     # El servicio de archivos repara al arrancar; al final, la comprobación desde Linux tiene que salir limpia.
     estropear = os.path.join(os.path.dirname(duenos), "estropear")

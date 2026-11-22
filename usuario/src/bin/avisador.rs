@@ -1,11 +1,15 @@
 //! S10: la prueba del servicio `avisos`, como un programa cualquiera que tiene su llave (de `inicio`, canal "avisos";
 //! llave 1). Avisa bien una vez y después intenta lo que no debe: hacerse pasar por otro, mensajes mal hechos, bytes
 //! que no son texto e inundar. Al final, otro aviso bueno: el servicio sigue.
+//!
+//! S27, oleada 3: también un aviso con acciones y lo que no debe con ellas (acciones falsas a mano, mensajes enormes), las
+//! órdenes de la barra, del panel y del centro sin serlo (descartar, pulsar acciones, "no molestar", los ajustes), y
+//! sustituir un aviso suyo (eso sí puede).
 
 #![no_std]
 #![no_main]
 
-use dashos::avisos_cliente::{avisar, mandar};
+use dashos::avisos_cliente::{avisar, avisar_con, mandar};
 use dashos::println;
 use dashos::protocolo::avisos::*;
 use dashos::protocolo::sesiones as s;
@@ -36,6 +40,14 @@ fn principal() -> u64 {
         && otro.as_ref().is_some_and(|r| r.estado == BIEN && r.de() == "avisador");
     println!("  [avisador] hacerse pasar por guardian o Sistema: sale como {}: {}", otro.as_ref().map_or("?", |r| r.de()),
         if impostor { "bien" } else { "MAL" });
+    // S27, oleada 6: el resumen de la pantalla de bloqueo como si fuera `sesiones` (con su marca, no vale): no es un
+    // resumen (el servicio no lo entiende), ni cuántos ni de quién.
+    let mut resumen = [0u8; s::LARGO_AVISO_RESUMEN];
+    resumen[0..4].copy_from_slice(&s::AVISO_RESUMEN.to_le_bytes());
+    resumen[4..8].copy_from_slice(&1000u32.to_le_bytes());
+    let r_resumen = mandar(AVISOS, &resumen);
+    let sin_resumen = r_resumen.is_some_and(|r| r.estado == MAL);
+    println!("  [avisador] el resumen de la pantalla de bloqueo sin ser sesiones: {}", if sin_resumen { "no lo da, bien" } else { "MAL" });
     // Mal hechos: vacío, largos enormes o que no cuadran, urgencia que no existe, sin título, 256 bytes de basura.
     let mut m = [0u8; 256];
     let n = pedir_aviso(&mut m, NORMAL, "título", "texto");
@@ -65,6 +77,7 @@ fn principal() -> u64 {
     let rechazos = rechazados == malos.len() && r_raro.is_some_and(|r| r.estado == BIEN) && sigue;
     println!("  [avisador] mal hechos rechazados {} de {}, bytes raros guardados limpios, y sigue: {}", rechazados, malos.len(),
         if rechazos { "bien" } else { "MAL" });
+    let acciones = acciones_hostiles();
     // Inundar: más de los que deja el ritmo. Los de más, DEMASIADOS; el servicio sigue contestando.
     let (mut guardados, mut demasiados, mut otros) = (0, 0, 0);
     for i in 0..100 {
@@ -77,7 +90,75 @@ fn principal() -> u64 {
     }
     let inunda = guardados + 4 <= RITMO as usize && demasiados > 80 && otros == 0;
     println!("  [avisador] inundar: 100 mandados, {} guardados, {} demasiados: {}", guardados, demasiados, if inunda { "bien" } else { "MAL" });
-    if bueno && impostor && rechazos && inunda { 0 } else { 1 }
+    if bueno && impostor && sin_resumen && rechazos && inunda && acciones { 0 } else { 1 }
+}
+
+/// S27: avisos con acciones. Uno bueno (con su llave para oírlas) y su sustituto; acciones falsas escritas a mano; un
+/// mensaje enorme; y lo que solo pueden la barra, el panel o el centro.
+fn acciones_hostiles() -> bool {
+    let (_oigo, escucha) = dashos::canal_crear();
+    let bueno = avisar_con(AVISOS, NORMAL, "Descarga acabada", "informe.pdf (2 MB)", 0, &[("default", "Abrir"), ("carpeta", "Ver en la carpeta")], Some(escucha));
+    let numero = bueno.as_ref().filter(|r| r.estado == BIEN).map_or(0, |r| r.numero);
+    // Sustituir el suyo, sí.
+    let suyo = avisar_con(AVISOS, NORMAL, "Descarga acabada", "informe.pdf, en Descargas", numero, &[("carpeta", "Ver en la carpeta")], None);
+    let sustituye = numero != 0 && suyo.as_ref().is_some_and(|r| r.estado == BIEN && r.numero > numero);
+    println!("  [avisador] aviso con acciones: {} (número {}); sustituir el suyo: {}", bueno.as_ref().map_or(i32::MIN, |r| r.estado), numero,
+        if sustituye { "bien" } else { "MAL" });
+    // Acciones falsas a mano: cinco acciones, un identificador con espacios o con un byte de control, repetido, una
+    // etiqueta vacía, largos que se salen, bytes de más.
+    let mut m = [0u8; 256];
+    let n = dashos::protocolo::avisos::pedir_aviso_con(&mut m, NORMAL, "título", "texto", 0, &[("a", "Uno"), ("b", "Dos")]).unwrap_or(0);
+    let i = CABECERA_AVISAR_CON + "título".len() + "texto".len();
+    let cambia = |f: &dyn Fn(&mut [u8; 256]) -> usize| {
+        let mut x = m;
+        let k = f(&mut x);
+        mandar(AVISOS, &x[..k]).is_some_and(|r| r.estado == MAL)
+    };
+    let falsas = [
+        cambia(&|x| { x[20..24].copy_from_slice(&5u32.to_le_bytes()); n }),
+        cambia(&|x| { x[20..24].copy_from_slice(&u32::MAX.to_le_bytes()); n }),
+        cambia(&|x| { x[i + 2] = b' '; n }),
+        cambia(&|x| { x[i + 2] = 0x1b; n }),
+        cambia(&|x| { x[i + 2 + 1 + 3 + 2] = b'a'; n }),
+        cambia(&|x| { x[i + 1] = 0; n }),
+        cambia(&|x| { x[i] = 250; n }),
+        cambia(&|_| n + 3),
+        cambia(&|_| n - 1),
+    ];
+    let rechazadas = falsas.iter().filter(|&&x| x).count();
+    // Enorme: un mensaje de 300 bytes no cabe en el canal (no llega); uno de 256 con largos falsos, MAL.
+    let enorme = [0x41u8; 300];
+    let no_llega = mandar(AVISOS, &enorme).is_none();
+    // Lo de la barra, el panel y el centro, sin serlo: PROTEGIDO, y nada cambia.
+    let orden = |o: u32, a: u32, b: u32| {
+        let mut x = [0u8; 12];
+        x[0..4].copy_from_slice(&o.to_le_bytes());
+        x[4..8].copy_from_slice(&a.to_le_bytes());
+        x[8..12].copy_from_slice(&b.to_le_bytes());
+        mandar(AVISOS, &x).is_some_and(|r| r.estado == PROTEGIDO)
+    };
+    let mut ajustes = [0u8; 40];
+    ajustes[0..4].copy_from_slice(&AJUSTES.to_le_bytes());
+    ajustes[4..8].copy_from_slice(&25u32.to_le_bytes());
+    let protegidas = [
+        orden(ACCION, numero, 0),
+        orden(ACCION, numero, POR_DEFECTO),
+        orden(LEER_ACCIONES, numero, 0),
+        orden(DESCARTAR, numero, 0),
+        orden(QUITAR, numero, 0),
+        orden(DESCARTAR_TODO, 0, 0),
+        orden(BORRAR_TODO, 0, 0),
+        orden(LEER, u32::MAX, 0),
+        orden(LEER_AJUSTES, 0, 0),
+        orden(NO_MOLESTAR, 1, 0),
+        orden(ESTADO, 0, 0),
+        mandar(AVISOS, &ajustes[..33]).is_some_and(|r| r.estado == PROTEGIDO),
+    ];
+    let negadas = protegidas.iter().filter(|&&x| x).count();
+    let ok = sustituye && rechazadas == falsas.len() && no_llega && negadas == protegidas.len();
+    println!("  [avisador] acciones falsas rechazadas {} de {}; 300 bytes no llegan: {}; lo de la barra, el panel y el centro: {} de {} negadas: {}",
+        rechazadas, falsas.len(), if no_llega { "sí" } else { "no" }, negadas, protegidas.len(), if ok { "bien" } else { "MAL" });
+    ok
 }
 
 /// "Aviso 00".."Aviso 99", sin `alloc`.

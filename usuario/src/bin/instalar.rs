@@ -73,7 +73,7 @@ fn pedir(llave: u32, orden: u32, entrada: &str, plazo: u64) -> Option<(i32, Stri
 /// La tanda "instalar <n>" a `sesiones`: `guardian` pide la contraseña de un administrador. 0 si se confirmó.
 fn confirmar(sesiones: u32, n: u32) -> i32 {
     use dashos::protocolo::sesiones as s;
-    let lista = format!("instalar {}\n", n);
+    let lista = format!("instalar-sistema {}\n", n);
     let mem = dashos::memoria_crear(lista.len());
     if (mem as i32) <= 0 || dashos::memoria_proyectar(mem, VA_LISTA, true) != 0 {
         return -1;

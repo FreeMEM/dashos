@@ -1,0 +1,86 @@
+# Los Material Symbols Rounded que usa DashOS (la interfaz): uno por línea, con el nombre de Material y la variante:
+# "contorno" (FILL 0, la de siempre), "lleno" (FILL 1) o las dos. Peso 400, grado 0, tamaño óptico 24.
+# Los emblemas de la colección de DashOS (`dashos.iconos`, "emblema=") entran solos, llenos.
+# Tras cambiar esta lista: `python3 tools/iconos_material.py` (baja lo que falte del repositorio oficial de Google y
+# rehace `kit/src/iconos/simbolos_datos.rs`). Procedencia y licencia: `NOTICE` de esta carpeta.
+
+# La barra (usuario/src/bin/barra.rs)
+apps            contorno
+search          contorno
+lan             contorno
+volume_up       contorno
+volume_down     contorno
+volume_mute     contorno
+volume_off      contorno
+notifications   contorno
+memory          contorno
+memory_alt      contorno
+
+# El panel rápido (usuario/src/bin/panel.rs)
+power_settings_new  contorno
+restart_alt     contorno
+logout          contorno
+lock            contorno
+dark_mode       contorno lleno
+light_mode      contorno
+expand_less     contorno
+expand_more     contorno
+close           contorno
+add             contorno
+remove          contorno
+# Unión de dms-avisos e iconos: los mosaicos y la edición del centro de control de DMS (S27, oleada 3)
+settings        contorno
+bluetooth       contorno
+mic             contorno
+do_not_disturb_on contorno
+chevron_left    contorno
+chevron_right   contorno
+undo            contorno
+edit            contorno
+
+# Los menús y los controles del kit (kit/src/menus.rs)
+check           contorno
+arrow_right     contorno
+
+# El explorador (usuario/src/explorador/pintar.rs)
+arrow_back      contorno
+arrow_forward   contorno
+grid_view       contorno
+view_list       contorno
+menu            contorno
+crop_square     contorno
+home            contorno
+delete          contorno
+hard_drive      contorno
+keyboard_arrow_up    contorno
+keyboard_arrow_down  contorno
+
+# Ajustes, las categorías (usuario/src/bin/centro.rs)
+key             contorno
+shield          contorno
+monitor         contorno
+palette         contorno
+monitor_heart   contorno
+dashboard       contorno
+info            contorno
+# Unión de union-dms: las categorías de cuentas-2 y de S27 (Cuentas, Barra, Centro de control y Dock; Avisos lleva
+# "notifications", el de la barra)
+manage_accounts contorno
+toolbar         contorno
+tune            contorno
+dock_to_bottom  contorno
+
+# El desplegable del kit (kit/src/controles.rs)
+arrow_drop_down contorno
+arrow_drop_up   contorno
+
+# El sonido (rama sonido-pro): el mezclador, los controles de medios y el visualizador
+play_arrow      lleno
+pause           lleno
+skip_next       lleno
+skip_previous   lleno
+graphic_eq      contorno
+equalizer       contorno
+mic_off         contorno
+spatial_audio_off contorno
+speed           contorno

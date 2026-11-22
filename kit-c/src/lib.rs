@@ -236,6 +236,9 @@ struct Estado {
     /// El menú que se está llenando (ventana, menú) y, entre `dash_ui_menu_sub_begin` y `_end`, su submenú.
     menu: Option<(usize, usize)>,
     sub: Option<usize>,
+    /// Los submenús que se empezaron dentro de otro y no valen (no hay segundo nivel, como en el Amiga): hasta sus
+    /// `_sub_end`, lo que venga no se pone en ningún sitio.
+    sub_malos: u32,
     /// S10: si el compositor sabe de menús, y dónde van (0 dentro, 1 en la barra).
     con_menus: bool,
     sitio: u32,
@@ -263,6 +266,7 @@ impl Estado {
             construyendo: None,
             menu: None,
             sub: None,
+            sub_malos: 0,
             con_menus: false,
             sitio: 0,
             cliente: None,
@@ -1327,6 +1331,7 @@ pub unsafe extern "C" fn dash_ui_menu_begin(titulo: *const c_char) -> i32 {
     let m = v.menus.len() - 1;
     e.menu = Some((w, m));
     e.sub = None;
+    e.sub_malos = 0;
     e.rehacer_menu(w);
     e.cosa(Cosa::Menu(w, m))
 }
@@ -1335,6 +1340,10 @@ pub unsafe extern "C" fn dash_ui_menu_begin(titulo: *const c_char) -> i32 {
 fn nueva_opcion(o: impl FnOnce(u32) -> OpcionMenu) -> i32 {
     let e = est();
     let Some((w, m)) = e.menu else { return 0 };
+    // Dentro de un submenú que no vale: ni en él ni en el de fuera.
+    if e.sub_malos > 0 {
+        return 0;
+    }
     let v = &mut e.ventanas[w];
     let numero = v.siguiente_numero;
     v.siguiente_numero = v.siguiente_numero.saturating_add(1).min(wayland::menus::MAX_NUMERO);
@@ -1384,13 +1393,16 @@ pub extern "C" fn dash_ui_menu_separator() {
     nueva_opcion(|_| OpcionMenu::Separador);
 }
 
-/// S10: un submenú (un nivel, como en el Amiga): lo que venga hasta `dash_ui_menu_sub_end` va dentro.
+/// S10: un submenú (un nivel, como en el Amiga): lo que venga hasta `dash_ui_menu_sub_end` va dentro. Dentro de otro
+/// es un error, como en el Amiga (no hay segundo nivel): devuelve 0, lo dice, y lo que venga hasta su `_sub_end` no se
+/// pone (antes iba al submenú abierto, y su `_sub_end` cerraba el de fuera).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dash_ui_menu_sub_begin(titulo: *const c_char) -> i32 {
     let t = sin_tecla(&sin_codigos(&unsafe { texto(titulo) }));
     let e = est();
-    if e.sub.is_some() {
-        // Dentro de otro: no hay segundo nivel; sus cosas van en el que está abierto.
+    if e.sub.is_some() || e.sub_malos > 0 {
+        e.sub_malos = e.sub_malos.saturating_add(1);
+        println!("  [dash-ui] submenú \"{}\" dentro de otro: no hay segundo nivel (como en el Amiga); lo suyo no se pone", t);
         return 0;
     }
     let Some((w, m)) = e.menu else { return 0 };
@@ -1402,9 +1414,15 @@ pub unsafe extern "C" fn dash_ui_menu_sub_begin(titulo: *const c_char) -> i32 {
     e.cosa(Cosa::Opcion(w, m, k, None))
 }
 
+/// El fin de un submenú: del que no valía (dentro de otro), si lo hay; si no, del abierto.
 #[unsafe(no_mangle)]
 pub extern "C" fn dash_ui_menu_sub_end() {
-    est().sub = None;
+    let e = est();
+    if e.sub_malos > 0 {
+        e.sub_malos -= 1;
+    } else if e.sub.take().is_none() {
+        println!("  [dash-ui] fin de submenú sin submenú abierto: nada");
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -1412,6 +1430,7 @@ pub extern "C" fn dash_ui_menu_end() {
     let e = est();
     e.menu = None;
     e.sub = None;
+    e.sub_malos = 0;
 }
 
 /// Que `obj` dé el evento `id`: `clase` 0 al pulsarlo, 1 al cambiar su valor o su texto, 2 al cerrar la ventana, 3 con

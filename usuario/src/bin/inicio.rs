@@ -46,6 +46,9 @@ const FICHAS: &[(&str, u32, u32, u32, &str)] = &[
     // S10: la barra, para listar los programas de su lanzador: del sistema, sin derechos y encerrada en `Programas`.
     // Lanzar no lo hace ella: lo hace `sesiones`, como la persona que está delante.
     ("barra", 1, 1, 0, "Programas"),
+    // S27: el dock, para leer sus ajustes (`ENV:Escritorio/dock` y `osd`): como el centro, de Ana, sin derechos y
+    // encerrado en `C`; el disco para leer y el `RAM:` de la sesión se los ponen `RAICES_DE_MAS` y `sesiones`.
+    ("dock", 1000, 1000, 0, "C"),
     // C3: el fondo de escritorio, para leer las imágenes de `C/Fondos` y su nombre en `C/Prefs/fondo`.
     ("fondo", 1000, 1000, 0, "C"),
     // S10: el Workbench, de Ana (1000), con el derecho de repartir, como el selector: al empezar se cede a sí mismo el
@@ -69,6 +72,9 @@ const FICHAS: &[(&str, u32, u32, u32, &str)] = &[
     // S13: el servicio de red, para leer lo que se configura en `Prefs/Red` del disco del sistema (`hosts` y `hora`):
     // del sistema, sin derechos y encerrado ahí.
     ("red", 1, 1, 0, "Prefs/Red"),
+    // S8 (rama `paq`): el servicio de paquetes, del sistema (usuario 2, el dueño de `Paquetes`), con su raíz 0 en
+    // `Paquetes` para leer y escribir: es el único que escribe ahí.
+    ("paq", 2, 2, 0, "Paquetes"),
 ];
 /// Raíces de más en el alta de archivos (U2, S6b capa 2): programa, hueco (1 a 15), tope (4 leer, 6 leer y escribir) y
 /// camino desde la raíz del disco.
@@ -85,6 +91,12 @@ const RAICES_DE_MAS: &[(&str, u8, u8, &str)] = &[
     // porque `RAM:` es un volumen en memoria que no existe hasta que entra su usuario: se la pone `sesiones` entonces
     // (`LEEN_IDIOMA`), como al Workbench. `sesiones` le pone los dos volúmenes en su tabla de nombres.
     ("centro", 1, 4, ""),
+    // S8: y el disco, solo para leer (su `SYS:`): los repositorios y `SYS:Estado/Paq` (la lista y las claves).
+    ("paq", 1, 4, ""),
+    // S27: el dock, igual: los ajustes de fábrica (`SYS:Prefs/Env-Archive`) antes de entrar nadie.
+    ("dock", 1, 4, ""),
+    // Rama `fondos`: el fondo de escritorio, igual: los fondos del sistema (`SYS:Fondos`), solo para leer.
+    ("fondo", 1, 4, ""),
 ];
 /// Los servicios cuyas llaves reparte `sesiones` (U4): de ellos recibe una copia sin marca, para hacer copias marcadas
 /// con el número de cada programa al que se las da. Del resto (archivos), una con la suya, como cualquier cliente.
@@ -98,8 +110,9 @@ const SIGUEN_SESIONES: &[&str] = &["compositor", "sonido", "avisos"];
 /// ficheros, para dar su llave a los programas que lanza y presentárselos (S6b: el selector es el camino por el que un
 /// programa encerrado llega a un fichero que el usuario elige).
 /// S32: y el instalador (solo en vivo): `sesiones` da su llave a la orden `Instalar` y le autoriza el plan que confirma
-/// un administrador (la acción "instalar" de una tanda).
-const A_SESIONES: &[&str] = &["selector", "instalador"];
+/// un administrador (la acción "instalar-sistema" de una tanda).
+/// S8: y el servicio `paq`: solo `sesiones` le manda las tandas de paquetes ya confirmadas.
+const A_SESIONES: &[&str] = &["selector", "instalador", "paq"];
 /// Si `sesiones` recibe una copia sin marca del canal que sirve `programa`.
 fn va_a_sesiones(programa: &str) -> bool {
     SIGUEN_SESIONES.contains(&programa) || A_SESIONES.contains(&programa)
@@ -483,10 +496,16 @@ fn principal() -> u64 {
         // U6: `sesiones`, 512: lo usado por los grupos de lo que lanza (64 MB cada uno) cuenta en el suyo.
         // C3: el fondo, 48: la imagen a pantalla entera en el montón y dos juegos de franjas (el que se ve y el nuevo); a
         // 1920 × 1080, unos 8 MB cada cosa.
+        // Rama `archivos-memoria`: el de archivos, 128, para el Argon2 de 64 MiB de S6b (mientras dura, y vuelve al
+        // kernel) encima de lo suyo: 24 MB de caché de páginas, hasta 16 de bloques, 4 de nodos, 2 de colchón y las
+        // ventanas de los clientes (hasta 16 MB las grandes).
         let cupo = match nombre(nombre_cab) {
-            "archivos" => 64 << 20,
+            "archivos" => 128 << 20,
             "sesiones" => 512 << 20,
-            "fondo" => 48 << 20,
+            // Rama `fondos`: 96: por pantalla, lo que se ve, la imagen quieta de debajo y, en una transición, la nueva
+            // (8 MB cada una a 1920 × 1080); la herramienta de fondos (su capa, 4,5 MB, y sus miniaturas), y un PNG a
+            // medio leer (hasta una foto 4K, 33 MB, en el montón).
+            "fondo" => 96 << 20,
             // El explorador: sus ventanas (3 MB cada una a 1100 × 720, 8 maximizada en Full HD), las fuentes, un PNG a
             // medio decodificar (hasta 1,5 Mpx) y 64 miniaturas. El Workbench, desde que los cajones los abre el
             // explorador, solo pinta los iconos y la Información: 16, lo de siempre.

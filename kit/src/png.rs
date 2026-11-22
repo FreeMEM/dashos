@@ -30,6 +30,8 @@ pub enum Error {
     Grande(u32, u32),
     /// No hay memoria para ella.
     SinMemoria,
+    /// Se pidió con sus índices (`leer_indexada`) y no es de paleta.
+    NoEsPaleta,
 }
 
 impl Error {
@@ -43,6 +45,7 @@ impl Error {
             Error::Comprimido => tr(7, "lo comprimido está roto"),
             Error::Grande(..) => tr(8, "demasiado grande"),
             Error::SinMemoria => tr(9, "no cabe en la memoria"),
+            Error::NoEsPaleta => tr(27, "no es una imagen de paleta"),
         }
     }
 }
@@ -547,6 +550,36 @@ fn pixel(c: &Cabecera, col: &Colores, fila: &[u8], x: usize) -> u32 {
 
 /// Lee un PNG entero. `max_px`: los píxeles que se dejan como mucho (ancho × alto); más es `Grande`, sin pedir memoria.
 pub fn leer(bytes: &[u8], max_px: u64) -> Result<Imagen, Error> {
+    leer_todo(bytes, max_px, false).map(|t| t.0)
+}
+
+/// Una imagen de paleta (tipo de color 3) con sus índices, para animar la paleta ("color cycling", rama `fondos`).
+pub struct Indexada {
+    pub ancho: usize,
+    pub alto: usize,
+    /// Un índice por píxel (de 1, 2, 4 u 8 bits en el fichero; aquí, un byte cada uno).
+    pub indices: Vec<u8>,
+    /// La paleta (ARGB), tal como viene; un índice fuera de ella se ve negro.
+    pub paleta: Vec<u32>,
+    /// Los trozos de texto `tEXt` (clave y texto, en Latin-1 pasado a UTF-8), como mucho `MAX_TEXTOS`.
+    pub textos: Vec<(alloc::string::String, alloc::string::String)>,
+}
+
+/// Lo más que se guarda de los trozos de texto (cuántos y lo que mide cada uno).
+pub const MAX_TEXTOS: usize = 16;
+pub const MAX_TEXTO: usize = 4096;
+
+/// Lee una imagen de paleta con sus índices. `Err(NoEsPaleta)` si es de otro tipo de color.
+pub fn leer_indexada(bytes: &[u8], max_px: u64) -> Result<Indexada, Error> {
+    let (img, ind, textos) = leer_todo(bytes, max_px, true)?;
+    let (indices, paleta) = ind.ok_or(Error::NoEsPaleta)?;
+    Ok(Indexada { ancho: img.ancho, alto: img.alto, indices, paleta, textos })
+}
+
+type Todo = (Imagen, Option<(Vec<u8>, Vec<u32>)>, Vec<(alloc::string::String, alloc::string::String)>);
+
+fn leer_todo(bytes: &[u8], max_px: u64, indexada: bool) -> Result<Todo, Error> {
+    let mut textos = Vec::new();
     if bytes.len() < 8 || bytes[..8] != FIRMA {
         return Err(Error::NoEsPng);
     }
@@ -612,6 +645,12 @@ pub fn leer(bytes: &[u8], max_px: u64) -> Result<Imagen, Error> {
                 idat.try_reserve(largo).map_err(|_| Error::SinMemoria)?;
                 idat.extend_from_slice(datos);
             }
+            b"tEXt" if indexada && textos.len() < MAX_TEXTOS && largo <= MAX_TEXTO => {
+                if let Some(cero) = datos.iter().position(|&b| b == 0) {
+                    let latin = |b: &[u8]| b.iter().map(|&c| c as char).collect::<alloc::string::String>();
+                    textos.push((latin(&datos[..cero]), latin(&datos[cero + 1..])));
+                }
+            }
             b"IEND" => fin = true,
             // Un trozo crítico que no se conoce (la primera letra en mayúscula): no se puede leer bien.
             _ if tipo[0] & 0x20 == 0 => return Err(Error::MalFormado),
@@ -635,7 +674,11 @@ pub fn leer(bytes: &[u8], max_px: u64) -> Result<Imagen, Error> {
         return Err(Error::Corto);
     }
     let (w, h) = (c.ancho as usize, c.alto as usize);
+    if indexada && c.tipo != 3 {
+        return Err(Error::NoEsPaleta);
+    }
     let mut px: Vec<u32> = ceros(w * h)?;
+    let mut indices: Vec<u8> = if indexada { ceros(w * h)? } else { Vec::new() };
     let mut desde = 0;
     for &(x0, y0, dx, dy, pw, ph) in &partes {
         let largo = c.linea(pw).unwrap();
@@ -646,11 +689,15 @@ pub fn leer(bytes: &[u8], max_px: u64) -> Result<Imagen, Error> {
             let y = y0 + f * dy;
             for k in 0..pw {
                 px[y * w + x0 + k * dx] = pixel(&c, &colores, fila, k);
+                if indexada {
+                    indices[y * w + x0 + k * dx] = muestra(fila, k, c.bits) as u8;
+                }
             }
         }
         desde += (largo + 1) * ph;
     }
-    Ok(Imagen { ancho: w, alto: h, px })
+    let ind = indexada.then(|| (indices, colores.paleta));
+    Ok((Imagen { ancho: w, alto: h, px }, ind, textos))
 }
 
 /// Solo la cabecera: (ancho, alto). Para decir lo que mide sin leerla entera.

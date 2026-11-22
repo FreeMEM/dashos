@@ -13,6 +13,9 @@
 //!   administrador.
 //! - `Usuario DEVOLVER Carla`: la vuelve a dejar como estaba.
 //! - `Usuario GRUPOS Carla`: sus grupos; `Usuario GRUPOS Carla +fotos -admin`: la pone y la quita.
+//! - `Usuario CLAVE` (rama `cuentas-2`): cambiar la propia contraseña. No es acción de administrador: la ventana del
+//!   sistema pide la de ahora y la nueva dos veces (esta orden no ve ninguna). Solo la propia: `Usuario CLAVE Carla`,
+//!   siendo otra persona, no se pregunta. Cambia la llave de su volumen sin reescribir lo que hay dentro.
 
 use crate::{di, Orden};
 use alloc::string::String;
@@ -53,6 +56,65 @@ fn que_paso(e: i32) -> String {
             Some(f) => alloc::format!("{}", f),
             None => String::from(crate::texto_error(e)),
         },
+    }
+}
+
+/// Rama `cuentas-2`: lo que tarda el usuario en la ventana (dos minutos) y un poco más.
+const PLAZO_CLAVE_US: u64 = 150_000_000;
+
+/// `Usuario CLAVE [nombre]`: pide a `sesiones` cambiar la contraseña de la propia cuenta; la ventana del sistema la pide.
+fn clave(o: &mut Orden, nombre: Option<&str>) -> u64 {
+    use dashos::protocolo::sesiones as s;
+    let n = nombre.unwrap_or("").as_bytes();
+    if n.len() > cu::MAX_NOMBRE {
+        o.error(format_args!("ese nombre no es de ninguna cuenta"));
+        return o.fin(shell::RC_ERROR);
+    }
+    di!(o, "Se pide en la ventana del sistema tu contraseña de ahora y la nueva...\n");
+    o.vaciar();
+    let mut m = [0u8; 8 + cu::MAX_NOMBRE];
+    m[0..4].copy_from_slice(&s::CLAVE_PROPIA.to_le_bytes());
+    m[4..8].copy_from_slice(&(n.len() as u32).to_le_bytes());
+    m[8..8 + n.len()].copy_from_slice(n);
+    let (lectura, suyo) = dashos::canal_crear();
+    let estado = if dashos::canal_escribir(crate::SESIONES, &m[..8 + n.len()], &[suyo]) == 0 {
+        let mut r = [0u8; 4];
+        let (leidos, _, _) = dashos::canal_leer_plazo(lectura, &mut r, &mut [], PLAZO_CLAVE_US);
+        (leidos == 4).then(|| i32::from_le_bytes(r))
+    } else {
+        dashos::cerrar(suyo);
+        None
+    };
+    dashos::cerrar(lectura);
+    match estado {
+        Some(0) => {
+            di!(o, "Contraseña cambiada. Lo que hay en tu Home: sigue igual; la de antes ya no vale.\n");
+            o.fin(shell::RC_BIEN)
+        }
+        Some(s::PROTEGIDO) if !n.is_empty() => {
+            o.error(format_args!("solo se cambia la propia: la de otra cuenta, con su código de recuperación"));
+            o.fin(shell::RC_ERROR)
+        }
+        Some(s::PROTEGIDO) => {
+            o.error(format_args!("no se cambió (se dijo que no, o tu sesión no está delante)"));
+            o.fin(shell::RC_ERROR)
+        }
+        Some(s::NO_EXISTE) => {
+            o.error(format_args!("este programa no es de una persona con cuenta"));
+            o.fin(shell::RC_ERROR)
+        }
+        Some(s::OCUPADO) => {
+            o.error(format_args!("ya hay otro cambio de contraseña esperando en la ventana del sistema"));
+            o.fin(shell::RC_ERROR)
+        }
+        Some(e) => {
+            o.error(format_args!("no se cambió: {}", que_paso(e)));
+            o.fin(shell::RC_ERROR)
+        }
+        None => {
+            o.error(format_args!("sesiones no contesta"));
+            o.fin(shell::RC_ERROR)
+        }
     }
 }
 
@@ -101,6 +163,7 @@ pub fn principal(o: &mut Orden) -> u64 {
     };
     let lineas: Vec<String> = match (accion.to_ascii_uppercase().as_str(), nombre) {
         ("LISTA", n) => return listar(o, n),
+        ("CLAVE", n) => return clave(o, n),
         ("GRUPOS", Some(n)) if mas.is_empty() => return listar(o, Some(n)),
         ("CREAR", Some(n)) => {
             let completo: Vec<&str> = mas.iter().filter(|m| !m.starts_with('+') && !m.starts_with('-')).map(|m| m.as_str()).collect();
@@ -127,7 +190,7 @@ pub fn principal(o: &mut Orden) -> u64 {
             return o.fin(shell::RC_ERROR);
         }
         (otra, _) => {
-            o.error(format_args!("\"{}\" no es LISTA, CREAR, BORRAR, DEVOLVER ni GRUPOS", otra));
+            o.error(format_args!("\"{}\" no es LISTA, CREAR, BORRAR, DEVOLVER, GRUPOS ni CLAVE", otra));
             return o.fin(shell::RC_ERROR);
         }
     };

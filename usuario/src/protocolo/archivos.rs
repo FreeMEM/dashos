@@ -20,6 +20,8 @@ pub const BORRAR: u32 = 8;
 pub const RENOMBRAR: u32 = 9;
 pub const TAMANO: u32 = 10;
 pub const VACIAR: u32 = 11;
+/// Lo que mide el volumen de la asa (a, bytes), lo libre (b, bytes) y el bloque (c). A15: en `asa`, 1 si alguien
+/// tiene el disco sujeto (`SUJETAR`): mientras tanto, lo que se borra no vuelve a quedar libre.
 pub const INFO: u32 = 12;
 pub const COMENTARIO: u32 = 13;
 pub const COMENTAR: u32 = 14;
@@ -37,6 +39,10 @@ pub const HACER_VOLUMEN: u32 = 23;
 /// (`dashos::cuentas::codigo_recuperacion`) y deja en la ventana, en el lugar de la contraseña; en b de la respuesta,
 /// lo que mide. El volumen se queda abierto, como sin él.
 pub const CON_RECUPERACION: u64 = 4;
+/// En a de `HACER_VOLUMEN` (cifrado de verdad, el 1), desde este bit: la memoria de Argon2 en MiB, 16 bits (0: la de
+/// serie, 64 MiB, `Cost::NORMAL`). Con tres pasadas. La que pase de los topes de `dashfs::seal::Cost` (de 1 a 341
+/// MiB con tres pasadas) da `MAL_FORMADO`; la que no quepa en el servicio, `SIN_MEMORIA` (rama `archivos-memoria`).
+pub const MEMORIA_ARGON2: u32 = 32;
 pub const QUITAR_VOLUMEN: u32 = 24;
 pub const ABRIR_VOLUMEN: u32 = 25;
 pub const CERRAR_VOLUMEN: u32 = 26;
@@ -90,6 +96,16 @@ pub const CRECER: u32 = 40;
 /// contar). Cuenta lo del volumen y lo que solo ven sus instantáneas. Pasado el tope, lo que lo haría crecer da
 /// `LLENO` en ese volumen y en ningún otro; borrar y escribir encima siguen valiendo. Solo con el derecho de administrar.
 pub const CUOTA: u32 = 41;
+/// S6b, rama `cuentas-2`: cambiar la contraseña de un volumen cifrado sin reescribir sus datos (su nombre en el
+/// mensaje; abierto o cerrado, da igual). En la ventana, la de ahora y la nueva, seguidas; en b, lo que mide la de ahora
+/// (los 32 bits de abajo) y la nueva (los de arriba). Solo cambia la ranura que abre la de ahora: la misma llave del
+/// volumen, envuelta otra vez con la nueva, con una sal nueva y el mismo coste. `PROTEGIDO` si la de ahora no es una
+/// contraseña suya (el código de recuperación no vale aquí). Con `CON_CODIGO` en a, lo de ahora es el **código de
+/// recuperación**: todas las contraseñas se van, la nueva es la única y el código se gasta: el servicio saca otro de su
+/// azar y lo deja en la ventana (en b de la respuesta, lo que mide), para apuntarlo otra vez. Solo con el derecho de
+/// administrar (lo pide `sesiones`). Lo de la ventana se borra al copiarlo.
+pub const CAMBIAR_CLAVE: u32 = 42;
+pub const CON_CODIGO: u64 = 1;
 /// Avisos de cambio (ajustes en texto, `docs/bitacoras/ajustes-texto.md`; como `StartNotify` del Amiga): vigilar lo que
 /// tiene la asa, un fichero o un cajón. El mensaje lleva una llave: la puerta (un extremo de escritura, normalmente una
 /// copia marcada del canal donde espera el cliente) por la que el servicio toca el timbre: `LARGO_TIMBRE` bytes, con
@@ -175,6 +191,15 @@ pub const RAM_COPIAR: u32 = 105;
 /// fichero, no se copia. Contesta en `a` los bytes copiados. `NO_EXISTE` si no está en `ENV:`, `MAL_FORMADO` si el
 /// nombre no vale o es demasiado grande. Número alto, para no chocar con otras ramas.
 pub const RAM_GUARDAR: u32 = 120;
+/// S27 (el dock): escribir un fichero de ajustes en `ENV:` en nombre de un programa del escritorio que no tiene la
+/// raíz de `RAM:` para escribir. Sin marca, como las demás de `RAM:`: solo lo pide `sesiones`, que antes mira que ese
+/// programa pueda escribir ese fichero (su lista de ajustes propios). Escribe `Env/<fichero>` del volumen en memoria de
+/// la sesión (bytes 4 a 7), con los cajones que falten (0700), suyo (uid y gid en los bytes 8 a 15) y 0600, con los
+/// bytes del objeto de memoria que viene en la primera llave (la segunda, la de la respuesta). Byte 16: lo que mide
+/// `fichero`, que va desde el byte 32; bytes 20 a 23: cuántos bytes del objeto. `fichero` tiene que valer
+/// (`ajuste_valido`) y los datos no pasar de `MAX_AJUSTE`. Lo que había se sustituye y quien vigila `ENV:` lo sabe.
+/// Contesta en `a` los bytes escritos. `MAL_FORMADO` si el nombre o el tamaño no valen.
+pub const RAM_ESCRIBIR: u32 = 121;
 /// Lo más que mide un fichero de ajustes que se guarda así (el tope del formato de texto).
 pub const MAX_AJUSTE: u64 = 64 * 1024;
 
@@ -241,6 +266,9 @@ pub const LLENO: i32 = -11;
 pub const PROTEGIDO: i32 = -12;
 pub const EN_USO: i32 = -13;
 pub const SIN_AZAR: i32 = -14;
+/// Rama `archivos-memoria`: la orden necesitaba más memoria de la que el servicio tiene ahora (un Argon2 grande, un
+/// cajón o un volumen enormes). No se hizo nada; el servicio sigue, y otra vez (o con menos) puede caber.
+pub const SIN_MEMORIA: i32 = -15;
 
 // Tipos de entrada (en `DATOS` y `LISTAR`).
 pub const FICHERO: u8 = 1;

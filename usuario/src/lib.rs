@@ -14,6 +14,7 @@ use core::fmt;
 pub mod barrera;
 pub mod graficos;
 pub mod hid;
+pub mod hid_teclas;
 pub mod hid_informe;
 pub mod particiones;
 /// El canal "disco" para los controladores de discos que no son el NVMe (X5c: AHCI).
@@ -31,8 +32,11 @@ pub mod protocolo {
     pub mod red;
     pub mod selector;
     pub mod sesiones;
+    pub mod sonido;
     /// S35: virtio por mensajes, entre un conductor de DashOS y el servicio de un dominio de controladores.
     pub mod virtio_msg;
+    /// S35: prestar un aparato USB, entre el xHCI de DashOS y el servicio de un dominio de controladores.
+    pub mod usb_prestado;
 }
 #[cfg(feature = "monton")]
 pub mod monton;
@@ -43,6 +47,8 @@ pub mod asignaciones;
 /// La tabla de llaves: qué es cada llave con que nace el programa (sin dependencias: se prueba en el PC).
 pub mod llaves;
 pub mod hilos;
+/// La cola fija de `hilos::Cola` (rama `centro-vivo`; sin dependencias: se prueba en el PC).
+pub mod anillo;
 pub mod red_cliente;
 /// S29: el cortafuegos de la caja Linux en el servicio de red (sin dependencias: se prueba en el PC).
 pub mod cortafuegos_caja;

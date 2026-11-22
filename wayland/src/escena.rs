@@ -34,6 +34,9 @@ pub mod commodities;
 // S10: los menús de los programas, en la ventana o en la barra (`docs/bitacoras/menus.md`), en su fichero.
 #[path = "menus_escena.rs"]
 pub mod menus;
+// S27: el dock y los avisos en pantalla (`dashos_dock_v1`), en su fichero.
+#[path = "dock_escena.rs"]
+pub mod dock;
 
 /// Errores de `zwp_linux_buffer_params_v1` (de `linux-dmabuf-v1.xml`, G6).
 pub const DMABUF_USADO: u32 = 0;
@@ -582,6 +585,11 @@ pub struct Escena<M: Memorias> {
     pub puntero: Option<(Cliente, u32)>,
     pub teclado: Option<(Cliente, u32)>,
     pub mods: u32,
+    /// Las teclas cuya pulsación llegó a quien tiene el teclado y que aún no se han soltado (tecla-pegada), y a quién
+    /// llegaron. Al quitarle el teclado se le sueltan (nunca se queda con una pulsada: ni repite ni deja un modificador
+    /// puesto); una tecla soltada solo llega a quien recibió su pulsación.
+    entregadas: Vec<u32>,
+    entregadas_a: Option<(Cliente, u32)>,
     /// El cursor se ve desde el primer movimiento del ratón.
     pub con_cursor: bool,
     /// Eventos de entrada que salen de peticiones (el teclado a una ventana nueva): quien atiende los manda.
@@ -612,6 +620,9 @@ pub struct Escena<M: Memorias> {
     /// S10: la barra de la pantalla, por el nombre que le da `inicio` (lo pone quien atiende). Pide el panel rápido, y
     /// a ella van Super sola (el lanzador) y el título de la ventana con el teclado.
     pub barras: Vec<Cliente>,
+    /// S27, oleada 6: quien recibe también el estado de la red y del volumen (`estado`), además de las barras: la pantalla
+    /// de bloqueo (`guardian`), por el nombre que le da `inicio`. Solo lo recibe: no pide nada de las barras.
+    pub ven_estado: Vec<Cliente>,
     /// Super sola (S10): a qué suscritos del tema que son barra hay que mandar `lanzador`.
     pub avisos_lanzador: Vec<(Cliente, u32)>,
     /// El título por decir a cada barra (S10): barra, objeto y título. Quien atiende lo manda con `avisar_titulo`.
@@ -691,6 +702,8 @@ pub struct Escena<M: Memorias> {
     pub cx: commodities::Estado,
     /// S10: los menús de los programas y dónde van (`menus`).
     pub mn: menus::Estado,
+    /// S27: el dock (las ventanas abiertas, lo de los avisos en pantalla).
+    pub dk: dock::Estado,
 }
 
 /// U6: cada cuánto reciben sus avisos de `frame` las ventanas de una sesión de detrás (no se pintan, pero así no se
@@ -752,6 +765,10 @@ pub fn avisar_inactividad(con: &mut Conexion, objeto: u32, ocioso: bool) {
 /// Tras una tecla, cuánto tiempo no se lleva el teclado una ventana nueva de otro programa (S8): así un programa no
 /// abre una ventana justo cuando se escribe una contraseña para quedarse con lo que se teclea.
 pub const SIN_ROBAR_MS: u32 = 2_000;
+
+/// Teclas pulsadas a la vez que se siguen (tecla-pegada): seis por teclado de arranque y los ocho modificadores, con
+/// sitio para un segundo teclado. Las de más no llegan (llegaría su pulsación y no su soltar).
+pub const MAX_ENTREGADAS: usize = 32;
 
 /// El color de serie del tema: el violeta de referencia de Material 3.
 pub const TEMA_DE_SERIE: u32 = 0xff67_50a4;
@@ -852,6 +869,8 @@ impl<M: Memorias> Escena<M> {
             puntero: None,
             teclado: None,
             mods: 0,
+            entregadas: Vec::new(),
+            entregadas_a: None,
             con_cursor: false,
             pendientes: Vec::new(),
             medidas: (i32::MAX / 2, i32::MAX / 2),
@@ -865,6 +884,7 @@ impl<M: Memorias> Escena<M> {
             avisos_inactividad: Vec::new(),
             del_sistema: Vec::new(),
             barras: Vec::new(),
+            ven_estado: Vec::new(),
             avisos_lanzador: Vec::new(),
             avisos_titulo: Vec::new(),
             titulo_dicho: alloc::string::String::new(),
@@ -903,6 +923,7 @@ impl<M: Memorias> Escena<M> {
             pegados_negados: Vec::new(),
             cx: Default::default(),
             mn: Default::default(),
+            dk: Default::default(),
         }
     }
 
@@ -1234,9 +1255,10 @@ impl<M: Memorias> Escena<M> {
     /// Quien no se ve (de una sesión de detrás o de otro espacio) pierde el teclado y el puntero, y el teclado pasa a la
     /// ventana de arriba que se ve.
     fn salir_de_lo_que_no_se_ve(&mut self) {
-        if let Some((c, s)) = self.teclado.filter(|t| self.oculto(t.0) || self.fuera_raiz(*t)) {
-            self.pendientes.push((c, Entrada::TecladoSale { superficie: s }));
-            self.teclado = None;
+        if self.teclado.is_some_and(|t| self.oculto(t.0) || self.fuera_raiz(t)) {
+            let mut ev = Vec::new();
+            self.soltar_teclado(&mut ev);
+            self.pendientes.extend(ev);
             self.devolver_teclado();
         }
         if let Some((c, s)) = self.puntero.filter(|p| self.oculto(p.0) || self.fuera_raiz(*p)) {
@@ -1444,6 +1466,7 @@ impl<M: Memorias> Escena<M> {
         self.commodities_adios(cliente);
         // S10: sus menús, y si era la barra, los menús vuelven a las ventanas.
         self.menus_adios(cliente);
+        self.dock_adios(cliente);
         self.del_sistema.retain(|&c| c != cliente);
         self.temas.retain(|t| t.0 != cliente);
         self.avisos_tema.retain(|t| t.0 != cliente);
@@ -1452,6 +1475,7 @@ impl<M: Memorias> Escena<M> {
         self.abren_panel.retain(|&c| c != cliente);
         self.ponen_tema.retain(|&c| c != cliente);
         self.barras.retain(|&c| c != cliente);
+        self.ven_estado.retain(|&c| c != cliente);
         self.de_caja.retain(|&c| c != cliente);
         self.de_caja_amiga.retain(|&c| c != cliente);
         self.de_desarrollo.retain(|&c| c != cliente);
@@ -1563,7 +1587,6 @@ impl<M: Memorias> Escena<M> {
         let yo = self.clientes.get_mut(&cliente).unwrap();
         let e = yo.capas[&id].actual;
         let antes = rect_de(yo, sup);
-        self.danos.extend(antes);
         let medida = yo.superficies[&sup].bufer.and_then(|b| yo.shm.pixeles(b)).map(|(_, b)| (b.ancho as i32, b.alto as i32));
         let s = yo.superficies.get_mut(&sup).unwrap();
         match medida {
@@ -1582,7 +1605,14 @@ impl<M: Memorias> Escena<M> {
                     // Otro sitio (H5: el área cambió tras su primer configure): se dice otra vez dónde.
                     self.capas_colocadas.push((cliente, x, y));
                 }
-                self.danos.extend(rect_de(yo, sup));
+                // Rama `fondos`: solo si se movió o cambió de medida. Si no, lo que cambió de dentro ya lo dañó `aplicar`
+                // (un búfer nuevo, entero; el mismo, lo que diga el cliente): antes cada commit de una capa la repintaba
+                // entera, y un fondo animado (dos franjas de 1 Mpx) hacía componer toda la pantalla en cada cuadro.
+                let ahora = rect_de(yo, sup);
+                if antes != ahora {
+                    self.danos.extend(antes);
+                    self.danos.extend(ahora);
+                }
                 // Teclado exclusivo en las capas de arriba: se lo lleva mientras se vea (una pantalla de entrada).
                 if e.teclado == 1 && e.capa >= 2 && self.teclado != Some((cliente, sup)) && !self.oculto(cliente) {
                     let mut ev = Vec::new();
@@ -1592,9 +1622,13 @@ impl<M: Memorias> Escena<M> {
             }
             None => {
                 s.sitio = None;
+                self.danos.extend(antes);
                 self.capas.retain(|x| *x != (cliente, sup));
                 if self.teclado == Some((cliente, sup)) {
-                    self.teclado = None;
+                    // La capa se va de la pantalla pero sigue: se le dice que pierde el teclado (antes, nada).
+                    let mut ev = Vec::new();
+                    self.soltar_teclado(&mut ev);
+                    self.pendientes.extend(ev);
                     self.devolver_teclado();
                 }
             }
@@ -1621,9 +1655,9 @@ impl<M: Memorias> Escena<M> {
     fn bloquear(&mut self, cliente: Cliente, objeto: u32) {
         self.bloqueo = Some(Bloqueo { cliente, objeto, vivo: true, superficies: Vec::new() });
         self.arrastre = None;
-        if let Some((c, s)) = self.teclado.take() {
-            self.pendientes.push((c, Entrada::TecladoSale { superficie: s }));
-        }
+        let mut ev = Vec::new();
+        self.soltar_teclado(&mut ev);
+        self.pendientes.extend(ev);
         if let Some((c, s)) = self.puntero.take() {
             self.pendientes.push((c, Entrada::Sale { superficie: s }));
         }
@@ -2161,7 +2195,13 @@ impl<M: Memorias> Escena<M> {
             }
         }
         // Los avisos de frame: de lo que está en pantalla, se haya dañado o no (el cliente espera su turno).
-        for &(c, id, _, _) in &capas {
+        // Rama `fondos`: una capa de fondo que no se ve (tapada por ventanas opacas o maximizadas, con la pantalla
+        // apagada o bloqueada) no recibe el suyo hasta que se vea: un fondo animado se para solo y no gasta nada.
+        let retener: Vec<bool> = (0..capas.len()).map(|k| self.fondo_sin_ver(&capas, k)).collect();
+        for (k, &(c, id, _, _)) in capas.iter().enumerate() {
+            if retener[k] {
+                continue;
+            }
             if let Some(s) = self.clientes.get_mut(&c).and_then(|cli| cli.superficies.get_mut(&id)) {
                 for aviso in s.avisos.drain(..) {
                     avisar(c, aviso, ms);
@@ -2170,6 +2210,63 @@ impl<M: Memorias> Escena<M> {
         }
         danos
     }
+
+    /// Rama `fondos`: si la capa `k` de `capas` (de abajo arriba) es de fondo y no se ve nada de ella: la pantalla
+    /// apagada o bloqueada, o tapada por lo de encima que es opaco seguro (un búfer sin alfa, o una ventana maximizada,
+    /// que el kit pinta entera). Lo que queda a la vista, si es menos de 1024 píxeles (una esquina redondeada) y poco de
+    /// la capa, no cuenta.
+    fn fondo_sin_ver(&self, capas: &[(Cliente, u32, i32, i32)], k: usize) -> bool {
+        let (c, id, _, _) = capas[k];
+        let Some(cli) = self.clientes.get(&c) else { return false };
+        let de_fondo = cli.superficies.get(&id).and_then(|s| s.capa).and_then(|x| cli.capas.get(&x)).is_some_and(|x| x.actual.capa == 0);
+        if !de_fondo {
+            return false;
+        }
+        if self.cx.oscuro || self.bloqueo.is_some() {
+            return true;
+        }
+        let Some(r) = rect_de(cli, id) else { return false };
+        let mut quedan: Vec<Rect> = alloc::vec![r];
+        for &(c2, id2, _, _) in &capas[k + 1..] {
+            let Some(cli2) = self.clientes.get(&c2) else { continue };
+            let opaca = cli2.superficies.get(&id2).and_then(|s| s.bufer).and_then(|b| cli2.shm.pixeles(b)).is_some_and(|(_, b)| b.formato == crate::shm::XRGB8888);
+            let maximizada = cli2.superficies.get(&id2).and_then(|s| s.rol).and_then(|r| cli2.xdg.get(&r)).is_some_and(|x| x.antes_de_maximizar.is_some() && x.emergente.is_none());
+            let tapa = if maximizada { decoracion::ventana_de(cli2, id2) } else if opaca { rect_de(cli2, id2) } else { None };
+            let Some(t) = tapa else { continue };
+            quedan = quedan.into_iter().flat_map(|q| restar(q, t)).collect();
+            if quedan.is_empty() {
+                return true;
+            }
+            if quedan.len() > 256 {
+                return false;
+            }
+        }
+        let (visto, total) = (quedan.iter().map(|q| q.w as i64 * q.h as i64).sum::<i64>(), r.w as i64 * r.h as i64);
+        visto < 1024 && visto * 4 < total
+    }
+}
+
+/// Rama `fondos`: lo que queda de `a` quitándole `b` (hasta cuatro rectángulos).
+pub fn restar(a: Rect, b: Rect) -> Vec<Rect> {
+    let c = a.cruce(b);
+    if c.vacio() {
+        return alloc::vec![a];
+    }
+    let mut v = Vec::with_capacity(4);
+    // Arriba y abajo, a todo lo ancho; izquierda y derecha, en la franja del cruce.
+    if c.y > a.y {
+        v.push(Rect { x: a.x, y: a.y, w: a.w, h: c.y - a.y });
+    }
+    if c.y + c.h < a.y + a.h {
+        v.push(Rect { x: a.x, y: c.y + c.h, w: a.w, h: a.y + a.h - c.y - c.h });
+    }
+    if c.x > a.x {
+        v.push(Rect { x: a.x, y: c.y, w: c.x - a.x, h: c.h });
+    }
+    if c.x + c.w < a.x + a.w {
+        v.push(Rect { x: c.x + c.w, y: c.y, w: a.x + a.w - c.x - c.w, h: c.h });
+    }
+    v
 }
 
 /// La sombra de una ventana (Material 3, elevación baja): 4 abajo, difuminada en `SOMBRA_BORROSA`, con las esquinas de
@@ -2275,6 +2372,10 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
         if let Some(r) = self.commodities(con, interfaz.name, objeto, orden, args) {
             return r;
         }
+        // S27: el dock.
+        if let Some(r) = self.dock(interfaz.name, objeto, orden, args) {
+            return r;
+        }
         // S10: los menús de los programas.
         if let Some(r) = self.menus(interfaz.name, objeto, orden, args) {
             return r;
@@ -2344,10 +2445,12 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                     return Err(ErrorProtocolo::new(objeto, 0, "solo el panel rápido da el estado"));
                 }
                 let nuevo = (args[0].uint().min(2), args[1].uint().min(100), (args[2].uint() != 0) as u32);
+                // S27: el volumen, al dock (para su OSD), si cambió.
+                escena.dock_volumen(nuevo.1, nuevo.2 != 0);
                 if escena.estado_escritorio != Some(nuevo) {
                     escena.estado_escritorio = Some(nuevo);
-                    let barras = &escena.barras;
-                    let suyos: Vec<(Cliente, u32)> = escena.temas.iter().filter(|t| barras.contains(&t.0)).copied().collect();
+                    let (barras, ven) = (&escena.barras, &escena.ven_estado);
+                    let suyos: Vec<(Cliente, u32)> = escena.temas.iter().filter(|t| barras.contains(&t.0) || ven.contains(&t.0)).copied().collect();
                     escena.avisos_estado.extend(suyos);
                 }
             }
@@ -3002,6 +3105,9 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
         if core::ptr::eq(global.interfaz, &tablas::DASHOS_MENUS_V1) {
             self.menus_enlazado(con, id);
         }
+        if core::ptr::eq(global.interfaz, &tablas::DASHOS_DOCK_V1) {
+            self.dock_enlazado(con, id);
+        }
         if core::ptr::eq(global.interfaz, &tablas::DASHOS_TEMA_V1) {
             // El tema de ahora, en el acto; y se apunta para los cambios (con tope: de más, nada se apunta y se dice).
             avisar_tema(con, id, self.escena.tema, self.escena.esquema.as_ref());
@@ -3018,6 +3124,11 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                     if let Some(est) = self.escena.estado_escritorio {
                         avisar_estado(con, id, est);
                     }
+                } else if self.escena.ven_estado.contains(&self.cliente)
+                    && let Some(est) = self.escena.estado_escritorio
+                {
+                    // S27, oleada 6: a la pantalla de bloqueo, solo el estado.
+                    avisar_estado(con, id, est);
                 }
             }
         }
@@ -3396,14 +3507,52 @@ impl<M: Memorias> Escena<M> {
         if self.oculto(ventana.0) || self.fuera_raiz(ventana) {
             return;
         }
+        // G5 (arreglo de la oleada 6 de S27): con la sesión bloqueada, solo a una pantalla de bloqueo. Antes, una capa de
+        // arriba con el teclado exclusivo que se ponía después de bloquear se lo llevaba (no se veía, pero oía lo que se
+        // tecleaba en la contraseña).
+        if self.bloqueo.as_ref().is_some_and(|b| !(b.cliente == ventana.0 && b.superficies.contains(&ventana.1))) {
+            return;
+        }
         if self.teclado != Some(ventana) {
-            if let Some((c, s)) = self.teclado {
-                out.push((c, Entrada::TecladoSale { superficie: s }));
-            }
+            self.soltar_teclado(out);
             self.teclado = Some(ventana);
+            self.entregadas_a = Some(ventana);
             // H9: la selección del portapapeles, justo antes del teclado (como pide `wl_data_device`).
             self.ofrecer(ventana.0, out);
             out.push((ventana.0, Entrada::TecladoEntra { superficie: ventana.1 }));
+            // Los modificadores que ya están pulsados (Wayland los manda tras `enter`): sin ellos, Mayúsculas pulsada
+            // antes del clic no contaría en la ventana nueva. Las teclas pulsadas no se le dan (`enter` va sin ellas):
+            // su soltar tampoco le llegará.
+            if self.mods != 0 {
+                out.push((ventana.0, Entrada::Mods { pulsados: self.mods }));
+            }
+        }
+    }
+
+    /// Quita el teclado a quien lo tiene (tecla-pegada), como cualquier escritorio: antes de decirle que lo pierde, se
+    /// le sueltan las teclas que recibió pulsadas y los modificadores. Sin esto, la tecla que se tenía pulsada al
+    /// cambiar de ventana (o al salir otra encima, o al bloquear) se quedaba pulsada para ella: un cliente que repite
+    /// por su cuenta (los programas de Linux, con su `wl_keyboard`) la repetía sin fin, y en los de DashOS Mayúsculas o
+    /// Control seguían puestos (`kit::teclado` cuenta las Mayúsculas por sus pulsar y soltar).
+    pub fn soltar_teclado(&mut self, out: &mut Vec<(Cliente, Entrada)>) {
+        self.revisar_entregadas();
+        let Some((c, s)) = self.teclado.take() else { return };
+        for codigo in self.entregadas.drain(..) {
+            out.push((c, Entrada::Tecla { codigo, pulsada: false }));
+        }
+        self.entregadas_a = None;
+        if self.mods != 0 {
+            out.push((c, Entrada::Mods { pulsados: 0 }));
+        }
+        out.push((c, Entrada::TecladoSale { superficie: s }));
+    }
+
+    /// Las teclas entregadas son de quien tiene el teclado: si cambió sin pasar por `soltar_teclado` (su superficie o su
+    /// cliente ya no están, y no hay a quién soltárselas), se olvidan.
+    fn revisar_entregadas(&mut self) {
+        if self.entregadas_a != self.teclado {
+            self.entregadas.clear();
+            self.entregadas_a = self.teclado;
         }
     }
 
@@ -3613,10 +3762,18 @@ impl<M: Memorias> Escena<M> {
         if pulsada {
             self.ultima_tecla_ms = Some(self.reloj_ms);
         }
+        // tecla-pegada: si quien tiene el teclado recibió esta tecla pulsada, su soltar le llega pase lo que pase
+        // (aunque entre medias se haya pulsado Super o una commodity se haya puesto a tragar esa tecla).
+        self.revisar_entregadas();
+        let entregada = !pulsada && self.entregadas.contains(&codigo);
         // S10: los atajos de las commodities, Bloq Mayús (NoCapsLock) y la tecla que despierta la pantalla: no llegan a
         // la ventana.
-        if self.commodities_tecla(uso, codigo, pulsada) {
+        if self.commodities_tecla(uso, codigo, pulsada) && !entregada {
             return out;
+        }
+        // S27: Bloq Mayús, para el OSD del dock (sigue llegando a la ventana).
+        if pulsada && codigo == dock::KEY_BLOQ_MAYUS && self.bloqueo.is_none() {
+            self.dock_bloq_mayus();
         }
         let mascara = match uso {
             0xE1 | 0xE5 => 1,
@@ -3631,6 +3788,25 @@ impl<M: Memorias> Escena<M> {
             self.super_sola = mascara == 64 && self.mods & !64 == 0;
         } else if mascara == 64 && core::mem::take(&mut self.super_sola) && self.bloqueo.is_none() {
             self.pedir_lanzador();
+        }
+        // tecla-pegada: soltar una tecla no hace nada en el compositor (los atajos van al pulsar), y solo llega a quien
+        // recibió su pulsación. Si no la recibió (la tragó un atajo, o se pulsó con el teclado en otra ventana, que ya
+        // tuvo su soltar al perderlo), no le llega: una tecla que nunca vio pulsada no le dice nada. Los modificadores,
+        // siempre: quien tiene el teclado sabe en cada momento cuáles hay pulsados.
+        if !pulsada {
+            if mascara != 0 {
+                self.mods &= !mascara;
+            }
+            if let Some((c, _)) = self.teclado {
+                if entregada {
+                    self.entregadas.retain(|&e| e != codigo);
+                    out.push((c, Entrada::Tecla { codigo, pulsada: false }));
+                }
+                if mascara != 0 {
+                    out.push((c, Entrada::Mods { pulsados: self.mods }));
+                }
+            }
+            return out;
         }
         // S27: las teclas del volumen van al panel rápido (si lo hay; si no, a la ventana, como antes), y Super con un
         // número cambia de espacio de trabajo (con Mayúsculas, lleva allí la ventana con el teclado). Ninguna de estas
@@ -3647,6 +3823,8 @@ impl<M: Memorias> Escena<M> {
             {
                 if pulsada {
                     self.pedir_volumen(paso);
+                    // S27: y al dock, que enseña el OSD.
+                    self.dock_tecla_volumen();
                 }
                 return out;
             }
@@ -3662,7 +3840,7 @@ impl<M: Memorias> Escena<M> {
         let Some((c, _)) = self.teclado else {
             // Sin ventana con el teclado los modificadores se siguen llevando, y Super+L (U3) bloquea igual.
             if mascara != 0 {
-                if pulsada { self.mods |= mascara } else { self.mods &= !mascara }
+                self.mods |= mascara;
             }
             if pulsada && codigo == KEY_L && self.mods & 64 != 0 && self.bloqueo.is_none() {
                 self.bloquear_ya();
@@ -3705,13 +3883,17 @@ impl<M: Memorias> Escena<M> {
             }
             return out;
         }
-        out.push((c, Entrada::Tecla { codigo, pulsada }));
         if mascara != 0 {
-            if pulsada {
-                self.mods |= mascara;
-            } else {
-                self.mods &= !mascara;
-            }
+            self.mods |= mascara;
+        }
+        // tecla-pegada: la que ya tiene pulsada (la misma tecla en otro teclado) no le llega otra vez, y sin sitio para
+        // seguirla no le llega (su soltar no podría llegarle: se quedaría pulsada).
+        if self.entregadas.contains(&codigo) || self.entregadas.len() >= MAX_ENTREGADAS {
+            return out;
+        }
+        self.entregadas.push(codigo);
+        out.push((c, Entrada::Tecla { codigo, pulsada: true }));
+        if mascara != 0 {
             out.push((c, Entrada::Mods { pulsados: self.mods }));
         }
         out

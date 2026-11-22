@@ -48,7 +48,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [archivos] comprobado al arrancar: 1 problemas; reparado, quedan 0
 # A7: la memoria de la caché de páginas, creada al arrancar (24 MB).
 ~│   [archivos] caché de páginas: 48 trozos de 512 KB creados
-~│   [ficheros] raíz (21 entradas, fin bien): C/ Classes/ DeCarla/ Devs/ Estado/ Fonts/ Imagenes/ L/ LEEME.txt Libs/ Locale/ Prefs/ Programas/ Rexx/ S/ Storage/ System/ Tools/ Utilities/ WBStartup/ Work/
+# S8 (rama paq): con `Paquetes/`, el cajón de lo instalado con Paq para todos. Rama `fondos`: y `Fondos/` (SYS:Fondos).
+~│   [ficheros] raíz (23 entradas, fin bien): C/ Classes/ DeCarla/ Devs/ Estado/ Fondos/ Fonts/ Imagenes/ L/ LEEME.txt Libs/ Locale/ Paquetes/ Prefs/ Programas/ Rexx/ S/ Storage/ System/ Tools/ Utilities/ WBStartup/ Work/
 ~│   [ficheros] LEEME.txt (19 bytes): "DashOS lee RedoxFS"
 # A3 (docs/REVISION_LOOP.md): buscar, leer y cerrar en un viaje.
 ~│   [ficheros] A3 leer por nombre: bien
@@ -72,6 +73,9 @@ DashOS en marcha con 4 núcleos.
 ~│   [ficheros] A15 sujetar sin soltar: bien
 ~│   [ficheros] FS9 instantáneas: bien
 ~│   [ficheros] FS10 volúmenes: bien
+# Rama `archivos-memoria`: lo que agota la memoria del servicio (un Argon2 que no cabe, con 100 ficheros abiertos sin
+# guardar) da SIN_MEMORIA y el servicio sigue; el de 64 MiB de S6b cabe y su memoria vuelve; el disco queda limpio.
+~│   [ficheros] memoria: bien
 # S20, fase 1: un ADF (FFS internacional, kernel/pruebas/disquete.adf.gz) montado como volumen de solo lectura por el
 # servicio imagen, que lo lee por el de archivos.
 ~│   [imagen] Disquete montado: FFS internacional, 1760 bloques
@@ -145,14 +149,30 @@ DashOS en marcha con 4 núcleos.
 ~│   [sonido] tono-a ya no está: su flujo sale con fundido
 ~│   [sonido] tono-a: flujo cerrado
 ~│   [sonido] tono-b: flujo cerrado
+# Rama sonido-pro (S19b, E1): el motor es un grafo (flujos, mezcla de la salida, efectos y salida); la ventana "Sonido"
+# (el mezclador) y el panel miran su estado.
+~│   [sonido] el grafo: flujos -> mezcla -> eq -> espacial -> limitador -> Altavoces, en cuantos de 256
+~│   [sonido] mezclador mira el estado
+~│   [sonido] panel mira el estado
+~│   [sonido] latencia de la salida: media 
 # R1 (docs/REVISION_LOOP.md): un cliente hostil manda mensajes vacíos y cientos de mensajes con 8 llaves a archivos, al
 # sonido y al compositor; cada uno tiene que seguir contestando a una petición normal.
 ~│   [hostil] A14 hora: bien
-~│   [hostil] montón: lo grande va aparte y vuelve al kernel al soltarlo: bien
+~│   [hostil] montón: lo grande va aparte y vuelve al kernel al soltarlo, lo que no cabe da error y el colchón aguanta: bien
 ~│   [hostil] archivos sigue: sí
 # R6: el hostil es otro usuario (1001), encerrado en C/: no sale, no entra en C/Privado, no escribe lo ajeno.
 ~│   [hostil] archivos, permisos: bien
 ~│   [hostil] A7 préstamos: bien
+# Rama sonido-pro: lo del mezclador no lo toca cualquiera (el volumen de otro, efectos absurdos, ver el estado, mandar a
+# otro programa, sonidos del sistema), lo que suena con basura no entra y mil flujos paran en el tope de un programa.
+~│   [sonido] hostil quiere tocar el mezclador: no le toca
+~│   [sonido] hostil quiere ver el estado: no le toca
+~│   [sonido] hostil quiere mandar a otro programa: no le toca
+~│   [sonido] hostil pide un sonido del sistema: no le toca
+~│   [sonido] hostil pide abrir la ventana del sonido: no le toca
+~│   [sonido] hostil: lo que suena no vale
+~│   [sonido] hostil: tope de 8 flujos; no se abren más
+~flujos pedidos, el servicio sigue: sí
 ~│   [hostil] sonido sigue: sí
 # S10c: el tema del sistema no lo cambia cualquiera.
 ~│   [hostil] compositor: poner el tema sin ser el centro da error: sí; el tema sigue: sí
@@ -174,6 +194,8 @@ DashOS en marcha con 4 núcleos.
 # del canal) pasa.
 ~│   [hostil] compositor: menús: ser la barra sin serlo da error: sí; poner su sitio sin ser el centro, también: sí; un menú mal formado, también: sí; uno de más de 16 KB, también: sí; elegir sin objeto de barra, también: sí; uno que vale casi del tope, no: sí
 ~│   [hostil] sesiones: quién está delante, sin ser el panel ni la barra: -2 y nada
+# S27, oleada 6: ni los avisos de la pantalla de bloqueo, sin ser `guardian`.
+~│   [hostil] sesiones: los avisos de la pantalla de bloqueo, sin ser guardian: -2 y nada
 # Apagar y reiniciar (decisión del usuario del 2026-11-13): solo `sesiones` tiene el permiso del kernel (llamada 51),
 # que le manda `inicio`, y solo el panel se lo puede pedir.
 ~│   [sesiones] tiene el permiso de apagar
@@ -198,12 +220,17 @@ DashOS en marcha con 4 núcleos.
 # S10c: el centro de control rechaza lo que no sea abrir una categoría, también tras una inundación.
 ~│   [hostil] centro: pedidos malos rechazados sin abrir nada, y sigue contestando tras la inundación: bien
 # C2: los mosaicos del panel rápido solo los lee y los guarda el panel: al hostil, -1 a todo.
-~│   [hostil] centro: los mosaicos del panel sin ser el panel: -1 y nada
+~│   [hostil] centro: el centro de control del panel y los ajustes de los avisos sin ser el panel ni la barra: -1 y nada
+~│   [hostil] centro: suscribirse a las barras sin ser la barra: -1
 # U2: sesiones, primera parte. Un programa del usuario 1001 no mata a uno del 1000, y sí a uno suyo.
 ~│   [sesiones] en marcha, con el servicio de archivos
+# S8 (rama paq): el servicio paq, al arrancar, quita el cerrojo que quedó de antes (el disco de pruebas lo trae).
+~│   [paq] el cerrojo de antes de arrancar (tanda de antes de apagar; arranque 0; desde 0) se quita
 # S6, S36: el registro común, con su cliente propio de archivos (cajón suyo, 0700).
 ~│   [sesiones] registro común en Estado:Registros/: seguridad, sistema y programas
 ~│   [sesiones] permisos concedidos (sistema): 0 leídos de su Prefs/Permisos
+# Y barre lo que dejó a medias una transacción cortada (el disco trae un cajón a medio desempaquetar).
+~│   [paq] Paquetes: en orden: generación 0, 0 paquetes; de una transacción cortada, 1 restos borrados y 0 cajones movidos
 # U3: entrar abre el volumen cifrado del usuario y salir lo cierra; solo puede pedirlo `guardian` (aquí, `entrada`).
 ~│   [entrada] Carla: contraseña mala -12, buena 0, volver con mala -12 y con buena 0, salir 0: bien
 ~│   [sesiones] hostil pide entrar como Carla: -12
@@ -234,12 +261,15 @@ DashOS en marcha con 4 núcleos.
 ~│   [guardian] centro pide comprobar: contesta como Ana
 # S10c: la pantalla de bloqueo y la de entrada siguen el tema del sistema (el del centro: oscuro, del fondo, C3).
 ~│   [guardian] tema del sistema: oscuro, color c44e68
-# C2: los mosaicos guardados del panel están rotos en el disco (uno repetido y otro que no existe): el centro y el
-# panel se quedan los de serie.
-~│   [centro] panel guardado: un mosaico repetido; se queda el de serie
-~│   [panel] mosaicos: oscuro bloquear volumen (el centro: 2)
-# C2: el panel rápido. Super+A lo abre; un clic en el mosaico apaga el modo oscuro y otro lo enciende (lo pone y lo
-# guarda el centro, que solo se lo acepta al panel); Super+A lo cierra.
+# S27, oleada 3: el centro de control de fábrica está roto en el disco (un mosaico repetido y otro que no existe): el
+# centro se queda el de serie (el del escritorio de shiva) y se lo da al panel por la puerta que este le dio.
+~│   [panel] pide el centro de control al centro: 0
+~│   [centro] Escritorio/centro-control: no se entiende (Repetido); se queda el de serie
+~│   [centro] el panel vigila el centro de control: 14 mosaicos; se lo da: 0
+# C2: el panel rápido. Super+A lo abre (la rejilla de DMS: 600 de ancho, 496 de alto); un clic en el mosaico del modo
+# oscuro lo apaga y otro lo enciende (lo pone y lo guarda el centro, que solo se lo acepta al panel); Super+A lo cierra.
+~│   [panel] se ven: usuario ajustes bloquear apagar volumen brillo red bluetooth salida entrada noche oscuro editar programas; editar a
+~8 columnas, 496 de alto
 ~│   [panel] abierto; mosaico a
 ~│   [centro] modo claro (lo pide el panel), guardado: 0
 ~│   [centro] modo oscuro (lo pide el panel), guardado: 0
@@ -248,19 +278,25 @@ DashOS en marcha con 4 núcleos.
 ~│   [sesiones] centro guarda ENV:Escritorio/apariencia en ENVARC: de Ana: 
 ~│   [sonido] volumen general: 90 % (lo pide panel)
 ~│   [sonido] volumen general: 100 % (lo pide panel)
-# C2, el modo de edición del panel: quitar Bloquear y Hecho (lo guarda el centro, que lo relee; el panel ya no lo
-# enseña); otra vez Editar, ponerlo (va al final), subirlo y Hecho: como estaba. El disco acaba con los de serie.
+# C2 y S27: el modo de edición del panel (como el de DMS): quitar Bloquear y Terminar (el centro lo guarda en ENV: y,
+# por `sesiones`, en el ENVARC: de Ana; el panel ya no lo enseña); otra vez Editar, Añadir, Bloquear (va al final),
+# moverlo uno antes y Terminar.
 ~│   [panel] quita bloquear
-~│   [centro] panel: oscuro volumen (lo pide el panel), guardado: 0; releído: sí
-~│   [panel] se ven: oscuro volumen;
+~│   [centro] centro de control (lo pide el panel): 13 mosaicos; en uso:
+~│   [sesiones] centro guarda ENV:Escritorio/centro-control en ENVARC: de Ana: 
+~│   [panel] se ven: usuario ajustes apagar volumen
 ~│   [panel] pone bloquear
 ~│   [panel] sube bloquear
-~│   [centro] panel: oscuro bloquear volumen (lo pide el panel), guardado: 0; releído: sí
+~│   [centro] centro de control (lo pide el panel): 14 mosaicos; en uso:
 ~│   [sonido] hostil pide el volumen general: no le toca
 ~│   [panel] cerrado
 # S10: la barra de la pantalla, arriba a todo lo ancho con su zona exclusiva (las ventanas, debajo). La hora se mueve
 # (la prueba dura más de un minuto).
 ~│   [barra] en pantalla: 800x40, zona exclusiva 40
+# La barra de DMS (docs/bitacoras/dms-barra.md): se suscribe al centro, que le da ENV:Escritorio/barra (sin fichero, lo
+# de serie: una barra arriba en todos los monitores).
+~│   [centro] la barra se suscribe a las barras: sí
+~│   [barra] barras: 1 configuradas; en pantalla: principal@DASHOS-1
 ~│   [barra] la hora se mueve: 
 # En medio, el título de la ventana con el teclado (el compositor solo se lo dice a la barra); con la sesión bloqueada,
 # ninguno.
@@ -278,17 +314,33 @@ DashOS en marcha con 4 núcleos.
 ~│   [compositor] espacios: se ve el 2
 ~│   [barra] espacios: se ve el 2 de 3; el 1 en
 ~│   [barra] pide el espacio 1
-~│   [panel] OSD abierto: volumen
-~│   [panel] OSD cerrado: 7 pulsaciones; volumen
+~│   [dock] OSD volumen: 
+~│   [dock] OSD cerrado: juntó 7
+# S27: el dock (como el de DMS): escondido abajo, sale al pasar el ratón por el borde; trae una ventana, abre su menú,
+# fija el programa (en ENV:Escritorio/dock, guardado) y se esconde al salir el ratón. Bloq Mayús saca su OSD.
+~│   [dock] ajustes: abajo, iconos de 40, se esconde solo, 0 fijados; OSD arriba-centro
+~│   [dock] se ve: lanzador en (
+~│   [dock] trae la ventana 
+~│   [compositor] dock: activa la ventana 
+~│   [dock] menú de 
+~│   [dock] fija 
+~│   [dock] se esconde
+~│   [dock] OSD mayusculas: Bloq Mayús
+# Hostil: el dock solo escribe y guarda su fichero (`Escritorio/dock`); lo ajeno y los nombres que salen del cajón se
+# niegan (-2 o -3) y quedan en el registro común (lo mira la comprobación del disco).
+~│   [dock] hostil: escribir y guardar lo ajeno: Escritorio/menus -2/-2, Sys/locale -2/-2, Prefs/Red/hora -2/-2, ../Escritorio/dock -3/-3, Escritorio/../menus -3/-3, /Escritorio/dock -3/-3, Escritorio/dock/../../Sys/locale -3/-3: bien
+~│   [sesiones] dock pide escribir ENV:"Escritorio/menus": -2
+~│   [sesiones] dock escribe ENV:Escritorio/dock: 
 # S10: el Workbench de Ana. Sus raíces: el disco solo para leer (SYS:) y `C` (Home, provisional). No lista el cajón
 # de `sesiones` ni el de Carla, no abre sus ficheros, no crea por SYS: ni sube por encima de Home; y los nombres con
 # '|' o ':' no salen.
 ~│   [workbench] raíces: SYS: solo para leer 0, Home: 0, Work: 0; RAM: la pone sesiones al entrar
 ~│   [workbench] lo ajeno: listar el cajón de sesiones -12, abrir su registro -12; listar DeCarla -12, abrir su fichero -12; crear por SYS: -12; ".." desde Home: no se abre: bien
 ~│   [workbench] nombres raros: 1 sin enseñar en Home:, 1 en SYS:Imagenes; "..", "a/b", "x:y" no se buscan: bien
-# Sus iconos, en una capa de abajo (una columna a la derecha, bajo la barra); el de Home, con la sesión de Ana abierta.
-~│   [compositor] capa de workbench en (696, 40)
-~│   [workbench] en pantalla: 104x560, icono de SYS en (
+# Sus discos, en una capa de abajo (rama dock-discos: un panel flotante de 248 de ancho, arriba a la derecha, a 12 de
+# los bordes y bajo la barra; antes, una columna de iconos de 104 de alto entero); Home y RAM, con la sesión de Ana.
+~│   [compositor] capa de workbench en (540, 52)
+~│   [workbench] en pantalla: 248x
 ~│   [workbench] icono de Home en (
 ~│   [workbench] icono de RAM en (
 ~│   [workbench] icono de Work en (
@@ -337,6 +389,15 @@ DashOS en marcha con 4 núcleos.
 # no vale (sube con "..") y otro que sí; se mueve por su barra y se arrastra datos.bin de ella a la primera (Privado).
 ~│   [explorador] miniatura de Home:Fondos/
 ~│   [explorador] ventana 1: pestaña nueva (2 pestañas)
+# Plan de iconos, parte 3: en la pestaña nueva, Amiga:Iconos con un .info de cada formato (y uno roto, que se queda
+# con el icono de siempre); en Amiga:, el cajón Iconos con el suyo, y el volumen con su Disk.info.
+~│   [explorador] icono del volumen Amiga: 36x20
+~│   [explorador] icono de Amiga:Iconos/Brillo.info: 48x48 (GlowIcons, con seleccionado)
+~│   [explorador] icono de Amiga:Iconos/Cristal.info: 48x48 (ARGB de OS4, con seleccionado)
+~│   [explorador] icono de Amiga:Iconos/Estrella.info: 52x52 (PNG de OS4, con seleccionado)
+~│   [explorador] icono de Amiga:Iconos/Programa.info: 40x40 (NewIcons, con seleccionado)
+~│   [explorador] icono de Amiga:Iconos/Roto.info: no se lee (Corto), el de siempre
+~│   [explorador] icono de Amiga:Iconos.info: 44x22 (clásico, con seleccionado)
 ~│   [explorador] ventana 2: camino escrito "Home/../DeCarla": no vale
 ~│   [explorador] ventana 2: camino escrito "Home:Viaje": va a Home:Viaje
 ~│   [explorador] suelta en la ventana 1: mueve a Home:Privado
@@ -354,27 +415,45 @@ DashOS en marcha con 4 núcleos.
 # inundar topa con su ritmo. El servicio sigue.
 ~│   [avisador] un aviso: 0 (sale como avisador): bien
 ~│   [avisador] hacerse pasar por guardian o Sistema: sale como avisador: bien
+# S27, oleada 6: ni el resumen de la pantalla de bloqueo con su marca (solo lo pide `sesiones`, sin marca).
+~│   [avisador] el resumen de la pantalla de bloqueo sin ser sesiones: no lo da, bien
 ~│   [avisador] mal hechos rechazados 6 de 6, bytes raros guardados limpios, y sigue: bien
 ~│   [avisos] avisador: demasiados avisos seguidos; los siguientes no se guardan
 ~│   [avisador] inundar: 100 mandados,
 ~demasiados: bien
+# S27, oleada 3: avisos con acciones. Uno bueno y su sustituto (el suyo, sí); acciones falsas a mano, un mensaje de 300
+# bytes, y lo que solo pueden la barra, el panel o el centro (pulsar acciones, descartar, "no molestar", los ajustes).
+~│   [avisador] aviso con acciones: 0 (número
+~sustituir el suyo: bien
+~│   [avisador] acciones falsas rechazadas 9 de 9; 300 bytes no llegan: sí; lo de la barra, el panel y el centro: 12 de 12 negadas: bien
 # U6: el `cambio` de Ana avisa con su sesión detrás: se guarda sin salir a Carla, y vuelve con ella.
 ~│   [cambio] Ana, detrás: avisa 0
 ~│   [avisos] cambio avisa con su sesión detrás (usuario
 ~│   [avisos] vuelve delante el usuario
-# Un programa del disco, lanzado desde la barra como Ana, con permiso fijo para avisar: sale el toast, con punto en la
-# campana, y un clic lo cierra. La campana abre el historial (lo de avisa, lo de cambio guardado y lo del avisador, que
-# no tapa a los demás); "Borrar todo" lo vacía y la campana lo cierra.
+# Un programa del disco, lanzado desde la barra como Ana, con permiso fijo para avisar, con acciones: sale el emergente
+# (arriba en el centro), con punto en la campana, y su botón "Deshacer" le llega a `avisa`, que antes no pudo sustituir
+# el aviso de otro. La campana abre el centro de avisos (los actuales, agrupados); en Historial, "Borrar todo" lo vacía
+# y la campana lo cierra.
 ~│   [sesiones] barra lanza Programas/avisa: 0
 ~│   [avisa] avisa: 0 (número
-~sale como avisa)
+~sale como avisa, 3 acciones)
+~(de otro): no se deja: bien
 ~│   [barra] aviso de avisa: "Copia terminada" (urgencia 1); campana con punto
-~│   [barra] aviso cerrado: con un clic
-~sin leer; de avisa, cambio, avisador; Borrar todo en
-# La rueda del ratón (USB, por el compositor como `wl_pointer.axis`) mueve la lista del historial.
-~│   [barra] historial: la rueda lo lleva a la fila 3 de
-~│   [barra] borrar todo: 0, quedan 0
-~│   [barra] historial cerrado
+~de avisa: "Copia terminada", arriba-centro, 5000 ms; en su capa: tarjeta
+~│   [avisos] acción "deshacer" del aviso
+~a avisa: dada
+~│   [avisa] acción pulsada: deshacer (aviso
+~cerrado: con una acción
+~│   [barra] centro de avisos abierto:
+~│   [barra] centro de avisos: pestaña Historial
+~│   [barra] centro de avisos: Borrar todo (historial): 0
+~│   [barra] centro de avisos cerrado
+# S27, oleada 3: el reloj de la barra abre el Dash (el calendario del mes, con la zona horaria del sistema); el mes
+# siguiente, y Esc lo cierra.
+~│   [barra] Dash abierto: hoy 
+~│   [barra] Dash: tarjeta de 768 × 
+~│   [barra] Dash: el calendario va al 
+~│   [barra] Dash cerrado
 ~│   [centro] Comprobar el disco: 0, 0 problemas
 # Pantallas: lo que dice el compositor de la de virt (ramfb, 800x600).
 ~│   [centro] Pantallas: Pantalla DASHOS-1: 800 × 600; Frecuencia: 60,000 Hz; Escala: 1
@@ -488,10 +567,11 @@ DashOS en marcha con 4 núcleos.
 ~│   [ram] Carla: su RAM: tiene 2 entradas (T y Env); el secreto de Ana: -2 en la suya, 0 caminos llegan a él; pedir el volumen [-12, -12, -12]; órdenes de sesiones [-1, -1, -1, -1]: bien
 # Ana se fue con 64 vigilancias puestas: el servicio las soltó al acabar ella.
 ~ en el servicio con la de Carla: bien
-# Ajustes en texto, hostil: Carla no escribe la zona (de la máquina) ni la capa de fábrica de `ENVARC:`.
-~│   [ram] Carla: guardar ENV: en ENVARC: por sesiones [-2, -2]; la orden de archivos con su llave -1
+# Ajustes en texto, hostil: Carla no escribe la zona (de la máquina) ni la capa de fábrica de `ENVARC:`. Desde
+# dms-dock, `sesiones` mira el nombre antes que quién lo pide: el que sale del cajón ("../../Prefs/Red/hora") es -3.
+~│   [ram] Carla: guardar ENV: en ENVARC: por sesiones [-2, -3]; la orden de archivos con su llave -1
 ~│   [sesiones] ram pide guardar ENV:"Sys/locale" en ENVARC:: -2
-~│   [sesiones] ram pide guardar ENV:"../../Prefs/Red/hora" en ENVARC:: -2
+~│   [sesiones] ram pide guardar ENV:"../../Prefs/Red/hora" en ENVARC:: -3
 ~│   [ram] Carla: escribir la zona de la máquina -12 y en ENVARC: de fábrica -12: bien
 ~(ENV: sigue como al entrar: true): bien
 ~│   [guardian] cambio de usuario: entra Ana (0 intentos malos); Carla sigue detrás
@@ -659,6 +739,14 @@ DashOS en marcha con 4 núcleos.
 ~│   [barra] tema del sistema: oscuro, color c44e68
 ~│   [shell] idioma: español (en RAM:Env/Sys/locale)
 ~│   [centro] idioma en marcha: español (España), de ENV:Sys/locale
+# S27, oleada 3: los avisos y el centro de control con la orden `Ajuste`: el centro los aplica en marcha (los avisos, a
+# la barra; el centro de control, al panel), y vuelven al quitar el fichero.
+~│   [centro] avisos en marcha: emergentes abajo-derecha
+~│   [barra] avisos: ajustes del centro (emergentes abajo-derecha
+~│   [centro] centro de control en marcha: 4 mosaicos en 8 columnas; al panel: 0
+~│   [panel] centro de control del centro: usuario volumen red editar; 8 columnas
+~│   [centro] avisos en marcha: emergentes arriba-centro
+~│   [centro] centro de control en marcha: 14 mosaicos en 8 columnas; al panel: 0
 # S10, los menús de los programas (docs/bitacoras/menus.md): Ajuste menus, que el centro aplica en marcha y el
 # compositor dice a todos. Lo hostil: un sitio que no existe; y cien cambios seguidos a mano, del que queda el último.
 ~│   [shell] Ajuste: menus: "arriba" no vale: dentro, barra. No se ha cambiado nada
@@ -669,6 +757,13 @@ DashOS en marcha con 4 núcleos.
 ~│   [centro] menús en marcha: dentro de las ventanas, de ENV:Escritorio/menus; en el compositor: sí
 ~│   [barra] menús: dentro de las ventanas
 ~│   [shell] menus: dentro (ENV:Escritorio/menus sitio)
+# La barra de DMS (docs/bitacoras/dms-barra.md): un cambio en ENV:Escritorio/barra se ve en marcha (el centro se lo da a
+# la barra, que no ve ENV:); el importador no cambia nada con un fichero que no es de DMS; sin el fichero, la de serie.
+~│   [shell] Escritorio/barra.principal-centro: reloj(orden=fecha) (en RAM:Env/Escritorio/barra)
+~│   [barra] configuración: principal arriba [lanzador, espacios, ventana, menus | reloj(orden=fecha) | bandeja, portapapeles, cpu, memoria, avisos, bateria, estado]
+~│   [shell] Ajuste: SYS:C/frio.bin: no es JSON
+~│   [shell] Ajuste: LOCALE:Countries/españa.country: no es JSON
+~│   [barra] configuración: principal arriba [lanzador, espacios, ventana, menus | musica, reloj, tiempo | bandeja, portapapeles, cpu, memoria, avisos, bateria, estado]
 # S6, S36: el registro común. Lo que apunta un guion sale con el programa que lo lanza (el Shell), y la hora y el
 # usuario que pone `sesiones`. Lo de antes de rotar (programas.1, de "ayer") se sigue leyendo; lo del hostil, que es de
 # Carla, Ana no lo ve.
@@ -689,8 +784,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [guardian] Shell pide registro: contesta como Ana
 ~ hostil (Carla) permiso: no se da "eco"
 # Ajustes en texto: lo negado a `ram` en GUARDAR_ENV, en el registro común (seguridad, clase "ajustes").
-~ ram (Carla) ajustes: no guarda ENV:Sys/locale en ENVARC: (estado -2): solo lo pide el centro de control
-~ ram (Carla) ajustes: no guarda ENV:../../Prefs/Red/hora en ENVARC: (estado -2): solo lo pide el centro de control
+~ ram (Carla) ajustes: no guarda ENV:Sys/locale en ENVARC: (estado -2): no es un ajuste suyo
+~ ram (Carla) ajustes: no guarda ENV:../../Prefs/Red/hora en ENVARC: (estado -3): el nombre sale del cajón de los ajustes o no vale
 # En vivo: lo que llega mientras mira.
 ~ Shell (Ana) programa: una línea en vivo
 # S6b, S36: los permisos, en Home:Prefs/Permisos/concedidos. Ver lo propio es libre; dar y quitar lo confirma el usuario
@@ -738,6 +833,8 @@ DashOS en marcha con 4 núcleos.
 # de una cuenta, ni hacerlo ni quitarlo sin el derecho de administrar.
 ~│   [tanda] cuentas: repetidas, números usados o malos, reservadas, la propia, la última administradora: no se preguntan: bien
 ~│   [tanda] hacer un volumen o quitar el de Carla sin administrar: -12 y -12: bien
+~│   [tanda] cuentas-2: recuperar -2, crear la primera -2, la lista -2, la contraseña de Carla -2, contestar por guardian -2147483648: bien
+~│   [tanda] cuentas-2: cambiar la contraseña del volumen de Carla sin administrar: -12 y -12: bien
 ~│   [tanda] prueba hostil acabada: bien
 # S6b, S36: `Abrir` abre encerrado, como con doble clic. Sin modo de desarrollo, la aplicación no carga de Home:Libs; con
 # él (`Permiso DAR espera desarrollo`, confirmado en `guardian`), sí, y el compositor marca sus ventanas; quitado, otra
@@ -791,10 +888,85 @@ DashOS en marcha con 4 núcleos.
 ~│   [shell] Usuario: no se hace nada: no se confirmó con la contraseña de un administrador
 ~│   [shell] Usuario: se paró en la 1: la contraseña de la cuenta nueva es corta: 8 letras o más
 ~│   [shell] Berta             1002  Berta Gil                -
+# Rama cuentas-2: cambiar la propia contraseña desde el Shell (`Usuario CLAVE`), en la ventana de `guardian`: la de
+# ahora mal y luego bien; de vuelta a la de siempre; dos nuevas distintas (no se cambia); la de otra cuenta, sin ventana.
+~│   [guardian] cambio de contraseña de Ana: La contraseña de ahora no es esa.
+~│   [sesiones] Ana cambia su contraseña (lo pidió Shell)
+~│   [guardian] cambio de contraseña de Ana: cambiada
+~│   [guardian] cambio de contraseña: las dos nuevas no son iguales
+~│   [guardian] cambio de contraseña de Ana: el usuario dice que no
+~│   [shell] Contraseña cambiada. Lo que hay en tu Home: sigue igual; la de antes ya no vale.
+~│   [shell] Usuario: no se cambió (se dijo que no, o tu sesión no está delante)
+~│   [shell] Usuario: solo se cambia la propia: la de otra cuenta, con su código de recuperación
+# S8 (rama paq): Paq. Lo de todos, por una tanda: guardian enseña el plan entero y pide la contraseña una vez; el
+# servicio paq hace solo esas líneas, juntas, en una generación. El repositorio mal firmado no se usa.
+~│   [shell] prueba  SYS:Work/Repos/prueba  prioridad 20: índice bien firmado, serie 1, 10 paquetes
+~│   [shell] firmamal  SYS:Work/Repos/firmamal  prioridad 10: su índice no se usa
+~  index para prueba (prueba): La clave de pruebas de DashOS para el repositorio prueba
+~│   [shell] saludo 1.0 (prueba): saludo 1.0, de las pruebas de Paq
+~│   [guardian] tanda en pantalla: Shell pide 2 (administrador propuesto: Ana): 1. Instalar para todos letras 1.0 (de prueba; lo necesita otro) | 2. Instalar para todos saludo 1.0 (de prueba)
+~│   [sesiones] tanda de Shell: 1 a 2 de 2, se espera al servicio de paquetes
+~│   [paq] el repositorio firmamal no se usa: su índice está firmado con una clave que no es de confianza
+~│   [paq] tanda de Shell (usuario 1000): hecha, generación 1
+~│   [sesiones] asignaciones de los paquetes de todos: 1 (y 0 que no valen)
+~│   [sesiones] tanda de Shell: 2 de 2 hechas; estado 0
+~│   [shell] Hecho: generación 1 de Paquetes:.
+~│   [shell] Saludo 1.0, instalado con Paq
+~│   [shell]   Instalado para todos: 1.0 (de prueba), en el cajón Saludo
+~│   [shell]   Asignaciones: SALUDO: Saludo
+~│   [shell]     Saludo/LEEME (11 bytes)
+# Actualizar (el repositorio publica la serie 2, con saludo 1.1), volver a la de antes (del almacén, sin bajar nada) y
+# quitar (se lleva letras, que ya no necesita nadie). Lo que se ve es lo de cada generación.
+~│   [guardian] tanda en pantalla: Shell pide 1 (administrador propuesto: Ana): 1. Actualizar para todos saludo de 1.0 a 1.1 (de prueba)
+~│   [shell] Hecho: generación 2 de Paquetes:.
+~│   [shell] Saludo 1.1, instalado con Paq
+~│   [guardian] tanda en pantalla: Shell pide 1 (administrador propuesto: Ana): 1. Volver para todos saludo de 1.1 a 1.0
+~│   [shell] Hecho: generación 3 de Paquetes:.
+~│   [shell] Saludo 1.0, instalado con Paq
+~│   [guardian] tanda en pantalla: Shell pide 2 (administrador propuesto: Ana): 1. Quitar para todos letras 1.0 | 2. Quitar para todos saludo 1.0
+~│   [sesiones] asignaciones de los paquetes de todos: 0 (y 0 que no valen)
+~│   [shell] Hecho: generación 4 de Paquetes:.
+~│   [shell] Paquetes:Saludo quitado
+~  Volver saludo de 1.1 a 1.0: 2 paquetes
+~  Quitar letras 1.0; Quitar saludo 1.0: 0 paquetes (en uso)
+~│   [guardian] tanda en pantalla: Shell pide 1 (administrador propuesto: Ana): 1. Borrar las versiones viejas de los paquetes de todos (menos la de ahora y la de antes)
+~│   [paq] limpio: 2 generaciones y 1 versiones fuera (0 KB)
+~│   [shell] Hecho: limpio.
+# Lo de cada uno (Home:Paquetes): sin administrador, lo hace la orden (con los alias en inglés).
+~│   [shell] Plan para ti (Home:Paquetes):
+~│   [shell]   2. Instalar saludo 1.1 (de prueba)
+~│   [shell] Hecho: generación 1 de Home:Paquetes.
+~│   [shell] Saludo 1.1, instalado con Paq
+~│   [shell]   2. Instalar circulo-b 1.0 (de prueba; lo necesita otro)
+~│   [shell] Hecho: generación 2 de Home:Paquetes.
+~│   [shell]   4. Quitar saludo 1.1
+~│   [shell] Hecho: generación 3 de Home:Paquetes.
+# Lo hostil: nada se instala.
+~│   [shell] Paq: el paquete fuera no se instala: la ruta "../Fuera.txt" se sale del paquete
+~│   [shell] Paq: el paquete absoluto no se instala: la ruta "/C/Absoluto" se sale del paquete
+~│   [shell] Paq: el paquete enlace no se instala: Enlace/arranque es un enlace simbólico
+~│   [shell] Paq: el paquete vecino no se instala: Saludo/LEEME está fuera de su cajón (Vecino)
+~│   [shell] Paq: cambiado 1.0 no es el paquete que dice el índice (está cambiado): no se toca nada
+~│   [shell] Paq: no se puede: no hay ningún paquete noexiste en los repositorios
+~│   [shell] Paq: no hay ningún paquete ajeno en los repositorios
+~  Quitar circulo-a 1.0; Quitar circulo-b 1.0; Quitar letras 1.0; Quitar saludo 1.1: 0 paquetes (en uso)
+~│   [shell] No se puede escribir en Paquetes:intruso: está protegido
+~│   [shell] Delete: Paquetes:Paq/Generaciones/4: está protegido
+~│   [guardian] tanda en pantalla: Shell pide 1 (administrador propuesto: Ana): 1. Instalar para todos letras 1.0 (de prueba)
+~│   [sesiones] tanda de Shell: no es la contraseña de un administrador; no se hace nada
+~│   [shell] Paq: no se hace nada: no se confirmó con la contraseña de un administrador (el detalle, en Registro)
+~  Quitar letras 1.0; Quitar saludo 1.0: 0 paquetes (en uso)
 ~│   [shell] Home:PruebaShell borrado
 ~│   [shell] Fin de la prueba del Shell
 ~│   [shell] acaba con el código 0
 ~│   [guardian] Shell nativo: lanza System/Shell como Ana: 0, acaba: true
+# Rama cuentas-2, sin pantalla: la lista de la entrada, crear "la primera" con cuentas hechas (no), recuperar a Berta con
+# su código (el malo no; el bueno da otro; el gastado ya no) y la espera que crece tras tres malas seguidas.
+~│   [guardian] cuentas-2: la lista de la entrada: ["Ana", "Carla", "Berta"], primer arranque false: bien
+~│   [guardian] cuentas-2: recuperar a Berta con su código, 0; da otro: true: bien
+~│   [sesiones] 3 intentos malos seguidos con la cuenta Berta (volver): no se prueba otra en 5 s
+~│   [guardian] cuentas-2: pasada la espera, la nueva de Berta vale: 0: bien
+~│   [guardian] cuentas-2: lista, primer arranque, recuperar y esperas: bien
 ~│   [guardian] S28: retirar a caja-amiga el permiso ejec:actualiza: 0
 # Hostil: un programa del disco llamado como el panel rápido no tiene sus poderes (son por el nombre que da `inicio`).
 ~│   [cambio] lanzado del disco como panel: 

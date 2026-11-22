@@ -311,3 +311,312 @@ in the window
 MSG_103
 in the top bar
 ; en la barra de arriba
+MSG_104
+Accounts
+; Cuentas
+MSG_105
+The accounts cannot be read
+; No se pueden leer las cuentas
+MSG_106
+number {}
+; número {}
+MSG_107
+deleted: can be restored until {}
+; borrada: se puede devolver hasta el {}
+MSG_108
+Done
+; Hecho
+MSG_109
+Not done: it was not confirmed in the system window
+; No se hizo: no se confirmó en la ventana del sistema
+MSG_110
+Another one is already waiting in the system window
+; Ya hay otra esperando en la ventana del sistema
+MSG_111
+It does not exist
+; No existe
+MSG_112
+sesiones does not answer
+; sesiones no contesta
+MSG_113
+Not done ({})
+; No se hizo ({})
+MSG_114
+Name (new account or group)
+; Nombre (cuenta nueva o grupo)
+MSG_115
+Group
+; Grupo
+MSG_116
+Who uses this computer; changes, with an administrator.
+; Quién usa el equipo; los cambios, con un administrador.
+MSG_117
+Delete
+; Borrar
+MSG_118
+My password
+; Mi contraseña
+MSG_119
+Create
+; Crear
+MSG_120
+Restore
+; Devolver
+MSG_121
+Type above the name of the new account
+; Escribe arriba el nombre de la cuenta nueva
+MSG_122
+Choose an account in the list
+; Elige una cuenta en la lista
+MSG_123
+Type above the name of the group
+; Escribe arriba el nombre del grupo
+MSG_124
+Bar
+; Barra
+MSG_125
+The bars and their widgets, as in DMS. Changes show at once.
+; Las barras y sus widgets, como en DMS. Lo que se cambia se ve ya.
+MSG_126
+Dock
+; Dock
+MSG_127
+bottom
+; abajo
+MSG_128
+top
+; arriba
+MSG_129
+top centre
+; arriba en el centro
+MSG_130
+bottom centre
+; abajo en el centro
+MSG_131
+on the left, vertical
+; a la izquierda, en vertical
+MSG_132
+on the right, vertical
+; a la derecha, en vertical
+MSG_133
+a dot
+; un punto
+MSG_134
+a line
+; una raya
+MSG_135
+none
+; ninguno
+MSG_136
+none (pin them with the right button on the dock)
+; ninguno (se fijan con el botón derecho en el dock)
+MSG_137
+Show the dock: {}
+; Enseñar el dock: {}
+MSG_138
+Where: {}
+; Dónde: {}
+MSG_139
+Icon size: {} px
+; Tamaño de los iconos: {} px
+MSG_140
+Hide by itself: {}
+; Esconderse solo: {}
+MSG_141
+Group each program's windows: {}
+; Juntar las ventanas de cada programa: {}
+MSG_142
+Mark for open programs: {}
+; Marca de los abiertos: {}
+MSG_143
+Opacity: {} %
+; Opacidad: {} %
+MSG_144
+Pinned: {}
+; Fijados: {}
+MSG_145
+On-screen notices: {}
+; Avisos en pantalla: {}
+MSG_146
+Always show the value: {}
+; Enseñar siempre el valor: {}
+MSG_147
+Notice when switching workspace: {}
+; Aviso al cambiar de espacio de trabajo: {}
+MSG_148
+Caps Lock notice: {}
+; Aviso de Bloq Mayús: {}
+MSG_150
+Desktop disks: {}
+; Discos del escritorio: {}
+MSG_151
+Disks: {}
+; Discos: {}
+MSG_152
+on the right, in the middle
+; a la derecha, en el centro
+MSG_153
+on the left, in the middle
+; a la izquierda, en el centro
+MSG_154
+Disk size: {}
+; Tamaño de los discos: {}
+MSG_155
+small
+; pequeño
+MSG_156
+medium
+; mediano
+MSG_157
+large
+; grande
+MSG_158
+Disk opacity: {} %
+; Opacidad de los discos: {} %
+MSG_159
+Used space of each disk: {}
+; Espacio usado de cada disco: {}
+MSG_160
+Disk animations: {}
+; Animaciones de los discos: {}
+MSG_162
+Magnify on hover: {}
+; Aumento al pasar el ratón: {}
+MSG_163
+Magnifying pushes the neighbours aside: {}
+; El aumento aparta a los vecinos: {}
+MSG_164
+When a program opens: {}
+; Al abrir un programa: {}
+MSG_165
+its dot pulses
+; su punto late
+MSG_166
+the icon bounces
+; el icono rebota
+MSG_167
+nothing
+; nada
+MSG_161
+The dock, the on-screen notices and the desktop disks, as in DMS. Enter changes a row.
+; El dock, los avisos en pantalla y los discos del escritorio, como en DMS. Intro cambia una fila.
+MSG_200
+Notifications
+; Avisos
+MSG_201
+Control center
+; Centro de control
+MSG_210
+until closed
+; hasta cerrarlo
+MSG_211
+no schedule
+; sin horario
+MSG_212
+Where they appear: {}
+; Dónde salen: {}
+MSG_213
+Animation: {} ms
+; Animación: {} ms
+MSG_214
+Time for normal notifications: {}
+; Tiempo de los avisos normales: {}
+MSG_215
+Time for urgent ones: {}
+; Tiempo de los urgentes: {}
+MSG_216
+Time bar: {}
+; Barra de tiempo: {}
+MSG_217
+Urgent ones show in do not disturb: {}
+; Los urgentes salen con no molestar: {}
+MSG_218
+Scheduled do not disturb: {}
+; No molestar programado: {}
+MSG_219
+No text in popups: {}
+; Sin el texto en los emergentes: {}
+MSG_220
+A click on the notification runs its action: {}
+; Un clic en el aviso hace su acción: {}
+MSG_221
+Days in the history: {}
+; Días en el historial: {}
+MSG_222
+always
+; siempre
+MSG_230
+{}. {} · {} columns
+; {}. {} · {} columnas
+MSG_231
+ · small
+;  · pequeño
+MSG_232
+ · not available yet
+;  · aún no disponible
+MSG_233
+Add: {}
+; Añadir: {}
+MSG_234
+Columns: {}
+; Columnas: {}
+MSG_235
+Back to defaults
+; Volver a lo de serie
+MSG_236
+Popups and do not disturb, as in DMS. Enter changes a row; it shows at once.
+; Los emergentes y el no molestar, como en DMS. Intro cambia una fila; se ve ya.
+MSG_237
+What the quick panel shows and in what order. Enter changes the width or adds; it shows at once.
+; Qué sale en el panel rápido y en qué orden. Intro cambia el ancho o añade; se ve ya.
+MSG_238
+Up
+; Subir
+MSG_239
+Down
+; Bajar
+MSG_900
+Sound
+; Sonido
+MSG_901
+for playing (64 frames, 1.3 ms)
+; para tocar (64 cuadros, 1,3 ms)
+MSG_902
+saving (1,024 frames, 21 ms)
+; ahorro (1.024 cuadros, 21 ms)
+MSG_903
+normal (256 frames, 5.3 ms)
+; normal (256 cuadros, 5,3 ms)
+MSG_904
+Open the Sound mixer
+; Abrir el mezclador Sonido
+MSG_905
+Sound theme: {}
+; Tema de los sonidos: {}
+MSG_906
+System sounds: {}
+; Sonidos del sistema: {}
+MSG_907
+Volume of the sounds: {} %
+; Volumen de los sonidos: {} %
+MSG_908
+Equalizer: {}
+; Ecualizador: {}
+MSG_909
+Limiter: {}
+; Limitador: {}
+MSG_910
+Spatial sound: {}
+; Sonido espacial: {}
+MSG_911
+Latency: {}
+; Latencia: {}
+MSG_912
+Try the notification sound
+; Probar el sonido de aviso
+MSG_913
+Sounds, effects and latency. Enter changes a row.
+; Sonidos, efectos y latencia. Intro cambia una fila.
+MSG_240
+Desktop wallpapers: open the wallpaper tool…
+; Fondos de escritorio: abrir la herramienta…

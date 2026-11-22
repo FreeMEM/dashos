@@ -328,3 +328,38 @@ Ajustes y el cajón `SYS:Prefs` son dos puertas a lo mismo, no dos sistemas:
   `.prefs` en IFF se genera de él cada vez que cambia. Si el usuario abre el `Locale` o el `Font` originales de 68k
   dentro de la caja y escriben el IFF, ese cambio se lleva al texto, y DashOS lo ve al momento. Cómo se casan los
   dos sentidos sin pisarse, por diseñar al hacerlo.
+
+## 8. La tercera oleada: avisos, el Dash del reloj y el centro de control configurable (2026-11-16)
+
+Portado de DMS v2.1.2 (MIT; sección 0). Detalle en `docs/bitacoras/dms-avisos.md`. Lo de serie, como en el escritorio
+del usuario en shiva (`notificationPopupPosition = -1`, `notificationAnimationDuration = 400`, su
+`controlCenterWidgets`, `radiusStrength = 38` y el radio de 3 de su niri).
+
+- **Avisos**: el servicio lleva el modelo de DMS (actuales e historial, acciones con la de `default` para el clic en
+  el cuerpo, sustituir un aviso propio, "no molestar" como estado de la sesión con plazo). Los emergentes (arriba en el
+  centro, hasta 4, entran deslizándose, la pila se recoloca con el muelle, se paran con el ratón encima, barra de tiempo
+  si se pide) y el centro de avisos (pestañas Actuales e Historial con su número, grupos por programa, "no molestar"
+  con los plazos de DMS, Borrar todo, Ajustes, teclado) los pinta la barra (`avisos_vista.rs`).
+- **Ajustes en texto** (S36, regla 1): `ENV:Escritorio/avisos` y `ENV:Escritorio/centro-control`. Los lee el centro de
+  control, que vigila `ENV:` y se los da por una puerta a la barra y al panel: cambian en caliente, también con la orden
+  `Ajuste`. En Ajustes, dos categorías nuevas: Avisos y Centro de control.
+- **El Dash del reloj** (`dash_reloj.rs`): el Resumen de DMS con lo que tiene dato en DashOS: el reloj, quien está
+  delante, los avisos actuales, el calendario del mes (con la zona horaria del sistema, empezando el lunes) y el sistema.
+- **El centro de control** (el panel): la rejilla de DMS (8 columnas de 64, cada mosaico con su ancho y su alto, filas
+  pequeñas de 48, detalle bajo la fila), con su modo de edición.
+
+Lo que DMS no tiene y DashOS sí: pestañas en el centro de avisos (las pidió el usuario) y "no molestar" con horario.
+
+## 9. La sexta oleada: la pantalla de bloqueo y el monitor de procesos (2026-11-17)
+
+Portado de DMS v2.1.2 (MIT; sección 0). Detalle en `docs/bitacoras/dms-bloqueo.md`.
+
+- **La pantalla de bloqueo** (y la de entrada) la sigue pintando `guardian`, con la disposición de serie de DMS: el
+  reloj grande y la fecha arriba, el avatar y el campo con contorno en medio, los avisos debajo y la red y el volumen
+  arriba a la derecha, sobre el fondo del usuario desenfocado con el velo de DMS. Encima del campo siguen el nombre y la
+  frase de la persona (S6b). Lo de alrededor le llega solo para leer: el fondo de `fondo`, la zona horaria del centro,
+  el estado del compositor y los avisos por `sesiones`, según el ajuste `bloqueo` de `ENV:Escritorio/avisos` (de serie,
+  cuántos; nunca el texto). Super+L bloquea también en la imagen de usar.
+- **El monitor de procesos** es el desplegable de las píldoras de CPU y memoria de la barra, como el de DMS: tarjetas con
+  gráfica, buscador, filtros, columnas que ordenan y cerrar el elegido (lo de quien está delante con `MATAR`; un
+  programa del escritorio o una caja del sistema, con la tanda de administrador).

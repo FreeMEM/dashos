@@ -148,13 +148,68 @@ def teclear(texto):
     ordenes.append("sendkey ret")
     mandar(*ordenes, pausa=0.15)
 
+TRAZA = os.environ.get("GUION_TRAZA")
+
+# guion-panel: mientras `guardian` pregunta algo (una pregunta de permisos, una tanda de administrador, el código de
+# recuperación, el cambio de contraseña), ningún paso del guion teclea ni pulsa: su ventana va encima y tiene el teclado,
+# y lo que mandara otro paso le llegaría a ella (una "s" de "avisa" contestaría que sí) o abriría algo encima (el panel
+# con Super+A se llevó el teclado y la tanda se contestó que no). Solo los pasos que le contestan (`contestando`), y esos,
+# cuando su ventana ya tiene el teclado. Con la sesión bloqueada no cuenta: lo de guardian que haya queda detrás.
+contestando = False
+
+def bloqueada(t):
+    b = max(t.rfind("[guardian] sesión bloqueada"), t.rfind("pantalla de bloqueo pintada"), t.rfind("pantalla de entrada pintada"))
+    return b > max(t.rfind("[guardian] desbloqueado"), t.rfind("[guardian] entra "))
+
+def guardian_pendiente(t):
+    return not bloqueada(t) and (t.count("[guardian] pregunta en pantalla: ") > t.count("El usuario dice ") or ventana_de_guardian(t))
+
+GUARDIAN_EN_PANTALLA = ("[guardian] pregunta en pantalla: ", "[guardian] tanda en pantalla: ", "[guardian] confirmación en pantalla: ",
+                        "[guardian] código de recuperación en pantalla: ", "[guardian] cambio de contraseña en pantalla: ")
+
+def guardian_con_teclado(t):
+    # Lo último que dijo `guardian` del teclado tras sacar su última ventana (lo dice siempre detrás de esa línea).
+    desde = max(t.rfind(x) for x in GUARDIAN_EN_PANTALLA)
+    if desde < 0:
+        return False
+    return t.rfind("[guardian] ventana del sistema: tiene el teclado") > max(desde, t.rfind("[guardian] ventana del sistema: pierde el teclado"))
+
+def esperar_teclado_guardian(plazo=10):
+    fin = time.time() + plazo
+    while time.time() < fin:
+        if guardian_con_teclado(open(serie, errors="replace").read()):
+            return True
+        time.sleep(0.1)
+    return False
+
 def mandar(*ordenes, pausa=0.0):
+    if not contestando and any(o.startswith("sendkey ") or (o.startswith("mouse_button ") and o != "mouse_button 0") for o in ordenes) \
+            and guardian_pendiente(open(serie, errors="replace").read()):
+        retenidas = [o for o in ordenes if o.startswith("sendkey ") or o.startswith("mouse_button ")]
+        ordenes = tuple(o for o in ordenes if o not in retenidas)
+        if TRAZA:
+            try:
+                with open(TRAZA, "a") as f:
+                    f.write("%.2f %d RETENIDO (guardian pregunta): %s\n" % (time.time(), os.path.getsize(serie), " | ".join(retenidas)))
+            except OSError:
+                pass
+        if not ordenes:
+            return False
+    if TRAZA:
+        # Con GUION_TRAZA=fichero: cada envío, con la hora y el largo de la salida serie en ese momento (para ponerlo
+        # junto a lo que dijo el sistema).
+        try:
+            with open(TRAZA, "a") as f:
+                f.write("%.2f %d %s\n" % (time.time(), os.path.getsize(serie), " | ".join(ordenes)))
+        except OSError:
+            pass
     s = socket.socket(socket.AF_UNIX)
     s.connect(ruta)
     for o in ordenes:
         s.sendall(o.encode() + b"\n")
         time.sleep(pausa)
     s.close()
+    return True
 
 def ir_a(x, y):
     # El cursor a (x, y) de la pantalla: primero a la esquina, y de ahí en pasos de 100 como mucho.
@@ -180,13 +235,18 @@ selector = 0
 entradas_antes = 0
 menu_intentos = 0
 menu_desde = 0
+ajustes_intentos = 0
+ajustes_desde = 0
 menus_antes = 0
 espera_carpeta = 0
 centro = 0
 panel = 0
 barra = 0
+dock_paso = 0
 avisos_paso = 0
 reintento_avisos = 0
+reintento_dock = 0
+pos_dock = (0, 0)
 wb = 0
 wb_ventana = {}
 ex = 0
@@ -201,6 +261,20 @@ dash_amiga = 0
 dash_nativo = 0
 dash_desde = 0
 dash_intentos = 0
+guardian_visto = 0.0
+panel_desde = 0.0
+
+def clave_de_ana(texto):
+    # La contraseña de Ana ahora: el guion del Shell la cambia a "otra de Ana" y luego la devuelve (los pasos de
+    # `claves_vistas`). Los bloqueos de `guardian` van a su ritmo y pueden caer en medio (tecla-pegada: el bloqueo por
+    # tiempo salió entre los dos cambios y "clave de Ana" ya no valía; la sesión se quedó bloqueada).
+    return "otra de Ana" if texto.count("[guardian] cambio de contraseña de Ana: cambiada") % 2 == 1 else "clave de Ana"
+
+def ventana_de_guardian(texto):
+    # Si hay en pantalla una ventana del sistema de `guardian` (una tanda de administrador del Shell, el código de
+    # recuperación, el cambio de contraseña): cada una dice cuándo sale y cuándo se va. Van encima, con el teclado.
+    return any(texto.count("[guardian] " + q + " en pantalla: ") > texto.count("[guardian] " + q + " de ")
+               for q in ("tanda", "código de recuperación", "cambio de contraseña"))
 dash_entradas = 0
 dash_fila_n = 2
 dash_subidas = 0
@@ -237,6 +311,7 @@ reinicio_menus = 0
 
 while time.time() - inicio < total:
     try:
+        contestando = False
         texto = open(serie, errors="replace").read()
         # Con ESTADO_GUION=fichero: el estado del guion cada 2 s (para ver en qué paso se queda).
         if os.environ.get("ESTADO_GUION") and time.time() - globals().get("estado_dicho", 0) > 2:
@@ -281,8 +356,10 @@ while time.time() - inicio < total:
                     time.sleep(1)
                     reinicio = 0
             elif reinicio == 3 and "[guardian] confirmación en pantalla: ¿reiniciar?" in texto:
-                # Sí pide Mayúsculas y S, como los permisos.
+                # Sí pide Mayúsculas y S, como los permisos (cuando su ventana tenga el teclado).
                 time.sleep(1.3)
+                contestando = True
+                esperar_teclado_guardian()
                 mandar("sendkey shift-s")
                 reinicio = 4
             time.sleep(0.25)
@@ -392,13 +469,27 @@ while time.time() - inicio < total:
         # "continue"), y cada paso, como mucho 30 s.
         import re
         centro_fuera = "[guardian] el centro de control abrirá" not in texto or "[centro] cerrado" in texto
-        # Si el clic no llegó (una pregunta de `guardian` salió encima mientras), otra vez, hasta tres.
+        # tecla-pegada: tampoco con una ventana del sistema de `guardian` (las tandas de administrador del Shell, el
+        # código de recuperación, el cambio de contraseña) ni hasta 4 s después de la última: salen en ráfaga y van
+        # encima, con el teclado; el clic en la ventana de Dash les llegaba a ellas (los tres intentos caían en la
+        # tanda de cuentas del Shell y el paso se rendía: "FALTA: [dash-ventana] pulsado").
+        ventana_guardian = guardian_pendiente(texto)
+        if ventana_guardian:
+            guardian_visto = time.time()
+        # Si el clic no llegó (una pregunta de `guardian` salió encima mientras), otra vez, hasta tres; si fue una
+        # ventana del sistema de `guardian`, ese intento no cuenta.
         if dash_nativo == 1 and "[dash-ventana] pulsado" not in texto and time.time() - dash_desde > 8 \
                 and dash_intentos < 3:
             dash_nativo = 0
+            if guardian_visto >= dash_desde:
+                dash_intentos -= 1
         # Tampoco con la ventana Amiga de H5 esperando su clic: delante, la de Dash la taparía.
         amiga_fuera = amiga >= 2 or "[caja-amiga] ventana Amiga en pantalla" not in texto
-        if dash_nativo == 0 and menu == 2 and centro_fuera and amiga_fuera and libre_caja and \
+        # union-tres: ni a la vez que el paso del panel (Super+A y sus clics): con las tandas del Shell hasta tarde, los
+        # dos pasos quedaban libres en la misma vuelta, el panel salía encima y se llevaba el clic de "Añadir"
+        # ("FALTA: [dash-ventana] pulsado"). El que empieza antes, acaba antes de que empiece el otro.
+        if dash_nativo == 0 and menu == 2 and centro_fuera and amiga_fuera and libre_caja and not 1 <= panel <= 14 and \
+                not ventana_guardian and time.time() - guardian_visto > 4 and \
                 "[guardian] prueba acabada" in texto and "[hostil] selector:" in texto and \
                 selector not in (1, 2, 4, 5, 17, 18):
             d = re.search(r'\[dash-ui\] ventana "Dash (?:en|on) DashOS" en pantalla \((\d+)x\d+\).*?"Añadir" en \((\d+), (\d+)\)', texto)
@@ -701,6 +792,8 @@ while time.time() - inicio < total:
         if tandas_en > globals().get("tandas_vistas", 0):
             globals()["tandas_vistas"] = globals().get("tandas_vistas", 0) + 1
             time.sleep(1.3)
+            contestando = True
+            esperar_teclado_guardian()
             # S6b, rama cuentas: la que crea una cuenta pide además su contraseña (Intro en una caja vacía pasa a la
             # siguiente). A Berta, la de Ana y la suya; a Dora, primero una mala de administrador, luego la buena de
             # Carla (que no lo es) y luego la de Ana con una corta para Dora: ninguna se crea.
@@ -727,7 +820,8 @@ while time.time() - inicio < total:
                 teclear("clave de Ana")
                 teclear("clave de " + nueva.group(1))
             else:
-                teclear("no es esta" if tandas_vistas == 4 else "clave de Ana")
+                # S8 (rama paq): a la de instalar letras para todos sola, una mala (Paq no hace nada).
+                teclear("no es esta" if tandas_vistas == 4 or "letras 1.0 (de prueba)" in linea_t else "clave de Ana")
             time.sleep(0.5)
             continue
         # S6b, rama cuentas: el código de recuperación de la cuenta nueva, en la ventana del sistema: Intro (con
@@ -736,10 +830,42 @@ while time.time() - inicio < total:
         if codigos_en > globals().get("codigos_vistos", 0):
             globals()["codigos_vistos"] = globals().get("codigos_vistos", 0) + 1
             time.sleep(1.3)
+            contestando = True
+            esperar_teclado_guardian()
             if os.environ.get("CAPTURA_CUENTAS"):
                 mandar("screendump " + os.environ["CAPTURA_CUENTAS"] + ".codigo.ppm")
                 time.sleep(0.5)
             mandar("sendkey ret")
+            time.sleep(0.5)
+            continue
+        # Rama cuentas-2: cambiar la propia contraseña desde el Shell (`Usuario CLAVE`), en la ventana del sistema (la de
+        # ahora, la nueva y repítela). La 1.ª, con la de ahora mal (vuelve a salir con el aviso, y las nuevas, "otra de
+        # Ana", siguen puestas); la 2.ª, solo la de ahora, bien; la 3.ª, de vuelta a "clave de Ana"; la 4.ª, dos nuevas
+        # distintas y, cuando guardian lo dice, Esc.
+        claves_en = texto.count("[guardian] cambio de contraseña en pantalla: ")
+        if claves_en > globals().get("claves_vistas", 0):
+            globals()["claves_vistas"] = globals().get("claves_vistas", 0) + 1
+            time.sleep(1.3)
+            contestando = True
+            esperar_teclado_guardian()
+            if claves_vistas == 1:
+                for t in ("no es esta", "otra de Ana", "otra de Ana"):
+                    teclear(t)
+            elif claves_vistas == 2:
+                teclear("clave de Ana")
+            elif claves_vistas == 3:
+                for t in ("otra de Ana", "clave de Ana", "clave de Ana"):
+                    teclear(t)
+            else:
+                antes = texto.count("las dos nuevas no son iguales")
+                for t in ("clave de Ana", "una nueva", "otra nueva"):
+                    teclear(t)
+                for _ in range(40):
+                    time.sleep(0.25)
+                    if open(serie, errors="replace").read().count("las dos nuevas no son iguales") > antes:
+                        break
+                time.sleep(1.3)
+                mandar("sendkey esc")
             time.sleep(0.5)
             continue
         # U4: las preguntas de permisos de `guardian`. A `pide`, que sí; a los demás, una "s" enseguida (en el primer
@@ -748,6 +874,10 @@ while time.time() - inicio < total:
         if len(vistas) > preguntas:
             linea = vistas[preguntas]
             preguntas += 1
+            contestando = True
+            # A la ventana de la pregunta, no a la que tenga el teclado (guion-panel); la "s" a destiempo de abajo, también
+            # ya con el teclado: así cae en su primer segundo, que es lo que se prueba.
+            esperar_teclado_guardian()
             # Con CAPTURA_PREGUNTA=fichero.ppm, la pantalla con la primera pregunta.
             if preguntas == 1 and captura_pregunta:
                 time.sleep(0.3)
@@ -801,6 +931,19 @@ while time.time() - inicio < total:
         # la ventana con la fila marcada, y en fichero.ppm.seg.ppm, la de Seguridad.
         if not selector_espera and centro == 0 and "[guardian] el centro de control abrirá Permisos" in texto:
             centro = 1
+        # Rama cuentas-2: en medio del tramo del centro, si otra ventana se llevó el teclado (con la máquina cargada, la de
+        # Dash o las de la caja Amiga salen a esta hora), Ajustes vuelve delante con un clic dentro, en su borde derecho
+        # (donde no la tapa ninguna, y no hay nada que pulsar), antes de seguir con sus teclas. Solo con su tamaño de siempre (luego se maximiza) y sin bloqueo.
+        if not selector_espera and 2 <= centro and centro != 12 and "[centro] cerrado" not in texto and not bloqueado_ahora \
+                and time.time() > globals().get("centro_foco", 0):
+            import re
+            titulos = re.findall(r"\[barra\] título: ([^\n]*)", texto)
+            vc = re.findall(r"\[compositor\] ventana de centro en \((\d+), (\d+)\) de 560x420", texto)
+            if titulos and vc and titulos[-1].strip() != "Centro de control" and "[centro] el compositor pide " not in texto:
+                globals()["centro_foco"] = time.time() + 3
+                ir_a(int(vc[-1][0]) + 546, int(vc[-1][1]) + 40)
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+                time.sleep(0.4)
         if not selector_espera and centro == 1:
             # Con todo lo que hace falta para el clic ya leído: el centro dice dónde están la lista y el botón, y el
             # compositor, dónde está la ventana, cada uno por su lado. Si se seguía con solo lo primero, a veces la línea
@@ -827,6 +970,12 @@ while time.time() - inicio < total:
                 time.sleep(0.3)
             if v and l and b:
                 vx, vy = int(v.group(1)), int(v.group(2))
+                # Rama cuentas-2: antes, delante de todo, con un clic dentro, en su borde derecho (donde no la tapa ninguna
+                # y no hay nada que pulsar): si a esta hora sale otra ventana encima (las de la caja Amiga, o la de Dash),
+                # los clics de abajo le llegaban a ella y la prueba se quedaba aquí.
+                ir(vx + 546, vy + 40)
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+                time.sleep(0.4)
                 ir(vx + int(l.group(1)) + 60, vy + int(l.group(2)) + 28)
                 mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
                 if captura_centro:
@@ -844,6 +993,21 @@ while time.time() - inicio < total:
             if "[centro] quita a " not in texto:
                 if time.time() > reintento:
                     reintento = time.time() + 4
+                    # Rama cuentas-2: otra ventana pudo salir encima y llevarse los clics: Ajustes delante con un clic en
+                    # su borde derecho, y otra vez la fila y el botón.
+                    import re
+                    v = re.search(r"\[compositor\] ventana de centro en \((\d+), (\d+)\)", texto)
+                    l = re.search(r"\[centro\] lista en \((\d+), (\d+)\)", texto)
+                    b = re.search(r"\[centro\] botón Quitar en \((\d+), (\d+)\)", texto)
+                    if v and l and b:
+                        vx, vy = int(v.group(1)), int(v.group(2))
+                        for x, y in ((vx + 546, vy + 40), (vx + int(l.group(1)) + 60, vy + int(l.group(2)) + 28), (vx + int(b.group(1)), vy + int(b.group(2)))):
+                            ir_a(x, y)
+                            time.sleep(0.3)
+                            mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+                            time.sleep(0.5)
+                        time.sleep(0.25)
+                        continue
                     mandar("sendkey down")
                     time.sleep(0.3)
                     mandar("sendkey delete")
@@ -1031,6 +1195,14 @@ while time.time() - inicio < total:
             if "[centro] Acerca de: " not in texto:
                 if time.time() > reintento:
                     reintento = time.time() + 4
+                    # Rama cuentas-2: la flecha, a Ajustes: delante antes (una ventana de la caja Amiga o la de Dash pudo
+                    # salir encima y llevarse el teclado), con un clic en su borde derecho.
+                    import re
+                    v = re.search(r"\[compositor\] ventana de centro en \((\d+), (\d+)\)", texto)
+                    if v:
+                        ir_a(int(v.group(1)) + 546, int(v.group(2)) + 40)
+                        mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+                        time.sleep(0.3)
                     mandar("sendkey down")
                 time.sleep(0.25)
                 continue
@@ -1051,6 +1223,14 @@ while time.time() - inicio < total:
             if captura_centro:
                 time.sleep(0.8)
                 mandar("screendump " + captura_centro + ".max.ppm")
+                # La barra de DMS (docs/bitacoras/dms-barra.md): Ajustes > Barra, maximizada (dos más abajo, tras
+                # Cuentas), y vuelta.
+                mandar("sendkey down", "sendkey down", pausa=0.3)
+                time.sleep(2)
+                mandar("screendump " + captura_centro + ".barra.ppm")
+                time.sleep(0.5)
+                mandar("sendkey up", "sendkey up", pausa=0.3)
+                time.sleep(0.8)
             time.sleep(0.5)
             mandar("sendkey meta_l-down")
             reintento = time.time() + 4
@@ -1071,19 +1251,33 @@ while time.time() - inicio < total:
                 time.sleep(0.25)
                 continue
             centro = 4
-        # C2: el panel rápido. Cuando `guardian` acaba sus bloqueos (con la sesión bloqueada, Super+A no hace nada): Super+A lo abre; un clic en el mosaico apaga el modo oscuro y
-        # otro lo vuelve a encender (lo pone el centro, que lo guarda); "−" y "+" del volumen. Luego el modo de edición: Editar, quitar Bloquear, Hecho (el
-        # centro lo guarda y el panel ya no lo enseña); otra vez Editar, ponerlo (va al final), subirlo y Hecho: como estaba (el disco acaba con los de serie).
-        # Super+A lo cierra. La pantalla mide 800 de ancho; los sitios los dice el panel, desde la esquina de arriba a la derecha.
-        # Con CAPTURA_CENTRO, también fichero.panel.ppm (abierto, en oscuro), fichero.panel-claro.ppm, fichero.panel-edicion.ppm (en edición, Bloquear quitado)
-        # y fichero.panel-sin.ppm (sin Bloquear).
-        if panel == 0 and "[guardian] bloqueo con la tecla: " in texto:
-            panel = 1
+        # C2 y S27 (oleada 3): el panel rápido, que es el centro de control de DMS (una rejilla configurable). Cuando
+        # `guardian` acaba sus bloqueos (con la sesión bloqueada, Super+A no hace nada): Super+A lo abre; un clic en el
+        # mosaico del modo oscuro lo apaga y otro lo vuelve a encender (lo pone el centro, que lo guarda); la pista del
+        # volumen, al 90 % y al 100 %. Luego el modo de edición: Editar, quitar Bloquear, Terminar (el centro lo guarda en
+        # ENV: y ENVARC:, y el panel ya no lo enseña); otra vez Editar, Añadir, Bloquear (va al final), moverlo uno antes y
+        # Terminar. Super+A lo cierra. La pantalla mide 800 de ancho; los sitios los dice el panel, desde la esquina de
+        # arriba a la derecha. Con CAPTURA_CENTRO, también fichero.panel.ppm (abierto, en oscuro), fichero.panel-claro.ppm,
+        # fichero.panel-edicion.ppm (en edición, Bloquear quitado), fichero.panel-sin.ppm (sin Bloquear) y
+        # fichero.panel-anadir.ppm (la lista para añadir).
+        # (Ni con guardian preguntando: el panel saldría encima de su ventana y se llevaría el teclado; `mandar` no deja
+        # pasar Super+A entonces, y el paso espera.)
+        if panel == 0 and "[guardian] bloqueo con la tecla: " in texto and dash_nativo not in (1, 2, 3, 31, 4, 5) \
+                and not guardian_pendiente(texto) and time.time() - guardian_visto > 4:
             time.sleep(0.5)
-            mandar("sendkey meta_l-a")
-            reintento = time.time() + 6
-        if 1 <= panel <= 13:
+            if mandar("sendkey meta_l-a"):
+                panel = 1
+                reintento = time.time() + 6
+        if 1 <= panel <= 14:
             import re
+            # tecla-pegada: como el paso de Dash, nada con una ventana de `guardian` delante ni hasta 4 s después (sus
+            # tandas del Shell salen a la vez que esto y se llevan el clic del mosaico).
+            if guardian_pendiente(texto):
+                guardian_visto = time.time()
+            if time.time() - guardian_visto < 4:
+                reintento = max(reintento, time.time() + 6)
+                time.sleep(0.25)
+                continue
             def ir_panel(x, y):
                 # El panel dice sus sitios como si estuviera a 8 del borde de arriba; con la barra (S10) sale más abajo:
                 # dónde, lo dice el compositor.
@@ -1106,8 +1300,8 @@ while time.time() - inicio < total:
                     ir_panel(800 - int(sitio[0]), int(sitio[1]))
             m = re.search(r"\[panel\] abierto; mosaico a \((\d+), (\d+)\)", texto)
             vol = re.search(r"\[panel\] volumen: menos a \((\d+), (\d+)\), más a \((\d+), (\d+)\)", texto)
-            editar = ultima(r"\[panel\] se ven: [a-z ]+; editar a \((\d+), (\d+)\)")
-            # Cada vez que pinta en edición, el panel dice dónde está cada botón, una línea por fila con el número de la vez.
+            editar = ultima(r"\[panel\] se ven: [a-z_ ]+; editar a \((\d+), (\d+)\)")
+            # Cada vez que pinta en edición, el panel dice dónde está cada botón, una línea por mosaico con el número de la vez.
             veces = [(int(k), l) for k, l in re.findall(r"\[panel\] edición (\d+): (.*)", texto)]
             edicion = sorted({k for k, _ in veces})
             QUITAR_BLOQUEAR = r"bloquear: subir \(\d+, \d+\) bajar \(\d+, \d+\) quitar"
@@ -1120,18 +1314,24 @@ while time.time() - inicio < total:
                       4: "[sonido] volumen general: 90 % (lo pide panel)" in texto,
                       5: "[sonido] volumen general: 100 % (lo pide panel)" in texto,
                       6: len(edicion) >= 1 and en_edicion(QUITAR_BLOQUEAR) is not None,
-                      7: "[panel] quita bloquear" in texto and len(edicion) >= 2 and en_edicion("bloquear: poner") is not None,
-                      8: "[panel] se ven: oscuro volumen;" in texto,
-                      9: len(edicion) >= 3 and en_edicion("bloquear: poner") is not None,
-                      10: "[panel] pone bloquear" in texto and len(edicion) >= 4 and en_edicion("bloquear: subir") is not None,
-                      11: "[panel] sube bloquear" in texto and len(edicion) >= 5 and en_edicion("volumen: subir") is not None,
-                      12: texto.count("[panel] se ven: oscuro bloquear volumen;") >= 2,
-                      13: "[panel] cerrado" in texto}[panel]
+                      7: "[panel] quita bloquear" in texto and len(edicion) >= 2 and en_edicion("hecho") is not None,
+                      8: "[panel] hecho: " in texto and "[panel] se ven: " in texto[texto.rfind("[panel] hecho: "):],
+                      9: len(edicion) >= 3 and en_edicion("añadir") is not None,
+                      10: len(edicion) >= 4 and en_edicion("bloquear: poner") is not None,
+                      11: "[panel] pone bloquear" in texto and len(edicion) >= 5 and en_edicion("bloquear: subir") is not None,
+                      12: "[panel] sube bloquear" in texto and len(edicion) >= 6 and en_edicion("hecho") is not None,
+                      13: texto.count("[panel] hecho: ") >= 2,
+                      14: "[panel] cerrado" in texto}[panel]
+            if not espera and 2 <= panel <= 14 and guardian_visto >= panel_desde:
+                # Salió una ventana de `guardian` tras lo último que se hizo y no llegó lo que se esperaba: se repite.
+                panel -= 1
+                panel_desde = time.time()
+                continue
             if not espera:
-                if time.time() > reintento and panel < 13:
+                if time.time() > reintento and panel < 14:
                     # No llegó: se cierra el panel (las líneas que falten lo dirán).
                     mandar("sendkey meta_l-a")
-                    panel = 13
+                    panel = 14
                     reintento = time.time() + 6
                 time.sleep(0.25)
                 continue
@@ -1141,7 +1341,7 @@ while time.time() - inicio < total:
                     mandar("screendump " + captura_centro + (".panel.ppm" if panel == 1 else ".panel-claro.ppm"))
                 ir_panel(800 - int(m.group(1)), int(m.group(2)))
             elif panel == 3:
-                # El volumen general: "−" (90 %) y luego "+" (100 %, como estaba).
+                # El volumen general: la pista al 90 % y luego al 100 % (como estaba).
                 ir_panel(800 - int(vol.group(1)), int(vol.group(2)))
             elif panel == 4:
                 ir_panel(800 - int(vol.group(3)), int(vol.group(4)))
@@ -1158,16 +1358,22 @@ while time.time() - inicio < total:
                     mandar("screendump " + captura_centro + ".panel-edicion.ppm")
                 clic_en(en_edicion("hecho"))
             elif panel == 9:
-                clic_en(en_edicion("bloquear: poner"))
+                clic_en(en_edicion("añadir"))
             elif panel == 10:
-                clic_en(en_edicion("bloquear: subir"))
+                if captura_centro:
+                    time.sleep(0.6)
+                    mandar("screendump " + captura_centro + ".panel-anadir.ppm")
+                clic_en(en_edicion("bloquear: poner"))
             elif panel == 11:
-                clic_en(en_edicion("hecho"))
+                clic_en(en_edicion("bloquear: subir"))
             elif panel == 12:
+                clic_en(en_edicion("hecho"))
+            elif panel == 13:
                 time.sleep(0.5)
                 mandar("sendkey meta_l-a")
             panel += 1
             reintento = time.time() + 6
+            panel_desde = time.time()
             # Sin lo de siempre (un clic de más daría otra vuelta al modo) hasta acabar.
             continue
         # S10: la barra y el lanzador, tras el panel (con la sesión de Ana delante, desbloqueada). Un clic en el botón del
@@ -1175,7 +1381,27 @@ while time.time() - inicio < total:
         # cierra. El botón del panel lo abre (la segunda vez que se abre) y otro clic lo cierra. Los botones los dice la
         # barra, que está en (0, 0). Con CAPTURA_BARRA=fichero.ppm: el lanzador abierto (fichero.ppm), con la búsqueda
         # (fichero.busca.ppm) y la barra con el panel (fichero.panel.ppm).
-        if barra == 0 and panel == 14 and "[barra] botones: " in texto:
+        # La barra de DMS (docs/bitacoras/dms-barra.md), solo para capturas: con CAPTURA_AJUSTES_BARRA=fichero.ppm, la barra
+        # al empezar (fichero.sola.ppm) y Ajustes > Barra, que abre el botón derecho sobre la barra (fichero.ppm); Esc la
+        # cierra. Pronto (antes de lo demás): la prueba no sale bien así, es solo para ver.
+        if os.environ.get("CAPTURA_AJUSTES_BARRA") and not globals().get("ajustes_barra_hecho") and "[barra] botones: " in texto \
+                and "[barra] CPU y memoria: " in texto:
+            import re
+            globals()["ajustes_barra_hecho"] = True
+            cab = os.environ["CAPTURA_AJUSTES_BARRA"]
+            time.sleep(2)
+            mandar("screendump " + cab[:-4] + ".sola.ppm")
+            bb = re.search(r"\[barra\] botones: lanzador en \((\d+), (\d+)\)", texto)
+            mandar(*["mouse_move -100 -100"] * 20, pausa=0.05)
+            mandar(*["mouse_move 100 0"] * 5, f"mouse_move 0 {bb.group(2)}", pausa=0.05)
+            mandar("mouse_button 2", "mouse_button 0", pausa=0.1)
+            time.sleep(4)
+            mandar("sendkey meta_l-up")
+            time.sleep(3)
+            mandar("screendump " + cab)
+            time.sleep(1)
+            mandar("sendkey esc")
+        if barra == 0 and panel == 15 and "[barra] botones: " in texto:
             barra = 1
             import re
             bb = re.search(r"\[barra\] botones: lanzador en \((\d+), (\d+)\), panel en \((\d+), (\d+)\)", texto)
@@ -1205,8 +1431,8 @@ while time.time() - inicio < total:
                       # en ráfaga: un solo OSD que las junta.
                       8: "[barra] espacios: se ve el 2" in texto,
                       9: "[barra] espacios: se ve el 1" in texto[texto.find("[barra] espacios: se ve el 2"):],
-                      10: "[panel] OSD cerrado: " in texto}[barra]
-            if barra == 10 and captura_barra and "[panel] OSD abierto" in texto and not globals().get("osd_capturado"):
+                      10: "[dock] OSD cerrado: " in texto}[barra]
+            if barra == 10 and captura_barra and "[dock] OSD volumen" in texto and not globals().get("osd_capturado"):
                 globals()["osd_capturado"] = True
                 mandar("screendump " + captura_barra[:-4] + ".osd.ppm")
             if not espera:
@@ -1251,15 +1477,95 @@ while time.time() - inicio < total:
             barra += 1
             reintento = time.time() + 8
             continue
-        # S10: los avisos, tras la barra (con Ana delante). Se abre el lanzador y se lanza `avisa`, que avisa: sale el toast
-        # (arriba a la derecha) y un clic lo cierra. La campana abre el historial; "Borrar todo" lo vacía y la campana lo
-        # cierra. Con la sesión bloqueada, se espera. Los sitios los dicen la barra y el compositor (dónde sale cada capa).
-        # Con CAPTURA_AVISOS=fichero.ppm: el toast (fichero.ppm), el historial (fichero.hist.ppm) y vacío
-        # (fichero.vacio.ppm).
-        if avisos_paso == 0 and barra == 11 and "[barra] campana en (" in texto and "[avisador] inundar" in texto:
+        # S27: el dock (escondido, abajo en el centro): el ratón en el borde de abajo lo saca; un clic en el primer
+        # programa trae su ventana; el botón derecho abre su menú y "Fijar en el dock" lo fija (y lo guarda); el ratón
+        # fuera lo esconde. Bloq Mayús dos veces: su OSD (y se queda como estaba). Los sitios los dice el dock. Con
+        # CAPTURA_BARRA=fichero.ppm: fichero.dock.ppm (visto), .dock-menu.ppm y .osd-mayus.ppm.
+        if dock_paso == 0 and barra == 11 and "[dock] en " in texto:
+            import re
+            # Hasta el borde de abajo desde la esquina; después, solo movimientos relativos desde donde está (salir del
+            # dock lo escondería a los 250 ms).
+            def ir_dock(x, y, boton=None):
+                global pos_dock
+                mandar(*["mouse_move -100 -100"] * 20, pausa=0.05)
+                pasos = []
+                x0, y0 = x, y
+                while x > 0 or y > 0:
+                    dx, dy = min(x, 100), min(y, 100)
+                    pasos.append(f"mouse_move {dx} {dy}")
+                    x, y = x - dx, y - dy
+                mandar(*pasos, pausa=0.05)
+                pos_dock = (x0, y0)
+                time.sleep(0.3)
+                if boton:
+                    mandar(f"mouse_button {boton}", "mouse_button 0", pausa=0.08)
+            def mover_dock(x, y, boton=None):
+                global pos_dock
+                mandar(f"mouse_move {x - pos_dock[0]} {y - pos_dock[1]}")
+                pos_dock = (x, y)
+                time.sleep(0.3)
+                if boton:
+                    mandar(f"mouse_button {boton}", "mouse_button 0", pausa=0.08)
+            ancho_dock = int(re.search(r"\[dock\] en [^ ]+ \((\d+)x(\d+)\)", texto).group(1))
+            alto_dock = int(re.search(r"\[dock\] en [^ ]+ \((\d+)x(\d+)\)", texto).group(2))
+            ir_dock(ancho_dock // 2, alto_dock + 50)
+            pos_dock = (ancho_dock // 2, alto_dock - 1)
+            dock_paso = 1
+            reintento_dock = time.time() + 8
+        if 1 <= dock_paso <= 6:
+            captura_barra = os.environ.get("CAPTURA_BARRA")
+            desde_mayus = texto.find("[dock] OSD mayusculas")
+            espera = {1: "[dock] se ve: " in texto,
+                      2: "[dock] trae la ventana" in texto,
+                      3: "[dock] menú de " in texto,
+                      4: "[dock] fija " in texto,
+                      5: "[dock] se esconde" in texto[texto.find("[dock] fija "):],
+                      6: desde_mayus >= 0 and "[dock] OSD cerrado" in texto[desde_mayus:]}[dock_paso]
+            if dock_paso == 6 and captura_barra and desde_mayus >= 0 and not globals().get("mayus_capturado"):
+                globals()["mayus_capturado"] = True
+                mandar("screendump " + captura_barra[:-4] + ".osd-mayus.ppm")
+                mandar("sendkey caps_lock")
+            if not espera:
+                if time.time() > reintento_dock:
+                    dock_paso = 7
+                time.sleep(0.25)
+                continue
+            time.sleep(0.6)
+            primero = re.search(r"\[dock\] se ve: lanzador en \((\d+), (\d+)\), [^,]+ en \((\d+), (\d+)\)", texto)
+            if dock_paso == 1:
+                if captura_barra:
+                    mandar("screendump " + captura_barra[:-4] + ".dock.ppm")
+                    time.sleep(0.5)
+                if primero:
+                    mover_dock(int(primero.group(3)), int(primero.group(4)), 1)
+            elif dock_paso == 2:
+                # El botón derecho en el mismo (el dock va por encima de las ventanas).
+                if primero:
+                    mover_dock(int(primero.group(3)), int(primero.group(4)), 2)
+            elif dock_paso == 3:
+                if captura_barra:
+                    mandar("screendump " + captura_barra[:-4] + ".dock-menu.ppm")
+                    time.sleep(0.5)
+                fijar = re.search(r"\[dock\] menú de .*; fijar en \((\d+), (\d+)\)", texto)
+                if fijar:
+                    mover_dock(int(fijar.group(1)), int(fijar.group(2)), 1)
+            elif dock_paso == 4:
+                mover_dock(ancho_dock // 2, alto_dock // 2)
+            elif dock_paso == 5:
+                mandar("sendkey caps_lock")
+            dock_paso += 1
+            reintento_dock = time.time() + 10
+            continue
+        # S10, S27 (oleada 3): los avisos, tras la barra (con Ana delante). Se abre el lanzador y se lanza `avisa`, que avisa
+        # con acciones: sale el emergente (arriba en el centro, como en el DMS de shiva) y se pulsa su botón "Deshacer", que
+        # le llega a `avisa`. La campana abre el centro de avisos; se pasa a la pestaña Historial, "Borrar todo" lo vacía y
+        # la campana lo cierra. Con la sesión bloqueada, se espera. Los sitios los dicen la barra (en su capa) y el
+        # compositor (dónde sale cada capa). Con CAPTURA_AVISOS=fichero.ppm: el emergente (fichero.ppm), el centro
+        # (fichero.centro.ppm), el historial (fichero.hist.ppm) y vacío (fichero.vacio.ppm).
+        if avisos_paso == 0 and barra == 11 and dock_paso >= 7 and "[barra] campana en (" in texto and "[avisador] inundar" in texto:
             avisos_paso = 1
             reintento_avisos = time.time() + 10
-        if 1 <= avisos_paso <= 8:
+        if 1 <= avisos_paso <= 12:
             import re
             def ultimo_a(t):
                 return texto.rfind(t)
@@ -1270,14 +1576,21 @@ while time.time() - inicio < total:
             captura_avisos = os.environ.get("CAPTURA_AVISOS")
             bb = re.search(r"\[barra\] botones: lanzador en \((\d+), (\d+)\)", texto)
             ca = re.search(r"\[barra\] campana en \((\d+), (\d+)\)", texto)
-            # El compositor dice dónde sale cada capa con el nombre de su cliente (la barra): la del toast es la primera tras
-            # su línea, y la del historial, igual.
+            rl = re.search(r"\[barra\] reloj en \((\d+), (\d+)\)", texto)
+            # El compositor dice dónde sale cada capa con el nombre de su cliente (la barra): la del emergente es la primera
+            # tras su línea, y la del centro, igual. (Unión de union-dms: definida antes de usarla; si no, la primera
+            # vuelta de este paso paraba el guion con un NameError y no se llegaba ni a los avisos ni al explorador.)
             def capa_tras(marca):
                 i = texto.rfind(marca)
-                return re.findall(r"\[compositor\] capa de barra en \((\d+), (\d+)\)", texto[i:]) if i >= 0 else []
-            capa_aviso = capa_tras('[barra] aviso de avisa: "Copia terminada"')
-            capa_hist = capa_tras("[barra] historial abierto")
-            borrar = re.findall(r"\[barra\] historial abierto: .*Borrar todo en \((\d+), (\d+)\)", texto)
+                return re.findall(r"\[compositor\] capa de barra en \((-?\d+), (-?\d+)\)", texto[i:]) if i >= 0 else []
+            capa_dash = capa_tras("[barra] Dash abierto")
+            dash_sitios = re.findall(r"\[barra\] Dash: tarjeta de .*siguiente \((\d+), (\d+)\)", texto)
+            emergente = re.findall(r'\[barra\] emergente \d+ de avisa: "Copia terminada".*Deshacer \((\d+), (\d+)\)', texto)
+            capa_aviso = capa_tras('de avisa: "Copia terminada"')
+            capa_centro = capa_tras("[barra] centro de avisos abierto")
+            def sitio_centro(nombre, linea):
+                m = re.findall(r"%s.*: %s \((\d+), (\d+)\)" % (re.escape(linea), nombre), texto)
+                return m[-1] if m else None
             def clic_en(x, y):
                 mandar(*["mouse_move -100 -100"] * 20, pausa=0.05)
                 pasos = []
@@ -1288,16 +1601,25 @@ while time.time() - inicio < total:
                 mandar(*pasos, pausa=0.05)
                 time.sleep(0.3)
                 mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
-            # Lo que se espera antes de cada paso: 1 nada; 2 el lanzador abierto; 3 la búsqueda; 4 el toast de `avisa`, en
-            # pantalla; 5 cerrado con el clic; 6 el historial en pantalla; 7 borrado; 8 cerrado.
+            def en_centro(nombre, linea):
+                s_ = sitio_centro(nombre, linea)
+                x0, y0 = capa_centro[0]
+                clic_en(int(x0) + int(s_[0]), int(y0) + int(s_[1]))
+            # Lo que se espera antes de cada paso: 1 nada; 2 el lanzador abierto; 3 la búsqueda; 4 el emergente de `avisa`
+            # en pantalla; 5 su acción, en `avisa`; 6 el centro abierto; 7 en la pestaña Historial; 8 borrado; 9 cerrado.
             espera = {1: True,
                       2: texto.count("[barra] lanzador abierto") >= 3,
                       3: '[barra] busca "avisa": avisa' in texto,
-                      4: '[barra] aviso de avisa: "Copia terminada"' in texto and len(capa_aviso) >= 1,
-                      5: "[barra] aviso cerrado: con un clic" in texto,
-                      6: "[barra] historial abierto" in texto and len(capa_hist) >= 1 and len(borrar) >= 1,
-                      7: "[barra] borrar todo: " in texto,
-                      8: "[barra] historial cerrado" in texto}[avisos_paso]
+                      4: len(emergente) >= 1 and len(capa_aviso) >= 1,
+                      5: "[avisa] acción pulsada: deshacer" in texto,
+                      6: "[barra] centro de avisos abierto" in texto and len(capa_centro) >= 1,
+                      7: "[barra] centro de avisos: pestaña Historial" in texto,
+                      8: "[barra] centro de avisos: Borrar todo (historial)" in texto,
+                      9: "[barra] centro de avisos cerrado" in texto,
+                      # S27: el Dash del reloj: el reloj lo abre; el mes siguiente; Esc lo cierra.
+                      10: "[barra] Dash abierto" in texto and len(capa_dash) >= 1 and len(dash_sitios) >= 1,
+                      11: "[barra] Dash: el calendario va al" in texto,
+                      12: "[barra] Dash cerrado" in texto}[avisos_paso]
             if not espera:
                 if time.time() > reintento_avisos:
                     # No llegó: se deja (las líneas que falten lo dirán).
@@ -1312,44 +1634,53 @@ while time.time() - inicio < total:
             elif avisos_paso == 3:
                 mandar("sendkey ret")
             elif avisos_paso == 4:
-                time.sleep(0.4)
+                # La animación de entrada (350 ms) y la captura; el ratón encima para el tiempo del emergente.
+                time.sleep(0.6)
                 if captura_avisos:
                     mandar("screendump " + captura_avisos)
                     time.sleep(0.5)
-                x, y = capa_aviso[0]
-                clic_en(int(x) + 180, int(y) + 44)
+                x0, y0 = capa_aviso[0]
+                bx, by = emergente[-1]
+                clic_en(int(x0) + int(bx), int(y0) + int(by))
             elif avisos_paso == 5:
                 clic_en(int(ca.group(1)), int(ca.group(2)))
             elif avisos_paso == 6:
+                time.sleep(0.6)
+                if captura_avisos:
+                    mandar("screendump " + captura_avisos[:-4] + ".centro.ppm")
+                    time.sleep(0.5)
+                en_centro("Historial", "[barra] centro de avisos abierto")
+            elif avisos_paso == 7:
                 time.sleep(0.4)
                 if captura_avisos:
                     mandar("screendump " + captura_avisos[:-4] + ".hist.ppm")
                     time.sleep(0.5)
-                x, y = capa_hist[0]
-                # La rueda sobre la lista (a media altura del historial): dos pasos en un sentido y dos en el otro (el signo
-                # de `dz` en el monitor de QEMU no está claro): en algún momento la lista pasa por la fila 3.
-                mandar(*["mouse_move -100 -100"] * 20, pausa=0.05)
-                px, py = int(x) + 150, int(y) + 200
-                pasos = []
-                while px > 0 or py > 0:
-                    dx, dy = min(px, 100), min(py, 100)
-                    pasos.append(f"mouse_move {dx} {dy}")
-                    px, py = px - dx, py - dy
-                mandar(*pasos, pausa=0.05)
-                time.sleep(0.3)
-                mandar("mouse_move 0 0 -1", "mouse_move 0 0 -1", "mouse_move 0 0 1", "mouse_move 0 0 1", pausa=0.3)
-                time.sleep(0.5)
-                bx, by = borrar[-1]
-                clic_en(int(x) + int(bx), int(y) + int(by))
-            elif avisos_paso == 7:
+                en_centro("Borrar todo", "[barra] centro de avisos: pestaña Historial")
+            elif avisos_paso == 8:
                 time.sleep(0.4)
                 if captura_avisos:
                     mandar("screendump " + captura_avisos[:-4] + ".vacio.ppm")
                     time.sleep(0.5)
                 clic_en(int(ca.group(1)), int(ca.group(2)))
-            elif avisos_paso == 8:
+            elif avisos_paso == 9:
+                clic_en(int(rl.group(1)), int(rl.group(2)))
+            elif avisos_paso == 10:
+                time.sleep(0.6)
+                if captura_avisos:
+                    mandar("screendump " + captura_avisos[:-4] + ".dash.ppm")
+                    time.sleep(0.5)
+                x0, y0 = capa_dash[0]
+                sx, sy = dash_sitios[-1]
+                clic_en(int(x0) + int(sx), int(y0) + int(sy))
+            elif avisos_paso == 11:
+                time.sleep(0.4)
+                if captura_avisos:
+                    mandar("screendump " + captura_avisos[:-4] + ".dash-mes.ppm")
+                    time.sleep(0.5)
+                mandar("sendkey esc")
+            elif avisos_paso == 12:
                 # El cursor, abajo a la derecha, donde los clics de siempre (que siguen, hacia abajo a la derecha) no dan
-                # en nada: desde la campana volverían a abrir el historial y el panel.
+                # en nada: desde la campana volverían a abrir el centro y el panel.
                 ir_a(790, 590)
                 avisos_paso = 99
                 continue
@@ -1650,6 +1981,29 @@ while time.time() - inicio < total:
                 tecla_ex("ctrl-t")
             elif ex == 30:
                 sitio = True
+                # Plan de iconos, parte 3: en la pestaña nueva, los `.info` de la caja Amiga (uno de cada formato y uno
+                # roto) y el volumen con su `Disk.info`. Con CAPTURA_EXPLORADOR: .amiga y .amiga-raiz.
+                tecla_ex("ctrl-l")
+                time.sleep(0.4)
+                tecla_ex("ctrl-a")
+                escribir_ex("Amiga:Iconos")
+                tecla_ex("ret")
+                fin_iconos = time.time() + 10
+                while time.time() < fin_iconos and "[explorador] icono de Amiga:Iconos/Roto.info" not in open(serie, errors="replace").read():
+                    time.sleep(0.3)
+                time.sleep(0.6)
+                if captura_ex:
+                    mandar("screendump " + captura_ex + ".amiga.ppm")
+                    time.sleep(0.5)
+                tecla_ex("ctrl-l")
+                time.sleep(0.4)
+                tecla_ex("ctrl-a")
+                escribir_ex("Amiga:")
+                tecla_ex("ret")
+                time.sleep(2)
+                if captura_ex:
+                    mandar("screendump " + captura_ex + ".amiga-raiz.ppm")
+                    time.sleep(0.5)
                 tecla_ex("ctrl-w")
             elif ex == 31:
                 sitio = True
@@ -2000,7 +2354,7 @@ while time.time() - inicio < total:
                 if open(serie, errors="replace").read().count("contraseña mala en la pantalla de bloqueo") > antes:
                     break
             time.sleep(0.3)
-            teclear("clave de Ana")
+            teclear(clave_de_ana(open(serie, errors="replace").read()))
         if bloqueo == 6:
             if texto.count("[guardian] desbloqueado") < 2:
                 time.sleep(0.5)
@@ -2025,7 +2379,7 @@ while time.time() - inicio < total:
                 if open(serie, errors="replace").read().count("contraseña mala en la pantalla de bloqueo") > antes:
                     break
             time.sleep(0.3)
-            teclear("clave de Ana")
+            teclear(clave_de_ana(open(serie, errors="replace").read()))
         if bloqueo == 9:
             if texto.count("[guardian] desbloqueado") < 3:
                 time.sleep(0.5)
@@ -2094,6 +2448,11 @@ while time.time() - inicio < total:
         # bloqueada: se llevarían el teclado, también Super+Arriba. Si sale una pregunta mientras, se repite.
         # Con el sitio que le dio el compositor ya dicho (con más programas al arrancar, como el explorador, esa línea
         # puede salir después que la de Ajustes, y el clic iba al sitio de siempre: encima de su campo).
+        # firefox-firme: si Super+Arriba no maximizó Ajustes (con el PC cargado, una ventana de la caja Amiga sale a esta
+        # hora y se lleva el teclado, y con él el atajo), otra vez, hasta tres.
+        if ajustes and ajustes_desde and "[ajustes] el compositor pide 800x560" not in texto \
+                and time.time() - ajustes_desde > 8 and ajustes_intentos < 3:
+            ajustes, ajustes_intentos = False, ajustes_intentos + 1
         if not ajustes and "[ajustes] ventana del kit en pantalla" in texto and "[compositor] ventana de ajustes en (" in texto and selector not in (1, 2, 4, 5, 17, 18) and libre_caja and not bloqueado_ahora:
             ajustes = True
             preguntas_antes = texto.count("[guardian] pregunta en pantalla: ")
@@ -2119,6 +2478,7 @@ while time.time() - inicio < total:
             mandar("sendkey meta_l-up")
             time.sleep(2)
             mandar("sendkey meta_l-down")
+            ajustes_desde = time.time()
             time.sleep(1)
             if open(serie, errors="replace").read().count("[guardian] pregunta en pantalla: ") > preguntas_antes:
                 ajustes = False
@@ -2132,7 +2492,9 @@ while time.time() - inicio < total:
         sin_centro = "[guardian] el centro de control abrirá" not in texto or "[centro] cerrado" in texto
         # Sin esperar dentro de la vuelta (antes se esperaba hasta 10 s aquí, y con reintentos 30: el guion no atendía
         # nada más y, con el PC lento, Super+L llegaba tarde): menu 1 = clic dado, esperando el menú; 2 = elegida.
-        if ajustes and menu == 0 and sin_centro and not bloqueado_ahora and not selector_espera and "[ajustes] el campo dice: DashOSa" in texto:
+        # Ni con una pregunta de `guardian` en pantalla (`libre_caja`): sale encima y se lleva el teclado, y el menú se
+        # cierra (firefox-firme: con el PC cargado, las de la caja Amiga salían justo entre abrir el menú y elegir).
+        if ajustes and menu == 0 and sin_centro and libre_caja and not bloqueado_ahora and not selector_espera and "[ajustes] el campo dice: DashOSa" in texto:
             import re
             v = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
             d = re.search(r"\[ajustes\] desplegable en \((\d+), (\d+)\)", texto)
@@ -2146,7 +2508,11 @@ while time.time() - inicio < total:
         elif menu == 1 and not bloqueado_ahora:
             import re
             abiertos = re.findall(r"\[ajustes\] menú abierto; la segunda opción en \((\d+), (\d+)\)", texto)
-            if len(abiertos) > menus_antes:
+            if len(abiertos) > menus_antes and not libre_caja:
+                # Una pregunta salió con el menú abierto: se cierra; otra vez cuando se conteste.
+                menu_intentos += 1
+                menu = 0
+            elif len(abiertos) > menus_antes:
                 v = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
                 o = abiertos[-1]
                 if os.environ.get("CAPTURA_MENU"):
@@ -2155,6 +2521,7 @@ while time.time() - inicio < total:
                 mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
                 ir_a(790, 590)
                 menu = 2
+                menu_desde = time.time()
             elif time.time() - menu_desde > 6 and menu_intentos < 3:
                 # No se abrió (algo lo tapaba, o el PC va lento): otra vez, hasta tres.
                 menu_intentos += 1
@@ -2163,6 +2530,10 @@ while time.time() - inicio < total:
                 # Con el menú abierto o por abrirse, nada de lo de siempre: un clic fuera lo cierra sin elegir.
                 time.sleep(0.25)
                 continue
+        elif menu == 2 and "[ajustes] el desplegable dice: " not in texto and time.time() - menu_desde > 6 and menu_intentos < 3:
+            # El clic en la segunda opción no la eligió (otra ventana o una pregunta lo tapó): otra vez, desde abrirlo.
+            menu_intentos += 1
+            menu = 0
         paso += 1
         ordenes = ["mouse_move 10 5"]
         if paso >= 15:
@@ -2184,8 +2555,24 @@ fi
 # La terminal de la caja Linux (H9): con CAJA_LINUX=prefijo, `tools/guion_caja_linux.py` teclea en ella (y la captura
 # en prefijo.ppm y prefijo.png). CAJA_MODO=arch: el guion de Arch Linux ARM (systemd, red por DHCP, pacman).
 if [ -n "${CAJA_LINUX:-}" ]; then
+    rm -f "$CAJA_LINUX.fallo"
     python3 -I "$(dirname "$0")/guion_caja_linux.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$CAJA_LINUX" "${CAJA_MODO:-busybox}" >/dev/null 2>&1 &
     CAJA_PID=$!
+fi
+# S27, oleada 3: con DMS_CAPTURAS=prefijo, `tools/guion_dms.py` entra, avisa, abre el centro de avisos, el Dash y el
+# centro de control, y los captura (docs/bitacoras/dms-avisos.md).
+if [ -n "${DMS_CAPTURAS:-}" ]; then
+    python3 -I "$(dirname "$0")/guion_dms.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$DMS_CAPTURAS" >/dev/null 2>&1 &
+fi
+# Los discos del escritorio (rama dock-discos): con DISCOS_CAPTURAS=prefijo, `tools/guion_discos.py` entra y los
+# captura (quietos, el ratón encima, la onda, el menú, Información, el explorador y los ajustes en marcha).
+if [ -n "${DISCOS_CAPTURAS:-}" ]; then
+    python3 -I "$(dirname "$0")/guion_discos.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$DISCOS_CAPTURAS" >/dev/null 2>&1 &
+fi
+# Rama `fondos`: con FONDOS_CAPTURAS=prefijo, `tools/guion_fondos.py` entra, cambia de fondo con cada transición, abre la
+# herramienta de fondos y pone cada fondo animado, con capturas y lo que gasta cada uno (`make arranque-virt-fondos`).
+if [ -n "${FONDOS_CAPTURAS:-}" ]; then
+    python3 -I "$(dirname "$0")/guion_fondos.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$FONDOS_CAPTURAS" >/dev/null 2>&1 &
 fi
 # El Shell nativo en pantalla: con SHELL_CAPTURAS=prefijo, `tools/guion_shell.py` entra, abre el Shell desde el
 # lanzador, teclea en él y lo captura en cada momento (`make arranque-virt-shell`).
@@ -2193,10 +2580,32 @@ if [ -n "${SHELL_CAPTURAS:-}" ]; then
     python3 -I "$(dirname "$0")/guion_shell.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$SHELL_CAPTURAS" >/dev/null 2>&1 &
     SHELL_PID=$!
 fi
+# S35, el dominio con un aparato USB: con DOMINIO_USB=<el -device del adaptador>, `tools/guion_dominio_usb.py` lo
+# desenchufa y lo enchufa cuando lo pide la prueba (`make arranque-virt-dominio`).
+if [ -n "${DOMINIO_USB:-}" ]; then
+    python3 -I "$(dirname "$0")/guion_dominio_usb.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$DOMINIO_USB" >/dev/null 2>"${GUION_ERRORES:-/dev/null}" &
+    DOMINIO_USB_PID=$!
+fi
+# Plan de iconos, parte 3: con ICONOS_CAPTURAS=prefijo, `tools/guion_iconos.py` (`make arranque-virt-iconos`).
+if [ -n "${ICONOS_CAPTURAS:-}" ]; then
+    python3 -I "$(dirname "$0")/guion_iconos.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$ICONOS_CAPTURAS" >/dev/null 2>&1 &
+    ICONOS_PID=$!
+fi
 # S10, los menús: con MENUS_CAPTURAS=prefijo, `tools/guion_menus.py` (`make arranque-virt-menus`).
 if [ -n "${MENUS_CAPTURAS:-}" ]; then
     python3 -I "$(dirname "$0")/guion_menus.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$MENUS_CAPTURAS" >/dev/null 2>&1 &
     MENUS_PID=$!
+fi
+# Rama sonido-pro: con SONIDO_CAPTURAS=prefijo, `tools/guion_sonido.py` (`make arranque-virt-sonido`): el mezclador,
+# el visualizador y los controles de medios, con capturas.
+if [ -n "${SONIDO_CAPTURAS:-}" ]; then
+    python3 -I "$(dirname "$0")/guion_sonido.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$SONIDO_CAPTURAS" >/dev/null 2>&1 &
+    SONIDO_PID=$!
+fi
+# Rama cuentas-2: con CUENTAS_CAPTURAS=prefijo, `tools/guion_cuentas.py` (`make arranque-virt-cuentas`).
+if [ -n "${CUENTAS_CAPTURAS:-}" ]; then
+    python3 -I "$(dirname "$0")/guion_cuentas.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$CUENTAS_CAPTURAS" >/dev/null 2>&1 &
+    CUENTAS_PID=$!
 fi
 # Se para en cuanto han salido todas las líneas esperadas, en cualquier orden (o al acabar el tiempo); el orden se
 # mira después. Antes se paraba en la última del fichero, y con procesos que acaban a su ritmo (W8, K7) la última en
@@ -2220,7 +2629,23 @@ reiniciada() {
     done
 }
 CAPTURADA=
+# Con el guion de la caja Linux (CAJA_LINUX): cuando acaba, lo que falta ya no va a salir. Se espera un poco por las
+# últimas líneas (las del apagado de la caja) y se para, en vez de seguir hasta el tope (con el de Wayland, 75 minutos):
+# GRACIA_GUION segundos (300 de serie), o 30 si el guion dejó dicho que algo falló (PREFIJO.fallo, con el motivo).
+GUION_ACABO=
 while kill -0 "$QEMU" 2>/dev/null; do
+    if [ -n "${CAJA_PID:-}" ] && [ -z "$GUION_ACABO" ] && ! kill -0 "$CAJA_PID" 2>/dev/null; then
+        GUION_ACABO=$SECONDS
+    fi
+    if [ -n "$GUION_ACABO" ]; then
+        GRACIA=${GRACIA_GUION:-300}
+        [ -s "$CAJA_LINUX.fallo" ] && GRACIA=30
+        if [ $((SECONDS - GUION_ACABO)) -ge "$GRACIA" ] && ! todas; then
+            echo "El guion de la caja Linux acabó hace $GRACIA s y faltan líneas: se para la prueba (a los $SECONDS s)"
+            kill "$QEMU" 2>/dev/null
+            break
+        fi
+    fi
     # Con REINICIO, tras la captura se da la señal al guion y se espera al segundo arranque (`todas` ya no se mira).
     if [ -n "$CAPTURADA" ] && [ -n "${REINICIO:-}" ]; then
         [ -e "$REINICIO_SENAL" ] || touch "$REINICIO_SENAL"
@@ -2245,10 +2670,12 @@ while kill -0 "$QEMU" 2>/dev/null; do
 done
 wait "$QEMU" 2>/dev/null
 [ -n "${TECLAS_PID:-}" ] && kill "$TECLAS_PID" 2>/dev/null
+[ -n "${DOMINIO_USB_PID:-}" ] && kill "$DOMINIO_USB_PID" 2>/dev/null
 [ -n "${MULTI_PID:-}" ] && kill "$MULTI_PID" 2>/dev/null
 [ -n "${CAJA_PID:-}" ] && kill "$CAJA_PID" 2>/dev/null
 [ -n "${SHELL_PID:-}" ] && kill "$SHELL_PID" 2>/dev/null
 [ -n "${MENUS_PID:-}" ] && kill "$MENUS_PID" 2>/dev/null
+[ -n "${CUENTAS_PID:-}" ] && kill "$CUENTAS_PID" 2>/dev/null
 # Lo que escribe EDK2 lleva secuencias de escape de terminal: fuera, para comparar el texto.
 sed -e 's/\x1b\[[0-9;]*[A-Za-z]//g' -e 's/\r//g' "$SALIDA" > "$SALIDA.txt"
 
@@ -2292,6 +2719,10 @@ if [ "$FALLO" = 0 ] && [ -n "${REINICIO:-}" ]; then
         FALLO=1
     fi
     [ "$FALLO" = 0 ] && echo "BIEN: $(basename "$REINICIO")"
+fi
+if [ -n "${CAJA_LINUX:-}" ] && [ -s "$CAJA_LINUX.fallo" ]; then
+    echo "--- lo que dice el guion de la caja Linux que falló ---"
+    cat "$CAJA_LINUX.fallo"
 fi
 if [ "$FALLO" = 0 ]; then
     echo "BIEN: $(basename "$ESPERADOS")"

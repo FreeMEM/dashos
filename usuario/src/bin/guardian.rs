@@ -21,7 +21,13 @@
 //! la sesión de delante y pone la pantalla de entrada. Al acabar la prueba se queda atendiendo eso y las demás
 //! preguntas (`atender`).
 //!
-//! Llaves: 1 el canal "ventanas" (con el poder de escritorio), 2 el canal "sesiones".
+//! S27, oleada 6: la pantalla de bloqueo (y la de entrada) como la de DMS: el fondo desenfocado (de `fondo`), el reloj
+//! grande con la fecha (en la zona horaria del sistema, que le dice el centro), el avatar con la inicial y el campo de
+//! la contraseña con su contorno, el estado (red y volumen, del compositor) y los avisos según su ajuste (de `sesiones`,
+//! que se lo pide al servicio de avisos). Dónde va cada cosa: `bloqueo_vista.rs`.
+//!
+//! Llaves (por su nombre en la tabla de llaves): "ventanas" (la 1, con el poder de escritorio), "sesiones" (la 2),
+//! "fondo", "centro" y, en algunas imágenes, "uso" y "codigos".
 
 #![no_std]
 #![no_main]
@@ -35,6 +41,21 @@ mod ventana_cliente;
 #[path = "../preguntas_ficheros.rs"]
 #[allow(dead_code)]
 mod preguntas_ficheros;
+#[path = "../sonido_estado.rs"]
+#[allow(dead_code)]
+mod sonido_estado;
+#[path = "../bloqueo_vista.rs"]
+mod bloqueo_vista;
+use bloqueo_vista as bv;
+#[path = "../desenfoque.rs"]
+#[allow(dead_code)]
+mod desenfoque;
+#[path = "../reloj.rs"]
+#[allow(dead_code)]
+mod reloj;
+#[path = "../dms_medidas.rs"]
+#[allow(dead_code)]
+mod dms_medidas;
 use preguntas_ficheros as pf;
 
 use alloc::string::String;
@@ -49,7 +70,7 @@ use kit::texto::Fuente;
 use ventana_cliente::*;
 use wayland::tablas::{
     ext_idle_notification_v1, ext_idle_notifier_v1, ext_session_lock_manager_v1, ext_session_lock_surface_v1,
-    ext_session_lock_v1, wl_compositor, wl_display, wl_keyboard,
+    ext_session_lock_v1, wl_compositor, wl_display, wl_keyboard, wl_pointer,
     wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface, zwlr_layer_shell_v1, zwlr_layer_surface_v1,
 };
 use wayland::Escritor;
@@ -58,8 +79,12 @@ dashos::programa!(principal);
 dashos::monton!();
 
 const SESIONES: u32 = 2;
-/// El canal del centro de control (S10c): por él solo se le pide que abra una categoría.
-const CENTRO: u32 = 3;
+/// El canal del centro de control (S10c): por él se le pide que abra una categoría y (S27, oleada 6) la zona horaria
+/// del sistema. Por su nombre en la tabla de llaves: desde la oleada 6, `guardian` tiene también el canal "fondo", que va
+/// antes en el orden de los canales, y el centro dejó de ser la llave 3.
+fn centro() -> u32 {
+    dashos::llaves::buscar("centro").unwrap_or(0)
+}
 /// La frase que eligió cada usuario al crear su cuenta (S6b): sale en su pantalla de bloqueo. Provisional, como las
 /// cuentas de `sesiones`.
 const FRASES: &[(&str, &str)] = &[("Carla", "Las gaviotas vuelven al puerto"), ("Ana", "El faro de la isla")];
@@ -71,29 +96,63 @@ fn pedir(m: &[u8], mas: &[u32]) -> i32 {
     let (lectura, suyo) = dashos::canal_crear();
     let mut llaves = [suyo; 2];
     llaves[1..1 + mas.len()].copy_from_slice(mas);
-    let mut r = [0u8; 4];
+    // Rama `cuentas-2`: entrar y volver contestan 8 bytes cuando hay que esperar (el estado y los segundos).
+    let mut r = [0u8; 8];
     let n = if dashos::canal_escribir(SESIONES, m, &llaves[..1 + mas.len()]) == 0 {
         dashos::canal_leer_plazo(lectura, &mut r, &mut [], 3_000_000).0
     } else {
         -1
     };
     dashos::cerrar(lectura);
-    if n == 4 { i32::from_le_bytes(r) } else { i32::MIN }
+    if n == 4 || n == 8 { i32::from_le_bytes(r[0..4].try_into().unwrap()) } else { i32::MIN }
 }
 
-/// La imagen para usar (llave 4, "uso"): sin las cuentas de la prueba (cuántos intentos malos espera el guion).
+/// Rama `cuentas-2`: como `pedir`, sin llaves de más, con la respuesta de 8 bytes (el estado y los segundos de espera).
+fn pedir_8(m: &[u8]) -> (i32, u32) {
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut r = [0u8; 8];
+    let n = if dashos::canal_escribir(SESIONES, m, &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 10_000_000).0 } else { -1 };
+    dashos::cerrar(lectura);
+    match n {
+        8 => (i32::from_le_bytes(r[0..4].try_into().unwrap()), u32::from_le_bytes(r[4..8].try_into().unwrap())),
+        4 => (i32::from_le_bytes(r[0..4].try_into().unwrap()), 0),
+        _ => (i32::MIN, 0),
+    }
+}
+
+/// La imagen para usar (la llave "uso"): sin las cuentas de la prueba (cuántos intentos malos espera el guion).
 static USO: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 fn uso() -> bool {
     USO.load(core::sync::atomic::Ordering::Relaxed)
 }
 
+/// Rama `cuentas-2`: con la llave "codigos" (la imagen de `make arranque-virt-cuentas`), la de usar escribe también los
+/// códigos de recuperación en la consola, como la de las pruebas: su guion los teclea.
+static CODIGOS: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Si los códigos de recuperación se escriben en la consola (solo en las imágenes de prueba).
+fn codigos_a_la_consola() -> bool {
+    !uso() || CODIGOS.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// Rama `cuentas-2`: el último código de recuperación que se enseñó (la cuenta y el código), para la prueba de recuperar
+/// (en las pruebas, `guardian` contesta también por la persona). Solo el hilo principal lo toca.
+struct Ultimo(core::cell::UnsafeCell<([u8; 16], [u8; dashos::cuentas::LARGO_CODIGO])>);
+// SAFETY: `guardian` tiene un solo hilo.
+unsafe impl Sync for Ultimo {}
+static ULTIMO_CODIGO: Ultimo = Ultimo(core::cell::UnsafeCell::new(([0; 16], [0; dashos::cuentas::LARGO_CODIGO])));
+
 fn principal() -> u64 {
-    // Antes de crear nada (cada llave nueva toma el siguiente número libre, y la 4 sería una suya): ¿hay llave 4?
-    let copia = dashos::llave_duplicar(4, u64::MAX, 0);
-    if copia > 0 {
-        dashos::cerrar(copia as u32);
+    // La imagen se sabe por el nombre de las llaves (su tabla), no por cuántas trae: `guardian` es el primero que
+    // nombra "uso" (y "codigos"), así que los lee y nace también con "yo:uso" (y "yo:codigos"), las copias para
+    // escribirse. En la imagen de usar, la llave 5 era "yo:uso", y mirar si había llave 5 daba por buena "codigos":
+    // los códigos de recuperación salían por la consola y Ajustes se abría en Cuentas al entrar.
+    let tabla = dashos::llaves::Tabla::leer();
+    if tabla.buscar("uso").is_some() {
         USO.store(true, core::sync::atomic::Ordering::Relaxed);
+        // Rama `cuentas-2`: solo en la imagen de `make arranque-virt-cuentas`.
+        CODIGOS.store(tabla.buscar("codigos").is_some(), core::sync::atomic::Ordering::Relaxed);
     }
     dashos::monton::con_nombre(&"guardian");
     let (preguntas, para_sesiones) = dashos::canal_crear();
@@ -119,14 +178,21 @@ fn principal() -> u64 {
     // pruebas: la pantalla de entrada hasta que alguien entre, y luego atender (preguntas, "*bloquear" del panel,
     // apagar y cerrar sesión, que vuelve a la entrada).
     if uso() {
-        println!("  [guardian] modo de uso: pantalla de entrada");
+        // Lo dice: en la imagen de usar, los códigos de recuperación no salen de su pantalla.
+        let codigos = if CODIGOS.load(core::sync::atomic::Ordering::Relaxed) { "también en la consola (prueba)" } else { "solo en su pantalla" };
+        println!("  [guardian] modo de uso: pantalla de entrada; los códigos de recuperación, {}", codigos);
         loop {
             if let Some(quien) = pantalla(None) {
                 println!("  [guardian] entra {}", quien);
                 break;
             }
         }
-        atender(preguntas);
+        // Rama `cuentas-2`: en la imagen de `make arranque-virt-cuentas` (la llave 5), Ajustes se abre en Cuentas, como
+        // si se pulsara, para su guion (en la de usar no hay aún un botón para abrir Ajustes que el guion encuentre).
+        if CODIGOS.load(core::sync::atomic::Ordering::Relaxed) {
+            println!("  [guardian] (prueba) pide al centro abrir Cuentas: {}", dashos::canal_escribir(centro(), b"abrir cuentas", &[]));
+        }
+        atender_uso(preguntas);
     }
     let (mut a_pide, mut a_otros) = (0, 0);
     // U6: lo concedido es por programa y usuario: a `pide` se le pregunta una vez por servicio y usuario (servicio y
@@ -251,7 +317,7 @@ fn principal() -> u64 {
     dashos::dormir_us(3_000_000);
     // Con una llave de vuelta: el centro contesta al cerrarse, y hasta entonces no sigue (lo siguiente es bloquear).
     let (lectura, suyo) = dashos::canal_crear();
-    let mandado = dashos::canal_escribir(CENTRO, b"abrir permisos", &[suyo]);
+    let mandado = dashos::canal_escribir(centro(), b"abrir permisos", &[suyo]);
     let mut r4 = [0u8; 4];
     // Mientras está abierto, se siguen atendiendo las acciones de administrador (el centro comprueba el disco desde
     // Discos): en la prueba, a "centro" se le da la contraseña de Ana, como a `pide`.
@@ -305,6 +371,9 @@ fn principal() -> u64 {
         let (e_shell, p_shell) = lanzar_con_argumentos("System/Shell", 1000, "REGISTRO ORDEN Execute S:Prueba-Shell");
         let acaba = e_shell == 0 && esperar_atendiendo(p_shell, 240_000_000, preguntas);
         println!("  [guardian] Shell nativo: lanza System/Shell como Ana: {}, acaba: {}", e_shell, acaba);
+        // Rama `cuentas-2`: con Berta hecha por el guion del Shell, la lista de entrada, recuperar y las esperas.
+        let cuentas = prueba_cuentas();
+        println!("  [guardian] cuentas-2: lista, primer arranque, recuperar y esperas: {}", if cuentas { "bien" } else { "MAL" });
     }
     // U6, paso 2, prueba hostil: `Programas/panel` (una copia de `cambio`), lanzado del disco con el nombre del panel
     // rápido, no tiene sus poderes en el compositor (lo comprueba él). Se lanza como `guardian` (sin `Home:`).
@@ -375,7 +444,10 @@ fn de_apagar(q: &[u8; PREGUNTA]) -> bool {
             let estado = pedir(&m[..12 + n], &[]);
             println!("  [guardian] cerrar la sesión de {}: {}", programa, estado);
             if estado == 0 {
-                pantalla(None);
+                // Rama `cuentas-2`: quién entra luego (la pantalla de entrada, con la lista), como al arrancar.
+                if let Some(quien) = pantalla(None) {
+                    println!("  [guardian] entra {} (tras cerrar la sesión de {})", quien, programa);
+                }
             }
             true
         }
@@ -383,20 +455,174 @@ fn de_apagar(q: &[u8; PREGUNTA]) -> bool {
     }
 }
 
-/// Tras la prueba: las preguntas que lleguen, para siempre. Las de apagar, como `de_apagar`; bloquear, con su pantalla;
-/// los permisos, al usuario; las acciones de administrador, negadas (aquí no se pide la contraseña).
+/// Tras la prueba: las preguntas que lleguen, para siempre (`atender_una`).
 fn atender(preguntas: u32) -> ! {
     loop {
         let mut q = [0u8; PREGUNTA];
-        if dashos::canal_leer(preguntas, &mut q, &mut []).0 as usize != PREGUNTA || de_apagar(&q) || de_permiso(&q) || de_tanda(&q) {
+        if dashos::canal_leer(preguntas, &mut q, &mut []).0 as usize != PREGUNTA {
             continue;
+        }
+        atender_una(&q);
+    }
+}
+
+/// S27, oleada 6: quien está delante (lo pone `pantalla` cuando alguien entra o desbloquea; solo el hilo principal),
+/// para bloquear su sesión con Super+L, el candado del panel o la inactividad. 16 bytes en dos palabras.
+static DELANTE: [core::sync::atomic::AtomicU64; 2] = [const { core::sync::atomic::AtomicU64::new(0) }; 2];
+
+fn poner_delante(nombre: &str) {
+    let mut b = [0u8; 16];
+    let n = nombre.len().min(16);
+    b[..n].copy_from_slice(&nombre.as_bytes()[..n]);
+    for (k, d) in DELANTE.iter().enumerate() {
+        d.store(u64::from_le_bytes(b[8 * k..8 * k + 8].try_into().unwrap()), core::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+fn delante() -> String {
+    let mut b = [0u8; 16];
+    for (k, d) in DELANTE.iter().enumerate() {
+        b[8 * k..8 * k + 8].copy_from_slice(&d.load(core::sync::atomic::Ordering::Relaxed).to_le_bytes());
+    }
+    String::from(core::str::from_utf8(&b[..b.iter().position(|&c| c == 0).unwrap_or(16)]).unwrap_or(""))
+}
+
+/// S27, oleada 6: en la imagen de usar, las preguntas de `sesiones` las recoge un hilo y las deja en esta cola; el bucle
+/// principal espera a la vez al compositor (para bloquear) y a la cola, por la puerta de su conexión (un proceso solo
+/// espera en un canal), como el centro y `fondo`.
+static COLA_PREGUNTAS: dashos::hilos::Cola<[u8; PREGUNTA], 8> = dashos::hilos::Cola::nueva();
+static SACADAS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+/// La puerta de la conexión con el compositor mientras se espera (0: ninguna). Se cambia y se usa con el cerrojo de la
+/// cola tomado: el hilo nunca escribe por una llave ya cerrada.
+static PUERTA_PREGUNTAS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+const MARCA_PUERTA: u64 = 0x6a7d_0001;
+/// Sin tocar el teclado ni el ratón, la sesión se bloquea a los 30 minutos: lo de shiva (`acLockTimeout` 1800 de DMS).
+const BLOQUEO_INACTIVO_MS: u32 = 30 * 60 * 1000;
+
+/// El hilo de las preguntas: las lee de `sesiones` y las deja en la cola.
+fn hilo_preguntas(preguntas: u64) -> u64 {
+    use core::sync::atomic::Ordering::Acquire;
+    loop {
+        let mut q = [0u8; PREGUNTA];
+        let n = dashos::canal_leer(preguntas as u32, &mut q, &mut []).0;
+        if n < 0 {
+            dashos::dormir_us(100_000);
+            continue;
+        }
+        if n as usize != PREGUNTA {
+            continue;
+        }
+        let mut m = Some(q);
+        loop {
+            let visto = SACADAS.load(Acquire);
+            m = COLA_PREGUNTAS.con(|c| m.take().and_then(|x| c.meter(x).err()));
+            if m.is_none() {
+                break;
+            }
+            dashos::hilos::esperar(&SACADAS, visto, 0);
+        }
+        COLA_PREGUNTAS.con(|_| {
+            let p = PUERTA_PREGUNTAS.load(Acquire);
+            if p != 0 {
+                dashos::canal_escribir(p, &[1], &[]);
+            }
+        });
+    }
+}
+
+fn sacar_pregunta() -> Option<[u8; PREGUNTA]> {
+    let (llena, m) = COLA_PREGUNTAS.con(|c| (c.llena(), c.sacar()));
+    if m.is_some() && llena {
+        SACADAS.fetch_add(1, core::sync::atomic::Ordering::Release);
+        dashos::hilos::despertar(&SACADAS, 1);
+    }
+    m
+}
+
+/// S27, oleada 6: espera a la vez una pregunta (en la cola) y que haya que bloquear: Super+L, el candado del panel (los
+/// dos dan ya los avisos de inactividad, U3) o `BLOQUEO_INACTIVO_MS` sin tocar nada. `true` si hay que bloquear. Al
+/// volver se despide del compositor (`pantalla` y las preguntas abren su propia conexión).
+fn esperar_bloqueo() -> bool {
+    use core::sync::atomic::Ordering::AcqRel;
+    const AVISOS: u32 = 30;
+    const INACTIVO: u32 = 31;
+    let Some((mut c, puerta)) = Cliente::conectar_con_puerta(MARCA_PUERTA) else {
+        dashos::dormir_us(1_000_000);
+        return false;
+    };
+    let soltar = || {
+        COLA_PREGUNTAS.con(|_| {
+            let antes = PUERTA_PREGUNTAS.swap(0, AcqRel);
+            if antes != 0 {
+                dashos::cerrar(antes);
+            }
+        });
+        dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
+    };
+    COLA_PREGUNTAS.con(|_| PUERTA_PREGUNTAS.store(puerta, core::sync::atomic::Ordering::Release));
+    let globales = c.globales();
+    let global = |n: &str| globales.as_ref().and_then(|g| g.iter().find(|g| g.1 == n).map(|g| g.0));
+    let (Some(ga), Some(gi)) = (global("wl_seat"), global("ext_idle_notifier_v1")) else {
+        println!("  [guardian] el compositor no da avisos de inactividad: no se bloquea solo");
+        soltar();
+        dashos::dormir_us(5_000_000);
+        return false;
+    };
+    let mut e = Escritor::new();
+    e.empezar(REGISTRO, wl_registry::req::BIND).uint(ga).texto(Some("wl_seat")).uint(7).uint(ASIENTO).fin();
+    e.empezar(REGISTRO, wl_registry::req::BIND).uint(gi).texto(Some("ext_idle_notifier_v1")).uint(2).uint(AVISOS).fin();
+    e.empezar(AVISOS, ext_idle_notifier_v1::req::GET_IDLE_NOTIFICATION).uint(INACTIVO).uint(BLOQUEO_INACTIVO_MS).uint(ASIENTO).fin();
+    c.mandar(&e);
+    let bloquear = loop {
+        if COLA_PREGUNTAS.con(|c| !c.is_empty()) {
+            break false;
+        }
+        match c.evento_plazo(60_000_000) {
+            Ok(Some((o, ev, _))) if o == INACTIVO && ev == ext_idle_notification_v1::ev::IDLED => break true,
+            Ok(_) => {}
+            Err(()) => break false,
+        }
+    };
+    soltar();
+    bloquear
+}
+
+/// La imagen de usar, tras entrar: las preguntas (`atender_una`) y bloquear la sesión de delante cuando toque.
+fn atender_uso(preguntas: u32) -> ! {
+    let pila: &'static mut [u8] = alloc::vec![0u8; 32 << 10].leak();
+    if dashos::hilos::crear(hilo_preguntas, preguntas as u64, pila, 0) < 0 {
+        println!("  [guardian] no se pudo lanzar el hilo de las preguntas: sin bloqueo con Super+L");
+        atender(preguntas);
+    }
+    println!("  [guardian] atiende: preguntas y bloquear (Super+L, el panel o {} min sin tocar nada)", BLOQUEO_INACTIVO_MS / 60_000);
+    loop {
+        while let Some(q) = sacar_pregunta() {
+            atender_una(&q);
+        }
+        if esperar_bloqueo() {
+            let quien = delante();
+            if quien.is_empty() {
+                continue;
+            }
+            println!("  [guardian] bloquear la sesión de {}", quien);
+            pantalla(Some(&quien));
+        }
+    }
+}
+
+/// Una pregunta de `sesiones`, tras la prueba o en la imagen de usar. Las de apagar, como `de_apagar`; bloquear, con
+/// su pantalla; los permisos, al usuario; las acciones de administrador, con su ventana.
+fn atender_una(q: &[u8; PREGUNTA]) {
+    {
+        if de_apagar(q) || de_permiso(q) || de_tanda(q) {
+            return;
         }
         let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
         let programa = core::str::from_utf8(&q[8..8 + campo(&q[8..24])]).unwrap_or("?");
         let servicio = &q[24..24 + campo(&q[24..40])];
         if servicio == b"*bloquear" {
             pantalla(Some(programa));
-            continue;
+            return;
         }
         // S28: un fichero de la caja Amiga: siempre, esta vez o no.
         if pf::es_permiso(servicio) {
@@ -406,11 +632,11 @@ fn atender(preguntas: u32) -> ! {
             m[4..8].copy_from_slice(&q[0..4]);
             m[8..12].copy_from_slice(&r.to_le_bytes());
             pedir(&m, &[]);
-            continue;
+            return;
         }
         // S36, decisión 1: una acción de administrador suelta, con la misma ventana que una tanda.
-        if de_accion(&q) {
-            continue;
+        if de_accion(q) {
+            return;
         }
         let mut r = [0u8; 16];
         let largo = if servicio.first() == Some(&b'*') {
@@ -644,6 +870,70 @@ fn sesion_de_prueba(orden: u32, usuaria: &str, clave: &str) -> i32 {
     pedir(&m[..12 + u.len() + c.len()], &[])
 }
 
+/// Rama `cuentas-2`, sin pantalla (la pantalla, en `make arranque-virt-cuentas`): con Berta recién creada por el guion del
+/// Shell (y su código de recuperación, que enseñó esta ventana), lo que pide la pantalla de entrada a `sesiones`:
+/// - la lista de cuentas (Ana, Carla y Berta), sin primer arranque; y crear "la primera" con cuentas ya hechas, no;
+/// - recuperar a Berta: con un código malo, no; con el bueno tecleado de cualquier manera y una contraseña corta, no; con
+///   el bueno, sí, y da otro; el gastado, otra vez, no; una cuenta que no existe, no;
+/// - las esperas: la contraseña de antes de Berta y una mala (con el código gastado, tres seguidas): hay que esperar, y ni
+///   la buena se prueba; pasada la espera, la nueva entra (`VOLVER`: sin abrir su volumen, que no tiene sesión).
+fn prueba_cuentas() -> bool {
+    use dashos::cuentas::Fallo;
+    use dashos::protocolo::sesiones::{OCUPADO, PRIMERA_CUENTA, PROTEGIDO, RECUPERAR};
+    let mut todo = true;
+    let mut paso = |que: core::fmt::Arguments, si: bool| {
+        todo &= si;
+        println!("  [guardian] cuentas-2: {}: {}", que, if si { "bien" } else { "MAL" });
+    };
+    let (lista, primer) = cuentas_de_entrada();
+    let nombres: alloc::vec::Vec<&str> = lista.iter().map(|c| c.0.as_str()).collect();
+    paso(format_args!("la lista de la entrada: {:?}, primer arranque {}", nombres, primer), nombres == ["Ana", "Carla", "Berta"] && !primer && lista[2].1 == "Berta Gil");
+    let (e, ..) = pedir_con_codigo(PRIMERA_CUENTA, "Eva", "", "clave de Eva");
+    paso(format_args!("crear la primera cuenta con cuentas ya hechas, {}", e), e == Fallo::HayCuentas.estado());
+    // SAFETY: un solo hilo (`Ultimo`).
+    let (cuenta, codigo) = unsafe { *ULTIMO_CODIGO.0.get() };
+    let codigo = String::from(core::str::from_utf8(&codigo).unwrap_or(""));
+    if &cuenta[..5] != b"Berta" || codigo.len() != dashos::cuentas::LARGO_CODIGO {
+        println!("  [guardian] cuentas-2: no hay código de Berta guardado: MAL");
+        return false;
+    }
+    // Tecleado de otra manera: en minúsculas y sin guiones.
+    let tecleado: String = codigo.chars().filter(|&c| c != '-').map(|c| c.to_ascii_lowercase()).collect();
+    let (malo, ..) = pedir_con_codigo(RECUPERAR, "Berta", "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA", "nueva de Berta");
+    let (corta, ..) = pedir_con_codigo(RECUPERAR, "Berta", &tecleado, "corta");
+    paso(format_args!("recuperar a Berta con un código malo, {}; con el bueno y una contraseña corta, {}", malo, corta), malo == PROTEGIDO && corta == Fallo::NuevaCorta.estado());
+    let (bien, _, nuevo) = pedir_con_codigo(RECUPERAR, "Berta", &tecleado, "nueva de Berta");
+    if codigos_a_la_consola() && bien == 0 {
+        println!("  [guardian] (prueba) el código de recuperación de Berta es {}", nuevo);
+    }
+    // Otro, y que sea un código (no ceros: se borraba antes de copiarlo).
+    let otro = dashos::cuentas::normalizar_codigo(nuevo.as_bytes()).is_some_and(|c| c[..] == *nuevo.as_bytes()) && nuevo != codigo;
+    paso(format_args!("recuperar a Berta con su código, {}; da otro: {}", bien, otro), bien == 0 && otro);
+    let (gastado, ..) = pedir_con_codigo(RECUPERAR, "Berta", &codigo, "otra de Berta");
+    let (nadie, ..) = pedir_con_codigo(RECUPERAR, "Nadie", &codigo, "otra de Nadie");
+    paso(format_args!("el código gastado otra vez, {}; una cuenta que no existe, {}", gastado, nadie), gastado == PROTEGIDO && nadie == PROTEGIDO);
+    // Las esperas: la de antes (2.ª mala seguida) y otra (3.ª): empieza la espera; ni la buena se prueba.
+    let vieja = sesion_de_prueba(VOLVER, "Berta", "clave de Berta");
+    let mala = sesion_de_prueba(VOLVER, "Berta", "tampoco es");
+    let mut m = [0u8; 64];
+    let clave = b"nueva de Berta";
+    m[0..4].copy_from_slice(&VOLVER.to_le_bytes());
+    m[4..8].copy_from_slice(&5u32.to_le_bytes());
+    m[8..12].copy_from_slice(&(clave.len() as u32).to_le_bytes());
+    m[12..17].copy_from_slice(b"Berta");
+    m[17..17 + clave.len()].copy_from_slice(clave);
+    let (esperando, segundos) = pedir_8(&m[..17 + clave.len()]);
+    paso(
+        format_args!("la de antes, {}; una mala, {}; la buena, sin probarla: {} con {} s de espera", vieja, mala, esperando, segundos),
+        vieja == dashos::protocolo::archivos::PROTEGIDO && mala == dashos::protocolo::archivos::PROTEGIDO && esperando == OCUPADO && (1..=5).contains(&segundos),
+    );
+    dashos::dormir_us(segundos as u64 * 1_000_000 + 300_000);
+    let (despues, _) = pedir_8(&m[..17 + clave.len()]);
+    m.fill(0);
+    paso(format_args!("pasada la espera, la nueva de Berta vale: {}", despues), despues == 0);
+    todo
+}
+
 /// S28: lo que se espera de la caja Amiga en la prueba: una pregunta de cada virus de laboratorio que cambia ficheros
 /// (arranque, enlace, guion y troyano) y dos de `actualiza.exe` (la tercera vez ya lo recuerda `sesiones`).
 const CAJA_ESPERADAS: u32 = 6;
@@ -703,6 +993,10 @@ fn de_permiso(q: &[u8; PREGUNTA]) -> bool {
 /// falso.
 fn de_tanda(q: &[u8; PREGUNTA]) -> bool {
     let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
+    // Rama `cuentas-2`: cambiar la propia contraseña (`CLAVE_PROPIA`).
+    if de_clave(q) {
+        return true;
+    }
     // S6b, rama `cuentas`: tras una tanda que creó una cuenta, su código de recuperación, para apuntarlo.
     if &q[24..24 + campo(&q[24..40])] == b"*codigo" {
         ensenar_codigo(q);
@@ -752,8 +1046,13 @@ fn ensenar_codigo(q: &[u8; PREGUNTA]) {
     let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
     let cuenta = limpiar(core::str::from_utf8(&q[8..8 + campo(&q[8..24])]).unwrap_or("?"), "?");
     let mut codigo = String::from(core::str::from_utf8(&q[40..40 + dashos::cuentas::LARGO_CODIGO]).unwrap_or("?"));
-    if !uso() {
+    if codigos_a_la_consola() {
         println!("  [guardian] (prueba) el código de recuperación de {} es {}", cuenta, codigo);
+        // SAFETY: un solo hilo (`Ultimo`).
+        let u = unsafe { &mut *ULTIMO_CODIGO.0.get() };
+        u.0 = [0; 16];
+        u.0[..cuenta.len().min(16)].copy_from_slice(&cuenta.as_bytes()[..cuenta.len().min(16)]);
+        u.1.copy_from_slice(&q[40..40 + dashos::cuentas::LARGO_CODIGO]);
     }
     let mut memoria = 0;
     let r = preguntar_dentro("sesiones", &Pregunta::Codigo { cuenta: &cuenta, codigo: &codigo }, &mut memoria);
@@ -833,15 +1132,23 @@ fn confirmar_admin(q: &[u8; PREGUNTA], programa: &str, lineas: alloc::vec::Vec<S
 fn esperar_atendiendo(pid: u64, max_us: u64, preguntas: u32) -> bool {
     let hasta = dashos::ahora_us() + max_us;
     let mut mirado = 0u64;
+    // Acabado el programa, se atiende aún lo que quede en la cola antes de volver: `sesiones` manda "*codigo" tras
+    // crear una cuenta en una tanda, y el programa puede acabar antes de que se lea (arreglo de la oleada 6 de S27: la
+    // prueba de cuentas-2 daba "no hay código de Berta guardado" según cuánto tardara la ventana de la tanda).
+    let mut acabado = false;
     while dashos::ahora_us() < hasta {
-        if dashos::ahora_us() >= mirado + 500_000 {
-            if !vivo(pid) {
-                return true;
-            }
+        if !acabado && dashos::ahora_us() >= mirado + 500_000 {
+            acabado = !vivo(pid);
             mirado = dashos::ahora_us();
         }
         let mut q = [0u8; PREGUNTA];
-        if dashos::canal_leer_plazo(preguntas, &mut q, &mut [], 300_000).0 as usize != PREGUNTA || de_apagar(&q) || de_permiso(&q) || de_tanda(&q) {
+        if dashos::canal_leer_plazo(preguntas, &mut q, &mut [], 300_000).0 as usize != PREGUNTA {
+            if acabado {
+                return true;
+            }
+            continue;
+        }
+        if de_apagar(&q) || de_permiso(&q) || de_tanda(&q) {
             continue;
         }
         let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
@@ -931,6 +1238,92 @@ enum Pregunta<'a> {
     },
     /// S6b, rama `cuentas`: el código de recuperación de una cuenta nueva, para apuntarlo.
     Codigo { cuenta: &'a str, codigo: &'a str },
+    /// Rama `cuentas-2`: cambiar la propia contraseña: la cuenta, las tres cajas (la de ahora, la nueva y repítela), la
+    /// que se teclea y lo que dijo `sesiones` del intento de antes (vacío si nada).
+    Clave { cuenta: &'a str, cajas: &'a [core::cell::RefCell<String>; 3], foco: &'a core::cell::Cell<u8>, aviso: &'a core::cell::RefCell<String> },
+}
+
+/// Rama `cuentas-2`: si `q` es un cambio de la propia contraseña ("*clave", de `CLAVE_PROPIA`), la ventana con la de ahora
+/// y la nueva dos veces; cada intento va a `sesiones` (`RESPUESTA_CLAVE`), que la cambia o dice qué pasa (la de ahora no
+/// es, hay que esperar, la nueva es corta): entonces se vuelve a enseñar, con el aviso. Esc, o dos minutos sin acabar,
+/// es que no. Si no es eso, falso.
+fn de_clave(q: &[u8; PREGUNTA]) -> bool {
+    use core::cell::{Cell, RefCell};
+    use dashos::protocolo::sesiones::{NO_EXISTE, OCUPADO, PROTEGIDO, RESPUESTA_CLAVE};
+    let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
+    if &q[24..24 + campo(&q[24..40])] != b"*clave" {
+        return false;
+    }
+    let cuenta = limpiar(core::str::from_utf8(&q[8..8 + campo(&q[8..24])]).unwrap_or("?"), "?");
+    let quien = limpiar(core::str::from_utf8(&q[40..40 + campo(&q[40..56])]).unwrap_or("?"), "un programa");
+    let cajas = [RefCell::new(String::new()), RefCell::new(String::new()), RefCell::new(String::new())];
+    let foco = Cell::new(0u8);
+    let aviso = RefCell::new(String::new());
+    let mandar = |vieja: &[u8], nueva: &[u8]| -> (i32, u32) {
+        let (v, n) = (&vieja[..vieja.len().min(100)], &nueva[..nueva.len().min(100)]);
+        let mut m = [0u8; 16 + 200];
+        m[0..4].copy_from_slice(&RESPUESTA_CLAVE.to_le_bytes());
+        m[4..8].copy_from_slice(&q[0..4]);
+        m[8..12].copy_from_slice(&(v.len() as u32).to_le_bytes());
+        m[12..16].copy_from_slice(&(n.len() as u32).to_le_bytes());
+        m[16..16 + v.len()].copy_from_slice(v);
+        m[16 + v.len()..16 + v.len() + n.len()].copy_from_slice(n);
+        let r = pedir_8(&m[..16 + v.len() + n.len()]);
+        m.fill(0);
+        r
+    };
+    // Unas cuantas vueltas como mucho (cada una, una ventana nueva con el aviso).
+    for _ in 0..12 {
+        let mut memoria = 0;
+        let r = preguntar_dentro(&quien, &Pregunta::Clave { cuenta: &cuenta, cajas: &cajas, foco: &foco, aviso: &aviso }, &mut memoria);
+        dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
+        dashos::memoria_quitar(VA);
+        if memoria > 0 {
+            dashos::cerrar(memoria);
+        }
+        if r != pf::RESPUESTA_SIEMPRE {
+            mandar(b"", b"");
+            println!("  [guardian] cambio de contraseña de {}: el usuario dice que no", cuenta);
+            break;
+        }
+        let (estado, espera) = mandar(cajas[0].borrow().as_bytes(), cajas[1].borrow().as_bytes());
+        let dice = match estado {
+            0 => {
+                println!("  [guardian] cambio de contraseña de {}: cambiada", cuenta);
+                break;
+            }
+            PROTEGIDO => {
+                borrar(&mut cajas[0].borrow_mut());
+                foco.set(0);
+                String::from("La contraseña de ahora no es esa.")
+            }
+            OCUPADO => {
+                borrar(&mut cajas[0].borrow_mut());
+                foco.set(0);
+                alloc::format!("Demasiados intentos. Espera {} s y prueba otra vez.", espera)
+            }
+            e if dashos::cuentas::Fallo::de_estado(e) == Some(dashos::cuentas::Fallo::NuevaCorta) => {
+                borrar(&mut cajas[1].borrow_mut());
+                borrar(&mut cajas[2].borrow_mut());
+                foco.set(1);
+                String::from("La nueva es corta: 8 letras o más.")
+            }
+            NO_EXISTE => {
+                println!("  [guardian] cambio de contraseña de {}: sesiones ya no lo espera", cuenta);
+                break;
+            }
+            e => {
+                println!("  [guardian] cambio de contraseña de {}: no se pudo ({})", cuenta, e);
+                break;
+            }
+        };
+        println!("  [guardian] cambio de contraseña de {}: {}", cuenta, dice);
+        *aviso.borrow_mut() = dice;
+    }
+    for c in cajas.iter() {
+        borrar(&mut c.borrow_mut());
+    }
+    true
 }
 
 /// S36, decisión 1: el alto del diálogo de una tanda de `n` líneas (una por acción). Con una cuenta nueva, una caja más.
@@ -951,10 +1344,11 @@ fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u
     let (ancho_d, alto_d) = match pregunta {
         Pregunta::Tanda { lineas, nueva, .. } => (DIALOGO_TANDA, alto_tanda(lineas.len(), nueva.is_some())),
         Pregunta::Codigo { .. } => DIALOGO_CODIGO,
+        Pregunta::Clave { .. } => DIALOGO_CLAVE,
         _ if fichero || matches!(pregunta, Pregunta::Cambio { .. }) => DIALOGO_FICHERO,
         _ => DIALOGO,
     };
-    let tanda = matches!(pregunta, Pregunta::Tanda { .. } | Pregunta::Codigo { .. });
+    let tanda = matches!(pregunta, Pregunta::Tanda { .. } | Pregunta::Codigo { .. } | Pregunta::Clave { .. });
     const ESPERA_US: u64 = 1_000_000;
     /// El tema del sistema (S10c): llega al enlazar, antes que la configuración de la capa.
     const TEMA: u32 = 22;
@@ -988,6 +1382,9 @@ fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u
     let mut teclado = Teclado::new();
     // Desde cuándo se ve (con el sync de su primer cuadro).
     let mut vista: Option<u64> = None;
+    // guion-panel: si la ventana tiene el teclado, y se dice (tras "en pantalla", para que en la salida vaya siempre detrás
+    // de la línea de su ventana): quien la conteste (el guion de las pruebas) espera a tenerlo, y no teclea en otra.
+    let mut con_teclado = false;
     // Teclear una contraseña lleva más que una tecla: la de una tanda espera dos minutos.
     let fin = dashos::ahora_us() + if tanda { 120_000_000 } else { 30_000_000 };
     loop {
@@ -1045,6 +1442,25 @@ fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u
                         println!("  [guardian] tanda en pantalla: {} pide {} (administrador propuesto: {}){}: {}", programa, lineas.len(), nombre.borrow(), con, lineas.join(" | "))
                     }
                     Pregunta::Codigo { cuenta, .. } => println!("  [guardian] código de recuperación en pantalla: {}", cuenta),
+                    Pregunta::Clave { cuenta, aviso, .. } => {
+                        let a = aviso.borrow();
+                        println!("  [guardian] cambio de contraseña en pantalla: {} (lo pide {}){}", cuenta, programa, if a.is_empty() { String::new() } else { alloc::format!("; {}", a) })
+                    }
+                }
+                if con_teclado {
+                    println!("  [guardian] ventana del sistema: tiene el teclado");
+                }
+            }
+            (TECLADO, wl_keyboard::ev::ENTER) => {
+                con_teclado = true;
+                if vista.is_some() {
+                    println!("  [guardian] ventana del sistema: tiene el teclado");
+                }
+            }
+            (TECLADO, wl_keyboard::ev::LEAVE) => {
+                con_teclado = false;
+                if vista.is_some() {
+                    println!("  [guardian] ventana del sistema: pierde el teclado");
                 }
             }
             (TECLADO, wl_keyboard::ev::KEYMAP) => {
@@ -1063,6 +1479,43 @@ fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u
                         Some(Tecla::Intro) => return pf::RESPUESTA_SIEMPRE,
                         _ => continue,
                     }
+                }
+                // Rama `cuentas-2`: cambiar la propia contraseña: tres cajas; Intro con todas puestas la manda, si las dos
+                // nuevas son iguales; si falta alguna, pasa a la siguiente. Tras "la de ahora no es esa", las nuevas
+                // siguen puestas: basta teclear la de ahora e Intro.
+                if let Pregunta::Clave { cajas, foco, aviso, .. } = pregunta {
+                    let Some(tecla) = tecla.filter(|_| a_tiempo) else { continue };
+                    let f = foco.get() as usize;
+                    match tecla {
+                        Tecla::Escape => return pf::RESPUESTA_NO,
+                        Tecla::Intro if cajas.iter().any(|c| c.borrow().is_empty()) => foco.set(((f + 1) % 3) as u8),
+                        Tecla::Intro if *cajas[1].borrow() != *cajas[2].borrow() => {
+                            borrar(&mut cajas[1].borrow_mut());
+                            borrar(&mut cajas[2].borrow_mut());
+                            foco.set(1);
+                            *aviso.borrow_mut() = String::from("Las dos nuevas no son iguales.");
+                            println!("  [guardian] cambio de contraseña: las dos nuevas no son iguales");
+                        }
+                        Tecla::Intro => return pf::RESPUESTA_SIEMPRE,
+                        Tecla::Tabulador | Tecla::Abajo => foco.set(((f + 1) % 3) as u8),
+                        Tecla::TabuladorAtras | Tecla::Arriba => foco.set(((f + 2) % 3) as u8),
+                        Tecla::Retroceso => {
+                            cajas[f].borrow_mut().pop();
+                        }
+                        Tecla::Letra(ch) if cajas[f].borrow().len() < 100 => cajas[f].borrow_mut().push(ch),
+                        _ => continue,
+                    }
+                    if *memoria != 0 {
+                        let tamano = (ancho_d * alto_d * 4) as usize;
+                        let px = unsafe { core::slice::from_raw_parts_mut(VA as *mut u32, tamano / 4) };
+                        pintar_pregunta(px, ancho_d, alto_d, programa, pregunta, detalles, &mut fuente, &mut medio, &tema);
+                        let mut e = Escritor::new();
+                        e.empezar(SUPERFICIE, wl_surface::req::ATTACH).uint(BUFER).int(0).int(0).fin();
+                        e.empezar(SUPERFICIE, wl_surface::req::DAMAGE).int(0).int(0).int(ancho_d).int(alto_d).fin();
+                        e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
+                        c.mandar(&e);
+                    }
+                    continue;
                 }
                 if let Pregunta::Tanda { nombre, clave, foco, nueva, .. } = pregunta {
                     let Some(tecla) = tecla.filter(|_| a_tiempo) else { continue };
@@ -1145,6 +1598,8 @@ const DIALOGO_FICHERO: (i32, i32) = (520, 268);
 const DIALOGO_TANDA: i32 = 560;
 /// S6b, rama `cuentas`: el del código de recuperación.
 const DIALOGO_CODIGO: (i32, i32) = (520, 300);
+/// Rama `cuentas-2`: el de cambiar la propia contraseña.
+const DIALOGO_CLAVE: (i32, i32) = (560, 400);
 /// Lo más largo que se enseña de un nombre que llega de fuera (el resto, "…").
 const MAX_NOMBRE_VISTO: usize = 60;
 
@@ -1173,6 +1628,7 @@ fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, pregun
         Pregunta::Tanda { lineas, .. } if lineas.len() == 1 => String::from("Acción de administrador"),
         Pregunta::Tanda { lineas, .. } => alloc::format!("{} acciones de administrador", lineas.len()),
         Pregunta::Codigo { cuenta, .. } => alloc::format!("Código de recuperación de {}", recortar(cuenta).trim_matches('"')),
+        Pregunta::Clave { cuenta, .. } => alloc::format!("Cambiar la contraseña de {}", recortar(cuenta).trim_matches('"')),
     };
     let tam = [24u32, 22, 20].into_iter().find(|&tam| fuente.medir(&titulo, tam).ancho <= ancho_texto).unwrap_or(20);
     l.recortar(Rect::new(x, caja.y, ancho_texto, caja.h));
@@ -1224,6 +1680,17 @@ fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, pregun
             ],
             &[("Intro", "Hecho")],
         ),
+        // Rama `cuentas-2`: quién lo pide, la frase de la cuenta (si no sale, no es el sistema) y el aviso o las teclas.
+        Pregunta::Clave { cuenta, aviso, .. } => {
+            let mut v = partir(fuente, &alloc::format!("{} pide cambiar tu contraseña. Lo que hay en tu Home: no cambia.", recortar(programa).trim_matches('"')), ancho_texto, 2);
+            match FRASES.iter().find(|f| f.0 == *cuenta) {
+                Some(f) => v.push(alloc::format!("Tu frase: \"{}\"", f.1)),
+                None => v.push(String::new()),
+            }
+            let a = aviso.borrow();
+            v.push(if a.is_empty() { String::from("Tab: la caja siguiente. Intro: cambiarla. Esc: no.") } else { a.clone() });
+            (v, &[("Intro", "Cambiar"), ("Esc", "No")])
+        }
         Pregunta::Tanda { lineas: acciones, nombre, foco, nueva, .. } => {
             let mut v = alloc::vec![alloc::format!("{} pide hacer esto, en este orden:", recortar(programa).trim_matches('"'))];
             for a in acciones.iter() {
@@ -1256,8 +1723,25 @@ fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, pregun
             (v, &[("Mayús+S", "Siempre"), ("E", "Esta vez"), ("N", "No")])
         }
     };
+    // Rama `cuentas-2`: el aviso de cambiar la contraseña (la última línea), en el color de error.
+    let con_aviso = matches!(pregunta, Pregunta::Clave { aviso, .. } if !aviso.borrow().is_empty());
     for (i, linea) in lineas.iter().enumerate() {
-        fuente.dibujar(&mut l, x, y + 20 * i as i32 + 15, linea, 14, t.sobre_variante_superficie);
+        let color = if con_aviso && i + 1 == lineas.len() { t.error } else { t.sobre_variante_superficie };
+        fuente.dibujar(&mut l, x, y + 20 * i as i32 + 15, linea, 14, color);
+    }
+    // Rama `cuentas-2`: las tres cajas de cambiar la contraseña, con un punto por letra.
+    if let Pregunta::Clave { cajas, foco, .. } = pregunta {
+        let y0 = y + 20 * lineas.len() as i32 + 12;
+        for (k, etiqueta) in ["Ahora", "Nueva", "Repítela"].iter().enumerate() {
+            let yc = y0 + 44 * k as i32;
+            fuente.dibujar(&mut l, x, yc + 24, etiqueta, 14, t.sobre_variante_superficie);
+            let caja = Rect::new(x + 120, yc, ancho_texto - 120, 36);
+            l.redondeado(caja, 8, t.contenedor());
+            if foco.get() as usize == k {
+                l.borde(caja, 8, 2, t.primario);
+            }
+            fuente.dibujar(&mut l, caja.x + 12, yc + 24, &"•".repeat(cajas[k].borrow().chars().count().min(24)), 14, t.sobre_superficie);
+        }
     }
     // S6b, rama `cuentas`: el código de recuperación, a 24 y centrado, para copiarlo sin errores.
     if let Pregunta::Codigo { codigo, .. } = pregunta {
@@ -1412,6 +1896,324 @@ fn esperar_inactividad(ms: u32, max_us: u64) -> Option<u64> {
     r
 }
 
+/// Rama `cuentas-2`: en qué está la pantalla de entrada (o de bloqueo).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Modo {
+    /// Elegir la persona en la lista de cuentas (con "Otra persona…" al final, para teclear el nombre).
+    Lista,
+    /// Teclear el nombre.
+    Nombre,
+    /// Teclear la contraseña de `nombre`.
+    Clave,
+    /// Olvidé la contraseña: el código de recuperación y la nueva dos veces.
+    Recuperar,
+    /// El primer arranque (S6b): la primera cuenta, administradora.
+    Asistente,
+    /// El código de recuperación nuevo (tras recuperar o crear la primera cuenta), para apuntarlo; Intro entra.
+    Codigo,
+}
+
+/// Lo que se ve y se teclea en la pantalla de entrada o de bloqueo.
+struct Pantalla {
+    /// La de entrada (nadie dentro), no un bloqueo.
+    entrada: bool,
+    /// U6: en "Cambiar de usuario" (Esc en la de bloqueo); quien estaba bloqueado sigue detrás.
+    cambiando: bool,
+    modo: Modo,
+    /// Las cuentas de la lista (nombre y nombre completo) y si toca el primer arranque.
+    cuentas: alloc::vec::Vec<(String, String)>,
+    primer: bool,
+    /// La fila elegida de la lista (`cuentas.len()` es "Otra persona…").
+    elegida: usize,
+    /// Si el nombre salió de la lista (tras una contraseña mala, se sigue con la misma persona) o se tecleó (se vuelve a
+    /// pedir el nombre).
+    de_lista: bool,
+    nombre: String,
+    clave: String,
+    /// Las cajas de recuperar (código, nueva, repítela) y del asistente (nombre, nombre completo, contraseña, repítela).
+    cajas: [String; 4],
+    foco: usize,
+    /// Lo que se dice debajo, en rojo (contraseña mala, un código que no es...).
+    aviso: Option<String>,
+    /// El código de recuperación nuevo, para enseñarlo.
+    codigo: String,
+}
+
+/// Una contraseña (o un código) fuera de la memoria (S6b, regla 9).
+fn borrar(s: &mut String) {
+    // SAFETY: se escriben ceros, que son UTF-8 válido, y se vacía.
+    unsafe { s.as_bytes_mut().fill(0) };
+    s.clear();
+}
+
+/// Rama `cuentas-2`: las filas de la lista que se ven a la vez.
+const FILAS_LISTA: usize = 5;
+/// Los códigos de `wl_keyboard` de Tab e Intro (los botones del pie hacen lo que su tecla).
+const TECLA_TAB: u32 = 15;
+const TECLA_INTRO: u32 = 28;
+
+/// Lo que se pulsa con el ratón en la pantalla de entrada.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Pulsado {
+    Fila(usize),
+    Caja(usize),
+    Tecla(u32),
+}
+const ALTO_FILA: i32 = 56;
+
+impl Pantalla {
+    fn vacia(entrada: bool) -> Pantalla {
+        Pantalla {
+            entrada,
+            cambiando: false,
+            modo: Modo::Clave,
+            cuentas: alloc::vec::Vec::new(),
+            primer: false,
+            elegida: 0,
+            de_lista: false,
+            nombre: String::new(),
+            clave: String::new(),
+            cajas: Default::default(),
+            foco: 0,
+            aviso: None,
+            codigo: String::new(),
+        }
+    }
+
+    /// El título de arriba.
+    fn titulo(&self) -> &'static str {
+        match self.modo {
+            Modo::Asistente => "Te damos la bienvenida a DashOS",
+            Modo::Recuperar => "Olvidé la contraseña",
+            Modo::Codigo => "Tu código de recuperación",
+            _ if self.cambiando => "Cambiar de usuario",
+            _ if self.entrada => "Entrar en DashOS",
+            _ => "Sesión bloqueada",
+        }
+    }
+
+    /// El nombre que se enseña de quien entra: el completo, si está en la lista y lo tiene.
+    fn visto(&self) -> String {
+        match self.cuentas.iter().find(|c| c.0 == self.nombre) {
+            Some((_, completo)) if !completo.is_empty() => completo.clone(),
+            _ => self.nombre.clone(),
+        }
+    }
+
+    /// Los botones del pie, en pastillas: lo que hacen y su tecla (el código de `wl_keyboard`). Se pulsan con el ratón
+    /// o con la tecla (S0: todo se puede hacer con el ratón).
+    fn pie(&self) -> &'static [(&'static str, u32)] {
+        const ESC: u32 = TECLA_ESC;
+        match self.modo {
+            Modo::Lista if self.cambiando => &[("Esc: volver a la sesión bloqueada", ESC)],
+            Modo::Lista => &[],
+            Modo::Nombre if self.cambiando => &[("Esc: volver", ESC)],
+            Modo::Nombre if !self.cuentas.is_empty() => &[("Esc: volver a la lista", ESC)],
+            Modo::Nombre => &[],
+            Modo::Clave if !self.entrada && !self.cambiando => &[("Esc: cambiar de usuario", ESC), ("Tab: olvidé la contraseña", TECLA_TAB)],
+            Modo::Clave if self.cuentas.is_empty() && !self.cambiando => &[("Tab: olvidé la contraseña", TECLA_TAB)],
+            Modo::Clave => &[("Esc: elegir a otra persona", ESC), ("Tab: olvidé la contraseña", TECLA_TAB)],
+            Modo::Recuperar => &[("Esc: volver", ESC), ("Intro: cambiarla", TECLA_INTRO)],
+            Modo::Asistente => &[("Intro: crear la cuenta", TECLA_INTRO)],
+            Modo::Codigo => &[("Intro: ya lo he apuntado, entrar", TECLA_INTRO)],
+        }
+    }
+
+    /// S27, oleada 6: si el modo va con la fila de DMS (el avatar y el campo): la contraseña y el nombre.
+    fn de_fila(&self) -> bool {
+        matches!(self.modo, Modo::Clave | Modo::Nombre)
+    }
+
+    /// Dónde va el título de la lista y de los formularios (su línea base): bajo el reloj y la fecha.
+    fn arriba(ancho: i32, alto: i32) -> i32 {
+        bv::disponer(ancho, alto).arriba_formularios + 30
+    }
+
+    /// Dónde acaba lo de en medio (la lista, las cajas del formulario o el código; en la fila, el campo), en una
+    /// pantalla de `ancho` × `alto`: debajo van el aviso y el pie.
+    fn abajo(&self, ancho: i32, alto: i32) -> i32 {
+        let y = Self::arriba(ancho, alto);
+        match self.modo {
+            Modo::Lista => y + 40 + ALTO_FILA * (self.cuentas.len() + 1).min(FILAS_LISTA) as i32 + 8,
+            Modo::Recuperar | Modo::Asistente => y + 68 + 48 * self.etiquetas().len() as i32 + 4,
+            Modo::Codigo => y + 176,
+            Modo::Clave | Modo::Nombre => bv::disponer(ancho, alto).aviso.y,
+        }
+    }
+
+    /// La primera fila de la lista que se ve (si no caben todas, la elegida, a la vista).
+    fn primera_fila(&self) -> usize {
+        let filas = self.cuentas.len() + 1;
+        self.elegida.saturating_sub(FILAS_LISTA - 1).min(filas.saturating_sub(FILAS_LISTA))
+    }
+
+    /// Las pastillas del pie (dónde y su tecla), en una pantalla de `ancho` × `alto`.
+    fn pastillas(&self, ancho: i32, alto: i32, fuente: &mut Fuente) -> alloc::vec::Vec<(Rect, &'static str, u32)> {
+        let botones = self.pie();
+        let anchos: alloc::vec::Vec<i32> = botones.iter().map(|b| fuente.medir(b.0, 15).ancho + 40).collect();
+        let total = anchos.iter().sum::<i32>() + 12 * (botones.len() as i32 - 1).max(0);
+        let mut x = (ancho - total) / 2;
+        let y = if self.de_fila() { bv::disponer(ancho, alto).pie_y } else { self.abajo(ancho, alto) + 24 + 20 };
+        botones
+            .iter()
+            .zip(anchos)
+            .map(|(b, w)| {
+                let r = Rect::new(x, y, w, 36);
+                x += w + 12;
+                (r, b.0, b.1)
+            })
+            .collect()
+    }
+
+    /// Lo que hay en (x, y) de la pantalla: una fila de la lista, una caja del formulario o un botón del pie.
+    fn en(&self, ancho: i32, alto: i32, x: i32, y: i32, fuente: &mut Fuente) -> Option<Pulsado> {
+        if let Some(b) = self.pastillas(ancho, alto, fuente).iter().find(|b| b.0.contiene(x, y)) {
+            return Some(Pulsado::Tecla(b.2));
+        }
+        // La flecha del campo: Intro (solo se ve con algo escrito).
+        let lleno = if self.modo == Modo::Clave { !self.clave.is_empty() } else { !self.nombre.is_empty() };
+        if self.de_fila() && lleno && boton_entrar(&bv::disponer(ancho, alto)).contiene(x, y) {
+            return Some(Pulsado::Tecla(TECLA_INTRO));
+        }
+        let arriba = Self::arriba(ancho, alto);
+        match self.modo {
+            Modo::Lista => {
+                let ancho_fila = 400.min(ancho - 32);
+                let x0 = (ancho - ancho_fila) / 2;
+                let primera = self.primera_fila();
+                (primera..(primera + FILAS_LISTA).min(self.cuentas.len() + 1))
+                    .enumerate()
+                    .find(|(k, _)| Rect::new(x0, arriba + 40 + ALTO_FILA * *k as i32, ancho_fila, ALTO_FILA - 8).contiene(x, y))
+                    .map(|(_, i)| Pulsado::Fila(i))
+            }
+            Modo::Recuperar | Modo::Asistente => {
+                let ancho_f = 520.min(ancho - 32);
+                let x0 = (ancho - ancho_f) / 2;
+                (0..self.etiquetas().len()).find(|&i| Rect::new(x0, arriba + 68 + 48 * i as i32, ancho_f, 40).contiene(x, y)).map(Pulsado::Caja)
+            }
+            _ => None,
+        }
+    }
+
+    /// Las cajas del modo (etiqueta, texto que se ve), si las tiene.
+    fn etiquetas(&self) -> &'static [(&'static str, bool)] {
+        match self.modo {
+            Modo::Recuperar => &[("Código", false), ("Contraseña nueva", true), ("Repítela", true)],
+            Modo::Asistente => &[("Nombre corto", false), ("Nombre completo", false), ("Contraseña", true), ("Repítela", true)],
+            _ => &[],
+        }
+    }
+
+    /// Lo más que cabe en la caja `i` del modo.
+    fn tope(&self, i: usize) -> usize {
+        match (self.modo, i) {
+            (Modo::Asistente, 0) => 16,
+            (Modo::Asistente, 1) => 48,
+            (Modo::Recuperar, 0) => 40,
+            _ => 128,
+        }
+    }
+
+    /// A la lista (o a teclear el nombre, sin cuentas), con lo tecleado olvidado.
+    fn a_la_lista(&mut self) {
+        borrar(&mut self.clave);
+        self.nombre.clear();
+        self.de_lista = false;
+        self.modo = if self.cuentas.is_empty() { Modo::Nombre } else { Modo::Lista };
+    }
+
+    fn borrar_cajas(&mut self) {
+        for c in self.cajas.iter_mut() {
+            borrar(c);
+        }
+        self.foco = 0;
+    }
+}
+
+/// Rama `cuentas-2`: las cuentas para la lista de la pantalla de entrada (`CUENTAS_ENTRADA`, por páginas) y si toca el
+/// primer arranque. Sin respuesta, ninguna (se teclea el nombre).
+fn cuentas_de_entrada() -> (alloc::vec::Vec<(String, String)>, bool) {
+    use dashos::protocolo::sesiones::{CUENTAS_ENTRADA, ENTRADA_CUENTA, POR_PAGINA_ENTRADA};
+    let campo = |b: &[u8]| -> String { limpiar(core::str::from_utf8(&b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]).unwrap_or("?"), "") };
+    let mut v = alloc::vec::Vec::new();
+    let mut primer = false;
+    for _ in 0..dashos::cuentas::MAX_CUENTAS {
+        let mut m = [0u8; 8];
+        m[0..4].copy_from_slice(&CUENTAS_ENTRADA.to_le_bytes());
+        m[4..8].copy_from_slice(&(v.len() as u32).to_le_bytes());
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 16 + ENTRADA_CUENTA * POR_PAGINA_ENTRADA];
+        let n = if dashos::canal_escribir(SESIONES, &m, &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 3_000_000).0 } else { -1 };
+        dashos::cerrar(lectura);
+        if n < 16 || r[0..4] != [0; 4] {
+            break;
+        }
+        let total = u32::from_le_bytes(r[4..8].try_into().unwrap()) as usize;
+        let van = (u32::from_le_bytes(r[8..12].try_into().unwrap()) as usize).min((n as usize - 16) / ENTRADA_CUENTA);
+        primer = r[12] == 1;
+        for i in 0..van {
+            let e = &r[16 + ENTRADA_CUENTA * i..16 + ENTRADA_CUENTA * (i + 1)];
+            let nombre = campo(&e[..16]);
+            if !nombre.is_empty() {
+                v.push((nombre, campo(&e[16..])));
+            }
+        }
+        if van == 0 || v.len() >= total {
+            break;
+        }
+    }
+    (v, primer)
+}
+
+/// Rama `cuentas-2`: `RECUPERAR` o `PRIMERA_CUENTA` a `sesiones` con tres textos: (estado, segundos de espera, el código
+/// nuevo si fue bien). Lo mandado se borra.
+fn pedir_con_codigo(orden: u32, uno: &str, dos: &str, tres: &str) -> (i32, u32, String) {
+    use dashos::protocolo::sesiones::LARGO_RECUPERAR;
+    let (a, b, c) = (&uno.as_bytes()[..uno.len().min(16)], &dos.as_bytes()[..dos.len().min(64)], &tres.as_bytes()[..tres.len().min(128)]);
+    let mut m = [0u8; 16 + 16 + 64 + 128];
+    m[0..4].copy_from_slice(&orden.to_le_bytes());
+    m[4..8].copy_from_slice(&(a.len() as u32).to_le_bytes());
+    m[8..12].copy_from_slice(&(b.len() as u32).to_le_bytes());
+    m[12..16].copy_from_slice(&(c.len() as u32).to_le_bytes());
+    let mut k = 16;
+    for t in [a, b, c] {
+        m[k..k + t.len()].copy_from_slice(t);
+        k += t.len();
+    }
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut r = [0u8; LARGO_RECUPERAR];
+    // Crear la primera cuenta hace su volumen (Argon2 dos veces): hasta un minuto con la máquina cargada.
+    let n = if dashos::canal_escribir(SESIONES, &m[..k], &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 60_000_000).0 } else { -1 };
+    m.fill(0);
+    dashos::cerrar(lectura);
+    if n < 8 {
+        return (i32::MIN, 0, String::new());
+    }
+    let estado = i32::from_le_bytes(r[0..4].try_into().unwrap());
+    let espera = u32::from_le_bytes(r[4..8].try_into().unwrap());
+    let codigo = if estado == 0 && n as usize == LARGO_RECUPERAR { String::from(core::str::from_utf8(&r[8..]).unwrap_or("")) } else { String::new() };
+    r.fill(0);
+    core::hint::black_box(&r);
+    (estado, espera, codigo)
+}
+
+/// Lo que se dice de un estado de `sesiones` al recuperar o crear una cuenta, en llano.
+fn que_dice(e: i32, espera: u32) -> String {
+    use dashos::protocolo::sesiones::{OCUPADO, PROTEGIDO};
+    match e {
+        OCUPADO => alloc::format!("Demasiados intentos. Espera {} s y prueba otra vez.", espera),
+        PROTEGIDO => String::from("Ese código no es el de esta cuenta."),
+        e => match dashos::cuentas::Fallo::de_estado(e) {
+            Some(f) => {
+                let t = f.texto();
+                let mut c = t.chars();
+                c.next().map_or(String::new(), |p| alloc::format!("{}{}.", p.to_uppercase(), c.as_str()))
+            }
+            None => alloc::format!("No se pudo ({}).", e),
+        },
+    }
+}
+
 /// Manda a `sesiones` la contraseña de la usuaria para comprobarla (VOLVER: sin tocar su volumen) y la borra. No
 /// espera: devuelve el canal por el que llegará la respuesta (tras una mala, `sesiones` tarda a propósito, y mientras
 /// tanto hay que seguir leyendo al compositor).
@@ -1420,6 +2222,7 @@ fn comprobar(orden: u32, usuaria: &str, clave: &mut String) -> Option<u32> {
     println!("  [guardian] se comprueba una contraseña de {} letras", clave.chars().count());
     let mut m = [0u8; 160];
     let (u, c) = (usuaria.as_bytes(), clave.as_bytes());
+    let u = &u[..u.len().min(16)];
     let c = &c[..c.len().min(128)];
     m[0..4].copy_from_slice(&orden.to_le_bytes());
     m[4..8].copy_from_slice(&(u.len() as u32).to_le_bytes());
@@ -1430,8 +2233,7 @@ fn comprobar(orden: u32, usuaria: &str, clave: &mut String) -> Option<u32> {
     let r = dashos::canal_escribir(SESIONES, &m[..12 + u.len() + c.len()], &[suyo]);
     m.fill(0);
     // La contraseña, fuera de la memoria (S6b, regla 9).
-    unsafe { clave.as_bytes_mut().fill(0) };
-    clave.clear();
+    borrar(clave);
     if r != 0 {
         dashos::cerrar(lectura);
         dashos::cerrar(suyo);
@@ -1440,78 +2242,576 @@ fn comprobar(orden: u32, usuaria: &str, clave: &mut String) -> Option<u32> {
     Some(lectura)
 }
 
-/// Pinta la pantalla de bloqueo: el fondo, la hora de DashOS, la frase de la usuaria, un punto por letra tecleada y,
-/// si la anterior fue mala, el aviso.
-/// Con `todo`, la pantalla entera; si no, solo la caja y el aviso (lo que cambia al teclear), que es mucho menos: el
-/// compositor suelta a quien tarda en leer (E8). Devuelve la zona pintada.
-/// Con los colores del tema del sistema (S10c: `dashos_tema_v1`, el que pone el centro de control); el rojo del error
-/// es el de Material 3 para el fondo claro u oscuro.
-///
-/// U6: con `cambio`, la de "Cambiar de usuario" (como la de entrada, sobre una sesión bloqueada). En la de bloqueo, al
-/// pie, cómo cambiar de usuario (Esc); en la de cambio, cómo volver.
-fn pintar(px: &mut [u32], ancho: i32, alto: i32, usuaria: &str, entrada: bool, cambio: bool, letras: usize, mala: bool, todo: bool, fuente: &mut Fuente, titulo: &mut Fuente, t: &Tema) -> Rect {
-    let bloqueo = !entrada;
-    let entrada = entrada || cambio;
+/// S27, oleada 6: lo que se ve además de lo de escribir, como en la pantalla de bloqueo de DMS: el fondo desenfocado,
+/// la hora, el estado (red y volumen), los avisos y Bloq Mayús.
+struct Alrededor {
+    /// El fondo pequeño y desenfocado de `fondo` (píxeles, ancho y alto); sin él, el color de la superficie del tema.
+    fondo: Option<(alloc::vec::Vec<u32>, usize, usize)>,
+    /// La fecha y la hora locales (si se sabe la hora), y el minuto en que se miró.
+    hora: Option<reloj::Fecha>,
+    minuto: u64,
+    /// La red (2 conectada), el volumen y el silencio, como los da el panel a la barra (por el compositor).
+    estado: Option<(u32, u32, u32)>,
+    /// Los avisos, según su ajuste (solo en la de bloqueo).
+    avisos: Option<ResumenAvisos>,
+    bloq_mayus: bool,
+    /// El primario del esquema oscuro del tema: el reloj sobre el fondo velado (oscuro) se lee con cualquier tema.
+    primario_oscuro: kit::lienzo::Color,
+    simbolos: kit::iconos::Simbolos,
+    /// Rama sonido-pro: lo que suena (en la de bloqueo, como DMS): su número, "título • artista" y si suena.
+    medio: Option<(u32, String, bool)>,
+}
+
+/// Lo que dejan ver los avisos en la pantalla de bloqueo (`protocolo::avisos::resumen_bloqueo`).
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct ResumenAvisos {
+    modo: u32,
+    cuantos: u32,
+    programas: alloc::vec::Vec<(String, u32)>,
+}
+
+impl Alrededor {
+    fn nuevo() -> Alrededor {
+        Alrededor { fondo: None, hora: None, minuto: u64::MAX, estado: None, avisos: None, bloq_mayus: false, primario_oscuro: Tema::OSCURO.primario, simbolos: kit::iconos::Simbolos::new(), medio: None }
+    }
+
+    /// El color del contenido (el texto, el estado) y el apagado: blanco sobre el fondo velado (como DMS,
+    /// `lockScreenContentColor`); sin fondo, los del tema.
+    fn colores(&self, t: &Tema) -> (kit::lienzo::Color, kit::lienzo::Color) {
+        if self.fondo.is_some() { (0xffff_ffff, 0xb3ff_ffff) } else { (t.sobre_superficie, t.sobre_variante_superficie) }
+    }
+}
+
+/// La zona horaria del sistema (su puesto en `dashos::zona::ZONAS`), que dice el centro de control; `usize::MAX` hasta
+/// que conteste (mientras, UTC).
+static ZONA: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(usize::MAX);
+
+/// La zona horaria del sistema: la que se sabe, o se le pregunta al centro ("zona"); si no contesta, UTC esta vez.
+fn zona_horaria() -> &'static dashos::zona::Zona {
+    use core::sync::atomic::Ordering::Relaxed;
+    if ZONA.load(Relaxed) == usize::MAX {
+        let (lectura, suyo) = dashos::canal_crear();
+        if dashos::canal_escribir(centro(), b"zona", &[suyo]) == 0 {
+            let mut r = [0u8; 64];
+            let n = dashos::canal_leer_plazo(lectura, &mut r, &mut [], 1_500_000).0;
+            if n >= 0 {
+                let nombre = core::str::from_utf8(&r[..n as usize]).unwrap_or("");
+                let i = dashos::zona::ZONAS.iter().position(|z| z.nombre.eq_ignore_ascii_case(nombre)).unwrap_or(0);
+                ZONA.store(i, Relaxed);
+                println!("  [guardian] zona horaria: {}", dashos::zona::ZONAS.get(i).map_or("UTC", |z| z.nombre));
+            }
+        } else {
+            dashos::cerrar(suyo);
+        }
+        dashos::cerrar(lectura);
+    }
+    dashos::zona::ZONAS.get(ZONA.load(Relaxed)).unwrap_or(&dashos::zona::UTC)
+}
+
+/// La fecha y la hora locales, y el minuto (local, desde 1970); sin hora, `None` y 0.
+fn ahora_local() -> (Option<reloj::Fecha>, u64) {
+    let ns = dashos::hora_ns();
+    if ns == 0 {
+        return (None, 0);
+    }
+    let local = dashos::zona::local_ns(zona_horaria(), ns);
+    (Some(reloj::fecha(local)), local / 60_000_000_000)
+}
+
+/// El fondo de la pantalla de bloqueo, pequeño y desenfocado, que da `fondo` ("bloqueo", solo a `guardian`): se copia y
+/// se suelta. Si no lo da, o lo que da no cuadra (medidas fuera de lo razonable, una memoria más pequeña), nada.
+fn fondo_de_bloqueo() -> Option<(alloc::vec::Vec<u32>, usize, usize)> {
+    const VA_FONDO: usize = 0x46_0000_0000;
+    let llave = dashos::llaves::buscar("fondo")?;
+    let (lectura, suyo) = dashos::canal_crear();
+    if dashos::canal_escribir(llave, b"bloqueo", &[suyo]) != 0 {
+        dashos::cerrar(lectura);
+        dashos::cerrar(suyo);
+        return None;
+    }
+    let mut r = [0u8; 12];
+    let mut ll = [0u32; 1];
+    let (n, k, _) = dashos::canal_leer_plazo(lectura, &mut r, &mut ll, 1_500_000);
+    dashos::cerrar(lectura);
+    let palabra = |i: usize| u32::from_le_bytes(r[i..i + 4].try_into().unwrap());
+    let (w, h) = (palabra(4) as usize, palabra(8) as usize);
+    let bueno = n == 12 && k == 1 && palabra(0) == 0 && (1..=desenfoque::MAX_LADO).contains(&w) && (1..=desenfoque::MAX_LADO).contains(&h);
+    if !bueno {
+        if n >= 0 && k == 1 {
+            dashos::cerrar(ll[0]);
+        }
+        println!("  [guardian] sin fondo para la pantalla ({}): el color del tema", if n == 4 { i32::from_le_bytes(r[0..4].try_into().unwrap()) } else { n as i32 });
+        return None;
+    }
+    let tam = dashos::memoria_tamano(ll[0]);
+    if tam < (w * h * 4) as i64 || dashos::memoria_proyectar(ll[0], VA_FONDO, false) != 0 {
+        dashos::cerrar(ll[0]);
+        println!("  [guardian] el fondo que da `fondo` no cuadra: el color del tema");
+        return None;
+    }
+    // SAFETY: proyectada aquí, solo para leer, con al menos `w × h` píxeles (mirado arriba); se quita en seguida.
+    let px = unsafe { core::slice::from_raw_parts(VA_FONDO as *const u32, w * h) }.to_vec();
+    dashos::memoria_quitar(VA_FONDO);
+    dashos::cerrar(ll[0]);
+    Some((px, w, h))
+}
+
+/// Rama sonido-pro: la llave del servicio de sonido, que se pide a `sesiones` la primera vez (`guardian` va antes que el
+/// servicio en `inicio`: si la nombrara, lo serviría él), y la memoria de su estado. 0 si no se da.
+static SONIDO_LLAVE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+/// Rama sonido-pro: lejos de lo demás del programa (la barra tiene el Dash en VA + 10 << 32, y el estado del sonido
+/// estuvo ahí: al cerrar el Dash, su memoria se quitaba y la barra caía al leer el estado).
+const VA_SONIDO: usize = 0x68_0000_0000;
+
+fn sonido_llave() -> u32 {
+    use core::sync::atomic::Ordering;
+    let l = SONIDO_LLAVE.load(Ordering::Relaxed);
+    if l != 0 {
+        return l;
+    }
+    let nombre = b"sonido";
+    let mut p = [0u8; 12 + 6];
+    p[0..4].copy_from_slice(&dashos::protocolo::sesiones::SERVICIO.to_le_bytes());
+    p[4..8].copy_from_slice(&(nombre.len() as u32).to_le_bytes());
+    p[12..].copy_from_slice(nombre);
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut r = [0u8; 4];
+    let mut ll = [0u32; 1];
+    let (n, k, _) = if dashos::canal_escribir(SESIONES, &p, &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut ll, 500_000) } else { (-1, 0, 0) };
+    dashos::cerrar(lectura);
+    if n != 4 || i32::from_le_bytes(r) != 0 || k != 1 {
+        return 0;
+    }
+    // Su estado, en una memoria nuestra (el extremo para despertarnos no se usa: se da uno de un canal cerrado).
+    let m = dashos::memoria_crear(dashos::protocolo::sonido::TAM_ESTADO);
+    let (lec, ext) = dashos::canal_crear();
+    dashos::cerrar(lec);
+    if (m as i32) <= 0 || dashos::memoria_proyectar(m, VA_SONIDO, true) != 0 {
+        return 0;
+    }
+    let copia = dashos::llave_duplicar(m, dashos::LEER | dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
+    if copia <= 0 || dashos::canal_escribir(ll[0], &dashos::protocolo::sonido::SUSCRIBIR.to_le_bytes(), &[copia as u32, ext]) != 0 {
+        return 0;
+    }
+    SONIDO_LLAVE.store(ll[0], Ordering::Relaxed);
+    ll[0]
+}
+
+/// Lo que suena ahora, si algún programa lo dice (para la pantalla de bloqueo).
+fn medio_de_bloqueo() -> Option<(u32, String, bool)> {
+    if sonido_llave() == 0 {
+        return None;
+    }
+    // El servicio rellena el estado al suscribirse: se le da un momento.
+    let mut w = alloc::vec![0u32; dashos::protocolo::sonido::TAM_ESTADO / 4];
+    for _ in 0..20 {
+        for (i, x) in w.iter_mut().enumerate() {
+            *x = unsafe { core::ptr::read_volatile((VA_SONIDO + 4 * i) as *const u32) };
+        }
+        if let Some(e) = sonido_estado::leer(&w) {
+            return e.medios.first().map(|m| {
+                let texto = if m.artista.is_empty() { m.titulo.clone() } else { alloc::format!("{} • {}", m.titulo, m.artista) };
+                (m.id, texto, m.estado == dashos::protocolo::sonido::MED_SUENA)
+            });
+        }
+        dashos::dormir_us(10_000);
+    }
+    None
+}
+
+/// Rama sonido-pro: la fila de lo que suena, arriba a la izquierda (DMS, `LockStatusRow`): la nota, "título •
+/// artista" y los botones anterior (16), reproducir (24, redondo) y siguiente (16). Devuelve los botones (1, 2, 3).
+fn sitios_medio(fuente: &mut Fuente, texto: &str) -> (Rect, [(Rect, u32); 3]) {
+    let (x0, y0) = (bv::MARGEN_ESTADO, bv::MARGEN_ESTADO - 2);
+    let w = fuente.medir(texto, 16).ancho.min(420);
+    let bx = x0 + 28 + w + 16;
+    let fila = Rect::new(x0 - 4, y0 - 4, bx + 24 + 16 + 24 + 24 + 8 - x0, 32);
+    (fila, [(Rect::new(bx, y0 + 4, 16, 16), 1), (Rect::new(bx + 24, y0, 24, 24), 2), (Rect::new(bx + 24 + 32, y0 + 4, 16, 16), 3)])
+}
+
+/// Lo que dejan ver los avisos en la pantalla de bloqueo: se pide a `sesiones` (`AVISOS_BLOQUEO`), que se lo pasa al
+/// servicio de avisos, que contesta aquí. Sin respuesta, o una que no cuadra, nada.
+fn avisos_de_bloqueo() -> Option<ResumenAvisos> {
+    use dashos::protocolo::avisos::{CABECERA_RESUMEN, ENTRADA_RESUMEN, LARGO_RESUMEN, RESUMEN_PROGRAMAS};
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut r = [0u8; LARGO_RESUMEN];
+    let n = if dashos::canal_escribir(SESIONES, &dashos::protocolo::sesiones::AVISOS_BLOQUEO.to_le_bytes(), &[suyo]) == 0 {
+        dashos::canal_leer_plazo(lectura, &mut r, &mut [], 500_000).0
+    } else {
+        -1
+    };
+    dashos::cerrar(lectura);
+    if n < CABECERA_RESUMEN as i64 || r[0..4] != [0; 4] {
+        return None;
+    }
+    let u = |i: usize| u32::from_le_bytes(r[i..i + 4].try_into().unwrap());
+    let van = (u(12) as usize).min(RESUMEN_PROGRAMAS).min((n as usize - CABECERA_RESUMEN) / ENTRADA_RESUMEN);
+    let programas = (0..van)
+        .map(|i| {
+            let o = CABECERA_RESUMEN + ENTRADA_RESUMEN * i;
+            let b = &r[o..o + 16];
+            (limpiar(core::str::from_utf8(&b[..b.iter().position(|&c| c == 0).unwrap_or(16)]).unwrap_or("?"), "?"), u(o + 16))
+        })
+        .collect();
+    Some(ResumenAvisos { modo: u(4).min(2), cuantos: u(8), programas })
+}
+
+/// Pinta en `px` el fondo de la zona `z`: el desenfocado agrandado con su velo, o el color de la superficie.
+fn pintar_fondo(px: &mut [u32], ancho: i32, alto: i32, z: Rect, a: &Alrededor, t: &Tema) {
+    match &a.fondo {
+        Some((f, w, h)) => desenfoque::agrandar(px, ancho as usize, alto as usize, ancho as usize, (z.x, z.y, z.w, z.h), f, *w, *h, desenfoque::VELO),
+        None => Lienzo::new(px, ancho, alto, ancho as usize).borrar(z, t.superficie),
+    }
+}
+
+fn caja(c: bv::Caja) -> Rect {
+    Rect::new(c.x, c.y, c.w, c.h)
+}
+
+/// El botón de entrar (la flecha) dentro del campo, como el de DMS (`buttonHeightXS`, 32).
+fn boton_entrar(d: &bv::Disposicion) -> Rect {
+    Rect::new(d.campo.x + d.campo.w - 12 - 32, d.campo.y + (d.campo.h - 32) / 2, 32, 32)
+}
+
+/// La zona de lo de en medio (lo que cambia al teclear), según el modo.
+fn zona_medio(p: &Pantalla, ancho: i32, alto: i32) -> Rect {
+    if p.de_fila() {
+        return caja(bv::disponer(ancho, alto).franja_clave(ancho));
+    }
+    let y = Pantalla::arriba(ancho, alto);
+    Rect::new(0, y + 12, ancho, (p.abajo(ancho, alto) + 32 - y - 12).max(0))
+}
+
+/// Arriba: el reloj, la fecha y el estado.
+fn zona_arriba(ancho: i32, alto: i32) -> Rect {
+    let d = bv::disponer(ancho, alto);
+    Rect::new(0, 0, ancho, d.fecha.abajo() + 8)
+}
+
+/// La fila de los avisos.
+fn zona_avisos(ancho: i32, alto: i32) -> Rect {
+    let d = bv::disponer(ancho, alto);
+    Rect::new(0, d.avisos.y - 2, ancho, d.avisos.h + 4)
+}
+
+/// Pinta la pantalla de entrada o de bloqueo en la zona `zona` (solo eso: el compositor suelta a quien tarda en leer,
+/// E8): el fondo, el reloj y la fecha, el estado, y según el modo, la fila de DMS (el avatar con la inicial y el campo
+/// con un punto por letra, con el nombre y la frase de la persona encima), la lista de cuentas, las cajas de recuperar o
+/// del primer arranque, o el código; debajo, el aviso, los avisos y, al pie, en pastillas, las teclas. Devuelve la zona.
+/// Con los colores del tema del sistema (S10c: `dashos_tema_v1`, el que pone el centro de control); sobre el fondo, el
+/// contenido en blanco, como DMS.
+#[allow(clippy::too_many_arguments)]
+fn pintar(px: &mut [u32], ancho: i32, alto: i32, p: &Pantalla, zona: Rect, fuente: &mut Fuente, titulo: &mut Fuente, t: &Tema, a: &Alrededor) -> Rect {
+    let zona = zona.cruce(Rect::new(0, 0, ancho, alto));
+    pintar_fondo(px, ancho, alto, zona, a, t);
     let mut l = Lienzo::new(px, ancho, alto, ancho as usize);
+    l.recortar(zona);
+    let d = bv::disponer(ancho, alto);
     let oscuro = (t.superficie >> 8 & 0xff) < 0x80;
-    let error = if oscuro { 0xfff2_b8b5 } else { 0xffb3_261e };
-    let y = alto / 2 - 90;
-    // Al teclear, solo la franja que cambia: la caja y el aviso; en la de entrada, también la frase y el nombre.
-    let zona = match (todo, entrada) {
-        (true, _) => Rect::new(0, 0, ancho, alto),
-        (false, false) => Rect::new(0, y + 116, ancho, 100),
-        (false, true) => Rect::new(0, y + 20, ancho, 196),
-    };
-    l.rellenar(zona, t.superficie);
+    let (contenido, tenue) = a.colores(t);
+    // El rojo del error de Material 3, el del fondo claro o el del oscuro (sobre el fondo velado, el del oscuro).
+    let error = if oscuro || a.fondo.is_some() { 0xfff2_b8b5 } else { 0xffb3_261e };
     let centrado = |f: &mut Fuente, t: &str, tam: u32| (ancho - f.medir(t, tam).ancho) / 2;
-    if todo {
-        let cabeza = if cambio { "Cambiar de usuario" } else if entrada { "Entrar en DashOS" } else { "Sesión bloqueada" };
-        let x = centrado(titulo, cabeza, 34);
-        titulo.dibujar(&mut l, x, y, cabeza, 34, t.sobre_superficie);
+    // El reloj (el "expressive" de DMS: horas y minutos en el primario, en una línea) y la fecha debajo.
+    if let Some(f) = a.hora {
+        let (hh, mm) = bv::hora(f.hora, f.minuto);
+        let texto = alloc::format!("{}:{}", hh, mm);
+        let tam = bv::letra_reloj(&d.reloj);
+        let m = titulo.medir(&texto, tam);
+        let color = if a.fondo.is_some() { a.primario_oscuro } else { t.primario };
+        titulo.dibujar(&mut l, d.reloj.x + (d.reloj.w - m.ancho) / 2, d.reloj.y + (d.reloj.h + m.sube - m.baja) / 2, &texto, tam, color);
+        let fecha = bv::fecha_larga(f.semana, f.dia, f.mes);
+        let x = centrado(titulo, &fecha, 22);
+        titulo.dibujar(&mut l, x, d.fecha.y + 22, &fecha, 22, contenido);
     }
-    if todo || entrada {
-        // La frase de quien entra, en cuanto se sabe quién es (S6b: así se sabe que es el sistema).
-        let frase = FRASES.iter().find(|f| f.0 == usuaria).map_or(alloc::string::String::new(), |f| alloc::format!("\"{}\"", f.1));
-        let x = centrado(fuente, &frase, 22);
-        fuente.dibujar(&mut l, x, y + 48, &frase, 22, t.primario);
-        let x = centrado(fuente, usuaria, 20);
-        fuente.dibujar(&mut l, x, y + 100, usuaria, 20, t.sobre_variante_superficie);
+    // El estado, arriba a la derecha (DMS: `LockStatusRow`): la red y el volumen; sin batería, que DashOS no lleva.
+    if let Some((red, nivel, silencio)) = a.estado {
+        let tam = bv::ICONO_ESTADO;
+        let (xd, y) = d.estado;
+        let x = xd - tam;
+        let silencio = silencio != 0;
+        a.simbolos.pintar(&mut l, x, y, tam, simbolo_sonido(nivel, silencio), if silencio { tenue } else { contenido });
+        let x = x - tam - 16;
+        if red == 2 {
+            a.simbolos.pintar(&mut l, x, y, tam, kit::iconos::simbolo::LAN, contenido);
+        } else {
+            a.simbolos.pintar(&mut l, x, y, tam, kit::iconos::simbolo::LAN, tenue);
+            l.trazo(((x + 2) * 8, (y + 2) * 8), ((x + tam - 2) * 8, (y + tam - 2) * 8), 14, tenue);
+        }
     }
-    // La caja de la contraseña, con un punto por letra.
-    let caja = Rect::new(ancho / 2 - 160, y + 120, 320, 48);
-    // Material 3: la caja en el contenedor alto, sin marco; con error, el borde rojo.
-    l.redondeado(caja, kit::tema::RADIO_DIALOGO, t.contenedor_alto());
-    if mala {
-        l.borde(caja, 24, 2, error);
+    // Rama sonido-pro: lo que suena, arriba a la izquierda (solo en la de bloqueo).
+    if let Some((_, texto, suena)) = &a.medio {
+        let (_, botones) = sitios_medio(fuente, texto);
+        let (x0, y0) = (bv::MARGEN_ESTADO, bv::MARGEN_ESTADO - 2);
+        a.simbolos.pintar(&mut l, x0, y0, 20, kit::iconos::simbolo::MUSIC_NOTE_LLENO, contenido);
+        let corto = if fuente.medir(texto, 16).ancho > 420 { alloc::format!("{}…", texto.chars().take(40).collect::<String>()) } else { texto.clone() };
+        fuente.dibujar(&mut l, x0 + 28, y0 + 17, &corto, 16, contenido);
+        for (r, n) in botones {
+            if n == 2 {
+                l.redondeado(r, 12, if *suena { contenido } else { tenue });
+                let s = if *suena { kit::iconos::simbolo::PAUSE_LLENO } else { kit::iconos::simbolo::PLAY_ARROW_LLENO };
+                a.simbolos.centrado(&mut l, r, 16, s, 0xff00_0000);
+            } else {
+                let s = if n == 1 { kit::iconos::simbolo::SKIP_PREVIOUS_LLENO } else { kit::iconos::simbolo::SKIP_NEXT_LLENO };
+                a.simbolos.centrado(&mut l, r, 16, s, contenido);
+            }
+        }
     }
-    for i in 0..if letras == usize::MAX { 0 } else { letras.min(20) } as i32 {
-        l.redondeado(Rect::new(caja.x + 24 + i * 14, caja.y + 19, 10, 10), 5, t.sobre_superficie);
+    let y = Pantalla::arriba(ancho, alto);
+    if p.de_fila() {
+        pintar_fila(&mut l, &d, p, fuente, titulo, t, a, contenido, tenue, error);
+    } else {
+        let cabeza = p.titulo();
+        let x = centrado(titulo, cabeza, 30);
+        titulo.dibujar(&mut l, x, y, cabeza, 30, contenido);
     }
-    let aviso = match (mala, entrada && letras == usize::MAX) {
-        (true, _) => "Contraseña incorrecta",
-        (false, true) => "Escribe tu nombre y pulsa Intro",
-        (false, false) => "Escribe tu contraseña y pulsa Intro",
+    match p.modo {
+        Modo::Clave | Modo::Nombre => {}
+        Modo::Lista => {
+            let filas = p.cuentas.len() + 1;
+            let primera = p.primera_fila();
+            let ancho_fila = 400.min(ancho - 32);
+            let x0 = (ancho - ancho_fila) / 2;
+            let mut yf = y + 40;
+            for i in primera..(primera + FILAS_LISTA).min(filas) {
+                let fila = Rect::new(x0, yf, ancho_fila, ALTO_FILA - 8);
+                let elegida = i == p.elegida;
+                l.redondeado(fila, 24, if elegida { t.contenedor_primario } else { t.contenedor_alto() });
+                if elegida {
+                    l.borde(fila, 24, 2, t.primario);
+                }
+                // Un círculo con la inicial (o un "+" para teclear otro nombre) y el nombre al lado.
+                let (principal, segundo, inicial) = match p.cuentas.get(i) {
+                    Some((n, c)) if !c.is_empty() && c != n => (c.clone(), n.clone(), bv::inicial(n)),
+                    Some((n, _)) => (n.clone(), String::new(), bv::inicial(n)),
+                    None => (String::from("Otra persona…"), String::new(), String::from("+")),
+                };
+                let circulo = Rect::new(fila.x + 8, fila.y + 6, 36, 36);
+                l.redondeado(circulo, 18, t.primario);
+                let mi = titulo.medir(&inicial, 18);
+                titulo.dibujar(&mut l, circulo.x + (36 - mi.ancho) / 2, circulo.y + (36 + mi.sube - mi.baja) / 2, &inicial, 18, t.sobre_primario);
+                let color = if elegida { t.sobre_contenedor_primario } else { t.sobre_superficie };
+                l.recortar(Rect::new(fila.x + 56, fila.y, fila.w - 64, fila.h));
+                fuente.dibujar(&mut l, fila.x + 56, fila.y + 30, &principal, 18, color);
+                if !segundo.is_empty() {
+                    let ancho_p = fuente.medir(&principal, 18).ancho;
+                    fuente.dibujar(&mut l, fila.x + 56 + ancho_p + 10, fila.y + 30, &segundo, 14, t.sobre_variante_superficie);
+                }
+                l.soltar_recorte();
+                yf += ALTO_FILA;
+            }
+        }
+        Modo::Recuperar | Modo::Asistente => {
+            let texto = if p.modo == Modo::Recuperar {
+                alloc::format!("El código de recuperación de {} y una contraseña nueva.", p.visto())
+            } else {
+                String::from("Crea la primera cuenta: será la administradora del equipo.")
+            };
+            let x = centrado(fuente, &texto, 16);
+            fuente.dibujar(&mut l, x, y + 48, &texto, 16, contenido);
+            let ancho_f = 520.min(ancho - 32);
+            let x0 = (ancho - ancho_f) / 2;
+            let mut yc = y + 68;
+            for (i, (etiqueta, secreta)) in p.etiquetas().iter().enumerate() {
+                fuente.dibujar(&mut l, x0, yc + 26, etiqueta, 15, contenido);
+                let caja = Rect::new(x0 + 170, yc, ancho_f - 170, 40);
+                l.redondeado(caja, 12, t.contenedor_alto());
+                l.borde(caja, 12, if i == p.foco { 2 } else { 1 }, if i == p.foco { t.primario } else { t.variante_contorno });
+                let valor = if *secreta { "•".repeat(p.cajas[i].chars().count().min(24)) } else { p.cajas[i].clone() };
+                l.recortar(caja.dentro(4));
+                fuente.dibujar(&mut l, caja.x + 14, yc + 26, &valor, 16, t.sobre_superficie);
+                l.soltar_recorte();
+                yc += 48;
+            }
+        }
+        Modo::Codigo => {
+            let lineas = [
+                alloc::format!("Es la otra llave del Home: de {}, por si olvidas la contraseña.", p.visto()),
+                String::from("Apúntalo en papel y guárdalo: no se vuelve a enseñar."),
+            ];
+            for (i, linea) in lineas.iter().enumerate() {
+                let x = centrado(fuente, linea, 16);
+                fuente.dibujar(&mut l, x, y + 48 + 24 * i as i32, linea, 16, contenido);
+            }
+            let caja = Rect::new(ancho / 2 - 260, y + 92, 520, 64);
+            l.redondeado(caja, 16, t.contenedor_alto());
+            let x = centrado(titulo, &p.codigo, 26);
+            titulo.dibujar(&mut l, x, y + 134, &p.codigo, 26, t.sobre_superficie);
+        }
+    }
+    // El aviso: el error, o qué hacer (en la fila de DMS, solo el error y Bloq Mayús, como su campo).
+    let aviso = match (&p.aviso, p.modo) {
+        // Con Bloq Mayús, también tras un error (DMS los dice los dos).
+        (Some(x), Modo::Clave | Modo::Nombre) if a.bloq_mayus => Some(alloc::format!("{} · Bloq Mayús está activado", x)),
+        (Some(a), _) => Some(a.clone()),
+        (None, Modo::Clave | Modo::Nombre) if a.bloq_mayus => Some(String::from("Bloq Mayús está activado")),
+        (None, Modo::Clave | Modo::Nombre) => None,
+        (None, Modo::Lista) => Some(String::from("¿Quién entra? Elige con las flechas o el ratón, o escribe tu nombre.")),
+        (None, Modo::Recuperar) => Some(String::from("El código está en el papel que apuntaste al crear la cuenta.")),
+        (None, Modo::Asistente) => Some(String::from("El nombre corto es para entrar: letras sin acentos y cifras.")),
+        (None, Modo::Codigo) => Some(String::from("Con él, en esta pantalla, pones otra contraseña si la olvidas.")),
     };
-    let x = centrado(fuente, aviso, 16);
-    fuente.dibujar(&mut l, x, y + 200, aviso, 16, if mala { error } else { t.sobre_variante_superficie });
-    // U6: al pie, en una pastilla del contenedor (Material 3), la tecla para cambiar de usuario o para volver.
-    if todo && bloqueo {
-        let pie = if cambio { "Esc: volver a la sesión bloqueada" } else { "Esc: cambiar de usuario" };
-        let m = fuente.medir(pie, 15);
-        let pastilla = Rect::new((ancho - m.ancho - 40) / 2, y + 236, m.ancho + 40, 36);
+    if let Some(texto) = aviso {
+        let base = if p.de_fila() { d.aviso.y + 16 } else { p.abajo(ancho, alto) + 24 };
+        let tam = if p.de_fila() { 14 } else { 16 };
+        let x = centrado(fuente, &texto, tam);
+        let rojo = p.aviso.is_some() || (p.de_fila() && a.bloq_mayus);
+        fuente.dibujar(&mut l, x, base, &texto, tam, if rojo { error } else { tenue });
+    }
+    // Los avisos (solo en la de bloqueo, y lo que deja su ajuste).
+    if p.de_fila() {
+        pintar_avisos(&mut l, &d, a, fuente, titulo, t);
+    }
+    // Al pie, en pastillas del contenedor (Material 3), los botones, con su tecla: se pulsan o se teclean.
+    for (pastilla, texto, _) in p.pastillas(ancho, alto, fuente) {
+        let m = fuente.medir(texto, 15);
         l.redondeado(pastilla, 18, t.contenedor());
-        fuente.dibujar(&mut l, pastilla.x + 20, pastilla.y + (36 + m.sube - m.baja) / 2, pie, 15, t.sobre_variante_superficie);
+        fuente.dibujar(&mut l, pastilla.x + 20, pastilla.y + (36 + m.sube - m.baja) / 2, texto, 15, t.sobre_variante_superficie);
     }
     zona
 }
 
-/// U3: bloquea la sesión (G5) con su pantalla y espera la contraseña de la usuaria. Devuelve si desbloqueó con la
-/// buena después de una mala, como hace la prueba.
-/// La pantalla de bloqueo de `usuaria` (U3), o la de entrada con `None`: primero el nombre, luego la contraseña. Al
-/// acabar se despide del compositor, para poder volver a conectarse. Devuelve quién entró o desbloqueó, si fue bien.
+/// La fila de DMS (`LockAuthWidget`, estilo "expressive"): el avatar (la inicial en un círculo del contenedor primario)
+/// y el campo en el contenedor alto, con el contorno del primario (el de foco de Material 3; en rojo tras un error), el
+/// candado en un cuadrado del contenedor primario, un punto por letra (o el nombre que se teclea) y la flecha para
+/// entrar. Encima, quién entra y su frase (S6b: así se sabe que es el sistema).
+#[allow(clippy::too_many_arguments)]
+fn pintar_fila(l: &mut Lienzo, d: &bv::Disposicion, p: &Pantalla, fuente: &mut Fuente, titulo: &mut Fuente, t: &Tema, a: &Alrededor, contenido: kit::lienzo::Color, tenue: kit::lienzo::Color, error: kit::lienzo::Color) {
+    let ancho = l.ancho;
+    let centrado = |f: &mut Fuente, t: &str, tam: u32| (ancho - f.medir(t, tam).ancho) / 2;
+    let clave = p.modo == Modo::Clave;
+    // Encima: "Cambiar de usuario" si toca, quién y su frase (o qué hacer, al teclear el nombre).
+    if p.cambiando {
+        let x = centrado(fuente, "Cambiar de usuario", 16);
+        fuente.dibujar(l, x, d.nombre.y - 14, "Cambiar de usuario", 16, tenue);
+    }
+    let visto = if clave { p.visto() } else { String::from("¿Quién eres?") };
+    let x = centrado(titulo, &visto, 22);
+    titulo.dibujar(l, x, d.nombre.y + 22, &visto, 22, contenido);
+    if clave && let Some(f) = FRASES.iter().find(|f| f.0 == p.nombre) {
+        let frase = alloc::format!("\"{}\"", f.1);
+        let x = centrado(fuente, &frase, 17);
+        let color = if a.fondo.is_some() { a.primario_oscuro } else { t.primario };
+        fuente.dibujar(l, x, d.frase.y + 18, &frase, 17, color);
+    }
+    // El avatar.
+    let av = caja(d.avatar);
+    l.redondeado(av, av.h / 2, t.contenedor_primario);
+    let ini = if clave { bv::inicial(&p.nombre) } else { bv::inicial(&p.nombre).replace('?', "") };
+    if ini.is_empty() {
+        a.simbolos.centrado(l, av, 28, kit::iconos::simbolo::MANAGE_ACCOUNTS, t.sobre_contenedor_primario);
+    } else {
+        let m = titulo.medir(&ini, 24);
+        titulo.dibujar(l, av.x + (av.w - m.ancho) / 2, av.y + (av.h + m.sube - m.baja) / 2, &ini, 24, t.sobre_contenedor_primario);
+    }
+    // El campo.
+    let campo = caja(d.campo);
+    let radio = dms_medidas::radio(28);
+    let fallo = p.aviso.is_some();
+    l.redondeado(campo, radio, t.contenedor_alto());
+    l.borde(campo, radio, 2, if fallo { error } else { t.primario });
+    let icono = Rect::new(campo.x + 8, campo.y + 8, campo.h - 16, campo.h - 16);
+    l.redondeado(icono, dms_medidas::radio(16), if fallo { kit::tema::con_opacidad(error, 72) } else { t.contenedor_primario });
+    let simbolo = if clave { kit::iconos::simbolo::LOCK } else { kit::iconos::simbolo::MANAGE_ACCOUNTS };
+    a.simbolos.centrado(l, icono, 20, simbolo, if fallo { t.sobre_superficie } else { t.sobre_contenedor_primario });
+    let tx = icono.x + icono.w + 12;
+    let hueco = Rect::new(tx, campo.y, campo.x + campo.w - tx - 52, campo.h);
+    l.recortar(hueco);
+    let vacio = if clave { p.clave.is_empty() } else { p.nombre.is_empty() };
+    if vacio {
+        let ph = if clave { "Contraseña…" } else { "Tu nombre…" };
+        let m = fuente.medir(ph, 15);
+        fuente.dibujar(l, tx, campo.y + (campo.h + m.sube - m.baja) / 2, ph, 15, t.contorno);
+    } else if clave {
+        // Un punto por letra (como el eco de contraseña de DMS), los últimos si no caben.
+        let n = p.clave.chars().count() as i32;
+        let cabe = ((hueco.w - 4) / 18).max(1);
+        for i in 0..n.min(cabe) {
+            l.redondeado(Rect::new(tx + 2 + i * 18, campo.y + campo.h / 2 - 5, 10, 10), 5, t.sobre_superficie);
+        }
+    } else {
+        let m = fuente.medir(&p.nombre, 17);
+        fuente.dibujar(l, tx, campo.y + (campo.h + m.sube - m.baja) / 2, &p.nombre, 17, t.sobre_superficie);
+    }
+    l.soltar_recorte();
+    if !vacio {
+        let b = boton_entrar(d);
+        l.redondeado(b, b.h / 2, t.contenedor_primario);
+        a.simbolos.centrado(l, b, 18, kit::iconos::simbolo::ARROW_FORWARD, t.sobre_contenedor_primario);
+    }
+}
+
+/// Los avisos bajo el campo, como los de DMS (`LockNotificationsWidget`): con "contador", un chip con la campana y
+/// cuántos; con "nombres", un chip por programa (la inicial, el nombre y cuántos), del mismo ancho, centrados.
+fn pintar_avisos(l: &mut Lienzo, d: &bv::Disposicion, a: &Alrededor, fuente: &mut Fuente, medio: &mut Fuente, t: &Tema) {
+    let Some(r) = &a.avisos else { return };
+    let fila = caja(d.avisos);
+    let radio = dms_medidas::radio(12);
+    let chip = |l: &mut Lienzo, c: Rect| {
+        l.redondeado(c, radio, t.contenedor());
+        l.borde(c, radio, 1, t.variante_contorno);
+    };
+    match r.modo {
+        1 => {
+            let Some(texto) = bv::texto_contador(r.cuantos) else { return };
+            let w = 12 + 16 + 8 + fuente.medir(&texto, 13).ancho + 14;
+            let c = Rect::new(fila.x + (fila.w - w) / 2, fila.y, w, fila.h);
+            chip(l, c);
+            a.simbolos.pintar(l, c.x + 12, c.y + (c.h - 16) / 2, 16, kit::iconos::simbolo::NOTIFICATIONS, t.sobre_variante_superficie);
+            let m = fuente.medir(&texto, 13);
+            fuente.dibujar(l, c.x + 36, c.y + (c.h + m.sube - m.baja) / 2, &texto, 13, t.sobre_superficie);
+        }
+        2 if !r.programas.is_empty() => {
+            let textos: alloc::vec::Vec<_> = r.programas.iter().map(|(n, k)| bv::texto_chip(n, *k)).collect();
+            let ancho_de = |m: &mut Fuente, f: &mut Fuente, (n, k): &(String, Option<String>)| 10 + 16 + 6 + m.medir(n, 12).ancho + k.as_ref().map_or(0, |k| 6 + (f.medir(k, 11).ancho + 8).max(16)) + 12;
+            let w = textos.iter().map(|x| ancho_de(medio, fuente, x)).max().unwrap_or(0);
+            let cabe = (((l.ancho - 32) + 8) / (w + 8)).max(1) as usize;
+            let van = textos.len().min(cabe);
+            let total = van as i32 * w + (van as i32 - 1) * 8;
+            let mut x = (l.ancho - total) / 2;
+            for (n, k) in textos.iter().take(van) {
+                let c = Rect::new(x, fila.y, w, fila.h);
+                chip(l, c);
+                let ic = Rect::new(c.x + 10, c.y + (c.h - 16) / 2, 16, 16);
+                l.redondeado(ic, 8, t.contenedor_secundario());
+                let ini = bv::inicial(n);
+                let m = medio.medir(&ini, 10);
+                medio.dibujar(l, ic.x + (16 - m.ancho) / 2, ic.y + (16 + m.sube - m.baja) / 2, &ini, 10, t.sobre_contenedor_secundario());
+                let m = medio.medir(n, 12);
+                medio.dibujar(l, c.x + 32, c.y + (c.h + m.sube - m.baja) / 2, n, 12, t.sobre_superficie);
+                if let Some(k) = k {
+                    let mk = fuente.medir(k, 11);
+                    let b = Rect::new(c.x + 32 + m.ancho + 6, c.y + (c.h - 16) / 2, (mk.ancho + 8).max(16), 16);
+                    l.redondeado(b, 8, t.primario);
+                    fuente.dibujar(l, b.x + (b.w - mk.ancho) / 2, b.y + (16 + mk.sube - mk.baja) / 2, k, 11, t.sobre_primario);
+                }
+                x += w + 8;
+            }
+        }
+        _ => {}
+    }
+}
+
+/// El símbolo del altavoz para el nivel y el silencio (como el de la barra, `barra_widgets::simbolo_sonido`).
+fn simbolo_sonido(nivel: u32, silencio: bool) -> kit::iconos::Simbolo {
+    use kit::iconos::simbolo;
+    match (silencio, nivel) {
+        (true, _) => simbolo::VOLUME_OFF,
+        (false, 0) => simbolo::VOLUME_MUTE,
+        (false, 1..=50) => simbolo::VOLUME_DOWN,
+        _ => simbolo::VOLUME_UP,
+    }
+}
+
+/// La pantalla de bloqueo de `usuaria` (U3), o la de entrada con `None`: elegir la persona (o teclear su nombre) y
+/// luego la contraseña; o recuperar la cuenta con su código, o, en el primer arranque, crear la primera. Al acabar se
+/// despide del compositor, para poder volver a conectarse. Devuelve quién entró o desbloqueó, si fue bien.
 fn pantalla(usuaria: Option<&str>) -> Option<String> {
     let mut memoria = 0;
     let r = pantalla_dentro(usuaria, &mut memoria);
+    if let Some(quien) = &r {
+        poner_delante(quien);
+    }
     dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
     // Y la memoria de la pantalla fuera de su sitio, para la siguiente.
     dashos::memoria_quitar(VA);
@@ -1540,12 +2840,24 @@ impl Drop for Otras {
     }
 }
 
+/// Las teclas: Esc va por su código (`TECLA_ESC`); lo demás, por el teclado del kit. En la contraseña, Tab es "olvidé la
+/// contraseña" (rama `cuentas-2`).
 fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
     let entrada = usuaria.is_none();
-    let mut nombre = String::from(usuaria.unwrap_or(""));
-    let mut en_nombre = entrada;
-    // U6: en "Cambiar de usuario" (Esc en la de bloqueo); quien estaba bloqueado sigue detrás.
-    let mut cambiando = false;
+    // Rama `cuentas-2`: la lista de cuentas (y si toca el primer arranque), para elegir en vez de teclear.
+    let (cuentas, primer) = if entrada { cuentas_de_entrada() } else { (alloc::vec::Vec::new(), false) };
+    let mut p = Pantalla::vacia(entrada);
+    p.cuentas = cuentas;
+    p.primer = primer;
+    p.nombre = String::from(usuaria.unwrap_or(""));
+    if entrada {
+        p.modo = if p.primer && p.cuentas.is_empty() { Modo::Asistente } else if p.cuentas.is_empty() { Modo::Nombre } else { Modo::Lista };
+        println!(
+            "  [guardian] pantalla de entrada: {} cuentas en la lista{}",
+            p.cuentas.len(),
+            if p.modo == Modo::Asistente { "; primer arranque: el asistente" } else { "" }
+        );
+    }
     // Si ya dijo que la pantalla está pintada y tiene el teclado.
     let mut pintada = false;
     const SALIDA: u32 = 20;
@@ -1555,7 +2867,8 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
     /// El tema del sistema (`dashos_tema_v1`, S10c): llega al enlazar y cada vez que cambia.
     const TEMA: u32 = 24;
     // Multimonitor: las demás salidas, cada una con su superficie de bloqueo (ext-session-lock pide una por salida). En
-    // ellas solo el color de la superficie del tema: lo de escribir va en la principal.
+    // ellas solo el fondo (S27, oleada 6: el desenfocado, o el color de la superficie del tema): lo de escribir va en la
+    // principal.
     const OTRAS: usize = 3;
     const SALIDA_OTRA: u32 = 40;
     const SUP_OTRA: u32 = 44;
@@ -1573,11 +2886,52 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
         const W: i32 = 400;
         const H: i32 = 300;
         let mut prueba = alloc::vec![0u32; (W * H) as usize];
-        pintar(&mut prueba, W, H, usuaria.unwrap_or("Ana"), entrada, false, 20, true, true, &mut fuente, &mut titulo, &Tema::OSCURO);
-        pintar(&mut prueba, W, H, usuaria.unwrap_or("Carla"), entrada, false, 20, false, true, &mut fuente, &mut titulo, &Tema::OSCURO);
-        if !entrada {
-            pintar(&mut prueba, W, H, "Carla", false, true, usize::MAX, false, true, &mut fuente, &mut titulo, &Tema::OSCURO);
+        let mut q = Pantalla::vacia(entrada);
+        q.cuentas = p.cuentas.clone();
+        q.nombre = String::from(usuaria.unwrap_or("Ana"));
+        q.clave = String::from("12345678901234567890");
+        q.aviso = Some(String::from("Contraseña incorrecta"));
+        let mut a = Alrededor::nuevo();
+        a.hora = Some(reloj::fecha(0));
+        let todo = Rect::new(0, 0, W, H);
+        for modo in [Modo::Clave, Modo::Nombre, Modo::Lista] {
+            q.modo = modo;
+            pintar(&mut prueba, W, H, &q, todo, &mut fuente, &mut titulo, &Tema::OSCURO, &a);
         }
+        q.nombre = String::from("Carla");
+        q.aviso = None;
+        q.modo = Modo::Clave;
+        pintar(&mut prueba, W, H, &q, todo, &mut fuente, &mut titulo, &Tema::OSCURO, &a);
+        borrar(&mut q.clave);
+        // S27, oleada 6: las cifras del reloj y la fecha, del tamaño de las pantallas de siempre (1920 × 1080,
+        // 1280 × 800 y 800 × 600): son grandes y lentas de hacer la primera vez.
+        let mut l = Lienzo::new(&mut prueba, W, H, W as usize);
+        for (w, h) in [(1920, 1080), (800, 600), (1280, 800)] {
+            let tam = bv::letra_reloj(&bv::disponer(w, h).reloj);
+            titulo.dibujar(&mut l, 0, 0, "0123456789:", tam, 0xffff_ffff);
+        }
+        titulo.dibujar(&mut l, 0, 0, "LMJVSD lunes, martes miércoles jueves viernes sábado domingo de enero febrero marzo abril mayo junio julio agosto septiembre octubre noviembre diciembre 0123456789", 22, 0xffff_ffff);
+    }
+    // S27, oleada 6: lo de alrededor: el fondo desenfocado de `fondo` (en las dos pantallas, como DMS, que pone el del
+    // usuario también en la de entrada), la hora y, en la de bloqueo, los avisos según su ajuste.
+    let mut alrededor = Alrededor::nuevo();
+    alrededor.fondo = fondo_de_bloqueo();
+    (alrededor.hora, alrededor.minuto) = ahora_local();
+    if !entrada {
+        alrededor.avisos = avisos_de_bloqueo();
+        // Rama sonido-pro: lo que suena, si algo suena.
+        alrededor.medio = medio_de_bloqueo();
+        if let Some((_, t, suena)) = &alrededor.medio {
+            println!("  [guardian] lo que suena en la pantalla de bloqueo: {}{}", t, if *suena { "" } else { " (en pausa)" });
+        }
+    }
+    println!(
+        "  [guardian] alrededor: {}; hora {}",
+        alrededor.fondo.as_ref().map_or(String::from("sin fondo (el color del tema)"), |f| alloc::format!("fondo desenfocado de {} x {}", f.1, f.2)),
+        alrededor.hora.map_or(String::from("no se sabe"), |f| alloc::format!("{:02}:{:02}", f.hora, f.minuto)),
+    );
+    if let Some(a) = &alrededor.avisos {
+        println!("  [guardian] avisos en la pantalla de bloqueo: modo {}, {} actuales, {} programas", a.modo, a.cuantos, a.programas.len());
     }
     let Some(mut c) = Cliente::conectar() else {
         println!("  [guardian] sin compositor");
@@ -1602,9 +2956,12 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(go).texto(Some("wl_output")).uint(4).uint(SALIDA).fin();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gl).texto(Some("ext_session_lock_manager_v1")).uint(1).uint(GESTOR).fin();
     if let Some(gt) = global("dashos_tema_v1") {
-        e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(1).uint(TEMA).fin();
+        // S27, oleada 6: la versión 5, para recibir el estado de la red y del volumen (como la barra).
+        e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(5).uint(TEMA).fin();
     }
     e.empezar(ASIENTO, wl_seat::req::GET_KEYBOARD).uint(TECLADO).fin();
+    // Rama `cuentas-2`: y el ratón (S0: todo se puede hacer con él): elegir en la lista, las cajas y los botones del pie.
+    e.empezar(ASIENTO, wl_seat::req::GET_POINTER).uint(PUNTERO).fin();
     e.empezar(GESTOR, ext_session_lock_manager_v1::req::LOCK).uint(CERROJO).fin();
     e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
     e.empezar(CERROJO, ext_session_lock_v1::req::GET_LOCK_SURFACE).uint(SUP_BLOQUEO).uint(SUPERFICIE).uint(SALIDA).fin();
@@ -1618,24 +2975,44 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
     c.mandar(&e);
     let mut teclado = Teclado::new();
     let mut entera = true;
-    let mut clave = String::new();
     let (mut ancho, mut alto, mut buf) = (0i32, 0i32, false);
+    // Rama `cuentas-2`: dónde está el ratón, y las teclas que hacen los clics (un botón del pie es su tecla; una fila
+    // de la lista, elegirla e Intro).
+    let (mut rx, mut ry) = (-1i32, -1i32);
+    let mut inyectadas: alloc::collections::VecDeque<u32> = alloc::collections::VecDeque::new();
     let mut malas = 0;
-    let mut ultima_mala = false;
     // Esperando la respuesta de `sesiones` a una contraseña: su canal.
     let mut esperando: Option<u32> = None;
     // Hay que repintar: se hace cuando no queda nada por leer (pintar es lento, y si se pinta tras cada tecla, la cola
     // se llena y el compositor suelta a quien no lee).
     let mut repintar = false;
+    // S27, oleada 6: otras zonas que repintar (el reloj, el estado, los avisos), además de lo de en medio.
+    let mut extras: alloc::vec::Vec<Rect> = alloc::vec::Vec::new();
     loop {
+        // S27, oleada 6: cada minuto, la hora (y en la de bloqueo, los avisos).
+        if buf {
+            let (hora, minuto) = ahora_local();
+            if minuto != alrededor.minuto {
+                (alrededor.hora, alrededor.minuto) = (hora, minuto);
+                extras.push(zona_arriba(ancho, alto));
+                if !entrada {
+                    let avisos = avisos_de_bloqueo();
+                    if avisos != alrededor.avisos {
+                        alrededor.avisos = avisos;
+                        extras.push(zona_avisos(ancho, alto));
+                    }
+                }
+            }
+        }
         if let Some(l) = esperando {
-            let mut r = [0u8; 4];
+            let mut r = [0u8; 8];
             let (n, _, _) = dashos::canal_leer_plazo(l, &mut r, &mut [], 1);
             if n != dashos::E_PLAZO {
                 dashos::cerrar(l);
                 esperando = None;
-                let r = if n == 4 { i32::from_le_bytes(r) } else { i32::MIN };
-                if r == 0 {
+                let estado = if n == 4 || n == 8 { i32::from_le_bytes(r[0..4].try_into().unwrap()) } else { i32::MIN };
+                let espera = if n == 8 { u32::from_le_bytes(r[4..8].try_into().unwrap()) } else { 0 };
+                if estado == 0 {
                     let mut e = Escritor::new();
                     e.empezar(SUP_BLOQUEO, ext_session_lock_surface_v1::req::DESTROY).fin();
                     e.empezar(SUPERFICIE, wl_surface::req::DESTROY).fin();
@@ -1653,57 +3030,104 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
                             break;
                         }
                     }
-                    if cambiando {
+                    let nombre = p.nombre.clone();
+                    if p.cambiando {
                         println!("  [guardian] cambio de usuario: entra {} ({} intentos malos); {} sigue detrás", nombre, malas, usuaria.unwrap_or("?"));
-                        return Some(nombre.clone());
+                        return Some(nombre);
                     }
                     if entrada {
                         // En la prueba, antes, un usuario que no existe: una mala.
                         if uso() {
-                            return Some(nombre.clone());
+                            return Some(nombre);
                         }
                         let bien = malas == 1;
                         println!("  [guardian] entra {} tras {} intento malo: {}", nombre, malas, if bien { "bien" } else { "MAL" });
-                        return bien.then(|| nombre.clone());
+                        return bien.then_some(nombre);
                     }
                     if uso() {
                         println!("  [guardian] desbloqueado");
-                        return Some(nombre.clone());
+                        return Some(nombre);
                     }
                     let bien = malas == 1;
                     println!("  [guardian] desbloqueado con la contraseña buena tras {} mala: {}", malas, if bien { "bien" } else { "MAL" });
-                    return bien.then(|| nombre.clone());
+                    return bien.then_some(nombre);
                 }
-                malas += 1;
-                ultima_mala = true;
-                // En la de entrada (y en la de cambio), se vuelve a pedir el nombre.
-                if entrada || cambiando {
-                    nombre.clear();
-                    en_nombre = true;
+                if estado == dashos::protocolo::sesiones::OCUPADO && n == 8 {
+                    // Rama `cuentas-2`: tras varias malas seguidas, hay que esperar; no se probó.
+                    p.aviso = Some(alloc::format!("Demasiados intentos. Espera {} s y prueba otra vez.", espera));
+                    println!("  [guardian] demasiados intentos con {}: espera {} s", p.nombre, espera);
+                } else {
+                    malas += 1;
+                    p.aviso = Some(String::from("Contraseña incorrecta"));
+                    // Tras el código (no debería fallar), a la contraseña: el código ya no se enseña.
+                    if p.modo == Modo::Codigo {
+                        p.modo = Modo::Clave;
+                        entera = true;
+                    }
+                    // En la de entrada (y en la de cambio), se vuelve a pedir el nombre si se tecleó; si se eligió en la
+                    // lista, se sigue con la misma persona.
+                    if (entrada || p.cambiando) && !p.de_lista {
+                        p.nombre.clear();
+                        p.modo = Modo::Nombre;
+                    }
+                    println!("  [guardian] contraseña mala en la pantalla de bloqueo ({})", estado);
                 }
-                println!("  [guardian] contraseña mala en la pantalla de bloqueo ({})", r);
                 repintar = true;
             }
         }
-        let ev = match (esperando.is_some(), repintar && buf) {
-            (true, _) => c.evento_plazo(20_000),
-            (false, true) => c.evento_plazo(1),
-            (false, false) => c.evento().ok_or(()).map(Some),
+        // Bloq Mayús, como lo lleva el teclado del kit (el compositor no manda los modificadores bloqueados: lo de antes
+        // de ponerse la pantalla no se sabe): se dice bajo el campo, como DMS.
+        if teclado.bloq_mayus() != alrededor.bloq_mayus {
+            alrededor.bloq_mayus = teclado.bloq_mayus();
+            repintar = true;
+        }
+        // Lo que haya que repintar (también lo que acaba de cambiar arriba, la respuesta de `sesiones`).
+        let toca = (repintar || !extras.is_empty()) && buf;
+        // Rama `cuentas-2`: lo que hizo un clic, como si se tecleara (sin esperar a nada).
+        let inyectada = if esperando.is_none() && !toca { inyectadas.pop_front() } else { None };
+        let ev = match (inyectada, esperando.is_some(), toca) {
+            (Some(codigo), ..) => {
+                let mut cuerpo = alloc::vec![0u8; 16];
+                cuerpo[8..12].copy_from_slice(&codigo.to_le_bytes());
+                cuerpo[12..16].copy_from_slice(&1u32.to_le_bytes());
+                Ok(Some((TECLADO, wl_keyboard::ev::KEY, cuerpo)))
+            }
+            (None, true, _) => c.evento_plazo(20_000),
+            (None, false, true) => c.evento_plazo(1),
+            (None, false, false) if !inyectadas.is_empty() => c.evento_plazo(1),
+            // Sin nada que hacer, hasta el minuto que viene (el reloj).
+            (None, false, false) => {
+                let s = dashos::hora_ns() / 1_000_000_000 % 60;
+                c.evento_plazo((60 - s.min(59)) * 1_000_000 + 50_000)
+            }
         };
         let Ok(ev) = ev else {
             println!("  [guardian] se cortó la conexión con el compositor");
             return None;
         };
-        if ev.is_none() && repintar && buf {
-            repintar = false;
+        if ev.is_none() && toca {
             let px = unsafe { core::slice::from_raw_parts_mut(VA as *mut u32, (ancho * alto) as usize) };
             let primera = entera;
-            let letras = if en_nombre { usize::MAX } else { clave.chars().count() };
-            let z = pintar(px, ancho, alto, &nombre, entrada, cambiando, letras, ultima_mala, entera, &mut fuente, &mut titulo, &tema);
+            // Las zonas: entera, o lo de en medio (si cambió) y las de más (el reloj, el estado, los avisos).
+            let mut zonas = core::mem::take(&mut extras);
+            if entera {
+                zonas = alloc::vec![Rect::new(0, 0, ancho, alto)];
+            } else if repintar {
+                zonas.push(zona_medio(&p, ancho, alto));
+            }
+            repintar = false;
             entera = false;
             let mut e = Escritor::new();
             e.empezar(SUPERFICIE, wl_surface::req::ATTACH).uint(BUFER).int(0).int(0).fin();
-            e.empezar(SUPERFICIE, wl_surface::req::DAMAGE).int(z.x).int(z.y).int(z.w).int(z.h).fin();
+            let t0 = dashos::ahora_us();
+            for zona in zonas {
+                let z = pintar(px, ancho, alto, &p, zona, &mut fuente, &mut titulo, &tema, &alrededor);
+                e.empezar(SUPERFICIE, wl_surface::req::DAMAGE).int(z.x).int(z.y).int(z.w).int(z.h).fin();
+            }
+            if primera {
+                // S27, oleada 6: lo que cuesta pintarla entera (con el fondo agrandado y el reloj).
+                println!("  [guardian] pantalla entera pintada en {} ms", (dashos::ahora_us() - t0) / 1000);
+            }
             e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
             // Y un sync: con su respuesta, el compositor ya tiene el búfer y la pantalla tiene el teclado.
             if primera {
@@ -1719,15 +3143,32 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
             // Una vez: al repintar entera (Esc en el bloqueo, U6) llega otro sync, y el guion cuenta estas líneas.
             (SYNC, wayland::tablas::wl_callback::ev::DONE) if !pintada => {
                 pintada = true;
-                println!("  [guardian] pantalla de {} pintada: tiene el teclado", if entrada { "entrada" } else { "bloqueo" })
+                println!("  [guardian] pantalla de {} pintada: tiene el teclado", if entrada { "entrada" } else { "bloqueo" });
+                // Para las pruebas del ratón: dónde está la primera fila de la lista.
+                if p.modo == Modo::Lista {
+                    println!("  [guardian] la lista en ({}, {}), filas de {}", ancho / 2, Pantalla::arriba(ancho, alto) + 40 + (ALTO_FILA - 8) / 2, ALTO_FILA);
+                }
             }
             (CERROJO, ext_session_lock_v1::ev::LOCKED) => println!("  [guardian] sesión bloqueada"),
             (TEMA, wayland::tablas::dashos_tema_v1::ev::TEMA) => {
                 let (color, oscuro) = (palabra(0) | 0xff00_0000, palabra(1) != 0);
                 tema = Tema::del_sistema(color, oscuro);
+                alrededor.primario_oscuro = if oscuro { tema.primario } else { Tema::del_sistema(color, true).primario };
                 println!("  [guardian] tema del sistema: {}, color {:06x}", if oscuro { "oscuro" } else { "claro" }, color & 0xff_ffff);
                 entera = true;
                 repintar = true;
+            }
+            // S27, oleada 6: el estado de la red y del volumen (lo da el panel; el compositor lo pasa aquí también).
+            (TEMA, wayland::tablas::dashos_tema_v1::ev::ESTADO) if cuerpo.len() >= 12 => {
+                let nuevo = Some((palabra(0), palabra(1), palabra(2)));
+                if nuevo != alrededor.estado {
+                    println!("  [guardian] estado: red {}, volumen {}{}", palabra(0), palabra(1), if palabra(2) != 0 { ", silencio" } else { "" });
+                    alrededor.estado = nuevo;
+                    if buf {
+                        let d = bv::disponer(ancho, alto);
+                        extras.push(Rect::new(d.estado.0 - 120, d.estado.1 - 4, 124, bv::ICONO_ESTADO + 8));
+                    }
+                }
             }
             (CERROJO, ext_session_lock_v1::ev::FINISHED) => {
                 println!("  [guardian] el compositor no deja bloquear");
@@ -1746,7 +3187,9 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
                         otras.memoria[k] = m as u32;
                         otras.va[k] = va;
                         let px = unsafe { core::slice::from_raw_parts_mut(va as *mut u32, (w * h) as usize) };
-                        px.fill(tema.superficie);
+                        // S27, oleada 6: el fondo desenfocado también en las demás salidas (como DMS, en todas); sin él,
+                        // el color de la superficie.
+                        pintar_fondo(px, w, h, Rect::new(0, 0, w, h), &alrededor, &tema);
                         let copia = dashos::llave_duplicar(m as u32, dashos::LEER | dashos::TRANSFERIR, 0);
                         let (pool, bufer, sup) = (POOL_OTRA + k as u32, BUFER_OTRA + k as u32, SUP_OTRA + k as u32);
                         e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(pool).llave(copia as u32).int(tamano as i32).fin();
@@ -1794,51 +3237,228 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
                     dashos::cerrar(l);
                 }
             }
+            (PUNTERO, wl_pointer::ev::ENTER) => (rx, ry) = ((palabra(2) as i32) >> 8, (palabra(3) as i32) >> 8),
+            (PUNTERO, wl_pointer::ev::MOTION) => (rx, ry) = ((palabra(1) as i32) >> 8, (palabra(2) as i32) >> 8),
+            (PUNTERO, wl_pointer::ev::LEAVE) => (rx, ry) = (-1, -1),
+            // Un clic (el botón izquierdo, al pulsarlo): en una fila, elegirla e Intro; en una caja, a ella; en un botón
+            // del pie, su tecla. Mientras se comprueba una contraseña, nada.
+            // Rama sonido-pro: los botones de lo que suena (al programa, por el servicio de sonido).
+            (PUNTERO, wl_pointer::ev::BUTTON)
+                if palabra(2) == 0x110
+                    && palabra(3) == 1
+                    && buf
+                    && alrededor.medio.as_ref().is_some_and(|(_, t, _)| sitios_medio(&mut fuente, t).1.iter().any(|(r, _)| r.contiene(rx, ry))) =>
+            {
+                let (id, texto, suena) = alrededor.medio.clone().unwrap();
+                let (fila, botones) = sitios_medio(&mut fuente, &texto);
+                if let Some(&(_, n)) = botones.iter().find(|(r, _)| r.contiene(rx, ry)) {
+                    use dashos::protocolo::sonido as sp;
+                    let orden = [sp::ORDEN_ANTERIOR, sp::ORDEN_REPRODUCIR_PAUSAR, sp::ORDEN_SIGUIENTE][n as usize - 1];
+                    let b: alloc::vec::Vec<u8> = [sp::MEDIOS_ORDEN, id, orden].iter().flat_map(|w| w.to_le_bytes()).collect();
+                    dashos::canal_escribir(sonido_llave(), &b, &[]);
+                    println!("  [guardian] lo que suena: botón {}", n);
+                    if n == 2 {
+                        alrededor.medio = Some((id, texto, !suena));
+                    } else if let Some(m) = medio_de_bloqueo() {
+                        alrededor.medio = Some(m);
+                    }
+                    extras.push(Rect::new(0, fila.y - 2, ancho, fila.h + 4));
+                }
+            }
+            (PUNTERO, wl_pointer::ev::BUTTON) if palabra(2) == 0x110 && palabra(3) == 1 && esperando.is_none() && buf => {
+                match p.en(ancho, alto, rx, ry, &mut fuente) {
+                    Some(Pulsado::Fila(i)) => {
+                        p.elegida = i;
+                        inyectadas.push_back(TECLA_INTRO);
+                    }
+                    Some(Pulsado::Caja(i)) => {
+                        p.foco = i;
+                        repintar = true;
+                    }
+                    // Intro en un formulario, con el botón: lo pide (desde la última caja).
+                    Some(Pulsado::Tecla(TECLA_INTRO)) if matches!(p.modo, Modo::Recuperar | Modo::Asistente) => {
+                        p.foco = p.etiquetas().len() - 1;
+                        inyectadas.push_back(TECLA_INTRO);
+                    }
+                    Some(Pulsado::Tecla(t)) => inyectadas.push_back(t),
+                    None => {}
+                }
+                if let Some(q) = inyectadas.back() {
+                    println!("  [guardian] clic en ({}, {}): como la tecla {}", rx, ry, q);
+                }
+            }
             // Mientras se comprueba una contraseña, lo tecleado no cuenta (pero se lee).
             (TECLADO, wl_keyboard::ev::KEY) if esperando.is_some() => {
                 teclado.tecla(palabra(2), palabra(3) == 1);
             }
-            // U6: Esc en la de bloqueo pasa a "Cambiar de usuario"; otra vez, vuelve. Lo tecleado se olvida.
-            (TECLADO, wl_keyboard::ev::KEY) if !entrada && palabra(2) == TECLA_ESC => {
-                if palabra(3) == 1 {
-                    cambiando = !cambiando;
-                    unsafe { clave.as_bytes_mut().fill(0) };
-                    clave.clear();
-                    nombre = String::from(if cambiando { "" } else { usuaria.unwrap_or("") });
-                    en_nombre = cambiando;
-                    ultima_mala = false;
-                    entera = true;
-                    repintar = true;
-                    if cambiando {
-                        println!("  [guardian] cambio de usuario: se pide el nombre");
-                    } else {
-                        println!("  [guardian] cambio de usuario: vuelve al bloqueo de {}", usuaria.unwrap_or("?"));
+            // Esc: en la de bloqueo, a "Cambiar de usuario" y vuelta (U6); en la de entrada, de la contraseña o del nombre a
+            // la lista; de recuperar, a la contraseña. Lo tecleado se olvida.
+            (TECLADO, wl_keyboard::ev::KEY) if palabra(2) == TECLA_ESC => {
+                if palabra(3) != 1 {
+                    continue;
+                }
+                p.aviso = None;
+                match p.modo {
+                    Modo::Recuperar => {
+                        p.borrar_cajas();
+                        p.modo = Modo::Clave;
+                        println!("  [guardian] olvidé la contraseña: vuelve a la contraseña de {}", p.nombre);
                     }
+                    Modo::Asistente | Modo::Codigo => continue,
+                    // En el bloqueo, a cambiar de usuario, y de ahí (desde la lista, o sin lista), de vuelta.
+                    _ if !entrada && (!p.cambiando || p.modo == Modo::Lista || p.cuentas.is_empty()) => {
+                        p.cambiando = !p.cambiando;
+                        borrar(&mut p.clave);
+                        if p.cambiando {
+                            if p.cuentas.is_empty() {
+                                p.cuentas = cuentas_de_entrada().0;
+                            }
+                            p.elegida = p.cuentas.iter().position(|c| Some(c.0.as_str()) != usuaria).unwrap_or(0);
+                            p.a_la_lista();
+                            println!("  [guardian] cambio de usuario: se pide el nombre");
+                        } else {
+                            p.nombre = String::from(usuaria.unwrap_or(""));
+                            p.modo = Modo::Clave;
+                            println!("  [guardian] cambio de usuario: vuelve al bloqueo de {}", usuaria.unwrap_or("?"));
+                        }
+                    }
+                    Modo::Clave | Modo::Nombre if !p.cuentas.is_empty() => p.a_la_lista(),
+                    _ => continue,
+                }
+                entera = true;
+                repintar = true;
+            }
+            (TECLADO, wl_keyboard::ev::KEY) => {
+                let Some(tecla) = teclado.tecla(palabra(2), palabra(3) == 1) else { continue };
+                repintar = true;
+                match (p.modo, tecla) {
+                    // La lista: flechas para elegir; Intro, a la contraseña de esa persona (o a teclear el nombre); una
+                    // letra, a teclear el nombre con ella.
+                    (Modo::Lista, Tecla::Arriba) => p.elegida = p.elegida.saturating_sub(1),
+                    (Modo::Lista, Tecla::Abajo) => p.elegida = (p.elegida + 1).min(p.cuentas.len()),
+                    (Modo::Lista, Tecla::Inicio) => p.elegida = 0,
+                    (Modo::Lista, Tecla::Fin) => p.elegida = p.cuentas.len(),
+                    (Modo::Lista, Tecla::Intro) => {
+                        p.aviso = None;
+                        match p.cuentas.get(p.elegida) {
+                            Some((n, _)) => {
+                                p.nombre = n.clone();
+                                p.de_lista = true;
+                                p.modo = Modo::Clave;
+                                println!("  [guardian] lista: elige a {}", p.nombre);
+                            }
+                            None => {
+                                p.nombre.clear();
+                                p.de_lista = false;
+                                p.modo = Modo::Nombre;
+                                println!("  [guardian] lista: otra persona, se teclea el nombre");
+                            }
+                        }
+                        entera = true;
+                    }
+                    (Modo::Lista, Tecla::Letra(ch)) if !ch.is_control() && ch != ' ' => {
+                        p.aviso = None;
+                        p.nombre.clear();
+                        p.nombre.push(ch);
+                        p.de_lista = false;
+                        p.modo = Modo::Nombre;
+                        entera = true;
+                    }
+                    (Modo::Nombre, Tecla::Letra(ch)) if p.nombre.len() < 16 => p.nombre.push(ch),
+                    (Modo::Nombre, Tecla::Retroceso) => {
+                        p.nombre.pop();
+                    }
+                    (Modo::Nombre, Tecla::Intro) if !p.nombre.is_empty() => {
+                        p.aviso = None;
+                        p.de_lista = false;
+                        p.modo = Modo::Clave;
+                    }
+                    (Modo::Clave, Tecla::Letra(ch)) if p.clave.len() < 128 => p.clave.push(ch),
+                    (Modo::Clave, Tecla::Retroceso) => {
+                        p.clave.pop();
+                    }
+                    (Modo::Clave, Tecla::Intro) => {
+                        let orden = if entrada || p.cambiando { ENTRAR } else { VOLVER };
+                        let nombre = p.nombre.clone();
+                        esperando = comprobar(orden, &nombre, &mut p.clave);
+                    }
+                    // Rama `cuentas-2`: olvidé la contraseña (S6b): con el código de recuperación, otra.
+                    (Modo::Clave, Tecla::Tabulador) if !p.nombre.is_empty() => {
+                        borrar(&mut p.clave);
+                        p.borrar_cajas();
+                        p.aviso = None;
+                        p.modo = Modo::Recuperar;
+                        entera = true;
+                        println!("  [guardian] olvidé la contraseña: {} pone el código de recuperación", p.nombre);
+                    }
+                    // Los formularios: recuperar y el primer arranque. Tab y las flechas cambian de caja; Intro, a la
+                    // siguiente, y en la última (con todo puesto), se pide.
+                    (Modo::Recuperar | Modo::Asistente, Tecla::Tabulador | Tecla::Abajo) => p.foco = (p.foco + 1) % p.etiquetas().len(),
+                    (Modo::Recuperar | Modo::Asistente, Tecla::TabuladorAtras | Tecla::Arriba) => {
+                        p.foco = (p.foco + p.etiquetas().len() - 1) % p.etiquetas().len()
+                    }
+                    (Modo::Recuperar | Modo::Asistente, Tecla::Retroceso) => {
+                        p.cajas[p.foco].pop();
+                    }
+                    (Modo::Recuperar | Modo::Asistente, Tecla::Letra(ch)) if p.cajas[p.foco].len() < p.tope(p.foco) => p.cajas[p.foco].push(ch),
+                    (Modo::Recuperar | Modo::Asistente, Tecla::Intro) => {
+                        let n = p.etiquetas().len();
+                        // Con todo lo que hace falta puesto (el nombre completo puede ir vacío), Intro lo pide; si no,
+                        // pasa a la caja siguiente. Tras un código malo, las nuevas siguen puestas.
+                        if (0..n).any(|i| p.cajas[i].is_empty() && !(p.modo == Modo::Asistente && i == 1)) {
+                            p.foco = (p.foco + 1) % n;
+                            continue;
+                        }
+                        if p.cajas[n - 1] != p.cajas[n - 2] {
+                            println!("  [guardian] {}: las dos contraseñas no son iguales", if p.modo == Modo::Recuperar { "recuperar" } else { "primer arranque" });
+                            p.aviso = Some(String::from("Las dos contraseñas nuevas no son iguales."));
+                            borrar(&mut p.cajas[n - 1]);
+                            borrar(&mut p.cajas[n - 2]);
+                            p.foco = n - 2;
+                            entera = true;
+                            continue;
+                        }
+                        let recuperar = p.modo == Modo::Recuperar;
+                        let (estado, espera, codigo) = if recuperar {
+                            pedir_con_codigo(dashos::protocolo::sesiones::RECUPERAR, &p.nombre, &p.cajas[0], &p.cajas[1])
+                        } else {
+                            pedir_con_codigo(dashos::protocolo::sesiones::PRIMERA_CUENTA, &p.cajas[0], &p.cajas[1], &p.cajas[2])
+                        };
+                        let quien = if recuperar { p.nombre.clone() } else { p.cajas[0].clone() };
+                        if estado == 0 && !codigo.is_empty() {
+                            println!("  [guardian] {} {}: hecho; el código nuevo, en pantalla", if recuperar { "recuperar" } else { "primer arranque: crear" }, quien);
+                            if codigos_a_la_consola() {
+                                println!("  [guardian] (prueba) el código de recuperación de {} es {}", quien, codigo);
+                            }
+                            // La contraseña nueva, para entrar tras apuntar el código.
+                            p.clave = core::mem::take(&mut p.cajas[n - 2]);
+                            p.nombre = quien;
+                            p.borrar_cajas();
+                            p.codigo = codigo;
+                            p.aviso = None;
+                            p.modo = Modo::Codigo;
+                        } else {
+                            let dice = que_dice(estado, espera);
+                            println!("  [guardian] {} {}: no ({}: {})", if recuperar { "recuperar" } else { "primer arranque: crear" }, quien, estado, dice);
+                            p.aviso = Some(dice);
+                            if recuperar && estado == dashos::protocolo::sesiones::PROTEGIDO {
+                                borrar(&mut p.cajas[0]);
+                                p.foco = 0;
+                            }
+                        }
+                        entera = true;
+                    }
+                    (Modo::Codigo, Tecla::Intro) => {
+                        borrar(&mut p.codigo);
+                        let orden = if entrada || p.cambiando { ENTRAR } else { VOLVER };
+                        let nombre = p.nombre.clone();
+                        println!("  [guardian] código apuntado: entra {}", nombre);
+                        esperando = comprobar(orden, &nombre, &mut p.clave);
+                        entera = true;
+                    }
+                    _ => repintar = false,
                 }
             }
-            (TECLADO, wl_keyboard::ev::KEY) => match teclado.tecla(palabra(2), palabra(3) == 1) {
-                Some(Tecla::Letra(ch)) if en_nombre && nombre.len() < 16 => {
-                    nombre.push(ch);
-                    repintar = true;
-                }
-                Some(Tecla::Letra(ch)) if !en_nombre && clave.len() < 128 => {
-                    clave.push(ch);
-                    repintar = true;
-                }
-                Some(Tecla::Retroceso) => {
-                    if en_nombre { nombre.pop() } else { clave.pop() };
-                    repintar = true;
-                }
-                Some(Tecla::Intro) if en_nombre => {
-                    en_nombre = nombre.is_empty();
-                    repintar = true;
-                }
-                Some(Tecla::Intro) => {
-                    esperando = comprobar(if entrada || cambiando { ENTRAR } else { VOLVER }, &nombre, &mut clave);
-                    repintar = true;
-                }
-                _ => {}
-            },
             (1, wl_display::ev::ERROR) => {
                 println!("  [guardian] error de protocolo");
                 return None;

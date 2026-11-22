@@ -3,9 +3,14 @@
 version = 4
 
 [[package]]
+name = "dashos-iconos-cajas"
+version = "0.0.1"
+
+[[package]]
 name = "dashos-puente"
 version = "0.0.1"
 dependencies = [
+ "dashos-iconos-cajas",
  "dashos-wayland",
  "libc",
 ]

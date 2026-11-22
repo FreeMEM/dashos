@@ -93,7 +93,12 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // El USB por xHCI (U6): el de los portátiles y el de QEMU `virt` (y, en la Pi 4, el VL805, por el PCIe).
     // Su interrupción (INTx) es opcional: con ACPI no se sabe cuál es (va en el AML) y mira los eventos con un
     // temporizador.
+    #[cfg(not(feature = "dominio"))]
     ("xhci", programa!("xhci"), &[("dma-xhci", PERMISO_DMA), ("xhci", REGISTROS), ("xhci", INTERRUPCION | OPCIONAL)], &["ventanas"]),
+    // S35, paso 2 con USB (`docs/bitacoras/dominio-usb.md`): el xHCI presta aparatos a un dominio de controladores por
+    // "usb-dominio" (lo nombra él antes que nadie: lo lee él).
+    #[cfg(feature = "dominio")]
+    ("xhci", programa!("xhci"), &[("dma-xhci", PERMISO_DMA), ("xhci", REGISTROS), ("xhci", INTERRUPCION | OPCIONAL)], &["ventanas", "usb-dominio"]),
     // El disco NVMe (U6d), que sirve el disco por el canal "disco" (U6f).
     ("nvme", programa!("nvme"), &[("dma-nvme", PERMISO_DMA), ("nvme", REGISTROS), ("nvme", INTERRUPCION | OPCIONAL)], &["disco"]),
     // Una prueba del servicio de disco (U6f), solo en `virt`: la Pi aún no tiene servicio de disco.
@@ -119,6 +124,10 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // eco y 6 su canal.
     #[cfg(feature = "virt")]
     ("sesiones", programa!("sesiones"), &[("plazo", PLAZO), ("hipervisor", MAQUINAS)], &["archivos", "eco", "sesiones", "comprobar"]),
+    // S8 (rama `paq`): el servicio de paquetes, el único que escribe en `Paquetes:`. Nombra "paq" antes que nadie (lo
+    // sirve); `sesiones` recibe de `inicio` una copia sin marca, y nadie más. Sus llaves: 1 archivos y 2 su canal.
+    #[cfg(feature = "virt")]
+    ("paq", programa!("paq"), &[], &["archivos", "paq"]),
     // Quien hace de `guardian` en la prueba de U3: pide entrar con una contraseña mala y con la buena, y salir.
     // Un programa con permiso para `eco` (U4): lo pide a `sesiones`, lo usa, renuncia y comprueba que ya no sirve.
     // Quien atiende las preguntas al usuario (U4): `sesiones` le pregunta si un programa puede usar un servicio.
@@ -144,15 +153,21 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // primero que nombra un canal es su servidor.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     ("centro", programa!("centro"), &[], &["ventanas", "sesiones", "fondo", "centro", "archivos"]),
+    // S27, oleada 6: `guardian` tiene también "fondo" (el de su pantalla de bloqueo, desenfocado): va tras el fondo, que
+    // lo nombra antes (es su servidor). Busca sus llaves por el nombre.
     // Con `linux` (`make arranque-virt-linux`), sin `guardian` ni las pruebas que lo necesitan (pide, entrada, el hostil
     // y su presa, el selector): sus preguntas y sus pantallas de bloqueo se llevarían el teclado de la terminal de la
     // caja Linux.
     #[cfg(all(feature = "virt", not(feature = "linux"), not(feature = "uso")))]
-    ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "centro"]),
+    ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "fondo", "centro"]),
     // Con `uso` (la imagen para usar a mano, `make virt-uso`), un canal más, "uso", que solo dice eso: `guardian`
     // pone la pantalla de entrada y atiende, sin el guion de las pruebas. Es el último suyo: no mueve los demás.
-    #[cfg(feature = "uso")]
-    ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "centro", "uso"]),
+    #[cfg(all(feature = "uso", not(feature = "cuentas")))]
+    ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "fondo", "centro", "uso"]),
+    // Rama cuentas-2: con `cuentas` (`make arranque-virt-cuentas`), otro más, "codigos": escribe los códigos de
+    // recuperación en la consola, para su guion.
+    #[cfg(feature = "cuentas")]
+    ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "fondo", "centro", "uso", "codigos"]),
     #[cfg(all(feature = "virt", not(feature = "linux"), not(feature = "uso")))]
     ("pide", programa!("pide"), &[], &["sesiones"]),
     #[cfg(all(feature = "virt", not(feature = "linux"), not(feature = "uso")))]
@@ -187,7 +202,19 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // "avisos" para enseñar las notificaciones (S10).
     #[cfg(feature = "virt")]
     // Trasfondo: también "centro", para abrir el monitor del sistema desde su desplegable de procesos.
-    ("barra", programa!("barra"), &[], &["ventanas", "sesiones", "archivos", "centro", "avisos"]),
+    // Rama sonido-pro: también "sonido": lo que suena (el widget de música, con su visualizador y sus botones). Su llave
+    // va antes que la de "avisos" (el sonido se nombra antes): las dos se buscan por su nombre.
+    ("barra", programa!("barra"), &[], &["ventanas", "sesiones", "archivos", "centro", "sonido", "avisos"]),
+    // S27: el dock y los avisos en pantalla (OSD), como los de DMS. Las capas y la lista de ventanas por su nombre;
+    // "sesiones" para lanzar lo fijado (como quien está delante, solo de `Programas/`) y la tabla de nombres, y
+    // "archivos" para leer y vigilar sus ajustes de `ENV:`.
+    // En la imagen de las pruebas, también el canal "dock-prueba" (de nadie más): con él, el dock hace su prueba hostil
+    // de los ajustes (escribir y guardar los que no son suyos). Rama sonido-pro: también "sonido" (el OSD del volumen
+    // dice por qué salida suena); el dock busca sus llaves por el nombre.
+    #[cfg(all(feature = "virt", not(feature = "uso")))]
+    ("dock", programa!("dock"), &[], &["ventanas", "sesiones", "archivos", "sonido", "dock-prueba"]),
+    #[cfg(all(feature = "virt", feature = "uso"))]
+    ("dock", programa!("dock"), &[], &["ventanas", "sesiones", "archivos", "sonido"]),
     // S10: la prueba hostil de los avisos: un programa cualquiera con la llave.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
     ("avisador", programa!("avisador"), &[], &["avisos"]),
@@ -237,7 +264,8 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // leen esos canales. Llaves: 1 ventanas, 2 sesiones, 3 red-estado (desde trasfondo, la red va antes del fondo), 4
     // centro y 5 sonido.
     #[cfg(feature = "virt")]
-    ("panel", programa!("panel"), &[], &["ventanas", "sesiones", "centro", "sonido", "red-estado"]),
+    // S27, oleada 3: también "avisos", para el "no molestar" de su mosaico (el servicio solo le deja eso y mirarlo).
+    ("panel", programa!("panel"), &[], &["ventanas", "sesiones", "centro", "sonido", "red-estado", "avisos"]),
     // Un servicio que se cae a propósito (E6), solo en `virt`: `inicio` lo relanza tres veces y lo deja.
     #[cfg(all(feature = "virt", not(feature = "uso")))]
     ("caida", programa!("caida"), &[], &["caida"]),
@@ -326,21 +354,30 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Al final, para no cambiar las marcas de los de antes.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux"), not(feature = "uso")))]
     ("commodity-prueba", programa!("commodity-prueba"), &[], &["ventanas", "sesiones"]),
-    // S35, paso 2 (`docs/bitacoras/dominio-red.md`): el dominio de red. El conductor de siempre, `virtio-red`, sin aparato
-    // PCI: con "dominio-red" usa el transporte por mensajes (nombra ese canal antes que nadie: lo lee él). Su prueba, que
-    // lee "dominio-control" (y con "sesiones" lee el registro común al acabar). Y el servicio del dominio, con la Image y
-    // el initramfs del dominio y la e1000 que se le presta (sus registros, su configuración, su INTx y un permiso DMA; sin
-    // IOMMU, solo en QEMU). El permiso de máquinas virtuales lo pide a `sesiones`, como la caja Linux (decisión del
-    // usuario del 2026-11-12), que se lo da sin preguntar por ser del sistema; y por `sesiones` apunta en el registro
-    // común cada vez que el dominio cae. Al final, para no cambiar las marcas de los de antes.
+    // S35, paso 2 (`docs/bitacoras/dominio-red.md`, `dominio-usb.md`): el dominio de red. El conductor de siempre,
+    // `virtio-red`, sin aparato PCI: con "dominio-red" usa el transporte por mensajes (nombra ese canal antes que nadie:
+    // lo lee él). Su prueba, que lee "dominio-control" (y con "sesiones" lee el registro común y mata al conductor para
+    // ver que vuelve). Y el servicio del dominio, con la Image y el initramfs del dominio; el aparato se lo presta el
+    // xHCI por "usb-dominio" (USB/IP: sin IOMMU, en cualquier máquina). Con "avisos", el aviso al usuario cuando el
+    // dominio cae tres veces seguidas. El permiso de máquinas virtuales lo pide a `sesiones`, como la caja Linux
+    // (decisión del usuario del 2026-11-12), que se lo da sin preguntar por ser del sistema; y por `sesiones` apunta en
+    // el registro común cada vez que el dominio cae, y su consola en el fichero del dominio. Al final, para no cambiar
+    // las marcas de los de antes.
     #[cfg(feature = "dominio")]
     ("virtio-red", programa!("virtio-red"), &[], &["red", "dominio-red"]),
     #[cfg(feature = "dominio")]
     ("dominio-prueba", programa!("dominio-prueba"), &[], &["red", "dominio-control", "sesiones"]),
     #[cfg(feature = "dominio")]
-    ("dominio", programa!("dominio"), &[("dominio-linux", DATOS), ("dred-bar", REGISTROS), ("dred-cfg", REGISTROS), ("dred-irq", INTERRUPCION), ("dma-dred", PERMISO_DMA)], &["sesiones", "dominio-red", "dominio-control"]),
+    ("dominio", programa!("dominio"), &[("dominio-linux", DATOS)], &["sesiones", "dominio-red", "dominio-control", "usb-dominio", "avisos"]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", programa!("medir-fs"), &[], &["archivos"]),
+    // Rama sonido-pro: la ventana "Sonido" (el mezclador), que vive sin ventana hasta que se pide (el panel, Ajustes, la
+    // barra: orden VENTANA del servicio). Con "sonido" mira el estado y mezcla. Al final, para no cambiar las marcas de
+    // los de antes. Y en la imagen de las capturas del sonido, un reproductor de prueba que suena desde el arranque.
+    #[cfg(feature = "virt")]
+    ("mezclador", programa!("mezclador"), &[], &["ventanas", "sonido"]),
+    #[cfg(feature = "sonido_demo")]
+    ("melodia", programa!("melodia"), &[], &["sonido"]),
     #[cfg(feature = "medir")]
     ("medir", programa!("medir"), &[("medir", DATOS)], &[]),
 ];
@@ -780,20 +817,10 @@ pub fn lanzar() -> bool {
         let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, 0)));
         apuntar(&mut llaves, "dma-vred", PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
     }
-    // S35, paso 2: la e1000 de QEMU (Intel 82540EM), para prestarla al dominio de red sin IOMMU (solo en QEMU, solo en
-    // esta imagen). Su BAR 0, su espacio de configuración (el servicio del dominio lo emula para el dominio y le pone el
-    // maestro de bus), su INTx y un permiso DMA (la zona de DMA del dominio). Y el kernel y el initramfs del dominio.
+    // S35, paso 2: el kernel y el initramfs del dominio de red. Su aparato es USB y lo presta el xHCI: la e1000 por PCI
+    // sin IOMMU (el paso intermedio) se retiró (`docs/bitacoras/dominio-usb.md`).
     #[cfg(feature = "dominio")]
     {
-        if let Some((fisica, tamano, irq, cfg)) = aparato_pci(&d, Pci::Id(0x8086, 0x100e), 0x10, "dominio-red") {
-            apuntar(&mut llaves, "dred-bar", REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano }, DERECHOS));
-            apuntar(&mut llaves, "dred-cfg", REGISTROS, Llave::nueva(Objeto::Registros { fisica: cfg, tamano: memoria::PAGINA }, DERECHOS));
-            if let Some(irq) = irq.and_then(interrupciones::Interrupcion::nueva) {
-                apuntar(&mut llaves, "dred-irq", INTERRUPCION, Llave::nueva(Objeto::Interrupcion(irq), DERECHOS));
-            }
-            let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, 0)));
-            apuntar(&mut llaves, "dma-dred", PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
-        }
         // Los dos en un objeto (un programa nace con 8 llaves como mucho): el largo de cada uno (u64) y detrás, seguidos.
         static IMAGEN: &[u8] = include_bytes!("../target/dominio/Image");
         static INITRD: &[u8] = include_bytes!("../target/dominio/initrd");

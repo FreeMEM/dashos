@@ -575,7 +575,60 @@ fn sonido(memoria: u32) -> bool {
         println!("  [hostil] sonido: el flujo no pide muestras ({:?})", r);
     }
     escribir(SONIDO, &12u32.to_le_bytes(), &[]);
-    vivo
+    vivo && sonido_pro(memoria, m)
+}
+
+/// Rama sonido-pro: lo que solo puede el mezclador (el volumen, el silencio y la salida de otro, los efectos con valores
+/// absurdos, ver el estado, mandar órdenes a otro programa, sonidos del sistema), lo que suena con basura, y mil flujos.
+/// Después, abrir un flujo más tiene que seguir funcionando: el servicio sigue.
+fn sonido_pro(memoria: u32, anillo: u32) -> bool {
+    let palabras = |w: &[u32]| -> alloc::vec::Vec<u8> { w.iter().flat_map(|x| x.to_le_bytes()).collect() };
+    // El volumen de otro (los nodos 1 a 3: los primeros de alguien), su silencio, su salida, la salida del sistema.
+    for id in 1..4u32 {
+        escribir(SONIDO, &palabras(&[21, id, 0, 0]), &[]);
+    }
+    escribir(SONIDO, &palabras(&[22, 1, 1]), &[]);
+    escribir(SONIDO, &palabras(&[23, 1, 2]), &[]);
+    escribir(SONIDO, &palabras(&[24, 1]), &[]);
+    // Efectos con valores absurdos y un período que no existe.
+    escribir(SONIDO, &palabras(&[25, 0x100, i32::MAX as u32]), &[]);
+    escribir(SONIDO, &palabras(&[26, u32::MAX]), &[]);
+    // Ver el estado (con una memoria), mandar a otro programa, un sonido del sistema, abrir la ventana del mezclador.
+    let estado = dashos::llave_duplicar(memoria, dashos::LEER | dashos::ESCRIBIR | dashos::TRANSFERIR, 0) as u32;
+    let (lectura, suyo, copia) = canal_respuesta();
+    escribir(SONIDO, &palabras(&[20]), &[estado, suyo]);
+    escribir(SONIDO, &palabras(&[31, 1, 1]), &[]);
+    escribir(SONIDO, &palabras(&[40, 1]), &[]);
+    escribir(SONIDO, &palabras(&[27]), &[]);
+    // Lo que suena, con largos que no caben y con texto que no es UTF-8.
+    escribir(SONIDO, &palabras(&[30, 1, 7, 0, 0, u32::MAX, 5]), &[]);
+    let mut malo = palabras(&[30, 9, 0xff, 0, 0, 4, 0]);
+    malo.extend_from_slice(&[0xff, 0xfe, 0xc0, 0x80]);
+    escribir(SONIDO, &malo, &[]);
+    // Mil flujos (el mismo anillo, proyectado una vez por cada uno que se acepte): el servicio para en su tope.
+    let abrir = palabras(&[10, 0, 1, 48_000]);
+    let mut pedidos = 0;
+    let (avisos, extremo) = dashos::canal_crear();
+    for _ in 0..1000 {
+        let m = dashos::llave_duplicar(anillo, dashos::LEER | dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
+        let c = dashos::llave_duplicar(extremo, dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
+        if m <= 0 || c <= 0 || !escribir(SONIDO, &abrir, &[m as u32, c as u32]) {
+            break;
+        }
+        pedidos += 1;
+    }
+    for i in 0..8u32 {
+        escribir(SONIDO, &palabras(&[12, i]), &[]);
+    }
+    dashos::cerrar(lectura);
+    dashos::cerrar(copia);
+    dashos::cerrar(avisos);
+    dashos::cerrar(extremo);
+    // Sigue: el volumen general a lo de siempre (que no le toca) tiene que seguir llegando sin cortar nada; y que
+    // `hostil` pueda volver a abrir uno (sus flujos se cerraron).
+    let sigue = escribir(SONIDO, &palabras(&[13, 1.0f32.to_bits()]), &[]);
+    println!("  [hostil] sonido: {} flujos pedidos, el servicio sigue: {}", pedidos, si(sigue));
+    sigue
 }
 
 /// Conecta con el compositor; devuelve (lectura, copia de escritura).
@@ -1105,6 +1158,13 @@ fn sesiones(memoria: u32) -> bool {
     dashos::cerrar(lectura);
     let delante_negado = delante == 4 && i32::from_le_bytes(rd[0..4].try_into().unwrap()) == s::PROTEGIDO;
     println!("  [hostil] sesiones: quién está delante, sin ser el panel ni la barra: {}", if delante_negado { "-2 y nada" } else { "MAL" });
+    // S27, oleada 6: los avisos de la pantalla de bloqueo, sin ser `guardian`: -2 y nada (ni cuántos ni de quién).
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut rb = [0u8; 128];
+    let bloqueo = if escribir(SESIONES, &s::AVISOS_BLOQUEO.to_le_bytes(), &[suyo]) { dashos::canal_leer_plazo(lectura, &mut rb, &mut [], 2_000_000).0 } else { -1 };
+    dashos::cerrar(lectura);
+    let bloqueo_negado = bloqueo == 4 && i32::from_le_bytes(rb[0..4].try_into().unwrap()) == s::PROTEGIDO;
+    println!("  [hostil] sesiones: los avisos de la pantalla de bloqueo, sin ser guardian: {}", if bloqueo_negado { "-2 y nada" } else { "MAL" });
     // aviso-cajas: escuchar el aviso de memoria baja sin ser una caja del sistema: -2, y el canal que da se cierra sin
     // usarse (no le llegará nunca el aviso, ni podrá hacer soltar a nadie). Decir que ha soltado, tampoco: -2.
     let (aviso_lee, aviso_escribe) = dashos::canal_crear();
@@ -1249,7 +1309,7 @@ fn principal() -> u64 {
     let ce = centro(memoria);
     println!("  [hostil] centro: pedidos malos rechazados sin abrir nada, y sigue contestando tras la inundación: {}", if ce { "bien" } else { "MAL" });
     let m = monton_grande();
-    println!("  [hostil] montón: lo grande va aparte y vuelve al kernel al soltarlo: {}", if m { "bien" } else { "MAL" });
+    println!("  [hostil] montón: lo grande va aparte y vuelve al kernel al soltarlo, lo que no cabe da error y el colchón aguanta: {}", if m { "bien" } else { "MAL" });
     // Trasfondo: la prueba del monitor, la última. Al principio, sus páginas cargaban a `sesiones` justo cuando contesta
     // las preguntas de permisos de las demás pruebas, y el arranque se desacompasaba (Ajustes no llegaba a maximizarse).
     let mon = monitor_ajeno();
@@ -1351,10 +1411,58 @@ fn monton_grande() -> bool {
     drop(bloques);
     drop(pequeno);
     let despues = dashos::monton::uso().reservado;
-    let bien = aparte && enteros && en_monton && durante >= antes + (9 << 20) && despues == antes;
+    // Rama `archivos-memoria`: lo que no cabe (17 MB con el grupo de 16 de este programa, y 2 GB) da error a quien lo
+    // pide con `try_reserve`, cuenta como fallo y no deja el montón crecido (antes crecía a trozos de 4 MB hasta el tope
+    // y se los quedaba). Y después, lo pequeño sigue cabiendo.
+    let fallos = dashos::monton::uso().fallos;
+    let mut v: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+    let no_cabe = v.try_reserve_exact(17 << 20).is_err() && v.try_reserve_exact(2 << 30).is_err();
+    let sin_crecer = dashos::monton::uso().reservado == despues;
+    let contados = dashos::monton::uso().fallos >= fallos + 2;
+    let sigue = alloc::vec![7u8; 100_000].iter().all(|&x| x == 7);
+    let colchon = colchon();
+    let bien = aparte && enteros && en_monton && durante >= antes + (9 << 20) && despues == antes && no_cabe && sin_crecer && contados && sigue && colchon;
     if !bien {
-        println!("  [hostil] montón: aparte {} enteros {} pequeño en el montón {}; reservado {} → {} → {} KB", aparte, enteros, en_monton,
-            antes >> 10, durante >> 10, despues >> 10);
+        println!("  [hostil] montón: aparte {} enteros {} pequeño en el montón {}; reservado {} → {} → {} KB; no cabe {} sin crecer {} contados {} sigue {} colchón {}", aparte, enteros, en_monton,
+            antes >> 10, durante >> 10, despues >> 10, no_cabe, sin_crecer, contados, sigue, colchon);
+    }
+    bien
+}
+
+/// El colchón del montón (rama `archivos-memoria`): con el grupo lleno (objetos de memoria hasta que el kernel dice
+/// que no), lo pequeño que no puede fallar sigue cabiendo gracias al colchón, que queda gastado (`en_apuro`); soltando
+/// lo que llenaba el grupo, se repone.
+fn colchon() -> bool {
+    let puesto = dashos::monton::colchon(&MONTON, 512 << 10);
+    let mut cajas: alloc::vec::Vec<alloc::boxed::Box<[u8; 1024]>> = alloc::vec::Vec::with_capacity(8192);
+    let mut llaves = [0u32; 256];
+    let mut n = 0;
+    for tam in [1 << 20, 64 << 10, 4 << 10] {
+        while n < llaves.len() {
+            let k = dashos::memoria_crear(tam);
+            if (k as i32) <= 0 {
+                break;
+            }
+            llaves[n] = k;
+            n += 1;
+        }
+    }
+    let gastados = dashos::monton::uso().colchones;
+    // Hasta 8 MB de cajas de 1 KB: en algún momento el montón tiene que crecer, y el kernel ya no da.
+    while cajas.len() < cajas.capacity() && !dashos::monton::en_apuro() {
+        cajas.push(alloc::boxed::Box::new([cajas.len() as u8; 1024]));
+    }
+    let gastado = dashos::monton::en_apuro() && dashos::monton::uso().colchones == gastados + 1;
+    let enteras = cajas.iter().enumerate().all(|(i, c)| c.iter().all(|&b| b == i as u8));
+    for &k in &llaves[..n] {
+        dashos::cerrar(k);
+    }
+    drop(cajas);
+    let repuesto = dashos::monton::rearmar(&MONTON) && !dashos::monton::en_apuro();
+    let quitado = dashos::monton::colchon(&MONTON, 0);
+    let bien = puesto && n > 0 && gastado && enteras && repuesto && quitado;
+    if !bien {
+        println!("  [hostil] colchón: puesto {} objetos {} gastado {} enteras {} repuesto {} quitado {}", puesto, n, gastado, enteras, repuesto, quitado);
     }
     bien
 }
@@ -1383,13 +1491,37 @@ fn centro(memoria: u32) -> bool {
     if !bien {
         println!("  [hostil] centro: rechazos {:?}, tras la inundación {}", rechazos, despues);
     }
-    // C2: los mosaicos del panel rápido, tampoco: ni leerlos ni guardarlos (con uno que vale, con uno que no existe,
-    // repetidos o vacío). A todo, -1, y el centro no toca el disco (la comprobación del disco tras la prueba mira que
-    // `C/Prefs/panel` acaba como lo dejó el panel).
-    let panel: [&[u8]; 6] = [b"panel leer", b"panel guardar volumen", b"panel guardar ", b"panel guardar nube", b"panel guardar oscuro oscuro", b"panel guardar"];
-    let rechazos_panel: [i32; 6] = core::array::from_fn(|k| pedir(panel[k]));
-    let panel_bien = rechazos_panel.iter().all(|&e| e == -1);
-    println!("  [hostil] centro: los mosaicos del panel sin ser el panel: {}", if panel_bien { "-1 y nada" } else { "MAL" });
+    // C2 y S27 (oleada 3): el centro de control del panel, tampoco: ni vigilarlo (dando una puerta suya), ni guardarlo
+    // (con uno que vale, roto o vacío), ni vigilar los ajustes de los avisos como la barra. A todo, -1, y por la puerta
+    // que dio no le llega nada.
+    let (oigo, puerta) = dashos::canal_crear();
+    let vigilar = |p: &[u8], puerta: u32| -> i32 {
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 4];
+        let otra = dashos::llave_duplicar(puerta, dashos::ESCRIBIR | dashos::TRANSFERIR, 0).max(0) as u32;
+        let e = if escribir(CENTRO, p, &[suyo, otra]) && dashos::canal_leer_plazo(lectura, &mut r, &mut [], 3_000_000).0 == 4 { i32::from_le_bytes(r) } else { i32::MIN };
+        dashos::cerrar(lectura);
+        e
+    };
+    let mut bueno = alloc::vec::Vec::from(&b"cc guardar "[..]);
+    bueno.extend_from_slice(&[1, 8, 1, 0, 2, 2, 1, 0, 0]);
+    let panel: [&[u8]; 6] = [b"panel leer", &bueno, b"cc guardar ", b"cc guardar \x01\x08\x05", b"cc vigilar", b"avisos vigilar"];
+    let mut rechazos_panel: [i32; 8] = [0; 8];
+    for (k, p) in panel.iter().enumerate() {
+        rechazos_panel[k] = pedir(p);
+    }
+    rechazos_panel[6] = vigilar(b"cc vigilar", puerta);
+    rechazos_panel[7] = vigilar(b"avisos vigilar", puerta);
+    let mut nada = [0u8; 64];
+    let llega = dashos::canal_leer_plazo(oigo, &mut nada, &mut [], 500_000).0;
+    dashos::cerrar(oigo);
+    dashos::cerrar(puerta);
+    let panel_bien = rechazos_panel.iter().all(|&e| e == -1) && llega < 0;
+    println!("  [hostil] centro: el centro de control del panel y los ajustes de los avisos sin ser el panel ni la barra: {}", if panel_bien { "-1 y nada" } else { "MAL" });
+    // La barra de DMS (docs/bitacoras/dms-barra.md): suscribirse a las barras (y que el centro escriba en una memoria
+    // suya) solo lo hace la barra. Al hostil, -1 y nada.
+    let barras = pedir(b"barra suscribir");
+    println!("  [hostil] centro: suscribirse a las barras sin ser la barra: {}", barras);
     if !panel_bien {
         println!("  [hostil] centro: a los mosaicos del panel, {:?}", rechazos_panel);
     }

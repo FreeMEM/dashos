@@ -117,6 +117,9 @@ const COMMODITIES: Global = Global { nombre: 21, interfaz: &tablas::DASHOS_COMMO
 /// solo da los menús de sus ventanas; poner el sitio es del centro y ser la barra, de la barra. El 40, lejos de los
 /// demás.
 const MENUS: Global = Global { nombre: 40, interfaz: &tablas::DASHOS_MENUS_V1, version: 1 };
+/// S27: las ventanas abiertas y lo de los avisos en pantalla, para el dock (`escena::dock`). Solo lo ve el dock; a los
+/// demás no se les anuncia. El 41.
+const DOCK: Global = Global { nombre: 41, interfaz: &tablas::DASHOS_DOCK_V1, version: 1 };
 
 /// H9: quien pinta la barra de DashOS de las ventanas que la llevan, con el kit (Material 3): el contenedor de
 /// superficie (alto si tiene el teclado), las esquinas de arriba redondeadas, el título (title small: 14, medium) a 16
@@ -208,12 +211,16 @@ const PONEN_TEMA: &[&str] = &["centro"];
 /// con las capas, el panel rápido (C2), la barra con su lanzador, el Workbench con los iconos del escritorio (S10) y el
 /// fondo de escritorio (C3, una capa de fondo).
 const ESCRITORIOS: &[&str] = &["guardian"];
-const CON_CAPAS: &[&str] = &["panel", "barra", "workbench", "fondo"];
+const CON_CAPAS: &[&str] = &["panel", "barra", "workbench", "fondo", "dock"];
+/// S27: el dock (y los avisos en pantalla): ve las ventanas abiertas de quien está delante y las trae o las cierra.
+const DOCKS: &[&str] = &["dock"];
 /// Quién recibe Super+A (C2 de S10c): el panel rápido.
 const ABREN_PANEL: &[&str] = &["panel"];
 /// La barra de la pantalla (S10): pide el panel con su botón, y recibe Super sola (el lanzador) y el título de la
 /// ventana con el teclado.
 const BARRAS: &[&str] = &["barra"];
+/// S27, oleada 6: quien recibe también el estado de la red y del volumen (como las barras): la pantalla de bloqueo.
+const VEN_ESTADO: &[&str] = &["guardian"];
 /// Los clientes que son parte del sistema: se les espera más (E8) y su ventana nueva se lleva el teclado aunque se esté
 /// escribiendo (U5: el selector de ficheros sale porque el usuario pidió abrir algo).
 const SISTEMA: &[&str] = &["guardian", "selector"];
@@ -346,6 +353,19 @@ fn avisar_inactividad(escena: &mut Escena<Proyecciones>, clientes: &mut BTreeMap
     for (cl, aviso) in core::mem::take(&mut escena.mn.avisos) {
         if let Some(cli) = clientes.get_mut(&cl) {
             escena::menus::escribir_aviso(&mut cli.con, &aviso);
+            if !mandar(cli) {
+                caidos.push(cl);
+            }
+        }
+    }
+    // S27: lo del dock (las ventanas que cambiaron, el espacio, el volumen, Bloq Mayús).
+    escena.revisar_dock();
+    for linea in core::mem::take(&mut escena.dk.registro) {
+        println!("  [compositor] dock: {}", linea);
+    }
+    for (cl, aviso) in core::mem::take(&mut escena.dk.avisos) {
+        if let Some(cli) = clientes.get_mut(&cl) {
+            escena::dock::escribir_aviso(&mut cli.con, &aviso);
             if !mandar(cli) {
                 caidos.push(cl);
             }
@@ -880,6 +900,7 @@ fn principal() -> u64 {
     // E8: cuadros, microsegundos componiendo, píxeles dañados y desde cuándo se cuenta.
     let mut primera_ventana = false;
     let mut medida = (0u64, 0u64, 0u64, dashos::ahora_us());
+    let mut cpu_medida = dashos::cpu_tiempo(0).max(0) as u64;
     let mut cuadros_total = 0u64;
     let mut arrastre: Option<(u64, u64)> = None;
     loop {
@@ -1085,7 +1106,15 @@ fn principal() -> u64 {
         let mut soltar = false;
         let mut soltar_sub: Option<Cliente> = None;
         match buf.first().copied().filter(|_| de_ventanas) {
-            Some(TROZO_CONECTAR) if k == 1 && !clientes.contains_key(&marca) => {
+            Some(TROZO_CONECTAR) if k == 1 => {
+                // tecla-pegada: una marca lleva una conexión. Si ya tenía una, la de antes se acabó y su adiós no llegó
+                // (el selector no mira lo que da `canal_escribir` al despedirse: con la cola de "ventanas" llena, -8).
+                // Antes la nueva se ignoraba y sus datos iban a la de antes: el selector, al abrir otra ventana justo
+                // tras cerrar una, daba "número de objeto nuevo malo" y se quedaba sin ventana.
+                if clientes.get(&marca).is_some_and(|c| c.sub.is_none()) {
+                    println!("  [compositor] {} conecta otra vez: la conexión de antes se cierra", nombre_de(&nombres, &lanzados, marca));
+                    soltar_cliente(&mut clientes, &mut escena, nombre_de(&nombres, &lanzados, marca), marca);
+                }
                 let del_sistema = nombres.get(&marca).is_some_and(|n| SISTEMA.contains(&n.as_str()));
                 if del_sistema && !escena.del_sistema.contains(&marca) {
                     escena.del_sistema.push(marca);
@@ -1098,6 +1127,12 @@ fn principal() -> u64 {
                 }
                 if nombres.get(&marca).is_some_and(|n| BARRAS.contains(&n.as_str())) && !escena.barras.contains(&marca) {
                     escena.barras.push(marca);
+                }
+                if nombres.get(&marca).is_some_and(|n| VEN_ESTADO.contains(&n.as_str())) && !escena.ven_estado.contains(&marca) {
+                    escena.ven_estado.push(marca);
+                }
+                if nombres.get(&marca).is_some_and(|n| DOCKS.contains(&n.as_str())) && !escena.dk.permitidos.contains(&marca) {
+                    escena.dk.permitidos.push(marca);
                 }
                 // S29: la terminal de la caja Linux y la pantalla de su invitado llevan la marca de la caja.
                 if nombres.get(&marca).is_some_and(|n| SUBCONEXIONES.contains(&n.as_str())) && !escena.de_caja.contains(&marca) {
@@ -1130,6 +1165,14 @@ fn principal() -> u64 {
                     let globales = if escena.cx.poderes_de(marca) != 0 {
                         con_cx = globales.iter().copied().chain([COMMODITIES]).collect();
                         &con_cx[..]
+                    } else {
+                        globales
+                    };
+                    // S27: el dock, también el suyo.
+                    let con_dock: Vec<Global>;
+                    let globales = if DOCKS.contains(&nombre) {
+                        con_dock = globales.iter().copied().chain([DOCK]).collect();
+                        &con_dock[..]
                     } else {
                         globales
                     };
@@ -1282,11 +1325,22 @@ fn principal() -> u64 {
             medida.2 += danos.iter().map(|r| (r.w as u64) * (r.h as u64)).sum::<u64>();
         }
         if t0 >= medida.3 + 10_000_000 {
+            // Rama `fondos`: y la CPU de todo el compositor (llamada 52, su grupo), en milésimas de un núcleo.
+            let cpu = dashos::cpu_tiempo(0).max(0) as u64;
             if medida.0 > 0 {
                 // x86-gpu: y, de eso, lo que tardó la copia a las salidas (y a cuánto: MB por segundo).
                 let (us, px) = core::mem::take(&mut c.copia);
-                println!("  [compositor] en 10 s: {} cuadros, {} ms componiendo, {} kpx; copia {} ms ({} MB/s)", medida.0, medida.1 / 1000, medida.2 / 1000, us / 1000, px * 4 / us.max(1));
+                println!(
+                    "  [compositor] en 10 s: {} cuadros, {} ms componiendo, {} kpx; CPU {}‰ de un núcleo; copia {} ms ({} MB/s)",
+                    medida.0,
+                    medida.1 / 1000,
+                    medida.2 / 1000,
+                    cpu.saturating_sub(cpu_medida) * 1000 / (t0 - medida.3).max(1),
+                    us / 1000,
+                    px * 4 / us.max(1)
+                );
             }
+            cpu_medida = cpu;
             medida = (0, 0, 0, t0);
         }
         for (cl, aviso, ms) in avisos {

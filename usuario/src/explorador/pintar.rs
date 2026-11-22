@@ -10,6 +10,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use kit::lienzo::{Color, Lienzo, Rect};
 use kit::tema::{self, con_opacidad, mezcla, Tema};
+use kit::iconos::Simbolos;
 use kit::texto::Fuente;
 
 pub const LATERAL: i32 = 232;
@@ -74,7 +75,7 @@ fn centrado(f: &mut Fuente, l: &mut Lienzo, cx: i32, base: i32, texto: &str, tam
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Símbolos (los de la barra), con trazos suavizados: en octavos de píxel.
+// Símbolos (los de la barra): Material Symbols Rounded, del kit (`kit::iconos`).
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Simbolo {
@@ -94,74 +95,36 @@ pub enum Simbolo {
     FlechaAbajo,
 }
 
-pub fn simbolo(l: &mut Lienzo, s: Simbolo, cx: i32, cy: i32, color: Color) {
-    let p = |x: i32, y: i32| (cx * 8 + x, cy * 8 + y);
-    let g = 14;
+/// El de Material de cada uno.
+fn de_material(s: Simbolo) -> kit::iconos::Simbolo {
+    use kit::iconos::simbolo as m;
     match s {
-        Simbolo::Atras => {
-            l.trazo(p(20, -44), p(-16, 0), g, color);
-            l.trazo(p(-16, 0), p(20, 44), g, color);
-        }
-        Simbolo::Adelante => {
-            l.trazo(p(-20, -44), p(16, 0), g, color);
-            l.trazo(p(16, 0), p(-20, 44), g, color);
-        }
-        Simbolo::FlechaArriba => {
-            l.trazo(p(-24, 10), p(0, -14), 11, color);
-            l.trazo(p(0, -14), p(24, 10), 11, color);
-        }
-        Simbolo::FlechaAbajo => {
-            l.trazo(p(-24, -10), p(0, 14), 11, color);
-            l.trazo(p(0, 14), p(24, -10), 11, color);
-        }
-        Simbolo::Buscar => {
-            l.borde(Rect::new(cx - 7, cy - 7, 13, 13), 7, 2, color);
-            l.trazo(p(26, 26), p(58, 58), 17, color);
-        }
-        Simbolo::Rejilla => {
-            for (dx, dy) in [(-7, -7), (1, -7), (-7, 1), (1, 1)] {
-                l.redondeado(Rect::new(cx + dx, cy + dy, 6, 6), 2, color);
-            }
-        }
-        Simbolo::Lista => {
-            for dy in [-6, -1, 4] {
-                l.redondeado(Rect::new(cx - 8, cy + dy, 3, 3), 1, color);
-                l.redondeado(Rect::new(cx - 3, cy + dy, 11, 3), 1, color);
-            }
-        }
-        Simbolo::Menu => {
-            for dy in [-6, -1, 4] {
-                l.redondeado(Rect::new(cx - 8, cy + dy, 16, 2), 1, color);
-            }
-        }
-        Simbolo::Cerrar => {
-            l.trazo(p(-36, -36), p(36, 36), g, color);
-            l.trazo(p(-36, 36), p(36, -36), g, color);
-        }
-        Simbolo::Maximizar => {
-            l.borde(Rect::new(cx - 6, cy - 6, 12, 12), 2, 2, color);
-        }
-        Simbolo::Mas => {
-            l.trazo(p(0, -48), p(0, 48), g, color);
-            l.trazo(p(-48, 0), p(48, 0), g, color);
-        }
-        Simbolo::Casa => {
-            l.trazo(p(-60, 0), p(0, -56), g, color);
-            l.trazo(p(0, -56), p(60, 0), g, color);
-            l.borde(Rect::new(cx - 6, cy - 2, 12, 10), 2, 2, color);
-        }
-        Simbolo::Papelera => {
-            l.redondeado(Rect::new(cx - 7, cy - 6, 14, 2), 1, color);
-            l.redondeado(Rect::new(cx - 2, cy - 8, 4, 2), 1, color);
-            l.borde(Rect::new(cx - 5, cy - 4, 10, 12), 2, 2, color);
-            l.rellenar(Rect::new(cx - 1, cy - 1, 2, 6), color);
-        }
-        Simbolo::Disco => {
-            l.borde(Rect::new(cx - 8, cy - 5, 16, 11), 3, 2, color);
-            l.redondeado(Rect::new(cx + 3, cy, 2, 2), 1, color);
-            l.rellenar(Rect::new(cx - 5, cy, 5, 2), color);
-        }
+        Simbolo::Atras => m::ARROW_BACK,
+        Simbolo::Adelante => m::ARROW_FORWARD,
+        Simbolo::Buscar => m::SEARCH,
+        Simbolo::Rejilla => m::GRID_VIEW,
+        Simbolo::Lista => m::VIEW_LIST,
+        Simbolo::Menu => m::MENU,
+        Simbolo::Cerrar => m::CLOSE,
+        Simbolo::Maximizar => m::CROP_SQUARE,
+        Simbolo::Mas => m::ADD,
+        Simbolo::Casa => m::HOME,
+        Simbolo::Papelera => m::DELETE,
+        Simbolo::Disco => m::HARD_DRIVE,
+        Simbolo::FlechaArriba => m::KEYBOARD_ARROW_UP,
+        Simbolo::FlechaAbajo => m::KEYBOARD_ARROW_DOWN,
     }
+}
+
+/// El símbolo `s` de 20 centrado en (`cx`, `cy`) (las flechas de ordenar, de 18).
+pub fn simbolo(sim: &mut Simbolos, l: &mut Lienzo, s: Simbolo, cx: i32, cy: i32, color: Color) {
+    let lado = if matches!(s, Simbolo::FlechaArriba | Simbolo::FlechaAbajo | Simbolo::Maximizar) { 18 } else { 20 };
+    simbolo_de(sim, l, s, cx, cy, lado, color);
+}
+
+/// El símbolo `s` de `lado` centrado en (`cx`, `cy`).
+pub fn simbolo_de(sim: &mut Simbolos, l: &mut Lienzo, s: Simbolo, cx: i32, cy: i32, lado: i32, color: Color) {
+    sim.pintar(l, cx - lado / 2, cy - lado / 2, lado, de_material(s), color);
 }
 
 /// Una miniatura dentro de `r`, sin deformar, con un borde fino (vecino más cercano: ya viene reducida).
@@ -189,15 +152,15 @@ pub fn miniatura(l: &mut Lienzo, img: &kit::imagen::Imagen, r: Rect, t: &Tema) {
 // ---------------------------------------------------------------------------------------------------------------
 
 /// Un botón redondo de la barra (sin fondo; al pasar por encima, una capa).
-fn boton(l: &mut Lienzo, v: &mut Ventana, r: Rect, z: Zona, s: Simbolo, t: &Tema, activo: bool) {
+fn boton(sim: &mut Simbolos, l: &mut Lienzo, v: &mut Ventana, r: Rect, z: Zona, s: Simbolo, t: &Tema, activo: bool) {
     if !activo {
-        simbolo(l, s, r.x + r.w / 2, r.y + r.h / 2, tema::apagado(t.sobre_superficie));
+        simbolo(sim, l, s, r.x + r.w / 2, r.y + r.h / 2, tema::apagado(t.sobre_superficie));
         return;
     }
     if v.encima == z {
         l.redondeado(r, r.h / 2, con_opacidad(t.sobre_superficie, 22));
     }
-    simbolo(l, s, r.x + r.w / 2, r.y + r.h / 2, t.sobre_superficie);
+    simbolo(sim, l, s, r.x + r.w / 2, r.y + r.h / 2, t.sobre_superficie);
     v.zonas.push((r, z));
 }
 
@@ -231,7 +194,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
     let todo = Rect::new(0, 0, w, h);
     l.borrar(todo, t.superficie);
     let lat = if con_lateral(w) { LATERAL } else { 0 };
-    let (reg, med) = (&mut app.regular, &mut app.medio);
+    let (reg, med, sim, ico, linux) = (&mut app.regular, &mut app.medio, &mut app.simbolos, &mut app.iconos, &app.iconos_linux);
 
     // --- La barra lateral ---
     if lat > 0 {
@@ -259,12 +222,16 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
                 l.redondeado(r, 20, con_opacidad(t.sobre_superficie, 20));
             }
             let tinta = if actual { t.sobre_contenedor_secundario() } else { t.sobre_variante_superficie };
-            let sim = match s.icono {
+            let que = match s.icono {
                 Icono::Casa => Simbolo::Casa,
                 Icono::Papelera => Simbolo::Papelera,
                 Icono::Disco | Icono::Amiga => Simbolo::Disco,
             };
-            simbolo(l, sim, r.x + 22, r.y + 20, tinta);
+            // El volumen de la caja Amiga, con el icono de su `Disk.info` si lo tiene (rama `iconos-cajas`).
+            match (s.icono, app.iconos_amiga.disco()) {
+                (Icono::Amiga, Some(img)) => iconos_cajas::dibujo::pintar(l, r.x + 8, r.y + 6, 28, img),
+                _ => simbolo(sim, l, que, r.x + 22, r.y + 20, tinta),
+            }
             let texto_tinta = if actual { t.sobre_contenedor_secundario() } else { t.sobre_superficie };
             let f = if actual { &mut *med } else { &mut *reg };
             f.dibujar(l, r.x + 44, r.y + 25, s.nombre, 14, texto_tinta);
@@ -297,8 +264,8 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
     let cy = CABECERA / 2;
     let hay_atras = !v.p().atras.is_empty();
     let hay_adelante = !v.p().adelante.is_empty();
-    boton(l, v, Rect::new(x0 + 8, cy - BOTON / 2, BOTON, BOTON), Zona::Atras, Simbolo::Atras, &t, hay_atras);
-    boton(l, v, Rect::new(x0 + 8 + BOTON + 2, cy - BOTON / 2, BOTON, BOTON), Zona::Adelante, Simbolo::Adelante, &t, hay_adelante);
+    boton(sim, l, v, Rect::new(x0 + 8, cy - BOTON / 2, BOTON, BOTON), Zona::Atras, Simbolo::Atras, &t, hay_atras);
+    boton(sim, l, v, Rect::new(x0 + 8 + BOTON + 2, cy - BOTON / 2, BOTON, BOTON), Zona::Adelante, Simbolo::Adelante, &t, hay_adelante);
     // A la derecha: Cerrar, Maximizar, Menú, Vista, Buscar.
     let mut xr = w - 8 - BOTON;
     let cerrar = Rect::new(xr, cy - BOTON / 2, BOTON, BOTON);
@@ -307,7 +274,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
     } else {
         l.redondeado(cerrar.dentro(6), (BOTON - 12) / 2, con_opacidad(t.sobre_superficie, 18));
     }
-    simbolo(l, Simbolo::Cerrar, cerrar.x + BOTON / 2, cy, t.sobre_superficie);
+    simbolo(sim, l, Simbolo::Cerrar, cerrar.x + BOTON / 2, cy, t.sobre_superficie);
     v.zonas.push((cerrar, Zona::Cerrar));
     xr -= BOTON + 2;
     let maxi = Rect::new(xr, cy - BOTON / 2, BOTON, BOTON);
@@ -316,21 +283,21 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
     } else {
         l.redondeado(maxi.dentro(6), (BOTON - 12) / 2, con_opacidad(t.sobre_superficie, 18));
     }
-    simbolo(l, Simbolo::Maximizar, maxi.x + BOTON / 2, cy, t.sobre_superficie);
+    simbolo(sim, l, Simbolo::Maximizar, maxi.x + BOTON / 2, cy, t.sobre_superficie);
     v.zonas.push((maxi, Zona::Maximizar));
     xr -= BOTON + 14;
-    boton(l, v, Rect::new(xr, cy - BOTON / 2, BOTON, BOTON), Zona::Menu, Simbolo::Menu, &t, true);
+    boton(sim, l, v, Rect::new(xr, cy - BOTON / 2, BOTON, BOTON), Zona::Menu, Simbolo::Menu, &t, true);
     xr -= BOTON + 2;
     let lista = v.p().lista;
-    boton(l, v, Rect::new(xr, cy - BOTON / 2, BOTON, BOTON), Zona::Vista, if lista { Simbolo::Rejilla } else { Simbolo::Lista }, &t, true);
+    boton(sim, l, v, Rect::new(xr, cy - BOTON / 2, BOTON, BOTON), Zona::Vista, if lista { Simbolo::Rejilla } else { Simbolo::Lista }, &t, true);
     xr -= BOTON + 2;
     let buscar = Rect::new(xr, cy - BOTON / 2, BOTON, BOTON);
     if v.foco == Foco::Buscar {
         l.redondeado(buscar, BOTON / 2, t.contenedor_secundario());
-        simbolo(l, Simbolo::Buscar, buscar.x + BOTON / 2, cy, t.sobre_contenedor_secundario());
+        simbolo(sim, l, Simbolo::Buscar, buscar.x + BOTON / 2, cy, t.sobre_contenedor_secundario());
         v.zonas.push((buscar, Zona::Buscar));
     } else {
-        boton(l, v, buscar, Zona::Buscar, Simbolo::Buscar, &t, true);
+        boton(sim, l, v, buscar, Zona::Buscar, Simbolo::Buscar, &t, true);
     }
     // El camino: migas, o el campo (Ctrl+L) o la búsqueda.
     let camino = Rect::new(x0 + 8 + 2 * (BOTON + 2) + 6, cy - 18, (xr - 10 - (x0 + 8 + 2 * (BOTON + 2) + 6)).max(60), 36);
@@ -339,7 +306,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
             l.redondeado(camino, 10, t.contenedor());
             l.borde(camino, 10, 2, t.primario);
             let (dentro, vacio) = if v.foco == Foco::Buscar {
-                simbolo(l, Simbolo::Buscar, camino.x + 20, cy, t.sobre_variante_superficie);
+                simbolo(sim, l, Simbolo::Buscar, camino.x + 20, cy, t.sobre_variante_superficie);
                 (Rect::new(camino.x + 38, camino.y, camino.w - 50, camino.h), trf(161, "Buscar en {}", &[&migas(&v.p().lugar).last().map_or(String::new(), |m| m.0.clone())]))
             } else {
                 (Rect::new(camino.x + 14, camino.y, camino.w - 28, camino.h), String::from(tr(162, "Escribe un camino, como Home/Privado")))
@@ -387,7 +354,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
                 }
                 let color = if ultima { t.sobre_superficie } else { t.sobre_variante_superficie };
                 if i == 0 {
-                    simbolo(l, sim_raiz, x + 20, cy, color);
+                    simbolo(sim, l, sim_raiz, x + 20, cy, color);
                 }
                 if i > 0 || m.len() == 1 {
                     let dx = if i == 0 { 38 } else { 10 };
@@ -429,9 +396,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
                 if v.encima == Zona::CerrarPestana(i) {
                     l.redondeado(c, 11, con_opacidad(t.sobre_superficie, 30));
                 }
-                let (cx, cyy) = (c.x + 11, c.y + 11);
-                l.trazo((cx * 8 - 24, cyy * 8 - 24), (cx * 8 + 24, cyy * 8 + 24), 11, t.sobre_variante_superficie);
-                l.trazo((cx * 8 - 24, cyy * 8 + 24), (cx * 8 + 24, cyy * 8 - 24), 11, t.sobre_variante_superficie);
+                simbolo_de(sim, l, Simbolo::Cerrar, c.x + 11, c.y + 11, 16, t.sobre_variante_superficie);
                 v.zonas.push((c, Zona::CerrarPestana(i)));
             }
         }
@@ -439,7 +404,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
         if v.encima == Zona::NuevaPestana {
             l.redondeado(mas, 15, con_opacidad(t.sobre_superficie, 22));
         }
-        simbolo(l, Simbolo::Mas, mas.x + 15, mas.y + 15, t.sobre_variante_superficie);
+        simbolo(sim, l, Simbolo::Mas, mas.x + 15, mas.y + 15, t.sobre_variante_superficie);
         v.zonas.push((mas, Zona::NuevaPestana));
         y0 += PESTANAS;
     }
@@ -490,7 +455,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
     if p_lista && n > 0 {
         let p = v.p();
         let (orden, asc) = (p.orden, p.asc);
-        let cabeza = |l: &mut Lienzo, f: &mut Fuente, x: i32, ancho: i32, texto: &str, o: Orden, derecha: bool, zonas: &mut Vec<(Rect, Zona)>, encima: Zona| {
+        let mut cabeza = |l: &mut Lienzo, f: &mut Fuente, x: i32, ancho: i32, texto: &str, o: Orden, derecha: bool, zonas: &mut Vec<(Rect, Zona)>, encima: Zona| {
             let r = Rect::new(x, area.y + 4, ancho, CAB_LISTA - 8);
             if encima == Zona::Columna(o) {
                 l.redondeado(r, 8, con_opacidad(t.sobre_superficie, 16));
@@ -499,7 +464,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
             let tx = if derecha { x + ancho - 12 - tw - if orden == o { 16 } else { 0 } } else { x + 12 };
             f.dibujar(l, tx, area.y + CAB_LISTA / 2 + 5, texto, 13, if orden == o { t.sobre_superficie } else { t.sobre_variante_superficie });
             if orden == o {
-                simbolo(l, if asc { Simbolo::FlechaArriba } else { Simbolo::FlechaAbajo }, tx + tw + 10, area.y + CAB_LISTA / 2, t.sobre_superficie);
+                simbolo(sim, l, if asc { Simbolo::FlechaArriba } else { Simbolo::FlechaAbajo }, tx + tw + 10, area.y + CAB_LISTA / 2, t.sobre_superficie);
             }
             zonas.push((r, Zona::Columna(o)));
         };
@@ -528,7 +493,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
         let cx = dentro.x + dentro.w / 2;
         let cyy = dentro.y + dentro.h / 2;
         l.redondeado(Rect::new(cx - 40, cyy - 72, 80, 80), 40, t.contenedor());
-        simbolo(l, if p.en_papelera() { Simbolo::Papelera } else if p.busca.is_some() { Simbolo::Buscar } else { Simbolo::Disco }, cx, cyy - 32, t.sobre_variante_superficie);
+        simbolo_de(sim, l, if p.en_papelera() { Simbolo::Papelera } else if p.busca.is_some() { Simbolo::Buscar } else { Simbolo::Disco }, cx, cyy - 32, 40, t.sobre_variante_superficie);
         centrado(med, l, cx, cyy + 34, &titulo, 18, t.sobre_superficie);
         if !sub.is_empty() {
             centrado(reg, l, cx, cyy + 58, &sub, 14, t.sobre_variante_superficie);
@@ -554,6 +519,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
         let encima = v.encima == Zona::Cosa(i);
         let es_destino = e.cajon && destino_arrastre.as_ref() == Some(&cosa.donde.hijo(&e.nombre));
         let mini = app.miniaturas.get(&(cosa.donde.clone(), e.nombre.clone())).and_then(|m| m.as_ref());
+        let info = app.iconos_amiga.de(&cosa, &p.cosas, elegida);
         if p_lista {
             if elegida {
                 l.redondeado(r, 10, t.contenedor_secundario());
@@ -565,7 +531,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
             if cursor {
                 l.borde(r, 10, 2, t.primario);
             }
-            icono(l, r.x + 10, r.y + 6, 28, &Fichero::de(e, &cosa.donde), &t, mini);
+            icono(ico, linux, l, r.x + 10, r.y + 6, 28, &Fichero::de(e, &cosa.donde).con_info(info), &t, mini);
             let tinta = if elegida { t.sobre_contenedor_secundario() } else { t.sobre_superficie };
             let suave = if elegida { t.sobre_contenedor_secundario() } else { t.sobre_variante_superficie };
             let mut nombre_x = x_tam - (r.x + 50) - 12;
@@ -603,7 +569,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
             } else if encima {
                 l.redondeado(caja, 14, con_opacidad(t.sobre_superficie, 14));
             }
-            icono(l, cx - ICONO / 2, r.y + 10, ICONO, &Fichero::de(e, &cosa.donde), &t, mini);
+            icono(ico, linux, l, cx - ICONO / 2, r.y + 10, ICONO, &Fichero::de(e, &cosa.donde).con_info(info), &t, mini);
             let lineas = dos_lineas(reg, &e.nombre, 13, r.w - 14);
             let mut base = r.y + ICONO + 34;
             for ln in &lineas {
@@ -658,7 +624,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
         l.redondeado(Rect::new(barra.x, barra.y, hecho.max(4), 4), 2, t.primario);
         let c = Rect::new(r.x + r.w - 52, r.y + 20, 36, 36);
         l.redondeado(c, 18, if v.encima == Zona::CancelarTrabajo(j) { con_opacidad(t.sobre_superficie, 40) } else { con_opacidad(t.sobre_superficie, 18) });
-        simbolo(l, Simbolo::Cerrar, c.x + 18, c.y + 18, t.sobre_superficie);
+        simbolo(sim, l, Simbolo::Cerrar, c.x + 18, c.y + 18, t.sobre_superficie);
         v.zonas.push((c, Zona::CancelarTrabajo(j)));
         abajo -= 84;
     }
@@ -835,7 +801,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
                             l.redondeado(f, 12, con_opacidad(t.sobre_superficie, 16));
                         }
                         let e = Entrada { nombre: p.clone(), cajon: false, tam: 0, fecha: 0, modo: 0o755, bits: 0 };
-                        icono(l, f.x + 10, f.y + 8, 28, &Fichero::de(&e, &crate::Lugar::raiz(crate::RAIZ_SISTEMA)), &t, None);
+                        icono(ico, linux, l, f.x + 10, f.y + 8, 28, &Fichero::de(&e, &crate::Lugar::raiz(crate::RAIZ_SISTEMA)), &t, None);
                         reg.dibujar(l, f.x + 50, f.y + 28, p, 14, t.sobre_superficie);
                         v.zonas.push((f, Zona::FilaDialogo(i)));
                     }
@@ -877,7 +843,7 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
     {
         let (x, y) = (a.x + 12, a.y + 10);
         l.redondeado(Rect::new(x - 4, y - 4, 56, 56), 12, con_opacidad(t.contenedor_alto(), 200));
-        icono(l, x, y, 48, &Fichero::de(&c.e, &c.donde), &t, None);
+        icono(ico, linux, l, x, y, 48, &Fichero::de(&c.e, &c.donde), &t, None);
         if a.cosas.len() > 1 {
             let n = alloc::format!("{}", a.cosas.len());
             let nw = med.medir(&n, 12).ancho;

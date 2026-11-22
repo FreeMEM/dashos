@@ -2270,3 +2270,113 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
 - **x86 (rama `x86-uso`, para la sesión de x86)**: `revision` unida en x86 y `make -C kernel x86-uso` (q35, OVMF, KVM,
   ventana GTK). Cambian números de la rama x86: `puertos_permitir` 56 → 59, llave de puertos 12 → 13. Sin cajas.
   Avisada la sesión de x86 para unirla.
+- **Unidas `cuentas-2`, `archivos-memoria`, `dominio-usb` y `paq` (2026-11-17, una tanda)** más el arreglo `union-menus`.
+  - `cuentas-2`: cambiar la propia contraseña (Ajustes y `Usuario CLAVE`, solo recierra la llave del volumen; orden
+    42 de `archivos`), entrar con el código de recuperación (se gasta y sale otro), asistente de primer arranque,
+    lista de cuentas en la entrada, Ajustes > Cuentas, espera creciente tras 3 intentos (5 s a 5 min); órdenes 130 a
+    134 de `sesiones` solo de `guardian`. Prueba `make arranque-virt-cuentas`.
+  - `archivos-memoria`: lo que no cabe da `SIN_MEMORIA` (-15) y el servicio sigue; el montón común suelta lo grande
+    al kernel y tiene colchón de 2 MB; DashFS deshace la transacción con ENOMEM; Argon2 vuelve a 64 MiB (tope del
+    grupo de archivos 128 MB, pendiente del sí del usuario).
+  - `dominio-usb` (S35): el xHCI presta el adaptador USB al dominio por USB/IP sobre un tubo de memoria (sin IOMMU,
+    vale en la Pi); registro por dominio en `Estado:Registros/dominio-red`; aviso a la tercera caída; el dominio se
+    vuelve a presentar si `virtio-red` cae.
+  - `paq` (S8): orden `Paq` y servicio `paq` (instalar, quitar, buscar, info, actualizar, generaciones, volver,
+    limpiar, repos, claves), `Paquetes:` con tanda de administrador y `Home:Paquetes` sin ella, generaciones
+    atómicas, firmas Ed25519, hostiles rechazados; `pkg2` de Hangar traído aparte (`tools/traer_pkg2.sh`, fuera de
+    git). Para Hangar: faltan en pkg2 la lectura del índice, las firmas y quitar en el resolutor.
+  - Conflictos: `seal.rs` (dos `cost`, se dejó uno), guion del Shell y líneas esperadas (cuentas y paq, las dos).
+  - Tanda: 10 de 12 bien; `arranque-virt` y `arranque-virt-wayland` solo en la familia conocida (teclado robado por
+    ventanas a destiempo; el arreglo de los guiones está en `firefox-firme`, por unir); `arranque-virt-shell`,
+    `-dominio` y `-cuentas` bien. `arranque-virt-menus` falló 2 de 2: `guardian` (de `cuentas-2`) tomaba toda imagen
+    de usar por la de cuentas al contar sus llaves (abría Cuentas en el centro y sacaba los códigos de recuperación
+    por la consola también en `virt-uso`: arreglado en `union-menus` 5533f690, la imagen por el nombre de las llaves,
+    con prueba de las tablas reales). Tras el arreglo: menús, prueba, shell y cuentas bien.
+  - Pendiente: con la ventana de Ajustes abierta, el centro no aplica los cambios de `ENV:` hasta cerrarla.
+- **Unidas `firefox-firme`, `dms-barra`, `dms-avisos`, `dms-dock`, `iconos` e `iconos-cajas` (2026-11-17, rama
+  `union-dms`)**.
+  - `firefox-firme`: no se pierden teclas por el camino; ventanas que salen a destiempo con carga (caja Amiga,
+    preguntas de `guardian`) se llevan el teclado (la regla deja robarlo tras 2 s sin teclear). Los guiones esperan a
+    que la ventana a la que hablan tenga el teclado y repiten; una prueba que se cuelga para a los 30 s y dice qué
+    faltó; `hid.rs` avisa si tira una tecla. Wayland con carga: 3 de 3 (antes 3 de 5). Arreglo de raíz (permiso de un
+    solo uso para llevarse el teclado, como xdg-activation): pendiente del sí del usuario.
+  - `dms-barra` (S27, DMS portado, MIT): barras configurables (`ENV:Escritorio/barra`, varias, por monitor, cualquier
+    borde), 31 widgets de DMS más los menús, Ajustes > Barra con arrastrar, `Ajuste DMS <settings.json>` (importador),
+    perfil `SYS:Prefs/Presets/DMS/shiva.json`, esquema monocromo de matugen en el tema.
+  - `dms-avisos`: emergentes con acciones, centro de avisos con historial y no molestar, Dash del reloj con calendario,
+    centro de control configurable (`ENV:Escritorio/avisos`, `centro-control`), `make arranque-virt-dms`.
+  - `dms-dock`: dock y OSD de volumen y Bloq Mayús, protocolo `dashos_dock_v1`; el dock solo escribe su ajuste
+    (`AJUSTES_PROPIOS` en `sesiones`, `ESCRIBIR_ENV`, `archivos` `RAM_ESCRIBIR` solo de `sesiones`).
+  - `iconos`: Material Symbols Rounded recortados (Apache 2.0, `kit/iconos/NOTICE`), colección propia de 72 tonal,
+    temas de Linux instalables en `Home:Iconos/` (ninguno de serie), lector de SVG mínimo propio.
+  - `iconos-cajas`: lector de `.info` (clásico, NewIcons, GlowIcons, PNG de OS4/MOS) en el explorador; catálogo de
+    programas de Linux con icono (aún no llega al lanzador); `make arranque-virt-iconos`.
+  - Conflictos resueltos con las dos partes (categorías de Ajustes tras "Acerca de", catálogos sin números repetidos,
+    barra de dms-barra con avisos de dms-avisos, OSD al dock, explorador con `.info` delante); disco de pruebas justo:
+    `rota.png` desde un fondo más pequeño (A15 bien). Arreglados al probar: el centro de control no volvía a lo de
+    serie, el guion de avisos con error de Python, el centro de avisos fuera de 800x600, la orden `Registro` con 3
+    ficheros de 4, plazo de `arranque-virt` 900 s.
+  - Pruebas: `prueba`, `-dms`, `-iconos`, `-escritorio`, `-shell`, `-menus`, `-cuentas`, `-2` y `-wayland` bien a la
+    primera. `arranque-virt` mal: en la última vuelta todo hasta el explorador, que falla por una tecla que se queda
+    pulsada (la búsqueda se llena de "a"): familia distinta del robo de teclado, por investigar. Sin ver: el resto
+    de `arranque-virt` tras el explorador.
+  - Pendiente: el fondo del usuario no sale al arrancar (el fondo arranca antes que el disco; ya pasaba antes).
+- **Unidas `tecla-pegada`, `centro-vivo`, `paq-formato` y `a15-carrera`, con dos arreglos del guion (`union-tres`
+  13a80479 y `guion-panel` cc787a16) (2026-11-17)**.
+  - `tecla-pegada`: no había tecla pegada (las "a" las mete el guion cuando un paso falla); sí estaba mal: al quitar el
+    teclado a una ventana no se le soltaba lo pulsado (ahora el compositor suelta teclas y modificadores, y un soltar
+    solo llega a quien vio la pulsación); con dos teclados uno soltaba lo del otro; un teclado que se va no soltaba;
+    la cola llena tiraba un soltar. El dock se repintaba ~500 veces por segundo (compositor al 95 %): ahora solo si
+    algo se mueve. El selector ignoraba una conexión nueva si la vieja no se cerró: conectar otra vez cierra la
+    anterior. Guion: pasos de Dash y del panel esperan a que no haya ventanas de contraseña; contraseña de Ana la que
+    vale en ese momento; comprobación del disco al día.
+  - `centro-vivo`: el centro atiende su canal con Ajustes abierta (hilo lector y cola común `dashos::hilos::Cola`,
+    `usuario/src/anillo.rs`); el fondo guardado sale al entrar; kit-c: submenú dentro de otro = error, y
+    `ventana.dash` con casilla, opciones y submenú (pedido de la sesión de Dash).
+  - `paq-formato`: varias `Url` por entrada probadas en orden (tope 16), `identify` (inventario de lo puesto a mano,
+    Query firmada con Nonce, respuesta comprobada) detrás del rasgo `Red`; `traer_pkg2.sh` trae la especificación.
+    Siete notas pasadas a la sesión de Hangar (dos fallos de su servicio: `identify` filtra siempre 68k; `Serial` de
+    respuestas por delante del índice).
+  - `a15-carrera`: el comprobador sujetaba el disco mientras `ficheros` escribía (2 bloques de margen); ahora
+    `ficheros` espera si el disco está sujeto y lo escrito no cabe con margen (164 bloques de sobra); el aviso de
+    "soltado por falta de sitio" va con cada cliente (antes uno para todos); `INFO` dice si el disco está sujeto.
+  - Guion: Dash y panel de uno en uno (`union-tres`); una sola puerta: con una pregunta de `guardian` pendiente no
+    pasan teclas ni clics salvo los que le contestan, y contestar espera a que su capa tenga el teclado
+    (`guion-panel`; `guardian` dice cuándo tiene o pierde el teclado).
+  - Pruebas: tanda completa de las tres primeras (todo bien salvo `arranque-virt`, luego arreglado), más shell,
+    menus, dms, cuentas, iconos y dominio bien; tras los arreglos, `arranque-virt` bien 3 de 3 y una con carga 18,
+    `prueba` bien, `-2` y `-linux` bien. Una vez el firmware de QEMU se colgó al reiniciar (antes de DashOS), no
+    repetido.
+  - Por decidir: que `guardian` conserve el teclado frente al panel (va con el permiso de un solo uso).
+- **Unida `dms-bloqueo` (2026-11-17)**: pantalla de bloqueo y de entrada como DMS (reloj grande, fecha, inicial,
+  campo con contorno de Material 3, fondo del usuario desenfocado, Bloq Mayús, red y volumen, avisos según la
+  privacidad: de serie solo cuántos), pintada por `guardian`, que recibe lo de alrededor solo para leer; Super+L
+  bloquea en la imagen de usar; monitor de procesos como DMS en la barra (gráficas, buscar, filtros, ordenar; cerrar
+  lo ajeno con la tanda de administrador). **Seguridad**: una capa abierta tras bloquear se quedaba con el teclado
+  (oía la contraseña sin verse): con la sesión bloqueada el teclado solo va a la pantalla de bloqueo (prueba hostil
+  del compositor). Tanda completa 12 de 12 y `-shell`, `-menus`, `-dms`, `-cuentas`, `-iconos` y `-dominio`: todo
+  bien a la primera, por primera vez sin repetir nada. Por decidir: los siete puntos de su bitácora.
+- **Unida `gpu-diseno` (2026-11-17)**: diseño S38 (el escritorio en la GPU y los fondos animados) y prototipo fuera de
+  DashOS: un compositor con Mesa en el invitado (`caja-linux/invitado/componer_gl.c`, `tools/gpu_componer.py`).
+  Medido a 1920x1080 con fondo animado, 4 ventanas y sombras: PC 3,0 ms componer + 2,2 ms el fondo por CPU frente a
+  0,03-0,04 ms en la GPU; aarch64 emulado 13,4 + 8,2 ms frente a 0,38-1,05 ms con virgl. Las sombras son 1,7 de los 3,0
+  ms. Decidido por el usuario (las seis): escritorio acelerado por el dominio de gráficos con nuestro compositor;
+  prueba 3D en QEMU por x86 (`virtio-vga-gl` pasada al dominio con IOMMU); Pi 5 primero planos del HVS y la V3D en un
+  dominio con MMU vigilada; fondos de GPU de una lista firmada (propios solo en modo de desarrollo); con batería, pocos
+  cuadros con ajuste de tres valores. Mientras, el camino por CPU (sombras guardadas, SIMD) en la rama
+  `compositor-rapido`. Pruebas en su rama: `prueba` y `arranque-virt` bien (no toca código del sistema).
+- **Unida `dock-discos` (2026-11-18)**: la columna de discos de la derecha pasa a panel flotante translúcido como los
+  widgets de DMS (tarjeta por volumen con icono, nombre, libre y barra; animaciones al aparecer, montar y pasar el
+  ratón; menú Abrir/Información; `ENV:Escritorio/discos`); el dock con lupa (también apartando), arrastrar fijados,
+  indicador animado, cuerpo con muelle y rebote al abrir. Decisiones del usuario: los discos así, de serie; el rebote
+  no ("ya un poco antiguo"): latido del indicador (en la rama, por unir). Tanda: 11 de 12 y shell, menus, dms y
+  cuentas bien; `arranque-virt` falló dos veces en pasos del guion, distintos: la comprobación de cuentas-2 "lista de
+  la entrada" antes de que el Shell cree a Berta (carrera de dos pruebas) y "[ajustes] el campo dice: DashOSa" (una
+  "a" de fondo del guion entra en el campo). Las dos son del guion de pruebas, no del sistema; arreglo encargado.
+  Salidas en ~/recuperar/geosian-7d/salida_av_lista_entrada.txt y salida_av_dashosa.txt.
+- **Unidas `sonido-pro` y el latido del dock (2026-11-18)**: grafo de sonido E1 con mezclador por programa, ecualizador,
+  limitador y espacial; ventana Sonido, OSD de volumen, visualizador, sonidos del sistema y protocolo de medios; el
+  dock ya no rebota al abrir, late el indicador (decisión del usuario). Choques en `centro.rs` y el `Makefile`
+  (ajustes de discos y de sonido), resueltos dejando los dos. Tanda en fusion-fondo ef5c89a0: 12 de 12 y shell,
+  menus, dms, cuentas y sonido bien. Pendiente del usuario: tema Cristal al 70 %, tic del volumen apagado, AHI 6 dB
+  más bajo (se recomienda subirlo).

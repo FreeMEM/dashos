@@ -31,21 +31,25 @@ pub(super) static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("comprobador", programa!("comprobador"), &[], &["disco", "archivos", "comprobar"]),
     ("eco", programa!("eco"), &[], &["eco"]),
     ("sesiones", programa!("sesiones"), &[("plazo", PLAZO), ("hipervisor", MAQUINAS)], &["archivos", "eco", "sesiones", "comprobar"]),
+    // S8: el servicio de paquetes, el único que escribe en `Paquetes:` (como en `inicio.rs`).
+    ("paq", programa!("paq"), &[], &["archivos", "paq"]),
     ("red", programa!("red"), &[], &["archivos", "red", "red-estado", "red-escuchar"]),
     ("virtio-red", programa!("virtio-red"), &[("dma-vred", PERMISO_DMA), ("virtio-red", REGISTROS), ("vred-cfg", REGISTROS), ("virtio-red", INTERRUPCION | OPCIONAL)], &["red"]),
     ("fondo", programa!("fondo"), &[], &["ventanas", "archivos", "sesiones", "red-estado", "fondo"]),
     ("centro", programa!("centro"), &[], &["ventanas", "sesiones", "fondo", "centro", "archivos"]),
     // Con el canal "uso": la pantalla de entrada de verdad, sin el guion de las pruebas.
-    ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "centro", "uso"]),
+    ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "fondo", "centro", "uso"]),
     ("imagen", programa!("imagen"), &[], &["archivos", "imagen"]),
     ("sonido", programa!("sonido"), &[("plazo", PLAZO)], &["sonido"]),
     ("avisos", programa!("avisos"), &[], &["avisos"]),
-    ("barra", programa!("barra"), &[], &["ventanas", "sesiones", "archivos", "centro", "avisos"]),
+    ("barra", programa!("barra"), &[], &["ventanas", "sesiones", "archivos", "centro", "sonido", "avisos"]),
+    // S27: el dock y los avisos en pantalla (OSD), como los de DMS.
+    ("dock", programa!("dock"), &[], &["ventanas", "sesiones", "archivos", "sonido"]),
     ("virtio-sonido", programa!("virtio-sonido"), &[("dma-vsonido", PERMISO_DMA), ("virtio-sonido", REGISTROS), ("vsonido-cfg", REGISTROS), ("plazo", PLAZO), ("virtio-sonido", INTERRUPCION | OPCIONAL)], &["sonido"]),
     // X5c: el sonido de un PC (Intel HDA). Si hay los dos, suena el primero que se presenta al servicio.
     ("hda", programa!("hda"), &[("dma-hda", PERMISO_DMA), ("hda", REGISTROS), ("plazo", PLAZO), ("hda", INTERRUPCION | OPCIONAL)], &["sonido"]),
     ("selector", programa!("selector"), &[], &["ventanas", "archivos", "selector"]),
-    ("panel", programa!("panel"), &[], &["ventanas", "sesiones", "centro", "sonido", "red-estado"]),
+    ("panel", programa!("panel"), &[], &["ventanas", "sesiones", "centro", "sonido", "red-estado", "avisos"]),
     ("explorador", programa!("explorador"), &[], &["ventanas", "archivos", "sesiones", "explorador"]),
     ("workbench", programa!("workbench"), &[], &["ventanas", "archivos", "sesiones", "explorador"]),
     // S13: la hora por la red (SNTP), con el permiso del reloj.
@@ -60,4 +64,6 @@ pub(super) static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // medidas del GOP, para que su primera cabeza tenga el modo que puso el firmware (y no el tamaño de la ventana de
     // QEMU en ese momento).
     ("virtio-gpu", programa!("virtio-gpu"), &[("dma-vgpu", PERMISO_DMA), ("virtio-gpu", REGISTROS), ("vgpu-cfg", REGISTROS), ("virtio-gpu", INTERRUPCION | OPCIONAL), ("pantalla-info", DATOS | OPCIONAL)], &["ventanas"]),
+    // Rama sonido-pro: la ventana "Sonido" (el mezclador). Tras la GPU, para no cambiar las marcas de los de antes.
+    ("mezclador", programa!("mezclador"), &[], &["ventanas", "sonido"]),
 ];

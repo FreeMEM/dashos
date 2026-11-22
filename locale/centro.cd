@@ -207,3 +207,209 @@ MSG_102 (102//)
 en la ventana
 MSG_103 (103//)
 en la barra de arriba
+MSG_104 (104//)
+Cuentas
+MSG_105 (105//)
+No se pueden leer las cuentas
+MSG_106 (106//)
+número {}
+MSG_107 (107//)
+borrada: se puede devolver hasta el {}
+MSG_108 (108//)
+Hecho
+MSG_109 (109//)
+No se hizo: no se confirmó en la ventana del sistema
+MSG_110 (110//)
+Ya hay otra esperando en la ventana del sistema
+MSG_111 (111//)
+No existe
+MSG_112 (112//)
+sesiones no contesta
+MSG_113 (113//)
+No se hizo ({})
+MSG_114 (114//)
+Nombre (cuenta nueva o grupo)
+MSG_115 (115//)
+Grupo
+MSG_116 (116//)
+Quién usa el equipo; los cambios, con un administrador.
+MSG_117 (117//)
+Borrar
+MSG_118 (118//)
+Mi contraseña
+MSG_119 (119//)
+Crear
+MSG_120 (120//)
+Devolver
+MSG_121 (121//)
+Escribe arriba el nombre de la cuenta nueva
+MSG_122 (122//)
+Elige una cuenta en la lista
+MSG_123 (123//)
+Escribe arriba el nombre del grupo
+MSG_124 (124//)
+Barra
+MSG_125 (125//)
+Las barras y sus widgets, como en DMS. Lo que se cambia se ve ya.
+MSG_126 (126//)
+Dock
+MSG_127 (127//)
+abajo
+MSG_128 (128//)
+arriba
+MSG_129 (129//)
+arriba en el centro
+MSG_130 (130//)
+abajo en el centro
+MSG_131 (131//)
+a la izquierda, en vertical
+MSG_132 (132//)
+a la derecha, en vertical
+MSG_133 (133//)
+un punto
+MSG_134 (134//)
+una raya
+MSG_135 (135//)
+ninguno
+MSG_136 (136//)
+ninguno (se fijan con el botón derecho en el dock)
+MSG_137 (137//)
+Enseñar el dock: {}
+MSG_138 (138//)
+Dónde: {}
+MSG_139 (139//)
+Tamaño de los iconos: {} px
+MSG_140 (140//)
+Esconderse solo: {}
+MSG_141 (141//)
+Juntar las ventanas de cada programa: {}
+MSG_142 (142//)
+Marca de los abiertos: {}
+MSG_143 (143//)
+Opacidad: {} %
+MSG_144 (144//)
+Fijados: {}
+MSG_145 (145//)
+Avisos en pantalla: {}
+MSG_146 (146//)
+Enseñar siempre el valor: {}
+MSG_147 (147//)
+Aviso al cambiar de espacio de trabajo: {}
+MSG_148 (148//)
+Aviso de Bloq Mayús: {}
+MSG_150 (150//)
+Discos del escritorio: {}
+MSG_151 (151//)
+Discos: {}
+MSG_152 (152//)
+a la derecha, en el centro
+MSG_153 (153//)
+a la izquierda, en el centro
+MSG_154 (154//)
+Tamaño de los discos: {}
+MSG_155 (155//)
+pequeño
+MSG_156 (156//)
+mediano
+MSG_157 (157//)
+grande
+MSG_158 (158//)
+Opacidad de los discos: {} %
+MSG_159 (159//)
+Espacio usado de cada disco: {}
+MSG_160 (160//)
+Animaciones de los discos: {}
+MSG_161 (161//)
+El dock, los avisos en pantalla y los discos del escritorio, como en DMS. Intro cambia una fila.
+MSG_162 (162//)
+Aumento al pasar el ratón: {}
+MSG_163 (163//)
+El aumento aparta a los vecinos: {}
+MSG_164 (164//)
+Al abrir un programa: {}
+MSG_165 (165//)
+su punto late
+MSG_166 (166//)
+el icono rebota
+MSG_167 (167//)
+nada
+MSG_200 (200//)
+Avisos
+MSG_201 (201//)
+Centro de control
+MSG_210 (210//)
+hasta cerrarlo
+MSG_211 (211//)
+sin horario
+MSG_212 (212//)
+Dónde salen: {}
+MSG_213 (213//)
+Animación: {} ms
+MSG_214 (214//)
+Tiempo de los avisos normales: {}
+MSG_215 (215//)
+Tiempo de los urgentes: {}
+MSG_216 (216//)
+Barra de tiempo: {}
+MSG_217 (217//)
+Los urgentes salen con no molestar: {}
+MSG_218 (218//)
+No molestar programado: {}
+MSG_219 (219//)
+Sin el texto en los emergentes: {}
+MSG_220 (220//)
+Un clic en el aviso hace su acción: {}
+MSG_221 (221//)
+Días en el historial: {}
+MSG_222 (222//)
+siempre
+MSG_230 (230//)
+{}. {} · {} columnas
+MSG_231 (231//)
+ · pequeño
+MSG_232 (232//)
+ · aún no disponible
+MSG_233 (233//)
+Añadir: {}
+MSG_234 (234//)
+Columnas: {}
+MSG_235 (235//)
+Volver a lo de serie
+MSG_236 (236//)
+Los emergentes y el no molestar, como en DMS. Intro cambia una fila; se ve ya.
+MSG_237 (237//)
+Qué sale en el panel rápido y en qué orden. Intro cambia el ancho o añade; se ve ya.
+MSG_238 (238//)
+Subir
+MSG_239 (239//)
+Bajar
+MSG_240 (240//)
+Fondos de escritorio: abrir la herramienta…
+MSG_900 (900//)
+Sonido
+MSG_901 (901//)
+para tocar (64 cuadros, 1,3 ms)
+MSG_902 (902//)
+ahorro (1.024 cuadros, 21 ms)
+MSG_903 (903//)
+normal (256 cuadros, 5,3 ms)
+MSG_904 (904//)
+Abrir el mezclador Sonido
+MSG_905 (905//)
+Tema de los sonidos: {}
+MSG_906 (906//)
+Sonidos del sistema: {}
+MSG_907 (907//)
+Volumen de los sonidos: {} %
+MSG_908 (908//)
+Ecualizador: {}
+MSG_909 (909//)
+Limitador: {}
+MSG_910 (910//)
+Sonido espacial: {}
+MSG_911 (911//)
+Latencia: {}
+MSG_912 (912//)
+Probar el sonido de aviso
+MSG_913 (913//)
+Sonidos, efectos y latencia. Intro cambia una fila.

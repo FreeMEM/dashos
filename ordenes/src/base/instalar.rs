@@ -107,7 +107,7 @@ pub fn principal(o: &mut Orden) -> u64 {
         };
         let n = numero_del_plan(&texto);
         di!(o, "Se pide la confirmación de un administrador para instalar con el plan {} ...\n", n);
-        match crate::base::administrar::pedir_tanda(format!("instalar {}\n", n).as_bytes()) {
+        match crate::base::administrar::pedir_tanda(format!("instalar-sistema {}\n", n).as_bytes()) {
             Some(r) if r.estado == 0 => {}
             Some(r) => {
                 di!(o, "No se instala: no se confirmó ({}).\n", r.estado);

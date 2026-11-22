@@ -18,11 +18,13 @@ pub struct Contexto {
     pub tema: Tema,
     pub regular: Fuente,
     pub medium: Fuente,
+    /// Los Material Symbols de los controles (la flecha del desplegable, los iconos de una lista), con su caché.
+    pub simbolos: crate::iconos::Simbolos,
 }
 
 impl Contexto {
     pub fn new(tema: Tema) -> Self {
-        Self { tema, regular: Fuente::regular(), medium: Fuente::medium() }
+        Self { tema, regular: Fuente::regular(), medium: Fuente::medium(), simbolos: crate::iconos::Simbolos::new() }
     }
 }
 
@@ -598,15 +600,9 @@ impl Clase for Ciclo {
         l.recortar(r.dentro(grosor).cruce(l.recorte()));
         ctx.regular.dibujar(l, r.x + 16, base, &texto, tam, tinta);
         l.soltar_recorte();
-        // La flecha (el icono "arrow_drop_down" en su hueco de 24; abierto, "arrow_drop_up"): un triángulo de 10 × 5,
-        // con los lados de 45° suavizados (el píxel de cada punta, a medias).
-        let (fx, fy) = (r.x + r.w - 12 - 24 + 7, r.y + (r.h - 24) / 2 + 10);
-        for i in 0..5 {
-            let y = if abierto { fy + 4 - i } else { fy + i };
-            l.rellenar(Rect::new(fx + i + 1, y, 8 - 2 * i, 1), flecha);
-            l.punto(fx + i, y, flecha, 128);
-            l.punto(fx + 9 - i, y, flecha, 128);
-        }
+        // La flecha: el símbolo "arrow_drop_down" en su hueco de 24 (abierto, "arrow_drop_up").
+        let s = if abierto { crate::iconos::simbolo::ARROW_DROP_UP } else { crate::iconos::simbolo::ARROW_DROP_DOWN };
+        ctx.simbolos.pintar(l, r.x + r.w - 12 - 24, r.y + (r.h - 24) / 2, 24, s, flecha);
     }
 
     fn pulsable(&self) -> bool {
@@ -696,7 +692,9 @@ impl Clase for Lista {
             .max()
             .unwrap_or(0);
         let alto = Self::filas(attrs) as i32 * FILA;
-        Medida { min: (ancho + 32, alto), max: (SIN_MAX, alto), peso: 100 }
+        let con_iconos = attrs.get(&atr::ICONOS).is_some_and(|v| !v.texto().is_empty());
+        // Con iconos: 8, el de 20, 6, el texto y 6 (8 más que sin ellos).
+        Medida { min: (ancho + 32 + if con_iconos { 8 } else { 0 }, alto), max: (SIN_MAX, alto), peso: 100 }
     }
 
     fn dibujar(&self, attrs: &BTreeMap<Atr, Valor>, l: &mut Lienzo, r: Rect, ctx: &mut Contexto, e: Estado) {
@@ -707,6 +705,8 @@ impl Clase for Lista {
         let primera = attrs.get(&atr::PRIMERA).map_or(0, Valor::int).max(0) as usize;
         let navegacion = attrs.get(&atr::ESTILO).map_or(0, Valor::int) == 1;
         let (tam, f) = if navegacion { (t.letra_etiqueta, &mut ctx.medium) } else { (t.letra_texto, &mut ctx.regular) };
+        let iconos = attrs.get(&atr::ICONOS).map(Valor::texto).unwrap_or_default();
+        let iconos: Vec<&str> = if iconos.is_empty() { Vec::new() } else { iconos.split('|').collect() };
         // Material 3: la lista sobre un contenedor de esquinas de 12, sin marco; la fila elegida, en el contenedor
         // secundario, redondeada y separada 4 del borde. La de navegación, sin contenedor y con píldoras enteras.
         let (dentro, radio) = if navegacion { (0, FILA / 2) } else { (4, 12) };
@@ -745,7 +745,14 @@ impl Clase for Lista {
             let resto: Vec<&str> = partes.collect();
             let m = f.medir(primera_parte, tam);
             let base = fila.y + (FILA - m.alto()) / 2 + m.sube;
-            f.dibujar(l, fila.x + 16, base, primera_parte, tam, tinta);
+            // Con icono: el de 20 a 8 del borde y el texto 6 después. Material 3 pide 24 y 12 en el cajón de navegación,
+            // pero así cabe en la ventana de Ajustes de siempre (560 de ancho; con 600 se salía de una pantalla de 800).
+            let mut x_texto = fila.x + 16;
+            if let Some(d) = iconos.get(k).filter(|d| !d.is_empty()) {
+                ctx.simbolos.pintar_trazado(l, fila.x + 8, fila.y + (FILA - 20) / 2, 20, d, tinta);
+                x_texto = fila.x + 8 + 20 + 6;
+            }
+            f.dibujar(l, x_texto, base, primera_parte, tam, tinta);
             for (j, c) in resto.iter().enumerate() {
                 let derecha = fila.x + fila.w - 16 - (resto.len() - 1 - j) as i32 * COLUMNA;
                 let w = f.medir(c, tam).ancho;
@@ -1925,8 +1932,8 @@ mod pruebas {
         i.arbol.poner(ciclo, atr::VALOR, Valor::Int(-1));
         assert_eq!(i.arbol.leer(ciclo, atr::VALOR), Some(&Valor::Int(2)));
         i.arbol.poner(ciclo, atr::VALOR, Valor::Int(0));
-        // Se dibuja: el contorno (sin foco, el del tema; esquinas de 4), y dentro la flecha en el color suave: su
-        // fila de arriba, 8 píxeles enteros y uno a medias en cada punta.
+        // Se dibuja: el contorno (sin foco, el del tema; esquinas de 4), y dentro la flecha en el color suave (el símbolo
+        // "arrow_drop_down" de Material): su fila de arriba, de 6 a 8 píxeles enteros (las puntas van redondeadas).
         let mut px = vec![0u32; 300 * 150];
         let pintar = |i: &mut Interfaz, px: &mut [u32]| {
             let mut l = Lienzo::new(px, 300, 150, 300);
@@ -1938,7 +1945,7 @@ mod pruebas {
         assert_eq!(px[((r.y + 20) * 300 + r.x) as usize], t.contorno);
         let fila = r.y + 26;
         let flecha = (r.x + r.w - 29..r.x + r.w - 19).filter(|&x| px[(fila * 300 + x) as usize] == t.sobre_variante_superficie).count();
-        assert_eq!(flecha, 8);
+        assert!((6..=8).contains(&flecha), "{flecha}");
         // Encima, el contorno del texto; con el foco, de 2 y del primario.
         i.raton(r.x + 30, r.y + 20, false);
         pintar(&mut i, &mut px);
@@ -1994,9 +2001,10 @@ mod pruebas {
         let bajo = en(&px, caja.x + 40, caja.y + caja.h + 1);
         assert_ne!(bajo, t.superficie);
         assert!((bajo >> 8 & 0xff) < (t.superficie >> 8 & 0xff), "{bajo:08x}");
-        // Abierto, la flecha mira arriba: su fila de abajo (la ancha) es la de arriba de antes más 4.
+        // Abierto, la flecha mira arriba ("arrow_drop_up"): la fila ancha es la de abajo (la 13 de su hueco de 24).
         let flecha = |px: &[u32], y: i32| (r.x + r.w - 29..r.x + r.w - 19).filter(|&x| en(px, x, y) == t.sobre_variante_superficie).count();
-        assert_eq!((flecha(&px, r.y + 26), flecha(&px, r.y + 30)), (0, 8));
+        let (arriba, abajo) = (flecha(&px, r.y + 26), flecha(&px, r.y + 29));
+        assert!(arriba < 3 && (6..=8).contains(&abajo), "{arriba} y {abajo}");
         // El ratón encima de la segunda: su capa (8 %). Un clic en ella la elige y cierra; no pulsa el botón de debajo.
         let segunda = (caja.x + 30, caja.y + 2 + 44 + 20);
         i.raton(segunda.0, segunda.1, false);

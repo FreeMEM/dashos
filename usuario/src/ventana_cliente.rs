@@ -49,7 +49,17 @@ pub struct Cliente {
     /// S10: la marca de la puerta (0, sin puerta) y cuántos mensajes han llegado por ella sin atender.
     puerta: u64,
     pub timbres: u32,
+    /// S27: lo que traía el último mensaje de la puerta (el centro de control le manda al panel su configuración así).
+    pub ultimo_timbre: Vec<u8>,
+    /// S27: otras puertas (`puerta_extra`): sus marcas, una copia para escribir de donde sacarlas, y lo que llegó por
+    /// ellas (marca y bytes; como mucho `MAX_RECIBIDOS`, se quedan los últimos).
+    marcas_extra: Vec<u64>,
+    copia: u32,
+    pub recibidos: Vec<(u64, Vec<u8>)>,
 }
+
+/// Lo que se guarda de lo llegado por las puertas de más.
+pub const MAX_RECIBIDOS: usize = 8;
 
 /// Al acabar, se cierran su canal y las llaves que llegaron sin usar: si no, quien se conecta muchas veces (`guardian`,
 /// una por pantalla y por pregunta) llena su tabla de llaves.
@@ -59,6 +69,9 @@ impl Drop for Cliente {
             dashos::cerrar(l);
         }
         dashos::cerrar(self.respuesta);
+        if self.copia != 0 {
+            dashos::cerrar(self.copia);
+        }
     }
 }
 
@@ -75,6 +88,8 @@ impl Cliente {
     pub fn conectar_con_puerta(marca: u64) -> Option<(Cliente, u32)> {
         let (mio, suyo) = dashos::canal_crear();
         let puerta = if marca != 0 { dashos::llave_duplicar(suyo, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, marca) } else { 0 };
+        // Una copia para escribir (sin marca), de donde sacar otras puertas (`puerta_extra`).
+        let copia = if marca != 0 { dashos::llave_duplicar(suyo, dashos::ESCRIBIR | dashos::TRANSFERIR, 0).max(0) as u32 } else { 0 };
         // Con el compositor atareado (al arrancar, con muchos clientes a la vez y una pantalla grande), su cola puede
         // estar llena: se reintenta hasta 5 s en vez de rendirse. Si no, se dice por qué y se sueltan las llaves.
         let mut intentos = 0;
@@ -94,17 +109,46 @@ impl Cliente {
             if puerta > 0 {
                 dashos::cerrar(puerta as u32);
             }
+            if copia > 0 {
+                dashos::cerrar(copia);
+            }
             return None;
         }
-        Some((Cliente { respuesta: mio, juntador: Juntador::new(), puerta: if puerta > 0 { marca } else { 0 }, timbres: 0 }, puerta.max(0) as u32))
+        Some((Cliente { respuesta: mio, juntador: Juntador::new(), puerta: if puerta > 0 { marca } else { 0 }, timbres: 0, ultimo_timbre: Vec::new(), marcas_extra: Vec::new(), copia, recibidos: Vec::new() }, puerta.max(0) as u32))
     }
 
     /// Si lo leído con la marca `marca` llegó por la puerta: se cuenta y se cierran sus llaves.
-    fn por_la_puerta(&mut self, marca: u64, llaves: &[u32]) -> bool {
+    /// S27: otra puerta, con otra marca (que no sea 0 ni la de la puerta), para otro servicio (el centro de control le
+    /// da a la barra los ajustes de los avisos por ella). Lo que llega por ella se cuenta en `timbres` y se guarda en
+    /// `recibidos`. 0 si no se puede (sin puerta al conectar).
+    pub fn puerta_extra(&mut self, marca: u64) -> u32 {
+        if self.copia == 0 || marca == 0 || marca == self.puerta || self.marcas_extra.contains(&marca) {
+            return 0;
+        }
+        let p = dashos::llave_duplicar(self.copia, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, marca);
+        if p <= 0 {
+            return 0;
+        }
+        self.marcas_extra.push(marca);
+        p as u32
+    }
+
+    fn por_la_puerta(&mut self, marca: u64, llaves: &[u32], datos: &[u8]) -> bool {
+        if marca != 0 && self.marcas_extra.contains(&marca) {
+            self.timbres = self.timbres.saturating_add(1);
+            if self.recibidos.len() >= MAX_RECIBIDOS {
+                self.recibidos.remove(0);
+            }
+            self.recibidos.push((marca, datos.to_vec()));
+            llaves.iter().for_each(|&l| { dashos::cerrar(l); });
+            return true;
+        }
         if self.puerta == 0 || marca != self.puerta {
             return false;
         }
         self.timbres = self.timbres.saturating_add(1);
+        self.ultimo_timbre.clear();
+        self.ultimo_timbre.extend_from_slice(datos);
         llaves.iter().for_each(|&l| { dashos::cerrar(l); });
         true
     }
@@ -155,7 +199,7 @@ impl Cliente {
         if n < 0 {
             return false;
         }
-        if self.por_la_puerta(marca, &ll[..k]) {
+        if self.por_la_puerta(marca, &ll[..k], &buf[..n as usize]) {
             return true;
         }
         if n == 0 {
@@ -181,7 +225,7 @@ impl Cliente {
             if n == dashos::E_PLAZO {
                 return Ok(None);
             }
-            if n >= 0 && self.por_la_puerta(marca, &ll[..k]) {
+            if n >= 0 && self.por_la_puerta(marca, &ll[..k], &buf[..n as usize]) {
                 return Ok(None);
             }
             if n <= 0 {
@@ -204,7 +248,7 @@ impl Cliente {
             let mut buf = [0u8; canal::MAX_CANAL];
             let mut ll = [0u32; canal::MAX_LLAVES];
             let (n, k, marca) = dashos::canal_leer_marca(self.respuesta, &mut buf, &mut ll);
-            if n >= 0 && self.por_la_puerta(marca, &ll[..k]) {
+            if n >= 0 && self.por_la_puerta(marca, &ll[..k], &buf[..n as usize]) {
                 continue;
             }
             if n <= 0 {
