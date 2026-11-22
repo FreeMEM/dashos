@@ -1241,8 +1241,8 @@ con otro motor y otra plataforma debajo:
   mismo que antes).
 - **`make -C caja x86`** (`build-x86/caja-amiga`) y **`make -C kernel caja-x86`**: la imagen `caja` (opción nueva del
   kernel: consola, compositor, NVMe, archivos y la caja, con su permiso de página 0, que `inicio_x86.rs` da ahora en todas
-  las imágenes) en QEMU q35, contra `pruebas/caja_x86.txt`. RelevoJIT sale de `RELEVO_DIR` (por omisión, su worktree
-  `motor-caja`) hasta que esa rama esté en GitHub.
+  las imágenes) en QEMU q35, contra `pruebas/caja_x86.txt`. RelevoJIT sale de GitHub (rama `motor-caja`, f74486e, el
+  `rev` de `caja/pegamento/Cargo.toml`); `RELEVO_DIR=<ruta>` usa un clon local en su lugar.
 
 Resultado (TCG): la tanda entera de la caja, la misma que en ARM, sin ninguna línea MAL: el 68k suma y escribe por la
 dos.library nativa, la línea A, el vigilante corta un bucle sin fin con la NMI, el cargador hunk y su prueba hostil, una

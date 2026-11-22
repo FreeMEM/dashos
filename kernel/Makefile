@@ -917,7 +917,7 @@ graficos-x86: FORCE
 
 # X7: la caja Amiga de x86-64 (`caja/build-x86/caja-amiga`, con el intérprete de RelevoJIT) con sus programas de
 # prueba: la imagen `caja` (la consola, el compositor, el disco NVMe, el servicio de archivos y la caja) en QEMU q35, y
-# lo que dice la caja contra pruebas/caja_x86.txt. RelevoJIT, de RELEVO_DIR (su rama motor-caja, aún sin subir).
+# lo que dice la caja contra pruebas/caja_x86.txt. RelevoJIT, de GitHub (rama motor-caja; RELEVO_DIR=<ruta> para un clon local).
 NUCLEO_X86_CAJA := target/kernel-x86-caja.elf
 caja-x86: firmware-x86 $(DISCO_NVME) FORCE
 	$(MAKE) -C ../caja x86 $(if $(RELEVO_DIR),RELEVO_DIR=$(abspath $(RELEVO_DIR)))

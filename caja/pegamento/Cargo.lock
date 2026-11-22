@@ -86,7 +86,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 [[package]]
 name = "relevo"
 version = "0.1.0"
-source = "git+https://github.com/FreeMEM/RelevoJIT?rev=42fe7e6#42fe7e6151a1b86dfce69c9ff31ed6749de6f4ee"
+source = "git+https://github.com/FreeMEM/RelevoJIT?rev=f74486e#f74486e51e390160a3ac0d8e6067414a636a151d"
 
 [[package]]
 name = "ttf-parser"

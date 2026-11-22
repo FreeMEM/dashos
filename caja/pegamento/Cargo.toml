@@ -23,10 +23,10 @@ wayland = { package = "dashos-wayland", path = "../../wayland" }
 kit = { package = "dashos-kit", path = "../../kit" }
 
 # X7: en x86 el 68k lo ejecuta RelevoJIT (su interfaz de C, include/relevo.h, la usa ../motor_relevo.c). La caja
-# necesita su rama `motor-caja` (f74486e: entrada anidada y base 0), que aún no está en GitHub: el Makefile pone siempre
-# el clon de RELEVO_DIR en su lugar. El `rev` de aquí es el último de GitHub (main), solo para que Cargo lo resuelva.
+# necesita su rama `motor-caja` (f74486e: entrada anidada y base 0). `make -C caja x86 RELEVO_DIR=<ruta>` usa un clon
+# local en su lugar.
 [target.'cfg(target_arch = "x86_64")'.dependencies]
-relevo = { git = "https://github.com/FreeMEM/RelevoJIT", rev = "42fe7e6", default-features = false }
+relevo = { git = "https://github.com/FreeMEM/RelevoJIT", rev = "f74486e", default-features = false }
 
 [profile.release]
 panic = "abort"

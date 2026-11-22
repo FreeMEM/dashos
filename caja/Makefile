@@ -162,18 +162,23 @@ FORCE:
 # --- X7: la caja de x86-64 (make -C caja x86): build-x86/caja-amiga ---
 # El C común (caja.c, hunk.c) con el motor RelevoJIT (motor_relevo.c; su crate va enlazado en pegamento/), la entrada de
 # x86 (entrada_x86.S) y lo que en ARM da Emu68: x86/soporte.c, y tlsf.c de Emu68 con x86/support.h y x86/spinlock.h. Los
-# programas 68k son los de ARM (los de Dash, en build/dash/). Hasta que el commit de RelevoJIT que pide
-# pegamento/Cargo.toml esté en GitHub, se usa su clon (RELEVO_DIR).
+# programas 68k son los de ARM (los de Dash, en build/dash/). RelevoJIT sale de GitHub con el `rev` de
+# pegamento/Cargo.toml (Cargo lo baja; su include/relevo.h se busca con `cargo metadata`). RELEVO_DIR=<ruta> usa un
+# clon local en su lugar.
 BX := build-x86
 CC_X86 ?= gcc
-RELEVO_DIR ?= $(HOME)/Projects/RelevoJIT/.worktrees/motor-caja
-CFLAGS_X86 := -MMD -MP -ffreestanding -fno-builtin -fno-stack-protector -fno-exceptions -fno-unwind-tables \
+RELEVO_DIR ?=
+# Se calcula una vez y solo si hace falta (las reglas de ARM no la tocan).
+RELEVO_INC = $(eval RELEVO_INC := $(if $(RELEVO_DIR),$(abspath $(RELEVO_DIR))/include,$(shell cd pegamento && \
+	cargo metadata --format-version 1 --filter-platform x86_64-unknown-none | python3 -c 'import json, os, sys; \
+	print(next(os.path.dirname(p["manifest_path"]) for p in json.load(sys.stdin)["packages"] if p["name"] == "relevo"))')/include))$(RELEVO_INC)
+CFLAGS_X86 = -MMD -MP -ffreestanding -fno-builtin -fno-stack-protector -fno-exceptions -fno-unwind-tables \
 	-fno-asynchronous-unwind-tables -fpie -O2 -fno-tree-loop-distribute-patterns -std=gnu23 \
-	-Ix86 -I. -I$(EMU68)/include -I$(RELEVO_DIR)/include
+	-Ix86 -I. -I$(EMU68)/include -I$(RELEVO_INC)
 OBJS_X86 := $(BX)/caja.o $(BX)/motor_relevo.o $(BX)/hunk.o $(BX)/soporte.o $(BX)/tlsf.o $(BX)/entrada_x86.o \
 	$(BX)/programas.o
 RUST_A_X86 := pegamento/target/x86_64-unknown-none/release/libcaja_pegamento.a
-RELEVO_PATCH := --config 'patch."https://github.com/FreeMEM/RelevoJIT".relevo.path="$(abspath $(RELEVO_DIR))"'
+RELEVO_PATCH := $(if $(RELEVO_DIR),--config 'patch."https://github.com/FreeMEM/RelevoJIT".relevo.path="$(abspath $(RELEVO_DIR))"')
 
 x86: $(BX)/caja-amiga
 
