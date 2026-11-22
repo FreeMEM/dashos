@@ -1204,4 +1204,14 @@ Comprobado en ARM, `make -C kernel arranque-virt` (TCG), contra una vuelta de re
   mejor de dos; casi todo es esperar al guion). Más lentos: los cambios de tarea (`procesos-e`, 20.002 cambios: 129 ms
   en la referencia; 142 y 151 con la copia de registros en C y en Rust; 136 ms, un 5 %, sin la de Rust) y `procesos-b`
   (759 ms; 846 y 870; 817, un 8 %). Es la conversión entre la copia de Emu68 y `motor_regs` en cada llamada nativa
-  (unos 117 ns más por llamada en TCG). Lo demás, dentro del ruido.
+  (unos 117 ns más por llamada en TCG). Lo demás, dentro del ruido. Decisión (jefe-dash, 2026-11-22): se acepta y
+  se sigue; hay que medirlo en una Pi de verdad. Se miró antes darle a `motor_regs` la disposición de la copia de
+  Emu68 (pasar su puntero sin convertir): no vale, la copia no es contigua (A0-A4 en x13-x17, D0-D7 en x19-x26, A5-A7
+  en x27-x29, con x18 en medio, de 64 bits cada uno).
+
+### 2026-11-22 — Aparte: el intermitente de "[ram] Ana: avisos hostiles"
+
+No es de la caja ni de x86. En `make -C kernel arranque-virt` (ARM, TCG), con la máquina a carga 7-10, la prueba de
+`ram` dio "llegan 16 timbres" (de 63) en 3 de 5 vueltas el 2026-11-22 (las tres con la rama `motor`; la de referencia,
+en `par`, una sola vuelta, bien). Es la misma cifra que apunta `docs/bitacoras/dock-discos.md` (16 de 63 en los 300 ms
+que espera la prueba, con otras QEMU en marcha). Sin mirar la causa: para la sesión del servicio de archivos.
