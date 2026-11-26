@@ -21,7 +21,7 @@ $(IMAGEN): usuario FORCE
 	$(OBJCOPY) -O binary $(ELF) $(IMAGEN)
 
 usuario: FORCE
-	cd ../usuario && cargo build --release --features archivos,ventanas,sonido
+	cd ../usuario && cargo build --release --features archivos,ventanas,sonido,imagenes
 	cd ../usuario && cargo build --release --target aarch64_be-unknown-none-softfloat --bin hola --bin fpu_b
 	$(BOOTLIN)/aarch64_be-linux-as -EL -o $(PIE).o ../usuario/asm/pie.s
 	$(BOOTLIN)/aarch64_be-linux-ld -EL -pie --no-dynamic-linker -z noexecstack -z stack-size=32768 -o $(PIE) $(PIE).o
@@ -72,6 +72,17 @@ sonido-carga: usuario FORCE
 	GUARDAR=$(abspath target/salida_carga.txt) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -audiodev wav,id=snd0,path=$(abspath target/sonido-carga.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/sonido_carga.txt 90
 	grep -E "\[(sonido|carga)\]" target/salida_carga.txt
 	-python3 ../tools/sonido_wav.py target/sonido-carga.wav
+
+# audio.device nativo (S19, fase 2): la imagen de virt con `paula-prueba` en lugar de los dos tonos, sin disco ni
+# USB. El WAV se comprueba con `sonido_wav.py --paula`.
+VIRT_PAULA := target/kernel8-virt-paula.img
+sonido-paula: usuario FORCE
+	cargo build $(CARGO_PERFIL) --features virt,paula
+	$(OBJCOPY) -O binary $(ELF) $(VIRT_PAULA)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_PAULA)) cargo build --release
+	rm -f target/sonido-paula.wav
+	GUARDAR=$(abspath target/salida_paula.txt) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -audiodev wav,id=snd0,path=$(abspath target/sonido-paula.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/sonido_paula.txt 60
+	python3 ../tools/sonido_wav.py --paula target/sonido-paula.wav
 
 PRUEBAS_VIRT := target/kernel8-pruebas-virt.img
 

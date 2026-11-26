@@ -33,7 +33,7 @@ DashOS en marcha con 4 núcleos.
 # FS1: el servicio de archivos abre el RedoxFS que empieza en el MB 1 del disco, sin escribir nada.
 ~│   [archivos] RedoxFS abierto: 7168 KB,
 # FS3: un cliente del protocolo de ficheros por el canal "archivos".
-~│   [ficheros] raíz (3 entradas, fin bien): C/ LEEME.txt Prefs/
+~│   [ficheros] raíz (4 entradas, fin bien): C/ Imagenes/ LEEME.txt Prefs/
 ~│   [ficheros] LEEME.txt (19 bytes): "DashOS lee RedoxFS"
 ~│   [ficheros] C/grande.txt: 313890 bytes, 25000 líneas: bien
 ~│   [ficheros] datos: bien; volumen: 7168 KB,
@@ -46,6 +46,17 @@ DashOS en marcha con 4 núcleos.
 ~│   [ficheros] FS8 comprobación: bien
 ~│   [ficheros] FS9 instantáneas: bien
 ~│   [ficheros] FS10 volúmenes: bien
+# S20, fase 1: un ADF (FFS internacional, kernel/pruebas/disquete.adf.gz) montado como volumen de solo lectura por el
+# servicio imagen, que lo lee por el de archivos.
+~│   [imagen] Disquete montado: FFS internacional, 1760 bloques
+~│   [adf-prueba] montar: bien (1760 bloques, FFS bien, internacional bien); sin montar: bien; otra vez: bien
+~│   [adf-prueba] volumen Disquete: 880 KB,
+~│   [adf-prueba] raíz (3 entradas, fin bien): C/ Cajón/ LEEME.txt
+~│   [adf-prueba] LEEME.txt (42 bytes): bien; comentario "léeme primero"
+~│   [adf-prueba] C/grande.txt: 
+~│   [adf-prueba] cajón/ÑANDÚ.txt: bien; sin escribir: bien; no borrar: bien
+~│   [adf-prueba] escribir: bien; crear: bien
+~│   [adf-prueba] comprobación: 0 problemas: bien
 # U4: la pantalla de UEFI (ramfb), del cargador al compositor por el árbol y por inicio.
 ~pantalla del firmware: 800x600 en
 ~│   [compositor] pantalla de UEFI de 800x600 a 32 bits, un búfer

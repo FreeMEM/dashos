@@ -52,6 +52,12 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("archivos", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/archivos"), &[], &["disco", "archivos"]),
     #[cfg(feature = "virt")]
     ("ficheros", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/ficheros"), &[], &["archivos"]),
+    // Un ADF montado como volumen (S20, fase 1): el servicio lo lee por "archivos" y lo sirve por "imagen", con
+    // un cliente de prueba.
+    #[cfg(feature = "virt")]
+    ("imagen", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/imagen"), &[], &["archivos", "imagen"]),
+    #[cfg(feature = "virt")]
+    ("adf-prueba", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/adf-prueba"), &[], &["imagen"]),
     ("gpu", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/gpu"), &[("dma-gpu", PERMISO_DMA), ("v3d", REGISTROS), ("v3d-puente", REGISTROS), ("pm", REGISTROS), ("cprman", REGISTROS)], &["buzon"]),
     // Dos clientes de Wayland de prueba (W7), cada uno con su ventana.
     ("ventana-a", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/ventana-a"), &[], &["ventanas"]),
@@ -63,10 +69,13 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("sonido", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/sonido"), &[], &["sonido"]),
     ("virtio-sonido", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/virtio-sonido"), &[("dma-vsonido", PERMISO_DMA), ("virtio-sonido", REGISTROS), ("vsonido-cfg", REGISTROS), ("virtio-sonido", INTERRUPCION | OPCIONAL)], &["sonido"]),
     // Dos programas que suenan a la vez por el servicio (A4), solo en `virt`.
-    #[cfg(feature = "virt")]
+    #[cfg(all(feature = "virt", not(feature = "paula")))]
     ("tono-a", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/tono-a"), &[], &["sonido"]),
-    #[cfg(feature = "virt")]
+    #[cfg(all(feature = "virt", not(feature = "paula")))]
     ("tono-b", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/tono-b"), &[], &["sonido"]),
+    // audio.device nativo (S19, fase 2), en lugar de los tonos: `make sonido-paula`.
+    #[cfg(all(feature = "virt", feature = "paula"))]
+    ("paula-prueba", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/paula-prueba"), &[], &["sonido"]),
     // Cuatro programas que esperan medio segundo y giran sin parar 6 s, detrás de los tonos: los cortes del sonido con los núcleos ocupados (A6).
     #[cfg(all(feature = "virt", feature = "carga"))]
     ("carga-1", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/carga"), &[], &[]),

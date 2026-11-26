@@ -223,6 +223,38 @@ el servicio se para antes, lo suelta al abrir el disco la vez siguiente.
 Pendiente: la fecha de lo escrito (no hay reloj de la hora: va en 0), juntar escrituras (FS11), usuarios y permisos
 (S6), cambiar si una carpeta distingue mayúsculas (para la caja Linux).
 
+## Imágenes del Amiga (S20, fase 1)
+
+`usuario/src/bin/imagen.rs` monta un ADF y lo sirve como un volumen de solo lectura por el canal "imagen", con el
+protocolo de archivos de arriba. Es como un "handler" del Amiga: un proceso por imagen. Lee la imagen por el servicio
+de archivos, como cualquier fichero (con una caché de 512 KB en trozos de 16 KB), y la entiende `amigados`: OFS y FFS,
+normal, internacional y con caché de directorios (`DOS\0` a `DOS\5`), de 880 KB y de 1,76 MB. Llaves: 1 el canal
+"archivos", 2 el canal "imagen".
+
+Lo propio de las imágenes:
+
+| Orden | Qué | Pide | Devuelve |
+|---|---|---|---|
+| 27 montar | Monta la imagen del camino `nombre` (en el volumen principal del servicio de archivos). Antes de montar, lo demás da -2; una segunda vez, -13 | nombre | a: bloques; b: 1 FFS, 2 internacional |
+
+Diferencias con el servicio de archivos:
+
+- **Solo lectura**: escribir, crear, borrar, renombrar, cambiar el tamaño, comentar, proteger, las instantáneas y los
+  volúmenes dan -8. La capa de cambios es la fase 2.
+- **Info** deja además el nombre del volumen en la ventana, en UTF-8 y acabado en 0.
+- **Comprobar** lee el volumen entero (cajones y ficheros, con las sumas de cada bloque) y el mapa de bits, y pone en la
+  ventana lo que falle.
+- **Nombres**: en el disco van en Latin-1 y aquí en UTF-8; sin distinguir mayúsculas como el volumen (sin la variante
+  internacional, solo a-z). Listar da el orden de la tabla de hash, como AmigaDOS.
+- **Bits**: los permisos de Unix salen de RWED (los del dueño, y leer y ejecutar para los demás); los bits del
+  Amiga, de A, P, S y H, y "no borrar" de D. Las fechas, de los días, minutos y tics desde 1978.
+- **Enlaces**: los duros dan el tipo, el tamaño y los datos del original; los simbólicos, el tipo 3 y su destino al
+  leerlos.
+- Un bloque dañado (suma, tipo, número fuera del disco, cadena sin fin) da -7, nunca una caída.
+
+Pendiente: los HDF (fase 3), escribir con la capa de cambios (fase 2), quién monta qué (hoy, quien tenga la llave del
+canal) y un nombre de aparato (`IMG0:`) cuando haya `dos.library`.
+
 ## Sonido (S19, A4)
 
 El servicio "sonido" lee el canal "sonido"; el controlador de virtio-sound y los programas le escriben con copias

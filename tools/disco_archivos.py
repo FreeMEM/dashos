@@ -6,7 +6,8 @@
 - Desde el MB 1: un RedoxFS hecho con `redoxfs-ar` a partir de una carpeta con LEEME.txt, C/grande.txt (las líneas
   "línea 0", "línea 1"..., unos 300 KB, para que pase por varios registros de 128 KB) y Prefs/fuente. Y un volumen
   cifrado, "Ana", con la contraseña "clave de Ana" (FS10), hecho con `redoxfs-volume`, que está al lado de
-  `redoxfs-ar`; con Argon2 barato, para que abrirlo en QEMU no tarde.
+  `redoxfs-ar`; con Argon2 barato, para que abrirlo en QEMU no tarde. Y `Imagenes/disquete.adf`, el ADF de la
+  prueba de S20 (`kernel/pruebas/disquete.adf.gz`, hecho con `tools/adf_oraculo.py --disquete`).
 
 Uso: disco_archivos.py SALIDA REDOXFS_AR
      disco_archivos.py --comprobar DISCO VER
@@ -15,6 +16,7 @@ Con --comprobar, tras la prueba en QEMU, mira con `ver` (archivos/herramientas) 
 el cliente `ficheros` (FS4) y nada más: lo escrito por DashOS está de verdad en el disco. Y que el comprobador (FS8)
 no encuentra nada roto en él. Y que lo que DashOS escribió en el volumen cifrado no está en claro en el disco (FS10).
 """
+import gzip
 import os
 import subprocess
 import sys
@@ -29,6 +31,8 @@ if sys.argv[1] == "--comprobar":
         "C/grande.txt 313890",
         "Escrito/ cajón",
         "Escrito/hola.txt 19 bits=0x4 : Saludo de DashOS, ñandú",
+        "Imagenes/ cajón",
+        "Imagenes/disquete.adf 901120",
         "LEEME.txt 19",
         "Prefs/ cajón",
         "Prefs/fuente 8",
@@ -62,6 +66,10 @@ with tempfile.TemporaryDirectory() as t:
     raiz = os.path.join(t, "raiz")
     os.makedirs(os.path.join(raiz, "C"))
     os.makedirs(os.path.join(raiz, "Prefs"))
+    os.makedirs(os.path.join(raiz, "Imagenes"))
+    adf = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "kernel", "pruebas", "disquete.adf.gz")
+    with open(os.path.join(raiz, "Imagenes", "disquete.adf"), "wb") as f:
+        f.write(gzip.open(adf).read())
     with open(os.path.join(raiz, "LEEME.txt"), "w") as f:
         f.write("DashOS lee RedoxFS\n")
     with open(os.path.join(raiz, "C", "grande.txt"), "w") as f:
