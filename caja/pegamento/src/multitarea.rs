@@ -3,7 +3,8 @@
 //! Se cambia de tarea dentro de una llamada nativa hecha en modo de usuario: la caja guarda los registros de la que
 //! estaba (`caja_exec::cambio`), elige otra con `elegir_siguiente` y deja en la copia de registros del JIT los de la
 //! otra. El `RTS` que sigue a la llamada (`$A0FF n RTS`) saca la vuelta de la pila de la otra. La coma flotante
-//! (FP0-FP7, FPCR, FPSR, FPIAR) se cambia con ella (`caja_fp_leer`/`caja_fp_poner`, caja.c).
+//! (FP0-FP7, en extendida si el motor la tiene, FPCR, FPSR, FPIAR) se cambia con ella (`caja_fp_leer`/`caja_fp_poner`, del
+//! motor).
 //!
 //! Con una sola tarea no se cambia nada de lo de antes: espera y duerme en el sitio (`esperar`, `dormir` de
 //! `lib.rs`).
@@ -79,19 +80,29 @@ pub(crate) fn turno_por_reloj(r: &mut Registros, usp: u32, pc: u32, sr: u32, rtr
     matches!(siguiente(r, None), Siguiente::Lista)
 }
 
+/// Lo que pasa por `caja_fp_leer`/`caja_fp_poner` (caja/motor.h): FP0-FP7, FPSR, FPIAR, FPCR y, en v[11] y v[12],
+/// el signo y el exponente de cada registro (16 bits cada uno, FP0 abajo de v[11]) si el motor es de 80 bits.
+const FP_TAM: usize = 13;
+
 fn fp_leer(ctx: &mut Contexto) {
-    let mut v = [0u64; 11];
-    // SEGURIDAD: `v` son 11 u64 nuestros; caja_fp_leer escribe ahí y nada más.
+    let mut v = [0u64; FP_TAM];
+    // SEGURIDAD: `v` son FP_TAM u64 nuestros; caja_fp_leer escribe ahí y nada más.
     unsafe { caja_fp_leer(v.as_mut_ptr()) };
     ctx.fp.copy_from_slice(&v[..8]);
+    for (i, e) in ctx.fp_ext.iter_mut().enumerate() {
+        *e = (v[11 + i / 4] >> (16 * (i % 4))) as u16;
+    }
     ctx.fpsr = v[8] as u32;
     ctx.fpiar = v[9] as u32;
     ctx.fpcr = v[10] as u32;
 }
 
 fn fp_poner(ctx: &Contexto) {
-    let mut v = [0u64; 11];
+    let mut v = [0u64; FP_TAM];
     v[..8].copy_from_slice(&ctx.fp);
+    for (i, e) in ctx.fp_ext.iter().enumerate() {
+        v[11 + i / 4] |= (*e as u64) << (16 * (i % 4));
+    }
     v[8] = ctx.fpsr as u64;
     v[9] = ctx.fpiar as u64;
     v[10] = ctx.fpcr as u64;

@@ -93,6 +93,19 @@ static int sigue_viva(const char *nombre)
     return t != 0;
 }
 
+/* La coma flotante de una tarea tras cambiar de tarea: 1 + 2^-60 cabe en extendida (80 bits) y en un double se
+   redondea a 1. Una hija pone otro valor en FP2 mientras la principal espera. */
+static const ULONG fp_uno_mas[3] = { 0x3fff0000, 0x80000000, 0x00000008 };
+static const ULONG fp_otro[3] = { 0xc0000000, 0xc0000000, 0x00000001 };
+static volatile LONG fp_hija;
+
+static void hija_fp(void)
+{
+    __asm__ volatile("fmove.x (%0),%%fp2" :: "a"(fp_otro));
+    fp_hija = 1;
+    Signal(principal, 1L << sig_p);
+}
+
 /* --- a: lo normal --- */
 
 static struct Task *hija;
@@ -319,6 +332,21 @@ static void normal(void)
     Delay(2);
     mira(ps && mp && bandera_seg == 2 && !sigue_viva("segmento") && !sigue_viva("viejo"), "NP_Seglist y CreateProc");
     if (seg) FreeMem(seg, 32);
+
+    /* 10. FP2 de la principal, igual en extendida antes y después de que corra la hija (que pone otro valor en su
+       FP2). Con un motor de 80 bits (RelevoJIT) sigue siendo 1 + 2^-60; con uno de doubles (Emu68), ya era 1 antes. */
+    ULONG antes[3], despues[3];
+    fp_hija = 0;
+    __asm__ volatile("fmove.x (%1),%%fp2\n\tfmove.x %%fp2,(%0)" :: "a"(antes), "a"(fp_uno_mas) : "memory");
+    SetSignal(0, 1L << sig_p);
+    struct Task *tf = crear("fp", 0, hija_fp, 4000);
+    if (tf) Wait(1L << sig_p);
+    __asm__ volatile("fmove.x %%fp2,(%0)" :: "a"(despues) : "memory");
+    int igual = antes[0] == despues[0] && antes[1] == despues[1] && antes[2] == despues[2];
+    if (!igual)
+        di("  [caja-amiga] procesos: FP2 antes %08lx %08lx, despues %08lx\n", antes[0], antes[2], despues[2]);
+    mira(tf && fp_hija == 1 && igual, "la coma flotante extendida sigue igual tras cambiar de tarea");
+    Delay(1);
 }
 
 /* --- b: hostil --- */

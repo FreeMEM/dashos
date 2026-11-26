@@ -1377,6 +1377,7 @@ DashOS en marcha con 4 núcleos.
 # tarea que quita la del programa (c); tareas y un proceso que caen por una excepción y se quitan solos (d). Y
 # CreateNewProc (con NP_Entry, NP_Seglist, CreateProc; NULL y etiquetas absurdas dan 0).
 ~│   [caja-amiga] procesos: Wait y Signal entre dos tareas: bien
+~│   [caja-amiga] procesos: la coma flotante extendida sigue igual tras cambiar de tarea: bien
 ~│   [caja-amiga] procesos: 0 fallos (modo a)
 ~│   [caja-amiga] procesos-a acabó por el vector -1 (D0 0)
 ~│   [caja-amiga] procesos: CreateNewProc con NP_Entry: bien
