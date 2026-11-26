@@ -96,7 +96,15 @@ pub struct Transaction<'a, D: Disk> {
     /// Whether the volume this transaction is in is encrypted, and its keys if it is unlocked (FS10c).
     pub(crate) sealed: bool,
     pub(crate) cipher: Option<alloc::sync::Arc<crate::seal::VolumeCipher>>,
+    /// Blocks freed by this transaction while the file system is `deferred`: they join `FileSystem::quarantine` on
+    /// commit, not the allocator.
+    pub(crate) quarantine: Vec<BlockAddr>,
+    /// Blocks allocated by this transaction while `deferred`: they join `FileSystem::fresh` on commit.
+    pub(crate) fresh: Vec<(u64, u64)>,
 }
+
+/// How many checked blocks `FileSystem::verified` remembers (16 bytes each).
+const VERIFIED_MAX: usize = 32768;
 
 impl<'a, D: Disk> Transaction<'a, D> {
     pub(crate) fn new(fs: &'a mut FileSystem<D>) -> Self {
@@ -117,6 +125,8 @@ impl<'a, D: Disk> Transaction<'a, D> {
             volume_changes: BTreeMap::new(),
             sealed: false,
             cipher: None,
+            quarantine: Vec::new(),
+            fresh: Vec::new(),
         }
     }
 
@@ -127,6 +137,8 @@ impl<'a, D: Disk> Transaction<'a, D> {
         }
         self.fs.header = self.header;
         self.fs.allocator = self.allocator;
+        self.fs.quarantine.append(&mut self.quarantine);
+        self.fs.fresh.extend(self.fresh.drain(..));
         Ok(())
     }
 
@@ -147,6 +159,9 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 // Stamped with the epoch, for the snapshots (FS9).
                 let addr = addr.with_epoch(self.header.epoch.to_ne());
                 self.allocator_log.push_back(AllocEntry::allocate(addr));
+                if self.fs.deferred {
+                    self.fresh.push((addr.index(), addr.level().blocks::<u64>()));
+                }
                 ctx.allocate(addr);
                 Ok(addr)
             }
@@ -193,6 +208,8 @@ impl<'a, D: Disk> Transaction<'a, D> {
 
         if found {
             // Deallocate immediately since it is an allocation that was not needed
+            let key = (addr.index(), addr.level().blocks::<u64>());
+            self.fresh.retain(|f| *f != key);
             self.allocator.deallocate(addr);
         } else {
             // Deallocate later when syncing filesystem, to avoid re-use
@@ -237,9 +254,11 @@ impl<'a, D: Disk> Transaction<'a, D> {
     /// This rebuild can be forced by setting `force_squash` to `true`.
     fn sync_allocator(&mut self, force_squash: bool) -> Result<bool> {
         let mut prev_ptr = BlockPtr::default();
+        // Not while blocks wait in quarantine: the rebuilt log would keep them in use (`deferred`).
         let should_gc = self.header.generation() % ALLOC_GC_THRESHOLD == 0
             && self.header.generation() >= ALLOC_GC_THRESHOLD
-            && self.allocator.free() > 0;
+            && self.allocator.free() > 0
+            && self.fs.quarantine.is_empty();
         if force_squash || should_gc {
             // Clear and rebuild alloc log
             self.allocator_log.clear();
@@ -304,7 +323,15 @@ impl<'a, D: Disk> Transaction<'a, D> {
         // De-allocate old blocks (after allocation to prevent re-use)
         //TODO: optimize allocator log in memory
         while let Some(addr) = self.deallocate.pop() {
-            self.allocator.deallocate(addr);
+            let key = (addr.index(), addr.level().blocks::<u64>());
+            if self.fs.deferred && !self.fs.fresh.remove(&key) && !self.fresh.contains(&key) {
+                self.quarantine.push(addr);
+            } else {
+                if self.fs.deferred {
+                    self.fs.disk.forget(self.fs.block + key.0, key.1);
+                }
+                self.allocator.deallocate(addr);
+            }
             self.allocator_log.push_back(AllocEntry::deallocate(addr));
         }
 
@@ -359,8 +386,10 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 log::error!("SYNC WRITE_CACHE: WRONG NUMBER OF BYTES");
                 return Err(Error::new(EIO));
             }
-            // The blocks must be on disk before the header that points to them.
-            self.fs.disk.flush()?;
+            // The blocks must be on disk before the header that points to them. Deferred, `durable` does it.
+            if !self.fs.deferred {
+                self.fs.disk.flush()?;
+            }
         }
         self.write_cache.clear();
 
@@ -372,6 +401,13 @@ impl<'a, D: Disk> Transaction<'a, D> {
             return Ok(false);
         }
 
+        // Deferred: the header stays in memory (`commit` puts it in the file system) until `durable`.
+        if self.fs.deferred {
+            self.fs.header_dirty = true;
+            self.header_changed = false;
+            return Ok(true);
+        }
+
         // On disk, the header keeps the fields of the main volume.
         let inside = self.main.map(|main| {
             let here = crate::volume::VolumeFields::of(&self.header);
@@ -379,6 +415,8 @@ impl<'a, D: Disk> Transaction<'a, D> {
             here
         });
 
+        // Its blocks were flushed above: nothing for the opening to check (`Header::commit`).
+        self.header.commit_count = 0.into();
         // Update header to next generation
         let generation = self.header.update(self.fs.cipher_opt.as_ref());
         let gen_block = generation % HEADER_RING;
@@ -435,6 +473,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 return Err(Error::new(ENOENT));
             }
         };
+        let mut from_memory = false;
         if let Some(raw) = self.write_cache.get(&ptr.addr()) {
             data.copy_from_slice(raw);
         } else {
@@ -449,6 +488,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 log::error!("READ_BLOCK: WRONG NUMBER OF BYTES");
                 return Err(Error::new(EIO));
             }
+            from_memory = self.fs.disk.last_read_from_memory();
             self.fs.decrypt(&mut data, ptr.addr());
         }
 
@@ -470,6 +510,11 @@ impl<'a, D: Disk> Transaction<'a, D> {
             return Ok(BlockData::new(ptr.addr(), data));
         }
 
+        // Checked when it came from the disk, and the disk has had it in memory since (F4).
+        let key = (ptr.addr().raw(), ptr.hash());
+        if from_memory && self.fs.verified.contains(&key) {
+            return Ok(BlockData::new(ptr.addr(), data));
+        }
         let block = BlockData::new(ptr.addr(), data);
         let block_ptr = block.create_ptr();
         if block_ptr.hash() != ptr.hash() {
@@ -483,6 +528,10 @@ impl<'a, D: Disk> Transaction<'a, D> {
             );
             return Err(Error::new(EIO));
         }
+        if self.fs.verified.len() >= VERIFIED_MAX {
+            self.fs.verified.clear();
+        }
+        self.fs.verified.insert(key);
         Ok(block)
     }
 

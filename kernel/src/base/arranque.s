@@ -113,6 +113,29 @@ en_el1:
     str     x5, [x0, #16]
     orr     x5, x4, #(3 << 30)
     str     x5, [x0, #24]
+.elseif PLACA_PI3
+    // La Pi 3 (P3): el primer GB, por bloques de 2 MB (los periféricos desde 0x3F000000); el segundo, de dispositivo
+    // (los locales de los núcleos en 0x40000000; no hay RAM ahí); los otros dos, normales (sin nada).
+    orr     x5, x1, #3                  // entrada de tabla hacia el nivel 2
+    str     x5, [x0, #0]
+    ldr     x8, =0x0060000000000401     // bloque de dispositivo: válido, AttrIndx 0, AF, PXN y UXN
+    orr     x5, x8, #(1 << 30)
+    str     x5, [x0, #8]
+    orr     x5, x4, #(2 << 30)
+    str     x5, [x0, #16]
+    orr     x5, x4, #(3 << 30)
+    str     x5, [x0, #24]
+    mov     x2, #0
+    mov     x6, #0                      // dirección física del bloque
+    ldr     x7, =0x3F000000             // desde aquí, periféricos
+7:  cmp     x6, x7
+    csel    x9, x4, x8, lo
+    orr     x9, x9, x6
+    str     x9, [x1, x2, lsl #3]
+    add     x6, x6, #0x200000
+    add     x2, x2, #1
+    cmp     x2, #512
+    b.ne    7b
 .else
     str     x4, [x0, #0]
     orr     x5, x4, #(1 << 30)

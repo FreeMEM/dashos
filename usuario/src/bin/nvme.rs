@@ -11,7 +11,8 @@
 //! girando un poco (en QEMU acaban en microsegundos) y, si tarda, durmiendo hasta su interrupción (U6i); sin
 //! interrupción, girando. Toda su memoria es memoria DMA del permiso, sin caché; su
 //! dirección de bus es la física. Con páginas de 4 KB (CC.MPS = 0): una transferencia de hasta dos páginas se
-//! describe con PRP1 y PRP2, sin lista.
+//! describe con PRP1 y PRP2; una mayor, hasta la ventana entera (64 KB), con PRP2 apuntando a una lista de páginas
+//! (4.1.1, "PRP List"; paso F de docs/MULTITAREA_LOOP.md: antes, 8 KB por orden como mucho).
 
 #![no_std]
 #![no_main]
@@ -45,6 +46,10 @@ const M_ADM_CQ: usize = 0x1000;
 const M_ES_SQ: usize = 0x2000;
 const M_ES_CQ: usize = 0x3000;
 const M_DATOS: usize = 0x4000;
+/// La lista de páginas de una transferencia de más de dos (4.1.1). Una sola: las órdenes van de una en una.
+const M_LISTA: usize = 0xF000;
+/// Su dirección de bus, cuando se sabe.
+static LISTA_BUS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 const ENTRADAS: usize = 16;
 
 // Órdenes (5 y NVM).
@@ -277,6 +282,7 @@ fn principal() -> u64 {
     // Con el controlador apagado, lo que dejara en cuarentena uno anterior puede volver (M5).
     dashos::dma_liberar(1);
     let (m, bus) = dashos::memoria_dma(1, TAM_DMA);
+    LISTA_BUS.store(bus + M_LISTA as u64, core::sync::atomic::Ordering::Relaxed);
     if m <= 0 || dashos::memoria_proyectar(m as u32, VA_DMA, true) != 0 {
         println!("  [nvme] sin memoria DMA");
         return 4;
@@ -303,6 +309,12 @@ fn principal() -> u64 {
     }
     let mut b = [0u8; 64];
     println!("  [nvme] versión {}.{}, modelo \"{}\"", vs >> 16, (vs >> 8) & 0xff, texto(M_DATOS + 24, 40, &mut b));
+    // MDTS (byte 77): lo más que admite una transferencia, 2^MDTS páginas (0 = sin tope). Si no llega a la ventana,
+    // las transferencias se quedan en dos páginas, como antes.
+    let mdts = dma8(M_DATOS + 77);
+    if mdts != 0 && (4096usize << mdts) < VENTANA {
+        LISTA_BUS.store(0, core::sync::atomic::Ordering::Relaxed);
+    }
     // Identify del espacio de nombres 1 (CNS 0): sectores (NSZE) y su tamaño (el formato que dice FLBAS).
     if n.orden(&mut adm, O_IDENTIFICAR, 1, (datos, 0), [0, 0, 0, 0, 0, 0]).is_err() {
         println!("  [nvme] sin espacio de nombres 1");
@@ -364,13 +376,29 @@ fn transferir(n: &Nvme, es: &mut Cola, c: &Cliente, orden: u32, cuantos: u64, pr
     }
     if orden != PEDIR_LEER && orden != PEDIR_ESCRIBIR {
         MAL_FORMADO
-    } else if cuantos == 0 || cuantos > 16 || primero.checked_add(cuantos).is_none_or(|f| f > sectores) {
+    } else if cuantos == 0 || primero.checked_add(cuantos).is_none_or(|f| f > sectores) {
         FUERA_DEL_DISCO
-    } else if off % 4 != 0 || off.checked_add(bytes).is_none_or(|f| f > VENTANA) || off % 4096 + bytes > 8192 {
+    } else if off % 4 != 0 || off.checked_add(bytes).is_none_or(|f| f > VENTANA) {
         FUERA_DE_LA_VENTANA
     } else {
         let prp1 = c.bus + off as u64;
-        let prp2 = if off % 4096 + bytes > 4096 { (prp1 & !0xfff) + 4096 } else { 0 };
+        let paginas = (off % 4096 + bytes).div_ceil(4096);
+        let lista = LISTA_BUS.load(core::sync::atomic::Ordering::Relaxed);
+        let prp2 = match paginas {
+            1 => 0,
+            2 => (prp1 & !0xfff) + 4096,
+            _ if lista != 0 => {
+                // Las páginas segunda y siguientes, en la lista; PRP2 apunta a ella.
+                for k in 1..paginas {
+                    let p = (prp1 & !0xfff) + 4096 * k as u64;
+                    poner32(M_LISTA + 8 * (k - 1), p as u32);
+                    poner32(M_LISTA + 8 * (k - 1) + 4, (p >> 32) as u32);
+                }
+                lista
+            }
+            // Sin lista (el controlador no admite tanto): como mucho dos páginas.
+            _ => return FUERA_DE_LA_VENTANA,
+        };
         let op = if orden == PEDIR_LEER { O_LEER } else { O_ESCRIBIR };
         let cdw = [primero as u32, (primero >> 32) as u32, cuantos as u32 - 1, 0, 0, 0];
         if n.orden(es, op, 1, (prp1, prp2), cdw).is_ok() { 0 } else { ERROR_DEL_DISCO }

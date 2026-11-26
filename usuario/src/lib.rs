@@ -12,6 +12,7 @@ pub mod graficos;
 pub mod hid;
 #[cfg(feature = "monton")]
 pub mod monton;
+mod copiar;
 
 /// Llamada al sistema en crudo: número y cinco argumentos; devuelve x0 y x1. Para pruebas y para la biblioteca.
 pub fn llamada(n: u64, a: [u64; 5]) -> (u64, u64) {
@@ -127,6 +128,11 @@ pub fn cerrar(llave: u32) -> i64 {
 
 /// Espera `us` microsegundos sin gastar CPU, con un temporizador de un solo disparo en un canal propio.
 pub fn dormir_us(us: u64) {
+    // Llamada 30 (M2b): una sola llamada, y despierta el reloj del propio núcleo. Con un kernel que no la tenga, por
+    // un temporizador y un canal, como antes.
+    if llamada(30, [us.max(1), 0, 0, 0, 0]).0 == 0 {
+        return;
+    }
     let (a, b) = canal_crear();
     let t = temporizador_crear(b, us.max(1), 0);
     if t > 0 {

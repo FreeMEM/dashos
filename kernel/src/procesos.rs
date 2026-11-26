@@ -8,7 +8,6 @@ use crate::objetos::{Control, Llave, Proceso, TablaLlaves};
 use crate::planificador;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug)]
 pub enum Error {
@@ -18,8 +17,6 @@ pub enum Error {
     Elf(elf::Error),
 }
 
-/// Núcleo para el siguiente proceso: del 1 al 3 por turno. El 0 tiene el arranque y el repartidor.
-static SIGUIENTE: AtomicUsize = AtomicUsize::new(0);
 
 /// Un proceso nuevo desde `binario`, con `llaves` como sus llaves 1, 2... Si no se puede, devuelve las llaves.
 /// Todo se cobra al grupo `cupo` (C42), y el proceso queda apuntado en él.
@@ -54,7 +51,7 @@ pub fn lanzar(binario: &[u8], llaves: Vec<Llave>, nucleo: Option<usize>, cupo: A
         _cargo: cargo,
         control: control.clone(),
     });
-    let n = nucleo.unwrap_or_else(|| 1 + SIGUIENTE.fetch_add(1, Ordering::Relaxed) % 3);
+    let n = nucleo.unwrap_or_else(planificador::nucleo_para_nuevo);
     planificador::crear_proceso(p, cargado.entrada, cargado.pila, n, pila);
     Ok((control, cargado))
 }

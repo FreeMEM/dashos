@@ -21,10 +21,12 @@ pub mod usuario;
 
 pub mod placa;
 // Para arranque.s, en el mismo bloque: qué tablas de arranque se hacen (placa.rs).
-#[cfg(not(feature = "virt"))]
-core::arch::global_asm!(".equ PLACA_VIRT, 0", include_str!("arranque.s"));
+#[cfg(not(any(feature = "virt", feature = "pi3")))]
+core::arch::global_asm!(".equ PLACA_VIRT, 0", ".equ PLACA_PI3, 0", include_str!("arranque.s"));
 #[cfg(feature = "virt")]
-core::arch::global_asm!(".equ PLACA_VIRT, 1", include_str!("arranque.s"));
+core::arch::global_asm!(".equ PLACA_VIRT, 1", ".equ PLACA_PI3, 0", include_str!("arranque.s"));
+#[cfg(feature = "pi3")]
+core::arch::global_asm!(".equ PLACA_VIRT, 0", ".equ PLACA_PI3, 1", include_str!("arranque.s"));
 core::arch::global_asm!(include_str!("contexto.s"));
 core::arch::global_asm!(include_str!("copia.s"));
 

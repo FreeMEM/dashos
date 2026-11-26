@@ -123,7 +123,8 @@ del disco, -5 sin sitio), en 8-15 los sectores del disco, en 16-19 el tamaño de
 Al abrir lleva además la llave de la **ventana**: 64 KB de memoria DMA (sin caché) del cliente, compartida con el
 servicio, donde el disco lee y escribe directamente. Cada cliente se reconoce por la marca de su llave (la pone
 `inicio`): un mensaje sin marca se rechaza, y abrir otra vez da la misma ventana. Hasta 4 clientes. Una transferencia
-cabe en dos páginas de la ventana (8 KB desde un principio de página). La ventana lleva derecho a transferir, para que
+puede ocupar la ventana entera (64 KB), con una lista de páginas; si el controlador admite menos (MDTS), dos páginas (8
+KB desde un principio de página). La ventana lleva derecho a transferir, para que
 el cliente pueda dársela a otro proceso suyo.
 
 **Vaciar** (orden 5, FS2): sin sectores ni ventana. Cuando contesta, todo lo escrito antes está guardado en el disco,
@@ -174,7 +175,7 @@ del principal; la orden 21 da la raíz de otro.
 | Orden | Qué | Pide | Devuelve |
 |---|---|---|---|
 | 0 sesión | Empieza; con una llave: el extremo de escritura del canal de respuesta | — | a: tamaño de la ventana; y su llave |
-| 1 buscar | Abre lo que hay en `nombre` (partes separadas por "/"; vacío, el mismo) desde la asa | asa, nombre | asa nueva; a tamaño, b fecha (segundos), c modo \| tipo << 16 \| bits del Amiga << 32 |
+| 1 buscar | Abre lo que hay en `nombre` (partes separadas por "/"; vacío, el mismo) desde la asa. Con a = 1, solo sus datos, sin abrirlo (como `stat`; sin asa nueva, asa 0) | asa, a, nombre | asa nueva; a tamaño, b fecha (segundos), c modo \| tipo << 16 \| bits del Amiga << 32 |
 | 2 leer | Lee del fichero al principio de la ventana | asa, a desde, b cuánto (hasta la ventana) | a bytes leídos, b tamaño del fichero |
 | 3 escribir | Escribe en el fichero lo que hay al principio de la ventana | asa, a desde, b cuánto (hasta la ventana) | a bytes escritos, b tamaño del fichero |
 | 4 listar | Pone en la ventana las entradas de un cajón desde la número a | asa, a desde | a cuántas, b la siguiente (o `u64::MAX` si no hay más), c bytes usados |
@@ -184,7 +185,7 @@ del principal; la orden 21 da la raíz de otro.
 | 8 borrar | Borra `nombre` del cajón de la asa; un cajón, solo vacío | asa, nombre | — |
 | 9 renombrar | Mueve `viejo` del cajón de la asa a `nuevo` en el cajón de la asa b. No sobrescribe; no mete un cajón en sí mismo | asa, b, nombre "viejo\0nuevo" | — |
 | 10 tamaño | Recorta o alarga el fichero | asa, a tamaño nuevo | a tamaño |
-| 11 vaciar | Que todo esté en el disco (hoy ya lo está al contestar cada orden) | — | — |
+| 11 vaciar | Que todo esté en el disco al contestar, como `fsync` | — | — |
 | 12 info | Datos del volumen | — | a tamaño, b libre, c tamaño de bloque (bytes) |
 | 13 comentario | Pone en la ventana el comentario (UTF-8, hasta 255 bytes) | asa | a su largo |
 | 14 comentar | Cambia el comentario; vacío, lo quita | asa, nombre: el comentario | — |
@@ -200,6 +201,14 @@ del principal; la orden 21 da la raíz de otro.
 | 24 quitar volumen | Borra un volumen con todo lo que tiene, instantáneas incluidas; no con algo abierto | nombre | — |
 | 25 abrir volumen | Abre un volumen cifrado con una de sus contraseñas, hasta que se cierre. La contraseña no se guarda | nombre "volumen\0contraseña" | — |
 | 26 cerrar volumen | Olvida la llave de un volumen cifrado; no con algo abierto | nombre | — |
+| 27 guardar | Crea el fichero `nombre` en el cajón de la asa con lo que hay al principio de la ventana, en una sola transacción, y en el disco al contestar. No lo deja abierto. No sobrescribe | asa, b cuánto (hasta la ventana), nombre | a bytes escritos, b tamaño |
+
+**Cuándo está en el disco.** Cada orden que cambia algo se confirma entera o nada, pero en memoria: va al disco al
+cerrar una asa por la que se creó, escribió o cambió de tamaño algo, con vaciar (11) o guardar (27), con las órdenes
+de instantáneas y volúmenes (18 a 20, 23 a 26), al juntarse 8 MB por escribir, y si no, como mucho un segundo
+después. Si se va la luz antes, el disco queda como tras el último guardado, entero: RedoxFS no reusa hasta entonces
+los bloques que soltó. Lo que borra, renombra, comenta o protege se pierde así hasta un segundo; quien necesite más,
+vacía (11) tras la orden.
 
 Tipos: 1 fichero, 2 cajón, 3 enlace. El modo es el de Unix (permisos en los 12 bits bajos). Cada entrada de listar:
 tamaño (8), fecha (8), modo (2), tipo (1), largo del nombre (1), bits del Amiga (2), largo del comentario (1), un byte

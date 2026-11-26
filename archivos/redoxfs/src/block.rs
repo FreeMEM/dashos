@@ -18,6 +18,7 @@ pub struct BlockAddr(u64);
 
 impl BlockAddr {
     const INDEX_SHIFT: u64 = 8;
+
     const DECOMP_LEVEL_MASK: u64 = 0xF0;
     const DECOMP_LEVEL_SHIFT: u64 = 4;
     const LEVEL_MASK: u64 = 0xF;

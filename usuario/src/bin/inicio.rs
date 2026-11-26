@@ -88,6 +88,11 @@ fn principal() -> u64 {
                 }
             }
         }
+        // Los canales que crea este programa: tras sus llaves, una copia para escribirse a sí mismo (paso B de
+        // docs/MULTITAREA_LOOP.md: un temporizador que lo despierte en su propio canal), con una marca que no es de
+        // ningún cliente.
+        let mut propios = [0u32; 8];
+        let mut np = 0;
         for c in 0..32 {
             if de_canales & (1 << c) != 0 && k < suyas.len() {
                 if pendientes[c] == 0 {
@@ -95,6 +100,10 @@ fn principal() -> u64 {
                     pendientes[c] = b;
                     suyas[k] = a;
                     k += 1;
+                    if np < propios.len() {
+                        propios[np] = b;
+                        np += 1;
+                    }
                 } else {
                     // Cada cliente, con su marca (el número del programa más 1), y el servidor sabe de quién es por un
                     // mensaje sin marca que solo puede mandar `inicio` (auditoría de la fase 4, M6).
@@ -118,6 +127,15 @@ fn principal() -> u64 {
                 }
             }
         }
+        for &b in &propios[..np] {
+            if k < suyas.len() {
+                let copia = llave_duplicar(b, dashos::ESCRIBIR | dashos::TRANSFERIR, u64::MAX);
+                if copia > 0 {
+                    suyas[k] = copia as u32;
+                    k += 1;
+                }
+            }
+        }
         datos = (datos + 7) & !7;
         let origen = datos;
         datos += tamano;
@@ -128,7 +146,10 @@ fn principal() -> u64 {
             continue;
         }
         unsafe { core::ptr::copy_nonoverlapping(origen as *const u8, destino as *mut u8, tamano) };
-        let g = grupo_crear(16 << 20);
+        // 16 MB por servicio; el de archivos, 64, para su caché de bloques (paso F9 de docs/MULTITAREA_LOOP.md: con 6 MB
+        // de caché, un fichero de 8 MB leído de corrido iba siempre al disco).
+        let cupo = if nombre(nombre_cab) == "archivos" { 64 << 20 } else { 16 << 20 };
+        let g = grupo_crear(cupo);
         let proceso = if g > 0 { proceso_crear_en(g as u32, m, tamano, &suyas[..k]) } else { g };
         if proceso <= 0 {
             println!("  [inicio] {}: no se pudo lanzar ({})", nombre(nombre_cab), proceso);

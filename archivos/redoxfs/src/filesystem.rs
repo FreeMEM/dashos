@@ -33,8 +33,23 @@ pub struct FileSystem<D: Disk> {
     pub(crate) compress_cache: Vec<u8>,
     /// How many times each node is open, by `Transaction::usage_key`: the volume and the node.
     pub node_usages: BTreeMap<u64, u64>,
+    /// Blocks (address and hash) whose hash was checked when read from the disk, while the disk keeps them in memory
+    /// (`Disk::last_read_from_memory`): read again from there, they are not checked again (DashOS, F4).
+    pub(crate) verified: alloc::collections::BTreeSet<(u64, u64)>,
     /// The keys of the encrypted volumes that are unlocked, by volume (FS10c).
     pub(crate) unlocked: BTreeMap<u64, alloc::sync::Arc<crate::seal::VolumeCipher>>,
+    /// Transactions are committed in memory only: their blocks go to the disk without a flush and the header is not
+    /// written until `durable` (DashOS, step B of docs/MULTITAREA_LOOP.md). The disk must keep what is written until
+    /// its next `flush`, which writes it out first: a crash then leaves the last durable state, never a mix.
+    pub deferred: bool,
+    /// The header in memory is newer than the one on disk (only while `deferred`).
+    pub(crate) header_dirty: bool,
+    /// Blocks freed since the last `durable`: the header on disk may still use them, so they are not reused until it
+    /// is replaced.
+    pub(crate) quarantine: Vec<BlockAddr>,
+    /// Blocks allocated since the last `durable` (index and count): the header on disk does not use them, so when
+    /// freed they are reused at once and what was written to them is forgotten.
+    pub(crate) fresh: alloc::collections::BTreeSet<(u64, u64)>,
 }
 
 impl<D: Disk> FileSystem<D> {
@@ -76,6 +91,7 @@ impl<D: Disk> FileSystem<D> {
             }
 
             let block = ring_block - (header.generation() % HEADER_RING);
+            let mut newest: Vec<Header> = Vec::new();
             for i in 0..HEADER_RING {
                 let mut other_header = Header::default();
                 unsafe { disk.read_at(block + i, &mut other_header)? };
@@ -84,11 +100,14 @@ impl<D: Disk> FileSystem<D> {
                 if !other_header.valid() {
                     continue;
                 }
-
-                // If this is a newer header, use it
-                if other_header.generation() > header.generation() {
-                    header = other_header;
-                }
+                newest.push(other_header);
+            }
+            newest.sort_by_key(|h| core::cmp::Reverse(h.generation()));
+            // The newest, unless it was written with its blocks under one flush and they did not all arrive: then
+            // the one before, whose blocks were flushed before the newest was written (DashOS, step B2).
+            header = newest[0];
+            if !Self::committed(&mut disk, block, &newest[0])? && newest.len() > 1 {
+                header = newest[1];
             }
 
             let cipher_opt = match password_opt {
@@ -123,6 +142,11 @@ impl<D: Disk> FileSystem<D> {
                 compress_cache: compress_cache(),
                 node_usages: BTreeMap::new(),
                 unlocked: BTreeMap::new(),
+                verified: alloc::collections::BTreeSet::new(),
+                deferred: false,
+                header_dirty: false,
+                quarantine: Vec::new(),
+                fresh: alloc::collections::BTreeSet::new(),
             };
 
             let allocator_read = match unsafe { fs.reset_allocator() } {
@@ -214,6 +238,11 @@ impl<D: Disk> FileSystem<D> {
             compress_cache: compress_cache(),
             node_usages: BTreeMap::new(),
             unlocked: BTreeMap::new(),
+            verified: alloc::collections::BTreeSet::new(),
+            deferred: false,
+            header_dirty: false,
+            quarantine: Vec::new(),
+            fresh: alloc::collections::BTreeSet::new(),
         };
 
         // Write header generation zero
@@ -281,6 +310,65 @@ impl<D: Disk> FileSystem<D> {
             tx.leave_volume()?;
         }
         tx.commit(true)
+    }
+
+    /// Whether every block that `header` lists as written with it (`Header::commit`) is on the disk as written.
+    fn committed(disk: &mut D, block: u64, header: &Header) -> Result<bool> {
+        let commit = header.commit;
+        for entry in commit.iter().take((header.commit_count.to_ne() as usize).min(crate::COMMIT_MAX)) {
+            let (at, hash) = (entry[0].to_ne(), entry[1].to_ne());
+            let count = (at >> 56) as usize;
+            let mut data = alloc::vec![0; count * BLOCK_SIZE as usize];
+            unsafe { disk.read_at(block + (at & ((1 << 56) - 1)), &mut data)? };
+            if seahash::hash(&data) != hash {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Whether there are committed changes that are not yet durable (see `deferred`).
+    pub fn pending(&self) -> bool {
+        self.header_dirty
+    }
+
+    /// Make every committed transaction durable: their blocks first, then the header that points to them, each
+    /// followed by a flush. Only then are the blocks they freed given back to the allocator.
+    pub fn durable(&mut self) -> Result<()> {
+        if !self.header_dirty {
+            return Ok(());
+        }
+        // Few new blocks: they go in the header, with a hash of each, and blocks and header reach the disk under one
+        // flush; opening checks them (`committed`). Many: the blocks are flushed before the header is written.
+        let few = self.fresh.len() <= crate::COMMIT_MAX;
+        let mut count = 0;
+        if few {
+            let fresh: Vec<(u64, u64)> = self.fresh.iter().copied().collect();
+            for (index, blocks) in fresh {
+                let mut data = alloc::vec![0; (blocks * BLOCK_SIZE) as usize];
+                unsafe { self.disk.read_at(self.block + index, &mut data)? };
+                self.header.commit[count] = [(index | blocks << 56).into(), seahash::hash(&data).into()];
+                count += 1;
+            }
+        } else {
+            self.disk.flush()?;
+        }
+        self.header.commit_count = (count as u64).into();
+        let generation = self.header.update(self.cipher_opt.as_ref());
+        let count = unsafe {
+            self.disk
+                .write_at(self.block + generation % HEADER_RING, &self.header)?
+        };
+        if count != core::mem::size_of_val(&self.header) {
+            return Err(Error::new(syscall::error::EIO));
+        }
+        self.disk.flush()?;
+        self.header_dirty = false;
+        for addr in self.quarantine.drain(..) {
+            self.allocator.deallocate(addr);
+        }
+        self.fresh.clear();
+        Ok(())
     }
 
     /// start a filesystem transaction, required for making any changes

@@ -86,6 +86,10 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     #[cfg(all(feature = "virt", feature = "carga"))]
     ("carga-4", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/carga"), &[], &[]),
     ("hola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[], &[]),
+    #[cfg(feature = "medir_fs")]
+    ("medir-fs", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/medir-fs"), &[], &["archivos"]),
+    #[cfg(feature = "medir")]
+    ("medir", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/medir"), &[("medir", DATOS)], &[]),
 ];
 
 const REGISTROS: u32 = 1;
@@ -370,6 +374,15 @@ pub fn lanzar() -> bool {
         apuntar(&mut llaves, "pantalla", FIRMWARE, Llave::nueva(pantalla, DERECHOS));
         apuntar(&mut llaves, "pantalla-info", DATOS, Llave::nueva(info, LEER | crate::objetos::TRANSFERIR));
     }
+    // El banco de medidas (M0): los ELF de los hijos de prueba, en un objeto de memoria solo de lectura.
+    #[cfg(feature = "medir")]
+    {
+        static PAQUETE_MEDIR: &[u8] = include_bytes!("../../usuario/target/medir.paq");
+        if let Some(m) = memoria::Memoria::nueva(PAQUETE_MEDIR.len(), &crate::cupo::Cupo::raiz()) {
+            m.escribir(0, PAQUETE_MEDIR);
+            apuntar(&mut llaves, "medir", DATOS, Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), LEER | crate::objetos::TRANSFERIR));
+        }
+    }
     // La V3D (C50): solo si su puente contesta. QEMU no la emula, y leer su ventana daría un fallo de bus: se sondea.
     // Sus registros son ventanas fijas (`docs/spec/hw/v3d.md`, §2.1 y §2.4). Su permiso DMA tiene desplazamiento 0: la
     // V3D ve direcciones físicas.
@@ -418,6 +431,10 @@ pub fn lanzar() -> bool {
     // Un servicio al que le falta algún aparato no se lanza (la GPU en QEMU, por ejemplo).
     let lanzables: Vec<_> = PROGRAMAS
         .iter()
+        // Con `medir`, nada que reste CPU a las pruebas: solo la consola y el orquestador.
+        .filter(|(nombre, _, _, _)| !cfg!(feature = "medir") || ["consola", "medir"].contains(nombre))
+        // Con `medir_fs` (paso F), solo el disco, el servicio de archivos y el banco.
+        .filter(|(nombre, _, _, _)| !cfg!(feature = "medir_fs") || ["consola", "nvme", "archivos", "medir-fs"].contains(nombre))
         .filter(|(nombre, _, aparatos, _)| {
             let falta = aparatos.iter().find(|(a, t)| t & OPCIONAL == 0 && !manifiesto.iter().any(|(n, tm, _)| *n == nombre16(a) && tm == t));
             if let Some((a, _)) = falta {

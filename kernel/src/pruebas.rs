@@ -995,6 +995,8 @@ fn prueba_lanzador() {
         paquete.extend_from_slice(elf);
     }
     llamadas::SALIDAS_VISIBLES.store(true, core::sync::atomic::Ordering::Relaxed);
+    // Las tablas de la zona de pilas no se devuelven (crecen con el máximo de hilos vivos a la vez): se cuentan aparte.
+    let tablas = crate::mapa::tablas_pilas();
     let libres = memoria::paginas().libres() + monton::paginas_pequenas();
     let Some(m) = memoria::Memoria::nueva(paquete.len(), &raiz) else { return };
     m.escribir(0, &paquete);
@@ -1014,13 +1016,14 @@ fn prueba_lanzador() {
     let mut despues = 0;
     while reloj::tics() < espera + 300 {
         esperar_tics(5);
-        despues = memoria::paginas().libres() + monton::paginas_pequenas();
+        despues = memoria::paginas().libres() + monton::paginas_pequenas() + (crate::mapa::tablas_pilas() - tablas);
         if despues >= libres {
             break;
         }
     }
     let usado = grupo.uso().1;
     kprintln!("  lanzador acabó: {:?}; usado en su grupo al final: {} bytes; páginas libres antes {}, después {}", fin, usado, libres, despues);
+    kprintln!("  tablas de pilas nuevas: {}", crate::mapa::tablas_pilas() - tablas);
     let bien = fin == Some(objetos::Fin::Salida(43)) && usado == 0 && despues >= libres && niveles == crate::cupo::MAX_PROFUNDIDAD as usize - 1;
     kprintln!("C43: pruebas de usuario lanzadas por un proceso {}", if bien { "bien" } else { "MAL" });
 }

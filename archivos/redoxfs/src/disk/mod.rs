@@ -61,6 +61,17 @@ pub trait Disk {
     fn flush(&mut self) -> Result<()> {
         Ok(())
     }
+
+    /// Whether the last `read_at` came whole from memory the disk already read (a cache), not from the disk. Then a
+    /// block whose hash was checked when it came from the disk need not be checked again (DashOS, F4). The default,
+    /// false, always checks.
+    fn last_read_from_memory(&self) -> bool {
+        false
+    }
+
+    /// The `count` blocks from `block` are free and nothing written there since the last `flush` needs to reach the
+    /// disk (DashOS, step B: blocks born and freed between two `FileSystem::durable`). The default keeps them.
+    fn forget(&mut self, _block: u64, _count: u64) {}
 }
 
 impl Disk for Box<dyn Disk> {
@@ -82,5 +93,9 @@ impl Disk for Box<dyn Disk> {
 
     fn flush(&mut self) -> Result<()> {
         (**self).flush()
+    }
+
+    fn last_read_from_memory(&self) -> bool {
+        (**self).last_read_from_memory()
     }
 }

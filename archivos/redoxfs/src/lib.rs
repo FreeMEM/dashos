@@ -45,7 +45,7 @@ pub use self::clone::clone;
 pub use self::dir::{DirEntry, DirList};
 pub use self::disk::*;
 pub use self::filesystem::FileSystem;
-pub use self::header::{HEADER_RING, Header};
+pub use self::header::{COMMIT_MAX, HEADER_RING, Header};
 pub use self::key::{Key, KeySlot, Salt};
 #[cfg(feature = "std")]
 pub use self::mount::mount;
@@ -102,3 +102,5 @@ mod tests_snapshot;
 mod tests_volume;
 #[cfg(all(feature = "std", test))]
 mod tests_seal;
+#[cfg(all(feature = "std", test))]
+mod tests_deferred;

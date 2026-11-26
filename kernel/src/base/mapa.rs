@@ -211,6 +211,14 @@ impl Pila {
     }
 }
 
+/// Tablas de nivel 3 de la zona de pilas creadas hasta ahora. No se devuelven: son memoria del kernel que crece con el
+/// máximo de hilos vivos a la vez, no una fuga (las pruebas que cuentan páginas libres las suman).
+static TABLAS_PILAS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+pub fn tablas_pilas() -> usize {
+    TABLAS_PILAS.load(Ordering::Relaxed)
+}
+
 /// Una pila nueva. `None` si no quedan ranuras o memoria.
 pub fn pila_nueva() -> Option<Pila> {
     let l2 = L2_PILAS.load(Ordering::Acquire);
@@ -228,6 +236,7 @@ pub fn pila_nueva() -> Option<Pila> {
         l3 = paginas().pagina(Zona::Normal)?;
         unsafe { core::ptr::write_bytes(mmu::virt(l3 as usize) as *mut u8, 0, PAGINA as usize) };
         poner(l2, i2, l3 | TABLA);
+        TABLAS_PILAS.fetch_add(1, Ordering::Relaxed);
     }
     for i in 0..pila.paginas.len() {
         let Some(p) = paginas().pagina(Zona::Normal) else {

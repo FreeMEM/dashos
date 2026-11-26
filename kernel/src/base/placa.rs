@@ -1,16 +1,23 @@
 //! Lo que cambia de una placa a otra (U3): la Pi 4 y QEMU `virt` (el camino de UEFI). Se elige al compilar, con la
-//! característica `virt`: el kernel está enlazado para una dirección física fija, distinta en cada una.
+//! característica `virt`: el kernel está enlazado para una dirección física fija, distinta en cada una. La Pi 3, con `pi3`
+//! (P3): la misma dirección que la Pi 4, otros periféricos.
 
 /// La ventana de periféricos, como [inicio, fin) físicos: memoria de dispositivo, nunca memoria normal.
-#[cfg(not(feature = "virt"))]
+#[cfg(not(any(feature = "virt", feature = "pi3")))]
 pub const PERIFERICOS: (u64, u64) = (0xFC00_0000, 0x1_0000_0000);
+/// La Pi 3 (P3): los periféricos de la BCM2837 desde 0x3F000000 y, justo después, los locales de los núcleos (el
+/// controlador de interrupciones de la QA7, en 0x40000000). En bloques de 2 MB.
+#[cfg(feature = "pi3")]
+pub const PERIFERICOS: (u64, u64) = (0x3F00_0000, 0x4020_0000);
 /// En `virt` todo el primer GB son aparatos (flash, GIC, PL011, virtio, ventanas del PCIe); la RAM empieza en 1 GB.
 #[cfg(feature = "virt")]
 pub const PERIFERICOS: (u64, u64) = (0, 0x4000_0000);
 
 /// El PL011 que usa el kernel para escribir antes de leer el árbol (y la consola hasta C48).
-#[cfg(not(feature = "virt"))]
+#[cfg(not(any(feature = "virt", feature = "pi3")))]
 pub const SERIE: usize = 0xFE20_1000;
+#[cfg(feature = "pi3")]
+pub const SERIE: usize = 0x3F20_1000;
 #[cfg(feature = "virt")]
 pub const SERIE: usize = 0x0900_0000;
 

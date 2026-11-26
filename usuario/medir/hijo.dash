@@ -1,0 +1,91 @@
+# Hijo del banco de medidas de la multitarea de DashOS (M0, docs/MULTITAREA_LOOP.md), en Dash: habla con el
+# orquestador `medir` como usuario/src/bin/medir_hijo.rs (órdenes eco, ping, calc y fin). Llave 1: el canal con el
+# orquestador; llave 2 (o la que llegue con una orden): el del otro hijo. Sin reloj fino: los huecos se miden en milisegundos, y el núcleo no lo
+# sabe (responde 9).
+# ./dash --dashos hijo.dash -o hijo
+
+func unidad(x: Int) -> Int
+    for i in (1..256)
+        x = x * 1664525 + 1013904223
+    end
+    return x
+end
+
+Main
+    buf = buffer_alloc(256)
+    otro = 2
+    while true
+        orden = channel_receive(1)
+        if orden == nil
+            break
+        end
+        if channel_handles() > 0
+            otro = channel_handle(0)
+        end
+        partes = str_split(orden, " ")
+        palabra = partes[0]
+        x = 0
+        if partes.length > 1
+            x = str_to_int(partes[1], 10)
+        end
+        if palabra == "eco"
+            veces = 0
+            while true
+                k = channel_receive_buffer(otro, buf, 256)
+                if k < 0
+                    break
+                end
+                if channel_send_buffer(otro, buf, k) != 0
+                    break
+                end
+                veces = veces + 1
+            end
+            channel_send(1, "eco #{veces}")
+        elif palabra == "ping"
+            t0 = time_ms()
+            i = 0
+            while i < x
+                buffer_set_long(buf, 0, i)
+                channel_send_buffer(otro, buf, 8)
+                channel_receive_buffer(otro, buf, 256)
+                i = i + 1
+            end
+            ms = time_ms() - t0
+            handle_close(otro)
+            channel_send(1, "ping #{x} #{ms * 1000} 9")
+        elif palabra == "calc"
+            t0 = time_ms()
+            fin = t0 + x
+            ant = t0
+            unidades = 0
+            acc = 1
+            hueco_max = 0
+            huecos = 0
+            while true
+                acc = unidad(acc)
+                unidades = unidades + 1
+                t = time_ms()
+                d = t - ant
+                if d > 1
+                    huecos = huecos + d
+                    if d > hueco_max
+                        hueco_max = d
+                    end
+                end
+                ant = t
+                if t >= fin
+                    break
+                end
+            end
+            if acc == 7
+                unidades = unidades + 1
+            end
+            channel_send(1, "calc #{unidades} #{hueco_max * 1000} #{huecos * 1000} 9 9")
+        elif palabra == "nucleo"
+            channel_send(1, "nucleo 9")
+        else
+            break
+        end
+    end
+    program_exit(0)
+end
