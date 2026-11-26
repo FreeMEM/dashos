@@ -5,6 +5,7 @@ Memoria física:
 CPU: NX sí, SMEP sí, SMAP sí
 MMU: tablas propias
 Defensas: NX sí, SMEP sí, SMAP sí, WP sí
+~Azar: semilla de la CPU
 X2: memoria libre como el mapa de UEFI bien
 X2: reparto de páginas bien, devolución bien
 X2: montón bien

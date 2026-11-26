@@ -14,6 +14,7 @@ Memoria física:
 CPU: NX sí, SMEP sí, SMAP sí
 MMU: tablas propias
 Defensas: NX sí, SMEP sí, SMAP sí, WP sí
+~Azar: semilla de la CPU
 DashOS en marcha (x86-64)
 # X5: el PCIe por la MCFG de ACPI, cada aparato con su MSI-X (desde la 8192, como las LPI de ARM), e inicio con los
 # servicios, como en arranque-virt.
@@ -82,3 +83,7 @@ DashOS en marcha (x86-64)
 ~│   [ficheros] FS8 comprobación: bien
 ~│   [ficheros] FS9 instantáneas: bien
 ~│   [ficheros] FS10 volúmenes: bien
+# El cifrado y la memoria del servicio (Argon2), con el azar de la CPU (RDSEED o RDRAND; antes de X7 paso 4, x86 no
+# tenía semilla y daban SIN_AZAR).
+~│   [ficheros] FS10 cifrado hecho aquí: bien
+~│   [ficheros] memoria: bien

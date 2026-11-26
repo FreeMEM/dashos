@@ -32,6 +32,56 @@ pub(super) const MSR_KERNEL_GS_BASE: u32 = 0xc000_0102;
 // el del APIC local (`tiempo.rs`).
 pub use super::tiempo::{contador, frecuencia, temporizador};
 
+/// De dónde saca la CPU su semilla de azar (SDM, volumen 1, 7.3.17: RDSEED y RDRAND).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FuenteAzar {
+    /// RDSEED (CPUID 7.0, EBX bit 18): la entropía del generador, para sembrar otro.
+    Rdseed,
+    /// RDRAND (CPUID 1, ECX bit 30): la salida de su generador determinista, resembrado por el hardware.
+    Rdrand,
+}
+
+/// Llena `salida` con números de la CPU. Devuelve la fuente y cuántos se llenaron (cada instrucción puede no dar nada
+/// un rato: se reintenta 10 veces por número, como dice el manual para RDRAND, y para RDSEED con pausas). Sin
+/// ninguna de las dos instrucciones, `None`.
+pub fn semilla(salida: &mut [u64]) -> Option<(FuenteAzar, usize)> {
+    let (max, ..) = cpuid(0, 0);
+    let (_, ebx7, ..) = if max >= 7 { cpuid(7, 0) } else { (0, 0, 0, 0) };
+    let (_, _, ecx1, _) = cpuid(1, 0);
+    let fuente = if ebx7 & (1 << 18) != 0 {
+        FuenteAzar::Rdseed
+    } else if ecx1 & (1 << 30) != 0 {
+        FuenteAzar::Rdrand
+    } else {
+        return None;
+    };
+    let mut n = 0;
+    for s in salida.iter_mut() {
+        let mut dado = false;
+        for _ in 0..10 {
+            let (v, ok): (u64, u8);
+            // SEGURIDAD: CPUID dice que la instrucción existe; solo escribe el registro y CF (y las banderas).
+            unsafe {
+                match fuente {
+                    FuenteAzar::Rdseed => asm!("rdseed {v}", "setc {ok}", v = out(reg) v, ok = out(reg_byte) ok, options(nomem, nostack)),
+                    FuenteAzar::Rdrand => asm!("rdrand {v}", "setc {ok}", v = out(reg) v, ok = out(reg_byte) ok, options(nomem, nostack)),
+                }
+            }
+            if ok != 0 {
+                *s = v;
+                dado = true;
+                break;
+            }
+            core::hint::spin_loop();
+        }
+        if !dado {
+            break;
+        }
+        n += 1;
+    }
+    Some((fuente, n))
+}
+
 /// Abre las interrupciones de este núcleo.
 pub fn habilitar_irq() {
     unsafe { asm!("sti", options(nomem, nostack)) };
