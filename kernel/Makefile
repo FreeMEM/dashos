@@ -33,6 +33,11 @@ CARGO_PERFIL := $(if $(filter release,$(PERFIL)),--release,)
 
 all: $(IMAGEN)
 
+# U7: CAJA_ORDEN=le mete la caja Amiga en little-endian (caja/build-le: el JIT gira los bytes del 68k), para las CPU
+# sin big-endian en EL0. Por omisión, big-endian (caja/build). build.rs la elige con DASHOS_CAJA_ORDEN.
+CAJA_ORDEN ?= be
+export DASHOS_CAJA_ORDEN := $(CAJA_ORDEN)
+
 $(IMAGEN): usuario FORCE
 	cargo build $(CARGO_PERFIL)
 	$(OBJCOPY) -O binary $(ELF) $(IMAGEN)
@@ -45,7 +50,7 @@ usuario: kit-c FORCE
 	$(BOOTLIN)/aarch64_be-linux-as -EL -o $(PIE).o ../usuario/asm/pie.s
 	$(BOOTLIN)/aarch64_be-linux-ld -EL -pie --no-dynamic-linker -z noexecstack -z stack-size=32768 -o $(PIE) $(PIE).o
 	@# H4: la caja Amiga (caja/), con el JIT de Emu68: solo si está el clon de third_party/Emu68 (toolchains/LEEME.md).
-	if [ -d ../third_party/Emu68/src ]; then $(MAKE) -C ../caja; else echo "Sin third_party/Emu68: la caja Amiga no se compila"; fi
+	if [ -d ../third_party/Emu68/src ]; then $(MAKE) -C ../caja ORDEN=$(CAJA_ORDEN); else echo "Sin third_party/Emu68: la caja Amiga no se compila"; fi
 
 # Las ventanas de los programas de Dash (kit-c/): ../build/libkit_c.a, el kit con ABI de C que enlaza `./dash --dashos`
 # cuando el programa usa mui_* (docs/bitacoras/dash-ventanas.md). Con el memcpy de la biblioteca dashos débil: manda el

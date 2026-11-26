@@ -63,7 +63,10 @@ fn comprimir_programas(dir: &str, fuente: &str, destino: &str) {
         let ruta = if nombre == "caja-amiga" && std::env::var_os("CARGO_FEATURE_DEMO").is_some() {
             format!("{}/../caja/build-demo/{}", dir, nombre)
         } else if nombre == "caja-amiga" {
-            format!("{}/../caja/build/{}", dir, nombre)
+            // U7: con DASHOS_CAJA_ORDEN=le (make CAJA_ORDEN=le), la caja en little-endian.
+            println!("cargo:rerun-if-env-changed=DASHOS_CAJA_ORDEN");
+            let le = std::env::var("DASHOS_CAJA_ORDEN").as_deref() == Ok("le");
+            format!("{}/../caja/{}/{}", dir, if le { "build-le" } else { "build" }, nombre)
         } else if nombre == "dash-ventana" {
             format!("{}/../build/{}", dir, nombre)
         } else if nombre == "paq" {

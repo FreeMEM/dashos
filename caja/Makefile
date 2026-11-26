@@ -5,7 +5,23 @@ TC      ?= $(HOME)/.local/opt/toolchains/aarch64be--glibc--stable-2026.08-1/bin/
 CC      := $(TC)gcc
 CXX     := $(TC)g++
 EMU68   ?= ../third_party/Emu68
+# U7: `make ORDEN=le` saca la caja en little-endian (build-le/caja-amiga), para las CPU sin big-endian en EL0 (Apple):
+# la memoria del 68k sigue en big-endian y el JIT da la vuelta a los bytes en cada acceso (parches 0004-0009 y 0012 de
+# patches/emu68; EMU68_HOST_LE). El kernel la corre en little-endian porque su ELF lo dice (EI_DATA).
+ORDEN   ?= be
+ifeq ($(ORDEN),le)
+B       := build-le
+ENDIAN  := -mlittle-endian
+LDEND   := -Wl,-EL
+INC_LE  := -I../jit-host/include-le
+RUST_T  := aarch64-unknown-none-softfloat
+else
 B       := build
+ENDIAN  := -mbig-endian
+LDEND   := -Wl,-EB
+INC_LE  :=
+RUST_T  := aarch64_be-unknown-none-softfloat
+endif
 
 # Los registros del 68k viven fijos en registros ARM (x13-x29, v19-v26): mismas opciones que jit-host/Makefile.
 CONTEXT_RESERVE := -ffixed-q19 -ffixed-v19 -ffixed-d19 -ffixed-q20 -ffixed-v20 -ffixed-d20 \
@@ -17,11 +33,11 @@ M68K_FIXED := -ffixed-x12 -ffixed-x18 -ffixed-x19 -ffixed-x20 -ffixed-x21 -ffixe
 M68K_SAVED := -fcall-saved-x4 -fcall-saved-x5 -fcall-saved-x6 -fcall-saved-x7 -fcall-saved-x8 \
 	-fcall-saved-x9 -fcall-saved-x10 -fcall-saved-x11
 
-COMMON  := -MMD -MP -mbig-endian -ffreestanding -fno-exceptions -fno-unwind-tables -fno-stack-protector \
+COMMON  := -MMD -MP $(ENDIAN) -ffreestanding -fno-exceptions -fno-unwind-tables -fno-stack-protector \
 	-fno-asynchronous-unwind-tables -fpie -march=armv8-a+crc -O2 -fomit-frame-pointer \
 	-ffixed-x12 -falign-functions=32 -mno-outline-atomics -fno-builtin \
 	-DEMU68_VERSION_MAJOR=1 -DEMU68_VERSION_MINOR=1 -DDASHOS_HOST=1 -DDASHOS_NATIVE_CALLS=1 \
-	-I$(EMU68)/include -I$(EMU68)/external/capstone/include -I../jit-host/include $(CONTEXT_RESERVE)
+	-I$(EMU68)/include -I$(EMU68)/external/capstone/include -I../jit-host/include $(INC_LE) $(CONTEXT_RESERVE)
 CFLAGS  := $(COMMON) -std=gnu23 -Wno-error
 ifneq ($(CAJA_INTERACTIVA),)
 CFLAGS  += -DCAJA_INTERACTIVA=$(CAJA_INTERACTIVA)
@@ -74,62 +90,63 @@ DASH_EJ := $(dir $(DASH))examples
 DASH_TESTS := $(dir $(DASH))tests
 # S28: los virus de laboratorio (pruebas68k/malware/, con su Makefile; van en git).
 MALWARE := $(patsubst %,pruebas68k/malware/%.exe,arranque enlace parche residente guion troyano memoria)
-DASH_EXES := $(B)/dash/hola.exe $(B)/dash/texto.exe $(B)/dash/texto_gcc.exe $(B)/dash/ventana.exe \
-	$(B)/dash/interp.exe $(B)/dash/listas.exe $(B)/dash/ctrl_c.exe $(B)/dash/ctrl_c_gcc.exe $(B)/dash/ctrl_c_for.exe \
-	$(B)/dash/trap_ilegal.exe $(B)/dash/trap_divcero.exe $(B)/dash/test_gadtools.exe \
-	$(B)/dash/test_reaction.exe $(B)/dash/test_doc_reaction.exe
+# Los programas de Dash son 68k: los mismos para los dos órdenes, siempre en build/dash (programas.S los busca ahí).
+DASH_EXES := build/dash/hola.exe build/dash/texto.exe build/dash/texto_gcc.exe build/dash/ventana.exe \
+	build/dash/interp.exe build/dash/listas.exe build/dash/ctrl_c.exe build/dash/ctrl_c_gcc.exe build/dash/ctrl_c_for.exe \
+	build/dash/trap_ilegal.exe build/dash/trap_divcero.exe build/dash/test_gadtools.exe \
+	build/dash/test_reaction.exe build/dash/test_doc_reaction.exe
 PROGRAMAS_DEPS := programas.S pruebas68k/sistema.bin pruebas68k/hola.bin pruebas68k/lineaa.bin pruebas68k/bucle.bin pruebas68k/mala.bin pruebas68k/saludo.exe pruebas68k/ventana.exe pruebas68k/hostil.exe pruebas68k/anidado.exe pruebas68k/gadtools.exe pruebas68k/boopsi.exe pruebas68k/ramlib.exe pruebas68k/capa.exe pruebas68k/glotona.exe pruebas68k/memh.exe pruebas68k/procesos.exe pruebas68k/actualiza.exe pruebas68k/ils.exe pruebas68k/dtprueba.exe pruebas68k/cgx.exe $(MALWARE) $(DASH_EXES)
 $(B)/programas.o: $(PROGRAMAS_DEPS) | $(B)
 	$(CC) $(COMMON) -c $< -o $@
 
 define compila_dash
-	@mkdir -p $(B)/dash
+	@mkdir -p build/dash
 	@if [ -x $(DASH) ]; then echo "dash $(2) $(1)"; $(DASH) $(2) $(1) -o $@.tmp >$@.log 2>&1 && mv $@.tmp $@ \
 		|| { cat $@.log; echo "AVISO: $(notdir $@) no compila: vacío"; : > $@; }; \
 		 else echo "AVISO: sin $(DASH): $(notdir $@) vacío (la caja no ejecuta programas de Dash)"; : > $@; fi
 endef
-$(B)/dash/hola.exe: $(wildcard $(DASH_EJ)/hola.dash) | $(B)
+build/dash/hola.exe: $(wildcard $(DASH_EJ)/hola.dash) | $(B)
 	$(call compila_dash,$(DASH_EJ)/hola.dash,)
-$(B)/dash/texto.exe: pruebas68k/dash/caja_texto.dash | $(B)
+build/dash/texto.exe: pruebas68k/dash/caja_texto.dash | $(B)
 	$(call compila_dash,$<,)
-$(B)/dash/texto_gcc.exe: pruebas68k/dash/caja_texto.dash | $(B)
+build/dash/texto_gcc.exe: pruebas68k/dash/caja_texto.dash | $(B)
 	$(call compila_dash,$<,--gcc)
-$(B)/dash/ventana.exe: pruebas68k/dash/caja_ventana.dash | $(B)
+build/dash/ventana.exe: pruebas68k/dash/caja_ventana.dash | $(B)
 	$(call compila_dash,$<,)
 # Dos pruebas de texto de FreeMEMLang, tal cual (su salida esperada, la de sus líneas "# expect-out").
-$(B)/dash/interp.exe: $(wildcard $(DASH_TESTS)/test_interp_comillas.dash) | $(B)
+build/dash/interp.exe: $(wildcard $(DASH_TESTS)/test_interp_comillas.dash) | $(B)
 	$(call compila_dash,$(DASH_TESTS)/test_interp_comillas.dash,)
-$(B)/dash/listas.exe: $(wildcard $(DASH_TESTS)/test_lista_listas_literal.dash) | $(B)
+build/dash/listas.exe: $(wildcard $(DASH_TESTS)/test_lista_listas_literal.dash) | $(B)
 	$(call compila_dash,$(DASH_TESTS)/test_lista_listas_literal.dash,)
 
 # Ctrl-C en un bucle (las excepciones de tarea, por los dos caminos) y tres pruebas de FreeMEMLang tal cual: Ctrl-C
 # por SetSignal a sí mismo, y dos excepciones del procesador que recoge el tc_TrapCode de Dash (llevan @native: van
 # por C aunque se pida el camino directo).
-$(B)/dash/ctrl_c.exe: pruebas68k/dash/caja_ctrl_c.dash | $(B)
+build/dash/ctrl_c.exe: pruebas68k/dash/caja_ctrl_c.dash | $(B)
 	$(call compila_dash,$<,)
-$(B)/dash/ctrl_c_gcc.exe: pruebas68k/dash/caja_ctrl_c.dash | $(B)
+build/dash/ctrl_c_gcc.exe: pruebas68k/dash/caja_ctrl_c.dash | $(B)
 	$(call compila_dash,$<,--gcc)
-$(B)/dash/ctrl_c_for.exe: $(wildcard $(DASH_TESTS)/test_ctrl_c_for.dash) | $(B)
+build/dash/ctrl_c_for.exe: $(wildcard $(DASH_TESTS)/test_ctrl_c_for.dash) | $(B)
 	$(call compila_dash,$(DASH_TESTS)/test_ctrl_c_for.dash,)
-$(B)/dash/trap_ilegal.exe: $(wildcard $(DASH_TESTS)/test_trap_illegal.dash) | $(B)
+build/dash/trap_ilegal.exe: $(wildcard $(DASH_TESTS)/test_trap_illegal.dash) | $(B)
 	$(call compila_dash,$(DASH_TESTS)/test_trap_illegal.dash,)
-$(B)/dash/trap_divcero.exe: $(wildcard $(DASH_TESTS)/test_trap_divzero.dash) | $(B)
+build/dash/trap_divcero.exe: $(wildcard $(DASH_TESTS)/test_trap_divzero.dash) | $(B)
 	$(call compila_dash,$(DASH_TESTS)/test_trap_divzero.dash,)
 
 # El ejemplo de GadTools de FreeMEMLang, tal cual.
-$(B)/dash/test_gadtools.exe: $(wildcard $(DASH_EJ)/test_gadtools.dash) | $(B)
+build/dash/test_gadtools.exe: $(wildcard $(DASH_EJ)/test_gadtools.dash) | $(B)
 	$(call compila_dash,$(DASH_EJ)/test_gadtools.dash,)
 # ReAction: el ejemplo (espera a que pulsen) y la prueba de la documentación (acaba sola).
-$(B)/dash/test_reaction.exe: $(wildcard $(DASH_EJ)/test_reaction.dash) | $(B)
+build/dash/test_reaction.exe: $(wildcard $(DASH_EJ)/test_reaction.dash) | $(B)
 	$(call compila_dash,$(DASH_EJ)/test_reaction.dash,)
-$(B)/dash/test_doc_reaction.exe: $(wildcard $(DASH_TESTS)/test_doc_reaction.dash) | $(B)
+build/dash/test_doc_reaction.exe: $(wildcard $(DASH_TESTS)/test_doc_reaction.dash) | $(B)
 	$(call compila_dash,$(DASH_TESTS)/test_doc_reaction.dash,)
 
 # Las bibliotecas nativas (pegamento/, una staticlib de Rust para aarch64_be-unknown-none-softfloat). Su memcpy (de
 # compiler_builtins, que entra con LTO) se queda dentro: el del C es el de Emu68 (support.c).
-RUST_A := pegamento/target/aarch64_be-unknown-none-softfloat/release/libcaja_pegamento.a
+RUST_A := pegamento/target/$(RUST_T)/release/libcaja_pegamento.a
 $(B)/pegamento.a: FORCE | $(B)
-	cd pegamento && cargo build --release --quiet
+	cd pegamento && cargo build --release --quiet --target $(RUST_T)
 	$(TC)objcopy --localize-symbol=memcpy --localize-symbol=memset --localize-symbol=memmove $(RUST_A) $@.tmp
 	cmp -s $@.tmp $@ || mv $@.tmp $@
 	rm -f $@.tmp
@@ -137,7 +154,7 @@ $(B)/pegamento.a: FORCE | $(B)
 # Un PIE estático (enlace.ld): el kernel lo pone por encima de 128 GB, fuera del alcance del 68k (S28). Solo puede llevar
 # reubicaciones R_AARCH64_RELATIVE (las aplica entrada.S): se comprueba aquí.
 $(B)/caja-amiga: $(OBJS) $(B)/pegamento.a enlace.ld
-	$(CXX) -mbig-endian -static-pie -nostdlib -nostartfiles -Wl,-EB -Wl,--build-id=none -Wl,-z,noexecstack \
+	$(CXX) $(ENDIAN) -static-pie -nostdlib -nostartfiles $(LDEND) -Wl,--build-id=none -Wl,-z,noexecstack \
 		-Wl,-z,text -Wl,-T,enlace.ld -Wl,-Map=$(B)/caja-amiga.map -o $@.tmp $(OBJS) $(B)/pegamento.a
 	@if $(TC)readelf -rW $@.tmp | grep -E '^[0-9a-f]{16} ' | grep -v R_AARCH64_RELATIVE; then \
 		echo "La caja lleva reubicaciones que entrada.S no aplica"; rm -f $@.tmp; exit 1; fi
@@ -155,7 +172,7 @@ pruebas-pc:
 	$(MAKE) -C pruebas_hunk
 
 clean:
-	rm -rf $(B) $(BX) build-pc pegamento/target
+	rm -rf build build-le $(BX) build-pc pegamento/target
 .PHONY: all clean pruebas-pc FORCE
 FORCE:
 

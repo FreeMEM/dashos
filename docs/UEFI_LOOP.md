@@ -448,3 +448,25 @@ comprobado si lo tienen).
   (0008 es solo del banco). Se aplican limpios sobre Emu68 af63580 tras 0001 a 0003, y un banco compilado desde ahí da
   las mismas sumas. **No comprobado:** interrupciones, fallos de bus y de MMU (formatos 3 y 4), MOVES, la parte de PPC
   de Emu68, y nada fuera de QEMU de usuario.
+
+### 2026-11-26 noche — U7h (la caja de DashOS en little-endian)
+
+Retomado por encargo del usuario (26/11), en la rama `aarch64-le` (sale de `motor`, con la interfaz de motor de X7),
+worktree `.worktrees/aarch64`.
+
+- `make -C caja ORDEN=le` saca la caja en little-endian (`caja/build-le/caja-amiga`), como `jit-host` con
+  `ORDEN=le`: la misma cadena de Bootlin con `-mlittle-endian` y `-Wl,-EL`, `jit-host/include-le`, y pegamento/ para
+  `aarch64-unknown-none-softfloat`. Emu68 con todos los parches de `patches/emu68` (los de U7, 0004 a 0009 y 0012, se
+  activan solos en little-endian). Los programas de Dash son 68k: los dos órdenes usan los de `caja/build/dash`.
+- El C común (caja.c, hunk.c) y las bibliotecas de Rust ya eran de los dos órdenes desde X7 (la caja de x86 es
+  little-endian): no hubo que tocarlos. `motor_emu68.c` solo cambia el nombre que dice al arrancar.
+- `make -C kernel ... CAJA_ORDEN=le` mete esa caja en la imagen (build.rs, con `DASHOS_CAJA_ORDEN`). El kernel no
+  cambia: pone o quita SCTLR_EL1.E0E por proceso según el EI_DATA de su ELF, así que esta caja corre sin E0E.
+- **Comprobado:** `make -C kernel arranque-virt CAJA_ORDEN=le` bien entera (486 líneas de la caja: hunks, ventanas,
+  GadTools, ReAction, procesos, el malware de laboratorio, la FPU), con el disco, la captura y el sonido bien. Es la
+  primera vez que el JIT en little-endian corre con interrupciones y con las bibliotecas nativas.
+- Sin `CAJA_ORDEN`, todo como antes: `make -C kernel prueba` y `caja-x86` bien; `arranque-virt` con la caja
+  big-endian, sus 486 líneas bien, pero las dos vueltas se pararon en `[ram]` (una en "crear y borrar en el cajón", otra
+  en "avisos hostiles"): el intermitente del servicio de archivos que ya apunta `docs/X86_LOOP.md`, no de la caja.
+- **No comprobado:** una CPU sin big-endian en EL0 de verdad (en QEMU la CPU lo tiene; la caja solo no lo usa), la Pi
+  con esta caja, y cuánto cuesta girar los bytes.

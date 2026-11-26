@@ -75,7 +75,14 @@ void MainLoop(void);
 
 static struct M68KState m68k;
 
-const char *motor_nombre(void) { return "JIT de Emu68 en un proceso de usuario big-endian"; }
+const char *motor_nombre(void)
+{
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    return "JIT de Emu68 en un proceso de usuario little-endian (U7: gira los bytes del 68k)";
+#else
+    return "JIT de Emu68 en un proceso de usuario big-endian";
+#endif
+}
 
 /* --- El código traducido: el mismo objeto para escribir y, en otra dirección, para ejecutar (W^X) --- */
 
