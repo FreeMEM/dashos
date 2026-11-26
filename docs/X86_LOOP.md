@@ -212,7 +212,7 @@ Dos líneas a la vez (decisión 4 de S30):
   - [ ] 4. Medir contra Emu68 (en máquinas de verdad: aquí ARM va por TCG y x86 por KVM) y, con el guion largo en x86,
     la caja dentro de `arranque-x86`. Mirado el 2026-11-22: metida en `arranque-x86`, su ventana se queda el teclado y
     falta "[ventana] tecla 30 recibida" (el guion corto de x86 manda la "a" a ciegas); y salió "[ficheros] memoria: ...
-    sin memoria MAL" (no está en lo esperado de x86: sin saber si ya salía antes). Queda en su prueba, `caja-x86`. En la
+    sin memoria MAL": no era de la caja, sino que x86 no tenía semilla de azar (arreglado el 2026-11-26, RDSEED). Queda en su prueba, `caja-x86`. En la
     imagen de usar, como en ARM, fuera de momento (corre sus programas de prueba).
 - [ ] X8 **La caja con el JIT** de RelevoJIT (necesita R6).
 - [ ] X9 **Un PC de verdad**, arrancando desde USB (necesita la máquina; decisión 5 de S30).
@@ -1251,3 +1251,25 @@ ficheros, `actualiza.exe`, los programas de Dash (texto, ventana, Ctrl-C, trampa
 cybergraphics, la multitarea (20.002 cambios de tarea en 133 ms) y, al final, la caja muere al escribir en la página 0
 ("caja-amiga acabó: clase 2"). Igual que en ARM: `ventana.exe` y la ventana de Dash se cierran solas por tiempo (en esta
 imagen no hay guion que pulse su gadget).
+
+### 2026-11-26 — La FPU extendida en la caja de x86 y el azar de x86
+
+Bucle reanudado (lo pidió el usuario el 2026-11-26). La cuota la manda `cuota.py` de `/trabajo`. Rama `motor`.
+
+- **La FPU extendida entre cambios de tarea** (53876712). `caja_fp_leer`/`caja_fp_poner` pasan 13 u64. Con RelevoJIT,
+  la mantisa en v[0..7] y el signo y el exponente en v[11..12]. Emu68 no cambia: sigue con double y no toca v[11..12].
+  `Contexto` de `caja_exec` lleva `fp_ext`. Prueba nueva en `procesos.c` (modo a): 1 + 2^-60 en FP2 (no cabe en un
+  double) y otra tarea que pone otro valor en su FP2. Sin el arreglo, MAL en `caja-x86` (la mantisa baja se perdía);
+  con él, bien en `caja-x86` y en `arranque-virt` de ARM (con Emu68 el valor ya era 1 antes, y sigue igual).
+- **El azar de x86** (d331d6f7). El "[ficheros] memoria ... sin memoria MAL" del paso 4 era `SIN_AZAR` (-14): x86
+  no tenía semilla (en ARM sale del árbol de dispositivos), así que el servicio de archivos no cifraba ni hacía
+  volúmenes de usuario. Ahora 256 bytes de RDSEED (o RDRAND) al arrancar, contados como semilla de verdad (como
+  `random.trust_cpu` de Linux). `arranque-x86` espera ya "FS10 cifrado hecho aquí: bien" y "[ficheros] memoria: bien".
+
+Comprobado: `make -C kernel prueba` (ARM) BIEN; `prueba-x86`, `arranque-x86` y `caja-x86` BIEN. La primera vuelta de
+`arranque-x86` falló solo en el sonido grabado (huecos en el tono de 600 Hz, con la máquina a carga 6); la segunda,
+entera bien. `arranque-virt` (ARM): la caja entera bien; solo faltó el intermitente de "[ram] Ana: avisos hostiles",
+esta vez con otra cara: llegan los 63 timbres y los 63 avisos y aun así MAL (lo que queda en la condición es
+`llegados == ids`: los números de las vigilancias). Sigue siendo para la sesión del servicio de archivos.
+No comprobado: RDSEED en un PC de verdad, ni una CPU sin RDSEED (el camino de RDRAND).
+
