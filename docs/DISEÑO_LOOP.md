@@ -60,7 +60,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
    este fichero. Cuando el usuario decide, se pasa a `PLAN.md` y se quita de la lista.
 7. **Sala limpia.** Este bucle puede leer documentación pública de AmigaOS, MorphOS y AROS. No lee código de AROS ni
    desensamblados del Kickstart: esos los usan solo las sesiones de análisis (`AGENTS.md`, regla 1).
-8. **Hangar.** Hangar es privado (`~/Proyectos/hangar`, plan en `servicio/docs/PLAN.md`). El bucle puede leerlo
+8. **Hangar.** Hangar es otro proyecto, con su repositorio. El bucle puede leerlo
    para diseñar cómo encaja con DashOS. No copia nada de Hangar en este repositorio: solo describe la integración.
 9. **Sin código del sistema.** Este bucle no escribe el kernel. Sí puede hacer pruebas pequeñas para comprobar un
    dato, en `docs/diseño/pruebas/` o en el scratchpad.
@@ -103,7 +103,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
   qué cuesta.
 - [x] S8 **Paquetes y Hangar.** Un gestor de paquetes como pacman: formato, repositorios, firmas, dependencias,
   actualizaciones atómicas con instantáneas del sistema de archivos, y deltas. Tres clases de paquete: nativos de
-  DashOS, programas Amiga y programas de Linux. Hangar como tienda y catálogo por encima, con programas de pago.
+  DashOS, programas Amiga y programas de Linux. Hangar como catálogo por encima.
 - [x] S9 **Gráficos.** De la pantalla del firmware a la GPU V3D de la Pi 4. Las dos salidas HDMI. Compositor,
   sincronía vertical, escalado para pantallas de mucha densidad.
 - [x] S10 **Escritorio.** Ventanas flotantes y en mosaico en el mismo escritorio, escritorios virtuales, varios
@@ -232,7 +232,7 @@ capa de traducción nunca está completa. Consecuencia para S9: el compositor ti
 `docs/diseño/S8-paquetes.md`. Dos niveles como Fedora Silverblue: `SYS:` como imagen firmada que entra al reiniciar,
 y paquetes por encima en `Paquetes:` o `Home:`, con cada transacción en una instantánea. Un gestor, `Paq`, con una
 orden que lo pone todo al día, como `pacman -Syu`. Tres mundos: nativos y Amiga con `Paq` (los Amiga con su
-`Installer` dentro de la caja), Linux con el gestor de su distribución. Hangar es la tienda y `Paq` el motor; el
+`Installer` dentro de la caja), Linux con el gestor de su distribución. Hangar es el catálogo y `Paq` el motor; el
 cliente de Hangar para el Amiga funcionaría en la caja desde el primer día. Hangar solo se leyó, no se tocó.
 
 ### 2026-11-03 — S9 (gráficos)
