@@ -32,8 +32,9 @@
 //! ciclos de color); un `WAIT`, tres antes de empezar a esperar, y despierta 2 ciclos de color antes de la posición
 //! (el comparador va adelantado); un `SKIP`, cuatro.
 //!
-//! Duda: sin Denise ni los demás DMA, el Copper tiene todos los ciclos pares. En el Amiga, los planos en alta resolución
-//! (o muchos en baja) le quitan ciclos y lo retrasan.
+//! Los planos le quitan los ciclos que usan ([`crate::denise`]): en alta resolución con 3 o 4, o en baja con 5 o 6, los
+//! pares de la zona de lectura; el Copper espera al siguiente ciclo libre. Duda: los demás DMA (disco, audio, sprites)
+//! aún no le quitan nada.
 
 use crate::memoria::MemoriaChip;
 use crate::{CICLOS_POR_COLOR, COLOR_POR_LINEA, Chips, custom, dir, dma};
@@ -338,7 +339,8 @@ impl Chips {
     /// Da el paso del Copper que toca a la hora actual (la de [`Copper::cuando`]).
     pub(crate) fn paso_copper(&mut self, mem: &mut dyn MemoriaChip) {
         let (_, h) = self.posicion();
-        let libre = h != CICLO_PROHIBIDO;
+        // El bus no está libre en el ciclo $E0 ni en los que usan los planos (crate::denise).
+        let libre = h != CICLO_PROHIBIDO && !self.planos_usan_ciclo();
         let par = h % 2 == 0;
         match self.copper.paso {
             Paso::Parado => {}

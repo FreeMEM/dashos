@@ -1,5 +1,6 @@
 //! Los chips del Amiga para la caja (S18, fase 1): los dos CIA 8520, un Agnus mínimo y el reloj. PAL y OCS. Y,
-//! adelantados de la fase 2, el Blitter ([`blitter`]) y el Copper ([`copper`]).
+//! adelantados de la fase 2, el Blitter ([`blitter`]), el Copper ([`copper`]) y los planos de imagen con Denise
+//! ([`denise`]).
 //!
 //! Escrito desde el Amiga Hardware Reference Manual y la hoja de datos del MOS 8520; el Copper, también desde el de
 //! vAmiga (MPL-2.0, ver [`copper`]). No se ha leído código de UAE, WinUAE, FS-UAE, Amiberry ni AROS. No sabe nada del
@@ -21,7 +22,7 @@
 //! - `VERTB` sube al empezar cada cuadro (línea 0), y el Copper vuelve a `COP1LC`. El TOD del CIA-A cuenta un pulso por cuadro (VSYNC) y el del CIA-B
 //!   uno por línea (HSYNC).
 //!
-//! Los chips no tienen la chip RAM: el Copper la lee por [`MemoriaChip`], que da la caja en [`Chips::avanzar_con`],
+//! Los chips no tienen la chip RAM: el Copper y los planos la leen por [`MemoriaChip`], que da la caja en [`Chips::avanzar_con`],
 //! [`Chips::leer_con`] y [`Chips::escribir_con`]. [`Chips::avanzar`], [`Chips::leer`] y [`Chips::escribir`] van sin ella
 //! ([`SinMemoria`]: el Copper lee 0, un `MOVE` prohibido, y se para hasta el cuadro siguiente).
 //!
@@ -58,11 +59,13 @@
 pub mod blitter;
 pub mod cia;
 pub mod copper;
+pub mod denise;
 pub mod memoria;
 
 use blitter::Blitter;
 use cia::Cia;
 use copper::Copper;
+use denise::Planos;
 pub use memoria::{MemoriaChip, SinMemoria};
 
 /// Ciclos del 68000 por segundo en un Amiga PAL (7,09379 MHz).
@@ -114,13 +117,11 @@ pub mod custom {
     pub const DMACON: u32 = 0x096;
     pub const INTENA: u32 = 0x09A;
     pub const INTREQ: u32 = 0x09C;
-    /// Se guarda (para Denise); de momento solo se usa su bit `LACE` (2), para la duración del cuadro.
+    /// Para Agnus y Denise ([`crate::denise`]); su bit `LACE` (2) da también la duración del cuadro.
     pub const BPLCON0: u32 = 0x100;
-    /// Se guarda, para Denise.
     pub const BPLCON1: u32 = 0x102;
-    /// Se guarda, para Denise.
     pub const BPLCON2: u32 = 0x104;
-    /// Los 32 registros de color, de `COLOR00` a `COLOR31`, se guardan para Denise.
+    /// Los 32 registros de color, de `COLOR00` a `COLOR31`, para Denise.
     pub const COLOR00: u32 = 0x180;
     pub const COLOR31: u32 = 0x1BE;
 }
@@ -190,6 +191,8 @@ pub struct Chips {
     intreq: u16,
     dmacon: u16,
     blitter: Blitter,
+    /// El DMA de planos y Denise.
+    planos: Planos,
     /// Accesos a direcciones sin nada que se imite: leen 0 y no escriben.
     pub accesos_a_nadie: u64,
     /// La última de esas direcciones.
@@ -220,6 +223,7 @@ impl Chips {
             intreq: 0,
             dmacon: 0,
             blitter: Blitter::default(),
+            planos: Planos::default(),
             accesos_a_nadie: 0,
             ultimo_a_nadie: 0,
         }
@@ -332,7 +336,7 @@ impl Chips {
         loop {
             if !self.copper_dma() {
                 // Sin su DMA, el Copper solo vuelve a COP1LC en cada cuadro.
-                if self.avanzar_base(hora) > 0 {
+                if self.avanzar_base(hora, mem) > 0 {
                     self.copper_cuadro();
                 }
                 return;
@@ -348,17 +352,29 @@ impl Chips {
             if t > hora {
                 break;
             }
-            if self.avanzar_base(t) > 0 {
+            if self.avanzar_base(t, mem) > 0 {
                 self.copper_cuadro();
             } else {
                 self.paso_copper(mem);
             }
         }
-        self.avanzar_base(hora);
+        self.avanzar_base(hora, mem);
     }
 
-    /// Pone al día hasta `hora` todo menos el Copper. Dice cuántos cuadros han empezado.
-    fn avanzar_base(&mut self, hora: u64) -> u64 {
+    /// Pone al día hasta `hora` todo menos el Copper: los planos y la imagen, cuadro a cuadro, y lo demás. Dice
+    /// cuántos cuadros han empezado.
+    fn avanzar_base(&mut self, hora: u64, mem: &mut dyn MemoriaChip) -> u64 {
+        let mut cuadros = 0;
+        while hora > self.hora {
+            let t = hora.min(self.inicio_cuadro(1));
+            self.pantalla_hasta(t, mem);
+            cuadros += self.avanzar_sin_pantalla(t);
+        }
+        cuadros
+    }
+
+    /// Pone al día hasta `hora` los CIA, el haz y el Blitter. Dice cuántos cuadros han empezado.
+    fn avanzar_sin_pantalla(&mut self, hora: u64) -> u64 {
         if hora <= self.hora {
             return 0;
         }
@@ -611,10 +627,7 @@ impl Chips {
             custom::INTENA => set_clr(&mut self.intena, v, 0x7FFF),
             // Duda: el bit 14 de INTREQ no tiene uso; aquí se guarda como en INTENA. Comprobar qué lee INTREQR.
             custom::INTREQ => set_clr(&mut self.intreq, v, 0x7FFF),
-            custom::BPLCON0 => self.bplcon0 = v,
-            custom::BPLCON1 => self.bplcon1 = v,
-            custom::BPLCON2 => self.bplcon2 = v,
-            custom::COLOR00..=custom::COLOR31 => self.colores[((off - custom::COLOR00) / 2) as usize] = v & 0x0FFF,
+            _ if self.escribir_planos(off, v, mem) => {}
             _ if self.escribir_copper(off, v) => {}
             _ => self.nadie(dir),
         }
