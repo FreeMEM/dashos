@@ -1,6 +1,7 @@
 /*
-    DashOS, X7 (paso 3): el motor RelevoJIT de la caja Amiga (motor.h), en x86-64. RelevoJIT es un crate de Rust que
-    va enlazado con pegamento/ y da su interfaz de C (relevo.h). Por ahora con su intérprete (X7); su JIT, en X8.
+    DashOS, X7 (paso 3) y X8: el motor RelevoJIT de la caja Amiga (motor.h), en x86-64. RelevoJIT es un crate de Rust
+    que va enlazado con pegamento/ y da su interfaz de C (relevo.h). Con su JIT (X8) o con su intérprete (X7): se elige
+    al compilar (`make -C caja x86 MOTOR=jit|interprete`, que define MOTOR_JIT a 1 o a 0).
 
     - Un 68040 con su FPU, con la memoria del 68k en las mismas direcciones que en el proceso (RELEVO_OPT_BASE_ZERO):
       RAM desde M68K_RAM hasta m68k_ram_fin (motor_memoria la sigue cuando crece o encoge) y, en los primeros 64 KB,
@@ -15,6 +16,11 @@
       desde cualquier hilo.
     - La FPU para pegamento/ (multitarea): los registros de 80 bits de RelevoJIT pasan tal cual (la mantisa y, aparte,
       el signo y el exponente; motor.h): la precisión extendida no se pierde al cambiar de tarea.
+    - El JIT: su memoria de código la da pegamento/ (jit.rs: un objeto de memoria de DashOS proyectado dos veces, para
+      escribir en 384 GB y para ejecutar en 388 GB, fuera del alcance del 68k; motor_zonas lo dice). Lo que el 68k
+      escribe en su código lo ve él solo; lo que escribe el anfitrión (el cargador, SetFunction...) lo avisa la caja con
+      motor_olvidar y motor_olvidar_en_nativa. La línea A, las páginas del anfitrión y las excepciones van por su
+      intérprete, y las interrupciones entran entre bloques traducidos.
 */
 
 #include <stdint.h>
@@ -22,10 +28,52 @@
 #include "motor.h"
 #include "relevo.h"
 
+#ifndef MOTOR_JIT
+#define MOTOR_JIT 1
+#endif
+
 static relevo_cpu *cpu;
 static volatile int nmi;    /* se pidió cortar: el nivel se queda en 7 hasta el programa siguiente */
 
-const char *motor_nombre(void) { return "Intérprete de RelevoJIT en un proceso de usuario de x86-64 (U7)"; }
+const char *motor_nombre(void)
+{
+    return MOTOR_JIT ? "JIT de RelevoJIT en un proceso de usuario de x86-64 (X8)"
+                     : "Intérprete de RelevoJIT en un proceso de usuario de x86-64 (U7)";
+}
+
+/* --- La memoria de código del JIT (pegamento/src/jit.rs) --- */
+
+int caja_codigo_proyectar(void *ctx, size_t tam, void **rw, void **rx);
+void caja_codigo_quitar(void *ctx, void *rw, void *rx, size_t tam);
+void caja_codigo_escrito(void *ctx, size_t desde, size_t tam);
+
+/* 16 MB, lo más que da el kernel en un objeto: si se llena, RelevoJIT tira lo traducido y empieza de nuevo. */
+#define TAM_CODIGO (16u << 20)
+static void *codigo_rw, *codigo_rx;
+
+static int codigo_proyectar(void *ctx, size_t tam, void **rw, void **rx)
+{
+    int e = caja_codigo_proyectar(ctx, tam, rw, rx);
+    if (e == 0) {
+        codigo_rw = *rw;
+        codigo_rx = *rx;
+    }
+    return e;
+}
+
+static const relevo_code_memory codigo = {
+    .size = TAM_CODIGO,
+    .map = codigo_proyectar,
+    .unmap = caja_codigo_quitar,
+    .end_write = caja_codigo_escrito,
+};
+
+/* Las estadísticas del JIT (de tests/hooks.h de RelevoJIT, que no es su interfaz pública): los bloques traducidos,
+   para motor_unidades. */
+typedef struct jit_stats {
+    uint64_t blocks, insns, runs, bails, interp, flushes, links, dropped, host;
+} jit_stats;
+void jit_get_stats(const relevo_cpu *cpu, jit_stats *out);
 
 static void volcar(relevo_regs *r)
 {
@@ -74,7 +122,8 @@ int motor_iniciar(void)
     relevo_config cfg = { 0 };
     cfg.model = RELEVO_68040;
     cfg.fpu = RELEVO_FPU_INTERNAL;
-    cfg.engine = RELEVO_ENGINE_INTERP;
+    cfg.engine = MOTOR_JIT ? RELEVO_ENGINE_JIT : RELEVO_ENGINE_INTERP;
+    cfg.code_memory = MOTOR_JIT ? &codigo : 0;
     cfg.memory = 0;
     cfg.memory_size = 0x100000000ULL - RELEVO_PAGE_SIZE;   /* todo lo que se puede ver; solo lo que se mapea vale */
     cfg.options = RELEVO_OPT_EXIT_ON_PC_ZERO | RELEVO_OPT_BASE_ZERO;
@@ -204,13 +253,21 @@ void motor_interrupcion_atendida(void)
 
 void motor_olvidar(void) { relevo_invalidate_all(cpu); }
 void motor_olvidar_en_nativa(void) { relevo_invalidate_all(cpu); }
-uint32_t motor_unidades(void) { return 0; }
 
+uint32_t motor_unidades(void)
+{
+    if (!MOTOR_JIT) return 0;
+    jit_stats s;
+    jit_get_stats(cpu, &s);
+    return (uint32_t)s.blocks;
+}
+
+/* Su estado y, con el JIT, su código para escribir y para ejecutar; con el intérprete, la variable y su código. */
 void motor_zonas(uintptr_t z[MOTOR_ZONAS])
 {
     z[0] = (uintptr_t)cpu;
-    z[1] = (uintptr_t)&cpu;
-    z[2] = (uintptr_t)motor_iniciar;
+    z[1] = MOTOR_JIT ? (uintptr_t)codigo_rw : (uintptr_t)&cpu;
+    z[2] = MOTOR_JIT ? (uintptr_t)codigo_rx : (uintptr_t)motor_iniciar;
 }
 
 void motor_volcar(void) { volcar(relevo_get_regs(cpu)); }

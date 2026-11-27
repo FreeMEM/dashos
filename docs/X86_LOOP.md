@@ -213,7 +213,18 @@ Dos líneas a la vez (decisión 4 de S30):
     su guion (`TECLAS=1`) y lo esperado compartido con ARM (`arranque_virt.txt` sin sus bloques "#[arm"). Pendiente
     todavía: medir contra Emu68 en máquinas de verdad (aquí ARM va por TCG y x86 por TCG o KVM). En la imagen de usar,
     como en ARM, fuera de momento (corre sus programas de prueba).
-- [ ] X8 **La caja con el JIT** de RelevoJIT (necesita R6).
+- [x] X8 **La caja con el JIT** de RelevoJIT (2026-11-27): `caja/motor_relevo.c` con `RELEVO_ENGINE_JIT`, su memoria
+  de código de `dashos::codigo_doble` (la de X7a, compartida con `relevo`) a través de `caja/pegamento/src/jit.rs`, en
+  384 y 388 GB; `make -C caja x86 MOTOR=jit|interprete` (y lo mismo en `make -C kernel caja-x86` y `arranque-x86`),
+  el JIT por omisión. RelevoJIT sin cambios (rama `motor-caja`, f74486e, ya en GitHub). Lo que queda abierto:
+  - Olvidar lo traducido es siempre todo (`relevo_invalidate_all`): exec ya apunta los tramos cambiados
+    (`tomar_codigo_cambiado`), pero `caja_jit_olvidar` no los pasa. Con TCG, `boopsi` y `glotona` van más lentas con
+    el JIT que con el intérprete (sin mirar si es por esto o por traducir código que corre una vez); con KVM, igual.
+  - Lo que el anfitrión escribe en la memoria del 68k sin avisar (una función nativa que cambie código sin pasar por
+    `tomar_codigo_cambiado`) se queda con lo traducido viejo, como con Emu68 en ARM. Lo que escribe el 68k, RelevoJIT
+    lo ve solo.
+  - Una sola CPU con JIT por proceso (las direcciones de `codigo_doble` son fijas), como en X7a.
+  - Sin medir contra Emu68 en máquinas de verdad (lo de X7 paso 4 sigue pendiente).
 - [ ] X9 **Un PC de verdad**, arrancando desde USB (necesita la máquina; decisión 5 de S30).
 
 ## Bloqueos
@@ -1323,3 +1334,61 @@ con la misma cara (todo lo impreso como debe, y MAL). La prueba dice ahora, si s
 vigilancias se pusieron, los timbres que faltan o sobran y los avisos con otra cuenta. Así, la próxima vez que salga,
 se sabrá cuál de las tres cosas es.
 
+
+### 2026-11-27 — X8: la caja Amiga de x86 con el JIT de RelevoJIT
+
+Rama `motor`. RelevoJIT sin cambios: la rama `motor-caja` (f74486e, ya en GitHub) trae todo lo que la caja necesita, y
+el `rev` de `caja/pegamento/Cargo.toml` sigue igual.
+
+- **`caja/motor_relevo.c`** con `RELEVO_ENGINE_JIT` y su memoria de código (`relevo_code_memory`). `MOTOR_JIT` (1 por
+  omisión) elige el motor al compilar; `motor_nombre` dice "JIT de RelevoJIT ... (X8)" o "Intérprete de RelevoJIT ...
+  (U7)". `motor_zonas` da, con el JIT, la CPU y las dos vistas del código (con el intérprete, como antes);
+  `motor_unidades`, los bloques traducidos (de `jit_get_stats`, que no está en `relevo.h`: se declara en el C).
+- **La memoria de código, compartida con X7a**: `dashos::codigo_doble` (`usuario/src/codigo_doble.rs`, solo x86): el
+  objeto de memoria proyectado para escribir en 384 GB y para ejecutar en 388 GB, y CPUID tras escribir. La usan el
+  programa `relevo` (sin su copia de antes) y la caja (`caja/pegamento/src/jit.rs`, tres funciones de C que arma
+  `motor_relevo.c`), con 16 MB. No depende del crate `relevo`: `usuario/` lo trae con otro `rev` (ac26a32) y dos
+  copias del crate chocarían al enlazar.
+- **Elegir el motor**: `make -C caja x86 MOTOR=jit|interprete` (`build-x86/motor` guarda el último, para recompilar
+  `motor_relevo.o` al cambiarlo), y `MOTOR=` en `make -C kernel caja-x86` y `arranque-x86` (y `x86`). Lo esperado
+  cita el JIT (`caja_x86.txt`, y una línea "#x86" nueva en `arranque_virt.txt`); con `MOTOR=interprete` el Makefile la
+  cambia por la del intérprete (`MOTOR_ESPERADO`).
+- Lo demás pasa igual que con el intérprete sin tocar nada: la base 0, la página 0 del anfitrión (sus accesos van por
+  el intérprete), la línea A y la entrada anidada, el nivel 6 y la NMI desde el vigilante (entran entre bloques), el
+  mapa al crecer o encoger la RAM (`relevo_map` vacía lo traducido), olvidar lo traducido (`relevo_invalidate_all`,
+  desde el cargador y desde las nativas) y la FPU de 80 bits entre tareas.
+
+Medidas de la tanda de la caja (`make -C kernel caja-x86`), en ms salvo el bucle; dos vueltas de cada, la máquina con
+otras QEMU a la vez (carga 2-4):
+
+| | TCG, intérprete | TCG, JIT | KVM, intérprete | KVM, JIT |
+|---|---|---|---|---|
+| bucle sin fin, vueltas en 300 ms | 2,9 M - 3,0 M | 34,5 M - 41,6 M | 28,8 M - 31,9 M | 447 M - 452 M |
+| suma de 1 a 100000 (el programa entero) | 22 | 18 - 19 | 1 | 1 |
+| `procesos-e` (20.002 cambios de tarea) | 136 - 137 | 149 - 151 | 9 - 10 | 10 |
+| `procesos-a` / `procesos-b` | 781 - 794 / 733 - 803 | 875 - 893 / 767 - 784 | 746 / 179 - 180 | 759 - 764 / 177 - 182 |
+| `cgx.exe` (WritePixelArray, 10 de 640x480) | 345 - 350 (60) | 155 (40 - 60) | 36 (0) | 10 (0 - 20) |
+| `hunk hostil` | 152 | 149 - 150 | 14 | 10 |
+| `boopsi.exe` / `glotona.exe` | 129 / 184 - 187 | 251 - 256 / 233 - 235 | 102 / 20 - 21 | 104 - 105 / 24 - 29 |
+| suma de las pruebas de menos de 1 s | 4703 - 4791 | 6064 - 6151 | 3045 - 3046 | 3074 - 3141 |
+
+Donde el 68k calcula, el JIT va 13 a 15 veces más rápido (el bucle); `cgx`, 2 a 3,5 veces; el cargador hostil, poco. Casi
+todas las pruebas de la tanda son llamadas nativas y esperas, y ahí no cambia nada. Con TCG, lo que corre una vez y
+cambia mucho de código (`boopsi`, `glotona`, `procesos-a`) va más lento con el JIT: traducir cuesta, y en TCG el código
+traducido se traduce otra vez. Sin mirar cuánto pesa que la caja olvide siempre todo lo traducido (abierto, en la
+tarea). Con KVM, igual que el intérprete. Los cambios de tarea (`procesos-e`) van por nativas: igual.
+
+Comprobado: `make -C kernel caja-x86` BIEN con el JIT y con `MOTOR=interprete`, con TCG y con `ACCEL=kvm` (las ocho
+vueltas de la tabla, sin una línea MAL; S28: la caja, toda por encima de 4 GB, con el código del JIT en 384 y 388 GB).
+`make -C kernel prueba-x86` BIEN (X7a con `codigo_doble`: los 14 programas igual que en Linux y el banco). `make -C
+kernel prueba` (ARM) BIEN. `make -C kernel arranque-virt` (ARM): solo faltó el intermitente de "[ram] Ana: avisos
+hostiles" (y lo que el guion deja para después: `guarda` y la commodity); la caja, entera. `make -C kernel
+arranque-x86` con el JIT: la primera vuelta, lo mismo, con la caja entera ("JIT de RelevoJIT" y todas sus líneas); la
+segunda, entera BIEN (el guion, el reinicio, el disco en Linux, los SATA, la captura, el sonido y la ventana de Ana).
+El detalle del intermitente,
+igual en las dos: "63 puestas; timbres que faltan [], que sobran []; avisos raros [(5, 1, 3), ..., (67, 1, 3)]": los 63
+avisos llegan con cuenta 3 en vez de 2. Es del servicio de archivos (la vigilancia de `RAM:`), no de la caja. En x86,
+además, `hostil` no recibió a tiempo su primera acción de administrador (-2147483648; el intermitente ya apuntado).
+
+No comprobado: con IOMMU, con `SONIDO_X86=virtio` ni con otras redes; `arranque-x86` con `ACCEL=kvm`; contra Emu68 en
+máquinas de verdad.

@@ -64,49 +64,37 @@ mod x86 {
 
     // ---- La memoria de código del JIT ----------------------------------------------------------------------------
 
-    /// Dónde se proyecta la memoria de código: en lo libre desde 384 GB (`docs/referencia/kernel.md`), lejos del
-    /// montón (64 GB) y de sus pedidos grandes (480 GB). Una sola CPU con JIT viva a la vez.
-    const ESCRIBIR_EN: usize = 0x60_0000_0000;
-    const EJECUTAR_EN: usize = 0x61_0000_0000;
-    /// 8 MB: el kernel da objetos de hasta 16 MB. Si se llena, RelevoJIT tira lo traducido y empieza de nuevo.
+    use dashos::codigo_doble::{self, CodigoDoble};
+
+    /// 8 MB: el kernel da objetos de hasta 16 MB. Si se llena, RelevoJIT tira lo traducido y empieza de nuevo. Una
+    /// sola CPU con JIT viva a la vez (las direcciones de `codigo_doble` son fijas).
     const TAM_CODIGO: usize = 8 << 20;
 
-    /// Lo que el JIT pidió a la memoria de código: la llave del objeto y cuántas veces escribió.
+    /// Lo que el JIT pidió a la memoria de código: la memoria y cuántas veces escribió.
     #[derive(Default)]
     struct Codigo {
-        llave: u32,
+        memoria: Option<CodigoDoble>,
         escrituras: u64,
         bytes: u64,
     }
 
-    /// `relevo_code_memory.map`: un objeto de memoria de `tam` bytes, proyectado para escribir en `ESCRIBIR_EN` y para
-    /// leer y ejecutar en `EJECUTAR_EN`.
+    /// `relevo_code_memory.map`: un objeto de memoria de `tam` bytes en sus dos proyecciones (`dashos::codigo_doble`).
     unsafe extern "C" fn proyectar(ctx: *mut c_void, tam: usize, rw: *mut *mut c_void, rx: *mut *mut c_void) -> c_int {
         // SAFETY: `ctx` es el `Codigo` que `cpu_nueva` puso en la tabla, vivo mientras la CPU, y RelevoJIT no llama a
         // la vez a otra función de la tabla.
         let c = unsafe { &mut *ctx.cast::<Codigo>() };
-        if c.llave != 0 {
+        if c.memoria.is_some() {
             return -1;
         }
-        let m = dashos::memoria_crear(tam);
-        if (m as i32) <= 0 {
+        let Some(m) = CodigoDoble::nueva(tam, codigo_doble::ESCRIBIR_EN, codigo_doble::EJECUTAR_EN) else {
             return -1;
-        }
-        if dashos::memoria_proyectar(m, ESCRIBIR_EN, true) != 0 {
-            dashos::cerrar(m);
-            return -1;
-        }
-        if dashos::memoria_proyectar_codigo(m, EJECUTAR_EN) != 0 {
-            dashos::memoria_quitar(ESCRIBIR_EN);
-            dashos::cerrar(m);
-            return -1;
-        }
-        c.llave = m;
+        };
         // SAFETY: `rw` y `rx` son de RelevoJIT, para esto (relevo.h).
         unsafe {
-            *rw = ESCRIBIR_EN as *mut c_void;
-            *rx = EJECUTAR_EN as *mut c_void;
+            *rw = m.escribir() as *mut c_void;
+            *rx = m.ejecutar() as *mut c_void;
         }
+        c.memoria = Some(m);
         0
     }
 
@@ -114,23 +102,19 @@ mod x86 {
     unsafe extern "C" fn quitar(ctx: *mut c_void, _rw: *mut c_void, _rx: *mut c_void, _tam: usize) {
         // SAFETY: como en `proyectar`.
         let c = unsafe { &mut *ctx.cast::<Codigo>() };
-        dashos::memoria_quitar(ESCRIBIR_EN);
-        dashos::memoria_quitar(EJECUTAR_EN);
-        dashos::cerrar(c.llave);
-        c.llave = 0;
+        if let Some(m) = c.memoria.take() {
+            m.quitar();
+        }
     }
 
-    /// `relevo_code_memory.end_write`: el JIT escribió `tam` bytes desde `desde`. En x86 no hay caché de instrucciones
-    /// que limpiar, pero el código se escribió por otra dirección lineal que la de ejecutarlo: antes de ejecutarlo, una
-    /// instrucción que serializa, CPUID (Intel SDM, volumen 3, "Self-Modifying Code"; como el paso 37 de `malo`).
+    /// `relevo_code_memory.end_write`: el JIT escribió `tam` bytes desde `desde`; antes de ejecutarlos, lo de
+    /// `codigo_doble::escrito` (CPUID).
     unsafe extern "C" fn escrito(ctx: *mut c_void, _desde: usize, tam: usize) {
         // SAFETY: como en `proyectar`.
         let c = unsafe { &mut *ctx.cast::<Codigo>() };
         c.escrituras += 1;
         c.bytes += tam as u64;
-        // SAFETY: CPUID existe en todo x86-64 y solo lee.
-        #[allow(unused_unsafe)]
-        let _ = unsafe { core::arch::x86_64::__cpuid(0) };
+        codigo_doble::escrito();
     }
 
     // ---- Una CPU -----------------------------------------------------------------------------------------------------

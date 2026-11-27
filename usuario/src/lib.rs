@@ -74,6 +74,9 @@ pub mod tanda;
 pub mod cuentas;
 #[cfg(target_arch = "aarch64")]
 mod copiar;
+/// X7a, X8: la memoria de código de un JIT en x86-64 (dos proyecciones del mismo objeto, escribir y ejecutar).
+#[cfg(target_arch = "x86_64")]
+pub mod codigo_doble;
 
 /// Llamada al sistema en crudo: número y cinco argumentos; devuelve x0 y x1. Para pruebas y para la biblioteca.
 #[cfg(target_arch = "aarch64")]

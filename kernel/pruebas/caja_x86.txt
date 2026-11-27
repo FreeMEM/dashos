@@ -1,8 +1,9 @@
 # X7: la caja Amiga en x86-64 (`make -C kernel caja-x86`): el mismo proceso de la caja que en ARM, con RelevoJIT (su
-# intérprete) en vez de Emu68. Lo básico de sus pruebas: el 68k suma y escribe por la dos.library nativa, la línea A, exec
-# y dos sobre el servicio de archivos y un ejecutable hunk.
+# JIT, X8; con MOTOR=interprete, su intérprete: el Makefile cambia la línea del nombre) en vez de Emu68. Lo básico de sus
+# pruebas: el 68k suma y escribe por la dos.library nativa, la línea A, exec y dos sobre el servicio de archivos y un
+# ejecutable hunk.
 DashOS: arranque por UEFI en x86-64
-~│   [caja-amiga] Intérprete de RelevoJIT en un proceso de usuario de x86-64
+~│   [caja-amiga] JIT de RelevoJIT en un proceso de usuario de x86-64
 ~│   [caja-amiga] hola desde un programa 68k, por la dos.library nativa
 ~│   [caja-amiga] suma de 1 a 100000 en el 68k: 705082704
 ~│   [caja-amiga] el 68k dio 705082704 (esperado 705082704) con 4 llamadas nativas

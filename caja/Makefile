@@ -160,13 +160,18 @@ clean:
 FORCE:
 
 # --- X7: la caja de x86-64 (make -C caja x86): build-x86/caja-amiga ---
-# El C común (caja.c, hunk.c) con el motor RelevoJIT (motor_relevo.c; su crate va enlazado en pegamento/), la entrada de
+# El C común (caja.c, hunk.c) con el motor RelevoJIT (motor_relevo.c; su crate va enlazado en pegamento/): su JIT (X8,
+# MOTOR=jit, por omisión) o su intérprete (X7, MOTOR=interprete). La entrada de
 # x86 (entrada_x86.S) y lo que en ARM da Emu68: x86/soporte.c, y tlsf.c de Emu68 con x86/support.h y x86/spinlock.h. Los
 # programas 68k son los de ARM (los de Dash, en build/dash/). RelevoJIT sale de GitHub con el `rev` de
 # pegamento/Cargo.toml (Cargo lo baja; su include/relevo.h se busca con `cargo metadata`). RELEVO_DIR=<ruta> usa un
 # clon local en su lugar.
 BX := build-x86
 CC_X86 ?= gcc
+MOTOR ?= jit
+ifeq ($(filter $(MOTOR),jit interprete),)
+$(error MOTOR=$(MOTOR): tiene que ser jit o interprete)
+endif
 RELEVO_DIR ?=
 # Se calcula una vez y solo si hace falta (las reglas de ARM no la tocan).
 RELEVO_INC = $(eval RELEVO_INC := $(if $(RELEVO_DIR),$(abspath $(RELEVO_DIR))/include,$(shell cd pegamento && \
@@ -184,6 +189,11 @@ x86: $(BX)/caja-amiga
 
 $(BX)/%.o: %.c Makefile | $(BX)
 	$(CC_X86) $(CFLAGS_X86) -c $< -o $@
+# El motor elegido: si MOTOR cambia, motor_relevo.o se rehace (build-x86/motor, con el último).
+$(BX)/motor_relevo.o: $(BX)/motor
+$(BX)/motor: FORCE | $(BX)
+	@echo $(MOTOR) | cmp -s - $@ || echo $(MOTOR) > $@
+$(BX)/motor_relevo.o: CFLAGS_X86 += -DMOTOR_JIT=$(if $(filter jit,$(MOTOR)),1,0)
 $(BX)/soporte.o: x86/soporte.c Makefile | $(BX)
 	$(CC_X86) $(CFLAGS_X86) -c $< -o $@
 $(BX)/tlsf.o: $(EMU68)/src/tlsf.c Makefile | $(BX)

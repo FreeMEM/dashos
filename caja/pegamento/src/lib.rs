@@ -21,6 +21,8 @@ mod aviso;
 mod compositor;
 mod defensa;
 mod faltan;
+#[cfg(target_arch = "x86_64")]
+mod jit;
 mod mates;
 mod memoria;
 mod multitarea;

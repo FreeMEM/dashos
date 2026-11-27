@@ -801,8 +801,12 @@ endif
 
 # PCID=1 enciende PCID en el kernel de x86 (opción `pcid`); sin él, apagado (decisión del usuario del 2026-11-15).
 # X7, paso 4: con la caja Amiga de x86 (`caja/build-x86/caja-amiga`, RelevoJIT de GitHub o RELEVO_DIR), que va dentro.
+# X8: MOTOR=jit (por omisión) o MOTOR=interprete elige el motor de RelevoJIT de la caja; lo esperado de la caja dice cuál
+# (`MOTOR_ESPERADO`: la línea del nombre del motor, que en los ficheros es la del JIT).
+MOTOR ?= jit
+MOTOR_ESPERADO := $(if $(filter interprete,$(MOTOR)),sed 's/\] JIT de RelevoJIT/] Intérprete de RelevoJIT/',cat)
 x86: usuario-x86-servicios firmware-x86 FORCE
-	$(MAKE) -C ../caja x86 $(if $(RELEVO_DIR),RELEVO_DIR=$(abspath $(RELEVO_DIR)))
+	$(MAKE) -C ../caja x86 MOTOR=$(MOTOR) $(if $(RELEVO_DIR),RELEVO_DIR=$(abspath $(RELEVO_DIR)))
 	cargo build $(CARGO_PERFIL) --target x86_64-unknown-none $(if $(PCID),--features pcid)
 	$(OBJCOPY_X86) --strip-debug $(ELF_X86) $(NUCLEO_X86)
 
@@ -872,7 +876,7 @@ arranque-x86: x86 $(DISCO_NVME_X86)
 	rm -f target/sonido-x86.wav target/captura-x86.ppm target/u6-x86.ana.ppm target/u6-x86.carla.ppm
 	python3 ../tools/disco_sata.py crear target/sata0.img 0
 	python3 ../tools/disco_sata.py crear target/sata1.img 1
-	{ cat pruebas/arranque_x86.txt; awk '/^#\[arm/ { fuera = 1; next } /^#\]/ { fuera = 0; next } fuera { next } { sub(/^#x86 /, ""); print }' pruebas/arranque_virt.txt; } > target/arranque_x86_comun.txt
+	{ cat pruebas/arranque_x86.txt; awk '/^#\[arm/ { fuera = 1; next } /^#\]/ { fuera = 0; next } fuera { next } { sub(/^#x86 /, ""); print }' pruebas/arranque_virt.txt | $(MOTOR_ESPERADO); } > target/arranque_x86_comun.txt
 	$(call esperados_x86,target/arranque_x86_comun.txt,pruebas/arranque_x86_iommu.txt,target/esperados_arranque_x86.txt)
 	cat pruebas/arranque_x86_sonido_$(SONIDO_X86).txt >> target/esperados_arranque_x86.txt
 	$(if $(IOMMU),echo "~$(SONIDO_NOMBRE): DMA por la IOMMU$(coma) en su dominio" >> target/esperados_arranque_x86.txt)
@@ -941,17 +945,18 @@ graficos-x86: FORCE
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(NUCLEO_X86_GRAFICOS)) cargo build --release --target x86_64-unknown-uefi
 	python3 ../tools/prueba_graficos_x86.py ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi $(DOMINIO_GRAFICOS) --iommu $(or $(IOMMU),intel) --salida target/graficos
 
-# X7: la caja Amiga de x86-64 (`caja/build-x86/caja-amiga`, con el intérprete de RelevoJIT) con sus programas de
+# X7, X8: la caja Amiga de x86-64 (`caja/build-x86/caja-amiga`, con el JIT de RelevoJIT o, con MOTOR=interprete, su
+# intérprete) con sus programas de
 # prueba: la imagen `caja` (la consola, el compositor, el disco NVMe, el servicio de archivos y la caja) en QEMU q35, y
 # lo que dice la caja contra pruebas/caja_x86.txt. RelevoJIT, de GitHub (rama motor-caja; RELEVO_DIR=<ruta> para un clon local).
 NUCLEO_X86_CAJA := target/kernel-x86-caja.elf
 caja-x86: firmware-x86 $(DISCO_NVME) FORCE
-	$(MAKE) -C ../caja x86 $(if $(RELEVO_DIR),RELEVO_DIR=$(abspath $(RELEVO_DIR)))
+	$(MAKE) -C ../caja x86 MOTOR=$(MOTOR) $(if $(RELEVO_DIR),RELEVO_DIR=$(abspath $(RELEVO_DIR)))
 	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86) $(RELEVO_PATCH) --bin inicio --bin consola --bin compositor --bin nvme --bin archivos
 	cargo build $(CARGO_PERFIL) --target x86_64-unknown-none --features caja$(if $(PCID),$(coma)pcid)
 	$(OBJCOPY_X86) --strip-debug $(ELF_X86) $(NUCLEO_X86_CAJA)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(NUCLEO_X86_CAJA)) cargo build --release --target x86_64-unknown-uefi
-	cp pruebas/caja_x86.txt target/esperados_caja_x86.txt
+	$(MOTOR_ESPERADO) < pruebas/caja_x86.txt > target/esperados_caja_x86.txt
 	$(ACCEL_QEMU) GUARDAR=$(abspath target/salida_caja_x86.txt) ARQ=x86_64 QEMU_EXTRA="-drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_caja_x86.txt $(or $(TIEMPO_X86),300)
 
 # La imagen de usar en x86-64 (`make x86-uso`): el escritorio de `virt-uso` (`kernel/src/inicio_x86_uso.rs`) en QEMU q35
