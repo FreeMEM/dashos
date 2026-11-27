@@ -62,8 +62,9 @@ las pruebas no valen como oráculo.
 - `jit-host/`: el JIT de Emu68 solo, como programa Linux big-endian. `make -C jit-host run` lo prueba con
   `qemu-aarch64_be`.
 - `caja/`: la caja Amiga (H4): el JIT de Emu68 en un programa de usuario big-endian de DashOS, en C. La compila
-  `make -C kernel` si está `third_party/Emu68`; `inicio` la lanza en `make -C kernel arranque-virt`. Con
-  `CAJA_ORDEN=le`, la caja en little-endian (U7, `docs/UEFI_LOOP.md`).
+  `make -C kernel` si está `third_party/Emu68`; `inicio` la lanza en `make -C kernel arranque-virt`. La
+  imagen de `virt` lleva también la caja en little-endian (`caja/build-le`) y la usa si la CPU no tiene big-endian en
+  EL0; `CAJA_ORDEN=le` la fuerza (U7, `docs/UEFI_LOOP.md`).
 - `toolchains/`: ficheros de CMake y envoltorios para las toolchains de Bootlin. `toolchains/LEEME.md` explica cómo
   compilar Emu68.
 - `patches/emu68/`: parches sobre Emu68 (MPL). `third_party/Emu68` es un clon que no va en git.

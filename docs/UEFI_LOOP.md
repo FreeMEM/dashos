@@ -47,8 +47,9 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   U7a banco de pruebas en los dos órdenes, U7b parche base, U7c direcciones efectivas, U7d instrucciones, U7e FPU.
   Prueba: `make -C jit-host && make -C jit-host ORDEN=le && python3 jit-host/comparar.py`.
   Hecho en el banco (`jit-host`) del 2026-11-07, U7a a U7g: el JIT corre en little-endian con los cinco programas de
-  prueba iguales que en big-endian. Falta llevarlo a la caja de DashOS cuando la caja exista (hoy el JIT solo corre
-  en el banco) y probarlo en una CPU sin big-endian de verdad.
+  prueba iguales que en big-endian. Hecho en la caja de DashOS el 2026-11-27 (U7h y U7i, rama `aarch64-le`): la caja
+  en little-endian pasa `arranque-virt` entera, y la imagen de `virt` la elige si la CPU no tiene big-endian en EL0.
+  Falta probarlo en una CPU sin big-endian de verdad (un Mac con Asahi) y medir lo que cuesta en tiempo.
 
 ## Herramientas
 
