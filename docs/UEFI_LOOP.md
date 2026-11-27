@@ -496,3 +496,8 @@ worktree `.worktrees/aarch64`.
   "MAL" en cinco (bloques algo más largos que en la referencia). La referencia (`pruebas68k/ref`, del 16/11) se saca
   con 0001-0003, 0008 y 0013 sin U7, así que no lleva 0014 (direcciones de 64 bits), que puede añadir instrucciones
   también en big-endian. Sin comprobar que sea solo eso; queda mirarlo y rehacer la referencia.
+- Tras unir `motor` (la FPU extendida entre tareas, X7 paso 4): `make -C kernel prueba` bien, `make -C kernel
+  caja-x86` bien y `arranque-virt CAJA_ORDEN=le` con la caja de little-endian elegida por `inicio` y entera bien.
+  La vuelta acabó con un solo fallo: "[ram] Ana: avisos de ENV:Sys ... cuentan [201, 201]". Es el otro intermitente
+  del servicio de archivos, el del aviso de más, que ya salió dos veces en x86 (`docs/X86_LOOP.md`). Con él, las
+  tres vueltas con la caja de little-endian han dado la caja entera bien.
