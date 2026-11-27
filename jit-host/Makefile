@@ -19,6 +19,16 @@ LDEND   := -Wl,-EB
 QEMU    := qemu-aarch64_be
 endif
 
+# L1 (docs/CAJA_LINUX_LOOP.md): `make PAGINA0=1` pone la página 0 del 68k en una copia en $10000, sin proyectar la
+# dirección 0 (Linux no deja sin ser root): el JIT desvía las lecturas absolutas y un manejador de SIGSEGV imita las
+# demás (pagina0.c, con decodifica() de caja/fallo_a64.h).
+PAGINA0 ?= 0
+FALLO_INC ?= ../caja
+ifeq ($(PAGINA0),1)
+B       := $(B)-p0
+P0      := -DDASHOS_PAGINA0=0x10000 -I$(FALLO_INC)
+endif
+
 CONTEXT_RESERVE := -ffixed-q19 -ffixed-v19 -ffixed-d19 -ffixed-q20 -ffixed-v20 -ffixed-d20 \
 	-ffixed-q21 -ffixed-v21 -ffixed-d21 -ffixed-v22 -ffixed-d22 -ffixed-v23 -ffixed-d23 \
 	-ffixed-v24 -ffixed-d24 -ffixed-v25 -ffixed-d25 -ffixed-v26 -ffixed-d26
@@ -32,7 +42,7 @@ COMMON  := -MMD -MP $(ENDIAN) -ffreestanding -fno-exceptions -fno-unwind-tables 
 	-fno-asynchronous-unwind-tables -fno-pic -fno-pie -march=armv8-a+crc -O2 -fomit-frame-pointer \
 	-ffixed-x12 -falign-functions=32 -mno-outline-atomics -fno-builtin \
 	-DEMU68_VERSION_MAJOR=1 -DEMU68_VERSION_MINOR=1 -DDASHOS_HOST=1 -DDASHOS_NATIVE_CALLS=1 \
-	-I$(EMU68)/include -I$(EMU68)/external/capstone/include -Iinclude $(INC_LE) $(CONTEXT_RESERVE)
+	-I$(EMU68)/include -I$(EMU68)/external/capstone/include -Iinclude $(INC_LE) $(P0) $(CONTEXT_RESERVE)
 CFLAGS  := $(COMMON) -std=gnu23 -Wno-error
 CXXFLAGS:= $(COMMON) -std=gnu++23 -fno-rtti -Wno-error
 
