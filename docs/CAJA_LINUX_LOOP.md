@@ -70,5 +70,17 @@ propio, `third_party/Emu68` del worktree, con los parches de `patches/emu68/`.
   con `malloc`, en una base cualquiera, y comparan el JIT con el intérprete.
 - `make comparar` (sin `PAGINA0`) sigue igual: el parche 0017 no cambia nada sin `DASHOS_PAGINA0`.
 
+Acuerdos para L2 (2026-11-28):
+
+- dashos-2f no toca ahora `caja.c` ni `pegamento/`. K7 (rama chips-k7) cambia `motor_emu68.c` y `fallo_a64.h`, y
+  quizá una línea de `caja/Makefile`. K8 tocará `motor.h`, `motor_emu68.c`, `motor_relevo.c`, quizá
+  `pegamento/src/chips.rs` y la función `chips()` de `caja.c` con su prueba 4b. **`pegamento/src/chips.rs` no se toca.**
+  Al unir K7 parte `fallo_a64.h`: `caja/fallo_a64_decodifica.h` tendrá `decodifica()`, `struct acceso` y
+  `marco_fallo`, sin los chips. Avisará entonces y al cerrar K8.
+- dashos-ec tiene en su rama pi5-instalador (sin subir) `medir_u7` en `caja.c`, que escribe la línea "medida U7" (la
+  usa la imagen de diagnóstico de la Pi 5). Al unir con la capa de plataforma, esa línea tiene que seguir saliendo;
+  dashos-ec se ofrece a resolver el choque.
+- RelevoJIT y la caja de x86: los llevaba dashos-x86, que no está abierta. Preguntado a jefe-dash.
+
 Pendiente de L1: `FALLO_INC` apunta a `caja/`, pero `caja/fallo_a64.h` aún no está en main (llega con union-chips,
 de dashos-2f). Hasta entonces, `make PAGINA0=1 FALLO_INC=<dir con fallo_a64.h y un motor.h>`.
