@@ -109,6 +109,10 @@ de S18).
   sucesos de `siguiente_suceso`, `ADKCON`/`ADKCONR` con la modulación de volumen y de periodo, y la salida en muestras
   estéreo i16 a una frecuencia dada (`Chips::sonido`, `Chips::muestras`), con un filtro de paso bajo que se puede
   apagar. Oráculo: `caja/pruebas68k/paula.c`.
+- [x] B5 **Los CIA completos.** Las dudas de K1 resueltas con medidas en FS-UAE (`caja/pruebas68k/cia.c`, A1200 y
+  A500) y vAmiga; el registro serie en los dos sentidos; el teclado del Amiga en el del CIA-A (`src/teclado.rs`,
+  `Chips::tecla`), con su saludo y la resincronía; los puertos (`Chips::ovl`, `led`, `fuego`, `disco_senales`,
+  `disco_lineas`) y `Chips::tras_el_arranque`. Pruebas: `caja/chips/tests/cia.rs`.
 
 ## Bloqueos
 
@@ -340,3 +344,68 @@ de S18).
   (`avanzar_base`) recibe ahora la chip RAM, para que el DMA de audio lea a la hora de cada paso; los comentarios,
   juntados. Comprobado: `cargo test` (todas) y `cargo clippy --all-targets` sin avisos; `make -C kernel caja-x86`
   BIEN. No comprobado: el Copper escribiendo en los registros de audio en el oráculo.
+
+- B5 hecho (papel de implementador; rama `chips-cia`, sale de `chips-blitter`): los CIA completos.
+  - Fuentes: el Hardware Reference Manual (el apéndice F y el teclado) y la hoja de datos del 8520, de memoria; vAmiga
+    (`Core/Components/CIA`, `Core/Peripherals/Keyboard`, y de mirada `Memory.cpp`, `PaulaRegs.cpp`, `AgnusEvents.cpp`
+    y el Blitter; MPL-2.0, cabeceras revisadas), del que salen la tubería de arranque de los temporizadores, la alarma
+    por flanco, el registro serie en salida y el saludo del teclado, reescritos con el aviso MPL en `cia.rs` y
+    `teclado.rs`. Nada de UAE, WinUAE, FS-UAE (su código), Amiberry ni AROS.
+  - El oráculo: `caja/pruebas68k/cia.c` (`cia.exe` en git, no va en la caja) mide con `Disable` y escribe lo que ve.
+    Pide a `ciab.resource` los temporizadores del CIA-B (libres con el Kickstart 3.1); las alarmas de los dos CIA las
+    tiene el sistema, así que usa la del CIA-B sin pedirla y al acabar la deja poco después del TOD. Se pasó en FS-UAE
+    con el A1200 (`--machine a1200`, 68020) y con el A500 (Kickstart 3.1 r40.63 del A500 en `DASH_KICKSTART_A500`,
+    compilado aparte con `-m68000`, fuera de git): el A500 es OCS y su 68000 va exacto al ciclo.
+  - Las dudas, una a una (lo medido manda donde no coincide con vAmiga):
+    - **Retraso de START y de la carga**: medido leyendo el contador cada 2 pulsos E tras arrancar, ocho veces en fases
+      distintas. Con `START` empieza a bajar en el 3.º o el 4.º pulso según la fase; con `LOAD` y `START`, igual; con
+      el byte alto en una vez, en el 4.º (A500; en el A1200 un pulso más). Se toma vAmiga: 2, 3 y 3 pulsos de espera
+      (cabe en lo medido). Con `LOAD` en marcha, FS-UAE carga al momento y sigue bajando (vAmiga espera): manda la
+      medida (en el A1200 baja uno menos). Tras desbordar en continuo espera un pulso (periodo `latch + 1`, como antes). Al parar, no baja más
+      (vAmiga baja dos; la medida no lo distingue). La cascada (B cuenta desbordes del A) espera un desborde al
+      arrancar.
+    - **VSYNC y HSYNC**: `VERTB` al principio de la línea 0. El TOD del CIA-A cambia entre la línea 4 (ciclo `$D3`) y
+      la 5 (ciclo `$0B`) en el A1200, y entre la 4 (`$C8`) y la 5 (`$25`) en el A500: ahora cuenta al empezar la línea 5
+      (`LINEA_VSYNC`), también para su alarma en `siguiente_suceso`. El del CIA-B cambia entre el ciclo `$DE` (A500:
+      `$CD`) de una línea y el `$0C` de la siguiente: se queda al empezar cada línea. vAmiga los pone en (5, 84) y en el
+      ciclo `$66`, con las lecturas retrasadas.
+    - **Alarma del TOD**: por flanco. Escribir el TOD igual a la alarma la hace saltar; escribir la alarma igual al
+      TOD, no (A500 y A1200; vAmiga sí). Escribir el byte alto para el TOD hasta el bajo; el del medio no lo para (medido).
+      Tras el reinicio el TOD está parado y a 0 (vAmiga; no se puede medir, el Kickstart ya lo puso en marcha).
+    - **Registro `$B`**: se lee `$00` en los dos CIA (vAmiga, `$FF`).
+    - **Espejos en `$BFxxxx`**: A500 como vAmiga: el bit 12 a 0 elige el CIA-A y el 13 el CIA-B, los dos a la vez si
+      los dos están a 0; los bits 0-7 no cuentan; una escritura de 1 byte llega al CIA elegido sea par o impar; uno de
+      2 bytes da el alto al B y el bajo al A; la mitad sin CIA se lee `$FF` (de 1 byte, lo que quedó en el bus: `$00`
+      o `$21`; aquí `$FF`). Con el A1200, FS-UAE no elige ninguno con los dos bits a 0: aquí se sigue al A500 (OCS).
+      Leer la mitad que no se toma también lee el registro (el ICR se borra).
+    - **INTREQ desde los CIA**: por nivel (medido: `EXTER` sigue a 1 tras borrarlo sin leer el ICR); como estaba.
+    - **`BZERO` tras el arranque**: 0, como vAmiga; no se puede medir desde un programa (en FS-UAE se lee 0 tras el
+      arranque, pero el Kickstart ya ha hecho blits).
+    - **Bit 14 de INTREQR**: se guarda y se lee (medido: `$4040`); como estaba, y como vAmiga.
+    - De paso: el bit 7 de CRA no existe y se lee 0 (medido); el de CRB, sí. El pin CNT y las entradas de los puertos
+      quedan como estaban (sin "Duda:"): CNT alto y quieto, entradas a 1.
+  - El registro serie: en entrada, cada flanco de subida de CNT mete el nivel de SP y con 8 pasa a `SDR` y sube `SP`;
+    en salida, cada desborde del temporizador A es medio bit y `SP` sube en el 16.º desborde contando el que carga el
+    byte (FS-UAE: 132-135 pulsos E con latch 7, más cerca de eso que del 15.º de vAmiga). Cambiar de sentido lo
+    vacía. PA0 y PA1 del CIA-B no van a SP y CNT (vAmiga sí; FS-UAE no: con ellos en salida no entra nada).
+  - El teclado (`src/teclado.rs`): cada código girado e invertido, bit a bit (60 µs por bit, el flanco a los 40), el
+    saludo es el CIA-A con el registro serie en salida al menos 85 µs (se cambia con `teclado_saludo_minimo`; vAmiga
+    acepta 1 µs), sin saludo en 143 ms resincroniza (un 1 cada 143 ms) y después manda `$F9` y el código perdido; al
+    encender espera un segundo a un saludo (como vAmiga) y si no resincroniza, y con el saludo manda `$FD` y `$FE`;
+    pila de 10 y `$FA` si se llena. No hace `$78` (reinicio), `$FC` ni las teclas pulsadas al encender entre `$FD` y
+    `$FE`. Solo se prueba en Rust: en FS-UAE no se pulsan teclas desde el programa.
+  - Los puertos: `Chips::ovl` y `led` (CIA-A PA0 y PA1, por los pines: sin `DDRA` la ROM tapa el 0),
+    `fuego(puerto, pulsado)` (PA6 y PA7), `disco_senales(cambio, protegido, pista0, listo)` (PA2-PA5) y
+    `disco_lineas()` (los pines de PB del CIA-B, con `paso`, `hacia_dentro`, `cara_arriba`, `elegida(x)` y `motor`).
+  - `Chips::tras_el_arranque`: los puertos como los deja el Kickstart (medido), los TOD en marcha y el teclado
+    sincronizado. Lo usa `pegamento/src/chips.rs` en vez de `Chips::nuevo`, porque en la caja no hay Kickstart que
+    ponga en marcha los TOD (`chips.exe` mira el del CIA-A).
+  - Comprobado: `cargo test` (20 pruebas nuevas en `tests/cia.rs`: cada duda con lo medido, el registro serie en los
+    dos sentidos, el teclado con saludo, sin él, con uno corto, al encender y con la pila llena, y los puertos; las de
+    `tests/chips.rs` puestas al día con los tiempos nuevos), `cargo clippy --all-targets` sin avisos, compila sin `std`
+    para `x86_64-unknown-none` y `aarch64-unknown-none-softfloat` (`-Zbuild-std=core`), y `make -C kernel caja-x86`
+    (BIEN; `chips.exe` igual: TA tras 16 líneas, TOD +1 y +5, 0 fallos).
+  - No comprobado: el teclado contra un Amiga o un emulador (solo en Rust); el retraso de los temporizadores al ciclo
+    (FS-UAE da dos valores según la fase del reloj E; aquí no hay fase: cada acceso cae en un pulso entero); los tiempos del registro serie en salida, solo con un
+    latch; un Amiga de verdad.
+
