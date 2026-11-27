@@ -752,8 +752,8 @@ static int ejecuta_hunk(const char *nombre, const uint8_t *datos, size_t largo, 
 uint32_t caja_chips_poner(int encendidos, uint64_t hora);
 
 /* Los enciende, con su hora 0 en la de ahora, o los apaga; con el 68k parado. 1 si quedan como se pide (encenderlos
-   no se puede con Emu68 hasta K6, ni con la RAM del 68k en sus direcciones). Al apagarlos, en *nadie, los accesos a
-   direcciones donde no hay nada que se imite. */
+   no se puede con la RAM del 68k en sus direcciones). Al apagarlos, en *nadie, los accesos a direcciones donde no hay
+   nada que se imite. */
 static int chips(int encendidos, uint32_t *nadie)
 {
     if (encendidos) {
@@ -1092,7 +1092,7 @@ int caja_main(void)
 
         /* 4b. K3: los chips del Amiga (chips.c): el haz, el temporizador A, el ICR y el TOD del CIA-A, e INTREQ. La caja
            los enciende solo para él y pone su marca delante de lo que escribe ("chips: ...: bien"); acaba con sus
-           fallos. En un motor que aún no los captura (Emu68, hasta K6) no se lanza. */
+           fallos. Con RelevoJIT (x86) y con Emu68 (ARM, K6: por el fallo de página). */
         if (chips(1, 0)) {
             static const char prefijo_chips[] = "  [caja-amiga] ";
             uint32_t nadie = 0;

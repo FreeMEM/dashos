@@ -91,6 +91,7 @@ prueba: $(PRUEBAS) catalogos
 	cd ../iconos-cajas && cargo test --quiet
 	cd ../caja-linux/vmm && cargo test --quiet
 	$(MAKE) -C ../caja/pruebas_hunk
+	$(MAKE) -C ../caja/pruebas_fallo
 	mkdir -p target && rustc --edition 2024 --test src/rp1.rs -o target/rp1_pruebas && ./target/rp1_pruebas -q
 	cd ../usuario && mkdir -p target && rustc --edition 2024 --test src/cc_rejilla.rs -o target/cc_rejilla_pruebas && ./target/cc_rejilla_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/lanzables.rs -o target/lanzables_pruebas && ./target/lanzables_pruebas -q
