@@ -80,7 +80,9 @@ Acuerdos para L2 (2026-11-28):
 - dashos-ec tiene en su rama pi5-instalador (sin subir) `medir_u7` en `caja.c`, que escribe la línea "medida U7" (la
   usa la imagen de diagnóstico de la Pi 5). Al unir con la capa de plataforma, esa línea tiene que seguir saliendo;
   dashos-ec se ofrece a resolver el choque.
-- RelevoJIT y la caja de x86: los llevaba dashos-x86, que no está abierta. Preguntado a jefe-dash.
+- RelevoJIT y la caja de x86: nadie los lleva (dashos-x86 está cerrada). jefe-dash da vía libre con condiciones:
+  `caja-x86`, `arranque-virt` y `arranque-virt CAJA_ORDEN=le` siguen pasando y `motor_relevo.c` no se toca hasta K8.
+  L2 empieza cuando union-chips (K6, que cambia `caja.c`) llegue a main; avisa jefe-dash.
 
 Pendiente de L1: `FALLO_INC` apunta a `caja/`, pero `caja/fallo_a64.h` aún no está en main (llega con union-chips,
 de dashos-2f). Hasta entonces, `make PAGINA0=1 FALLO_INC=<dir con fallo_a64.h y un motor.h>`.
