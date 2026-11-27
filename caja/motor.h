@@ -75,8 +75,9 @@ uint64_t motor_ciclos(void);
 /* K2: los chips del Amiga, encendidos (`encendidos` distinto de 0) o apagados, con el 68k parado (entre programas).
    Encendidos, el motor manda a caja_chip_leer y caja_chip_escribir los accesos a $BF0000-$BFFFFF y $DF0000-$DFFFFF;
    apagados (de serie), ahí no hay nada, como hasta ahora: un acceso es un fallo (el Enforcer, o el proceso muere).
-   Devuelve 1 si quedan como se pide; 0 si el motor aún no sabe capturar esos accesos (Emu68, hasta K6) o si la RAM
-   del 68k llega a $BF0000 (no se pueden quitar de debajo de exec). Con ellos encendidos, la caja no crece la RAM
+   Devuelve 1 si quedan como se pide; 0 si el motor no sabe capturar esos accesos o si la RAM del 68k llega a $BF0000
+   (no se pueden quitar de debajo de exec). Cómo los captura cada motor: RelevoJIT, con sus páginas del anfitrión;
+   Emu68 (K6), por el fallo de página que el kernel entrega al hilo (fallo_a64.h y motor_emu68.c). Con ellos encendidos, la caja no crece la RAM
    hasta ahí (caja_ampliar_ram).
    Quién los enciende: la caja (chips, en caja.c), entre programas, para el que los necesita: primero los de
    pegamento/ (caja_chips_poner, con su hora 0 en motor_ciclos()) y después este. Hoy solo para pruebas68k/chips.c, que
