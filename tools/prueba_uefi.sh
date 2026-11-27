@@ -62,53 +62,7 @@ QEMU=$!
 # apagado del panel (decisión del usuario del 2026-11-13) y se espera a que la máquina vuelva a arrancar (otro "DashOS en
 # marcha") y a las líneas de ese fichero, en orden. La señal para el guion es un fichero junto a la salida.
 export REINICIO_SENAL="${REINICIO:+$SALIDA.reiniciar}"
-# Con TECLAS=simple (make arranque-x86, X6), el guion corto de antes de fusionar `revision`: una "a" y un movimiento
-# del ratón (10, 5) cada medio segundo desde el segundo 3; cuando la salida serie dice que Ajustes está en pantalla, un
-# clic en ella (400, 130) para darle el teclado; cuando su campo recibe la "a", Super+Arriba (la maximiza) y, un segundo
-# después, Super+Abajo. El escritorio de x86 no tiene todavía las sesiones ni `guardian`, que es lo que maneja el guion
-# largo.
-if [ "${TECLAS:-}" = simple ]; then
-    python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" <<'PY' >/dev/null 2>&1 &
-import socket, sys, time
-ruta, total, serie = sys.argv[1], float(sys.argv[2]), sys.argv[3]
-inicio = time.time()
-time.sleep(3)
-estado = 0
-def salida():
-    try:
-        return open(serie, errors="replace").read()
-    except OSError:
-        return ""
-def mandar(*ordenes, pausa=0.05):
-    s = socket.socket(socket.AF_UNIX)
-    s.connect(ruta)
-    for o in ordenes:
-        s.sendall(o.encode() + b"\n")
-        time.sleep(pausa)
-    s.close()
-while time.time() - inicio < total:
-    try:
-        texto = salida()
-        if estado == 0 and "[ajustes] ventana del kit en pantalla" in texto:
-            # Ajustes sale cuando ya se teclea en otra ventana y no se lleva el teclado: el cursor a la esquina y de ahí
-            # a (400, 130), donde solo está ella (en (104, 104), de 360x408), y un clic.
-            mandar(*["mouse_move -100 -100"] * 14, "mouse_move 100 100", "mouse_move 100 30", "mouse_move 100 0", "mouse_move 100 0")
-            mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
-            estado = 1
-        elif estado == 1 and "[ajustes] el campo dice: DashOSa" in texto:
-            # Ya tiene el teclado: Super+Arriba la maximiza y, un segundo después, Super+Abajo la devuelve.
-            mandar("sendkey meta_l-up")
-            time.sleep(1)
-            mandar("sendkey meta_l-down")
-            estado = 2
-        else:
-            mandar("mouse_move 10 5", "sendkey a")
-    except OSError:
-        pass
-    time.sleep(0.5)
-PY
-    TECLAS_PID=$!
-elif [ -n "${TECLAS:-}" ]; then
+if [ -n "${TECLAS:-}" ]; then
     ESPERADOS_GUION="$ESPERADOS" python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" "${CAPTURA_PREGUNTA:-}" "${DIAG_REGISTROS:-}" "${CAPTURA_SELECTOR:-}" "${CAPTURA_CENTRO:-}" <<'PY' >/dev/null 2>"${GUION_ERRORES:-/dev/null}" &
 import os, socket, sys, time
 ruta, total, serie, captura_pregunta, diag_registros, captura_selector, captura_centro = sys.argv[1], float(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7]

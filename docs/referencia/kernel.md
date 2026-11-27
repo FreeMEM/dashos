@@ -597,13 +597,13 @@ mismos límites. Cambian los registros y lo que es de la CPU:
   la entrada no tiene que estar alineada; el hilo empieza con `rdi` = argumento, la base de FS = TLS y `rsp` = pila
   menos 8 (como tras un `call`: la entrada puede ser una función de C); y cuesta 24 KB al grupo, no 20 (su zona de
   XSAVE). La prueba es la misma (`hilos`, C52 en `make -C kernel prueba-x86`).
-- **Lo que no hay todavía en x86.** El globo de las máquinas virtuales (55) da `E_NO_HAY`, y las llaves de arranque
-  no traen el permiso de máquinas (`inicio_x86.rs` no lanza la caja Linux). `apagar` (51) reinicia (puerto 0xCF9 y, si no,
+- **Lo que no hay todavía en x86.** El globo de las máquinas virtuales (55) da `E_NO_HAY`, y no hay caja Linux
+  (`inicio_x86.rs` no la lanza; el permiso de máquinas va en las llaves de arranque, para `sesiones`). `apagar` (51) reinicia (puerto 0xCF9 y, si no,
   el controlador del teclado), pero no apaga: da `E_NO_HAY` (haría falta leer `\_S5` del AML de ACPI). `hora` (39) da
   0: no se lee el reloj del PC. `azar` (34) se siembra al arrancar con 256 bytes de RDSEED (o RDRAND, sin ella) y es
-  de calidad si la CPU los da; sin ninguna de las dos, no. No hay orden de bytes por proceso: todo es little-endian. Las llaves de arranque no traen los
-  permisos de página 0, de apagar ni del aviso de memoria (`inicio_x86.rs` no lanza `sesiones` ni la caja Amiga);
-  las llamadas 49, 53 y 54 sí están.
+  de calidad si la CPU los da; sin ninguna de las dos, no. No hay orden de bytes por proceso: todo es little-endian. Las llaves de arranque traen,
+  como en ARM, los permisos de página 0, de apagar y del aviso de memoria; desde X7 (paso 4), la imagen de
+  `arranque-x86` lanza el escritorio de `arranque-virt` (`sesiones` incluido), salvo lo que es de ARM.
 - **Máquinas virtuales** (X10; `kernel/src/maquinas_x86.rs`, `base/x86_64/hiper.rs`). Las llamadas 45 a 48, con los
   mismos números, llaves, informe (13 u64) y bloque de interrupciones (10 u64) que en ARM, con AMD-V (SVM) y NPT o con
   VT-x y EPT (con invitado sin restricciones). Sin ninguno de los dos, `maquina_crear` da `E_NO_HAY`. El kernel dice

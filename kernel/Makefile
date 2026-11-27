@@ -6,7 +6,7 @@
 # make virt    la imagen para QEMU virt (U3, docs/UEFI_LOOP.md), que carga el programa de UEFI
 # make arranque-virt  esa imagen dentro del programa de UEFI, arrancada por EDK2 en QEMU virt
 # make arranque-x86  el kernel de x86-64 dentro del programa de UEFI (BOOTX64.EFI), arrancado por OVMF en QEMU q35,
-#              con los servicios de X5 (xHCI con teclado y ratón, NVMe con su disco, virtio-sound) y el compositor (X6)
+#              con el escritorio y el guion largo de arranque-virt (X7) y los controladores de un PC (X5, X5c)
 # make prueba-x86  lo mismo con las pruebas del arranque de x86 (pruebas_x86.rs) y los programas de usuario de x86
 #              Las dos, con IOMMU=intel (VT-d) o IOMMU=amd (AMD-Vi): con esa IOMMU en QEMU (X5b), con remapeo de
 #              interrupciones (con IOMMU=intel INTREMAP=off, la VT-d sin él)
@@ -730,13 +730,18 @@ NUCLEO_X86  := target/kernel-x86.elf
 
 # Los servicios que lanza `inicio` en x86 (X5, `inicio_x86.rs`). Las mismas características que `usuario-x86`, para
 # no recompilar la biblioteca entre una y otra.
-FUNCIONES_X86 := archivos,ventanas,sonido,red,relevo
+# X7, paso 4: también `imagenes` (el servicio de los ADF) y `ordenes` (`guardian` lanza el Shell), para el escritorio de
+# `arranque-virt`.
+FUNCIONES_X86 := archivos,ventanas,sonido,red,imagenes,ordenes,relevo
 
 # X7a: el crate `relevo` (RelevoJIT) viene por git con `rev` fijo (usuario/Cargo.toml). RELEVO_DIR=<ruta> lo cambia por
 # un RelevoJIT local, para probar cambios suyos sin subirlos (un `[patch]` por `--config`). La `rev` de Cargo.toml tiene
 # que estar en GitHub igual, y Cargo.lock cambia mientras se use: no se sube así.
 RELEVO_PATCH := $(if $(RELEVO_DIR),--config 'patch."https://github.com/FreeMEM/RelevoJIT".relevo.path="$(abspath $(RELEVO_DIR))"')
-SERVICIOS_X86 := inicio consola compositor xhci nvme disco ahci disco-sata archivos ficheros sonido virtio-sonido hda red virtio-red intel-red rtl-red red-gloton red-prueba tono-a tono-b ventana-a ventana-b ajustes hola
+# X7, paso 4: los de `arranque-virt` (`inicio.rs` con `virt`) que no son de ARM, más los controladores de un PC. `paq`
+# sale de `ordenes/`, como en ARM. Y los programas del disco de la prueba (`tools/disco_archivos.py`), también de x86.
+SERVICIOS_X86 := inicio consola compositor xhci nvme disco ahci disco-sata archivos comprobador eco sesiones red virtio-red intel-red rtl-red fondo centro guardian pide entrada ficheros imagen adf-prueba ventana-a ventana-b ajustes sonido avisos barra dock avisador virtio-sonido hda tono-a tono-b selector hostil presa red-gloton red-prueba sin-red panel caida explorador workbench hola virtio-gpu presion sin-maquina espia hora commodity-prueba mezclador
+DISCO_PROGRAMAS_PRUEBA_X86 := pide cambio ram avisa guarda espera
 
 # X5c: el firmware del PHY de la RTL8125B (`rtl8125b-2.fw` de linux-firmware), si este sistema lo tiene: va dentro del
 # kernel de x86 (`inicio_x86.rs`) y `rtl-red` lo aplica. No va en git. Se descomprime (.zst o .xz) en
@@ -756,7 +761,8 @@ firmware-x86: FORCE
 	@echo "Firmware de la RTL8125B: $(or $(FIRMWARE_RTL8125),ninguno) ($$(stat -c %s $(FW_RTL)) bytes)"
 
 usuario-x86-servicios: FORCE
-	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86) $(RELEVO_PATCH) $(addprefix --bin ,$(SERVICIOS_X86))
+	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86) $(RELEVO_PATCH) $(addprefix --bin ,$(SERVICIOS_X86) $(DISCO_PROGRAMAS_PRUEBA_X86))
+	cd ../ordenes && cargo build --release --target x86_64-unknown-none
 
 # X5b: IOMMU=intel pone en QEMU la VT-d (`-device intel-iommu`) e IOMMU=amd la AMD-Vi (`-device amd-iommu,dma-remap=on`:
 # sin dma-remap, la AMD-Vi de QEMU deja pasar sin traducir el DMA de los aparatos que emula). Con IOMMU, virtio-sound va
@@ -843,12 +849,29 @@ ESPERADOS_VFIO = { sed -n '1,/^\# --- firmware/p' pruebas/arranque_x86_red_vfio.
 	if [ -s $(FW_RTL) ]; then echo "~│   [rtl-red] firmware aplicado: "; else echo "~│   [rtl-red] sin firmware del PHY"; fi; \
 	$(if $(MAC_RED),echo "~MAC $(MAC_RED);";) \
 	sed -n '/^\# --- firmware/,$$p' pruebas/arranque_x86_red_vfio.txt; } >> target/esperados_arranque_x86.txt
-arranque-x86: x86 $(DISCO_NVME)
-	cd ../uefi && DASHOS_NUCLEO=$(abspath $(NUCLEO_X86)) cargo build --release --target x86_64-unknown-uefi
-	rm -f target/sonido-x86.wav target/captura-x86.ppm
+# X7, paso 4: el escritorio de `arranque-virt` (`inicio_x86.rs`) con su guion largo (TECLAS=1, con el reinicio del
+# final) y a 800x600, como la ramfb de virt (el guion pulsa en sitios de esa pantalla). El disco, como el de
+# arranque-virt pero con los programas de x86 (DASHOS_ARQ=x86_64) y 256 KB más grande, para que quede el mismo sitio
+# libre (el código de x86 ocupa más en DashFS; ver `tools/disco_archivos.py`), nuevo en cada prueba y mirado después en
+# Linux.
+#
+# Lo esperado de x86 y de ARM es el mismo fichero, para que vayan a la par: `pruebas/arranque_virt.txt`, sin sus bloques
+# solo de ARM (entre "#[arm" y "#]") y con sus líneas solo de x86 (las que empiezan por "#x86 ", que ARM ignora como
+# comentario), detrás de `pruebas/arranque_x86.txt` (el arranque de x86 y lo que solo hay en un PC: el AHCI y sus
+# discos) y delante de lo de la tarjeta de sonido y la de red que se elijan. Quien añada algo a arranque_virt.txt lo
+# añade a los dos; si no sale en x86, va en un bloque de ARM, con el porqué.
+DISCO_NVME_X86 := target/nvme-x86-prueba.img
+$(DISCO_NVME_X86): catalogos usuario-x86-servicios FORCE
+	cd ../archivos/dashfs && cargo build --release --bin dashfs-ar --bin dashfs-volume
+	cd ../archivos/herramientas && cargo build --release
+	DASHOS_ARQ=x86_64 DASHOS_DISCO_MAS_KB=256 python3 ../tools/disco_archivos.py $@ $(DASHFS_AR)
+arranque-x86: x86 $(DISCO_NVME_X86)
+	cd ../uefi && DASHOS_PANTALLA=800x600 DASHOS_NUCLEO=$(abspath $(NUCLEO_X86)) cargo build --release --target x86_64-unknown-uefi
+	rm -f target/sonido-x86.wav target/captura-x86.ppm target/u6-x86.ana.ppm target/u6-x86.carla.ppm
 	python3 ../tools/disco_sata.py crear target/sata0.img 0
 	python3 ../tools/disco_sata.py crear target/sata1.img 1
-	$(call esperados_x86,pruebas/arranque_x86.txt,pruebas/arranque_x86_iommu.txt,target/esperados_arranque_x86.txt)
+	{ cat pruebas/arranque_x86.txt; awk '/^#\[arm/ { fuera = 1; next } /^#\]/ { fuera = 0; next } fuera { next } { sub(/^#x86 /, ""); print }' pruebas/arranque_virt.txt; } > target/arranque_x86_comun.txt
+	$(call esperados_x86,target/arranque_x86_comun.txt,pruebas/arranque_x86_iommu.txt,target/esperados_arranque_x86.txt)
 	cat pruebas/arranque_x86_sonido_$(SONIDO_X86).txt >> target/esperados_arranque_x86.txt
 	$(if $(IOMMU),echo "~$(SONIDO_NOMBRE): DMA por la IOMMU$(coma) en su dominio" >> target/esperados_arranque_x86.txt)
 	$(if $(IOMMU),echo "~$(RED_NOMBRE): DMA por la IOMMU$(coma) en su dominio" >> target/esperados_arranque_x86.txt)
@@ -856,14 +879,15 @@ arranque-x86: x86 $(DISCO_NVME)
 	mkdir -p $(RED)
 	rm -f $(RED)/qemu.sock $(RED)/pc.sock $(RED)/qemu2.sock $(RED)/vecino.sock
 	$(if $(filter vfio,$(RED_X86)),true & BASURA=$$!,python3 -I ../tools/red_basura.py $(RED) $(RED_MAC) 300 & BASURA=$$!; $(RED_ANTES)); \
-	$(ACCEL_QEMU) $(MAQUINA_IOMMU) GUARDAR=$(abspath target/salida_x86.txt) CAPTURA=$(abspath target/captura-x86.ppm) ARQ=x86_64 TECLAS=simple QEMU_EXTRA="$(IOMMU_QEMU) -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv $(SATA_QEMU) -audiodev wav,id=snd0,path=$(abspath target/sonido-x86.wav),out.frequency=48000 $(SONIDO_QEMU) $(RED_HUB_X86) $(RED_TARJETA_X86)" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_arranque_x86.txt $(or $(TIEMPO_X86),240); \
+	$(ACCEL_QEMU) $(MAQUINA_IOMMU) GUARDAR=$(abspath target/salida_x86.txt) CAPTURA=$(abspath target/captura-x86.ppm) CAPTURA_U6=$(abspath target/u6-x86) REINICIO=$(abspath pruebas/arranque_virt_reinicio.txt) ARQ=x86_64 TECLAS=1 QEMU_EXTRA="$(IOMMU_QEMU) -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME_X86)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv $(SATA_QEMU) -audiodev wav,id=snd0,path=$(abspath target/sonido-x86.wav),out.frequency=48000 $(SONIDO_QEMU) $(RED_HUB_X86) $(RED_TARJETA_X86)" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_arranque_x86.txt $(or $(TIEMPO_X86),900); \
 	R=$$?; $(RED_DESPUES); exit $$R
 	@if grep -q "fallo de DMA\|interrupción bloqueada" target/salida_x86.txt; then echo "MAL: fallos de DMA o interrupciones bloqueadas en el arranque"; grep "fallo de DMA\|interrupción bloqueada" target/salida_x86.txt | head; exit 1; fi
-	python3 ../tools/disco_archivos.py --comprobar-basico $(DISCO_NVME) $(VER)
+	DASHOS_ARQ=x86_64 DASHOS_SIN_CAJA=1 DASHOS_SALIDA=$(abspath target/salida_x86.txt) python3 ../tools/disco_archivos.py --comprobar $(DISCO_NVME_X86) $(VER)
 	python3 ../tools/disco_sata.py comprobar target/sata0.img 0
 	python3 ../tools/disco_sata.py comprobar target/sata1.img 1
-	python3 ../tools/captura_ventanas.py target/captura-x86.ppm target/salida_x86.txt --sin-barra
+	python3 ../tools/captura_ventanas.py target/captura-x86.ppm
 	python3 ../tools/sonido_wav.py target/sonido-x86.wav
+	python3 ../tools/captura_cambio.py target/u6-x86.ana.ppm target/u6-x86.carla.ppm
 
 # X5c: un PC con un solo disco SATA y sin NVMe. El AHCI sirve entonces el canal "disco" y todo va por él: `disco` (la
 # prueba entera del NVMe, con el plazo vencido y el anillo) y `archivos`. El disco es el de arranque-virt

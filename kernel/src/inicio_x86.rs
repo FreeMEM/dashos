@@ -25,8 +25,9 @@ macro_rules! elf {
 static INICIO: &[u8] = elf!("inicio");
 
 // Con `uso` (`make x86-uso`), el escritorio entero de la imagen de usar, como `virt-uso` en ARM, con sus programas
-// comprimidos (`build.rs`; los descomprime `crate::lz4` al montar el paquete).
-#[cfg(feature = "uso")]
+// comprimidos (`build.rs`; los descomprime `crate::lz4` al montar el paquete). Lo mismo en la de `arranque-x86` (X7), con
+// el escritorio de `arranque-virt`. Las de `graficos` y `caja` van sin comprimir (`elf!`).
+#[cfg(any(feature = "uso", not(any(feature = "graficos", feature = "caja", feature = "pruebas"))))]
 macro_rules! programa {
     ($n:literal) => {
         include_bytes!(concat!(env!("OUT_DIR"), "/", $n, ".lz4"))
@@ -63,48 +64,90 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
 ];
 
 /// Los servicios que lanza `inicio`, en orden, con los aparatos (por nombre y tipo) y los canales (por nombre) que le
-/// pasa a cada uno: los de ARM (`inicio.rs`) que tienen sus aparatos en un PC.
-#[cfg(not(any(feature = "uso", feature = "graficos", feature = "caja")))]
+/// pasa a cada uno (X7, paso 4): los de `arranque-virt` (`inicio.rs` con `virt`), en el mismo orden y con los mismos
+/// canales, para que cada uno tenga las mismas llaves que en ARM y el guion largo de `tools/prueba_uefi.sh` valga en los
+/// dos; los controladores de x86 van junto a los de ARM (el AHCI y su prueba tras el NVMe, las tarjetas de Intel y de
+/// Realtek tras virtio-net, el HDA tras virtio-sound). Comprimidos, como en ARM (`build.rs`).
+///
+/// Fuera, por ser de ARM: el buzón, el USB y la GPU de la Pi; la caja Linux (su VMM es de ARM: virtio por MMIO, GIC,
+/// PSCI, árbol de dispositivos); `dash-ventana` (Dash compila para ARM). Y la caja Amiga, hasta el commit
+/// que la mete.
+#[cfg(not(any(feature = "uso", feature = "graficos", feature = "caja", feature = "pruebas")))]
 static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // La consola (C48), con el registro y los puertos de COM1 (X6).
-    ("consola", elf!("consola"), &[("registro", REGISTRO), ("serie", PUERTOS)], &[]),
+    ("consola", programa!("consola"), &[("registro", REGISTRO), ("serie", PUERTOS)], &[]),
     // El compositor (X6), con la pantalla del GOP: nombra "ventanas" antes que el xHCI y que los clientes de Wayland,
     // así es quien lee (el servidor), como en ARM.
-    ("compositor", elf!("compositor"), &[("pantalla", FIRMWARE), ("pantalla-info", DATOS)], &["ventanas"]),
-    ("xhci", elf!("xhci"), &[("dma-xhci", PERMISO_DMA), ("xhci", REGISTROS), ("xhci", INTERRUPCION | OPCIONAL)], &["ventanas"]),
-    ("nvme", elf!("nvme"), &[("dma-nvme", PERMISO_DMA), ("nvme", REGISTROS), ("nvme", INTERRUPCION | OPCIONAL)], &["disco"]),
+    ("compositor", programa!("compositor"), &[("pantalla", FIRMWARE), ("pantalla-info", DATOS)], &["ventanas"]),
+    ("xhci", programa!("xhci"), &[("dma-xhci", PERMISO_DMA), ("xhci", REGISTROS), ("xhci", INTERRUPCION | OPCIONAL)], &["ventanas"]),
+    ("nvme", programa!("nvme"), &[("dma-nvme", PERMISO_DMA), ("nvme", REGISTROS), ("nvme", INTERRUPCION | OPCIONAL)], &["disco"]),
     // X5c: los discos SATA por AHCI. Su canal es "sata" si hay NVMe (que sirve "disco"); si no, "disco" (`canal`), y
     // los demás servicios del disco van por él: por eso va antes que `disco` (el primero que nombra un canal
     // es quien lo sirve). `disco-sata`, su prueba.
-    ("ahci", elf!("ahci"), &[("dma-ahci", PERMISO_DMA), ("ahci", REGISTROS), ("ahci", INTERRUPCION | OPCIONAL)], &["sata"]),
-    ("disco-sata", elf!("disco-sata"), &[], &["sata"]),
-    ("disco", elf!("disco"), &[], &["disco"]),
-    ("archivos", elf!("archivos"), &[], &["disco", "archivos"]),
-    ("ficheros", elf!("ficheros"), &[], &["archivos"]),
-    // Desde la fusión con `revision`, el sonido y su controlador reciben el permiso de plazo (S3), como en ARM.
-    ("sonido", elf!("sonido"), &[("plazo", PLAZO)], &["sonido"]),
-    ("virtio-sonido", elf!("virtio-sonido"), &[("dma-vsonido", PERMISO_DMA), ("virtio-sonido", REGISTROS), ("vsonido-cfg", REGISTROS), ("plazo", PLAZO), ("virtio-sonido", INTERRUPCION | OPCIONAL)], &["sonido"]),
-    // X5c: el sonido de un PC (Intel HDA). Si hay los dos, suena el primero que se presenta al servicio.
-    ("hda", elf!("hda"), &[("dma-hda", PERMISO_DMA), ("hda", REGISTROS), ("plazo", PLAZO), ("hda", INTERRUPCION | OPCIONAL)], &["sonido"]),
-    ("tono-a", elf!("tono-a"), &[], &["sonido"]),
-    ("tono-b", elf!("tono-b"), &[], &["sonido"]),
-    // X5c: la red, como en `virt` (S13): el servicio con la pila (nombra "red" y "red-estado" antes que nadie) y el
-    // controlador de virtio-net, con su MSI-X. Y sus pruebas: el eco del PC y un glotón de conexiones.
-    // Desde la unión con `revision`, como allí: cliente de "archivos" (lee `Prefs/Red`) y el permiso de escuchar.
-    ("red", elf!("red"), &[], &["archivos", "red", "red-estado", "red-escuchar"]),
-    ("virtio-red", elf!("virtio-red"), &[("dma-vred", PERMISO_DMA), ("virtio-red", REGISTROS), ("vred-cfg", REGISTROS), ("virtio-red", INTERRUPCION | OPCIONAL)], &["red"]),
+    ("ahci", programa!("ahci"), &[("dma-ahci", PERMISO_DMA), ("ahci", REGISTROS), ("ahci", INTERRUPCION | OPCIONAL)], &["sata"]),
+    ("disco-sata", programa!("disco-sata"), &[], &["sata"]),
+    ("disco", programa!("disco"), &[], &["disco"]),
+    ("archivos", programa!("archivos"), &[], &["disco", "archivos"]),
+    ("comprobador", programa!("comprobador"), &[], &["disco", "archivos", "comprobar"]),
+    ("eco", programa!("eco"), &[], &["eco"]),
+    ("sesiones", programa!("sesiones"), &[("plazo", PLAZO), ("hipervisor", MAQUINAS)], &["archivos", "eco", "sesiones", "comprobar"]),
+    ("paq", programa!("paq"), &[], &["archivos", "paq"]),
+    // X5c: la red, como en `virt` (S13): el servicio con la pila y los controladores de un PC (virtio-net, Intel y
+    // Realtek); se lanza el que tenga su tarjeta.
+    ("red", programa!("red"), &[], &["archivos", "red", "red-estado", "red-escuchar"]),
+    ("virtio-red", programa!("virtio-red"), &[("dma-vred", PERMISO_DMA), ("virtio-red", REGISTROS), ("vred-cfg", REGISTROS), ("virtio-red", INTERRUPCION | OPCIONAL)], &["red"]),
     // X5c: la red con cable de Intel: el I219 del PCH (pegaso) y el 82574L (el `e1000e` de QEMU). Como virtio-red.
-    ("intel-red", elf!("intel-red"), &[("dma-ired", PERMISO_DMA), ("intel-red", REGISTROS), ("ired-cfg", REGISTROS), ("intel-red", INTERRUPCION | OPCIONAL)], &["red"]),
+    ("intel-red", programa!("intel-red"), &[("dma-ired", PERMISO_DMA), ("intel-red", REGISTROS), ("ired-cfg", REGISTROS), ("intel-red", INTERRUPCION | OPCIONAL)], &["red"]),
     // X5c: la red con cable de Realtek (RTL8125B, la de shiva), con el firmware de su PHY (`FIRMWARE_RTL8125`).
-    ("rtl-red", elf!("rtl-red"), &[("dma-rtl", PERMISO_DMA), ("rtl-red", REGISTROS), ("rtl-cfg", REGISTROS), ("rtl8125b-fw", DATOS), ("rtl-red", INTERRUPCION | OPCIONAL)], &["red"]),
-    ("red-gloton", elf!("red-gloton"), &[], &["red"]),
-    ("red-prueba", elf!("red-prueba"), &[], &["red", "red-escuchar"]),
+    ("rtl-red", programa!("rtl-red"), &[("dma-rtl", PERMISO_DMA), ("rtl-red", REGISTROS), ("rtl-cfg", REGISTROS), ("rtl8125b-fw", DATOS), ("rtl-red", INTERRUPCION | OPCIONAL)], &["red"]),
+    ("fondo", programa!("fondo"), &[], &["ventanas", "archivos", "sesiones", "red-estado", "fondo"]),
+    ("centro", programa!("centro"), &[], &["ventanas", "sesiones", "fondo", "centro", "archivos"]),
+    ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "fondo", "centro"]),
+    ("pide", programa!("pide"), &[], &["sesiones"]),
+    ("entrada", programa!("entrada"), &[], &["sesiones"]),
+    ("ficheros", programa!("ficheros"), &[], &["archivos"]),
+    ("imagen", programa!("imagen"), &[], &["archivos", "imagen"]),
+    ("adf-prueba", programa!("adf-prueba"), &[], &["imagen"]),
     // Dos clientes de Wayland de prueba (W7) y una aplicación con el kit (K7), como en ARM.
-    ("ventana-a", elf!("ventana-a"), &[], &["ventanas"]),
-    ("ventana-b", elf!("ventana-b"), &[], &["ventanas"]),
-    ("ajustes", elf!("ajustes"), &[], &["ventanas"]),
-    ("hola", elf!("hola"), &[], &[]),
+    ("ventana-a", programa!("ventana-a"), &[], &["ventanas"]),
+    ("ventana-b", programa!("ventana-b"), &[], &["ventanas"]),
+    ("ajustes", programa!("ajustes"), &[], &["ventanas"]),
+    // Desde la fusión con `revision`, el sonido y su controlador reciben el permiso de plazo (S3), como en ARM.
+    ("sonido", programa!("sonido"), &[("plazo", PLAZO)], &["sonido"]),
+    ("avisos", programa!("avisos"), &[], &["avisos"]),
+    ("barra", programa!("barra"), &[], &["ventanas", "sesiones", "archivos", "centro", "sonido", "avisos"]),
+    ("dock", programa!("dock"), &[], &["ventanas", "sesiones", "archivos", "sonido", "dock-prueba"]),
+    ("avisador", programa!("avisador"), &[], &["avisos"]),
+    ("virtio-sonido", programa!("virtio-sonido"), &[("dma-vsonido", PERMISO_DMA), ("virtio-sonido", REGISTROS), ("vsonido-cfg", REGISTROS), ("plazo", PLAZO), ("virtio-sonido", INTERRUPCION | OPCIONAL)], &["sonido"]),
+    // X5c: el sonido de un PC (Intel HDA). Si hay los dos, suena el primero que se presenta al servicio.
+    ("hda", programa!("hda"), &[("dma-hda", PERMISO_DMA), ("hda", REGISTROS), ("plazo", PLAZO), ("hda", INTERRUPCION | OPCIONAL)], &["sonido"]),
+    ("tono-a", programa!("tono-a"), &[], &["sonido"]),
+    ("tono-b", programa!("tono-b"), &[], &["sonido"]),
+    ("selector", programa!("selector"), &[], &["ventanas", "archivos", "selector"]),
+    ("hostil", programa!("hostil"), &[], &["sesiones", "ventanas", "archivos", "sonido", "selector", "disco", "centro"]),
+    ("presa", programa!("presa"), &[], &["sesiones"]),
+    ("red-gloton", programa!("red-gloton"), &[], &["red"]),
+    ("red-prueba", programa!("red-prueba"), &[], &["red", "red-escuchar"]),
+    ("sin-red", programa!("sin-red"), &[], &[]),
+    ("panel", programa!("panel"), &[], &["ventanas", "sesiones", "centro", "sonido", "red-estado", "avisos"]),
+    ("caida", programa!("caida"), &[], &["caida"]),
+    ("caida-cliente", programa!("hola"), &[], &["caida"]),
+    ("explorador", programa!("explorador"), &[], &["ventanas", "archivos", "sesiones", "explorador"]),
+    ("workbench", programa!("workbench"), &[], &["ventanas", "archivos", "sesiones", "explorador"]),
+    ("hola", programa!("hola"), &[], &[]),
+    ("virtio-gpu", programa!("virtio-gpu"), &[("dma-vgpu", PERMISO_DMA), ("virtio-gpu", REGISTROS), ("vgpu-cfg", REGISTROS), ("virtio-gpu", INTERRUPCION | OPCIONAL)], &["ventanas"]),
+    ("presion", programa!("presion"), &[], &["presion"]),
+    // Sin la caja Linux, pero sí el programa que pide el permiso de máquinas virtuales sin tenerlo (H9): no es de ARM.
+    ("sin-maquina", programa!("sin-maquina"), &[("sistema", DATOS)], &["sesiones"]),
+    ("espia", programa!("espia"), &[], &["ventanas"]),
+    ("hora", programa!("hora"), &[("reloj", RELOJ)], &["red"]),
+    ("commodity-prueba", programa!("commodity-prueba"), &[], &["ventanas", "sesiones"]),
+    ("mezclador", programa!("mezclador"), &[], &["ventanas", "sonido"]),
 ];
+
+/// Con `pruebas` (`make prueba-x86`), el kernel no lanza `inicio`: ningún servicio.
+#[cfg(all(feature = "pruebas", not(any(feature = "uso", feature = "graficos", feature = "caja"))))]
+static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[];
 
 const REGISTROS: u32 = 1;
 const INTERRUPCION: u32 = 2;
@@ -248,15 +291,17 @@ fn pantalla_del_gop() -> Option<(Objeto, Objeto)> {
     Some((Objeto::Firmware { fisica: pagina, tamano: fin - pagina }, Objeto::Memoria(alloc::sync::Arc::new(info))))
 }
 
-/// El tamaño del ELF de un programa de `PROGRAMAS`: con `uso` van comprimidos, y el original es lo primero que guarda
-/// `build.rs`.
+/// Si los programas de `PROGRAMAS` van comprimidos (`programa!`): en la imagen de usar y en la de `arranque-x86`.
+const COMPRIMIDOS: bool = cfg!(any(feature = "uso", not(any(feature = "graficos", feature = "caja", feature = "pruebas"))));
+
+/// El tamaño del ELF de un programa de `PROGRAMAS`: comprimidos, el original es lo primero que guarda `build.rs`.
 fn tamano_elf(elf: &[u8]) -> u32 {
-    if cfg!(feature = "uso") { elf.get(0..4).map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])) } else { elf.len() as u32 }
+    if COMPRIMIDOS { elf.get(0..4).map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])) } else { elf.len() as u32 }
 }
 
-/// El ELF entero de un programa de `PROGRAMAS` (con `uso`, descomprimido). `None` si no cuadra.
+/// El ELF entero de un programa de `PROGRAMAS` (descomprimido, si va comprimido). `None` si no cuadra.
 fn elf_entero(elf: &[u8]) -> Option<alloc::borrow::Cow<'_, [u8]>> {
-    if cfg!(feature = "uso") { crate::lz4::programa(elf).map(alloc::borrow::Cow::Owned) } else { Some(alloc::borrow::Cow::Borrowed(elf)) }
+    if COMPRIMIDOS { crate::lz4::programa(elf).map(alloc::borrow::Cow::Owned) } else { Some(alloc::borrow::Cow::Borrowed(elf)) }
 }
 
 /// Arma las llaves de arranque y lanza `inicio`. Falso si no se pudo.

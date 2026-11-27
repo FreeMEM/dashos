@@ -344,7 +344,8 @@ pub fn kmain() -> ! {
     #[cfg(feature = "pruebas")]
     pruebas::ejecutar(&a, n, &funciones);
 
-    kprintln!("DashOS en marcha (x86-64) con {} núcleos.", n + 1);
+    // Como en ARM ("DashOS en marcha con N núcleos."): así lo esperado de `arranque-virt` vale también aquí (X7).
+    kprintln!("DashOS en marcha con {} núcleos. (x86-64)", n + 1);
     // La imagen normal pasa el sistema al programa de inicio (X5), como en ARM. La consola es un proceso (X6).
     #[cfg(not(feature = "pruebas"))]
     if !inicio_x86::lanzar(&a, &funciones) {
