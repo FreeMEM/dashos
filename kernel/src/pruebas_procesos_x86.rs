@@ -69,6 +69,7 @@ pub fn ejecutar() {
     prueba_lanzador();
     prueba_reparto();
     prueba_hilos_usuario();
+    prueba_fallos();
     prueba_maquinas();
     prueba_relevo();
 }
@@ -348,6 +349,7 @@ static TIEMPO: &[u8] = programa_x86!("tiempo");
 static GRUPOS: &[u8] = programa_x86!("grupos");
 static LANZADOR: &[u8] = programa_x86!("lanzador");
 static MUCHOS: &[u8] = programa_x86!("muchos");
+static FALLOS: &[u8] = programa_x86!("fallos");
 
 static PIE_ULTIMO: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
@@ -707,6 +709,20 @@ fn prueba_hilos_usuario() {
 /// aparatos, CPUID, hipercall, MSR, interrupción, temporizador, modo largo, otra vCPU en modo real) la comprueba el
 /// programa, que sale con 10 si todo cuadra (11 si no hay hipervisor).
 static MAQUINA: &[u8] = programa_x86!("maquina");
+
+/// K5: los fallos del propio proceso (llamadas 61 y 62) aún no están en x86: el programa de ARM (`fallos`) comprueba
+/// que las dos dicen `E_NO_HAY`, lo manda por su llave y sale con 0.
+fn prueba_fallos() {
+    let (mio, suyo) = objetos::Canal::nuevo();
+    let (c, lado) = extremo(&mio);
+    let fin = lanzar_elf_en(FALLOS, alloc::vec![suyo], 2, crate::cupo::Cupo::raiz()).and_then(|c| esperar_fin(&c, 1000));
+    let paso = c.intentar_leer(lado).and_then(|m| m.datos.first().copied());
+    let ok = paso == Some(0) && fin == Some(objetos::Fin::Salida(0));
+    if !ok {
+        kprintln!("  fallos: paso {:?}, fin {:?}", paso, fin);
+    }
+    kprintln!("K5: en x86 las llamadas 61 y 62 dicen que no hay {}", bien(ok));
+}
 
 fn prueba_maquinas() {
     use objetos::Fin;

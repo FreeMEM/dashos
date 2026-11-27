@@ -155,6 +155,13 @@ fn tratar(marco: &mut Marco, tipo: u64) {
         crate::planificador::terminar_actual(crate::objetos::Fin::Fallo);
     }
 
+    // K5: un fallo de datos, de instrucción, de alineación o una instrucción no definida, con manejador puesto: va al
+    // propio hilo. Si no hay manejador, si ya estaba dentro de él o si no se puede escribir el marco, sigue abajo y se
+    // termina el proceso, como siempre.
+    if tipo == 8 && matches!(clase, 0x00 | 0x20 | 0x22 | 0x24 | 0x26) && entregar_fallo(marco, clase) {
+        return;
+    }
+
     // Cualquier otro fallo de un proceso: se avisa y se termina el proceso, no el sistema. Desde AArch32 (12 a 15) no
     // debería llegar nada, porque DashOS nunca baja a AArch32.
     if tipo >= 8 {
@@ -207,4 +214,126 @@ fn tratar(marco: &mut Marco, tipo: u64) {
         }
     }
     panic!("excepción no tratada");
+}
+
+// K5 (S18, "Lo que pide al kernel", punto 1): el proceso trata sus propios fallos.
+//
+// El marco que ve el proceso: 36 palabras de 64 bits, en su orden de bytes (C30): x0 a x30, SP, PC, PSTATE, ESR y FAR.
+// Va en lo alto de la pila del manejador, alineado a 16. Lo escribe y lo lee el kernel con los permisos de EL0
+// (`usuario.rs`, C31): con una dirección que el proceso no puede tocar, el kernel tampoco.
+
+/// Bytes del marco de un fallo (K5).
+pub const MARCO_FALLO: u64 = 36 * 8;
+const SP: usize = 31;
+const PC: usize = 32;
+const PSTATE: usize = 33;
+const ESR: usize = 34;
+const FAR: usize = 35;
+/// Fin de la mitad baja: lo que pase de aquí no es del usuario.
+const LIMITE: u64 = 1 << 39;
+/// NZCV en PSTATE: lo único que el manejador puede cambiar de él al reanudar.
+const NZCV: u64 = 0xf << 28;
+/// BTYPE en PSTATE: a cero al entrar en el manejador y al reanudar, como tras un salto que no es indirecto.
+const BTYPE: u64 = 3 << 10;
+
+/// Pone el manejador de fallos del hilo que llama (llamada 61): entra en `pc` con la pila `[pila, pila + tamano)`.
+/// `pc` 0 lo quita. Falso si algo no vale: `pc` sin alinear a 4 o fuera de la mitad baja, `pila` o `tamano` sin
+/// alinear a 16, una pila que no cabe un marco o que se sale de la mitad baja. Que la pila esté proyectada no se mira
+/// aquí: si no se puede escribir el marco cuando toque, el proceso muere.
+pub fn fallo_manejador(pc: u64, pila: u64, tamano: u64) -> bool {
+    if pc == 0 {
+        return super::planificador::con_fallo(|f| {
+            f.pc = 0;
+            f.pila_fin = 0;
+            f.dentro = false;
+        })
+        .is_some();
+    }
+    let fin = pila.checked_add(tamano);
+    if pc % 4 != 0 || pc >= LIMITE || pila % 16 != 0 || tamano % 16 != 0 || tamano < MARCO_FALLO || fin.is_none_or(|f| f > LIMITE) {
+        return false;
+    }
+    // `dentro` se queda como estaba: cambiar de manejador dentro del manejador no da otro fallo de propina.
+    super::planificador::con_fallo(|f| {
+        f.pc = pc;
+        f.pila_fin = pila + tamano;
+    })
+    .is_some()
+}
+
+/// Entrega un fallo de EL0 al manejador del hilo (K5). Falso si no tiene, si ya está dentro de él o si no se puede
+/// escribir el marco: entonces el fallo termina el proceso, como antes de K5.
+fn entregar_fallo(marco: &mut Marco, clase: u64) -> bool {
+    let Some(f) = super::planificador::con_fallo(|f| *f) else { return false };
+    if f.pc == 0 {
+        return false;
+    }
+    if f.dentro {
+        kprintln!("Proceso: fallo dentro de su manejador de fallos");
+        return false;
+    }
+    let Some(p) = super::planificador::proceso_actual_arc() else { return false };
+    // FAR solo vale en los fallos de datos y de instrucción (si no lleva FnV, el bit 10) y en el PC sin alinear.
+    let far = match clase {
+        0x20 | 0x24 if marco.esr & (1 << 10) == 0 => marco.far,
+        0x22 => marco.far,
+        _ => 0,
+    };
+    let mut v = [0u64; 36];
+    v[..31].copy_from_slice(&marco.x);
+    v[SP] = marco.sp_el0;
+    v[PC] = marco.elr;
+    v[PSTATE] = marco.spsr;
+    v[ESR] = marco.esr;
+    v[FAR] = far;
+    let mut b = [0u8; MARCO_FALLO as usize];
+    for (trozo, x) in b.chunks_exact_mut(8).zip(v) {
+        trozo.copy_from_slice(&if p.big_endian { x.to_be_bytes() } else { x.to_le_bytes() });
+    }
+    // Alineado a 16: `pila_fin` lo está y el marco mide 288.
+    let dir = f.pila_fin - MARCO_FALLO;
+    if !super::usuario::escribir(dir, &b) {
+        kprintln!("Proceso: no se pudo escribir el marco del fallo en {:#x}", dir);
+        return false;
+    }
+    super::planificador::con_fallo(|f| f.dentro = true);
+    // Al manejador: x0 y SP, el marco; x30 a cero, para que volver con `ret` sea un fallo dentro del manejador. Los
+    // demás registros, como estaban al fallar.
+    marco.x[0] = dir;
+    marco.x[30] = 0;
+    marco.sp_el0 = dir;
+    marco.elr = f.pc;
+    marco.spsr &= !BTYPE;
+    true
+}
+
+/// Vuelve de un fallo con el marco que está en `dir` (llamada 62): repone x0 a x30, SP y PC y, de PSTATE, solo NZCV;
+/// el resto de PSTATE sigue siendo el de EL0 que tenía el hilo al llamar. Devuelve el x0 del marco (la llamada lo deja
+/// en x0) o `None` si el marco no se puede leer, si su PSTATE pide otro nivel, AArch32 o enmascarar D, A o I, o si el
+/// PC no está en la mitad baja. Saca al hilo de su manejador.
+pub fn reanudar(marco: &mut Marco, dir: u64) -> Option<u64> {
+    let p = super::planificador::proceso_actual_arc()?;
+    if dir % 8 != 0 || dir.checked_add(MARCO_FALLO).is_none_or(|f| f > LIMITE) {
+        return None;
+    }
+    let mut b = [0u8; MARCO_FALLO as usize];
+    if !super::usuario::leer(dir, &mut b) {
+        return None;
+    }
+    let mut v = [0u64; 36];
+    for (x, trozo) in v.iter_mut().zip(b.chunks_exact(8)) {
+        let t = [trozo[0], trozo[1], trozo[2], trozo[3], trozo[4], trozo[5], trozo[6], trozo[7]];
+        *x = if p.big_endian { u64::from_be_bytes(t) } else { u64::from_le_bytes(t) };
+    }
+    let pstate = v[PSTATE];
+    // M[4:0] distinto de 0 sería EL1, EL2 o AArch32; D, A e I enmascaradas no le tocan a EL0.
+    if pstate & 0x1f != 0 || pstate & (7 << 7) != 0 || v[PC] >= LIMITE {
+        return None;
+    }
+    marco.x.copy_from_slice(&v[..31]);
+    marco.sp_el0 = v[SP];
+    marco.elr = v[PC];
+    marco.spsr = (marco.spsr & !(NZCV | BTYPE)) | (pstate & NZCV);
+    super::planificador::con_fallo(|f| f.dentro = false);
+    Some(v[0])
 }

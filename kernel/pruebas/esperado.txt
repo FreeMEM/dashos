@@ -152,5 +152,7 @@ C46: memoria DMA con permiso bien
   [hilos] el cupo del grupo corta los hilos, y unirse devuelve lo cobrado
   [hilos] medidas
 C52: hilos de usuario bien
+K5: fallos de EL0 al manejador del proceso (little-endian): lectura, escritura e instrucción no definida bien; un fallo dentro del manejador lo mata bien
+K5: fallos de EL0 al manejador del proceso (big-endian): lectura, escritura e instrucción no definida bien; un fallo dentro del manejador lo mata bien
 PÁNICO: panicked at src/base/excepciones.rs
 pila del kernel desbordada

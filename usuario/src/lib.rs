@@ -49,6 +49,8 @@ pub mod asignaciones;
 /// La tabla de llaves: qué es cada llave con que nace el programa (sin dependencias: se prueba en el PC).
 pub mod llaves;
 pub mod hilos;
+/// K5: el hilo trata sus propios fallos (llamadas 61 y 62).
+pub mod fallos;
 /// La cola fija de `hilos::Cola` (rama `centro-vivo`; sin dependencias: se prueba en el PC).
 pub mod anillo;
 pub mod red_cliente;

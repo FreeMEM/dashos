@@ -51,6 +51,8 @@
 //! | 59 | puertos_permitir(llave de puertos): en x86, el proceso puede usar esos puertos de E/S (X6; fue la 29 y la 56, que en `revision` son `medir` y `llaves_nombres`) |
 //!
 //! | 56 | llaves_nombres(búfer, capacidad) -> cuántas llaves de nacimiento tienen nombre; los copia al búfer |
+//! | 61 | fallo_manejador(entrada, pila, tamaño): los fallos de EL0 del hilo van a su manejador (K5; solo ARM) |
+//! | 62 | reanudar(marco): vuelve de un fallo con los registros del marco (K5; solo ARM) |
 //!
 //! `proceso_crear` lleva en x4 una llave de grupo donde crear el proceso, o 0 para el propio (C42). Con el bit 16 de
 //! x3 (`CON_NOMBRES`), tras los números de llave van sus nombres, 16 bytes por llave: lo que es cada una.
@@ -263,6 +265,14 @@ pub fn atender(marco: &mut Marco) {
         64 => firmware_variable(marco, a[0] as u32, a[1], a[2], a[3]),
         #[cfg(not(target_arch = "x86_64"))]
         64 => E_NO_HAY,
+        // K5 (S18): el hilo trata sus propios fallos. 61 pone su manejador (a[0] la entrada, 0 lo quita; a[1] y a[2] su
+        // pila) y 62 vuelve de un fallo con el marco de a[0]. Solo en ARM; en x86, `E_NO_HAY` (aún no está).
+        #[cfg(target_arch = "aarch64")]
+        61 => if crate::excepciones::fallo_manejador(a[0], a[1], a[2]) { 0 } else { E_ARGUMENTO },
+        #[cfg(target_arch = "aarch64")]
+        62 => crate::excepciones::reanudar(marco, a[0]).unwrap_or(E_ARGUMENTO),
+        #[cfg(not(target_arch = "aarch64"))]
+        61 | 62 => E_NO_HAY,
         n => {
             kprintln!("  [hilo {}] llamada desconocida {}", planificador::actual_id(), n);
             E_ARGUMENTO
