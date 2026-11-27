@@ -55,6 +55,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_reparto();
     prueba_dma_proceso();
     prueba_hilos_usuario();
+    prueba_fallos();
     prueba_its();
     prueba_desborde();
 }
@@ -1515,6 +1516,29 @@ fn lanzar_hilos(orden: &[u8], bytes: u64, nucleo: usize) -> Option<(alloc::sync:
     c.escribir(lado, objetos::Mensaje { datos: orden.to_vec(), llaves: alloc::vec::Vec::new(), marca: 0 }).ok()?;
     let control = lanzar_elf_en(HILOS_U, alloc::vec![suyo], nucleo, g.clone())?;
     Some((control, g, mio))
+}
+
+/// K5: los fallos de EL0 van al manejador del propio hilo (`usuario/src/bin/fallos.rs`), en un proceso little-endian y
+/// en uno big-endian (el marco va en el orden de bytes del proceso). El programa manda 0 por su llave si la lectura, la
+/// escritura y la instrucción no definida volvieron bien; después falla dentro del manejador, y tiene que morir.
+static FALLOS: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/fallos");
+static FALLOS_BE: &[u8] = include_bytes!("../../usuario/target/aarch64_be-unknown-none-softfloat/release/fallos");
+
+fn prueba_fallos() {
+    for (binario, orden) in [(FALLOS, "little-endian"), (FALLOS_BE, "big-endian")] {
+        let (mio, suyo) = objetos::Canal::nuevo();
+        let (c, lado) = extremo(&mio);
+        let Some(control) = lanzar_elf_control(binario, alloc::vec![suyo], 2) else { return };
+        let fin = esperar_fin(&control, 1000);
+        let paso = c.intentar_leer(lado).and_then(|m| m.datos.first().copied());
+        let tratados = paso == Some(0);
+        let muerto = fin == Some(objetos::Fin::Fallo);
+        if !tratados || !muerto {
+            kprintln!("  fallos ({}): paso {:?}, fin {:?}", orden, paso, fin);
+        }
+        kprintln!("K5: fallos de EL0 al manejador del proceso ({}): lectura, escritura e instrucción no definida {}; un fallo dentro del manejador lo mata {}",
+            orden, if tratados { "bien" } else { "MAL" }, if muerto { "bien" } else { "MAL" });
+    }
 }
 
 fn prueba_hilos_usuario() {

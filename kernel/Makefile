@@ -47,7 +47,7 @@ usuario: kit-c FORCE
 	cd ../usuario && cargo build --release --features archivos,ventanas,sonido,imagenes,red,caja,ordenes
 	@# El Shell nativo y las órdenes de SYS:C (van al disco, no a la imagen del kernel).
 	cd ../ordenes && cargo build --release
-	cd ../usuario && cargo build --release --target aarch64_be-unknown-none-softfloat --bin hola --bin fpu_b
+	cd ../usuario && cargo build --release --target aarch64_be-unknown-none-softfloat --bin hola --bin fpu_b --bin fallos
 	$(BOOTLIN)/aarch64_be-linux-as -EL -o $(PIE).o ../usuario/asm/pie.s
 	$(BOOTLIN)/aarch64_be-linux-ld -EL -pie --no-dynamic-linker -z noexecstack -z stack-size=32768 -o $(PIE) $(PIE).o
 	@# H4: la caja Amiga (caja/), con el JIT de Emu68: solo si está el clon de third_party/Emu68 (toolchains/LEEME.md).
@@ -91,6 +91,7 @@ prueba: $(PRUEBAS) catalogos
 	cd ../iconos-cajas && cargo test --quiet
 	cd ../caja-linux/vmm && cargo test --quiet
 	$(MAKE) -C ../caja/pruebas_hunk
+	$(MAKE) -C ../caja/pruebas_fallo
 	mkdir -p target && rustc --edition 2024 --test src/rp1.rs -o target/rp1_pruebas && ./target/rp1_pruebas -q
 	cd ../usuario && mkdir -p target && rustc --edition 2024 --test src/cc_rejilla.rs -o target/cc_rejilla_pruebas && ./target/cc_rejilla_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/lanzables.rs -o target/lanzables_pruebas && ./target/lanzables_pruebas -q
@@ -747,7 +748,7 @@ RELEVO_PATCH := $(if $(RELEVO_DIR),--config 'patch."https://github.com/FreeMEM/R
 # X7, paso 4: los de `arranque-virt` (`inicio.rs` con `virt`) que no son de ARM, más los controladores de un PC. `paq`
 # sale de `ordenes/`, como en ARM. Y los programas del disco de la prueba (`tools/disco_archivos.py`), también de x86.
 SERVICIOS_X86 := inicio consola compositor xhci nvme disco ahci disco-sata archivos comprobador eco sesiones red virtio-red intel-red rtl-red fondo centro guardian pide entrada ficheros imagen adf-prueba ventana-a ventana-b ajustes sonido avisos barra dock avisador virtio-sonido hda tono-a tono-b selector hostil presa red-gloton red-prueba sin-red panel caida explorador workbench hola virtio-gpu presion sin-maquina espia hora commodity-prueba mezclador
-DISCO_PROGRAMAS_PRUEBA_X86 := pide cambio ram avisa guarda espera
+DISCO_PROGRAMAS_PRUEBA_X86 := pide cambio ram avisa guarda espera blanker nocapslock
 
 # X5c: el firmware del PHY de la RTL8125B (`rtl8125b-2.fw` de linux-firmware), si este sistema lo tiene: va dentro del
 # kernel de x86 (`inicio_x86.rs`) y `rtl-red` lo aplica. No va en git. Se descomprime (.zst o .xz) en
@@ -912,7 +913,7 @@ sata-x86: x86 FORCE
 
 # Los programas de usuario de x86-64 que no tocan aparatos (S30, X4), y el PIE de C29 (con las binutils del sistema).
 PIE_X86 := ../usuario/target/pie_x86
-BINES_X86 := hola fpu_a fpu_b malo tenis repartos tls trampas hijo padre llaves grupos lanzador tiempo muchos hilos maquina maquina_pci relevo
+BINES_X86 := hola fpu_a fpu_b malo tenis repartos tls trampas hijo padre llaves grupos lanzador tiempo muchos hilos maquina maquina_pci relevo fallos
 
 usuario-x86: FORCE
 	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86) $(RELEVO_PATCH) $(addprefix --bin ,$(BINES_X86))

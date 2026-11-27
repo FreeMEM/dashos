@@ -10,6 +10,16 @@ DashOS: arranque por UEFI en x86-64
 ~│   [caja-amiga] línea A desconocida: excepción 10 del 68k, 1 rechazada, 1 llamada buena: bien
 ~│   [caja-amiga] exec, dos, graphics e intuition nativas (Rust): ExecBase $
 ~│   [caja-amiga] saludo.exe acabó con 0 (vector -1), 7 llamadas nativas
+# K3: los chips del Amiga (chips.c): el haz, el temporizador A, el ICR y el TOD del CIA-A, e INTREQ. La caja los
+# enciende solo para él; RelevoJIT manda sus accesos a caja/chips con la hora de relevo_cycles.
+~│   [caja-amiga] chips: VPOSR y VHPOSR: la linea cambia a la siguiente: bien
+~│   [caja-amiga] chips: temporizador A del CIA-A, una vez (709 tics): el bit TA del ICR sube a su hora: bien
+~│   [caja-amiga] chips: temporizador A del CIA-A: se para solo (START a 0): bien
+~│   [caja-amiga] chips: ICR del CIA-A: leerlo lo borra: bien
+~│   [caja-amiga] chips: TOD del CIA-A: 1 por cuadro: bien
+~│   [caja-amiga] chips: INTREQ: SOFT sube con SET y baja con CLR: bien
+~│   [caja-amiga] chips: 0 fallos
+~│   [caja-amiga] chips.exe acabó con 0 (vector -1), 
 # Las tareas de procesos.c (modo a), con la coma flotante extendida guardada al cambiar de tarea.
 ~│   [caja-amiga] procesos: la coma flotante extendida sigue igual tras cambiar de tarea: bien
 ~│   [caja-amiga] procesos: 0 fallos (modo a)

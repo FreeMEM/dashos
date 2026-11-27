@@ -120,6 +120,11 @@ path = "src/bin/trampas.rs"
 test = false
 
 [[bin]]
+name = "fallos"
+path = "src/bin/fallos.rs"
+test = false
+
+[[bin]]
 name = "hijo"
 path = "src/bin/hijo.rs"
 test = false

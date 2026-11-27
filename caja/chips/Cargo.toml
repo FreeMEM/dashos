@@ -1,0 +1,12 @@
+[package]
+name = "dashos-caja-chips"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "Los chips del Amiga para la caja (S18, fase 1): los dos CIA 8520, un Agnus mínimo (haz e interrupciones) y el reloj, calculados con pereza a partir de la hora del 68000"
+
+[lib]
+name = "caja_chips"
+path = "src/lib.rs"
+
+[dependencies]

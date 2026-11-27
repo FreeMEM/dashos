@@ -21,6 +21,10 @@
       escribe en su código lo ve él solo; lo que escribe el anfitrión (el cargador, SetFunction...) lo avisa la caja con
       motor_olvidar y motor_olvidar_en_nativa. La línea A, las páginas del anfitrión y las excepciones van por su
       intérprete, y las interrupciones entran entre bloques traducidos.
+    - K3: los chips del Amiga (motor_chips). Encendidos, sus dos páginas ($BF0000, los CIA, y $DF0000, los registros
+      de los chips) pasan a ser del anfitrión, como la primera: anfitrion_leer y anfitrion_escribir mandan los accesos
+      a caja_chip_leer y caja_chip_escribir con la hora de relevo_cycles (los ciclos de 68000 que cuenta el intérprete;
+      el JIT los estima). Apagados, vuelven a no tener nada.
 */
 
 #include <stdint.h>
@@ -34,6 +38,7 @@
 
 static relevo_cpu *cpu;
 static volatile int nmi;    /* se pidió cortar: el nivel se queda en 7 hasta el programa siguiente */
+static int chips;           /* K3: los chips del Amiga, encendidos (motor_chips) */
 
 const char *motor_nombre(void)
 {
@@ -103,6 +108,23 @@ static void pagina_escribir(void *ctx, uint32_t dir, uint32_t v, unsigned largo)
     for (unsigned i = 0; i < largo; i++) *(volatile uint8_t *)(uintptr_t)(dir + i) = (uint8_t)(v >> (8 * (largo - 1 - i)));
 }
 
+/* K3: las páginas de los chips del Amiga, cada una de 64 KB, como las de RelevoJIT. */
+#define CHIPS_CIA    0x00BF0000u    /* los CIA: CIA-A en $BFE001, CIA-B en $BFD000 */
+#define CHIPS_CUSTOM 0x00DF0000u    /* los registros de los chips: $DFF000-$DFF1FF */
+
+/* Los accesos a las páginas del anfitrión: la primera (pagina_*) y, con los chips encendidos, las suyas. */
+static uint32_t anfitrion_leer(void *ctx, uint32_t dir, unsigned largo)
+{
+    if (dir < RELEVO_PAGE_SIZE) return pagina_leer(ctx, dir, largo);
+    return caja_chip_leer(dir, largo, relevo_cycles(cpu));
+}
+
+static void anfitrion_escribir(void *ctx, uint32_t dir, uint32_t v, unsigned largo)
+{
+    if (dir < RELEVO_PAGE_SIZE) pagina_escribir(ctx, dir, v, largo);
+    else caja_chip_escribir(dir, v, largo, relevo_cycles(cpu));
+}
+
 static relevo_trap_result linea_a(void *ctx, relevo_cpu *c, uint16_t op)
 {
     (void)ctx;
@@ -127,8 +149,8 @@ int motor_iniciar(void)
     cfg.memory = 0;
     cfg.memory_size = 0x100000000ULL - RELEVO_PAGE_SIZE;   /* todo lo que se puede ver; solo lo que se mapea vale */
     cfg.options = RELEVO_OPT_EXIT_ON_PC_ZERO | RELEVO_OPT_BASE_ZERO;
-    cfg.host.read = pagina_leer;
-    cfg.host.write = pagina_escribir;
+    cfg.host.read = anfitrion_leer;
+    cfg.host.write = anfitrion_escribir;
     cfg.host.line_a = linea_a;
     cpu = relevo_create(&cfg);
     if (!cpu) {
@@ -152,6 +174,30 @@ void motor_memoria(uint32_t desde, uint32_t hasta, int ram)
     uint64_t b = ((uint64_t)hasta + RELEVO_PAGE_SIZE - 1) & ~(uint64_t)(RELEVO_PAGE_SIZE - 1);
     if (relevo_map(cpu, a, b - a, ram ? RELEVO_PAGE_RAM : RELEVO_PAGE_NONE) != 0)
         di("RelevoJIT: no se puede mapear [%x, %x)\n", a, (uint32_t)b);
+}
+
+uint64_t motor_ciclos(void) { return cpu ? relevo_cycles(cpu) : 0; }
+
+int motor_chips(int encendidos)
+{
+    if (!cpu) return 0;
+    encendidos = encendidos != 0;
+    if (encendidos == chips) return 1;
+    /* La RAM del 68k empieza en M68K_RAM y no tiene huecos: si llega a la primera página de los chips, exec puede
+       tener bloques ahí. */
+    if (encendidos && m68k_ram_fin > CHIPS_CIA) return 0;
+    relevo_page_kind k = encendidos ? RELEVO_PAGE_HOST : RELEVO_PAGE_NONE;
+    if (relevo_map(cpu, CHIPS_CIA, RELEVO_PAGE_SIZE, k) != 0 || relevo_map(cpu, CHIPS_CUSTOM, RELEVO_PAGE_SIZE, k) != 0) {
+        di("RelevoJIT: no se pueden mapear las páginas de los chips\n");
+        relevo_map(cpu, CHIPS_CIA, RELEVO_PAGE_SIZE, RELEVO_PAGE_NONE);
+        relevo_map(cpu, CHIPS_CUSTOM, RELEVO_PAGE_SIZE, RELEVO_PAGE_NONE);
+        chips = 0;
+        return !encendidos;
+    }
+    /* Lo traducido con las páginas de antes no vale. */
+    relevo_invalidate_all(cpu);
+    chips = encendidos;
+    return 1;
 }
 
 /* Corre hasta que el PC llega a 0. Un doble error de bus (el 68k parado) acaba el programa por el vector 2. */

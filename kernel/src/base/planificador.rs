@@ -133,6 +133,18 @@ pub struct Hilo {
     /// Tiempo de CPU que lleva en la clase justa, en cuentas del contador, en cualquier núcleo (M9): la rotación entre
     /// núcleos da la vez al que lleva menos.
     consumido: u64,
+    /// Su manejador de fallos (K5, llamada 61): solo lo lee y lo cambia el propio hilo, desde sus excepciones y sus
+    /// llamadas, así que va sin cerrojo.
+    fallo: Fallo,
+}
+
+/// El manejador de fallos de un hilo (K5): dónde entra, el final de su pila y si está dentro (de la entrega a
+/// `reanudar`). `pc` 0, sin manejador.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Fallo {
+    pub(super) pc: u64,
+    pub(super) pila_fin: u64,
+    pub(super) dentro: bool,
 }
 
 /// Lo que guarda `fp_guardar` (contexto.s): q0..q31, FPCR y FPSR. También el de la vCPU de una máquina virtual (H9).
@@ -515,6 +527,7 @@ pub fn iniciar_nucleo() {
         sig_dormido: core::ptr::null_mut(),
         fijo: false,
         consumido: 0,
+        fallo: Fallo { pc: 0, pila_fin: 0, dentro: false },
     }));
     #[cfg(target_arch = "aarch64")]
     {
@@ -662,6 +675,7 @@ unsafe fn crear_hilo_registrado(f: extern "C" fn(usize), arg: usize, nucleo: usi
         sig_dormido: core::ptr::null_mut(),
         fijo: false,
         consumido: 0,
+        fallo: Fallo { pc: 0, pila_fin: 0, dentro: false },
     });
     // Sin memoria, el hilo que no llegó a la caja ya se ha soltado, y con él su pila y su cuenta en `HILOS` (`Drop`).
     let Ok(caja) = caja else {
@@ -1621,6 +1635,15 @@ fn aqui<R>(f: impl FnOnce(&mut Nucleo) -> R) -> Option<R> {
     let r = NUCLEOS[n].tomar().as_mut().map(f);
     crate::cerrojo::restaurar_irq(daif);
     r
+}
+
+/// El manejador de fallos del hilo actual (K5), para leerlo o cambiarlo. `None` si no hay hilo o es del kernel. Solo
+/// lo toca el propio hilo (sus llamadas y sus excepciones), así que no hace falta cerrojo.
+#[cfg(target_arch = "aarch64")]
+pub(super) fn con_fallo<R>(f: impl FnOnce(&mut Fallo) -> R) -> Option<R> {
+    let h = actual();
+    // SAFETY: el hilo actual no se suelta mientras corre, y `fallo` solo lo usa él.
+    (!h.is_null() && unsafe { (*h).proceso } != 0).then(|| f(unsafe { &mut (*h).fallo }))
 }
 
 /// El proceso del hilo actual (puntero de `Arc<Proceso>`), o 0.
