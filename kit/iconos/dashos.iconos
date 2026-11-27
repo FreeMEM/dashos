@@ -1,0 +1,184 @@
+# La colección de iconos de DashOS (carpetas, tipos de fichero, volúmenes y aparatos), dibujada aquí, MPL-2.0 como el
+# resto del kit. La lee `kit/src/iconos/coleccion.rs`; la hoja con todos sale con `cargo run --example iconos`.
+#
+# Rejilla de 64 × 64, con `y` hacia abajo. Los bordes rectos de fuera van en múltiplos de 4: a 16 píxeles caen en
+# píxeles enteros. Cada capa es un papel y un trazado de SVG (el atributo `d`); el papel es un tono que sale del tema
+# (Material You, tonal: el icono toma el color del acento, que a su vez puede salir del fondo de escritorio):
+#
+#   fondo   el contenedor de la familia (tono 90 en claro, 30 en oscuro)
+#   hondo   un tono más hondo que el fondo, hacia el acento
+#   acento  el color de la familia (tono 40 en claro, 80 en oscuro)
+#   sobre   lo que va encima del contenedor (tono 10 en claro, 90 en oscuro)
+#   claro   el fondo aclarado hacia la superficie
+#   papel   el de las hojas (casi blanco en claro, gris claro en oscuro)
+#   sombra  negro translúcido;  luz  blanco translúcido
+#
+# `papel@N` pone la capa al N % de opacidad. Una `forma` son capas que comparten varios iconos; un `icono` puede usar
+# una forma, añadir sus capas y llevar un emblema: un Material Symbol lleno (Apache 2.0, `NOTICE`) en la caja
+# `emblema x y lado` de la forma, en el papel que diga (`sobre` si no). El emblema no se pinta por debajo de 24
+# píxeles, salvo en las formas que dicen `siempre` (en las que el emblema es el dibujo). `familia=` elige los tonos:
+# primario, secundario, terciario, neutro, error o amiga (la marca naranja de la caja Amiga, S29). `linux=` son los
+# nombres de la norma de iconos de freedesktop con los que un tema de Linux instalado puede sustituirlo.
+
+# ---------------------------------------------------------------------------------------------------------------
+# Formas
+
+forma carpeta
+hondo M4 18a6 6 0 0 1 6-6h14.3a4 4 0 0 1 2.9 1.2L30 16h24a6 6 0 0 1 6 6v24a6 6 0 0 1-6 6H10a6 6 0 0 1-6-6z
+sombra@18 M4 25a6 6 0 0 1 6-6h44a6 6 0 0 1 6 6v21a6 6 0 0 1-6 6H10a6 6 0 0 1-6-6z
+fondo M4 26a6 6 0 0 1 6-6h44a6 6 0 0 1 6 6v20a6 6 0 0 1-6 6H10a6 6 0 0 1-6-6z
+luz@45 M10 20h44a6 6 0 0 1 6 6v1.5a6 6 0 0 0-6-6H10a6 6 0 0 0-6 6V26a6 6 0 0 1 6-6z
+emblema 22 25 20 acento
+
+forma hoja
+sombra@22 M18 6h20.3a4 4 0 0 1 2.8 1.2l13.7 13.7a4 4 0 0 1 1.2 2.8V56a6 6 0 0 1-6 6H18a6 6 0 0 1-6-6V12a6 6 0 0 1 6-6z
+papel M18 4h20.3a4 4 0 0 1 2.8 1.2l13.7 13.7a4 4 0 0 1 1.2 2.8V54a6 6 0 0 1-6 6H18a6 6 0 0 1-6-6V10a6 6 0 0 1 6-6z
+acento M38 4.2a4 4 0 0 1 3.1 1l13.7 13.7a4 4 0 0 1 1 3.1H44a6 6 0 0 1-6-6z
+emblema 22 28 20 acento
+
+forma baldosa
+sombra@20 M22 9h20a14 14 0 0 1 14 14v20a14 14 0 0 1-14 14H22A14 14 0 0 1 8 43V23A14 14 0 0 1 22 9z
+fondo M22 8h20a14 14 0 0 1 14 14v20a14 14 0 0 1-14 14H22A14 14 0 0 1 8 42V22A14 14 0 0 1 22 8z
+emblema 18 18 28 siempre acento
+
+forma disco
+sombra@20 M12 18h40a8 8 0 0 1 8 8v16a8 8 0 0 1-8 8H12a8 8 0 0 1-8-8V26a8 8 0 0 1 8-8z
+fondo M12 16h40a8 8 0 0 1 8 8v16a8 8 0 0 1-8 8H12a8 8 0 0 1-8-8V24a8 8 0 0 1 8-8z
+hondo M4 36h56v4a8 8 0 0 1-8 8H12a8 8 0 0 1-8-8z
+acento M50 39.5a2.5 2.5 0 1 1 0 5a2.5 2.5 0 1 1 0-5z
+claro M12 40.5h22a1.5 1.5 0 0 1 0 3H12a1.5 1.5 0 0 1 0-3z
+emblema 24 18 16 sobre
+
+# ---------------------------------------------------------------------------------------------------------------
+# Carpetas
+
+icono carpeta forma=carpeta familia=primario linux=folder,inode-directory
+icono carpeta-casa forma=carpeta familia=primario emblema=home linux=user-home,folder-home
+icono carpeta-documentos forma=carpeta familia=primario emblema=description linux=folder-documents
+icono carpeta-imagenes forma=carpeta familia=primario emblema=image linux=folder-pictures,folder-images
+icono carpeta-musica forma=carpeta familia=primario emblema=music_note linux=folder-music
+icono carpeta-videos forma=carpeta familia=primario emblema=movie linux=folder-videos
+icono carpeta-descargas forma=carpeta familia=primario emblema=download linux=folder-download
+icono carpeta-escritorio forma=carpeta familia=primario emblema=desktop_windows linux=user-desktop
+icono carpeta-programas forma=carpeta familia=primario emblema=apps linux=folder-applications
+icono carpeta-prefs forma=carpeta familia=primario emblema=settings linux=folder-preferences
+icono carpeta-compartida forma=carpeta familia=primario emblema=group linux=folder-publicshare
+icono carpeta-red forma=carpeta familia=primario emblema=public linux=folder-remote,folder-network
+icono carpeta-bloqueada forma=carpeta familia=primario emblema=lock linux=folder-locked
+icono carpeta-instantanea forma=carpeta familia=primario emblema=history linux=folder-snapshot
+icono carpeta-codigo forma=carpeta familia=primario emblema=code linux=folder-development
+icono carpeta-fuentes forma=carpeta familia=primario emblema=font_download linux=folder-fonts
+icono carpeta-sistema forma=carpeta familia=primario emblema=memory linux=folder-system
+
+# ---------------------------------------------------------------------------------------------------------------
+# Ficheros
+
+icono fichero forma=hoja familia=neutro linux=text-x-generic-template,application-octet-stream,unknown
+icono texto forma=hoja familia=secundario linux=text-x-generic,text-plain
+acento@70 M20.5 27h23a1.5 1.5 0 0 1 0 3h-23a1.5 1.5 0 0 1 0-3zM20.5 35h23a1.5 1.5 0 0 1 0 3h-23a1.5 1.5 0 0 1 0-3zM20.5 43h23a1.5 1.5 0 0 1 0 3h-23a1.5 1.5 0 0 1 0-3zM20.5 51h13a1.5 1.5 0 0 1 0 3h-13a1.5 1.5 0 0 1 0-3z
+icono documento forma=hoja familia=primario emblema=description linux=x-office-document
+icono pdf forma=hoja familia=error emblema=picture_as_pdf linux=application-pdf
+icono imagen forma=hoja familia=terciario emblema=image linux=image-x-generic
+icono audio forma=hoja familia=secundario emblema=music_note linux=audio-x-generic
+icono video forma=hoja familia=terciario emblema=movie linux=video-x-generic
+icono codigo forma=hoja familia=primario emblema=code linux=text-x-script,text-x-source
+icono guion forma=hoja familia=secundario emblema=terminal linux=application-x-shellscript,text-x-dash
+icono comprimido forma=hoja familia=neutro emblema=folder_zip linux=package-x-generic,application-x-archive
+icono imagen-disco forma=hoja familia=secundario emblema=save linux=application-x-cd-image,application-x-amiga-disk-format
+icono hoja-calculo forma=hoja familia=terciario emblema=table_chart linux=x-office-spreadsheet
+icono presentacion forma=hoja familia=error emblema=slideshow linux=x-office-presentation
+icono fuente forma=hoja familia=neutro emblema=font_download linux=font-x-generic
+icono web forma=hoja familia=primario emblema=html linux=text-html
+icono datos forma=hoja familia=neutro emblema=database linux=application-x-sqlite3,x-office-database
+icono clave forma=hoja familia=terciario emblema=key linux=application-pgp-keys,application-x-x509-ca-cert
+icono correo forma=hoja familia=primario emblema=mail linux=message-rfc822
+icono calendario forma=hoja familia=primario emblema=calendar_month linux=text-calendar,x-office-calendar
+icono registro forma=hoja familia=neutro emblema=receipt_long linux=text-x-log
+icono paquete forma=hoja familia=secundario emblema=package_2 linux=application-x-dashos-paq
+icono icono-amiga forma=hoja familia=amiga emblema=joystick linux=application-x-amiga-icon
+icono ajustes-fichero forma=hoja familia=secundario emblema=tune linux=application-x-desktop
+icono enlace forma=hoja familia=neutro emblema=link linux=inode-symlink
+
+# ---------------------------------------------------------------------------------------------------------------
+# Programas
+
+icono programa forma=baldosa familia=primario emblema=deployed_code linux=application-x-executable,application-x-dashos-programa
+icono programa-amiga forma=baldosa familia=amiga emblema=joystick linux=application-x-amiga-executable
+icono programa-linux forma=baldosa familia=neutro emblema=terminal linux=application-x-elf
+icono shell forma=baldosa familia=secundario emblema=terminal linux=utilities-terminal
+
+# ---------------------------------------------------------------------------------------------------------------
+# Volúmenes
+
+icono disco-duro forma=disco familia=secundario linux=drive-harddisk
+icono disco-sistema forma=disco familia=primario emblema=memory linux=drive-harddisk-system
+icono disco-red forma=disco familia=secundario emblema=cloud linux=network-server,folder-remote
+icono disco-amiga forma=disco familia=amiga emblema=joystick linux=drive-harddisk-amiga
+icono disco-linux forma=disco familia=neutro emblema=terminal linux=drive-harddisk-linux
+
+icono usb familia=secundario linux=drive-removable-media-usb,drive-removable-media
+sombra@20 M4 28h12v12H4z M24 22h28a8 8 0 0 1 8 8v12a8 8 0 0 1-8 8H24a8 8 0 0 1-8-8V30a8 8 0 0 1 8-8z
+hondo M6 26h12v12H6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2z
+papel M8 29h4v2.5H8zM8 32.5h4V35H8z
+fondo M24 20h28a8 8 0 0 1 8 8v12a8 8 0 0 1-8 8H24a8 8 0 0 1-8-8V28a8 8 0 0 1 8-8z
+claro M28 26h20a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H28a3 3 0 0 1-3-3V29a3 3 0 0 1 3-3z
+acento M54 32.5a1.5 1.5 0 0 1 0 3a1.5 1.5 0 0 1 0-3z
+
+icono tarjeta-sd familia=secundario linux=media-flash-sd,media-flash
+sombra@20 M26 8h16a6 6 0 0 1 6 6v42a6 6 0 0 1-6 6H22a6 6 0 0 1-6-6V18z
+fondo M26 6h16a6 6 0 0 1 6 6v42a6 6 0 0 1-6 6H22a6 6 0 0 1-6-6V16z
+hondo M28 10h3v10h-3zM34 10h3v10h-3zM40 10h3v10h-3z
+claro M24 34h16a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H24a2 2 0 0 1-2-2V36a2 2 0 0 1 2-2z
+
+icono optico familia=terciario linux=media-optical,drive-optical
+sombra@20 M32 8a26 26 0 1 1 0 52a26 26 0 1 1 0-52z
+fondo M32 6a26 26 0 1 1 0 52a26 26 0 1 1 0-52zM32 28a4 4 0 1 0 0 8a4 4 0 1 0 0-8z
+luz@40 M32 6a26 26 0 0 1 22.5 13l-8.7 5A16 16 0 0 0 32 16z M32 58a26 26 0 0 1-22.5-13l8.7-5A16 16 0 0 0 32 48z
+hondo M32 22a10 10 0 1 1 0 20a10 10 0 1 1 0-20zM32 28a4 4 0 1 0 0 8a4 4 0 1 0 0-8z
+
+icono disquete familia=primario linux=media-floppy
+sombra@20 M14 10h33.5a4 4 0 0 1 2.8 1.2l6.5 6.5a4 4 0 0 1 1.2 2.8V52a6 6 0 0 1-6 6H14a6 6 0 0 1-6-6V16a6 6 0 0 1 6-6z
+fondo M14 8h33.5a4 4 0 0 1 2.8 1.2l6.5 6.5a4 4 0 0 1 1.2 2.8V50a6 6 0 0 1-6 6H14a6 6 0 0 1-6-6V14a6 6 0 0 1 6-6z
+hondo M20 8h24v14a2 2 0 0 1-2 2H22a2 2 0 0 1-2-2z
+fondo M35 11h5v10h-5z
+papel M18 32h28a2 2 0 0 1 2 2v22H16V34a2 2 0 0 1 2-2z
+sobre@35 M21 38h22v2H21zM21 44h22v2H21zM21 50h14v2H21z
+
+icono disco-ram familia=terciario linux=drive-ram,media-memory
+hondo M18 6h3v8h-3zM26 6h3v8h-3zM35 6h3v8h-3zM43 6h3v8h-3zM18 50h3v8h-3zM26 50h3v8h-3zM35 50h3v8h-3zM43 50h3v8h-3zM6 18h8v3H6zM6 26h8v3H6zM6 35h8v3H6zM6 43h8v3H6zM50 18h8v3h-8zM50 26h8v3h-8zM50 35h8v3h-8zM50 43h8v3h-8z
+sombra@20 M18 13h28a5 5 0 0 1 5 5v28a5 5 0 0 1-5 5H18a5 5 0 0 1-5-5V18a5 5 0 0 1 5-5z
+fondo M18 12h28a6 6 0 0 1 6 6v28a6 6 0 0 1-6 6H18a6 6 0 0 1-6-6V18a6 6 0 0 1 6-6z
+acento M26 22h12a4 4 0 0 1 4 4v12a4 4 0 0 1-4 4H26a4 4 0 0 1-4-4V26a4 4 0 0 1 4-4z
+luz@50 M17 16.5a1.5 1.5 0 1 1 0 3a1.5 1.5 0 1 1 0-3z
+
+icono papelera familia=neutro linux=user-trash
+sombra@20 M14 20h36l-3 34a6 6 0 0 1-6 6H23a6 6 0 0 1-6-6z
+fondo M14 18h36l-3 34a6 6 0 0 1-6 6H23a6 6 0 0 1-6-6z
+hondo M25 26a1.5 1.5 0 0 1 1.5 1.5v22a1.5 1.5 0 0 1-3 0v-22a1.5 1.5 0 0 1 1.5-1.5zM32 26a1.5 1.5 0 0 1 1.5 1.5v22a1.5 1.5 0 0 1-3 0v-22a1.5 1.5 0 0 1 1.5-1.5zM39 26a1.5 1.5 0 0 1 1.5 1.5v22a1.5 1.5 0 0 1-3 0v-22a1.5 1.5 0 0 1 1.5-1.5z
+acento M14 10h36a4 4 0 0 1 4 4v4H10v-4a4 4 0 0 1 4-4zM28 5h8a2 2 0 0 1 2 2v3H26V7a2 2 0 0 1 2-2z
+
+icono papelera-llena familia=neutro linux=user-trash-full
+sombra@20 M14 20h36l-3 34a6 6 0 0 1-6 6H23a6 6 0 0 1-6-6z
+fondo M14 18h36l-3 34a6 6 0 0 1-6 6H23a6 6 0 0 1-6-6z
+hondo M25 26a1.5 1.5 0 0 1 1.5 1.5v22a1.5 1.5 0 0 1-3 0v-22a1.5 1.5 0 0 1 1.5-1.5zM32 26a1.5 1.5 0 0 1 1.5 1.5v22a1.5 1.5 0 0 1-3 0v-22a1.5 1.5 0 0 1 1.5-1.5zM39 26a1.5 1.5 0 0 1 1.5 1.5v22a1.5 1.5 0 0 1-3 0v-22a1.5 1.5 0 0 1 1.5-1.5z
+papel M16 18c1-7 7-10 12-7c3-5 10-5 13 0c4-2 9 1 9 7z
+acento M11.3 9.6l34.6-9.3a4 4 0 0 1 4.9 2.8l1 3.9L13.3 17.4l-1-3.9a4 4 0 0 1-1-3.9z
+
+# ---------------------------------------------------------------------------------------------------------------
+# Aparatos
+
+icono ordenador forma=baldosa familia=secundario emblema=computer linux=computer
+icono portatil forma=baldosa familia=secundario emblema=laptop_chromebook linux=computer-laptop
+icono pantalla forma=baldosa familia=secundario emblema=monitor linux=video-display
+icono teclado forma=baldosa familia=secundario emblema=keyboard linux=input-keyboard
+icono raton forma=baldosa familia=secundario emblema=mouse linux=input-mouse
+icono impresora forma=baldosa familia=secundario emblema=print linux=printer
+icono auriculares forma=baldosa familia=terciario emblema=headphones linux=audio-headphones
+icono altavoz forma=baldosa familia=terciario emblema=speaker linux=audio-speakers
+icono microfono forma=baldosa familia=terciario emblema=mic linux=audio-input-microphone
+icono camara forma=baldosa familia=terciario emblema=photo_camera linux=camera-photo
+icono telefono forma=baldosa familia=secundario emblema=smartphone linux=phone
+icono mando forma=baldosa familia=terciario emblema=stadia_controller linux=input-gaming
+icono router forma=baldosa familia=secundario emblema=router linux=network-wired
+icono bluetooth forma=baldosa familia=secundario emblema=bluetooth linux=bluetooth
+icono bateria forma=baldosa familia=secundario emblema=battery_full linux=battery

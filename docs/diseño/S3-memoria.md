@@ -109,19 +109,24 @@ Cada controlador pide memoria para DMA diciendo qué periférico la usará, y el
 - **Un Enforcer integrado.** En el Amiga, Enforcer era una herramienta que usaba la MMU para pillar programas que
   escriben donde no deben. La caja puede hacerlo de serie: avisar de toda escritura en la página 0 y fuera de la
   memoria reservada, con la tarea y la instrucción culpables. Ayuda a depurar programas 68k, y Forja lo puede mostrar.
+  Los avisos van a un fichero de texto por caja en `Estado:Registros/` (S6), una línea por aviso. La orden `Registro`
+  lo lee y lo sigue en vivo: no hace falta Forja para leerlo.
 - El código traducido por el JIT vive en la caja, fuera de los 4 GB, con sus dos direcciones (escribir y ejecutar).
 - El exec de la caja apunta el dueño de cada bloque de `AllocMem` (S2, matar tareas).
 
 ### Poca memoria
 
-- **Sin intercambio a disco por defecto.** La tarjeta SD es lenta y se gasta. Se puede activar en un disco USB.
+- **Sin intercambio a disco por defecto.** La tarjeta SD es lenta y se gasta. Se puede activar en un disco USB: es un
+  ajuste de la máquina, una línea de texto en `Estado:Prefs` (S4b), con su casilla en Ajustes y con la orden `Ajuste`.
+  Cambiarlo es acción de administrador.
 - **Memoria comprimida con LZ4**, en el kernel. Comprimir y descomprimir una página es un trabajo corto, sin
   pasar por otro proceso.
 - **Sin prometer de más.** La memoria se reserva al pedirla, aunque las páginas se rellenen al usarlas. Si no hay, la
   petición falla en ese momento. Así no hay un OOM killer que mate procesos al azar.
 - **Si aun así falta**, el sistema avisa en el escritorio y propone cerrar programas de fondo. Nunca se toca el
   compositor ni los servicios del sistema.
-- **Límites por proceso**: quien lanza un proceso le puede poner un tope de memoria, igual que de CPU (S2).
+- **Límites por proceso**: quien lanza un proceso le puede poner un tope de memoria, igual que de CPU (S2). Desde el
+  2026-11-14 es un tope de verdad y no una reserva (ver "Cupos como topes").
 
 ## Lo que queda abierto
 
@@ -130,7 +135,62 @@ Cada controlador pide memoria para DMA diciendo qué periférico la usará, y el
    Recomendado: sí. El coste es que algunos programas de Linux reservan mucho más de lo que usan; para ellos la capa
    de S7 puede prometer de más dentro de un límite.
 3. ¿Enforcer integrado en la caja Amiga, activo siempre o solo al depurar? Recomendado: activo siempre, con avisos a
-   un registro, porque cuesta poco.
+   un registro (el de la caja en `Estado:Registros/`), porque cuesta poco.
+
+## Cupos como topes (2026-11-14)
+
+Decisión del usuario ("lo de cgroups es perfecto"), hecha en la rama `cupos-topes` (bitácora en
+`docs/bitacoras/cupos.md`). Hasta aquí, el presupuesto de un grupo era una **reserva**: `grupo_crear` lo descontaba
+del padre al crearlo, se usara o no. En la máquina de pruebas de 2 GB no cabían las cajas, y hubo que darle a la caja
+Amiga "32 MB más la cuarta parte de lo libre". Ahora es un **tope**, con la idea de `memory.max` de los cgroups de Linux
+(solo la idea: no se ha leído su código).
+
+- **Cobrar al usar.** Crear un grupo solo cobra al padre lo que ocupa el grupo (512 bytes). Cada cobro (objeto de
+  memoria, tablas, proceso, hilo, canal, temporizador...) suma a su grupo y a todos los de encima, hasta el raíz. Si
+  alguno pasaría de su tope, se deshace lo sumado y la llamada da `E_MEMORIA`. Soltar resta en toda la cadena. Sumas
+  atómicas sin orden de memoria y sin cerrojos, como el tiempo de CPU (llamada 52). Como mucho son 8 sumas (los niveles).
+- **Topar con el cupo se distingue de una máquina sin memoria.** El programa solo ve `E_MEMORIA` y dirá "sin memoria"
+  aunque haya RAM libre. Por eso tiene que existir (sin hacer): `sesiones` se entera de qué grupo topó, deja una línea
+  en `Estado:Registros/` (S6) con el grupo, el tope y la hora, y sale un aviso en llano ("X ha llegado a su tope de
+  memoria"). Cómo se entera (un aviso del kernel o una consulta), por diseñar al hacerlo. Lo usado y el tope de cada
+  grupo se ven con `Status` (S2).
+- **Los topes pueden sumar más que la máquina.** Los de los hijos, más que el del padre y más que la RAM. Lo que no se
+  pasa es lo usado: el tope del raíz es la memoria libre para procesos al arrancar, y por debajo sigue la reserva del
+  kernel (32 MB). Esto es prometer de más, que la recomendación de arriba evitaba; la diferencia es que nada falla
+  después de concedido: cada petición se cobra al hacerse y, si no hay, falla en ese momento, como antes. Lo que se
+  pierde es la garantía de que un grupo tiene sitio para llegar a su tope: otro puede habérselo comido.
+- **Aviso de memoria baja.** Por eso hace falta saber cuándo queda poco. El kernel avisa (llamada 53) cuando lo libre
+  para procesos baja del 5 % de lo que había al arrancar, y otra vez cuando pasa del 10 % (el hueco evita un aviso en
+  cada página). Escucha `sesiones`, que tiene el permiso de memoria (una llave de arranque propia), y se lo dirá a las cajas para que suelten lo que
+  puedan. Primera versión: el aviso llega y se apunta en el registro (tiene que ser un fichero de texto en
+  `Estado:Registros/`, con la hora y lo libre; S6). Pendiente: el globo de la caja Linux (devolver
+  páginas del invitado) y las cachés de la caja Amiga (las bibliotecas sin abrir, los lienzos que no se ven).
+
+- **El tope de la caja Amiga lo pone el kernel** (decisión del usuario del 2026-11-14), no la caja: un programa 68k
+  podría engañarla. Es el ajuste `memoria amiga` de `Prefs/cajas` (256 MB de serie) más los 32 MB fijos de la caja.
+  La caja nace con el de serie (288 MB); `sesiones`, que tiene la llave de su grupo, lo cambia (llamada 54) al darla
+  de alta y cada vez que el centro de control le dice el ajuste (solo se le acepta al centro, donde lo elige el
+  usuario; `sesiones` no puede leer los Prefs del usuario). Un
+  proceso no puede cambiar el tope de su grupo ni el de los de encima.
+  Eso es lo hecho. Con S0 y S36 (regla 1), lo que manda es el fichero de texto: `Prefs/cajas` es un fichero de
+  `ENVARC:` (S4b, S26). Lo escriben Ajustes y la orden `Ajuste`, y editarlo a mano vale igual. `sesiones` sigue sin
+  leer el `Home:` del usuario: el servicio que vigila ese fichero (el centro o uno suyo) le dice el valor, y la orden
+  pasa por el mismo camino. Cuando la caja llega a su tope, sale un aviso en llano con un botón para subirlo (S4).
+
+### Si ni así basta (diseño, sin hacer)
+
+Sin matar a nadie todavía. Cuando se haga, será así:
+
+1. Primero se avisa (memoria baja) y se espera un rato a que las cajas suelten.
+2. Si lo libre baja de un segundo umbral (por ejemplo, el 2 %), `sesiones` elige a quién cerrar: el grupo que más gasta
+   (`grupo_uso`, lo usado con sus subgrupos) entre los de menor prioridad. Nunca un servicio del sistema (lo que lanza
+   `inicio`: compositor, archivos, sesiones, la consola...) ni la sesión de delante si hay otra.
+3. Antes de cerrarlo, se dice en el escritorio quién y por qué, y se le da un momento para guardar (un aviso por su
+   canal con `sesiones`).
+4. Se cierra con `grupo_matar`: todo lo cobrado vuelve en la cadena.
+
+Lo decide `sesiones`, no el kernel: el kernel solo cuenta y avisa. Así la política (prioridades, qué es del sistema)
+no vive en el kernel.
 
 ## Cómo encaja
 

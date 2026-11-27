@@ -12,11 +12,45 @@ bench = false
 [features]
 # Las pruebas del arranque y lo que solo usan ellas (C36). `make prueba` las pone; `make` no.
 pruebas = []
+# x86-64: PCID encendido (CR4.PCIDE). Apagado de serie hasta probarlo en una CPU de verdad (usuario, 2026-11-15):
+# `make -C kernel arranque-x86 PCID=1` o `prueba-x86 PCID=1`.
+pcid = []
+# x86-64, X12 (G5 de S38): la imagen del dominio de gráficos (`make -C kernel graficos-x86`): la consola y el servicio
+# `dominio-graficos`, que recibe la virtio-gpu (pasada con la IOMMU) y el kernel y el initramfs que deja el cargador.
+graficos = []
+# x86-64, X7: la imagen de la caja Amiga (`make -C kernel caja-x86`): la consola, el compositor, el disco y el servicio
+# de archivos, y la caja Amiga con RelevoJIT (`caja/build-x86/caja-amiga`), que corre sus programas de prueba.
+caja = []
 # QEMU virt por UEFI (U3, docs/UEFI_LOOP.md): otra dirección de carga, otro mapa de aparatos, PSCI.
 virt = []
+# La imagen para usar a mano (`make virt-uso`, `tools/qemu_a_mano.sh`): `virt` sin los programas de prueba, y `guardian`
+# con la pantalla de entrada de verdad.
+uso = ["virt"]
+# S10, los menús de los programas (`make arranque-virt-menus`, docs/bitacoras/menus.md): la imagen de usar con la prueba
+# de kit-c (`dash-ventana`), para verla con los menús dentro de la ventana y en la barra.
+menus = ["uso"]
+# Rama cuentas-2, las cuentas en pantalla (`make arranque-virt-cuentas`): la imagen de usar, con `guardian` escribiendo los
+# códigos de recuperación en la consola (un canal más, "codigos"), para que su guion los teclee.
+cuentas = ["uso"]
 # La Raspberry Pi 3 (P3, docs/MULTITAREA_LOOP.md): periféricos en 0x3F000000 y el controlador de interrupciones de la
 # BCM2836 (QA7) en lugar del GIC. Sin `virt`.
 pi3 = []
+# La Raspberry Pi 5 (docs/bitacoras/pi5.md): la imagen que carga su firmware (kernel_2712.img), periféricos de la BCM2712
+# por encima de 64 GB, el UART10 de depuración. Lleva el diagnóstico en pantalla.
+pi5 = ["diagnostico"]
+# La consola del kernel en la pantalla del firmware (buzón de la VideoCore o `simple-framebuffer` del árbol) con el
+# diagnóstico del primer arranque en una placa nueva, y solo la consola y la caja Amiga como programas
+# (`make pi5`, `make arranque-virt-diag`).
+diagnostico = []
+# Con `diagnostico`: el escritorio en la pantalla del firmware, sin GPU ni teclado (la Pi 5, paso 4 de
+# docs/bitacoras/pi5.md): el compositor, dos ventanas de prueba, Ajustes y la caja Amiga con su ventana. El kernel pinta su
+# diagnóstico hasta que da la pantalla al compositor.
+escritorio = ["diagnostico"]
+# Con `diagnostico`: el teclado y el ratón USB de la Pi 5 (docs/bitacoras/pi5.md, "el RP1"): el kernel mira el PCIe del
+# RP1 tal como lo dejó el firmware (`pciex4_reset=0`), el RP1 y sus dos xHCI, lo cuenta en el panel (`rp1.rs`) y da sus
+# registros a `xhci0` y `xhci1`. Sin `escritorio`, solo esos dos y la consola (`make pi5-usb`): cada tecla sale en
+# pantalla. Con `escritorio`, las teclas y el ratón van al compositor.
+usb = ["diagnostico"]
 # Con `virt`: cuatro programas que ocupan los cuatro núcleos mientras suena el sonido (S19, A6; `make sonido-carga`).
 carga = []
 # Con `virt`: audio.device nativo en lugar de los dos tonos (S19, fase 2; `make sonido-paula`).
@@ -28,6 +62,23 @@ medir = []
 medir_asid = []
 # Con `virt`: el banco del sistema de archivos (paso F; `make medir-fs`): solo consola, nvme, archivos y `medir-fs`.
 medir_fs = []
+# Con `virt`: la caja Linux (H9) arranca un kernel de Linux de verdad (`make arranque-virt-linux`): su Image, que no va
+# en git, entra en el paquete de arranque desde target/linux/Image y llega a `caja-linux` como datos.
+linux = []
+# La imagen del vídeo de la demo (`make demo`, docs/bitacoras/demo.md): la de usar (`uso`), con la caja Linux de verdad
+# (`linux`) y la caja Amiga, que en `uso` no va. La caja Amiga de la demo es la de las capturas (CAJA_INTERACTIVA=1, en
+# caja/build-demo): sus programas esperan a que alguien los mire.
+demo = ["uso", "linux"]
+# Con `virt`: un dominio de controladores (S35, paso 2; `make arranque-virt-dominio`): el kernel y el initramfs del
+# dominio de red (fuera de git, de target/dominio/); su aparato, un adaptador de red USB que le presta el xHCI.
+dominio = ["virt"]
+# Rama sonido-pro: la imagen de usar con un reproductor de prueba (`melodia`) que suena desde el arranque, para ver y
+# capturar el mezclador, el visualizador y los controles de medios (`make arranque-virt-sonido`).
+sonido_demo = ["uso"]
+
+# El build.rs comprime los programas del paquete de arranque (LZ4, formato de bloque); el kernel no depende de nada.
+[build-dependencies]
+lz4_flex = "0.11"
 
 [profile.dev]
 panic = "abort"

@@ -1,5 +1,7 @@
 # S9. Gráficos
 
+> **2026-11-10.** Qué chip hace cada trabajo (HVS, V3D, decodificadores, DMA), con la Pi 3, 4 y 5, en [S21](S21-cada-trabajo-a-su-chip.md).
+
 > **Nota del 2026-11-03 por la tarde.** El usuario decidió que lo nativo sea little-endian y solo la caja Amiga
 > big-endian. Donde este documento dice big-endian para lo nativo, manda `PLAN.md`.
 
@@ -93,10 +95,16 @@ Wayland son capacidades.
 La alternativa sería un protocolo propio de DashOS y un traductor de Wayland aparte, como Exo en ChromeOS. Da más
 libertad, pero duplica el trabajo de todos los kits de interfaz.
 
-### Pantallas y monitores
+### Monitores
 
-- **`DEVS:Monitors`** tiene un fichero por salida: `HDMI-0` y `HDMI-1` (S4b).
-- **`Prefs/ScreenMode`** elige resolución, frecuencia y escala de cada monitor.
+- **`DEVS:Monitors`** tiene un fichero por salida: `HDMI-0` y `HDMI-1` (S4b). Son de texto: el icono con sus
+  tooltypes, como dice S4b. Lo que cambia la máquina va en la capa de la máquina de `DEVS:` (`Estado:Devs`, S4b).
+- **`Prefs/ScreenMode`** elige resolución, frecuencia y escala de cada monitor. El ajuste es un fichero de texto en
+  `ENVARC:` (S4b, S27).
+- **Una orden `ModoMonitor`** hace lo mismo desde el Shell: listar las salidas y sus modos, y poner uno
+  (`Pantalla LISTA`, `Pantalla HDMI-0 1920x1080 60`). La sintaxis exacta, por diseñar al hacerlo.
+- **Cambiar de modo se deshace solo.** El modo nuevo se prueba unos segundos. Si el usuario no lo acepta (porque la
+  pantalla se quedó en negro, por ejemplo), vuelve el anterior. Vale igual desde la ventana y desde la orden.
 - **Conectar y desconectar en caliente**: el controlador avisa y el escritorio recoloca las ventanas (S10).
 
 ## Lo que queda abierto

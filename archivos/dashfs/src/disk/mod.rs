@@ -1,0 +1,134 @@
+use alloc::boxed::Box;
+
+use syscall::error::Result;
+
+#[cfg(feature = "std")]
+pub use self::cache::DiskCache;
+#[cfg(feature = "std")]
+pub use self::file::DiskFile;
+#[cfg(feature = "std")]
+pub use self::io::DiskIo;
+#[cfg(feature = "std")]
+pub use self::memory::DiskMemory;
+#[cfg(feature = "std")]
+pub use self::sparse::DiskSparse;
+
+#[cfg(feature = "std")]
+mod cache;
+#[cfg(feature = "std")]
+mod file;
+#[cfg(feature = "std")]
+mod io;
+#[cfg(feature = "std")]
+mod memory;
+#[cfg(all(feature = "std", target_os = "redox"))]
+pub mod ring;
+#[cfg(feature = "std")]
+mod sparse;
+
+/// A disk
+pub trait Disk {
+    /// Read blocks from disk
+    ///
+    /// # Safety
+    /// Unsafe to discourage use, use filesystem wrappers instead
+    unsafe fn read_at(&mut self, block: u64, buffer: &mut [u8]) -> Result<usize>;
+
+    /// Write blocks to disk
+    ///
+    /// # Safety
+    /// Unsafe to discourage use, use filesystem wrappers instead
+    unsafe fn write_at(&mut self, block: u64, buffer: &[u8]) -> Result<usize>;
+
+    /// Write blocks to the disk
+    ///
+    /// # Safety
+    /// Unsafe to discourage use, use filesystem wrappers instead
+    unsafe fn write_at_batched(&mut self, batch: &[(u64, &[u8])]) -> Result<usize> {
+        let mut written = 0;
+        for (block, buf) in batch {
+            written += unsafe { self.write_at(*block, buf)? };
+        }
+        Ok(written)
+    }
+
+    /// Get size of disk in bytes
+    fn size(&mut self) -> Result<u64>;
+
+    /// Whether `size` is a hard limit: nothing can be written beyond it (a partition, a disk). False for an image
+    /// file, which grows when written beyond its end (DashOS, S32). When it is a limit, a file system whose header
+    /// says more than `size` is not opened to be used, and it cannot grow beyond it.
+    fn size_is_limit(&self) -> bool {
+        true
+    }
+
+    /// Make every write done so far durable before any later write. A disk with a volatile write cache must flush
+    /// it here: the filesystem calls this before and after writing a header, so that a header never reaches the
+    /// disk before the blocks it points to. The default does nothing, which is right for disks that write through.
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Whether the last `read_at` came whole from memory the disk already read (a cache), not from the disk. Then a
+    /// block whose hash was checked when it came from the disk need not be checked again (DashOS, F4). The default,
+    /// false, always checks.
+    fn last_read_from_memory(&self) -> bool {
+        false
+    }
+
+    /// The `count` blocks from `block` are free and nothing written there since the last `flush` needs to reach the
+    /// disk (DashOS, step B: blocks born and freed between two `FileSystem::durable`). The default keeps them.
+    fn forget(&mut self, _block: u64, _count: u64) {}
+
+    /// The reads that follow, until `reading_data(false)`, are the data of a file, not metadata (DashOS, A7). A disk
+    /// with a cache of blocks may keep them out of it when the file's data has a cache of its own. The default
+    /// ignores it.
+    fn reading_data(&mut self, _data: bool) {}
+
+    /// The blocks of `ranges` (first block, count) are free in the durable state: the disk may drop what they hold
+    /// (TRIM; DashOS, A14). Called after the header that frees them is on the disk and before anything can reuse
+    /// them. A hint: the default does nothing.
+    fn discard(&mut self, _ranges: &[(u64, u64)]) {}
+}
+
+impl Disk for Box<dyn Disk> {
+    unsafe fn read_at(&mut self, block: u64, buffer: &mut [u8]) -> Result<usize> {
+        unsafe { (**self).read_at(block, buffer) }
+    }
+
+    unsafe fn write_at(&mut self, block: u64, buffer: &[u8]) -> Result<usize> {
+        unsafe { (**self).write_at(block, buffer) }
+    }
+
+    unsafe fn write_at_batched(&mut self, batch: &[(u64, &[u8])]) -> Result<usize> {
+        unsafe { (**self).write_at_batched(batch) }
+    }
+
+    fn size(&mut self) -> Result<u64> {
+        (**self).size()
+    }
+
+    fn size_is_limit(&self) -> bool {
+        (**self).size_is_limit()
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        (**self).flush()
+    }
+
+    fn last_read_from_memory(&self) -> bool {
+        (**self).last_read_from_memory()
+    }
+
+    fn forget(&mut self, block: u64, count: u64) {
+        (**self).forget(block, count)
+    }
+
+    fn reading_data(&mut self, data: bool) {
+        (**self).reading_data(data)
+    }
+
+    fn discard(&mut self, ranges: &[(u64, u64)]) {
+        (**self).discard(ranges)
+    }
+}

@@ -1,0 +1,62 @@
+# S10, los menús de los programas (`make arranque-virt-menus`, tools/guion_menus.py; docs/bitacoras/menus.md): la imagen
+# de usar con la prueba de kit-c. Entra Ana; los menús del Shell (kit nativo) y de la ventana de Dash (kit-c), dentro de
+# sus ventanas; `Ajuste menus barra` los pasa a la barra (el centro lo aplica y el compositor lo dice a todos); allí se
+# abren con un clic y con el botón derecho, y se elige; y vuelven dentro con `Ajuste menus dentro`.
+DashOS en marcha con 4 núcleos
+~[guardian] modo de uso: pantalla de entrada; los códigos de recuperación, solo en su pantalla
+~[guardian] entra Ana
+~[dash-ui] ventana "Dash en DashOS" en pantalla (
+~[shell] menús de la ventana: "Shell" en (
+~[centro] menús en marcha: en la barra, de ENV:Escritorio/menus; en el compositor: sí
+~[compositor] menús: los menús van en la barra
+~[barra] menús: en la barra
+~[shell] menús: en la barra
+~[dash-ui] menús: en la barra
+~[barra] menús en la barra: "Shell" en (
+~[barra] menú abierto: Shell; "Pestaña nueva" en (
+# Elegido en la barra: lo pasa el compositor al Shell, que parte su panel.
+~[barra] elige en el menú: Partir en vertical (2)
+~[compositor] menús: elegido en la barra: Partir en vertical (2)
+~[shell] menú: Partir en vertical
+# El botón derecho sobre la ventana: el compositor no se lo da a ella; la barra abre los menús.
+~[barra] abre los menús (botón derecho): sí
+# La ventana de Dash delante: sus menús, en la barra; "Acerca de..." llega al programa de Dash por el compositor.
+~[barra] menús en la barra: "Proyecto" en (
+~[barra] elige en el menú: Acerca de... (1)
+~[dash-ui] elegido en la barra: 1 (vale)
+~[dash-ventana] acerca de: 1
+~[centro] menús en marcha: dentro de las ventanas, de ENV:Escritorio/menus; en el compositor: sí
+~[shell] menús: dentro de la ventana
+~[dash-ui] menús: dentro de la ventana
+# menus-pulido: las teclas en la fila del Shell; en la ventana de Dash (kit-c), las teclas y la rueda en "Largo", que
+# no cabe, y el menú que se cierra cuando el teclado se va.
+~[shell] menú: Borrar la pantalla
+~[dash-ventana] menú: Entrada 30
+~[dash-ventana] menú: Entrada 1
+~[dash-ui] menús cerrados: el teclado se fue
+# `menus-prueba` (kit nativo) en la barra: las teclas en un submenú que no cabe, la rueda en un menú y en un submenú que
+# no caben, el clic que cierra (el compositor se lo traga), y su menú cambiado veinte veces mientras se ve.
+~[menus-prueba] los menús van a la barra por segunda vez: abre su ventana
+~[barra] elige en el menú: Opción 13 (113)
+~[menus-prueba] elegido: 113 (Opción 13)
+~[barra] elige en el menú: Entrada 
+~[barra] menús cerrados: un clic fuera
+~[compositor] menús: un clic fuera cierra lo desplegado en la barra: no llega a nadie
+~[menus-prueba] cambia su menú: vuelta 20 de 20
+# Dentro de su ventana: las teclas en el submenú y la rueda en "Largo". Y la ventana que se cierra con su menú
+# desplegado en la barra.
+~[menus-prueba] elegido: 110 (Opción 10)
+~[menus-prueba] cierra su ventana (
+# centro-vivo (docs/bitacoras/centro-vivo.md): el menú "Ver" de la ventana de Dash (kit-c), con una casilla, opciones y un
+# submenú; un submenú dentro de otro da error, como en el Amiga, y lo suyo no se pone.
+~[dash-ui] submenú "Más" dentro de otro: no hay segundo nivel (como en el Amiga); lo suyo no se pone
+~[dash-ventana] submenú dentro de otro: 0
+~[dash-ventana] Rejilla: 0
+~[dash-ventana] tamaño: pequeño 0, mediano 0, grande 1
+~[dash-ventana] orden: 27
+# Con Ajustes abierta (el botón derecho sobre la barra), el centro sigue atendiendo su canal: `Ajuste menus barra` y
+# `Ajuste menus dentro` en el Shell se aplican al momento; y una ráfaga de cambios con Ajustes abriéndose y cerrándose
+# (el guion lo comprueba antes de llegar al final).
+~[barra] abre Ajustes > Barra: 0
+~[centro] Barra en pantalla
+~[sesiones] Shell asigna "MenusHechos=RAM:" (0): 0

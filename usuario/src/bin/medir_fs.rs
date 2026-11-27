@@ -13,25 +13,17 @@
 mod medir_comun;
 
 use dashos::println;
+use dashos::protocolo::archivos::*;
 use medir_comun::*;
 
 dashos::programa!(principal);
 
 const VA: usize = 0x40_0000_0000;
-const SESION: u32 = 0;
-const BUSCAR: u32 = 1;
-const LEER: u32 = 2;
-const ESCRIBIR: u32 = 3;
-const LISTAR: u32 = 4;
-const DATOS: u32 = 5;
-const CERRAR: u32 = 6;
-const CREAR: u32 = 7;
-const BORRAR: u32 = 8;
-const VACIAR: u32 = 11;
-const GUARDAR: u32 = 27;
 
 const GRANDE: u64 = 8 << 20;
 const TROZO: u64 = 64 << 10;
+/// Con la ventana de 1 MB (A4): los trozos grandes, múltiplos del registro de RedoxFS.
+const TROZO_GRANDE: u64 = 1 << 20;
 const PEQUENOS: u64 = 500;
 
 #[derive(Clone, Copy)]
@@ -39,6 +31,7 @@ struct R {
     estado: i32,
     asa: u32,
     a: u64,
+    b: u64,
 }
 
 struct Cliente {
@@ -54,7 +47,7 @@ impl Cliente {
         }
         let u32_en = |i: usize| u32::from_le_bytes(b[i..i + 4].try_into().unwrap());
         let u64_en = |i: usize| u64::from_le_bytes(b[i..i + 8].try_into().unwrap());
-        Some((R { estado: u32_en(0) as i32, asa: u32_en(4), a: u64_en(8) }, k))
+        Some((R { estado: u32_en(0) as i32, asa: u32_en(4), a: u64_en(8), b: u64_en(16) }, k))
     }
 
     fn pedir(&self, orden: u32, asa: u32, a: u64, b: u64, nombre: &[u8]) -> R {
@@ -65,7 +58,7 @@ impl Cliente {
         p[16..24].copy_from_slice(&b.to_le_bytes());
         p[24..28].copy_from_slice(&(nombre.len() as u32).to_le_bytes());
         p[32..32 + nombre.len()].copy_from_slice(nombre);
-        let malo = R { estado: i32::MIN, asa: 0, a: 0 };
+        let malo = R { estado: i32::MIN, asa: 0, a: 0, b: 0 };
         if dashos::canal_escribir(1, &p[..32 + nombre.len()], &[]) != 0 {
             return malo;
         }
@@ -74,7 +67,7 @@ impl Cliente {
 }
 
 fn ventana() -> &'static mut [u8] {
-    unsafe { core::slice::from_raw_parts_mut(VA as *mut u8, TROZO as usize) }
+    unsafe { core::slice::from_raw_parts_mut(VA as *mut u8, TROZO_GRANDE as usize) }
 }
 
 /// Valor con un decimal, como `fs.c`.
@@ -104,15 +97,35 @@ fn rellenar() {
     }
 }
 
+const VA_PRESTADOS: usize = 0x41_0000_0000;
+
+/// Lee el fichero grande entero con lo prestado, por trozos de `trozo` a la ventana; falso si algo falla.
+fn leer_prestado(pr: &mut dashos::prestados::Prestados, lectura: u32, asa: u32, op: &str, trozo: u64) -> bool {
+    let viajes = pr.viajes;
+    let t0 = cuentas();
+    let mut off = 0;
+    while off < GRANDE {
+        match pr.leer(1, lectura, asa, off, &mut ventana()[..trozo as usize]) {
+            Some(n) if n > 0 => off += n as u64,
+            _ => return false,
+        }
+    }
+    dato(op, 1 << 20, GRANDE, cuentas() - t0, "MB/s");
+    println!("[medir] fs-viajes op={} viajes={}", op, pr.viajes - viajes);
+    true
+}
+
 fn principal() -> u64 {
     println!("[medir] empieza");
     let (lectura, vuelta) = dashos::canal_crear();
     let c = Cliente { lectura };
     let mut p = [0u8; 32];
     p[0..4].copy_from_slice(&SESION.to_le_bytes());
+    // Una ventana de 1 MB (A4): las medidas de siempre siguen con trozos de 64 KB, como fs.c en Linux.
+    p[8..16].copy_from_slice(&TROZO_GRANDE.to_le_bytes());
     let mut ll = [0u32; 1];
     if dashos::canal_escribir(1, &p, &[vuelta]) != 0
-        || !c.leer_respuesta(&mut ll).is_some_and(|(r, k)| r.estado == 0 && k == 1)
+        || !c.leer_respuesta(&mut ll).is_some_and(|(r, k)| r.estado == 0 && k == 1 && r.a == TROZO_GRANDE)
         || dashos::memoria_proyectar(ll[0], VA, true) != 0
     {
         println!("  [medir] sin servicio de archivos\n[medir] fin");
@@ -128,6 +141,23 @@ fn principal() -> u64 {
     // Un fichero de 8 MB por trozos de 64 KB, sin y con vaciar cada vez, y leer el primero dos veces.
     let mut bien = true;
     let mut grande = 0;
+    // A14: un fichero que ya estaba en el disco al arrancar (lo pone `tools/medir.py`), leído de verdad en frío: nada
+    // suyo en ninguna caché. Sin él (una imagen vieja), no se mide.
+    let previo = c.pedir(BUSCAR, 0, 0, 0, b"previo.bin");
+    if previo.estado == 0 {
+        let t0 = cuentas();
+        let mut off = 0;
+        while off < GRANDE {
+            let r = c.pedir(LEER, previo.asa, off, TROZO, b"");
+            if r.estado != 0 || r.a == 0 {
+                bien = false;
+                break;
+            }
+            off += r.a;
+        }
+        dato("leer_8mb_disco", mb, GRANDE, cuentas() - t0, "MB/s");
+        c.pedir(CERRAR, previo.asa, 0, 0, b"");
+    }
     for (op, nombre_f, cada_vez) in [("escribir_8mb", &b"grande"[..], false), ("escribir_8mb_sync", b"grande_sync", true)] {
         let t0 = cuentas();
         let f = c.pedir(CREAR, 0, 1, 0, nombre_f);
@@ -161,22 +191,57 @@ fn principal() -> u64 {
         }
         dato(op, mb, GRANDE, cuentas() - t0, "MB/s");
     }
+    // A7: lo mismo con las páginas prestadas, copiando cada trozo a un búfer como `read` en Linux (LEER no copia: lo
+    // deja en la ventana).
+    let mut pr = dashos::prestados::Prestados::nuevo(VA_PRESTADOS);
+    bien &= leer_prestado(&mut pr, c.lectura, grande, "leer_8mb_prestado", TROZO);
+    pr.cerrar_asa(grande);
     c.pedir(CERRAR, grande, 0, 0, b"");
+
+    // Lo mismo con trozos de 1 MB (A4): 8 viajes en lugar de 128, y registros de 128 KB enteros al escribir.
+    let t0 = cuentas();
+    let f = c.pedir(CREAR, 0, 1, 0, b"grande1m");
+    bien &= f.estado == 0;
+    let mut off = 0;
+    while bien && off < GRANDE {
+        bien = c.pedir(ESCRIBIR, f.asa, off, TROZO_GRANDE, b"").estado == 0;
+        off += TROZO_GRANDE;
+    }
+    bien &= c.pedir(VACIAR, 0, 0, 0, b"").estado == 0;
+    dato("escribir_8mb_1m", mb, GRANDE, cuentas() - t0, "MB/s");
+    let t0 = cuentas();
+    let mut off = 0;
+    while off < GRANDE {
+        let r = c.pedir(LEER, f.asa, off, TROZO_GRANDE, b"");
+        if r.estado != 0 || r.a == 0 {
+            bien = false;
+            break;
+        }
+        off += r.a;
+    }
+    dato("leer_8mb_1m", mb, GRANDE, cuentas() - t0, "MB/s");
+    bien &= leer_prestado(&mut pr, c.lectura, f.asa, "leer_8mb_1m_prestado", TROZO_GRANDE);
+    pr.cerrar_asa(f.asa);
+    c.pedir(CERRAR, f.asa, 0, 0, b"");
+    c.pedir(BORRAR, 0, 0, 0, b"grande1m");
 
     // 500 ficheros de 4 KB en un cajón: crear y escribir (cerrar los lleva al disco), leer, sus datos, listar y borrar.
     let dir = c.pedir(CREAR, 0, 2, 0, b"peq");
     let mut nb = [0u8; 5];
-    let crear = |op: &str, bien: &mut bool, nb: &mut [u8; 5]| {
+    let crear = |op: &str, cada_vez: bool, bien: &mut bool, nb: &mut [u8; 5]| {
         let t0 = cuentas();
         for i in 0..PEQUENOS {
             let g = c.pedir(CREAR, dir.asa, 1, 0, nombre(i, nb));
             *bien &= g.estado == 0 && c.pedir(ESCRIBIR, g.asa, 0, 4096, b"").estado == 0;
             *bien &= c.pedir(CERRAR, g.asa, 0, 0, b"").estado == 0;
+            if cada_vez {
+                *bien &= c.pedir(VACIAR, 0, 0, 0, b"").estado == 0;
+            }
         }
         *bien &= c.pedir(VACIAR, 0, 0, 0, b"").estado == 0;
         dato(op, 1, PEQUENOS, cuentas() - t0, "ficheros/s");
     };
-    crear("crear_4k", &mut bien, &mut nb);
+    crear("crear_4k", false, &mut bien, &mut nb);
     let t0 = cuentas();
     for i in 0..PEQUENOS {
         let g = c.pedir(BUSCAR, dir.asa, 0, 0, nombre(i, &mut nb));
@@ -202,6 +267,18 @@ fn principal() -> u64 {
     let l = c.pedir(LISTAR, dir.asa, 0, 0, b"");
     dato("listar_500", 1, 1, cuentas() - t0, "listados/s");
     let listados = l.a;
+    // A15: COMPROBAR, sin y con los datos, por MB ocupado: mientras dura, el servicio no atiende a nadie más. Con
+    // esto se ve cuánto tardaría en un disco de verdad.
+    let info = c.pedir(INFO, 0, 0, 0, b"");
+    let ocupado = info.a.saturating_sub(info.b);
+    for (op, datos) in [("comprobar", 0u64), ("comprobar_datos", 1)] {
+        let t0 = cuentas();
+        let r = c.pedir(COMPROBAR, 0, datos, 0, b"");
+        let t = cuentas() - t0;
+        bien &= r.estado == 0 && r.a == 0;
+        dato(op, 1 << 20, ocupado, t, "MB/s");
+        println!("[medir] fs-comprobar op={} ms={} ocupado_kb={}", op, a_us(t) / 1000, ocupado / 1024);
+    }
     let borrar = |op: &str, cada_vez: bool, bien: &mut bool, nb: &mut [u8; 5]| {
         let t0 = cuentas();
         for i in 0..PEQUENOS {
@@ -214,8 +291,8 @@ fn principal() -> u64 {
         dato(op, 1, PEQUENOS, cuentas() - t0, "ficheros/s");
     };
     borrar("borrar", false, &mut bien, &mut nb);
-    // Cerrar ya es como fsync: "crear_4k_sync" es lo mismo que "crear_4k".
-    crear("crear_4k_sync", &mut bien, &mut nb);
+    // Desde A1 cerrar ya no espera al disco: "crear_4k_sync" vacía tras cada fichero, como fsync en fs.c.
+    crear("crear_4k_sync", true, &mut bien, &mut nb);
     borrar("borrar_sync", true, &mut bien, &mut nb);
     // Paso A: crear con datos, una orden por fichero, en el disco al contestar. La ventana trae aún lo del listado.
     rellenar();

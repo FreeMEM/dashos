@@ -1,0 +1,622 @@
+## version $VER: centro.catalog 1.0 (15.11.2026)
+## language english
+## codeset 106
+;
+MSG_1
+Permissions
+; Permisos
+MSG_2
+Security
+; Seguridad
+MSG_3
+Disks
+; Discos
+MSG_4
+Displays
+; Pantallas
+MSG_5
+Appearance
+; Apariencia
+MSG_6
+System Monitor
+; Monitor del sistema
+MSG_7
+Desktop
+; Escritorio
+MSG_8
+About
+; Acerca de
+MSG_9
+automatic
+; automático
+MSG_10
+kill
+; matar
+MSG_11
+service
+; servicio
+MSG_12
+sign in
+; entrar
+MSG_13
+crash
+; fallo
+MSG_14
+launch
+; lanzar
+MSG_15
+administer
+; administrar
+MSG_16
+shut down
+; apagar
+MSG_17
+done
+; hecho
+MSG_18
+denied
+; negado
+MSG_19
+error {}
+; error {}
+MSG_20
+System disk: {}
+; Disco del sistema: {}
+MSG_21
+Used: {} ({}%)
+; Ocupado: {} ({} %)
+MSG_22
+Free: {}
+; Libre: {}
+MSG_23
+The file service is not responding
+; El servicio de archivos no contesta
+MSG_24
+Check the disk (requires an administrator)
+; Comprobar el disco (pide administrador)
+MSG_25
+Checked, data included: no problems
+; Comprobado, datos incluidos: sin problemas
+MSG_26
+Checked: 1 problem
+; Comprobado: 1 problema
+MSG_27
+Checked: {} problems
+; Comprobado: {} problemas
+MSG_28
+The disk is busy: try again
+; El disco está ocupado: inténtalo otra vez
+MSG_29
+Interrupted: the disk is almost full
+; Interrumpido: queda poco sitio en el disco
+MSG_30
+Not checked: an administrator is required
+; No se comprobó: hace falta un administrador
+MSG_31
+Not checked ({})
+; No se comprobó ({})
+MSG_32
+selected
+; elegido
+MSG_33
+Light mode
+; Modo claro
+MSG_34
+Dark mode
+; Modo oscuro
+MSG_35
+Fixed color: {}
+; Color fijo {}
+MSG_36
+Wallpaper palette
+; Paleta del fondo
+MSG_37
+({} exceptions)
+; ({} excepciones)
+MSG_38
+Sandboxed programs: DashOS look
+; Programas de las cajas: como DashOS
+MSG_39
+Sandboxed programs: original look
+; Programas de las cajas: originales
+MSG_40
+Scale Amiga windows: {}
+; Ampliar ventanas Amiga: {}
+MSG_41
+Amiga sandbox memory: {} MB
+; Memoria de la caja Amiga: {} MB
+MSG_42
+on screen
+; en pantalla
+MSG_43
+Wallpaper: {}
+; Fondo: {}
+MSG_44
+The compositor has not reported any display
+; El compositor no ha dicho nada de la pantalla
+MSG_45
+Display {}: {} × {}
+; Pantalla {}: {} × {}
+MSG_46
+on the left
+; a la izquierda
+MSG_47
+on the right
+; a la derecha
+MSG_48
+in the middle
+; en medio
+MSG_49
+Display {}: {} × {}, {}
+; Pantalla {}: {} × {}, {}
+MSG_50
+Refresh rate: {}
+; Frecuencia: {}
+MSG_51
+Refresh rates: {}
+; Frecuencias: {}
+MSG_52
+Scale: {}
+; Escala: {}
+MSG_53
+Scales: {}
+; Escalas: {}
+MSG_54
+DashOS, version {}
+; DashOS, versión {}
+MSG_55
+Up for {} min {} s
+; Encendido hace {} min {} s
+MSG_56
+Date and time: {}
+; Fecha y hora: {}
+MSG_57
+Date and time: unknown
+; Fecha y hora: no se sabe
+MSG_58
+Running processes: {}
+; Procesos en marcha: {}
+MSG_59
+Memory in use: {} MB of {} MB (kernel, {} MB, and its heap, {} MB; {} MB were already reserved at boot)
+; Memoria en uso: {} MB de {} MB (el núcleo, {} MB, y su montón, {} MB; al arrancar ya había {} MB reservados)
+MSG_60
+Top memory users: {}
+; Lo que más gasta: {}
+MSG_61
+CPU
+; CPU
+MSG_62
+memory
+; memoria
+MSG_63
+name
+; nombre
+MSG_64
+user
+; usuario
+MSG_65
+system
+; sistema
+MSG_66
+By {}\tCPU\tMemory
+; Por {}\tCPU\tMemoria
+MSG_67
+The session service is not responding
+; sesiones no contesta
+MSG_68
+({}, desktop)
+; ({}, escritorio)
+MSG_69
+yes
+; sí
+MSG_70
+no
+; no
+MSG_71
+top left
+; arriba a la izquierda
+MSG_72
+top right
+; arriba a la derecha
+MSG_73
+bottom left
+; abajo a la izquierda
+MSG_74
+bottom right
+; abajo a la derecha
+MSG_75
+Time and date
+; Hora y fecha
+MSG_76
+CPU per core
+; CPU por núcleo
+MSG_77
+Memory
+; Memoria
+MSG_78
+Top processes
+; Los que más gastan
+MSG_79
+Network
+; Red
+MSG_80
+Show the panel on the desktop: {}
+; Enseñar el panel en el fondo: {}
+MSG_81
+Corner: {}
+; Esquina: {}
+MSG_82
+Update interval: {} s
+; Cada cuánto se mide: {} s
+MSG_83
+Graphs: {}
+; Gráficas: {}
+MSG_84
+No program has been granted permissions
+; Ningún programa tiene permisos concedidos
+MSG_85
+Remove
+; Quitar
+MSG_86
+Close
+; Cerrar
+MSG_87
+What each program may use. Removing a permission revokes it immediately.
+; Lo que cada programa puede usar. Quitarlo lo revoca ya.
+MSG_88
+Denied requests and crashes, most recent first.
+; Lo que se ha negado y los fallos, lo último primero.
+MSG_89
+How much space your data takes up.
+; Cuánto ocupa lo guardado.
+MSG_90
+Mode, color and wallpaper. Press Enter or double-click to select.
+; Modo, color y fondo. Intro o doble clic para elegir.
+MSG_91
+What the compositor reports for each display.
+; Lo que dice el compositor de cada pantalla.
+MSG_92
+Your processes in detail; everything else, summed up.
+; Lo tuyo con detalle; lo demás, sumado.
+MSG_93
+The menus and the monitor on the desktop. Press Enter to change a row.
+; Los menús y el monitor del fondo. Intro cambia una fila.
+MSG_94
+The system.
+; El sistema.
+MSG_95
+End Process
+; Cerrar proceso
+MSG_96
+Settings
+; Centro de control
+MSG_97
+Use
+; Usar
+MSG_98
+Cancel
+; Cancelar
+MSG_99
+Save
+; Guardar
+MSG_100
+save a setting
+; guardar un ajuste
+MSG_101
+Program menus: {}
+; Menús de los programas: {}
+MSG_102
+in the window
+; en la ventana
+MSG_103
+in the top bar
+; en la barra de arriba
+MSG_104
+Accounts
+; Cuentas
+MSG_105
+The accounts cannot be read
+; No se pueden leer las cuentas
+MSG_106
+number {}
+; número {}
+MSG_107
+deleted: can be restored until {}
+; borrada: se puede devolver hasta el {}
+MSG_108
+Done
+; Hecho
+MSG_109
+Not done: it was not confirmed in the system window
+; No se hizo: no se confirmó en la ventana del sistema
+MSG_110
+Another one is already waiting in the system window
+; Ya hay otra esperando en la ventana del sistema
+MSG_111
+It does not exist
+; No existe
+MSG_112
+sesiones does not answer
+; sesiones no contesta
+MSG_113
+Not done ({})
+; No se hizo ({})
+MSG_114
+Name (new account or group)
+; Nombre (cuenta nueva o grupo)
+MSG_115
+Group
+; Grupo
+MSG_116
+Who uses this computer; changes, with an administrator.
+; Quién usa el equipo; los cambios, con un administrador.
+MSG_117
+Delete
+; Borrar
+MSG_118
+My password
+; Mi contraseña
+MSG_119
+Create
+; Crear
+MSG_120
+Restore
+; Devolver
+MSG_121
+Type above the name of the new account
+; Escribe arriba el nombre de la cuenta nueva
+MSG_122
+Choose an account in the list
+; Elige una cuenta en la lista
+MSG_123
+Type above the name of the group
+; Escribe arriba el nombre del grupo
+MSG_124
+Bar
+; Barra
+MSG_125
+The bars and their widgets, as in DMS. Changes show at once.
+; Las barras y sus widgets, como en DMS. Lo que se cambia se ve ya.
+MSG_126
+Dock
+; Dock
+MSG_127
+bottom
+; abajo
+MSG_128
+top
+; arriba
+MSG_129
+top centre
+; arriba en el centro
+MSG_130
+bottom centre
+; abajo en el centro
+MSG_131
+on the left, vertical
+; a la izquierda, en vertical
+MSG_132
+on the right, vertical
+; a la derecha, en vertical
+MSG_133
+a dot
+; un punto
+MSG_134
+a line
+; una raya
+MSG_135
+none
+; ninguno
+MSG_136
+none (pin them with the right button on the dock)
+; ninguno (se fijan con el botón derecho en el dock)
+MSG_137
+Show the dock: {}
+; Enseñar el dock: {}
+MSG_138
+Where: {}
+; Dónde: {}
+MSG_139
+Icon size: {} px
+; Tamaño de los iconos: {} px
+MSG_140
+Hide by itself: {}
+; Esconderse solo: {}
+MSG_141
+Group each program's windows: {}
+; Juntar las ventanas de cada programa: {}
+MSG_142
+Mark for open programs: {}
+; Marca de los abiertos: {}
+MSG_143
+Opacity: {} %
+; Opacidad: {} %
+MSG_144
+Pinned: {}
+; Fijados: {}
+MSG_145
+On-screen notices: {}
+; Avisos en pantalla: {}
+MSG_146
+Always show the value: {}
+; Enseñar siempre el valor: {}
+MSG_147
+Notice when switching workspace: {}
+; Aviso al cambiar de espacio de trabajo: {}
+MSG_148
+Caps Lock notice: {}
+; Aviso de Bloq Mayús: {}
+MSG_150
+Desktop disks: {}
+; Discos del escritorio: {}
+MSG_151
+Disks: {}
+; Discos: {}
+MSG_152
+on the right, in the middle
+; a la derecha, en el centro
+MSG_153
+on the left, in the middle
+; a la izquierda, en el centro
+MSG_154
+Disk size: {}
+; Tamaño de los discos: {}
+MSG_155
+small
+; pequeño
+MSG_156
+medium
+; mediano
+MSG_157
+large
+; grande
+MSG_158
+Disk opacity: {} %
+; Opacidad de los discos: {} %
+MSG_159
+Used space of each disk: {}
+; Espacio usado de cada disco: {}
+MSG_160
+Disk animations: {}
+; Animaciones de los discos: {}
+MSG_162
+Magnify on hover: {}
+; Aumento al pasar el ratón: {}
+MSG_163
+Magnifying pushes the neighbours aside: {}
+; El aumento aparta a los vecinos: {}
+MSG_164
+When a program opens: {}
+; Al abrir un programa: {}
+MSG_165
+its dot pulses
+; su punto late
+MSG_166
+the icon bounces
+; el icono rebota
+MSG_167
+nothing
+; nada
+MSG_161
+The dock, the on-screen notices and the desktop disks, as in DMS. Enter changes a row.
+; El dock, los avisos en pantalla y los discos del escritorio, como en DMS. Intro cambia una fila.
+MSG_200
+Notifications
+; Avisos
+MSG_201
+Control center
+; Centro de control
+MSG_210
+until closed
+; hasta cerrarlo
+MSG_211
+no schedule
+; sin horario
+MSG_212
+Where they appear: {}
+; Dónde salen: {}
+MSG_213
+Animation: {} ms
+; Animación: {} ms
+MSG_214
+Time for normal notifications: {}
+; Tiempo de los avisos normales: {}
+MSG_215
+Time for urgent ones: {}
+; Tiempo de los urgentes: {}
+MSG_216
+Time bar: {}
+; Barra de tiempo: {}
+MSG_217
+Urgent ones show in do not disturb: {}
+; Los urgentes salen con no molestar: {}
+MSG_218
+Scheduled do not disturb: {}
+; No molestar programado: {}
+MSG_219
+No text in popups: {}
+; Sin el texto en los emergentes: {}
+MSG_220
+A click on the notification runs its action: {}
+; Un clic en el aviso hace su acción: {}
+MSG_221
+Days in the history: {}
+; Días en el historial: {}
+MSG_222
+always
+; siempre
+MSG_230
+{}. {} · {} columns
+; {}. {} · {} columnas
+MSG_231
+ · small
+;  · pequeño
+MSG_232
+ · not available yet
+;  · aún no disponible
+MSG_233
+Add: {}
+; Añadir: {}
+MSG_234
+Columns: {}
+; Columnas: {}
+MSG_235
+Back to defaults
+; Volver a lo de serie
+MSG_236
+Popups and do not disturb, as in DMS. Enter changes a row; it shows at once.
+; Los emergentes y el no molestar, como en DMS. Intro cambia una fila; se ve ya.
+MSG_237
+What the quick panel shows and in what order. Enter changes the width or adds; it shows at once.
+; Qué sale en el panel rápido y en qué orden. Intro cambia el ancho o añade; se ve ya.
+MSG_238
+Up
+; Subir
+MSG_239
+Down
+; Bajar
+MSG_900
+Sound
+; Sonido
+MSG_901
+for playing (64 frames, 1.3 ms)
+; para tocar (64 cuadros, 1,3 ms)
+MSG_902
+saving (1,024 frames, 21 ms)
+; ahorro (1.024 cuadros, 21 ms)
+MSG_903
+normal (256 frames, 5.3 ms)
+; normal (256 cuadros, 5,3 ms)
+MSG_904
+Open the Sound mixer
+; Abrir el mezclador Sonido
+MSG_905
+Sound theme: {}
+; Tema de los sonidos: {}
+MSG_906
+System sounds: {}
+; Sonidos del sistema: {}
+MSG_907
+Volume of the sounds: {} %
+; Volumen de los sonidos: {} %
+MSG_908
+Equalizer: {}
+; Ecualizador: {}
+MSG_909
+Limiter: {}
+; Limitador: {}
+MSG_910
+Spatial sound: {}
+; Sonido espacial: {}
+MSG_911
+Latency: {}
+; Latencia: {}
+MSG_912
+Try the notification sound
+; Probar el sonido de aviso
+MSG_913
+Sounds, effects and latency. Enter changes a row.
+; Sonidos, efectos y latencia. Intro cambia una fila.
+MSG_240
+Desktop wallpapers: open the wallpaper tool…
+; Fondos de escritorio: abrir la herramienta…

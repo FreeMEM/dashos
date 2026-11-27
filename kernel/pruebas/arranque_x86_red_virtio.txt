@@ -1,0 +1,3 @@
+# X5c: la tarjeta virtio-net (RED_X86=virtio, la de siempre), con su MSI-X.
+~virtio-red: en el PCIe 0:
+~│   [virtio-red] MAC 52:54:00:12:34:56; colas de 128 y 64; avisos 

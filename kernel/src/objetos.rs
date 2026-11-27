@@ -14,6 +14,10 @@ pub const LEER: u32 = 1 << 0;
 pub const ESCRIBIR: u32 = 1 << 1;
 pub const TRANSFERIR: u32 = 1 << 2;
 pub const TODOS: u32 = LEER | ESCRIBIR | TRANSFERIR;
+/// No es un derecho sino una restricción (S4): la llave se puede transferir una vez, y quien la recibe (por un canal o
+/// al nacer) se queda sin el derecho de transferirla. Así `inicio` da a un controlador su llave de aparato sin que este
+/// pueda pasársela a otro. Al duplicar, la restricción se hereda: no se quita nunca.
+pub const UNA_VEZ: u32 = 1 << 3;
 
 pub const MAX_DATOS: usize = 256;
 pub const MAX_LLAVES: usize = 8;
@@ -34,6 +38,9 @@ pub enum Objeto {
     /// como memoria normal sin caché. Solo la crea el kernel, para `inicio`. Quien la tiene puede escribir en toda la
     /// memoria de la VideoCore, también la del propio firmware: es para el compositor, de confianza.
     Firmware { fisica: u64, tamano: u64 },
+    /// Puertos de E/S de un PC (X6): de `primero` a `primero + cuantos - 1`. Con `puertos_permitir`, el proceso los usa
+    /// con `in` y `out` desde el anillo 3. Solo la crea el kernel, en x86 (la de COM1, para la consola).
+    Puertos { primero: u32, cuantos: u32 },
     /// Una interrupción de aparato (C20): llega como mensaje a un canal.
     Interrupcion(Arc<crate::interrupciones::Interrupcion>),
     /// Un temporizador (C49): avisa por un canal pasado un plazo, una vez o cada cierto tiempo.
@@ -45,8 +52,37 @@ pub enum Objeto {
     PermisoDma(Arc<crate::memoria::PermisoDma>),
     /// El registro del sistema (C48): con leer se saca, y quien lo saca es la consola. Solo lo da el kernel.
     Registro,
+    /// Permiso para pedir la clase de plazo (S3): con escribir, la llamada 28. Solo lo da el kernel, y `inicio` lo
+    /// reparte al sonido (y, cuando lo use, al compositor).
+    PermisoPlazo,
+    /// Permiso para tener página 0 (H4, S3): con escribir, la llamada 45 proyecta un objeto de una página en la dirección
+    /// 0, de solo lectura (ExecBase en la dirección 4 de la caja Amiga). Solo lo da el kernel, y `inicio` lo da a la
+    /// caja Amiga y a nadie más.
+    PermisoPaginaCero,
+    /// Permiso para apagar o reiniciar la máquina (decisión del usuario del 2026-11-13): con escribir, la llamada 51.
+    /// Solo lo da el kernel, a `inicio`, que se lo manda a `sesiones` y a nadie más.
+    PermisoApagar,
+    /// Permiso para escuchar el aviso de memoria baja (S3): con escribir, la llamada 53. Solo lo da el kernel, a
+    /// `inicio`, que se lo manda a `sesiones` y a nadie más.
+    PermisoMemoria,
+    /// Permiso para poner la hora del calendario (S13): con escribir, la llamada 39 con `x0` = 1. Solo lo da el kernel,
+    /// y `inicio` lo da a `hora` (el servicio que la toma de la red) y a nadie más.
+    PermisoReloj,
+    /// Permiso para leer y escribir las variables de arranque de la NVRAM de UEFI (S32, solo x86): con escribir, la
+    /// llamada 64. Solo lo da el kernel, a `inicio`, que lo da al servicio `instalador` (en vivo) y a nadie más.
+    PermisoVariables,
     /// Un grupo de procesos con su cupo (C42): con escribir se crean procesos en él y se mata; con leer se mira el uso.
     Grupo(Arc<crate::cupo::Cupo>),
+    /// Permiso para crear máquinas virtuales (caja Linux, H9): con escribir, la llamada 45. Solo lo da el kernel, a
+    /// `inicio`, que lo da al servicio `caja-linux`.
+    PermisoMaquina,
+    /// Una máquina virtual (H9; en x86, X10): con escribir se corre (llamada 46). Se para y se suelta al cerrar su última
+    /// llave.
+    Maquina(Arc<crate::maquinas::Maquina>),
+    /// Un aparato del PCIe que se puede pasar a una máquina virtual (X11, solo x86): con escribir, la llamada 60. Solo
+    /// lo crea el kernel; el aparato ya no es de ningún servicio.
+    #[cfg(target_arch = "x86_64")]
+    AparatoPci(Arc<crate::pasar::Aparato>),
     /// Una llave revocable (C41): apunta al objeto a través de un intermediario que se puede vaciar.
     Revocable(Arc<Revocable>),
     /// La llave con la que se revoca: vacía el intermediario, y todas las llaves que pasan por él dejan de valer.
@@ -233,7 +269,12 @@ pub fn forma_ciclo(l: &Llave, canal: &Arc<Canal>) -> bool {
 #[derive(Default)]
 pub struct Control {
     pub estado: Cerrojo<EstadoProceso>,
+    /// Su número de proceso en el kernel (U6): no se repite; 0 en los que no lanza `procesos::lanzar`.
+    pub pid: u64,
 }
+
+/// El siguiente número de proceso (U6). Empieza en 1: el 0 es "ninguno".
+pub static SIGUIENTE_PID: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
 
 #[derive(Default)]
 pub struct EstadoProceso {
@@ -246,6 +287,68 @@ pub struct EstadoProceso {
     pub esperando: ColaEspera,
     /// Lo han matado (C43, M2): los hilos que se apunten después nacen marcados.
     pub matado: bool,
+    /// Canales a los que avisar cuando acabe (K7, `proceso_avisar`).
+    pub avisos: Vec<AvisoFin>,
+    /// Los hilos creados con `hilo_crear` (llamada 40), vivos o acabados, hasta que alguien se une a ellos.
+    pub registro: Vec<RegistroHilo>,
+    /// Hilos bloqueados en `hilo_unir` (llamada 41). Se despiertan cada vez que acaba un hilo del proceso.
+    pub unen: ColaEspera,
+    /// Cómo acabará el proceso cuando muera su último hilo, si lo decidió antes otro hilo: `proceso_salir` (44) o un
+    /// fallo. Sin esto, el último hilo, que muere marcado, diría "matado".
+    pub fin_pendiente: Option<Fin>,
+}
+
+/// Un hilo creado con `hilo_crear` (docs/diseño/hilos-de-usuario.md): su número, cómo acabó y lo que costó al grupo.
+/// El coste se devuelve al unirse a él o al acabar el proceso, no al acabar el hilo: así un programa que crea hilos sin
+/// unirse a ellos topa con su cupo.
+pub struct RegistroHilo {
+    pub id: u64,
+    pub fin: Option<Fin>,
+    pub _cargo: crate::cupo::Cargo,
+}
+
+/// Hilos vivos o sin unir por proceso, como mucho (llamada 40): un tope de forma, como `MAX_TABLA`. Lo que cuestan lo
+/// para además el cupo del grupo.
+pub const MAX_HILOS: usize = 256;
+
+/// Los bytes de un aviso del kernel (interrupción, temporizador, fin de proceso), o `None` si no queda montón (S1):
+/// quien avisa lo reintenta o lo pierde, pero no hay pánico.
+pub fn bytes_aviso(b: &[u8]) -> Option<Vec<u8>> {
+    let mut v = Vec::new();
+    v.try_reserve_exact(b.len()).ok()?;
+    v.extend_from_slice(b);
+    Some(v)
+}
+
+/// Lo más de avisos de fin que se apuntan en un proceso (K7): cada uno sujeta un canal.
+pub const MAX_AVISOS: usize = 16;
+
+/// Un aviso de fin de proceso (K7): cuando acabe, se escribe en `canal` desde `lado` un mensaje de 16 bytes, clase y
+/// código como en `proceso_esperar` (u64 little-endian), con `marca`, como hace un temporizador. Si se revoca una de
+/// las llaves por las que se pidió (`via`), no se manda.
+pub struct AvisoFin {
+    pub canal: Arc<Canal>,
+    pub lado: usize,
+    pub marca: u64,
+    pub via: Vec<Arc<core::sync::atomic::AtomicBool>>,
+}
+
+impl AvisoFin {
+    /// Manda el aviso de `fin`. Si la cola está llena, se pierde: quien lo pidió puede preguntar con
+    /// `proceso_esperar`.
+    pub fn mandar(self, fin: Fin) {
+        if self.via.iter().any(|r| r.load(core::sync::atomic::Ordering::Acquire)) {
+            return;
+        }
+        let (clase, codigo) = fin.valores();
+        let mut datos = Vec::new();
+        if datos.try_reserve(16).is_err() {
+            return;
+        }
+        datos.extend_from_slice(&clase.to_le_bytes());
+        datos.extend_from_slice(&codigo.to_le_bytes());
+        let _ = self.canal.escribir(self.lado, Mensaje { datos, llaves: Vec::new(), marca: self.marca });
+    }
 }
 
 /// Un objeto de memoria: está en `base`, que es quien toca las páginas (C37).
@@ -263,6 +366,14 @@ pub struct Llave {
 impl Llave {
     pub fn nueva(objeto: Objeto, derechos: u32) -> Self {
         Self { objeto, derechos, marca: 0 }
+    }
+
+    /// Como queda al llegar a su nuevo dueño: con `UNA_VEZ`, sin el derecho de transferir (S4).
+    pub fn llegada(mut self) -> Self {
+        if self.derechos & UNA_VEZ != 0 {
+            self.derechos &= !(TRANSFERIR | UNA_VEZ);
+        }
+        self
     }
 }
 
@@ -297,6 +408,8 @@ pub enum Error {
     /// La cola del otro lado tiene ya `MAX_COLA` mensajes.
     Llena,
     SinMemoria,
+    /// Venció el plazo de la lectura sin que llegara nada (K7).
+    Plazo,
 }
 
 /// Soltar un canal suelta los mensajes de sus colas, y con ellos sus llaves, que pueden ser de otros canales con
@@ -451,15 +564,21 @@ impl Canal {
 
     /// Lee en el lado `lado`, esperando si no hay nada.
     pub fn leer(&self, lado: usize) -> Result<Mensaje, Error> {
+        self.leer_hasta(lado, 0)
+    }
+
+    /// Como `leer`, pero esperando como mucho hasta `vence` (cuentas del reloj; 0 es sin plazo): entonces
+    /// `Error::Plazo` (K7).
+    pub fn leer_hasta(&self, lado: usize, vence: u64) -> Result<Mensaje, Error> {
         // Con las IRQ enmascaradas desde antes de tomar el cerrojo: se suelta dentro del planificador al bloquearse,
         // y ahí no deben abrirse (cerrojo.rs).
         let estado = crate::cerrojo::enmascarar_irq();
-        let r = self.leer_enmascarado(lado);
+        let r = self.leer_enmascarado(lado, vence);
         crate::cerrojo::restaurar_irq(estado);
         r
     }
 
-    fn leer_enmascarado(&self, lado: usize) -> Result<Mensaje, Error> {
+    fn leer_enmascarado(&self, lado: usize, vence: u64) -> Result<Mensaje, Error> {
         loop {
             let mut l = self.lados.tomar();
             // Si lo despertaron para matarlo (C39), nadie lo quitó de la cola: se quita él, para que el canal no guarde
@@ -474,11 +593,22 @@ impl Canal {
             if l[1 - lado].cerrado {
                 return Err(Error::Cerrado);
             }
+            // Sin plazo, ni se mira el reloj: es el camino de cada ida y vuelta.
+            let ahora = if vence == 0 { 0 } else { crate::reloj::ahora() };
+            if vence != 0 && ahora >= vence {
+                return Err(Error::Plazo);
+            }
             if !l[lado].esperando.apuntarme() {
                 return Err(Error::SinMemoria);
             }
-            // El cerrojo se suelta con el hilo ya bloqueado: así quien escriba no puede despertarlo antes.
-            planificador::bloquear_soltando(l);
+            // El cerrojo se suelta con el hilo ya bloqueado: así quien escriba no puede despertarlo antes. Con plazo,
+            // despierta solo al vencer y la vuelta siguiente lo ve.
+            if vence == 0 {
+                planificador::bloquear_soltando(l);
+            } else {
+                let us = ((vence - ahora) as u128 * 1_000_000 / crate::reloj::frecuencia().max(1) as u128) as u64;
+                planificador::bloquear_soltando_hasta(l, us.max(1));
+            }
         }
     }
 
@@ -516,6 +646,10 @@ impl Canal {
 #[derive(Default)]
 pub struct TablaLlaves {
     llaves: Vec<Option<Llave>>,
+    /// Huecos vacíos dentro de `llaves` (sin contar el 0), y por debajo de cuál no hay ninguno (K2): ni `huecos` ni
+    /// `instalar` recorren la tabla entera en cada mensaje.
+    libres: usize,
+    primero: usize,
 }
 
 impl TablaLlaves {
@@ -523,16 +657,22 @@ impl TablaLlaves {
     /// memoria para crecer, devuelve la llave.
     pub fn instalar(&mut self, l: Llave) -> Result<u32, Llave> {
         if self.llaves.is_empty() {
-            if self.llaves.try_reserve(1).is_err() {
+            if !self.crecer(1) {
                 return Err(l);
             }
             self.llaves.push(None);
         }
-        if let Some(i) = self.llaves.iter().skip(1).position(|x| x.is_none()) {
-            self.llaves[i + 1] = Some(l);
-            return Ok((i + 1) as u32);
+        if self.libres > 0 {
+            let desde = self.primero.max(1);
+            if let Some(i) = self.llaves[desde..].iter().position(|x| x.is_none()) {
+                let i = desde + i;
+                self.llaves[i] = Some(l);
+                self.libres -= 1;
+                self.primero = i + 1;
+                return Ok(i as u32);
+            }
         }
-        if self.llaves.len() > MAX_TABLA || self.llaves.try_reserve(1).is_err() {
+        if self.llaves.len() > MAX_TABLA || !self.crecer(1) {
             return Err(l);
         }
         self.llaves.push(Some(l));
@@ -541,13 +681,28 @@ impl TablaLlaves {
 
     /// Reserva memoria para `n` llaves más, para que `instalar` no tenga que pedirla. Falso si no hay.
     pub fn reservar(&mut self, n: usize) -> bool {
-        self.llaves.try_reserve(n).is_ok()
+        self.crecer(n)
+    }
+
+    /// Sitio para `n` más. Crece al doble, pero nunca pasa de `MAX_TABLA + 1` (la llave 0 y las demás): así la tabla
+    /// llena ocupa lo que se cobra (`cupo::TABLA_LLENA`, S1) y no el doble.
+    fn crecer(&mut self, n: usize) -> bool {
+        let falta = self.llaves.len() + n;
+        if falta <= self.llaves.capacity() {
+            return true;
+        }
+        let nueva = falta.max((self.llaves.capacity() * 2).min(MAX_TABLA + 1)).max(4);
+        self.llaves.try_reserve_exact(nueva - self.llaves.len()).is_ok()
+    }
+
+    /// Los bytes que ocupa ahora (para las pruebas de S1).
+    pub fn bytes(&self) -> usize {
+        self.llaves.capacity() * core::mem::size_of::<Option<Llave>>()
     }
 
     /// Cuántas llaves caben todavía sin pasar de `MAX_TABLA`.
     pub fn huecos(&self) -> usize {
-        let libres = self.llaves.iter().skip(1).filter(|x| x.is_none()).count();
-        libres + (MAX_TABLA + 1).saturating_sub(self.llaves.len().max(1))
+        self.libres + (MAX_TABLA + 1).saturating_sub(self.llaves.len().max(1))
     }
 
     /// La llave `h` lista para usarse: si es revocable, con el objeto de detrás (y `None` si está revocada).
@@ -578,14 +733,35 @@ impl TablaLlaves {
         self.llaves.get(h as usize).and_then(|x| x.clone())
     }
 
+    /// Cuántas llaves de la tabla son el objeto de memoria `m` sin intermediario (globo, llamada 55: así se sabe si
+    /// alguien más lo tiene).
+    pub fn cuantas_de_memoria(&self, m: &Arc<Memoria>) -> usize {
+        self.llaves.iter().flatten().filter(|l| matches!(&l.objeto, Objeto::Memoria(o) if Arc::ptr_eq(o, m))).count()
+    }
+
     pub fn quitar(&mut self, h: u32) -> Option<Llave> {
-        self.llaves.get_mut(h as usize).and_then(|x| x.take())
+        let l = self.llaves.get_mut(h as usize).and_then(|x| x.take());
+        if l.is_some() {
+            self.libres += 1;
+            self.primero = self.primero.min(h as usize);
+        }
+        l
+    }
+
+    /// La llave `h` como queda al llegar a este proceso (`Llave::llegada`, S4).
+    pub fn llegada(&mut self, h: u32) {
+        if let Some(Some(l)) = self.llaves.get_mut(h as usize) {
+            if l.derechos & UNA_VEZ != 0 {
+                l.derechos &= !(TRANSFERIR | UNA_VEZ);
+            }
+        }
     }
 
     /// Vuelve a poner una llave en el hueco `h`, que tiene que estar vacío (se quitó en la misma llamada).
     pub fn reponer(&mut self, h: u32, l: Llave) {
         if let Some(x @ None) = self.llaves.get_mut(h as usize) {
             *x = Some(l);
+            self.libres -= 1;
         }
     }
 }
@@ -597,6 +773,9 @@ pub struct Proceso {
     /// sus bibliotecas, big-endian como el 68k (decisión del usuario, 03/11/2026).
     pub big_endian: bool,
     pub espacio: Cerrojo<crate::espacio::Espacio>,
+    /// x86 (X6): los puertos de E/S que puede usar (`puertos_permitir`); el cambio de hilo los pone en la TSS.
+    #[cfg(target_arch = "x86_64")]
+    pub puertos: crate::excepciones::Puertos,
     pub llaves: Cerrojo<TablaLlaves>,
     /// Su grupo (C42): a él se cobra lo que crea.
     pub cupo: Arc<crate::cupo::Cupo>,
@@ -604,6 +783,36 @@ pub struct Proceso {
     pub _cargo: crate::cupo::Cargo,
     /// Sus hilos y cómo acabó (C39). Lo comparte con las llaves de proceso que lo nombran.
     pub control: Arc<Control>,
+    /// Qué es cada llave con que nació, si quien lo lanzó lo dijo (llamada 12 con `CON_NOMBRES`): `NOMBRE_LLAVE` bytes
+    /// por llave, en su orden (la primera es la de la llave 1). El kernel no los mira: los devuelve la llamada 56.
+    pub nombres: NombresLlaves,
+}
+
+/// Lo que mide el nombre de una llave de nacimiento (relleno con ceros).
+pub const NOMBRE_LLAVE: usize = 16;
+
+/// Los nombres de las llaves con que nace un proceso: cuántos y sus bytes.
+#[derive(Clone, Copy)]
+pub struct NombresLlaves {
+    pub cuantos: u8,
+    pub bytes: [u8; NOMBRE_LLAVE * MAX_LLAVES],
+}
+
+impl NombresLlaves {
+    pub const NINGUNO: Self = Self { cuantos: 0, bytes: [0; NOMBRE_LLAVE * MAX_LLAVES] };
+
+    /// De `bytes` (un múltiplo de `NOMBRE_LLAVE`, como mucho `MAX_LLAVES` nombres); lo que sobre no se guarda.
+    pub fn de(bytes: &[u8]) -> Self {
+        let mut n = Self::NINGUNO;
+        let largo = (bytes.len() / NOMBRE_LLAVE).min(MAX_LLAVES) * NOMBRE_LLAVE;
+        n.bytes[..largo].copy_from_slice(&bytes[..largo]);
+        n.cuantos = (largo / NOMBRE_LLAVE) as u8;
+        n
+    }
+
+    pub fn datos(&self) -> &[u8] {
+        &self.bytes[..self.cuantos as usize * NOMBRE_LLAVE]
+    }
 }
 
 /// El proceso del hilo actual, si lo hay.

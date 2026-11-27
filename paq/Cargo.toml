@@ -1,0 +1,27 @@
+[package]
+name = "dashos-paq"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "Paq, el gestor de paquetes de DashOS (S8): índices firmados, paquetes en su cajón, generaciones y transacciones"
+
+# Sin `std`: lo usan la orden `Paq` (`C:Paq`) y el servicio `paq` (ordenes/), y se prueba en el PC con `cargo test`.
+# Crates de terceros, todos `no_std` y con licencia compatible con MPL-2.0:
+# - pkg2 (MPL-2.0): el formato de paquetes 2, de Hangar; se trae con tools/traer_pkg2.sh (fuera de git).
+# - ed25519-dalek y curve25519-dalek (BSD-3-Clause): comprobar firmas Ed25519, sin las tablas precalculadas.
+# - sha2 (MIT o Apache-2.0): SHA-256 (las huellas) y SHA-512 (lo usa Ed25519).
+# - miniz_oxide (MIT, Zlib o Apache-2.0): descomprimir deflate (el gzip del índice y de los paquetes).
+
+[lib]
+name = "paq"
+path = "src/lib.rs"
+
+[dependencies]
+pkg2 = { path = "../third_party/pkg2" }
+ed25519-dalek = { version = "2.2", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
+
+[dev-dependencies]
+ed25519-dalek = { version = "2.2", default-features = false }
+miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }

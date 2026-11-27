@@ -14,8 +14,16 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
+/// El mapa de teclado por defecto (G2): la distribución española de xkb, compilada, con su 0 final como pide
+/// `wl_keyboard.keymap`. Origen y licencia en `teclados/LEEME.md`.
+pub static MAPA_TECLADO: &[u8] = concat!(include_str!("../teclados/es.xkb"), "\0").as_bytes();
+
+pub mod aspecto;
+pub mod atajos;
 pub mod canal;
 pub mod escena;
+pub mod menus;
+pub mod puente;
 pub mod servidor;
 pub mod shm;
 pub mod tablas;
@@ -118,6 +126,8 @@ pub enum Fallo {
     Nulo,
     /// Faltan llaves para sus descriptores.
     SinLlave,
+    /// Demasiadas llaves esperando un mensaje que las use (E2).
+    Llaves,
 }
 
 /// La cabecera de un mensaje: objeto, orden y tamaño (con la cabecera).
@@ -128,7 +138,7 @@ pub fn leer_cabecera(bytes: &[u8]) -> Result<(u32, u16, usize), Fallo> {
     let objeto = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
     let segundo = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
     let tamano = (segundo >> 16) as usize;
-    if tamano < 8 || tamano % 4 != 0 {
+    if tamano < 8 || !tamano.is_multiple_of(4) {
         return Err(Fallo::Tamano);
     }
     if tamano > bytes.len() {
@@ -279,7 +289,7 @@ impl Escritor {
     }
 
     fn rellenar(&mut self) -> &mut Self {
-        while self.bytes.len() % 4 != 0 {
+        while !self.bytes.len().is_multiple_of(4) {
             self.bytes.push(0);
         }
         self
@@ -303,3 +313,24 @@ impl Escritor {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod tests_multimonitor;
+
+#[cfg(test)]
+mod tests_linux;
+
+#[cfg(test)]
+mod tests_s29;
+
+#[cfg(test)]
+mod tests_commodities;
+
+#[cfg(test)]
+mod tests_menus;
+
+#[cfg(test)]
+mod tests_dock;
+
+#[cfg(test)]
+mod tests_teclas;

@@ -1,0 +1,163 @@
+# La prueba de kit-c (las ventanas de los programas de Dash en DashOS): una ventana con un texto, un campo con su
+# etiqueta, un botón, una lista y sus menús (con una casilla, opciones y un submenú), hecha con las funciones mui_* de Dash. En el Amiga es una ventana de MUI;
+# en DashOS (./dash --dashos), del kit, con el aspecto de Material 3. Cada evento sale por la consola: la prueba del
+# arranque (tools/prueba_uefi.sh) pulsa el botón, y luego "Guardar" en la pregunta (mui_request); el programa guarda
+# la lista en su cajón por el servicio de archivos (file_*, dir_*), la lee y la borra. Después pide al selector de
+# DashOS un fichero para leer (el guion elige C/Privado/nota.txt) y una carpeta para guardar (el guion elige C), y con
+# eso acaba. El título y una línea salen del catálogo (ventana_es.ct, en el disco de la prueba en
+# Locale/Catalogs/español/ de su cajón): sin idioma en ENV:, el castellano.
+
+@catalog "DashVentana.catalog" 1
+
+func contenido(lista: Int) -> String
+    t = ""
+    for i in (0..mui_list_count(lista) - 1)
+        t = t + mui_list_get(lista, i) + "\n"
+    end
+    return t
+end
+
+# Los ficheros de Dash por el servicio de archivos, en su cajón (su raíz): escribir, mover a un cajón nuevo, listarlo,
+# leer línea a línea y entero, y borrar (el disco queda como estaba: lo comprueba tools/disco_archivos.py).
+func ficheros(t: String)
+    ok = file_write_text("lista.txt", t)
+    Print "[dash-ventana] lista.txt: escrito #{ok}, #{file_size(\"lista.txt\")} bytes"
+    hecho = dir_create("Listas")
+    movido = file_rename("lista.txt", "Listas/lista.txt")
+    n = dir_read("Listas")
+    Print "[dash-ventana] Listas: creado #{hecho}, movido #{movido}; #{n} entrada: #{dir_entry_name(0)}, #{dir_entry_size(0)} bytes"
+    h = file_open("Listas/lista.txt", 1005)
+    buf = buffer_alloc(256)
+    primera = file_read_line(h, buf, 256)
+    file_close(h)
+    buffer_free(buf)
+    leida = file_read_text("Listas/lista.txt")
+    esperada = "Primera línea\n"
+    Print "[dash-ventana] leída: primera línea #{primera == esperada}, entera #{leida == t}"
+    # La fecha por el servicio de archivos (orden FECHAR): se pone y se lee igual.
+    fechada = file_set_date("Listas/lista.txt", 1700000000)
+    Print "[dash-ventana] fecha: puesta #{fechada}, leída #{file_date(\"Listas/lista.txt\") == 1700000000}"
+    a = file_delete("Listas/lista.txt")
+    b = file_delete("Listas")
+    Print "[dash-ventana] borrado: #{a} #{b}; queda: #{file_exists(\"Listas\")}"
+end
+
+# El selector de ficheros de DashOS: lo que elige el usuario, para leer (Elegido:) y una carpeta para guardar (Carpeta:)
+func selector(t: String)
+    if file_open_dialog("Abrir", "#?")
+        dice = file_read_text(file_fullpath())
+        Print "[dash-ventana] elegido: #{file_fullpath()}, #{dice.length} bytes: #{str_trim(dice)}"
+    else
+        Print "[dash-ventana] no se eligió fichero"
+    end
+    ruta = dialog_file_at("Guardar como", "#?", 1, "", "dash-lista.txt")
+    if ruta == ""
+        Print "[dash-ventana] no se eligió carpeta"
+    else
+        ok = file_write_text(ruta, t)
+        igual = file_read_text(ruta) == t
+        Print "[dash-ventana] guardada en #{ruta}: #{ok}, leída igual #{igual}, borrada #{file_delete(ruta)}"
+    end
+end
+
+Main
+    Print "[dash-ventana] " + tr(1, "catalog language") + ": " + catalog_language()
+    app = mui_app_begin("Ventana de Dash", "DASHVENTANA")
+    if app == 0
+        Print "[dash-ventana] sin compositor"
+    else
+        # En la prueba del arranque sale tras la caja Amiga: 20 s más, para no salir mientras el guion teclea en el
+        # centro de control (una ventana nueva se lleva el teclado si no se escribe).
+        time_delay(1000)
+        win = mui_window_begin(tr(2, "Dash on DashOS"), 1)
+            mui_menu_begin("Proyecto")
+                acerca = mui_menu_item("Acerca de...", "?", 10)
+                mui_menu_separator()
+                mui_menu_item("Salir", "Q", 11)
+            mui_menu_end()
+            # S10 (menus-pulido, `make arranque-virt-menus`): un menú que no cabe en la ventana, para probar la rueda
+            # y el teclado en él.
+            mui_menu_begin("Largo")
+                for k in (1..30)
+                    mui_menu_item("Entrada #{k}", "", 200 + k)
+                end
+            mui_menu_end()
+            # Rama `centro-vivo` (pedido de la sesión de Dash): una casilla, un grupo de opciones y un submenú, para
+            # verlos en pantalla. Lo hostil: un submenú dentro de otro no lo hay (como en el Amiga): da 0 y lo suyo no
+            # se pone; lo que va tras su fin sigue en el de fuera.
+            mui_menu_begin("Ver")
+                rejilla = mui_menu_check("Rejilla", "", 20, 1)
+                mui_menu_separator()
+                chico = mui_menu_radio("Pequeño", "", 21, 0)
+                mediano = mui_menu_radio("Mediano", "", 22, 1)
+                grande = mui_menu_radio("Grande", "", 23, 0)
+                mui_menu_separator()
+                mui_submenu_begin("Orden")
+                    mui_menu_item("Por nombre", "", 24)
+                    mui_menu_item("Por fecha", "", 25)
+                    dentro = mui_submenu_begin("Más")
+                        mui_menu_item("No sale", "", 26)
+                    mui_submenu_end()
+                    mui_menu_item("Por tamaño", "", 27)
+                mui_submenu_end()
+            mui_menu_end()
+            texto = mui_text("Hola desde Dash")
+            mui_hgroup_begin()
+                mui_label("Nombre:")
+                nombre = mui_string("Ñandú", 40)
+                boton = mui_button("_Añadir")
+            mui_group_end()
+            lista = mui_list()
+        mui_window_end()
+        Print "[dash-ventana] submenú dentro de otro: #{dentro}"
+        mui_list_add(lista, "Primera línea")
+        mui_on_press(boton, 1)
+        mui_on_double(lista, 2)
+        mui_on_change(lista, 3)
+        if mui_window_open(win) == 0
+            Print "[dash-ventana] no se abre la ventana"
+        else
+            Print "[dash-ventana] abierta"
+            n = 0
+            seguir = true
+            while seguir
+                ev = mui_wait_event()
+                if ev == -1 or ev == 11
+                    seguir = false
+                elif ev == 1
+                    n = n + 1
+                    mui_list_add(lista, "#{mui_get_text(nombre)} #{n}")
+                    mui_set_text(texto, "Pulsado #{n} veces")
+                    Print "[dash-ventana] pulsado: #{mui_get_text(texto)}; líneas: #{mui_list_count(lista)}"
+                    r = mui_request(win, "Guardar", "¿Guardar la lista en un fichero?", "_Guardar|_Cancelar")
+                    Print "[dash-ventana] guardar: #{r}"
+                    if r == 1
+                        ficheros(contenido(lista))
+                    end
+                    selector(contenido(lista))
+                    # En la prueba del arranque, acaba aquí: delante, su ventana taparía otras.
+                    seguir = false
+                elif ev == 2
+                    Print "[dash-ventana] doble clic en: #{mui_list_get(lista, mui_get_value(lista))}"
+                elif ev == 3
+                    Print "[dash-ventana] elegida la línea #{mui_get_value(lista)}"
+                elif ev == 10
+                    r = mui_request(win, "Acerca de", "Una ventana de Dash en DashOS", "_Vale|_Cancelar")
+                    Print "[dash-ventana] acerca de: #{r}"
+                elif ev > 200 and ev <= 230
+                    Print "[dash-ventana] menú: Entrada #{ev - 200}"
+                elif ev == 20
+                    Print "[dash-ventana] Rejilla: #{mui_get_value(rejilla)}"
+                elif ev >= 21 and ev <= 23
+                    Print "[dash-ventana] tamaño: pequeño #{mui_get_value(chico)}, mediano #{mui_get_value(mediano)}, grande #{mui_get_value(grande)}"
+                elif ev == 24 or ev == 25 or ev == 27
+                    Print "[dash-ventana] orden: #{ev}"
+                elif ev == 26
+                    Print "[dash-ventana] MAL: elegido lo del submenú que no vale"
+                end
+            end
+            Print "[dash-ventana] fin"
+        end
+        mui_app_end()
+    end
+end

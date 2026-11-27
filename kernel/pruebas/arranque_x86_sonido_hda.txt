@@ -1,0 +1,14 @@
+# X5c: el sonido de un PC, Intel HDA (`-device intel-hda -device hda-duplex`, lo de omisión de arranque-x86): el
+# controlador con su códec, el servicio y dos programas que suenan a la vez; tools/sonido_wav.py mira el WAV de QEMU.
+~hda: en el PCIe 0:
+~│   [hda] versión 1.0, 4 flujos de entrada y 4 de salida, códecs 0x1
+~│   [hda] códec 0 (1af4:0022): salida por el DAC 2 y la patilla de línea (1 patillas)
+~│   [sonido] salida por hda: 8 ranuras de 256 cuadros a 48 kHz
+~│   [hda] suena el flujo de salida 4 para el servicio
+~│   [hda] avisos por su interrupción
+~│   [sonido] tono-a abre un flujo: I16, 1 canales, 48000 Hz
+~│   [sonido] tono-b abre un flujo: F32, 2 canales, 44100 Hz
+~│   [tono-a] 1,5 s escritos; ahora falla a propósito
+~│   [sonido] tono-a ya no está: su flujo sale con fundido
+~│   [sonido] tono-a: flujo cerrado
+~│   [sonido] tono-b: flujo cerrado

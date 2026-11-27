@@ -1,0 +1,25 @@
+# El Reino Unido.
+codigo GB
+telefono 44
+medidas britanico
+fecha_hora %A %e %B %Y, %H:%M:%S
+fecha %A %e %B %Y
+hora %H:%M:%S
+fecha_hora_corta %d/%m/%Y %H:%M
+fecha_corta %d/%m/%Y
+hora_corta %H:%M
+decimal .
+grupo ,
+agrupar 3
+agrupar_frac 255
+dinero_decimal .
+dinero_grupo ,
+dinero_agrupar 3
+dinero_agrupar_frac 255
+dinero_decimales 2
+moneda £
+moneda_pequena p
+moneda_int GBP
+positivo nada junto delante delante
+negativo - junto delante delante
+semana_empieza lunes

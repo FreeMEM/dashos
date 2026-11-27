@@ -1,5 +1,7 @@
 # S19. El sonido
 
+> **2026-11-10.** Lo de estudio (grafo, MIDI, chips como instrumentos, plugins) está en [S19b](S19b-sonido-de-estudio.md).
+
 Del 2026-11-09. Lo pidió el usuario ese día. Es análisis y diseño: no hay código. Orden decidido por el usuario: el
 sonido se programa detrás de los gráficos (el compositor que habla Wayland y el kit de interfaz).
 
@@ -75,8 +77,15 @@ A, con este diseño:
   defecto: 256 muestras a 48 kHz (5,3 ms), dos o tres períodos en el anillo del controlador. El escritorio sin
   juegos puede subir el período para gastar menos.
 - Los controladores son otros procesos (S12): el servicio les habla por un anillo de bloques ya mezclados. Si un
-  controlador cae, el servicio sigue y pasa a otra salida.
+  controlador cae, el servicio sigue y pasa a otra salida. El cambio se dice: un aviso en llano con la salida nueva
+  ("Los auriculares USB han fallado. El sonido sale ahora por HDMI") y una línea en `Estado:Registros/` (S6). Y nunca
+  salta solo de una salida privada (auriculares) a unos altavoces: en ese caso se calla y avisa.
+- **Qué salida se usa recién instalado**: sin configurar nada, gana lo último que se enchufa, y se recuerda por
+  aparato (al volver a enchufar unos auriculares, vuelven a ser la salida). Cambiarla es un clic en la barra. Lo
+  recordado va en el fichero de texto de ajustes del sonido, en `ENVARC:`.
 - **Volumen por programa y por salida**, y silenciar. La barra (S10) lo enseña con los programas que suenan.
+- **Lo mismo desde el Shell**: una orden `Sonido` (volumen, silencio, salida, y volumen por programa) y el servicio
+  por ARexx, para guiones. La sintaxis, por diseñar al hacerlo.
 - **Matar**: un flujo es un objeto con dueño (S2). Muere el programa y el servicio ve cerrarse el anillo y lo quita en
   el siguiente período, con un fundido de unos milisegundos para que no chasque.
 
@@ -123,6 +132,8 @@ por ALSA. No hay puente de protocolos que mantener.
 - **Un aviso que no se puede tapar**: mientras un programa graba, el compositor (no el escritorio, que es de terceros
   en S10b) dibuja una marca en la pantalla y la barra dice quién graba.
 - Lo mismo para grabar lo que suena (otros flujos o la salida entera): es un permiso aparte.
+- **Queda rastro de quién grabó.** La marca solo se ve mientras se graba. Además, cada grabación deja una línea en
+  `Estado:Registros/` (S6): qué programa, desde cuándo y hasta cuándo. Se lee con la orden `Registro` y en Ajustes.
 
 ## Cómo se prueba
 
@@ -164,7 +175,7 @@ Los tamaños son estimaciones, sin medir.
 - Con S1: anillos en memoria compartida para las muestras y llaves para cada flujo.
 - Con S2: el servicio y los controladores en la clase de plazos; matar corta el flujo.
 - Con S4 y S18: `audio.device` y AHI nativos; Paula imitada manda sus muestras al servicio.
-- Con S6: el servicio con su usuario; permisos de micrófono y de grabar lo que suena.
+- Con S6: el servicio con su usuario; permisos de micrófono y de grabar lo que suena; el registro de quién grabó.
 - Con S7: virtio-sound para la caja Linux.
 - Con S10 y S10b: volumen y programas que suenan en la barra; el aviso de grabación lo dibuja el compositor.
 - Con S12: los controladores son procesos aparte, recargables.

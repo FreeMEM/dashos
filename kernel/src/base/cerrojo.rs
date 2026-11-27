@@ -38,9 +38,14 @@ impl<T> Cerrojo<T> {
             .is_err()
         {
             while self.tomado.load(Ordering::Relaxed) {
+                // x86 (X4): quien tiene el cerrojo puede estar esperando a que este núcleo vacíe su TLB
+                // (`nucleos::vaciar_tlb_otros`), y aquí las interrupciones están cerradas: se atiende mientras.
+                #[cfg(target_arch = "x86_64")]
+                super::nucleos::atender_tlb();
                 core::hint::spin_loop();
             }
         }
+        contar(1);
         Guarda { cerrojo: self, daif, _no_send: core::marker::PhantomData }
     }
 
@@ -49,6 +54,7 @@ impl<T> Cerrojo<T> {
     pub fn intentar(&self) -> Option<Guarda<'_, T>> {
         let daif = enmascarar_irq();
         if self.tomado.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+            contar(1);
             Some(Guarda { cerrojo: self, daif, _no_send: core::marker::PhantomData })
         } else {
             restaurar_irq(daif);
@@ -76,6 +82,7 @@ impl<T> Guarda<'_, T> {
     /// Suelta el cerrojo sin reponer las IRQ: quedan enmascaradas. Para soltarlo dentro del planificador
     /// (`planificador::bloquear_soltando`).
     pub fn soltar_sin_irq(self) {
+        contar(-1);
         self.cerrojo.tomado.store(false, Ordering::Release);
         core::mem::forget(self);
     }
@@ -96,12 +103,33 @@ impl<T> DerefMut for Guarda<'_, T> {
 
 impl<T> Drop for Guarda<'_, T> {
     fn drop(&mut self) {
+        contar(-1);
         self.cerrojo.tomado.store(false, Ordering::Release);
         restaurar_irq(self.daif);
     }
 }
 
+/// Cerrojos tomados en cada núcleo, solo en la imagen de pruebas: `planificador::punto_de_corte` comprueba que no hay
+/// ninguno (S2). En la imagen normal no cuesta nada.
+#[cfg(feature = "pruebas")]
+static TOMADOS: [core::sync::atomic::AtomicI32; 4] = [const { core::sync::atomic::AtomicI32::new(0) }; 4];
+
+#[inline(always)]
+fn contar(_d: i32) {
+    #[cfg(feature = "pruebas")]
+    TOMADOS[crate::nucleos::numero() as usize % 4].fetch_add(_d, Ordering::Relaxed);
+}
+
+/// Cuántos cerrojos tiene tomados este núcleo (solo en pruebas; si no, 0).
+pub fn tomados() -> i32 {
+    #[cfg(feature = "pruebas")]
+    return TOMADOS[crate::nucleos::numero() as usize % 4].load(Ordering::Relaxed);
+    #[cfg(not(feature = "pruebas"))]
+    0
+}
+
 /// Enmascara las IRQ y devuelve el estado anterior de DAIF.
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn enmascarar_irq() -> u64 {
     let daif: u64;
@@ -109,9 +137,51 @@ pub fn enmascarar_irq() -> u64 {
     daif
 }
 
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn restaurar_irq(daif: u64) {
     unsafe { core::arch::asm!("msr daif, {}", in(reg) daif) };
+}
+
+/// En x86-64 (S30, X2): cierra las interrupciones (IF) y devuelve RFLAGS de antes.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub fn enmascarar_irq() -> u64 {
+    let rflags: u64;
+    unsafe { core::arch::asm!("pushfq", "pop {}", "cli", out(reg) rflags) };
+    rflags
+}
+
+/// Las vuelve a abrir si lo estaban (RFLAGS.IF, bit 9).
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub fn restaurar_irq(rflags: u64) {
+    if rflags & (1 << 9) != 0 {
+        unsafe { core::arch::asm!("sti", options(nomem, nostack)) };
+    }
+}
+
+/// Abre las interrupciones un momento y las vuelve a cerrar (X6): una que esté pendiente se atiende ahí, y el tic puede
+/// cambiar de hilo. Para las llamadas al sistema largas (`memoria_crear`), que corren con ellas cerradas. Solo sin
+/// ningún cerrojo tomado: si no, la interrupción podría pedir el mismo y el núcleo se colgaría. Si estaban abiertas, no
+/// cambia nada.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+pub fn ventana_irq() {
+    let daif = enmascarar_irq();
+    unsafe { core::arch::asm!("msr daifclr, #2", "isb", "msr daifset, #2", options(nostack)) };
+    restaurar_irq(daif);
+}
+
+/// En x86, `sti` deja pasar las interrupciones después de la instrucción siguiente: tras el `nop`. El salto es para
+/// QEMU sin KVM, que solo mira las interrupciones al empezar un bloque traducido: sin él, el `nop` y el `cli` iban en
+/// el mismo bloque y no entraba ninguna.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub fn ventana_irq() {
+    let rflags = enmascarar_irq();
+    unsafe { core::arch::asm!("sti", "nop", "jmp 2f", "2:", "cli", options(nostack)) };
+    restaurar_irq(rflags);
 }
 
 /// Nombre de antes de C35, cuando había cerrojos que no enmascaraban. Hoy son lo mismo.

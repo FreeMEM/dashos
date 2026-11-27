@@ -11,22 +11,12 @@
 #![no_main]
 
 use dashos::println;
+use dashos::protocolo::archivos::*;
 
 dashos::programa!(principal);
 
 const VA: usize = 0x40_0000_0000;
-const SESION: u32 = 0;
-const BUSCAR: u32 = 1;
-const LEER: u32 = 2;
-const ESCRIBIR: u32 = 3;
-const LISTAR: u32 = 4;
-const CREAR: u32 = 7;
-const INFO: u32 = 12;
-const COMENTARIO: u32 = 13;
-const COMPROBAR: u32 = 16;
 const MONTAR: u32 = 27;
-const SOLO_LECTURA: i32 = -8;
-const NO_EXISTE: i32 = -2;
 
 #[derive(Clone, Copy)]
 struct R {

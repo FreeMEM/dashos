@@ -1,0 +1,16 @@
+# Firefox y la entrada de DashOS (`make arranque-virt-wayland CAJA_SOLO=firefox
+# ESPERADO_WAYLAND=pruebas/arranque_virt_wayland_firefox.txt`, firefox-entrada): lo de `arranque_virt_wayland.txt` hasta
+# el puente, y solo Firefox. El guion pulsa en su barra de direcciones y teclea file:///usr/local/share/dashos/: su
+# título cambia al índice de esa carpeta.
+Hipervisor: EL2 instalado en 4 núcleos
+~[caja-linux] wayland: vsock en el puerto 5000 para el puente de Wayland de Linux (CID 3)
+~[caja-linux] linux: caja login: root (automatic login)
+~[caja-linux] wayland: el puente de Linux conecta por vsock
+~[caja-linux] linux: puente hostil: hecho
+~[caja-linux] linux: la máquina tiene 8192 MB de RAM: hasta 1024 MB para el invitado
+~firefox: empieza
+~título: Linux · Firefox en DashOS
+~título: Linux · Index of file:///usr/local/share/dashos/
+~memoria: RAM
+~firefox: hecho
+~Linux apagó la máquina por PSCI

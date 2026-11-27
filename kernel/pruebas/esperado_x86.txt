@@ -1,0 +1,121 @@
+# X2 a X4 (S30): las pruebas del arranque en x86-64 (make prueba-x86). La última para el núcleo 0 con un fallo doble.
+DashOS 0.0.1 (x86-64)
+GDT, TSS e IDT cargadas
+Memoria física:
+CPU: NX sí, SMEP sí, SMAP sí
+MMU: tablas propias
+Defensas: NX sí, SMEP sí, SMAP sí, WP sí
+~Azar: semilla de la CPU
+X2: memoria libre como el mapa de UEFI bien
+X2: reparto de páginas bien, devolución bien
+X2: montón bien
+X2: mapa del kernel con W^X y guardas bien
+Excepción: punto de parada en
+X2: de vuelta del punto de parada
+X2: fallo de página recuperado bien
+X2: SMEP, SMAP y NX activos bien
+ACPI: 4 núcleos en la MADT
+Reloj: TSC a
+~núcleo 1 en marcha
+~núcleo 2 en marcha
+~núcleo 3 en marcha
+X3: ACPI (MADT y HPET) bien
+X3: TSC calibrado contra el HPET bien
+X3: temporizador del APIC a 100 Hz en cada núcleo bien
+C8: interrupciones bien
+X3: 3 núcleos más en marcha, cada uno con su GDT y su TSS bien
+C10: hilos bien
+X3: hilos en tres núcleos que se reparten el trabajo y terminan bien
+X3: avisos entre núcleos bien
+X3: interrupción de la UART por el IOAPIC bien
+X3: vaciado de la TLB en los demás núcleos al soltar una pila bien
+C14: clase de plazo bien
+X3: recogida de hilos bien
+# X4: procesos en el anillo 3 (pruebas_procesos_x86.rs), con los programas de usuario/ compilados para x86-64.
+X4: despertar un proceso bloqueado desde otro núcleo bien
+  proceso con PCID 1 en el núcleo 2
+  proceso con PCID 2 en el núcleo 3
+~│   hola desde el anillo 3, proceso A
+~│   hola desde el anillo 3, proceso B
+C11: procesos lanzados bien
+~│   ping: mensaje del cliente con una llave
+~│   pong: respuesta del servidor
+C12: canales lanzados bien
+│   memoria compartida: escrito por el productor
+│   memoria compartida: cambiado por el consumidor
+C13: memoria compartida lanzada bien
+X4: syscall y sysret conservan los registros bien
+~Proceso: excepción 14 (fallo de página (#PF)) en 0x40000a (CR2 0xffffff8004000000, código 0x4); se termina
+~Proceso: excepción 14 (fallo de página (#PF)) en 0x400000 (CR2 0x600000, código 0x4); se termina
+│   el otro proceso sigue entero
+X4: un proceso no lee la memoria del kernel ni la de otro proceso bien
+# X6: un proceso con la llave de COM1 usa sus puertos y muere al tocar otro; uno sin llave muere al tocar COM1.
+Proceso: excepción 13 (fallo de protección general (#GP))
+Proceso: excepción 13 (fallo de protección general (#GP))
+X6: puertos de E/S por el mapa de la TSS bien
+# X6: poner a cero 4 MB en memoria_crear se para tras cada página a atender las interrupciones.
+X6: memoria_crear de 4 MB con las interrupciones atendidas bien
+C18: recogida bien
+C28: FPU por hilo bien
+│   [pie] hola desde un PIE por encima de 4 GB
+│   [pie] hola desde un PIE por encima de 4 GB
+  dos cargas: bases distintas sí, por encima de 4 GB sí
+C29: cargador de PIE bien
+C32: los dos extremos de un canal a la vez, en dos núcleos: bien
+  6 de 6 procesos acabados
+C32: reparto de páginas desde varios núcleos bien
+C32: PCID de 12 bits sin repetirse bien, y se vuelven a dar bien
+Proceso: excepción 13 (fallo de protección general (#GP))
+Proceso: excepción 13 (fallo de protección general (#GP))
+Proceso: excepción 14 (fallo de página (#PF)) en 0xffffffff80100000
+Proceso: excepción 13 (fallo de protección general (#GP))
+C32: registros del anillo 3 bien
+  subgrupos uno dentro de otro: 7 niveles como mucho
+│   hola desde Rust en EL0 (DashOS, little-endian)
+│   memoria propia proyectada (0); primer byte de 0x11223344: 0x44
+│   [lanzador] hola: clase 0, código 5
+│   [padre] hijos que salen, giran, se bloquean y fallan: creados, matados y esperados
+│   [lanzador] padre: clase 0, código 39
+│   [malo] escape: ?[31m
+│ C99: imitado por un programa
+│   [malo] punteros malos, llaves repetidas y canales cerrados: todo rechazado sin perder nada
+│   [lanzador] malo: clase 0, código 31
+│   [lanzador] llaves: clase 0, código 41
+│   [lanzador] tiempo: clase 0, código 49
+│   [grupos] ciclos soltados al matar el grupo, y matanzas a la vez sin caerse
+│   [lanzador] grupos: clase 0, código 42
+│   [lanzador] 6 pruebas lanzadas desde un proceso, cada una en su grupo, que queda a cero
+C43: pruebas de usuario lanzadas por un proceso bien
+│   [muchos] 900 temporizadores de 10 ms
+C51: temporizadores repartidos por grupos bien
+# C52 (llegó al fusionar `revision`): hilos de usuario, llamadas 40 a 44, con el mismo programa que en ARM.
+~[hilos] víctima con 4 hilos: dos esperando, uno unido a otro y uno que gira
+[hilos] 4 hilos suman 80000 con un cerrojo: 80000
+[hilos] entradas, pilas, uniones y esperas que no valen: todas rechazadas
+[hilos] hilos sin fin:
+[hilos] el cupo del grupo corta los hilos, y unirse devuelve lo cobrado
+C52: hilos de usuario bien
+# X10: el hipervisor de x86 (AMD-V con NPT o VT-x con EPT) con un invitado mínimo (`usuario/src/bin/maquina.rs`).
+~Hipervisor: 
+[maquina] puertos (IN y OUT de 1, 2 y 4 bytes) y aparatos (MOV, MOVZX, AH, 16 bits, sin contestar): bien
+[maquina] CPUID (hipervisor, sin VMX ni SVM, DashOSDashOS), hipercall y MSR: bien
+[maquina] interrupción entregada a un HLT y temporizador del invitado (plazo del TSC): bien
+[maquina] modo largo (tablas del invitado, dirección alta, 8 bytes, REX): bien
+[maquina] segunda vCPU en modo real (como tras una SIPI) y parar la máquina: bien
+X10: máquinas virtuales bien
+# X7a: RelevoJIT en un proceso (`usuario/src/bin/relevo.rs`): los programas de jit-host/pruebas68k con el intérprete y
+# con el JIT, comparados con lo que da RelevoJIT en Linux (jit-host/pruebas68k/ref/relevo.txt), y su banco.
+[relevo] JIT: 
+[relevo] memoria de código: 
+[relevo] 7 programas de jit-host/pruebas68k con el intérprete y con el JIT, igual que en Linux
+[relevo] banco arith: 
+[relevo] banco copy: 
+[relevo] banco bytes: 
+X7a: RelevoJIT dentro de un proceso bien
+# X11: pasar un aparato del PCIe (el edu de QEMU) a una máquina virtual, con `usuario/src/bin/maquina_pci.rs` de
+# monitor y su invitado mínimo. Sin IOMMU, la llamada se niega; con ella, los pasos están en esperado_x86_iommu.txt.
+X11: pasar un aparato a una máquina virtual bien
+X2: desborde de la pila del arranque
+Excepción 8 (fallo doble (#DF)) en el kernel
+en la pila de emergencia (IST 1)
+Núcleo parado.

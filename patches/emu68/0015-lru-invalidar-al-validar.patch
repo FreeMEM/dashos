@@ -1,0 +1,40 @@
+From 7c457bed91c58f55eb969428b624a2730f599813 Mon Sep 17 00:00:00 2001
+From: Michal Schulz <michal.schulz@gmx.de>
+Date: Thu, 3 Sep 2026 16:31:00 +0000
+Subject: [PATCH] invalidate entries in LRU if removed during validation
+
+---
+ src/M68k_Translator.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/M68k_Translator.c b/src/M68k_Translator.c
+index fef5b16..16df91f 100644
+--- a/src/M68k_Translator.c
++++ b/src/M68k_Translator.c
+@@ -805,6 +805,7 @@ struct M68KTranslationUnit *M68K_VerifyUnit(struct M68KTranslationUnit *unit)
+         if (unit->mt_JIT_CONTROL != __m68k_state->JIT_CONTROL ||
+             unit->mt_JIT_CONTROL2 != __m68k_state->JIT_CONTROL2)
+         {
++            LRU_InvalidateByM68kAddress(unit->mt_M68kAddress);
+             REMOVE(&unit->mt_LRUNode);
+             REMOVE(&unit->mt_HashNode);
+             tlsf_free(jit_tlsf, unit);
+@@ -851,6 +852,7 @@ struct M68KTranslationUnit *M68K_VerifyUnit(struct M68KTranslationUnit *unit)
+         /* In case of FP or CRC mismatch, remove the unit and reclaim memory */
+         if (fp != unit->mt_Fingerprint || crc != unit->mt_CRC32)
+         {
++            LRU_InvalidateByM68kAddress(unit->mt_M68kAddress);   
+             REMOVE(&unit->mt_LRUNode);
+             REMOVE(&unit->mt_HashNode);
+             tlsf_free(jit_tlsf, unit);
+@@ -898,6 +900,7 @@ struct M68KTranslationUnit *M68K_VerifyUnitCRC32(struct M68KTranslationUnit *uni
+         /* In case of FP or CRC mismatch, remove the unit and reclaim memory */
+         if (crc != unit->mt_CRC32)
+         {
++            LRU_InvalidateByM68kAddress(unit->mt_M68kAddress);
+             REMOVE(&unit->mt_LRUNode);
+             REMOVE(&unit->mt_HashNode);
+             tlsf_free(jit_tlsf, unit);
+-- 
+2.56.1
+

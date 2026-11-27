@@ -8,10 +8,20 @@
 //!
 //! El remuestreo es lineal. Cada flujo puede reajustar su ritmo unas partes por millón, para seguir el reloj real del
 //! hardware (S18).
+//!
+//! Todo en coma fija (E9 de `docs/REVISION_ARQUITECTURA.md`): el servicio corre sin coma flotante de hardware y cada
+//! operación de `f32` era una llamada. Una muestra es un entero con 1,0 = 32.768 (Q15, con margen para pasarse al
+//! sumar), un volumen un entero con 1,0 = 65.536 (Q16) y la posición del remuestreo una fracción de 32 bits.
 
 #![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
+
+pub mod efectos;
+pub mod espectro;
+pub mod grafo;
+pub mod mates;
+pub mod sonidos;
 
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
@@ -60,16 +70,21 @@ impl Formato {
     }
 }
 
-/// Un cuadro: la muestra izquierda y la derecha, entre -1 y 1.
-pub type Cuadro = [f32; 2];
+/// Un cuadro: la muestra izquierda y la derecha, con 1,0 = `UNO` (de -1 a 1 al entrar; la mezcla puede pasarse).
+pub type Cuadro = [i32; 2];
 
-fn leer_muestra(m: Muestra, b: &[u8]) -> f32 {
+/// 1,0 en una muestra.
+pub const UNO: i32 = 32_768;
+/// 1,0 en un volumen.
+pub const UNO_VOL: i64 = 65_536;
+
+fn leer_muestra(m: Muestra, b: &[u8]) -> i32 {
     match m {
-        Muestra::I16 => i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0,
-        Muestra::I32 => (i32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f64 / 2_147_483_648.0) as f32,
+        Muestra::I16 => i16::from_le_bytes([b[0], b[1]]) as i32,
+        Muestra::I32 => i32::from_le_bytes([b[0], b[1], b[2], b[3]]) >> 16,
         Muestra::F32 => {
             let v = f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
-            if v.is_nan() { 0.0 } else { v.clamp(-1.0, 1.0) }
+            if v.is_nan() { 0 } else { (v.clamp(-1.0, 1.0) * UNO as f32) as i32 }
         }
     }
 }
@@ -88,40 +103,42 @@ pub fn convertir(f: &Formato, bytes: &[u8], cola: &mut VecDeque<Cuadro>) -> usiz
     n * tam
 }
 
-/// Un cuadro en coma flotante a dos muestras de 16 bits, redondeando y sin pasarse.
+/// Un cuadro a dos muestras de 16 bits, sin pasarse (de -32.767 a 32.767, igual por arriba que por abajo).
 pub fn a_i16(c: Cuadro) -> [i16; 2] {
-    c.map(|x| {
-        let v = x.clamp(-1.0, 1.0) * 32767.0;
-        (if v >= 0.0 { v + 0.5 } else { v - 0.5 }) as i16
-    })
+    c.map(|x| x.clamp(-32_767, 32_767) as i16)
 }
 
 /// El remuestreo lineal: `pos` es dónde cae la siguiente muestra de salida entre `previo` y el primero de la cola (de
 /// 0 a 1), y avanza `paso` cuadros de entrada por cada uno de salida.
-struct Remuestreo {
+/// `pos` y `paso`, con 32 bits de fracción (1 << 32 es un cuadro de entrada).
+pub(crate) struct Remuestreo {
     previo: Cuadro,
-    pos: f64,
-    nominal: f64,
-    paso: f64,
+    pos: u64,
+    pub(crate) nominal: u64,
+    pub(crate) paso: u64,
 }
 
+const UN_CUADRO: u64 = 1 << 32;
+
 impl Remuestreo {
-    fn nuevo(entrada: u32, salida: u32) -> Remuestreo {
-        let nominal = entrada as f64 / salida as f64;
-        Remuestreo { previo: [0.0; 2], pos: 0.0, nominal, paso: nominal }
+    pub(crate) fn nuevo(entrada: u32, salida: u32) -> Remuestreo {
+        let nominal = ((entrada as u64) << 32) / salida as u64;
+        Remuestreo { previo: [0; 2], pos: 0, nominal, paso: nominal }
     }
 
     /// El siguiente cuadro de salida, o `None` si a la cola le faltan cuadros (sin gastar nada).
-    fn siguiente(&mut self, cola: &mut VecDeque<Cuadro>) -> Option<Cuadro> {
-        while self.pos >= 1.0 {
+    pub(crate) fn siguiente(&mut self, cola: &mut VecDeque<Cuadro>) -> Option<Cuadro> {
+        while self.pos >= UN_CUADRO {
             self.previo = cola.pop_front()?;
-            self.pos -= 1.0;
+            self.pos -= UN_CUADRO;
         }
         let b = *cola.front()?;
-        let t = self.pos as f32;
+        // La fracción con 16 bits basta: el error es menor que la muestra más pequeña.
+        let t = (self.pos >> 16) as i64;
         let a = self.previo;
         self.pos += self.paso;
-        Some([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t])
+        let entre = |a: i32, b: i32| a + (((b as i64 - a as i64) * t) >> 16) as i32;
+        Some([entre(a[0], b[0]), entre(a[1], b[1])])
     }
 }
 
@@ -137,9 +154,9 @@ struct Flujo {
     formato: Formato,
     cola: VecDeque<Cuadro>,
     remuestreo: Remuestreo,
-    /// El volumen pedido y el que se aplicó al final del último período.
-    volumen: Cuadro,
-    actual: Cuadro,
+    /// El volumen pedido y el que se aplicó al final del último período, con 1,0 = 65.536.
+    volumen: [i64; 2],
+    actual: [i64; 2],
     estado: Estado,
     /// Ya recibió muestras: desde entonces, quedarse sin ellas es una falta.
     empezado: bool,
@@ -147,7 +164,7 @@ struct Flujo {
 }
 
 /// Lo que cabe en la cola de un flujo: un segundo de su entrada.
-fn cabida(f: &Formato) -> usize {
+pub(crate) fn cabida(f: &Formato) -> usize {
     f.frecuencia as usize
 }
 
@@ -156,12 +173,20 @@ pub struct Mezclador {
     flujos: Vec<Flujo>,
     siguiente: u32,
     mezcla: Vec<Cuadro>,
+    /// El volumen general (C2: el del panel rápido), pedido y aplicado al final del último período, con 1,0 = 65.536.
+    general: i64,
+    general_actual: i64,
+}
+
+/// Un volumen de 0 a 4 (o NaN, que es 0) a coma fija.
+pub fn a_volumen(v: f32) -> i64 {
+    if v.is_nan() { 0 } else { (v.clamp(0.0, 4.0) * UNO_VOL as f32) as i64 }
 }
 
 impl Mezclador {
     /// Un mezclador cuya salida va a `frecuencia` cuadros por segundo.
     pub fn nuevo(frecuencia: u32) -> Mezclador {
-        Mezclador { frecuencia, flujos: Vec::new(), siguiente: 1, mezcla: Vec::new() }
+        Mezclador { frecuencia, flujos: Vec::new(), siguiente: 1, mezcla: Vec::new(), general: UNO_VOL, general_actual: UNO_VOL }
     }
 
     pub fn frecuencia(&self) -> u32 {
@@ -185,8 +210,8 @@ impl Mezclador {
             formato,
             cola: VecDeque::new(),
             remuestreo: Remuestreo::nuevo(formato.frecuencia, self.frecuencia),
-            volumen: [1.0; 2],
-            actual: [0.0; 2],
+            volumen: [UNO_VOL; 2],
+            actual: [0; 2],
             estado: Estado::Suena,
             empezado: false,
             faltas: 0,
@@ -226,15 +251,21 @@ impl Mezclador {
     /// El volumen de cada lado, de 0 a 1 (más de 1 amplifica, hasta 4).
     pub fn volumen(&mut self, id: u32, izquierdo: f32, derecho: f32) -> bool {
         let Some(f) = self.flujo(id) else { return false };
-        f.volumen = [izquierdo, derecho].map(|v| if v.is_nan() { 0.0 } else { v.clamp(0.0, 4.0) });
+        f.volumen = [a_volumen(izquierdo), a_volumen(derecho)];
         true
+    }
+
+    /// El volumen general, de 0 a 1 (más de 1 amplifica, hasta 4), sobre la mezcla entera; cambia con una rampa a lo largo
+    /// del período siguiente, como el de cada flujo.
+    pub fn volumen_general(&mut self, v: f32) {
+        self.general = a_volumen(v);
     }
 
     /// Reajusta el ritmo del flujo, en partes por millón (de -10.000 a 10.000): positivo gasta la entrada más deprisa.
     pub fn ajustar(&mut self, id: u32, ppm: i32) -> bool {
         let Some(f) = self.flujo(id) else { return false };
         let ppm = ppm.clamp(-10_000, 10_000);
-        f.remuestreo.paso = f.remuestreo.nominal * (1.0 + ppm as f64 / 1e6);
+        f.remuestreo.paso = ((f.remuestreo.nominal as u128 * (1_000_000 + ppm as i64) as u128) / 1_000_000) as u64;
         true
     }
 
@@ -255,30 +286,30 @@ impl Mezclador {
 
     /// Mezcla un período en `salida`.
     pub fn mezclar(&mut self, salida: &mut [Cuadro]) {
-        salida.fill([0.0; 2]);
-        let n = salida.len();
+        salida.fill([0; 2]);
+        let n = salida.len() as i64;
         if n == 0 {
             return;
         }
-        let fundido = self.fundido() as f32;
+        let fundido = self.fundido() as i64;
         for f in self.flujos.iter_mut() {
             let mut falto = false;
             for (i, s) in salida.iter_mut().enumerate() {
                 // Rampa del volumen a lo largo del período.
-                let t = (i + 1) as f32 / n as f32;
-                let mut g = [0, 1].map(|c| f.actual[c] + (f.volumen[c] - f.actual[c]) * t);
+                let paso = i as i64 + 1;
+                let mut g = [0, 1].map(|c| f.actual[c] + (f.volumen[c] - f.actual[c]) * paso / n);
                 if let Estado::Saliendo(queda) = f.estado {
                     if queda == 0 {
                         break;
                     }
-                    let k = (queda - 1) as f32 / fundido;
-                    g = g.map(|x| x * k);
+                    let k = (queda - 1) as i64;
+                    g = g.map(|x| x * k / fundido);
                     f.estado = Estado::Saliendo(queda - 1);
                 }
                 match f.remuestreo.siguiente(&mut f.cola) {
                     Some(c) => {
-                        s[0] += c[0] * g[0];
-                        s[1] += c[1] * g[1];
+                        s[0] = s[0].saturating_add(((c[0] as i64 * g[0]) >> 16) as i32);
+                        s[1] = s[1].saturating_add(((c[1] as i64 * g[1]) >> 16) as i32);
                     }
                     None => falto = true,
                 }
@@ -289,6 +320,15 @@ impl Mezclador {
             }
         }
         self.flujos.retain(|f| f.estado != Estado::Saliendo(0));
+        // El volumen general, con su rampa; a 1 y sin cambiar, nada que hacer.
+        if self.general != UNO_VOL || self.general_actual != UNO_VOL {
+            let (a, b) = (self.general_actual, self.general);
+            for (i, s) in salida.iter_mut().enumerate() {
+                let g = a + (b - a) * (i as i64 + 1) / n;
+                *s = s.map(|x| ((x as i64 * g) >> 16).clamp(i32::MIN as i64, i32::MAX as i64) as i32);
+            }
+            self.general_actual = b;
+        }
     }
 
     /// Mezcla un período en estéreo de 16 bits entrelazado (izquierda, derecha): `salida` tiene dos muestras por
@@ -296,7 +336,7 @@ impl Mezclador {
     pub fn mezclar_i16(&mut self, salida: &mut [i16]) {
         let n = salida.len() / 2;
         let mut mezcla = core::mem::take(&mut self.mezcla);
-        mezcla.resize(n, [0.0; 2]);
+        mezcla.resize(n, [0; 2]);
         self.mezclar(&mut mezcla);
         for (c, s) in mezcla.iter().zip(salida.chunks_exact_mut(2)) {
             s.copy_from_slice(&a_i16(*c));

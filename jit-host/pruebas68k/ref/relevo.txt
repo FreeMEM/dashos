@@ -1,0 +1,14 @@
+c1 interp: pc0 insns=228460 regs=02eb22c015d3df26 mem=64230205830423e4
+c1 jit: pc0 insns=228460 regs=02eb22c015d3df26 mem=64230205830423e4
+c1-o0 interp: pc0 insns=715984 regs=bfc6438f4808a455 mem=e27f5695366f19f9
+c1-o0 jit: pc0 insns=715984 regs=bfc6438f4808a455 mem=e27f5695366f19f9
+t1 interp: pc0 insns=118054 regs=21f17686d37d1b16 mem=f92203374fccb551
+t1 jit: pc0 insns=118054 regs=21f17686d37d1b16 mem=f92203374fccb551
+t2 interp: pc0 insns=141 regs=342aea3096c72d55 mem=cd6587357fbcd547
+t2 jit: pc0 insns=141 regs=342aea3096c72d55 mem=cd6587357fbcd547
+t3 interp: pc0 insns=7764 regs=b25b3a7ca870ebfd mem=6d68307840c08337
+t3 jit: pc0 insns=7764 regs=b25b3a7ca870ebfd mem=6d68307840c08337
+t4 interp: pc0 insns=304 regs=4e3122563e3cd83b mem=596f9aacd83e5656
+t4 jit: pc0 insns=304 regs=4e3122563e3cd83b mem=596f9aacd83e5656
+t5 interp: pc0 insns=46 regs=86b306984b72cfca mem=ca5a191233ec0b4d
+t5 jit: pc0 insns=46 regs=86b306984b72cfca mem=ca5a191233ec0b4d

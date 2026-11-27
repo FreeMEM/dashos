@@ -295,7 +295,7 @@ impl Dwc2 {
     /// Una transacción en el canal 0: `tipo` 0 control, 3 interrupción. Un NAK vuelve como `Error::Nak`.
     #[allow(clippy::too_many_arguments)]
     fn transaccion_en(&self, direccion: u32, punto: u32, tipo: u32, mps: u32, entrada: bool, pid: u32, datos: usize, largo: u32) -> Result<u32, Error> {
-        let paquetes = if largo == 0 { 1 } else { largo.div_ceil(mps) };
+        let paquetes = if largo == 0 { 1 } else { largo.div_ceil(mps.max(1)) };
         self.borrar_canal();
         // Solo "parado": en modo DMA el canal siempre se para al acabar, bien o mal.
         self.r(HCINTMSK).escribir(HCINT_PARADO);
@@ -362,6 +362,11 @@ impl Dwc2 {
         let pedir = |n: u8| [0x80, 6, 0, 1, 0, 0, n, 0];
         let d = self.control(direccion, pedir(8), 8)?;
         if d.len() < 8 || d[1] != 1 {
+            return Err(Error::Transferencia(0));
+        }
+        // El tamaño de paquete lo dice el aparato: solo valen 8, 16, 32 y 64 (USB 2.0, 9.6.1). Con 0 se dividía por cero
+        // y caía el servicio, y con él el teclado y el ratón (S7).
+        if !matches!(d[7], 8 | 16 | 32 | 64) {
             return Err(Error::Transferencia(0));
         }
         self.mps[direccion as usize & 15] = d[7] as u32;
@@ -474,7 +479,10 @@ impl Dwc2 {
                     if let Some((ifz, teclado)) = interfaz {
                         if copia[i + 2] & 0x80 != 0 && copia[i + 3] & 3 == 3 && hallado.is_none() {
                             let mps = u16::from_le_bytes([copia[i + 4], copia[i + 5]]) as u32 & 0x7ff;
-                            hallado = Some((ifz, Hid { teclado, entrada: PuntoInterrupcion { direccion: dir, punto: (copia[i + 2] & 0xf) as u32, mps, dato1: false } }));
+                            // Un informe de arranque cabe en 8 bytes; más de 64 no es de baja ni plena velocidad (S7).
+                            if (1..=64).contains(&mps) {
+                                hallado = Some((ifz, Hid { teclado, entrada: PuntoInterrupcion { direccion: dir, punto: (copia[i + 2] & 0xf) as u32, mps, dato1: false } }));
+                            }
                         }
                     }
                 }
@@ -558,13 +566,16 @@ fn principal() -> u64 {
         } else {
             esperar_us(8000);
         }
-        for h in hids.iter_mut().flatten() {
+        // Lo que no cupo en la cola del compositor, primero (E4).
+        entrada.reintentar();
+        for (k, h) in hids.iter_mut().enumerate() {
+            let Some(h) = h else { continue };
             let teclado = h.teclado;
             if let Ok(Some(i)) = u.leer_interrupcion(&mut h.entrada) {
                 let mut copia = [0u8; 16];
                 let n = i.len().min(16);
                 copia[..n].copy_from_slice(&i[..n]);
-                if teclado { entrada.teclado(&copia[..n]) } else { entrada.raton(&copia[..n]) }
+                if teclado { entrada.teclado(k as u32, &copia[..n]) } else { entrada.raton(&copia[..n]) }
             }
         }
     }

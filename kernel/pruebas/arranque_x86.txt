@@ -1,0 +1,44 @@
+# Lo de `make -C kernel arranque-x86` que solo hay en x86. Lo demás, lo común con ARM, sale de arranque_virt.txt (X7,
+# paso 4: el Makefile los junta; ver allí).
+#
+# X1 y X2 (S30): el programa de UEFI en x86-64 (BOOTX64.EFI), arrancado por OVMF en QEMU q35, carga el ELF del kernel,
+# sale de los servicios de arranque y salta; el kernel habla por COM1 con lo que le dejó el cargador, carga su GDT y su
+# IDT, reparte la memoria del mapa de UEFI, enciende las defensas y pasa a sus tablas de páginas. En orden, las líneas de
+# arranque_virt.txt (que son también de x86); estas, en cualquier sitio.
+DashOS: arranque por UEFI en x86-64
+DashOS: kernel ELF de
+~DashOS: fuera de los servicios de arranque
+~DashOS 0.0.1 (x86-64)
+~Orden de bytes: little-endian
+~GDT, TSS e IDT cargadas
+~Mapa de memoria de UEFI:
+~ACPI: RSDP en
+~Pantalla:
+~Memoria física:
+~CPU: NX sí, SMEP sí, SMAP sí
+~MMU: tablas propias
+~Defensas: NX sí, SMEP sí, SMAP sí, WP sí
+# El cifrado y la memoria del servicio de archivos (Argon2) usan el azar de la CPU (RDSEED o RDRAND; antes de X7 paso 4,
+# x86 no tenía semilla y daban SIN_AZAR).
+~Azar: semilla de la CPU
+# X5: el PCIe por la MCFG de ACPI, cada aparato con su MSI-X (desde la 8192, como las LPI de ARM).
+~PCIe: 1 tramos de ECAM en la MCFG,
+# A 800x600, como la ramfb de virt: el cargador pide ese modo al GOP (DASHOS_PANTALLA), para el guion largo.
+~DashOS: modo
+~(800x600) pedido: puesto
+# X5c: el AHCI de q35 con dos discos SATA (puertos 0 y 2) por su MSI, servidos por el canal "sata" (hay NVMe) a su
+# prueba, `disco-sata`, que escribe en los dos (se mira después en Linux).
+~ahci: en el PCIe 0:
+~│   [ahci] puerto 0: disco 0, "QEMU HARDDISK", 8192 sectores de 512 bytes (4096 KB); TRIM: sí
+~│   [ahci] puerto 2: disco 1, "QEMU HARDDISK", 8192 sectores de 512 bytes (4096 KB); TRIM: sí
+~│   [ahci] disco 0, sector 0: "DashOS: sector 0 del disco SATA 0", firma 0xaa55
+~│   [ahci] disco 1, sector 1: "DashOS: sector 1", firma 0x0000
+~│   [ahci] 2 discos; avisos por su interrupción
+~│   [ahci] disco 1: particiones: MBR; ninguna de DashOS
+~│   [disco-sata] disco 0: 2048 sectores de 512 bytes; leer: bien; de prueba: sí
+~│   [disco-sata] disco 0: escribir y releer: bien; cruzando páginas: bien; rechazos: bien; vaciar: bien
+~│   [disco-sata] disco 0: descartar: bien; se lee a cero: sí
+~│   [disco-sata] disco 0: anillo: 16 lecturas, escribir y releer en orden y un rechazo: bien
+~│   [disco-sata] disco 1: escribir y releer: bien; cruzando páginas: bien; rechazos: bien; vaciar: bien
+~│   [disco-sata] disco 1: anillo: 16 lecturas, escribir y releer en orden y un rechazo: bien
+~│   [disco-sata] 2 discos; el 2 no existe: bien

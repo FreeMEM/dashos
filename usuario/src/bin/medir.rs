@@ -12,7 +12,10 @@
 #[macro_use]
 mod medir_comun;
 
-use dashos::{canal_crear, canal_escribir, canal_leer, cerrar, memoria_crear, memoria_proyectar, memoria_quitar, println, proceso_crear, proceso_esperar};
+use dashos::{
+    LEER, TRANSFERIR, canal_crear, canal_escribir, canal_leer, cerrar, llave_duplicar, memoria_crear, memoria_proyectar, memoria_quitar, println,
+    proceso_crear, proceso_esperar,
+};
 use medir_comun::*;
 
 dashos::programa!(principal);
@@ -113,86 +116,116 @@ fn hijo_de(lenguaje: &str) -> &'static str {
     }
 }
 
+/// Lanza `nombre` hasta que uno caiga en el núcleo `en` (y se fija ahí); los que no, quedan en `relleno` sin gastar
+/// CPU hasta el final de la prueba. Sin `en`, el primero, sin fijar.
+fn colocar(p: &Paquete, nombre: &str, en: Option<u64>, relleno: &mut [Option<Hijo>; 24]) -> Option<Hijo> {
+    for _ in 0..24 {
+        let h = lanzar(p, nombre, None)?;
+        let Some(n) = en else { return Some(h) };
+        if h.nucleo() == n {
+            return Some(h);
+        }
+        match relleno.iter_mut().find(|r| r.is_none()) {
+            Some(r) => *r = Some(h),
+            None => h.acabar(),
+        }
+    }
+    None
+}
+
+/// Dónde ve el orquestador la bandera que acaba las cargas.
+const BANDERA: usize = 0x58_0000_0000;
+
 /// P1: idas y vueltas entre dos hijos, en el mismo núcleo (`juntos`), en dos distintos o donde los ponga el
 /// planificador (`None`), con `carga` hijos calculando a la vez.
+///
+/// R7 (B1): todo en su sitio, siempre el mismo respecto al orquestador (fijado en su núcleo `o` al empezar): el eco
+/// en el núcleo o + 1 y el ping en ese (juntos) o en o + 2; cada carga fijada en su núcleo (0, 1, 2, 3), calculando
+/// hasta que acaba la medida. El núcleo del orquestador no se usa para ellos: cuenta como ocupado y el kernel no
+/// pondría ahí un proceso nuevo. El hijo
+/// de Dash no sabe en qué núcleo está: con él, donde caiga (nucleos 9).
 fn ida_vuelta(p: &Paquete, lenguaje: &str, rondas: u64, juntos: Option<bool>, carga: usize) {
-    // Con carga: hijos calculando mientras tanto, que acaban solos.
+    let mut relleno: [Option<Hijo>; 24] = Default::default();
     let mut cargas: [Option<Hijo>; 4] = Default::default();
-    for c in cargas.iter_mut().take(carga) {
-        *c = lanzar(p, "hijo-rust", None);
-        if let Some(h) = c {
-            h.mandar(&texto!("calc 4000"));
+    let bandera = if carga > 0 { memoria_crear(4096) } else { 0 };
+    let con_bandera = (bandera as i32) > 0 && memoria_proyectar(bandera, BANDERA, true) == 0;
+    if con_bandera {
+        unsafe { core::ptr::write_volatile(BANDERA as *mut u8, 0) };
+        for (i, c) in cargas.iter_mut().take(carga).enumerate() {
+            *c = colocar(p, "hijo-rust", Some(i as u64), &mut relleno);
+            if let Some(h) = c {
+                let k = llave_duplicar(bandera, LEER | TRANSFERIR, 0);
+                canal_escribir(h.control, b"carga", &[k as u32]);
+            }
         }
     }
-    let (x, y) = canal_crear();
-    let Some(eco) = lanzar(p, hijo_de(lenguaje), Some(x)) else { return };
-    // Se lanzan hijos hasta tener uno en el núcleo pedido (el del eco o, sin `juntos`, otro), y ese hace de ping; los
-    // demás esperan sin gastar CPU. El de Dash no sabe en qué núcleo está: con él, el primero que salga (9 = no se sabe).
     let sabe = lenguaje != "dash" && juntos.is_some();
-    let juntos_b = juntos.unwrap_or(false);
-    let n_eco = if sabe { eco.nucleo() } else { 9 };
-    let mut relleno: [Option<Hijo>; 8] = Default::default();
-    let mut ping = None;
-    for r in relleno.iter_mut() {
-        let Some(h) = lanzar(p, hijo_de(lenguaje), None) else { break };
-        let n = if sabe { h.nucleo() } else { 9 };
-        if !sabe || (n == n_eco) == juntos_b {
-            ping = Some(h);
-            break;
-        }
-        *r = Some(h);
-    }
-    let Some(ping) = ping else {
-        let mut t = Texto::nuevo();
-        for h in relleno.iter().flatten() {
-            let _ = core::fmt::Write::write_fmt(&mut t, format_args!(" {}", h.nucleo()));
-        }
-        println!("  [medir] ida-vuelta: no se pudo colocar (eco en {}, probados:{})", n_eco, core::str::from_utf8(t.bytes()).unwrap_or(""));
-        // Sin dejar nada corriendo para la prueba siguiente.
-        cerrar(y);
-        eco.acabar();
-        for h in relleno.into_iter().flatten() {
-            h.acabar();
-        }
-        for c in cargas.into_iter().flatten() {
-            let _ = c.respuesta();
-            c.acabar();
-        }
-        return;
+    let (x, y) = canal_crear();
+    let (eco, ping) = if sabe {
+        let o = nucleo();
+        let (n_eco, n_ping) = ((o + 1) % 4, if juntos == Some(true) { (o + 1) % 4 } else { (o + 2) % 4 });
+        let eco = colocar(p, hijo_de(lenguaje), Some(n_eco), &mut relleno);
+        let ping = colocar(p, hijo_de(lenguaje), Some(n_ping), &mut relleno);
+        (eco, ping)
+    } else {
+        (lanzar(p, hijo_de(lenguaje), Some(x)), lanzar(p, hijo_de(lenguaje), None))
     };
-    // La llave del canal con el eco va con la orden.
-    let orden = texto!("ping {}", rondas);
-    eco.mandar(&texto!("eco"));
-    let espera = || [8u64, 9, 10, 11].map(|q| dashos::llamada(29, [q, 0, 0, 0, 0]).0);
-    let e0 = espera();
-    canal_escribir(ping.control, orden.bytes(), &[y]);
-    let r = ping.respuesta();
-    let e1 = espera();
-    let [desp, tarde, us_desp, no_adelanta] = [0, 1, 2, 3].map(|i| e1[i].wrapping_sub(e0[i]));
-    let [_, n, us, n_ping] = numeros::<4>(r.bytes());
-    let _ = eco.respuesta();
-    println!(
-        "[medir] ida-vuelta lenguaje={} juntos={} carga={} rondas={} ns={} nucleos={}-{} despiertan={} tarde={} espera_us={} no_adelanta={}",
-        lenguaje,
-        juntos.map_or(2, |j| j as u8),
-        carga,
-        n,
-        if n > 0 { us * 1000 / n } else { 0 },
-        n_eco,
-        n_ping,
-        desp,
-        tarde,
-        if desp > 0 { us_desp / desp } else { 0 },
-        no_adelanta
-    );
-    eco.acabar();
-    ping.acabar();
-    for h in relleno.into_iter().flatten() {
+    if let (Some(eco), Some(ping)) = (&eco, &ping) {
+        // El canal con el eco va con la orden (o, sin colocar, nació con él).
+        if sabe {
+            canal_escribir(eco.control, b"eco", &[x]);
+        } else {
+            eco.mandar(&texto!("eco"));
+        }
+        let orden = texto!("ping {}", rondas);
+        let espera = || [8u64, 9, 10, 11].map(|q| dashos::llamada(29, [q, 0, 0, 0, 0]).0);
+        let e0 = espera();
+        canal_escribir(ping.control, orden.bytes(), &[y]);
+        let r = ping.respuesta();
+        let e1 = espera();
+        let [desp, tarde, us_desp, no_adelanta] = [0, 1, 2, 3].map(|i| e1[i].wrapping_sub(e0[i]));
+        let [_, n, us, n_ping, p50, p99, max] = numeros::<7>(r.bytes());
+        let _ = eco.respuesta();
+        println!(
+            "[medir] ida-vuelta lenguaje={} juntos={} carga={} rondas={} ns={} p50_ns={} p99_ns={} max_ns={} nucleos={}-{} despiertan={} tarde={} espera_us={} no_adelanta={}",
+            lenguaje,
+            juntos.map_or(2, |j| j as u8),
+            carga,
+            n,
+            if n > 0 { us * 1000 / n } else { 0 },
+            p50,
+            p99,
+            max,
+            if sabe { (nucleo() + 1) % 4 } else { 9 },
+            if sabe { n_ping } else { 9 },
+            desp,
+            tarde,
+            if desp > 0 { us_desp / desp } else { 0 },
+            no_adelanta
+        );
+    } else {
+        println!("  [medir] no se pudo colocar la ida y vuelta de {} (juntos {:?}, carga {})", lenguaje, juntos, carga);
+        cerrar(x);
+        cerrar(y);
+    }
+    for h in [eco, ping].into_iter().flatten() {
         h.acabar();
+    }
+    if con_bandera {
+        unsafe { core::ptr::write_volatile(BANDERA as *mut u8, 1) };
     }
     for c in cargas.into_iter().flatten() {
         let _ = c.respuesta();
         c.acabar();
+    }
+    if con_bandera {
+        memoria_quitar(BANDERA);
+    }
+    if (bandera as i32) > 0 {
+        cerrar(bandera);
+    }
+    for h in relleno.into_iter().flatten() {
+        h.acabar();
     }
 }
 
@@ -353,7 +386,9 @@ fn principal() -> u64 {
     }
     let tamano = dashos::memoria_tamano(1).max(0) as usize;
     let p = Paquete { base: unsafe { core::slice::from_raw_parts(PAQUETE as *const u8, tamano) } };
-    println!("[medir] empieza");
+    // Fijo en su núcleo (R7): la ida y vuelta coloca a los suyos respecto a él.
+    let o = fijar();
+    println!("[medir] empieza (orquestador en el núcleo {})", o);
     memoria(&p);
     ociosos();
     for lenguaje in ["rust", "c"] {
@@ -361,9 +396,9 @@ fn principal() -> u64 {
         ida_vuelta(&p, lenguaje, 20_000, Some(true), 0);
     }
     ida_vuelta(&p, "dash", 20_000, Some(false), 0);
-    // Con carga, donde los ponga el planificador (juntos=2): con robo de trabajo no se puede forzar.
+    // Con carga: los dos donde los ponga el planificador (juntos=2), y fijos juntos y separados (M10); las cuatro
+    // cargas, siempre una fijada en cada núcleo (R7).
     ida_vuelta(&p, "rust", 5_000, None, 4);
-    // Y con los dos fijos en su núcleo (llamada 31), juntos y separados, con la carga donde caiga (M10).
     ida_vuelta(&p, "rust", 5_000, Some(true), 4);
     ida_vuelta(&p, "rust", 5_000, Some(false), 4);
     for n in [1, 2, 3, 4, 5, 6, 8] {

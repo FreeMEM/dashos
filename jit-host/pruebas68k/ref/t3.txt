@@ -1,4 +1,4 @@
-[HOST] Programa /home/freemem/Projects/dashos/.worktrees/u7/jit-host/pruebas68k/t3.bin (36896 bytes)
+[HOST] Programa t3.bin (36896 bytes)
 [ERROR] SBCD mem is not yet fixed!
 [ERROR] SBCD mem is not yet fixed!
 [ERROR] SBCD mem is not yet fixed!

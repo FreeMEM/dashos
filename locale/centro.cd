@@ -1,0 +1,415 @@
+; Los textos de centro (versión 1), de usuario/src/bin/centro.rs
+; Hecho con tools/catalogo.py cd: no se edita a mano.
+;
+MSG_1 (1//)
+Permisos
+MSG_2 (2//)
+Seguridad
+MSG_3 (3//)
+Discos
+MSG_4 (4//)
+Pantallas
+MSG_5 (5//)
+Apariencia
+MSG_6 (6//)
+Monitor del sistema
+MSG_7 (7//)
+Escritorio
+MSG_8 (8//)
+Acerca de
+MSG_9 (9//)
+automático
+MSG_10 (10//)
+matar
+MSG_11 (11//)
+servicio
+MSG_12 (12//)
+entrar
+MSG_13 (13//)
+fallo
+MSG_14 (14//)
+lanzar
+MSG_15 (15//)
+administrar
+MSG_16 (16//)
+apagar
+MSG_17 (17//)
+hecho
+MSG_18 (18//)
+negado
+MSG_19 (19//)
+error {}
+MSG_20 (20//)
+Disco del sistema: {}
+MSG_21 (21//)
+Ocupado: {} ({} %)
+MSG_22 (22//)
+Libre: {}
+MSG_23 (23//)
+El servicio de archivos no contesta
+MSG_24 (24//)
+Comprobar el disco (pide administrador)
+MSG_25 (25//)
+Comprobado, datos incluidos: sin problemas
+MSG_26 (26//)
+Comprobado: 1 problema
+MSG_27 (27//)
+Comprobado: {} problemas
+MSG_28 (28//)
+El disco está ocupado: inténtalo otra vez
+MSG_29 (29//)
+Interrumpido: queda poco sitio en el disco
+MSG_30 (30//)
+No se comprobó: hace falta un administrador
+MSG_31 (31//)
+No se comprobó ({})
+MSG_32 (32//)
+elegido
+MSG_33 (33//)
+Modo claro
+MSG_34 (34//)
+Modo oscuro
+MSG_35 (35//)
+Color fijo {}
+MSG_36 (36//)
+Paleta del fondo
+MSG_37 (37//)
+({} excepciones)
+MSG_38 (38//)
+Programas de las cajas: como DashOS
+MSG_39 (39//)
+Programas de las cajas: originales
+MSG_40 (40//)
+Ampliar ventanas Amiga: {}
+MSG_41 (41//)
+Memoria de la caja Amiga: {} MB
+MSG_42 (42//)
+en pantalla
+MSG_43 (43//)
+Fondo: {}
+MSG_44 (44//)
+El compositor no ha dicho nada de la pantalla
+MSG_45 (45//)
+Pantalla {}: {} × {}
+MSG_46 (46//)
+a la izquierda
+MSG_47 (47//)
+a la derecha
+MSG_48 (48//)
+en medio
+MSG_49 (49//)
+Pantalla {}: {} × {}, {}
+MSG_50 (50//)
+Frecuencia: {}
+MSG_51 (51//)
+Frecuencias: {}
+MSG_52 (52//)
+Escala: {}
+MSG_53 (53//)
+Escalas: {}
+MSG_54 (54//)
+DashOS, versión {}
+MSG_55 (55//)
+Encendido hace {} min {} s
+MSG_56 (56//)
+Fecha y hora: {}
+MSG_57 (57//)
+Fecha y hora: no se sabe
+MSG_58 (58//)
+Procesos en marcha: {}
+MSG_59 (59//)
+Memoria en uso: {} MB de {} MB (el núcleo, {} MB, y su montón, {} MB; al arrancar ya había {} MB reservados)
+MSG_60 (60//)
+Lo que más gasta: {}
+MSG_61 (61//)
+CPU
+MSG_62 (62//)
+memoria
+MSG_63 (63//)
+nombre
+MSG_64 (64//)
+usuario
+MSG_65 (65//)
+sistema
+MSG_66 (66//)
+Por {}\tCPU\tMemoria
+MSG_67 (67//)
+sesiones no contesta
+MSG_68 (68//)
+({}, escritorio)
+MSG_69 (69//)
+sí
+MSG_70 (70//)
+no
+MSG_71 (71//)
+arriba a la izquierda
+MSG_72 (72//)
+arriba a la derecha
+MSG_73 (73//)
+abajo a la izquierda
+MSG_74 (74//)
+abajo a la derecha
+MSG_75 (75//)
+Hora y fecha
+MSG_76 (76//)
+CPU por núcleo
+MSG_77 (77//)
+Memoria
+MSG_78 (78//)
+Los que más gastan
+MSG_79 (79//)
+Red
+MSG_80 (80//)
+Enseñar el panel en el fondo: {}
+MSG_81 (81//)
+Esquina: {}
+MSG_82 (82//)
+Cada cuánto se mide: {} s
+MSG_83 (83//)
+Gráficas: {}
+MSG_84 (84//)
+Ningún programa tiene permisos concedidos
+MSG_85 (85//)
+Quitar
+MSG_86 (86//)
+Cerrar
+MSG_87 (87//)
+Lo que cada programa puede usar. Quitarlo lo revoca ya.
+MSG_88 (88//)
+Lo que se ha negado y los fallos, lo último primero.
+MSG_89 (89//)
+Cuánto ocupa lo guardado.
+MSG_90 (90//)
+Modo, color y fondo. Intro o doble clic para elegir.
+MSG_91 (91//)
+Lo que dice el compositor de cada pantalla.
+MSG_92 (92//)
+Lo tuyo con detalle; lo demás, sumado.
+MSG_93 (93//)
+Los menús y el monitor del fondo. Intro cambia una fila.
+MSG_94 (94//)
+El sistema.
+MSG_95 (95//)
+Cerrar proceso
+MSG_96 (96//)
+Centro de control
+MSG_97 (97//)
+Usar
+MSG_98 (98//)
+Cancelar
+MSG_99 (99//)
+Guardar
+MSG_100 (100//)
+guardar un ajuste
+MSG_101 (101//)
+Menús de los programas: {}
+MSG_102 (102//)
+en la ventana
+MSG_103 (103//)
+en la barra de arriba
+MSG_104 (104//)
+Cuentas
+MSG_105 (105//)
+No se pueden leer las cuentas
+MSG_106 (106//)
+número {}
+MSG_107 (107//)
+borrada: se puede devolver hasta el {}
+MSG_108 (108//)
+Hecho
+MSG_109 (109//)
+No se hizo: no se confirmó en la ventana del sistema
+MSG_110 (110//)
+Ya hay otra esperando en la ventana del sistema
+MSG_111 (111//)
+No existe
+MSG_112 (112//)
+sesiones no contesta
+MSG_113 (113//)
+No se hizo ({})
+MSG_114 (114//)
+Nombre (cuenta nueva o grupo)
+MSG_115 (115//)
+Grupo
+MSG_116 (116//)
+Quién usa el equipo; los cambios, con un administrador.
+MSG_117 (117//)
+Borrar
+MSG_118 (118//)
+Mi contraseña
+MSG_119 (119//)
+Crear
+MSG_120 (120//)
+Devolver
+MSG_121 (121//)
+Escribe arriba el nombre de la cuenta nueva
+MSG_122 (122//)
+Elige una cuenta en la lista
+MSG_123 (123//)
+Escribe arriba el nombre del grupo
+MSG_124 (124//)
+Barra
+MSG_125 (125//)
+Las barras y sus widgets, como en DMS. Lo que se cambia se ve ya.
+MSG_126 (126//)
+Dock
+MSG_127 (127//)
+abajo
+MSG_128 (128//)
+arriba
+MSG_129 (129//)
+arriba en el centro
+MSG_130 (130//)
+abajo en el centro
+MSG_131 (131//)
+a la izquierda, en vertical
+MSG_132 (132//)
+a la derecha, en vertical
+MSG_133 (133//)
+un punto
+MSG_134 (134//)
+una raya
+MSG_135 (135//)
+ninguno
+MSG_136 (136//)
+ninguno (se fijan con el botón derecho en el dock)
+MSG_137 (137//)
+Enseñar el dock: {}
+MSG_138 (138//)
+Dónde: {}
+MSG_139 (139//)
+Tamaño de los iconos: {} px
+MSG_140 (140//)
+Esconderse solo: {}
+MSG_141 (141//)
+Juntar las ventanas de cada programa: {}
+MSG_142 (142//)
+Marca de los abiertos: {}
+MSG_143 (143//)
+Opacidad: {} %
+MSG_144 (144//)
+Fijados: {}
+MSG_145 (145//)
+Avisos en pantalla: {}
+MSG_146 (146//)
+Enseñar siempre el valor: {}
+MSG_147 (147//)
+Aviso al cambiar de espacio de trabajo: {}
+MSG_148 (148//)
+Aviso de Bloq Mayús: {}
+MSG_150 (150//)
+Discos del escritorio: {}
+MSG_151 (151//)
+Discos: {}
+MSG_152 (152//)
+a la derecha, en el centro
+MSG_153 (153//)
+a la izquierda, en el centro
+MSG_154 (154//)
+Tamaño de los discos: {}
+MSG_155 (155//)
+pequeño
+MSG_156 (156//)
+mediano
+MSG_157 (157//)
+grande
+MSG_158 (158//)
+Opacidad de los discos: {} %
+MSG_159 (159//)
+Espacio usado de cada disco: {}
+MSG_160 (160//)
+Animaciones de los discos: {}
+MSG_161 (161//)
+El dock, los avisos en pantalla y los discos del escritorio, como en DMS. Intro cambia una fila.
+MSG_162 (162//)
+Aumento al pasar el ratón: {}
+MSG_163 (163//)
+El aumento aparta a los vecinos: {}
+MSG_164 (164//)
+Al abrir un programa: {}
+MSG_165 (165//)
+su punto late
+MSG_166 (166//)
+el icono rebota
+MSG_167 (167//)
+nada
+MSG_200 (200//)
+Avisos
+MSG_201 (201//)
+Centro de control
+MSG_210 (210//)
+hasta cerrarlo
+MSG_211 (211//)
+sin horario
+MSG_212 (212//)
+Dónde salen: {}
+MSG_213 (213//)
+Animación: {} ms
+MSG_214 (214//)
+Tiempo de los avisos normales: {}
+MSG_215 (215//)
+Tiempo de los urgentes: {}
+MSG_216 (216//)
+Barra de tiempo: {}
+MSG_217 (217//)
+Los urgentes salen con no molestar: {}
+MSG_218 (218//)
+No molestar programado: {}
+MSG_219 (219//)
+Sin el texto en los emergentes: {}
+MSG_220 (220//)
+Un clic en el aviso hace su acción: {}
+MSG_221 (221//)
+Días en el historial: {}
+MSG_222 (222//)
+siempre
+MSG_230 (230//)
+{}. {} · {} columnas
+MSG_231 (231//)
+ · pequeño
+MSG_232 (232//)
+ · aún no disponible
+MSG_233 (233//)
+Añadir: {}
+MSG_234 (234//)
+Columnas: {}
+MSG_235 (235//)
+Volver a lo de serie
+MSG_236 (236//)
+Los emergentes y el no molestar, como en DMS. Intro cambia una fila; se ve ya.
+MSG_237 (237//)
+Qué sale en el panel rápido y en qué orden. Intro cambia el ancho o añade; se ve ya.
+MSG_238 (238//)
+Subir
+MSG_239 (239//)
+Bajar
+MSG_240 (240//)
+Fondos de escritorio: abrir la herramienta…
+MSG_900 (900//)
+Sonido
+MSG_901 (901//)
+para tocar (64 cuadros, 1,3 ms)
+MSG_902 (902//)
+ahorro (1.024 cuadros, 21 ms)
+MSG_903 (903//)
+normal (256 cuadros, 5,3 ms)
+MSG_904 (904//)
+Abrir el mezclador Sonido
+MSG_905 (905//)
+Tema de los sonidos: {}
+MSG_906 (906//)
+Sonidos del sistema: {}
+MSG_907 (907//)
+Volumen de los sonidos: {} %
+MSG_908 (908//)
+Ecualizador: {}
+MSG_909 (909//)
+Limitador: {}
+MSG_910 (910//)
+Sonido espacial: {}
+MSG_911 (911//)
+Latencia: {}
+MSG_912 (912//)
+Probar el sonido de aviso
+MSG_913 (913//)
+Sonidos, efectos y latencia. Intro cambia una fila.

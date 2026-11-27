@@ -1,14 +1,31 @@
-//! `ver DISCO DESDE [RUTA]`: abre el RedoxFS que empieza en el byte DESDE de DISCO, sin escribir nada. Sin RUTA,
+//! `ver DISCO DESDE [RUTA]`: abre el RedoxFS que empieza en el byte DESDE de DISCO, sin escribir nada. Con `tabla` en
+//! vez de DESDE, el de la partición de DashOS de su tabla de particiones (A14, sectores de 512 bytes). Sin RUTA,
 //! lista todo el árbol (una línea por entrada: ruta, tipo y tamaño, y los bits del Amiga y el comentario si los
 //! tiene); con RUTA, saca el fichero por la salida. Con `--comprobar` en vez de RUTA, comprueba el disco entero, datos
-//! incluidos (FS8), y dice "sin problemas" o uno por línea.
+//! incluidos (FS8), y dice "sin problemas" o uno por línea. Con `--fecha RUTA`, la fecha de creación y la de cambio de
+//! la RUTA, en segundos desde 1970 (A14).
 
 use std::fs::File;
 use std::io::Write;
 use std::os::unix::fs::FileExt;
 
-use redoxfs::{BLOCK_SIZE, Disk, FileSystem, Node, Transaction, TreePtr};
+use dashfs::{BLOCK_SIZE, Disk, FileSystem, Node, Transaction, TreePtr};
 use syscall::error::{EIO, EROFS, Error, Result};
+
+/// El mismo lector de la tabla que usa el servicio de disco.
+#[path = "../../../usuario/src/particiones.rs"]
+#[allow(dead_code)]
+mod particiones;
+#[cfg(test)]
+mod particiones_pruebas;
+/// El disco de memoria del `RAM:` de una sesión, el mismo que usa el servicio de archivos: aquí solo se prueba.
+#[cfg(test)]
+extern crate alloc;
+#[cfg(test)]
+#[path = "../../../usuario/src/disco_ram.rs"]
+mod disco_ram;
+#[cfg(test)]
+mod disco_ram_pruebas;
 
 struct Trozo {
     f: File,
@@ -62,18 +79,40 @@ fn main() {
         std::process::exit(2);
     }
     let f = File::open(&args[1]).expect("no se abre el disco");
-    let tam = f.metadata().unwrap().len();
-    let disco = Trozo { f, desde: args[2].parse().expect("DESDE no es un número"), tam };
+    let mut tam = f.metadata().unwrap().len();
+    let desde = if args[2] == "tabla" {
+        let mut leer = |s: u64, b: &mut [u8]| f.read_exact_at(b, s * 512).is_ok();
+        let t = particiones::leer_tabla(&mut leer, tam / 512, 512).unwrap_or_else(|e| {
+            eprintln!("la tabla de particiones no vale: {e:?}");
+            std::process::exit(1)
+        });
+        let Some((a, b)) = t.dashos else {
+            eprintln!("no hay partición de DashOS ({:?})", t.clase);
+            std::process::exit(1)
+        };
+        tam = b * 512;
+        a * 512
+    } else {
+        args[2].parse().expect("DESDE no es un número")
+    };
+    let disco = Trozo { f, desde, tam };
     // Sin `cleanup`: no escribe nada.
     let mut fs = FileSystem::open(disco, None, Some(0), false).expect("no es un RedoxFS");
     let r = fs.tx(|tx| match args.get(3) {
         Some(o) if o == "--comprobar" => {
-            let informe = redoxfs::check::check(tx, redoxfs::check::Options { data: true }, true)?;
+            let informe = dashfs::check::check(tx, dashfs::check::Options { data: true }, true)?;
             let mut out: Vec<String> = informe.problems.iter().map(|p| p.to_string()).collect();
             if out.is_empty() {
                 out.push("sin problemas".into());
             }
             Ok((out.join("\n") + "\n").into_bytes())
+        }
+        Some(o) if o == "--fecha" => {
+            let mut n = tx.read_tree(TreePtr::root())?;
+            for p in args.get(4).map(String::as_str).unwrap_or("").split('/') {
+                n = tx.find_node(n.ptr(), p)?;
+            }
+            Ok(format!("{} {}\n", n.data().ctime().0, n.data().mtime().0).into_bytes())
         }
         None => {
             let mut out = Vec::new();

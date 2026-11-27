@@ -1,0 +1,17 @@
+[package]
+name = "dashos-caja-vmm"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "Los aparatos que la máquina virtual de la caja Linux da al invitado: virtio-mmio, consola, disco, PL011, GIC, PSCI, el DTB y la carga de la Image de arm64"
+
+[lib]
+name = "caja_vmm"
+path = "src/lib.rs"
+
+[[bin]]
+name = "caja-vmm"
+path = "src/bin/caja_vmm.rs"
+test = false
+
+[dependencies]

@@ -60,6 +60,10 @@ Como en Fuchsia: los programas no hacen llamadas al kernel a mano. Las hacen a t
 proyecta en cada proceso. El contrato entre esa biblioteca y el kernel es privado. Así el kernel puede cambiar sin
 que haya que recompilar los programas.
 
+Privado no quiere decir que no se pueda mirar (S0). Tiene que existir una herramienta de traza de serie, al estilo de
+SnoopDos: enseña las bibliotecas que abre un programa, sus ficheros y sus canales, con salida de texto. Solo sobre los
+procesos de uno mismo, para quien tenga la llave de ese proceso (S1). Por diseñar al hacerla.
+
 ### Sin el paso de "interfaces" de AmigaOS 4
 
 Las bibliotecas nativas se versionan por número, como en el Amiga, y se abren en un solo paso. Si una biblioteca
@@ -83,6 +87,12 @@ documentación pública de MUI.
 
 - Dash ya tiene 110 builtins de MUI y el editor `.dashui`. **El mismo `.dashui` sirve en el Amiga y en DashOS.**
 - Se dibuja sobre Wayland (S9), con escalado, tema claro y oscuro, y accesibilidad.
+- **Un puerto de guiones por aplicación, sin escribir nada.** El kit crea solo un puerto ARexx para cada aplicación,
+  con sus menús como órdenes, como hacía MUI. Así lo que se hace con el ratón se puede hacer con un guion (S0). Quién
+  puede hablar con ese puerto lo siguen diciendo los permisos (S6).
+- **Los ajustes de una aplicación son texto.** La API de ajustes del kit guarda un fichero de texto legible por
+  programa en `ENVARC:` (S4b), y es la única vía de serie. La orden `Ajuste` lee y pone un ajuste suelto (S27). El
+  formato, y cómo llega ahí una aplicación encerrada que solo ve su cajón (S6b), por diseñar al hacerlo.
 - Los programas 68k con MUI en la caja siguen usando MUI 68k, el que tenga instalado el usuario. Más adelante, las
   clases nativas pueden servir también a la caja.
 
@@ -99,6 +109,8 @@ de Linux con GTK o Qt, como Firefox.
     usuario tiene las clases 68k instaladas en `SYS:Classes`, corren en el JIT desde el primer día. Después se
     reimplementan en nativo, con el mismo método de sala limpia.
   - **MUI 68k**, el del usuario, igual que ReAction: en el JIT primero, y clases nativas más adelante.
+  - Si un programa pide MUI o ReAction y el usuario no los tiene, sale un aviso en llano que dice qué falta y de dónde
+    sale ("Este programa necesita MUI, que DashOS no trae"), con el detalle a un clic. No falla en silencio.
 - **En programas nativos**: un solo motor de interfaz, con el modelo de MUI, y tres caras encima: la de MUI (la
   principal), la de ReAction y la de GadTools. Dash ya tiene builtins de las tres, así que un programa Dash con
   GadTools o ReAction también compila para DashOS sin cambios.
@@ -116,8 +128,9 @@ User Interface) y MUI de la web (una biblioteca de React que sigue Material Desi
 - **Material Design como aspecto de DashOS** (decidido por el usuario, 2026-11-03): el motor de interfaz sigue el
   modelo de Magic User Interface, y se dibuja con el aspecto de Material 3. Es el tema por defecto, con un tema
   "Amiga clásico" como opción (S10). DMS, la barra que el usuario usa a diario, ya sigue Material 3.
-- Los programas MUI de 68k en la caja usan su MUI y sus preferencias. Se les puede preparar una configuración de MUI
-  parecida a Material 3, para que no desentonen.
+- Los programas MUI de 68k en la caja usan su MUI y sus preferencias. DashOS trae preparada una configuración de MUI
+  parecida a Material 3, que se usa de serie para que no desentonen. Ajustes (S27) lleva una entrada que abre las
+  preferencias de MUI, para que no haya dos sitios que buscar.
 - **Programas de Android**: se podrían ejecutar dentro de la caja Linux con Waydroid, que mete Android en un
   contenedor de Linux. No se ha comprobado en la Pi 4 ni en una máquina virtual. Queda como idea, no como plan.
 
@@ -154,6 +167,7 @@ más ReAction, GadTools, GTK y Qt, con aspecto de Material Design; y el mismo pr
 - Con S4: la API Amiga de 32 bits se queda en la caja.
 - Con S4b: bibliotecas por capas de `LIBS:`, catálogos en UTF-8.
 - Con S6: ARexx con permiso; selector de ficheros del sistema.
+- Con S27: los ajustes de cada aplicación, en texto en `ENVARC:`, con la orden `Ajuste`.
 - Con S7: relibc para POSIX.
 - Con S9: el kit dibuja sobre Wayland.
 - Con S10: los menús del kit van a la barra de la pantalla.

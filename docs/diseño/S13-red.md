@@ -1,5 +1,21 @@
 # S13. Red
 
+> **2026-11-15, segunda parte (rama `red-dns`, `docs/bitacoras/red.md`).** UDP, el resolvedor de nombres dentro del
+> servicio (con `hosts` y caché), escuchar con el permiso `red-escuchar` aparte y el cortafuegos de entrada cerrado de
+> serie, IPv6 por SLAAC, y la hora por la red (`hora`, con el permiso del reloj) con zona horaria en la barra. TLS no:
+> el estudio y la propuesta, en [S13b](S13b-tls-propuesta.md). Lo que se configura va, por ahora, en `Prefs/Red` del
+> disco del sistema, que el servicio lee al arrancar.
+
+> **2026-11-12, primera versión (rama `red`, `docs/bitacoras/red.md`).** smoltcp como pila, provisional (la pregunta
+> abierta 1). Su CUBIC no compila sin `std` (usa `f64::powi` y `mul_add`): va con Reno hasta que se le dé una raíz y
+> una potencia propias. La memoria de cada conexión la pone el servicio, no el programa: una memoria del programa
+> podría ser revocable y quitársela al servicio con él dentro.
+
+> **2026-11-10.** Los controladores de Linux con LKL, y el Wi-Fi y las mejoras de red, en [S12b](S12b-controladores-de-linux.md).
+>
+> **2026-11-16.** LKL se retira (decidido por el usuario, S36): el controlador de Wi-Fi de Linux va en un dominio de
+> controladores (S35). Las mejoras de red de S12b siguen.
+
 > **Nota del 2026-11-03 por la tarde.** El usuario decidió que lo nativo sea little-endian y solo la caja Amiga
 > big-endian. Donde este documento dice big-endian para lo nativo, manda `PLAN.md`.
 
@@ -71,13 +87,26 @@ lo piden, se le añade SACK y las marcas de tiempo, que es mejor que cambiar de 
 ### Cortafuegos
 
 - Cerrado por defecto para lo que entra. Abierto para lo que sale, de las aplicaciones con permiso.
-- Una aplicación que quiere escuchar en un puerto lo pide como permiso aparte.
-- Se configura en `Prefs/Red`.
+- Una aplicación que quiere escuchar en un puerto lo pide como permiso aparte (`red-escuchar`, S6b). La pregunta va
+  en llano: "X quiere que otros equipos se conecten a este ordenador". El puerto, en el detalle.
+- Se configura en Ajustes, categoría Red (S27; es el editor `SYS:Prefs/Red`). Ver "Ajustes, órdenes y registro".
+
+### Ajustes, órdenes y registro (repaso S36, 2026-11-15)
+
+- **Los ajustes de red son ficheros de texto** en los ajustes de la máquina (`Estado:Prefs`, la capa de la máquina
+  de `ENVARC:`, S4b): reglas del cortafuegos, DNS y DNS cifrado, IP fija. Los leen todos. Cambiarlos es acción de
+  administrador (S6b), desde Ajustes o con la orden `Ajuste`: los dos escriben el mismo fichero, y el servicio de red
+  lo relee. El nombre y el formato, por diseñar al hacerlo.
+- **Órdenes en `C:`**, además de las equivalentes a `ifconfig` y `ping` de abajo: una que liste las conexiones
+  abiertas por programa, y la del Wi-Fi. Los nombres, por diseñar al hacerlo.
+- **Rastro**: lo que corta el cortafuegos va a `Estado:Registros/` (S6), una línea con programa, destino, motivo y
+  hora, y lo repetido se resume. Se lee con la orden `Registro` y en Ajustes. Aviso en pantalla, en llano, solo si el
+  usuario lo nota (un programa que no conecta) o si se repite.
 
 ### Nombres
 
 - Un servicio de nombres con caché, que todos los programas usan.
-- DNS cifrado (sobre TLS o HTTPS) como opción en `Prefs/Red`.
+- DNS cifrado (sobre TLS o HTTPS) como opción en Ajustes, categoría Red: una línea del fichero de ajustes de red.
 
 ### TLS
 
@@ -91,6 +120,8 @@ lo piden, se le añade SACK y las marcas de tiempo, que es mejor que cambiar de 
 - Un servicio que gestiona redes, claves y conexión, como `wpa_supplicant` o `iwd` en Linux. Habla con el
   controlador del CYW43455 (S12).
 - Las claves de las redes se guardan cifradas en el cajón del administrador.
+- La lista de redes conocidas es texto que se lee (nombre, si se conecta sola); solo la clave va al almacén cifrado.
+- Una orden de Shell para ver las redes, conectar y olvidar una, que hace lo mismo que la ventana.
 
 ### La caja Amiga
 
@@ -106,6 +137,9 @@ lo piden, se le añade SACK y las marcas de tiempo, que es mejor que cambiar de 
 - Lleva su propia pila TCP/IP dentro, con la red de virtio. DashOS le da una red con traducción de direcciones, como
   hacen las máquinas virtuales de escritorio.
 - Sus conexiones cuentan como de una sola aplicación para el permiso de red (S6).
+- Para que no sea una caja negra: en el registro queda al menos el destino de cada conexión de la caja; y un
+  servidor de dentro se alcanza publicando un puerto (S14, S7), con orden o con un botón en Ajustes. El cortafuegos
+  propio de la caja, sus reglas y lo que corta, en S29.
 
 ## Lo que queda abierto
 
@@ -118,7 +152,8 @@ lo piden, se le añade SACK y las marcas de tiempo, que es mejor que cambiar de 
 
 - Con S1: la red es un servicio con anillos hacia los controladores.
 - Con S5: sin AES por hardware, ChaCha20 primero.
-- Con S6: permiso de red, permiso para escuchar, cortafuegos cerrado.
+- Con S6: permiso de red, permiso para escuchar, cortafuegos cerrado, y el registro en `Estado:Registros/`.
+- Con S4b y S27: los ajustes de red, texto en la capa de la máquina; la ventana es Ajustes.
 - Con S4: `bsdsocket.library` nativa en la caja.
 - Con S7: la caja Linux con su pila y red virtio.
 - Con S11: sockets POSIX y API nativa sobre el mismo canal.

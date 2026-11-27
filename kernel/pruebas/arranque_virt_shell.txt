@@ -1,0 +1,18 @@
+# El Shell nativo en pantalla (`make arranque-virt-shell`, tools/guion_shell.py): la imagen de usar, con la pantalla
+# de entrada de verdad. Entra Ana, abre el Shell desde el lanzador de la barra y teclea en él con el teclado de QEMU.
+DashOS en marcha con 4 núcleos
+~[guardian] modo de uso: pantalla de entrada; los códigos de recuperación, solo en su pantalla
+~[guardian] entra Ana
+~[barra] busca "shell": Shell
+~[shell] ventana en pantalla: 
+# El título de la ventana: el cajón y la última orden tecleada (lo enseñan su barra y la de la pantalla).
+~[barra] título: Home: · List
+# Una asignación tecleada, que dice `sesiones`: llegaron las teclas, con ":" y mayúsculas.
+# La barra de DMS (docs/bitacoras/dms-barra.md): `Ajuste` cambia ENV:Escritorio/barra y la barra lo ve en marcha (se lo
+# da el centro); `Ajuste DMS` importa la barra de shiva (relleno 4: más gruesa, así que la barra se rehace).
+~[barra] configuración: principal arriba [lanzador, espacios, ventana, menus | reloj | bandeja, portapapeles, cpu, memoria, avisos, bateria, estado]
+~[barra] configuración: principal arriba [lanzador(logo=sistema), espacios(numeros ocupados borde), ventana, menus | musica, reloj, tiempo, avisos | bandeja, portapapeles, cpu, memoria, temperatura, temperatura_gpu, bateria, estado, actualizaciones, apagado]
+~[barra] barras: 1 configuradas; en pantalla: principal@DASHOS-1 (1 nuevas, 1 quitadas)
+~[sesiones] Shell asigna "CapturasHechas=RAM:" (0): 0
+# Cerrada con el botón de la barra que le pone el compositor, con un trabajo de fondo (`Run Wait 100`) en marcha.
+~[shell] ventana cerrada desde su barra; trabajos matados: 1

@@ -35,6 +35,8 @@ const GICD_CTLR: usize = 0x000;
 const GICD_IGROUPR: usize = 0x080;
 const GICD_ISENABLER: usize = 0x100;
 const GICD_ICENABLER: usize = 0x180;
+const GICD_ISACTIVER: usize = 0x300;
+const GICD_ICACTIVER: usize = 0x380;
 const GICD_IPRIORITYR: usize = 0x400;
 const GICD_ITARGETSR: usize = 0x800;
 const GICD_ICFGR: usize = 0xC00;
@@ -67,6 +69,9 @@ static BCM2836: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool:
 /// Usa el controlador de la BCM2836 en lugar del GIC.
 pub fn iniciar_bcm2836(local_fisica: u64, armctrl_fisica: u64) {
     BCM2836.store(true, Ordering::Relaxed);
+    // S4: del kernel, como el GIC.
+    crate::placa::reservar_kernel(local_fisica, 0x1000);
+    crate::placa::reservar_kernel(armctrl_fisica, 0x1000);
     crate::bcm2836::iniciar(local_fisica, armctrl_fisica);
 }
 
@@ -158,9 +163,12 @@ pub fn iniciar_cpu() {
         return;
     }
     habilitar(SGI_PLANIFICAR, 0x80);
+    habilitar(SGI_VCPU, 0x80);
     c(GICC_PMR).escribir(MASCARA_PRIORIDAD as u32);
     c(GICC_BPR).escribir(0);
     c(GICC_CTLR).escribir(1);
+    // H9: las del GIC virtual de este núcleo (el temporizador del invitado y el mantenimiento), si lo hay.
+    crate::base::hiper::gic_nucleo();
 }
 
 /// Dónde están los registros de una interrupción: las privadas (0 a 31), en el redistribuidor de este núcleo con el
@@ -234,6 +242,18 @@ pub fn numero(iar: u32) -> u32 {
     if V3.load(Ordering::Relaxed) { iar & 0xff_ffff } else { iar & 0x3ff }
 }
 
+/// Pone o quita el estado activo de una interrupción (GICD_ISACTIVER / GICD_ICACTIVER). Para el temporizador virtual
+/// de un invitado (H9): activa mientras su interrupción virtual, con el bit HW, está en un registro de lista; el EOI
+/// del invitado la desactiva. Las privadas son las de este núcleo.
+pub fn activa(intid: u32, si: bool) {
+    if BCM2836.load(Ordering::Relaxed) {
+        return;
+    }
+    let i = intid as usize;
+    let r = if si { GICD_ISACTIVER } else { GICD_ICACTIVER };
+    RegLe32::new(base_de(intid) + r + 4 * (i / 32)).escribir(1 << (i % 32));
+}
+
 pub fn es_v3() -> bool {
     V3.load(Ordering::Relaxed)
 }
@@ -286,6 +306,9 @@ pub fn terminar(iar: u32) {
 
 /// Interrupción por software que pide a un núcleo que vuelva a planificar (C17).
 pub const SGI_PLANIFICAR: u32 = 1;
+/// Interrupción por software que saca de su invitado a una vCPU que corre en ese núcleo (H9, varias vCPU): solo eso;
+/// el kernel la termina sin más. Solo con el GIC virtual (GICv2): sin él, se usa la de planificar.
+pub const SGI_VCPU: u32 = 2;
 
 /// Manda una interrupción por software (SGI) a un núcleo.
 pub fn avisar(nucleo: u32, sgi: u32) {

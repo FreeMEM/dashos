@@ -5,7 +5,11 @@
 //! cada una. Llave 2, si la hay: el canal con el otro hijo de la prueba; también puede llegar con una orden.
 //!
 //! - `eco`: devuelve por la llave 2 lo que llega por ella, hasta que se cierra. Responde `eco N` (mensajes).
-//! - `ping N`: N idas y vueltas de 8 bytes por la llave 2. Responde `ping N us nucleo`.
+//! - `ping N`: 500 idas y vueltas de calentamiento, N seguidas (el tiempo total, `us`, como siempre) y otras N mirando
+//!   el reloj en cada una (R7, B2: a un histograma; leer el reloj cuesta, por eso van aparte). De 8 bytes por la
+//!   llave 2. Responde `ping N us nucleo p50_ns p99_ns max_ns`.
+//! - `carga` (con la llave de una memoria): calcula hasta que el primer byte de esa memoria deja de ser 0 (R7, B1).
+//!   Responde `carga unidades`.
 //! - `calc MS`: calcula MS milisegundos en unidades fijas de trabajo. Responde
 //!   `calc unidades hueco_max_us huecos_us nucleo_al_empezar nucleo_al_acabar`; un hueco es un tramo de más de
 //!   200 µs entre dos lecturas seguidas del reloj (el proceso no corría).
@@ -26,6 +30,33 @@ use dashos::{canal_escribir, canal_leer, cerrar};
 use medir_comun::*;
 
 dashos::programa!(principal);
+
+/// Dónde se ve la memoria de la bandera de `carga`.
+const BANDERA: usize = 0x40_0000_0000;
+
+/// Histograma de rondas (R7, B2): de 100 en 100 ns hasta 102,4 µs, y de 10 en 10 µs hasta unos 10 ms.
+struct Histo([u16; 2048]);
+
+impl Histo {
+    fn meter(&mut self, ns: u64) {
+        let i = if ns < 102_400 { ns / 100 } else { 1024 + ((ns - 102_400) / 10_000).min(1023) };
+        self.0[i as usize] = self.0[i as usize].saturating_add(1);
+    }
+
+    /// El valor (cota de arriba de su cubo) por debajo del que queda el `q` por mil de las rondas.
+    fn cuantil(&self, q: u64, n: u64) -> u64 {
+        let meta = (n * q).div_ceil(1000).max(1);
+        let mut suma = 0u64;
+        for (i, &v) in self.0.iter().enumerate() {
+            suma += v as u64;
+            if suma >= meta {
+                let i = i as u64;
+                return if i < 1024 { (i + 1) * 100 } else { 102_400 + (i - 1023) * 10_000 };
+            }
+        }
+        0
+    }
+}
 
 const CONTROL: u32 = 1;
 
@@ -73,6 +104,11 @@ fn principal() -> u64 {
             }
             b"ping" => {
                 let mut m = [0u8; 8];
+                for i in 0..500u64 {
+                    m.copy_from_slice(&i.to_le_bytes());
+                    canal_escribir(otro, &m, &[]);
+                    canal_leer(otro, &mut m, &mut []);
+                }
                 let t0 = cuentas();
                 for i in 0..x {
                     m.copy_from_slice(&i.to_le_bytes());
@@ -80,8 +116,38 @@ fn principal() -> u64 {
                     canal_leer(otro, &mut m, &mut []);
                 }
                 let us = a_us(cuentas() - t0);
+                let mut h = Histo([0; 2048]);
+                let (mut max, f) = (0u64, frecuencia());
+                let mut ant = cuentas();
+                for i in 0..x {
+                    m.copy_from_slice(&i.to_le_bytes());
+                    canal_escribir(otro, &m, &[]);
+                    canal_leer(otro, &mut m, &mut []);
+                    let t = cuentas();
+                    let ns = (t - ant) * 1_000_000_000 / f;
+                    ant = t;
+                    h.meter(ns);
+                    max = max.max(ns);
+                }
                 cerrar(otro);
-                responder(&texto!("ping {} {} {}", x, us, nucleo()));
+                responder(&texto!("ping {} {} {} {} {} {}", x, us, nucleo(), h.cuantil(500, x), h.cuantil(990, x), max));
+            }
+            b"carga" => {
+                // Hasta que el orquestador escriba en la bandera: así la carga dura lo que dura la medida.
+                let mut unidades = 0u64;
+                if dashos::memoria_proyectar(otro, BANDERA, false) == 0 {
+                    let mut acc = 1u32;
+                    while unsafe { core::ptr::read_volatile(BANDERA as *const u8) } == 0 {
+                        for _ in 0..64 {
+                            acc = unidad(acc);
+                        }
+                        unidades += 64;
+                    }
+                    core::hint::black_box(acc);
+                    dashos::memoria_quitar(BANDERA);
+                }
+                cerrar(otro);
+                responder(&texto!("carga {}", unidades));
             }
             b"calc" => {
                 let n0 = nucleo();

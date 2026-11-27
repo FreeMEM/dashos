@@ -1,0 +1,12 @@
+[package]
+name = "dashos-caja-exec"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "exec.library nativa de la caja Amiga (S4): estructuras de AmigaOS 3.1 en la memoria del 68k, listas, memoria, tareas, señales, puertos, bibliotecas y el planificador de la caja"
+
+[lib]
+name = "caja_exec"
+path = "src/lib.rs"
+
+[dependencies]

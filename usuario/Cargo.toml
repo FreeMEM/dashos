@@ -6,24 +6,42 @@ license = "MPL-2.0"
 
 [features]
 # El servicio de archivos (FS1): RedoxFS y el montón. La caja big-endian no lo compila.
-archivos = ["monton", "dep:redoxfs", "dep:syscall"]
+archivos = ["monton", "dep:dashfs", "dep:syscall"]
 monton = ["dep:linked_list_allocator"]
 # El compositor que habla Wayland y sus clientes de prueba (W7).
-ventanas = ["monton", "dep:wayland", "dep:kit"]
+ventanas = ["monton", "dep:wayland", "dep:kit", "dep:iconos-cajas"]
 # El servicio de sonido (S19, A4).
 sonido = ["monton", "dep:sonido", "dep:audiodevice"]
 # Las imágenes de disco del Amiga (S20): el servicio que monta un ADF.
 imagenes = ["monton", "dep:amigados"]
+# El servicio de red (S13): la pila TCP/IP smoltcp (0BSD), solo con lo que usa.
+red = ["monton", "dep:smoltcp"]
+# La caja Linux (H9): los aparatos de la máquina virtual (virtio, PL011, distribuidor del GIC, PSCI, DTB).
+caja = ["monton", "dep:caja-vmm"]
+# RelevoJIT (intérprete y JIT del 68k para x86-64, MPL-2.0) en un proceso de x86-64 (X7a): el crate `relevo` sin std.
+relevo = ["monton", "dep:relevo"]
+# El protocolo del Shell nativo (docs/bitacoras/shell-nativa.md), para quien lo lanza con argumentos (`guardian`).
+# El Shell y sus órdenes están en `ordenes/`.
+ordenes = ["dep:shell"]
 
 [dependencies]
 linked_list_allocator = { version = "0.10.6", default-features = false, optional = true }
-redoxfs = { path = "../archivos/redoxfs", default-features = false, optional = true }
+dashfs = { path = "../archivos/dashfs", default-features = false, optional = true }
 syscall = { package = "redox_syscall", version = "0.9.5", default-features = false, optional = true }
 wayland = { package = "dashos-wayland", path = "../wayland", optional = true }
 kit = { package = "dashos-kit", path = "../kit", optional = true }
+# Los iconos de las cajas (los `.info` del Amiga y los de los programas de Linux), para el explorador.
+iconos-cajas = { package = "dashos-iconos-cajas", path = "../iconos-cajas", optional = true }
 sonido = { package = "dashos-sonido", path = "../sonido", optional = true }
 audiodevice = { package = "dashos-audiodevice", path = "../audiodevice", optional = true }
 amigados = { package = "dashos-amigados", path = "../amigados", optional = true }
+caja-vmm = { package = "dashos-caja-vmm", path = "../caja-linux/vmm", optional = true }
+# Por git con `rev` fijo: el repositorio es público y Cargo.lock queda igual en cualquier máquina. Para probar un
+# RelevoJIT local sin subirlo: `make -C kernel prueba-x86 RELEVO_DIR=<ruta>` (un `[patch]` por `--config`; ver
+# kernel/Makefile).
+relevo = { git = "https://github.com/FreeMEM/RelevoJIT", rev = "ac26a328c3a910667999140b442a2566db3d8683", default-features = false, optional = true }
+shell = { package = "dashos-shell", path = "../shell", optional = true }
+smoltcp = { version = "0.14.0", default-features = false, optional = true, features = ["alloc", "medium-ethernet", "proto-ipv4", "proto-dhcpv4", "proto-ipv6", "proto-ipv6-slaac", "socket-tcp", "socket-tcp-reno", "socket-udp", "socket-dhcpv4", "iface-max-addr-count-4", "iface-max-route-count-4"] }
 
 [lib]
 name = "dashos"
@@ -63,10 +81,16 @@ test = false
 [profile.release]
 panic = "abort"
 opt-level = "s"
+# Sin tabla de símbolos: los programas van dentro de la imagen del kernel (el paquete de arranque de `inicio`) y nada
+# la lee al cargarlos; con ella, la imagen pasaba de 9 MB.
+strip = "symbols"
 # Las dependencias (RedoxFS, seahash, lz4 del servicio de archivos), para ir rápido: con "s", crear un fichero costaba
 # en DashOS cuatro veces lo que el mismo RedoxFS bajo QEMU en modo usuario (paso F10 de docs/MULTITAREA_LOOP.md).
 [profile.release.package."*"]
 opt-level = 3
+# Los iconos de las cajas: se leen pocos y a ratos; mejor pequeños que rápidos (el disco de pruebas va justo).
+[profile.release.package.dashos-iconos-cajas]
+opt-level = "s"
 [profile.dev]
 panic = "abort"
 
@@ -83,6 +107,11 @@ test = false
 [[bin]]
 name = "tls"
 path = "src/bin/tls.rs"
+test = false
+
+[[bin]]
+name = "hilos"
+path = "src/bin/hilos.rs"
 test = false
 
 [[bin]]
@@ -152,6 +181,130 @@ test = false
 required-features = ["ventanas"]
 
 [[bin]]
+name = "hostil"
+path = "src/bin/hostil.rs"
+
+# S29: malware de laboratorio (docs/diseño/S29-malware-linux-y-dashos.md).
+[[bin]]
+name = "espia"
+path = "src/bin/espia.rs"
+
+[[bin]]
+name = "caida"
+path = "src/bin/caida.rs"
+
+[[bin]]
+name = "sesiones"
+path = "src/bin/sesiones.rs"
+
+[[bin]]
+name = "guardian"
+path = "src/bin/guardian.rs"
+required-features = ["ventanas", "ordenes"]
+
+[[bin]]
+name = "panel"
+path = "src/bin/panel.rs"
+required-features = ["ventanas"]
+
+[[bin]]
+name = "barra"
+path = "src/bin/barra.rs"
+required-features = ["ventanas"]
+
+[[bin]]
+name = "dock"
+path = "src/bin/dock.rs"
+required-features = ["ventanas"]
+
+[[bin]]
+name = "workbench"
+path = "src/bin/workbench.rs"
+required-features = ["ventanas"]
+
+[[bin]]
+name = "explorador"
+path = "src/bin/explorador.rs"
+required-features = ["ventanas"]
+
+[[bin]]
+name = "presa"
+path = "src/bin/presa.rs"
+
+[[bin]]
+name = "entrada"
+path = "src/bin/entrada.rs"
+
+[[bin]]
+name = "eco"
+path = "src/bin/eco.rs"
+
+# S10: el servicio de avisos (las notificaciones), su prueba hostil y un programa del disco que avisa.
+[[bin]]
+name = "avisos"
+path = "src/bin/avisos.rs"
+test = false
+
+[[bin]]
+name = "avisador"
+path = "src/bin/avisador.rs"
+test = false
+
+[[bin]]
+name = "avisa"
+path = "src/bin/avisa.rs"
+test = false
+
+[[bin]]
+name = "espera"
+path = "src/bin/espera.rs"
+test = false
+# S6b, S36: con las pruebas del encierro y de la tanda (`src/prueba_encierro.rs`), que usan el montón.
+required-features = ["monton"]
+
+[[bin]]
+name = "pide"
+path = "src/bin/pide.rs"
+
+[[bin]]
+name = "comprobador"
+path = "src/bin/comprobador.rs"
+test = false
+required-features = ["archivos"]
+
+[[bin]]
+name = "centro"
+path = "src/bin/centro.rs"
+test = false
+required-features = ["ventanas"]
+
+[[bin]]
+name = "fondo"
+path = "src/bin/fondo.rs"
+test = false
+required-features = ["ventanas"]
+
+[[bin]]
+name = "selector"
+path = "src/bin/selector.rs"
+test = false
+required-features = ["ventanas"]
+
+# U6: la prueba del cambio rápido de usuario (en el disco); desde el paso 2, con su ventana.
+[[bin]]
+name = "cambio"
+path = "src/bin/cambio.rs"
+test = false
+required-features = ["ventanas", "sonido"]
+
+# `RAM:` en memoria: la prueba (en el disco; la lanza `guardian` como Ana y como Carla).
+[[bin]]
+name = "ram"
+path = "src/bin/ram.rs"
+test = false
+required-features = ["monton"]
+
+[[bin]]
 name = "ventana-a"
 path = "src/bin/ventana_a.rs"
 test = false
@@ -160,6 +313,112 @@ required-features = ["ventanas"]
 [[bin]]
 name = "virtio-sonido"
 path = "src/bin/virtio_sonido.rs"
+test = false
+
+# La red (S13): el controlador de virtio-net, el servicio con la pila y sus pruebas.
+# El multimonitor: el controlador de virtio-gpu, con varias cabezas.
+[[bin]]
+name = "virtio-gpu"
+path = "src/bin/virtio_gpu.rs"
+test = false
+
+[[bin]]
+name = "virtio-red"
+path = "src/bin/virtio_red.rs"
+test = false
+
+# X5c: la red con cable de Intel (I219 del PCH y 82574L, el `e1000e` de QEMU).
+[[bin]]
+name = "intel-red"
+path = "src/bin/intel_red.rs"
+test = false
+
+# X5c: la red con cable de Realtek (RTL8125B, la de shiva).
+[[bin]]
+name = "rtl-red"
+path = "src/bin/rtl_red.rs"
+test = false
+
+[[bin]]
+name = "red"
+path = "src/bin/red.rs"
+test = false
+required-features = ["red"]
+
+[[bin]]
+name = "red-prueba"
+path = "src/bin/red_prueba.rs"
+test = false
+
+[[bin]]
+name = "red-gloton"
+path = "src/bin/red_gloton.rs"
+test = false
+
+[[bin]]
+name = "sin-red"
+path = "src/bin/sin_red.rs"
+test = false
+
+# S13: la hora por la red (SNTP): el único con el permiso del reloj.
+[[bin]]
+name = "hora"
+path = "src/bin/hora.rs"
+test = false
+
+# La caja Linux (H9): el servicio de las máquinas virtuales y un programa sin su permiso.
+[[bin]]
+name = "caja-linux"
+path = "src/bin/caja_linux.rs"
+test = false
+required-features = ["caja", "ventanas"]
+
+# S35, paso 2 (docs/bitacoras/dominio-red.md): un dominio de controladores que presta una tarjeta a un Linux mínimo y
+# recibe de él una red virtio, y su prueba.
+[[bin]]
+name = "dominio"
+path = "src/bin/dominio.rs"
+test = false
+required-features = ["caja"]
+
+[[bin]]
+name = "dominio-prueba"
+path = "src/bin/dominio_prueba.rs"
+test = false
+
+# X12 (G5 de S38): el dominio de gráficos de x86, con la GPU pasada por la IOMMU (`make -C kernel graficos-x86`).
+[[bin]]
+name = "dominio-graficos"
+path = "src/bin/dominio_graficos.rs"
+test = false
+required-features = ["caja"]
+
+[[bin]]
+name = "graficos-cliente"
+path = "src/bin/graficos_cliente.rs"
+test = false
+
+[[bin]]
+name = "sin-maquina"
+path = "src/bin/sin_maquina.rs"
+test = false
+
+# X10: el hipervisor de x86 con un invitado mínimo propio (prueba-x86). En ARM no hace nada.
+[[bin]]
+name = "maquina"
+path = "src/bin/maquina.rs"
+test = false
+
+[[bin]]
+name = "relevo"
+path = "src/bin/relevo.rs"
+test = false
+required-features = ["relevo"]
+
+# aviso-cajas: provoca el aviso de memoria baja para ver que las cajas sueltan memoria (solo en las pruebas).
+[[bin]]
+name = "presion"
+path = "src/bin/presion.rs"
 test = false
 
 [[bin]]
@@ -216,6 +475,33 @@ path = "src/bin/xhci.rs"
 test = false
 
 [[bin]]
+name = "xhci0"
+path = "src/bin/xhci0.rs"
+test = false
+
+[[bin]]
+name = "xhci1"
+path = "src/bin/xhci1.rs"
+test = false
+
+[[bin]]
+name = "disco-vivo"
+path = "src/bin/disco_vivo.rs"
+test = false
+
+[[bin]]
+name = "instalador"
+path = "src/bin/instalador.rs"
+test = false
+required-features = ["archivos", "caja"]
+
+[[bin]]
+name = "instalar"
+path = "src/bin/instalar.rs"
+test = false
+required-features = ["ventanas"]
+
+[[bin]]
 name = "archivos"
 path = "src/bin/archivos.rs"
 test = false
@@ -259,3 +545,56 @@ test = false
 name = "medir-fs"
 path = "src/bin/medir_fs.rs"
 test = false
+# X5c: la prueba del servicio de discos SATA (`ahci`).
+[[bin]]
+name = "disco-sata"
+path = "src/bin/disco_sata.rs"
+test = false
+
+# La prueba del selector de ficheros desde un programa del disco ("Guardar como"), con su tabla de llaves.
+[[bin]]
+name = "guarda"
+path = "src/bin/guarda.rs"
+test = false
+
+# S10, Commodities (docs/bitacoras/commodities.md): su prueba de virt y las clásicas de SYS:Tools/Commodities sin
+# ventana (Blanker y NoCapsLock; FKey y Exchange están en `ordenes/`).
+[[bin]]
+name = "commodity-prueba"
+path = "src/bin/commodity_prueba.rs"
+test = false
+required-features = ["ventanas"]
+
+[[bin]]
+name = "blanker"
+path = "src/bin/blanker.rs"
+test = false
+required-features = ["ventanas"]
+
+[[bin]]
+name = "nocapslock"
+path = "src/bin/nocapslock.rs"
+test = false
+required-features = ["ventanas"]
+
+# S10, los menús (docs/bitacoras/menus-pulido.md): un programa del kit nativo con un submenú y menús que no caben, para
+# `make arranque-virt-menus`.
+[[bin]]
+name = "menus-prueba"
+path = "src/bin/menus_prueba.rs"
+test = false
+required-features = ["ventanas"]
+
+# La ventana "Sonido" (rama sonido-pro): el mezclador, el visualizador y los efectos.
+[[bin]]
+name = "mezclador"
+path = "src/bin/mezclador.rs"
+test = false
+required-features = ["ventanas"]
+
+# Un reproductor de prueba que suena y dice lo que suena (rama sonido-pro).
+[[bin]]
+name = "melodia"
+path = "src/bin/melodia.rs"
+test = false
+required-features = ["sonido"]

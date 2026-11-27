@@ -53,6 +53,7 @@ const C_COLAS: usize = 0x12;
 const C_ESTADO: usize = 0x14;
 const C_COLA_ELEGIR: usize = 0x16;
 const C_COLA_TAMANO: usize = 0x18;
+const C_COLA_MSIX: usize = 0x1A;
 const C_COLA_ENCENDER: usize = 0x1C;
 const C_COLA_AVISO: usize = 0x1E;
 const C_COLA_DESC: usize = 0x20;
@@ -194,10 +195,10 @@ impl Cola {
     /// Ofrece al aparato la cadena que empieza en el descriptor `cabeza` y le avisa.
     fn ofrecer(&mut self, cabeza: u16, numero: u16) {
         poner16(self.m + DISP + 4 + 2 * (self.disp % ENTRADAS) as usize, cabeza);
-        unsafe { core::arch::asm!("dmb oshst") };
+        dashos::barrera::escrituras();
         self.disp = self.disp.wrapping_add(1);
         poner16(self.m + DISP + 2, self.disp);
-        unsafe { core::arch::asm!("dmb osh") };
+        dashos::barrera::total();
         poner_reg16(self.aviso, numero);
     }
 
@@ -206,7 +207,7 @@ impl Cola {
         if dma16(self.m + USADOS + 2) == self.usados {
             return None;
         }
-        unsafe { core::arch::asm!("dmb oshld") };
+        dashos::barrera::lecturas();
         let id = dma32(self.m + USADOS + 4 + 8 * (self.usados % ENTRADAS) as usize);
         self.usados = self.usados.wrapping_add(1);
         Some(id as u16)
@@ -226,6 +227,9 @@ fn montar(b: &Bloques, bus: u64, numero: u16, m: usize) -> Option<Cola> {
     poner_reg64(b.comun + C_COLA_DISP, base + DISP as u64);
     poner_reg64(b.comun + C_COLA_USADOS, base + USADOS as u64);
     let aviso = b.aviso + reg16(b.comun + C_COLA_AVISO) as usize * b.multiplicador as usize;
+    // Con MSI-X (el kernel se la da en x86, X5), cada cola dice qué entrada de la tabla usa: la 0, la única que
+    // prepara el kernel. Sin ella, la cola no avisaría (4.1.4.3, 4.1.5.1.2). Con INTx no cuenta.
+    poner_reg16(b.comun + C_COLA_MSIX, 0);
     poner_reg16(b.comun + C_COLA_ENCENDER, 1);
     Some(Cola { m, bus: base, aviso, disp: 0, usados: 0 })
 }
@@ -251,8 +255,8 @@ fn control(c: &mut Cola, peticion: &[u32], largo: u32) -> u32 {
 }
 
 fn principal() -> u64 {
-    // Lo primero, antes de crear llaves: con llave 5, la 4 es la interrupción y la 5 el canal "sonido"; si no, el
-    // canal es la 4.
+    // Lo primero, antes de crear llaves: la 4 es el permiso de la clase de plazo (S3); con llave 6, la 5 es la
+    // interrupción y la 6 el canal "sonido"; si no, el canal es la 5.
     let existe = |k: u32| {
         let copia = dashos::llave_duplicar(k, dashos::LEER, 0);
         if copia > 0 {
@@ -260,7 +264,7 @@ fn principal() -> u64 {
         }
         copia > 0
     };
-    let (irq, servicio) = if existe(5) { (Some(4u32), 5u32) } else { (None, 4u32) };
+    let (irq, servicio) = if existe(6) { (Some(5u32), 6u32) } else { (None, 5u32) };
     if dashos::registros_proyectar(2, VA) != 0 || dashos::registros_proyectar(3, VA_CFG) != 0 {
         println!("  [virtio-sonido] sin registros");
         return 1;
@@ -275,16 +279,18 @@ fn principal() -> u64 {
     while reg8(b.comun + C_ESTADO) != 0 && dashos::ahora_us() < fin {}
     poner_reg8(b.comun + C_ESTADO, S_ENTERADO);
     poner_reg8(b.comun + C_ESTADO, S_ENTERADO | S_CONDUCTOR);
-    // Solo VIRTIO_F_VERSION_1 (el bit 32), que es obligatoria en PCI moderno.
+    // VIRTIO_F_VERSION_1 (el bit 32), que es obligatoria en PCI moderno, y VIRTIO_F_ACCESS_PLATFORM (el 33, virtio 1.2,
+    // 6) si la ofrece: el aparato va detrás de una IOMMU (X5b) y sus direcciones son las de bus que da `memoria_dma`.
     poner_reg32(b.comun + C_FUNC_ELEGIR, 1);
-    if reg32(b.comun + C_FUNC) & 1 == 0 {
+    let altas = reg32(b.comun + C_FUNC);
+    if altas & 1 == 0 {
         println!("  [virtio-sonido] sin la versión 1");
         return 3;
     }
     poner_reg32(b.comun + C_PROPIAS_ELEGIR, 0);
     poner_reg32(b.comun + C_PROPIAS, 0);
     poner_reg32(b.comun + C_PROPIAS_ELEGIR, 1);
-    poner_reg32(b.comun + C_PROPIAS, 1);
+    poner_reg32(b.comun + C_PROPIAS, 1 | (altas & 2));
     poner_reg8(b.comun + C_ESTADO, S_ENTERADO | S_CONDUCTOR | S_FUNC_OK);
     if reg8(b.comun + C_ESTADO) & S_FUNC_OK == 0 {
         println!("  [virtio-sonido] no acepta las funciones");
@@ -364,7 +370,7 @@ fn principal() -> u64 {
     }
     println!("  [virtio-sonido] suena el flujo {} para el servicio", flujo);
     // La clase de plazo (S2, A6): hasta 1 ms de CPU cada período de 5,3 ms.
-    if dashos::plazo(1_000, 5_333) != 0 {
+    if dashos::plazo(4, 1_000, 5_333) != 0 {
         println!("  [virtio-sonido] sin clase de plazo: va en la justa");
     }
     // Cada búfer que vuelve se llena con el siguiente período del servicio (o silencio, si no lo tiene: un vacío) y se
@@ -372,7 +378,7 @@ fn principal() -> u64 {
     let (mut devueltos, mut vacios, mut errores) = (0u64, 0u64, 0u64);
     let mut sonando = false;
     // La interrupción, a un canal propio. Por nivel (INTx): leer el estado (ISR) la baja, y después se vuelve a
-    // habilitar (4.1.4.5).
+    // habilitar (4.1.4.5). Por MSI-X (x86, X5), leer el ISR no hace nada.
     let avisos = irq.and_then(|i| {
         let (lee, escribe) = dashos::canal_crear();
         (dashos::interrupcion_asociar(i, escribe) == 0).then_some((lee, i))
@@ -400,6 +406,11 @@ fn principal() -> u64 {
         let mut alguno = false;
         while let Some(cabeza) = tx.devuelta() {
             let r = (cabeza / 2) as usize;
+            // La cabeza la devuelve el aparato: una que no es de las nuestras caería fuera de la memoria de DMA (S7).
+            if r >= RANURAS || cabeza % 2 != 0 {
+                errores += 1;
+                continue;
+            }
             let base = M_BUFERES + r * TAM_RANURA;
             if dma32(base + ESTADO) != BIEN {
                 errores += 1;
@@ -407,7 +418,7 @@ fn principal() -> u64 {
             poner32(base + ESTADO, 0);
             let (escritos, leidos) = (salida(0), salida(1));
             if escritos != leidos {
-                unsafe { core::arch::asm!("dmb ishld") };
+                dashos::barrera::lecturas();
                 let desde = VA_SALIDA + 64 + (leidos as usize % RANURAS) * PERIODO;
                 for k in 0..CUADROS {
                     poner32(base + DATOS + 4 * k, unsafe { read_volatile((desde + 4 * k) as *const u32) });

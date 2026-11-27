@@ -33,6 +33,47 @@ Estos principios ordenan las decisiones de las tareas siguientes. Cuando dos cho
    kernel (S1).
 8. **Medido.** Cada meta de este documento tiene una prueba automática. Si una versión empeora una medida, no sale.
 
+## Amigable de 2026, con fondo para informáticos (usuario, 2026-11-15)
+
+DashOS copia cómo funciona AmigaOS porque es amigable, pero tiene que ser amigable de 2026. La referencia de
+facilidad es un móvil; lo que **no** se copia del móvil es esconder el sistema de archivos. Y debajo tiene que haber
+un nivel "hacker", el que gusta a los informáticos. Las dos cosas a la vez, en el mismo sistema, sin "modo experto"
+aparte.
+
+La regla es **sencillo por delante, todo a la vista por detrás**:
+
+Lo amigable:
+
+- **Sirve recién instalado.** Nada que configurar para empezar. Los valores de serie son buenos.
+- **Todo se puede hacer con el ratón**, y lo corriente, en uno o dos pasos.
+- **Los ficheros se ven.** Volúmenes con nombre, cajones e iconos, como en el Amiga. El usuario sabe dónde están sus
+  cosas (`Home:`) y dónde los programas (`Paquetes:`). No hay "almacenamiento interno" opaco ni datos de un programa
+  que el usuario no pueda encontrar.
+- **Ordenado, no escondido.** Lo que el usuario no necesita no estorba (el almacén de versiones de `Paq`, los ficheros
+  internos), pero se puede mirar si se pide.
+- **Deshacer antes que preguntar.** Mejor una acción que se deshace que un aviso de "¿seguro?".
+- **Mensajes en llano**, con el detalle técnico a un clic, no en la cara.
+- **Un solo sitio para los ajustes** (S27), y los mismos gestos en todo el sistema.
+
+El fondo para informáticos:
+
+- **Todo lo que se hace con el ratón se puede hacer desde el Shell** y desde un guion. Si una función solo existe en
+  una ventana, está sin acabar.
+- **Los ajustes son ficheros de texto** en `ENVARC:`, legibles y editables a mano. La ventana de Ajustes escribe esos
+  mismos ficheros.
+- **Los programas se hablan entre sí** con guiones, como con ARexx (S11), y con Dash.
+- **El sistema se deja mirar.** `SYS:` se lee entero (aunque no se escriba); se puede ver qué asignaciones, permisos
+  y memoria tiene cada programa, qué hizo el sistema y por qué (registros legibles). Nada pasa sin dejar rastro que
+  se pueda leer.
+- **Se puede cambiar sin romper.** Quien quiera sustituir una pieza lo hace en su capa (`Home:`, S4b) o con un modo
+  de desarrollo explícito, no apagando la seguridad. Y vuelve atrás con las generaciones (S8).
+- **Se entiende entero** (principio 7): documentación de cada servicio y código abierto.
+
+Dos preguntas para cada diseño nuevo: ¿lo usa sin ayuda alguien que no es informático? ¿Puede un informático ver
+cómo funciona y cambiarlo sin leer el código? Si una de las dos falla, el diseño no está acabado.
+
+Cuando chocan (pocas veces): lo de serie es lo amigable, y lo otro queda a un paso, nunca quitado.
+
 ## Metas medibles
 
 Las referencias de Linux son orientativas. Las únicas que valen son las medidas en la misma placa con el mismo

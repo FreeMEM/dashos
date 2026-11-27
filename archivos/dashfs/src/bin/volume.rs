@@ -1,0 +1,131 @@
+//! Lists, makes and removes the volumes of a DashFS disk (FS10). The main volume has no name and is always there.
+
+use std::time::{SystemTime, UNIX_EPOCH};
+use std::{env, process};
+
+use dashfs::{DiskFile, FileSystem};
+
+fn usage() -> ! {
+    eprintln!("dashfs-volume DISK [list | create NAME | create-encrypted NAME | delete NAME | quota NAME SIZE]");
+    eprintln!("  quota: the most the volume may use (500MiB, 2GB; 0 for no limit), rounded down to 4 KiB blocks;");
+    eprintln!("    what only its snapshots see counts too");
+    eprintln!("  create-encrypted: reads the password from the first line of the standard input; with");
+    eprintln!("    --test-cost after the name, a cheap Argon2 (64 KiB, 1 pass), for test disks only");
+    eprintln!("  delete: removes the volume with all its files and snapshots");
+    process::exit(2);
+}
+
+/// The owner of the new volume's root, from `DASHFS_DUENO=uid:gid` (DashOS test disks); 0:0 without it.
+fn owner() -> (u32, u32) {
+    env::var("DASHFS_DUENO")
+        .ok()
+        .and_then(|v| {
+            let (u, g) = v.split_once(':')?;
+            Some((u.parse().ok()?, g.parse().ok()?))
+        })
+        .unwrap_or((0, 0))
+}
+
+fn main() {
+    env_logger::init();
+    let args: Vec<String> = env::args().skip(1).collect();
+    let (path, what, name) = match args.as_slice() {
+        [path] => (path, "list", None),
+        [path, what] if what == "list" => (path, "list", None),
+        [path, what, name] => (path, what.as_str(), Some(name.as_str())),
+        [path, what, name, flag] if what == "create-encrypted" && flag == "--test-cost" => {
+            (path, "create-encrypted-test", Some(name.as_str()))
+        }
+        [path, what, name, _size] if what == "quota" => (path, "quota", Some(name.as_str())),
+        _ => usage(),
+    };
+    let disk = match DiskFile::open(path) {
+        Ok(disk) => disk,
+        Err(err) => {
+            eprintln!("dashfs-volume: cannot open {path}: {err}");
+            process::exit(2);
+        }
+    };
+    let mut fs = match FileSystem::open(disk, None, None, false) {
+        Ok(fs) => fs,
+        Err(err) => {
+            eprintln!("dashfs-volume: no file system found on {path}: {err}");
+            process::exit(2);
+        }
+    };
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    let result = match (what, name) {
+        ("list", None) => fs.tx(|tx| tx.volumes()).map(|list| {
+            for v in list {
+                let kind = if v.is_encrypted() { "encrypted" } else { "" };
+                // Used and quota, in bytes: "-" when not counted yet or without a limit.
+                let bytes = |blocks: u64| match blocks {
+                    0 => "-".to_string(),
+                    n => (n * dashfs::BLOCK_SIZE).to_string(),
+                };
+                println!("{}\t{}\t{kind}\t{}\t{}", v.id(), v.name(), bytes(v.used()), bytes(v.quota()));
+            }
+        }),
+        ("create-encrypted" | "create-encrypted-test", Some(name)) => {
+            let cost = if what == "create-encrypted" {
+                dashfs::seal::Cost::NORMAL
+            } else {
+                dashfs::seal::Cost::CHEAP
+            };
+            let mut password = String::new();
+            if std::io::stdin().read_line(&mut password).is_err() {
+                usage();
+            }
+            let password = password.trim_end_matches(['\n', '\r']);
+            if password.is_empty() {
+                eprintln!("dashfs-volume: empty password");
+                process::exit(2);
+            }
+            let mut master = [0u8; 32];
+            let mut salt = [0u8; 16];
+            getrandom::fill(&mut master).expect("randomness");
+            getrandom::fill(&mut salt).expect("randomness");
+            let result = fs
+                .tx(|tx| {
+                    tx.create_encrypted_volume_owned(
+                        name,
+                        now.as_secs(),
+                        now.subsec_nanos(),
+                        password.as_bytes(),
+                        &master,
+                        salt,
+                        cost,
+                        owner(),
+                    )
+                })
+                .map(|_| ());
+            master.fill(0);
+            result
+        }
+        ("create", Some(name)) => fs
+            .tx(|tx| tx.create_volume(name, now.as_secs(), now.subsec_nanos()))
+            .map(|_| ()),
+        ("quota", Some(name)) => {
+            let size = match parse_size::parse_size(&args[3]) {
+                Ok(size) => size,
+                Err(err) => {
+                    eprintln!("dashfs-volume: size {:?}: {err}", args[3]);
+                    process::exit(2);
+                }
+            };
+            fs.tx(|tx| {
+                let id = tx.find_volume(name)?;
+                tx.set_volume_quota(id, size / dashfs::BLOCK_SIZE)
+            })
+        }
+        ("delete", Some(name)) => fs.tx(|tx| {
+            let id = tx.find_volume(name)?;
+            tx.delete_volume(id)
+        }),
+        _ => usage(),
+    };
+    if let Err(err) = result {
+        eprintln!("dashfs-volume: {what}: {err}");
+        process::exit(1);
+    }
+}

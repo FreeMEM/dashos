@@ -1,0 +1,4 @@
+# Como usuario/: nightly, por el destino de nivel 3 aarch64_be-unknown-none-softfloat (necesita -Zbuild-std).
+[toolchain]
+channel = "nightly"
+components = ["rust-src"]

@@ -1,0 +1,17 @@
+# X5b (`make -C kernel prueba-x86 IOMMU=intel` o `IOMMU=amd`): la IOMMU encendida al arrancar, y la prueba con el NVMe
+# de QEMU: escribe en su ventana, y fuera de ella (una ventana ya soltada, una página del kernel) se bloquea y se avisa.
+~traducción encendida
+~X5b: el NVMe escribe por DMA en su ventana bien
+~X5b: DMA fuera de la ventana bloqueado y avisado por la interrupción de la IOMMU bien
+~X5b: sin fallos de DMA al arrancar bien
+# X11: el aparato pasado a la máquina: configuración filtrada, BAR proyectada, DMA en la memoria del invitado, su MSI
+# entregada al invitado, DMA fuera bloqueado y, muerto el monitor, el aparato bloqueado y libre. Lo de una MSI falsa
+# depende del remapeo (solo AMD-Vi): la añade el Makefile.
+~[maquina_pci] aparato asignado
+~[maquina_pci] configuración filtrada por el kernel (BAR y MSI no se tocan): bien
+~[maquina_pci] el invitado lee su configuración y usa su BAR sin salir: bien
+~[maquina_pci] el aparato copia por DMA en la memoria del invitado: bien
+~[maquina_pci] la MSI del aparato llega al anfitrión y se entrega al invitado (vector 0x50): bien
+~[maquina_pci] al parar la máquina el aparato queda libre, y se asigna a otra: bien
+~X11: el DMA fuera de la memoria del invitado se bloquea bien
+~X11: al morir el monitor, el aparato queda bloqueado y libre bien

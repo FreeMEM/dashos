@@ -24,6 +24,8 @@
 
 extern crate alloc;
 
+pub mod arranque;
+
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -165,6 +167,17 @@ impl<D: Dispositivo> Volumen<D> {
         }
         v.nombre = nombre_de(&r);
         Ok(v)
+    }
+
+    /// Los dos bloques de arranque (S28: `arranque::analizar` dice qué hay).
+    pub fn bloque_de_arranque(&mut self) -> Result<[u8; arranque::TAMANO], Error> {
+        let mut b = [0u8; arranque::TAMANO];
+        let mut x = [0u8; BLOQUE];
+        for n in 0..2 {
+            self.d.leer(n, &mut x)?;
+            b[n as usize * BLOQUE..(n as usize + 1) * BLOQUE].copy_from_slice(&x);
+        }
+        Ok(b)
     }
 
     pub fn ffs(&self) -> bool {

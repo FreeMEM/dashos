@@ -77,10 +77,23 @@ pub enum Permiso {
     SoloLecturaSinCache,
 }
 
+/// Cómo se proyecta un objeto de memoria (`proyectar_memoria`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Acceso {
+    /// Solo leer.
+    Leer,
+    /// Leer y escribir; nunca se ejecuta.
+    Escribir,
+    /// Leer y ejecutar; nunca se escribe por esta dirección (H4, el JIT de la caja Amiga).
+    Ejecutar,
+}
+
 /// Intermediarios revocables por proyección, como mucho: los que puede haber uno dentro de otro (objetos.rs).
 pub const VIAS: usize = 4;
-/// Hasta cuántas páginas se invalida la TLB página a página al quitar una proyección (M3).
-const TLB_POR_PAGINA: u64 = 32;
+/// Hasta cuántas páginas se invalida la TLB página a página al quitar una proyección (M3). Con más, una invalidación
+/// de todo el ASID: en QEMU cada aviso para a todos los núcleos, y con 32 quitar un trozo prestado de 512 KB costaba
+/// 140 µs (A7).
+const TLB_POR_PAGINA: u64 = 4;
 
 pub struct Espacio {
     l1: u64, // dirección física
@@ -91,10 +104,14 @@ pub struct Espacio {
     /// Objetos de memoria proyectados, con la dirección donde empiezan: el espacio los mantiene vivos mientras estén
     /// proyectados (C18, C45). Con cada uno, los intermediarios revocables por los que se hizo (como números que solo
     /// se comparan; 0, ninguno): revocar quita solo las suyas (auditoría de la fase 4, M2).
-    proyectados: alloc::vec::Vec<(u64, alloc::sync::Arc<super::memoria::Memoria>, [usize; VIAS])>,
+    /// Y su permiso: el globo de una máquina (llamada 55) repone sus páginas con él.
+    proyectados: alloc::vec::Vec<(u64, alloc::sync::Arc<super::memoria::Memoria>, [usize; VIAS], Permiso)>,
     /// El grupo al que se cobran sus tablas y sus páginas propias, y cuánto lleva cobrado (C42).
     cupo: alloc::sync::Arc<crate::cupo::Cupo>,
     cobrado: u64,
+    /// Hay código escrito que aún no se ha quitado de la caché de instrucciones de los núcleos (K15): se hace una vez,
+    /// en `codigo_listo`, no por cada página.
+    codigo_pendiente: bool,
 }
 
 impl Drop for Espacio {
@@ -127,6 +144,20 @@ pub enum Error {
 
 /// Proyecciones de objetos de memoria por proceso, hasta los cupos de S16 (F).
 const MAX_PROYECCIONES: usize = 1024;
+/// Páginas como mucho por llamada 58 (`Espacio::paginas_de`): acota el rato con los cerrojos tomados, como el globo.
+pub const MAX_PAGINAS_SUELTAS: usize = 256;
+
+/// Por qué no se ponen o sueltan páginas de un objeto de memoria (llamada 58).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FalloPaginas {
+    /// El tramo se sale del objeto, o son demasiadas páginas de una vez.
+    Fuera,
+    /// El objeto lo tiene alguien más (otro proceso, un mensaje, una vista, una máquina, una llave revocable), o es
+    /// memoria DMA o una vista.
+    Compartida,
+    /// No se pudo poner ni la primera: no cabe en el tope de su grupo o no queda memoria.
+    Memoria,
+}
 /// Inicio de la ventana de periféricos de la Pi 4.
 
 /// Por debajo de esto no se proyecta nada.
@@ -136,9 +167,8 @@ pub const VA_LIMITE: u64 = 1 << 39;
 
 /// Una tabla nueva, a cero. Es memoria del proceso: no entra en la reserva del kernel.
 fn tabla_nueva() -> Result<u64, Error> {
-    let p = paginas().pagina_usuario().ok_or(Error::SinMemoria)?;
-    unsafe { core::ptr::write_bytes(mmu::virt(p as usize) as *mut u8, 0, PAGINA as usize) };
-    Ok(p)
+    // `pagina_usuario` ya la da a cero.
+    crate::memoria::pagina_usuario().ok_or(Error::SinMemoria)
 }
 
 fn entrada(tabla: u64, i: usize) -> *mut u64 {
@@ -150,6 +180,14 @@ fn indices(va: u64) -> [usize; 3] {
 }
 
 impl Espacio {
+    /// Quita de la caché de instrucciones de todos los núcleos lo que había donde ahora hay código nuevo. Una sola vez
+    /// por carga (K15): antes iba una invalidación de los 4 núcleos por cada página de código.
+    pub fn codigo_listo(&mut self) {
+        if core::mem::take(&mut self.codigo_pendiente) {
+            unsafe { core::arch::asm!("ic ialluis", "dsb ish", "isb") };
+        }
+    }
+
     /// Un espacio vacío. `None` si no quedan ASID o memoria.
     pub fn nuevo(cupo: alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
         if !cupo.cobrar_suelto(PAGINA) {
@@ -172,6 +210,7 @@ impl Espacio {
             proyectados: alloc::vec::Vec::new(),
             cupo,
             cobrado: PAGINA,
+            codigo_pendiente: false,
         })
     }
 
@@ -231,11 +270,43 @@ impl Espacio {
         Copia::Directa((mmu::virt((v & DIRECCION) as usize) + (va % PAGINA) as usize) as *mut u8)
     }
 
+    /// ¿Puede EL0 ejecutar en `va`? Para la entrada de un hilo nuevo (llamada 40): mejor un error al crearlo que un
+    /// hilo que muere al nacer y se lleva el proceso.
+    pub fn ejecutable(&self, va: u64) -> bool {
+        if !(VA_MINIMA..VA_LIMITE).contains(&va) {
+            return false;
+        }
+        let Some(e) = self.hoja(va) else { return false };
+        // SAFETY: `hoja` da una entrada de una tabla de este espacio, que vive mientras lo tengamos tomado.
+        let v = unsafe { e.read_volatile() };
+        v & VALIDO == VALIDO && v & AF != 0 && v & AP_EL0 != 0 && v & UXN == 0
+    }
+
+    /// La palabra de 32 bits de `va` para la espera de hilos (llamadas 42 y 43): su valor, leído de una vez, y una
+    /// clave que la nombra: su dirección en el mapa directo del kernel, la misma para dos procesos que comparten la
+    /// página. `None` si no está alineada a 4, EL0 no puede leerla o no es memoria normal con caché. Hay que tener el
+    /// espacio tomado: así la página no se puede quitar mientras se lee.
+    pub fn palabra(&self, va: u64) -> Option<(u32, usize)> {
+        if va % 4 != 0 {
+            return None;
+        }
+        let Copia::Directa(k) = self.para_copiar(va, false) else { return None };
+        // SAFETY: `k` está en el mapa directo, dentro de una página proyectada en este espacio (que tenemos tomado),
+        // alineada a 4. Una carga atómica: la escriben a la vez los hilos del proceso.
+        let v = unsafe { (*(k as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+        Some((v, k as usize))
+    }
+
     /// La entrada de nivel 3 de `va`, creando las tablas que falten.
     fn hoja_o_crear(&mut self, va: u64) -> Result<*mut u64, Error> {
         if !(VA_MINIMA..VA_LIMITE).contains(&va) {
             return Err(Error::Direccion);
         }
+        self.hoja_o_crear_en(va)
+    }
+
+    /// Como `hoja_o_crear`, sin mirar `VA_MINIMA`: solo para la página 0 de la caja Amiga (`proyectar_pagina_cero`).
+    fn hoja_o_crear_en(&mut self, va: u64) -> Result<*mut u64, Error> {
         let ix = indices(va);
         let mut tabla = self.l1;
         for &i in &ix[..2] {
@@ -286,52 +357,92 @@ impl Espacio {
         if unsafe { e.read_volatile() } & VALIDO != 0 {
             return Err(Error::Ocupada);
         }
-        let atributos = VALIDO | AF | NG | AP_EL0 | PXN
-            | match permiso {
-                Permiso::Codigo => SH_INTERNO | ATTR_NORMAL | AP_SOLO_LECTURA,
-                Permiso::Datos => SH_INTERNO | ATTR_NORMAL | UXN,
-                Permiso::SoloLectura => SH_INTERNO | ATTR_NORMAL | UXN | AP_SOLO_LECTURA,
-                Permiso::Dispositivo => ATTR_DISPOSITIVO | UXN,
-                Permiso::DatosSinCache => SH_INTERNO | ATTR_SIN_CACHE | UXN,
-                Permiso::SoloLecturaSinCache => SH_INTERNO | ATTR_SIN_CACHE | UXN | AP_SOLO_LECTURA,
-            };
-        unsafe {
-            e.write_volatile((fisica & DIRECCION) | atributos);
-            core::arch::asm!("dsb ishst", "isb");
-        }
+        escribir_hoja(e, fisica, permiso);
         Ok(())
     }
 
-    /// Proyecta un objeto de memoria entero desde `va`, de lectura y escritura o de solo lectura; nunca se ejecuta.
+    /// H4 (S3): la página 0 de la caja Amiga. Proyecta un objeto de una sola página en la dirección 0, de solo lectura y
+    /// nunca ejecutable: el 68k lee ahí, en la dirección 4, el puntero a ExecBase. Lo demás de los primeros 64 KB sigue
+    /// sin proyectarse. Quien llama ya comprobó el permiso (llamada 45); el kernel no copia nunca desde ni hacia la
+    /// página 0 (`para_copiar` sigue mirando `VA_MINIMA`). Sin PAN (la A72 no lo tiene), un puntero nulo del kernel
+    /// leería esta página en vez de fallar; escribir en ella, no (es de solo lectura también para EL1).
+    pub fn proyectar_pagina_cero(&mut self, m: &alloc::sync::Arc<super::memoria::Memoria>) -> Result<(), Error> {
+        if m.paginas() != 1 || m.bus().is_some() {
+            return Err(Error::Direccion);
+        }
+        if self.proyectados.len() >= MAX_PROYECCIONES {
+            return Err(Error::Limite);
+        }
+        self.proyectados.try_reserve(1).map_err(|_| Error::SinMemoria)?;
+        let e = self.hoja_o_crear_en(0)?;
+        if unsafe { e.read_volatile() } & VALIDO != 0 {
+            return Err(Error::Ocupada);
+        }
+        let f = m.fisica(0);
+        if f == 0 {
+            return Err(Error::Direccion);
+        }
+        escribir_hoja(e, f, Permiso::SoloLectura);
+        self.proyectados.push((0, m.clone(), [0; VIAS], Permiso::SoloLectura));
+        Ok(())
+    }
+
+    /// Los permisos de la entrada de `va` para EL0: (leer, escribir, ejecutar). Para las pruebas de la página 0.
+    #[cfg(feature = "pruebas")]
+    pub fn permisos_el0(&self, va: u64) -> Option<(bool, bool, bool)> {
+        let e = self.hoja(va)?;
+        let v = unsafe { e.read_volatile() };
+        if v & VALIDO != VALIDO || v & AP_EL0 == 0 {
+            return None;
+        }
+        Some((true, v & AP_SOLO_LECTURA == 0, v & UXN == 0))
+    }
+
+    /// Proyecta un objeto de memoria entero desde `va`: de solo lectura, de lectura y escritura o (H4, el JIT de la
+    /// caja Amiga) de lectura y ejecución, nunca de escritura y ejecución a la vez. El mismo objeto puede estar
+    /// proyectado para escribir en una dirección y para ejecutar en otra: así escribe su código un JIT (S3).
     /// Primero comprueba el tramo entero y crea sus tablas, así que o se proyecta todo o nada. El espacio guarda el
     /// objeto mientras exista (C18).
-    pub fn proyectar_memoria(&mut self, va: u64, m: &alloc::sync::Arc<super::memoria::Memoria>, escribir: bool, via: &[usize]) -> Result<(), Error> {
+    pub fn proyectar_memoria(&mut self, va: u64, m: &alloc::sync::Arc<super::memoria::Memoria>, acceso: Acceso, via: &[usize]) -> Result<(), Error> {
         if via.len() > VIAS {
             return Err(Error::Limite);
+        }
+        // La memoria de DMA no se ejecuta nunca: la escribe un aparato. Una vista (llamada 50), solo se lee.
+        if acceso == Acceso::Ejecutar && m.bus().is_some() || acceso != Acceso::Leer && m.es_vista() {
+            return Err(Error::Direccion);
         }
         if self.proyectados.len() >= MAX_PROYECCIONES {
             return Err(Error::Limite);
         }
         self.proyectados.try_reserve(1).map_err(|_| Error::SinMemoria)?;
         self.preparar(va, m.paginas() as u64)?;
-        let permiso = match (escribir, m.bus().is_some()) {
-            (true, true) => Permiso::DatosSinCache,
-            (true, false) => Permiso::Datos,
-            (false, true) => Permiso::SoloLecturaSinCache,
-            (false, false) => Permiso::SoloLectura,
+        let permiso = match (acceso, m.bus().is_some()) {
+            (Acceso::Escribir, true) => Permiso::DatosSinCache,
+            (Acceso::Escribir, false) => Permiso::Datos,
+            (Acceso::Leer, true) => Permiso::SoloLecturaSinCache,
+            (Acceso::Leer, false) => Permiso::SoloLectura,
+            (Acceso::Ejecutar, _) => Permiso::Codigo,
         };
-        for (i, &p) in m.fisicas().iter().enumerate() {
+        // Las páginas soltadas por el globo (0) se quedan sin proyectar hasta que se repongan (llamada 55).
+        for (i, p) in m.fisicas().enumerate().filter(|&(_, p)| p != 0) {
             let _ = self.proyectar(va + i as u64 * PAGINA, p, permiso);
+        }
+        // Las páginas del objeto ya están limpias hasta la RAM (`limpiar_cache` al crearlo) y lo que escriba después
+        // el proceso lo limpia él (SCTLR_EL1.UCI, `mapa::wxn`); aquí solo se quita de la caché de instrucciones lo
+        // que quedara de otro uso de esas páginas físicas.
+        if acceso == Acceso::Ejecutar {
+            self.codigo_pendiente = true;
+            self.codigo_listo();
         }
         let mut vias = [0usize; VIAS];
         vias[..via.len()].copy_from_slice(via);
-        self.proyectados.push((va, m.clone(), vias));
+        self.proyectados.push((va, m.clone(), vias, permiso));
         Ok(())
     }
 
     /// ¿Hay en `va` una proyección hecha a través del intermediario `via`? (para purgar sus listas, M2)
     pub fn proyectada_via(&self, va: u64, via: usize) -> bool {
-        self.proyectados.iter().any(|(v, _, vs)| *v == va && vs.contains(&via))
+        self.proyectados.iter().any(|(v, _, vs, _)| *v == va && vs.contains(&via))
     }
 
     /// Quita la proyección que empieza en `va` (C45): borra sus entradas y vacía la TLB de este ASID en todos los
@@ -339,12 +450,12 @@ impl Espacio {
     /// (para revocar sin tocar otra proyección que haya ocupado el sitio, o la misma hecha con la llave original; M2).
     /// Falso si no había.
     pub fn quitar_proyeccion(&mut self, va: u64, m: Option<&alloc::sync::Arc<super::memoria::Memoria>>, via: Option<usize>) -> bool {
-        let Some(i) = self.proyectados.iter().position(|(v, o, vs)| {
+        let Some(i) = self.proyectados.iter().position(|(v, o, vs, _)| {
             *v == va && m.is_none_or(|m| alloc::sync::Arc::ptr_eq(o, m)) && via.is_none_or(|x| vs.contains(&x))
         }) else {
             return false;
         };
-        let (_, objeto, _) = self.proyectados.swap_remove(i);
+        let (_, objeto, _, _) = self.proyectados.swap_remove(i);
         // Con pocas páginas, una invalidación por página; con muchas, una sola de todo el ASID: así el trabajo con
         // las IRQ enmascaradas no depende de lo grande que sea el objeto (auditoría de la fase 4, M3).
         let paginas = objeto.paginas() as u64;
@@ -369,6 +480,116 @@ impl Espacio {
         true
     }
 
+    /// Cuántas proyecciones de `m` tiene (para saber si alguien más lo tiene: globo, llamada 55).
+    pub fn proyecciones_de(&self, m: &alloc::sync::Arc<super::memoria::Memoria>) -> usize {
+        self.proyectados.iter().filter(|(_, o, _, _)| alloc::sync::Arc::ptr_eq(o, m)).count()
+    }
+
+    /// Globo (llamada 55): quita la página `k` de `m` de todas sus proyecciones en este espacio y la saca de las TLB de
+    /// todos los núcleos. Después, el proceso no la ve: tocarla es un fallo.
+    pub(super) fn quitar_pagina(&mut self, m: &alloc::sync::Arc<super::memoria::Memoria>, k: usize) {
+        for i in 0..self.proyectados.len() {
+            let (va, ref o, _, _) = self.proyectados[i];
+            if !alloc::sync::Arc::ptr_eq(o, m) {
+                continue;
+            }
+            let p = va + k as u64 * PAGINA;
+            if let Some(e) = self.hoja(p) {
+                unsafe {
+                    e.write_volatile(0);
+                    core::arch::asm!("dsb ishst", "tlbi vae1is, {}", in(reg) (self.asid << 48) | (p >> 12));
+                }
+            }
+        }
+        unsafe { core::arch::asm!("dsb ish", "isb") };
+    }
+
+    /// Globo: pone la página `fisica` como página `k` de `m` en todas sus proyecciones de este espacio, con el permiso de
+    /// cada una. Sus tablas ya existen (se crearon al proyectar el objeto entero) y la entrada estaba vacía, así que no
+    /// hay nada que vaciar de las TLB.
+    pub(super) fn poner_pagina(&mut self, m: &alloc::sync::Arc<super::memoria::Memoria>, k: usize, fisica: u64) {
+        let mut codigo = false;
+        for (va, o, _, permiso) in &self.proyectados {
+            if !alloc::sync::Arc::ptr_eq(o, m) {
+                continue;
+            }
+            if let Some(e) = self.hoja(va + k as u64 * PAGINA) {
+                escribir_hoja(e, fisica, *permiso);
+                codigo |= matches!(permiso, Permiso::Codigo);
+            }
+        }
+        if codigo {
+            unsafe { core::arch::asm!("dsb ish", "ic ialluis", "dsb ish", "isb") };
+        }
+    }
+
+    /// Llamada 58: pone (`poner`) o suelta las páginas `primera..primera + n` del objeto `m` (`n` hasta
+    /// [`MAX_PAGINAS_SUELTAS`]), en orden, y dice cuántas quedaron como se pedía desde la primera; se para en la primera
+    /// que no puede. Una que ya estaba como se pedía cuenta como hecha.
+    ///
+    /// Poner da a cada hueco una página nueva a cero, cobrada al grupo del objeto (si no cabe en su tope o no queda
+    /// memoria fuera de la reserva del kernel, se para ahí), y la pone en las proyecciones que este espacio tenga del
+    /// objeto. Soltar la quita de esas proyecciones, la saca de las TLB de todos los núcleos y la devuelve al sistema
+    /// (y sus bytes al grupo): después, tocarla es un fallo del programa.
+    ///
+    /// Solo con un objeto que no tiene nadie más que este proceso, como el globo de una máquina
+    /// (`hiper::Espacio::globo`): ni otro proceso, ni un mensaje en un canal, ni una vista, ni una máquina, ni una
+    /// llave revocable. Se comprueba contando: sus `Arc` tienen que ser exactamente las proyecciones de este espacio
+    /// más `mias`, las referencias que dice tener quien llama (las llaves de la tabla del proceso y la copia con la
+    /// que llama), que tiene tomado el cerrojo de esa tabla: así nadie del proceso saca otra mientras tanto. Tampoco
+    /// con memoria DMA ni con una vista.
+    pub fn paginas_de(&mut self, m: &alloc::sync::Arc<super::memoria::Memoria>, primera: usize, n: usize, poner: bool, mias: usize) -> Result<usize, FalloPaginas> {
+        if n == 0 || n > MAX_PAGINAS_SUELTAS || primera.checked_add(n).is_none_or(|fin| fin > m.paginas()) {
+            return Err(FalloPaginas::Fuera);
+        }
+        if m.bus().is_some() || m.es_vista() || alloc::sync::Arc::strong_count(m) != self.proyecciones_de(m) + mias {
+            return Err(FalloPaginas::Compartida);
+        }
+        let mut hechas = 0;
+        if poner {
+            for k in primera..primera + n {
+                if m.fisica(k) == 0 {
+                    let Some(f) = crate::memoria::pagina_usuario() else { break };
+                    if !m.reponer_pagina(k, f) {
+                        // SAFETY: recién sacada del repartidor y sin poner en ningún sitio: nadie más la tiene.
+                        unsafe { paginas().liberar(f, 1) };
+                        break;
+                    }
+                    self.poner_pagina(m, k, f);
+                }
+                hechas += 1;
+            }
+            // SAFETY: barrera: las entradas nuevas, antes de volver al proceso.
+            unsafe { core::arch::asm!("dsb ish", "isb") };
+            if hechas == 0 {
+                return Err(FalloPaginas::Memoria);
+            }
+            return Ok(hechas);
+        }
+        let mut sueltas = [0u64; MAX_PAGINAS_SUELTAS];
+        let mut n_sueltas = 0;
+        for k in primera..primera + n {
+            if m.fisica(k) != 0 {
+                // Primero fuera de las proyecciones y de las TLB; después deja de ser del objeto.
+                self.quitar_pagina(m, k);
+                if let Some(f) = m.soltar_pagina(k) {
+                    sueltas[n_sueltas] = f;
+                    n_sueltas += 1;
+                }
+            }
+            hechas += 1;
+        }
+        let mut p = paginas();
+        for &f in &sueltas[..n_sueltas] {
+            // SAFETY: eran del objeto, que solo tiene este proceso (se contó arriba, con su tabla de llaves tomada por
+            // quien llama): `quitar_pagina` las sacó de sus proyecciones y de las TLB de todos los núcleos, y
+            // `soltar_pagina` del objeto, así que el kernel tampoco llega a ellas por él (`Memoria::tramos` no toca un
+            // tramo con huecos). Ya no las ve nadie.
+            unsafe { p.liberar(f, 1) };
+        }
+        Ok(hechas)
+    }
+
     /// Proyecta memoria del firmware (C50): la de la VideoCore, por debajo de 4 GB y fuera de la RAM que reparte el
     /// kernel; la pantalla del firmware está ahí. Como memoria normal sin caché (lo ve también la VideoCore), nunca
     /// ejecutable. Comprueba otra vez que no toca la RAM, aunque solo el kernel crea estos objetos.
@@ -377,7 +598,9 @@ impl Espacio {
         let p = paginas();
         let permitido = p.fuera_de_la_ram(fisica, tamano) || p.dentro_de_una_reserva(fisica, tamano);
         drop(p);
-        if fin > 1 << 32 || fisica % PAGINA != 0 || tamano % PAGINA != 0 || !permitido {
+        // Por encima de 4 GB, solo una zona reservada del árbol (la pantalla de UEFI en RAM, con highmem en `virt`).
+        let reserva = paginas().dentro_de_una_reserva(fisica, tamano);
+        if (fin > 1 << 32 && !reserva) || fisica % PAGINA != 0 || tamano % PAGINA != 0 || !permitido {
             return Err(Error::Direccion);
         }
         self.preparar(va, tamano.div_ceil(PAGINA))?;
@@ -393,7 +616,11 @@ impl Espacio {
     /// ventana de periféricos: nunca memoria normal, aunque alguien le pase una.
     pub fn proyectar_dispositivo(&mut self, va: u64, fisica: u64, tamano: u64) -> Result<(), Error> {
         let fin = fisica.checked_add(tamano).ok_or(Error::Direccion)?;
-        if !super::placa::es_periferico(fisica) || fin > super::placa::PERIFERICOS.1 || fisica % PAGINA != 0 {
+        if !super::placa::es_periferico(fisica) || !super::placa::es_periferico(fin.saturating_sub(1).max(fisica)) || fin > super::placa::PERIFERICOS.1 || fisica % PAGINA != 0 {
+            return Err(Error::Direccion);
+        }
+        // Lo que usa el kernel (el GIC, el ITS...), nunca (S4).
+        if super::placa::del_kernel(fisica, fin) {
             return Err(Error::Direccion);
         }
         self.preparar(va, tamano.div_ceil(PAGINA))?;
@@ -406,19 +633,19 @@ impl Espacio {
     }
 
     /// Reserva una página nueva para el proceso y la proyecta en `va`. Va a cero, con `contenido` copiado a partir de
-    /// `desplazamiento` (lo que no quepa en la página se descarta). Si es código, se lleva a la caché de
-    /// instrucciones de todos los núcleos.
+    /// `desplazamiento` (lo que no quepa en la página se descarta). Si es código, se limpia de la caché de datos; antes
+    /// de ejecutarlo hay que llamar a `codigo_listo`.
     pub fn pagina_nueva(&mut self, va: u64, permiso: Permiso, contenido: &[u8], desplazamiento: usize) -> Result<(), Error> {
         self.propias.try_reserve(1).map_err(|_| Error::SinMemoria)?;
         self.cobrar()?;
-        let Some(p) = paginas().pagina_usuario() else {
+        let Some(p) = crate::memoria::pagina_usuario() else {
             self.descobrar();
             return Err(Error::SinMemoria);
         };
         let k = mmu::virt(p as usize);
         // La página es nuestra (recién sacada del repartidor) y la mitad alta la ve entera por el mapa lineal.
+        // Ya viene a cero (`pagina_usuario`).
         let pagina = unsafe { core::slice::from_raw_parts_mut(k as *mut u8, PAGINA as usize) };
-        pagina.fill(0);
         let desde = desplazamiento.min(pagina.len());
         let n = contenido.len().min(pagina.len() - desde);
         pagina[desde..desde + n].copy_from_slice(&contenido[..n]);
@@ -428,7 +655,8 @@ impl Espacio {
                 unsafe { core::arch::asm!("dc cvau, {}", in(reg) a) };
                 a += 64;
             }
-            unsafe { core::arch::asm!("dsb ish", "ic ialluis", "dsb ish", "isb") };
+            unsafe { core::arch::asm!("dsb ish") };
+            self.codigo_pendiente = true;
         }
         if let Err(e) = self.proyectar(va, p, permiso) {
             unsafe { paginas().liberar(p, 1) };
@@ -437,6 +665,23 @@ impl Espacio {
         }
         self.propias.push(p);
         Ok(())
+    }
+}
+
+/// Escribe en la entrada de nivel 3 `e` la página física `fisica` con los atributos de `permiso`.
+fn escribir_hoja(e: *mut u64, fisica: u64, permiso: Permiso) {
+    let atributos = VALIDO | AF | NG | AP_EL0 | PXN
+        | match permiso {
+            Permiso::Codigo => SH_INTERNO | ATTR_NORMAL | AP_SOLO_LECTURA,
+            Permiso::Datos => SH_INTERNO | ATTR_NORMAL | UXN,
+            Permiso::SoloLectura => SH_INTERNO | ATTR_NORMAL | UXN | AP_SOLO_LECTURA,
+            Permiso::Dispositivo => ATTR_DISPOSITIVO | UXN,
+            Permiso::DatosSinCache => SH_INTERNO | ATTR_SIN_CACHE | UXN,
+            Permiso::SoloLecturaSinCache => SH_INTERNO | ATTR_SIN_CACHE | UXN | AP_SOLO_LECTURA,
+        };
+    unsafe {
+        e.write_volatile((fisica & DIRECCION) | atributos);
+        core::arch::asm!("dsb ishst", "isb");
     }
 }
 

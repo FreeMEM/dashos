@@ -16,7 +16,9 @@ Lee `PLAN.md` antes de empezar. Ahí están las decisiones tomadas, las piezas y
    Con los chips del Amiga (S18, usuario, 2026-11-08): el núcleo de vAmiga (`Core`, MPL-2.0) se puede leer y
    reutilizar con su aviso, tras revisar las cabeceras. UAE, WinUAE y Amiberry (GPL) no se leen; solo un analista,
    y solo para un comportamiento concreto que no salga del manual, de vAmiga ni de las pruebas, en prosa.
-2. **Nada de código de la ROM en el repositorio.** Ni desensamblados, ni traducciones, ni volcados.
+2. **Nada de código de la ROM en el repositorio.** Ni desensamblados, ni traducciones, ni volcados. Vale también
+   para la ROM libre de AROS (S18, S36): su binario se baja al construir la imagen, con su huella comprobada, y
+   nunca entra en git; su código no se lee (regla de sala limpia).
 3. **Los cambios en ficheros de Emu68 siguen siendo MPL-2.0.** Lo propio de DashOS va en ficheros aparte.
 4. **Los cambios en Dash los hacen las sesiones de Dash** (`~/Projects/FreeMEMLang`). Aquí solo se usa.
 5. **Cada función de la API llega con su prueba del oráculo.** El mismo binario 68k se ejecuta en FS-UAE con el
@@ -31,6 +33,8 @@ Lee `PLAN.md` antes de empezar. Ahí están las decisiones tomadas, las piezas y
    un directorio propio con su licencia, y solo hablan con DashOS por canales. Ahí sí se lee y se copia Linux; de ahí
    no sale nada hacia el kernel ni hacia los ficheros MPL. Quien reparta DashOS con ellos ofrece su código fuente. El
    firmware que cargan lleva su propia licencia: se comprueba que se puede repartir antes de meterlo.
+   Lo mismo para los emuladores de chips con licencia GPL (reSID para el SID, S19b; usuario, 2026-11-10): cada uno en
+   su proceso, en la zona GPL, y solo por canales con el servicio de sonido.
 
 ## Oráculo
 
@@ -57,6 +61,8 @@ las pruebas no valen como oráculo.
 - `docs/spec/`: especificaciones de la sala limpia, una por función o por grupo.
 - `jit-host/`: el JIT de Emu68 solo, como programa Linux big-endian. `make -C jit-host run` lo prueba con
   `qemu-aarch64_be`.
+- `caja/`: la caja Amiga (H4): el JIT de Emu68 en un programa de usuario big-endian de DashOS, en C. La compila
+  `make -C kernel` si está `third_party/Emu68`; `inicio` la lanza en `make -C kernel arranque-virt`.
 - `toolchains/`: ficheros de CMake y envoltorios para las toolchains de Bootlin. `toolchains/LEEME.md` explica cómo
   compilar Emu68.
 - `patches/emu68/`: parches sobre Emu68 (MPL). `third_party/Emu68` es un clon que no va en git.

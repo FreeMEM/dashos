@@ -1,0 +1,10 @@
+# Tras todo lo de arranque_virt.txt, el guion pulsa Reiniciar en el menú de apagado del panel (REINICIO en
+# tools/prueba_uefi.sh; decisión del usuario del 2026-11-13). Con Carla detrás de Ana, `sesiones` pregunta antes a
+# `guardian`, y el guion contesta que sí. Después, la máquina tiene que volver a arrancar (lo mira prueba_uefi.sh).
+[panel] menú de apagado abierto
+~[sesiones] panel pide reiniciar con 1 sesiones más abiertas: se pregunta
+~[panel] reiniciar: 0
+[guardian] confirmación en pantalla: ¿reiniciar?
+[guardian] reiniciar con otras sesiones abiertas: el usuario dice sí
+[sesiones] panel pide reiniciar: se reinicia la máquina
+kernel: se reinicia la máquina (llamada 51)

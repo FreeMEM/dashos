@@ -48,6 +48,9 @@ pub fn evdev(uso: u8) -> u32 {
         0x52 => 103,                             // Arriba
         0x64 => 86,                              // < > de los teclados europeos (102ND)
         0x65 => 127,                             // Menú (Compose)
+        0x7F => 113,                             // Silencio (S27: van al panel rápido)
+        0x80 => 115,                             // Subir el volumen
+        0x81 => 114,                             // Bajar el volumen
         0xE0 => 29,                              // Control izquierdo
         0xE1 => 42,                              // Mayúsculas izquierda
         0xE2 => 56,                              // Alt izquierdo
@@ -110,7 +113,7 @@ mod pruebas {
             (0x4F, "KEY_RIGHT"), (0x50, "KEY_LEFT"), (0x51, "KEY_DOWN"), (0x52, "KEY_UP"), (0x64, "KEY_102ND"),
             (0x65, "KEY_COMPOSE"), (0xE0, "KEY_LEFTCTRL"), (0xE1, "KEY_LEFTSHIFT"), (0xE2, "KEY_LEFTALT"),
             (0xE3, "KEY_LEFTMETA"), (0xE4, "KEY_RIGHTCTRL"), (0xE5, "KEY_RIGHTSHIFT"), (0xE6, "KEY_RIGHTALT"),
-            (0xE7, "KEY_RIGHTMETA"),
+            (0xE7, "KEY_RIGHTMETA"), (0x7F, "KEY_MUTE"), (0x80, "KEY_VOLUMEUP"), (0x81, "KEY_VOLUMEDOWN"),
         ] {
             nombres.push((uso, n.into()));
         }
@@ -120,6 +123,6 @@ mod pruebas {
         for (b, n) in BOTONES.iter().zip(["BTN_LEFT", "BTN_RIGHT", "BTN_MIDDLE"]) {
             assert_eq!(Some(*b), de_linux(&cabecera, n));
         }
-        assert_eq!(nombres.len(), 26 + 10 + 12 + 40);
+        assert_eq!(nombres.len(), 26 + 10 + 12 + 43);
     }
 }

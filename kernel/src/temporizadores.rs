@@ -157,14 +157,18 @@ impl Colas {
         }
         let tarde = vence.saturating_add(t.holgura);
         c.monton.push(Entrada { vence, tarde, t: Arc::downgrade(t) });
-        PROXIMO.fetch_min(tarde, Ordering::SeqCst);
+        PROXIMO.store(self.proximo(), Ordering::SeqCst);
         true
     }
 
+    /// Cuándo poner el reloj (K10). El límite es lo más tarde que se puede avisar al más urgente (su `tarde`). Dentro de
+    /// ese límite se espera solo lo necesario para juntar a los que vencen antes de él: el reloj va al último `vence`
+    /// que no pasa del límite. Un temporizador solo avisa en su `vence`, sin llegar tarde; si otro vence poco después,
+    /// dentro de su holgura, avisan juntos.
     fn proximo(&self) -> u64 {
-        // El reloj se programa para lo más tarde del más próximo de cada cola; al llegar, se avisa a todos los que ya
-        // han vencido (con su holgura, se juntan).
-        self.grupos.iter().flat_map(|g| g.subs.iter()).filter_map(|c| c.monton.peek()).map(|e| e.tarde).min().unwrap_or(u64::MAX)
+        let cabezas = || self.grupos.iter().flat_map(|g| g.subs.iter()).filter_map(|c| c.monton.peek());
+        let Some(limite) = cabezas().map(|e| e.tarde).min() else { return u64::MAX };
+        cabezas().map(|e| e.vence).filter(|&v| v <= limite).max().unwrap_or(limite)
     }
 }
 
@@ -195,9 +199,9 @@ impl Temporizador {
             None => false,
         };
         drop(colas);
-        // Vence antes que lo que tenía programado el núcleo 0: que replanifique y ponga su reloj (M2).
-        if bien && vence.saturating_add(holgura) < antes {
-            crate::gic::avisar(0, crate::gic::SGI_PLANIFICAR);
+        // Hay que avisar antes de lo que tenía programado el núcleo 0: que replanifique y ponga su reloj (M2).
+        if bien && PROXIMO.load(Ordering::SeqCst) < antes {
+            crate::planificador::avisar_nucleo(0);
         }
         if bien {
             Some(t)
@@ -354,8 +358,12 @@ pub fn repartir() {
     // Fuera del cerrojo: escribir en un canal despierta hilos.
     for (t, aviso) in &lote {
         let Some((canal, lado, n)) = aviso else { continue };
-        let m = Mensaje { datos: n.to_le_bytes().to_vec(), llaves: Vec::new(), marca: t.marca };
-        if canal.escribir(*lado, m).is_err() {
+        // Sin montón, como si no cupiera (S1).
+        let enviado = match crate::objetos::bytes_aviso(&n.to_le_bytes()) {
+            Some(datos) => canal.escribir(*lado, Mensaje { datos, llaves: Vec::new(), marca: t.marca }).is_ok(),
+            None => false,
+        };
+        if !enviado {
             // No cupo. Un periódico lo cuenta para el siguiente aviso, que ya está programado. Uno de una vez se
             // reintenta en el tic siguiente, para que no se pierda (M1), sin contar dos veces el mismo vencimiento
             // (B12).

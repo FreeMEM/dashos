@@ -5,13 +5,17 @@
 //! `interrupcion_terminar`, que la vuelve a habilitar. Así una interrupción por nivel no se repite sin parar
 //! mientras el proceso aún no la ha atendido.
 //!
-//! El mensaje no se manda desde la interrupción: ahí no se puede reservar memoria (el montón usa un cerrojo que no
-//! enmascara interrupciones). La interrupción solo apunta que está pendiente y despierta al repartidor, un hilo
+//! El mensaje no se manda desde la interrupción: ahí no se reserva memoria (el cerrojo del montón enmascara las
+//! interrupciones, pero una reserva desde una interrupción podría encontrarlo tomado en el mismo núcleo). La interrupción solo apunta que está pendiente y despierta al repartidor, un hilo
 //! del kernel en el núcleo 0 que manda los mensajes. Todas las interrupciones de aparatos van al núcleo 0: así
 //! la comprobación del repartidor y su bloqueo, con las interrupciones enmascaradas, no pierden ningún aviso.
 //!
 //! Las LPI (U6h, las MSI que pasan por el ITS del GICv3) se enmascaran aquí, sin tocar el GIC: enmascararlas allí
 //! pide órdenes al ITS. Son mensajes, sin nivel: una que llega enmascarada se apunta y se avisa al terminar.
+//!
+//! En x86-64 (X4) el controlador es el IOAPIC (`arq`, abajo): el número de una interrupción es su GSI más 32, y llega
+//! al núcleo 0 por el vector de aparatos que le toca (`apic.rs`). Las MSI (X5) se tratan como las LPI: los mismos
+//! números desde la 8192, enmascaradas aquí, cada una con su vector (desde `apic::PRIMER_VECTOR_MSI`) del núcleo 0.
 
 use crate::cerrojo::Cerrojo;
 use crate::objetos::{Canal, Mensaje, Revocable};
@@ -21,10 +25,108 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 /// Interrupciones que se pueden dar a un proceso: las de aparatos (SPI), de la 32 a la 255, y las primeras `LPIS` LPI
-/// (desde la 8192), que en los mapas de bits van detrás, desde el bit 256.
+/// (desde la 8192), que en los mapas de bits van detrás, desde el bit 256. En x86, las GSI de los IOAPIC que caben
+/// en sus vectores (de la 32 a la 159) y, como LPI, las MSI (X5).
 pub const PRIMERA: u32 = 32;
-pub const ULTIMA: u32 = 255;
-pub const LPIS: u32 = 64;
+pub const ULTIMA: u32 = arq::ULTIMA;
+pub const LPIS: u32 = arq::LPIS;
+
+/// Lo que cambia con el controlador de interrupciones: el GIC (y su ITS) en ARM.
+#[cfg(target_arch = "aarch64")]
+mod arq {
+    pub const ULTIMA: u32 = 255;
+    pub const LPIS: u32 = 64;
+
+    /// Dirigida al núcleo 0, y habilitada.
+    pub fn dirigir_y_habilitar(intid: u32) {
+        crate::gic::dirigir(intid, 0);
+        habilitar(intid);
+    }
+
+    pub fn habilitar(intid: u32) {
+        crate::gic::habilitar(intid, 0xa0);
+    }
+
+    pub fn deshabilitar(intid: u32) {
+        crate::gic::deshabilitar(intid);
+    }
+
+    pub fn lpi_encender(intid: u32, si: bool) {
+        crate::its::encender(intid, si);
+    }
+}
+
+/// x86-64 (X4): los IOAPIC. La interrupción `intid` es la GSI `intid - 32`, y va al vector de aparatos
+/// `apic::PRIMER_VECTOR_APARATO + intid - 32` del núcleo 0. Las MSI (X5), como las LPI: la 8192 + k va al vector
+/// `apic::PRIMER_VECTOR_MSI + k` del núcleo 0.
+#[cfg(target_arch = "x86_64")]
+mod arq {
+    use crate::base::{apic, ioapic};
+    use core::sync::atomic::{AtomicU32, Ordering};
+
+    pub const ULTIMA: u32 = super::PRIMERA + (apic::PRIMER_VECTOR_MSI - 1 - apic::PRIMER_VECTOR_APARATO) as u32;
+    pub const LPIS: u32 = (apic::ULTIMO_VECTOR_APARATO - apic::PRIMER_VECTOR_MSI) as u32 + 1;
+
+    fn vector(intid: u32) -> u8 {
+        apic::PRIMER_VECTOR_APARATO + (intid - super::PRIMERA) as u8
+    }
+
+    /// El número de la interrupción que llega por el vector de aparatos `v`.
+    pub fn de_vector(v: u8) -> u32 {
+        if v >= apic::PRIMER_VECTOR_MSI {
+            super::PRIMERA_LPI + (v - apic::PRIMER_VECTOR_MSI) as u32
+        } else {
+            super::PRIMERA + (v - apic::PRIMER_VECTOR_APARATO) as u32
+        }
+    }
+
+    static MSI_SIGUIENTE: AtomicU32 = AtomicU32::new(0);
+
+    /// Una MSI nueva para un aparato (X5): (número, dirección y dato que escribe el aparato). Va al núcleo 0, por su
+    /// vector, por flanco y con entrega fija (SDM, volumen 3, 11.11: la dirección 0xFEE con el ID de APIC del destino en
+    /// los bits 19:12; el dato, el vector). `None` si se acabaron o el núcleo 0 tiene un ID de más de 8 bits (haría
+    /// falta el remapeo de interrupciones).
+    pub fn msi() -> Option<(u32, u64, u32)> {
+        let destino = crate::nucleos::apic_de(0)?;
+        if destino > 0xff {
+            return None;
+        }
+        let k = MSI_SIGUIENTE.fetch_add(1, Ordering::Relaxed);
+        if k >= LPIS {
+            return None;
+        }
+        Some((super::PRIMERA_LPI + k, 0xFEE0_0000 | (destino as u64) << 12, (apic::PRIMER_VECTOR_MSI as u32) + k))
+    }
+
+    /// Al núcleo 0, y desenmascarada. Si ningún IOAPIC lleva esa GSI, no llegará nunca.
+    pub fn dirigir_y_habilitar(intid: u32) {
+        if let Some(destino) = crate::nucleos::apic_de(0) {
+            ioapic::dirigir(ioapic::linea_de_gsi(intid - super::PRIMERA), vector(intid), destino);
+        }
+    }
+
+    pub fn habilitar(intid: u32) {
+        dirigir_y_habilitar(intid);
+    }
+
+    pub fn deshabilitar(intid: u32) {
+        ioapic::enmascarar(intid - super::PRIMERA);
+    }
+
+    pub fn lpi_encender(_intid: u32, _si: bool) {}
+}
+
+/// Desde la interrupción de un vector de aparatos sin manejador del kernel (`apic.rs`). Como `atender`.
+#[cfg(target_arch = "x86_64")]
+pub fn atender_vector(v: u8) -> bool {
+    atender(arq::de_vector(v))
+}
+
+/// x86-64 (X5): una MSI nueva para un aparato del PCIe: (número de la interrupción, dirección y dato del mensaje).
+#[cfg(target_arch = "x86_64")]
+pub fn msi() -> Option<(u32, u64, u32)> {
+    arq::msi()
+}
 const PRIMERA_LPI: u32 = 8192;
 const PALABRAS: usize = 5;
 
@@ -40,6 +142,12 @@ static LPI_RETENIDAS: AtomicU64 = AtomicU64::new(0);
 static ASOCIADAS: [AtomicU64; PALABRAS] = [const { AtomicU64::new(0) }; PALABRAS];
 /// Las que han llegado y esperan al repartidor.
 static PENDIENTES: [AtomicU64; PALABRAS] = [const { AtomicU64::new(0) }; PALABRAS];
+/// Las que no se pudieron entregar porque la cola del canal estaba llena (K11). Siguen enmascaradas hasta que su dueño
+/// llame a `interrupcion_terminar`, que solo llamará si le llega el aviso: el repartidor lo reintenta cada milisegundo
+/// (y con cada interrupción nueva) hasta que cabe.
+static REENTREGAR: [AtomicU64; PALABRAS] = [const { AtomicU64::new(0) }; PALABRAS];
+/// Cada cuánto se reintenta una entrega con la cola llena.
+const REINTENTO_US: u64 = 1_000;
 /// Donde espera el repartidor a que llegue una interrupción.
 static REPARTIDOR: crate::cerrojo::Cerrojo<ColaEspera> = crate::cerrojo::Cerrojo::new(ColaEspera::nueva());
 static DUENOS: Cerrojo<Vec<(u32, Weak<Interrupcion>)>> = Cerrojo::new(Vec::new());
@@ -81,11 +189,10 @@ impl Interrupcion {
             // Dirigida al núcleo 0 por la colección 0 (its.rs); se enciende en su tabla de configuración.
             let m = 1u64 << (self.intid - PRIMERA_LPI);
             LPI_ENMASCARADAS.fetch_and(!m, Ordering::SeqCst);
-            crate::its::encender(self.intid, true);
+            arq::lpi_encender(self.intid, true);
             return;
         }
-        crate::gic::dirigir(self.intid, 0);
-        crate::gic::habilitar(self.intid, 0xa0);
+        arq::dirigir_y_habilitar(self.intid);
     }
 
     /// El controlador ya atendió el aparato: se vuelve a habilitar.
@@ -112,7 +219,7 @@ impl Interrupcion {
             }
             return;
         }
-        crate::gic::habilitar(self.intid, 0xa0);
+        arq::habilitar(self.intid);
     }
 }
 
@@ -131,9 +238,9 @@ impl Interrupcion {
 impl Drop for Interrupcion {
     fn drop(&mut self) {
         if es_lpi(self.intid) {
-            crate::its::encender(self.intid, false);
+            arq::lpi_encender(self.intid, false);
         } else {
-            crate::gic::deshabilitar(self.intid);
+            arq::deshabilitar(self.intid);
         }
         let (w, b) = bit(self.intid);
         ASOCIADAS[w].fetch_and(!b, Ordering::SeqCst);
@@ -163,7 +270,7 @@ pub fn atender(intid: u32) -> bool {
             return true;
         }
     } else {
-        crate::gic::deshabilitar(intid);
+        arq::deshabilitar(intid);
     }
     PENDIENTES[w].fetch_or(b, Ordering::SeqCst);
     REPARTIDOR.tomar().despertar_todos();
@@ -190,13 +297,21 @@ extern "C" fn repartidor(_: usize) {
         let estado = crate::cerrojo::enmascarar_irq();
         let mut llegadas = [0u64; PALABRAS];
         for (i, p) in PENDIENTES.iter().enumerate() {
-            llegadas[i] = p.swap(0, Ordering::SeqCst);
+            llegadas[i] = p.swap(0, Ordering::SeqCst) | REENTREGAR[i].swap(0, Ordering::SeqCst);
         }
         let vencidos = crate::temporizadores::tomar_pendiente();
-        if llegadas.iter().all(|&x| x == 0) && !vencidos {
+        let presion = crate::presion::hay_pendiente();
+        if llegadas.iter().all(|&x| x == 0) && !vencidos && !presion {
             // Se apunta con el cerrojo y lo suelta ya bloqueado: una interrupción en otro núcleo no se pierde. Los
             // muertos de otros núcleos se miran con el cerrojo tomado: quien los apunta avisa tomándolo (U3d).
             let mut cola = REPARTIDOR.tomar();
+            // Otra vez con el cerrojo (K12): `terminar()` en otro núcleo puede marcar una y despertar entre la mirada
+            // de arriba y aquí; sin esto, esperaría al siguiente despertar.
+            if PENDIENTES.iter().any(|p| p.load(Ordering::SeqCst) != 0) || crate::presion::hay_pendiente() {
+                drop(cola);
+                crate::cerrojo::restaurar_irq(estado);
+                continue;
+            }
             if crate::planificador::hay_muertos_global() {
                 drop(cola);
                 crate::cerrojo::restaurar_irq(estado);
@@ -212,21 +327,40 @@ extern "C" fn repartidor(_: usize) {
         if vencidos {
             crate::temporizadores::repartir();
         }
+        if presion {
+            crate::presion::repartir();
+        }
         for (w, &palabra) in llegadas.iter().enumerate() {
             let mut p = palabra;
             while p != 0 {
-                let i = w as u32 * 64 + p.trailing_zeros();
+                let b = p.trailing_zeros();
+                let i = w as u32 * 64 + b;
                 p &= p - 1;
                 let intid = if i > ULTIMA { PRIMERA_LPI + i - ULTIMA - 1 } else { i };
-                entregar(intid);
+                if !entregar(intid) {
+                    REENTREGAR[w].fetch_or(1 << b, Ordering::SeqCst);
+                }
             }
+        }
+        // Alguna no cupo: se espera a una interrupción nueva o, como mucho, `REINTENTO_US`, y se vuelve a probar. Sin
+        // esto, girar aquí dejaría sin CPU al lector que tiene que vaciar la cola.
+        if REENTREGAR.iter().any(|r| r.load(Ordering::SeqCst) != 0) {
+            let estado = crate::cerrojo::enmascarar_irq();
+            let mut cola = REPARTIDOR.tomar();
+            if PENDIENTES.iter().all(|p| p.load(Ordering::SeqCst) == 0) {
+                cola.apuntarme();
+                planificador::bloquear_soltando_hasta(cola, REINTENTO_US);
+                REPARTIDOR.tomar().quitarme();
+            }
+            crate::cerrojo::restaurar_irq(estado);
         }
     }
 }
 
-fn entregar(intid: u32) {
+/// Entrega el aviso de `intid` a su canal. Falso solo si la cola estaba llena: hay que reintentarlo (K11).
+fn entregar(intid: u32) -> bool {
     let objeto = DUENOS.tomar().iter().find(|(i, _)| *i == intid).and_then(|(_, w)| w.upgrade());
-    let Some(o) = objeto else { return };
+    let Some(o) = objeto else { return true };
     let (revocada, marca) = {
         let v = o.via.tomar();
         (v.0.iter().any(|c| c.load(core::sync::atomic::Ordering::Acquire)), v.1)
@@ -235,12 +369,17 @@ fn entregar(intid: u32) {
         // Revocada la llave del canal: la interrupción se desasocia y queda enmascarada (A2).
         let viejo = o.destino.tomar().take();
         drop(viejo);
-        return;
+        return true;
     }
     let destino = o.destino.tomar().clone();
     if let Some((canal, lado)) = destino {
         // Los mensajes que escribe el kernel van en little-endian, el orden nativo de DashOS (C30).
-        let m = Mensaje { datos: intid.to_le_bytes().to_vec(), llaves: Vec::new(), marca };
-        let _ = canal.escribir(lado, m);
+        // Sin montón, se reintenta como con la cola llena (S1).
+        let Some(datos) = crate::objetos::bytes_aviso(&intid.to_le_bytes()) else { return false };
+        let m = Mensaje { datos, llaves: Vec::new(), marca };
+        if let Err((crate::objetos::Error::Llena | crate::objetos::Error::SinMemoria, _)) = canal.escribir(lado, m) {
+            return false;
+        }
     }
+    true
 }

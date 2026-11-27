@@ -1,0 +1,67 @@
+# Las ventanas de Linux en el escritorio de DashOS (`make arranque-virt-wayland`, H9): Arch Linux ARM en la caja, como
+# en `arranque_virt_arch.txt`, con vsock para el puente de Wayland. El puente de Arch (un servicio de systemd) conecta
+# por vsock; `puente --hostil` manda tramas rotas, memorias que no existen y tamaños absurdos (DashOS corta esas
+# conexiones y sigue); `ventana_wayland` (libwayland y wl_shm) abre su ventana con la barra de DashOS (xdg-decoration),
+# recibe un clic y una tecla, se mueve por su barra y se cierra con su botón; foot copia una línea que se pega en la
+# terminal de la caja (la de siempre y la primaria) y pega lo que se copia en ella. Hostiles de Linux: decoraciones y
+# tipos rotos (el compositor los corta), una fuente que escribe sin fin (se le corta) y otra que nunca cierra (se deja de
+# esperar). Después, otra ventana de Linux sale como siempre. Desde caja-linux-grandes (QEMU con 8 GB, 1 GB para el
+# invitado y su zram): GTK4 (gtk4-widget-factory) sale con su menú emergente; un programa del invitado que se come toda su
+# memoria muere (OOM) y la ventana de GTK sigue; Firefox abre una página del disco.
+# firefox-entrada: un clic en la barra de direcciones de Firefox y otra dirección tecleada: su título cambia.
+# Sin copia: el puente da los pools de wl_shm por sus páginas físicas y el compositor los lee en la RAM del invitado
+# (vistas, llamada 50); `ventana_wayland` se mide sin copia y con copia, de 320 x 240 y de 1280 x 720.
+Hipervisor: EL2 instalado en 4 núcleos
+~[caja-linux] arch: la partición de la caja Linux, 6135 MB, como disco del invitado
+~[caja-linux] wayland: vsock en el puerto 5000 para el puente de Wayland de Linux (CID 3)
+~[caja-linux] linux: Welcome to Arch Linux ARM!
+~[caja-linux] linux: caja login: root (automatic login)
+~[caja-linux] terminal: ventana en pantalla (80x25 letras
+~, con portapapeles
+~[caja-linux] wayland: el puente de Linux conecta por vsock
+~[caja-linux] linux: active
+~[caja-linux] wayland: el puente de Linux manda algo que no son tramas
+~[caja-linux] linux: puente hostil: vistas:
+~[caja-linux] linux: puente hostil: hecho
+~ventana_wayland: decoración del compositor
+~[compositor] ventana de caja-linux (un programa de su puente de Wayland) en
+~ventana_wayland: primer cuadro en pantalla
+~ventana_wayland: tengo el teclado
+~ventana_wayland: clic del botón 272
+~ventana_wayland: tecla 30 pulsada
+~ventana_wayland: en marcha:
+~[compositor] arrastre:
+~ventana_wayland: el compositor pide cerrar
+~adiós
+~ventana_wayland: medida de 320 x 240
+~ventana_wayland: medida de 1280 x 720
+~puente: DashOS lee los búferes sin copia
+~puente: cliente 1: primer cuadro sin copia
+~foot: lista
+~[caja-linux] linux: Hola desde foot, en Arch Linux ARM, en DashOS
+~[caja-linux] linux: primaria: Hola desde foot, en Arch Linux ARM, en DashOS
+~[caja-linux] terminal: seleccionado "pegame-en-foot"
+~[caja-linux] terminal: copiado "pegame-en-foot"
+~foot: leido pegame-en-foot
+~cliente hostil: modo de decoración que no existe: el compositor lo cortó
+~cliente hostil: dos decoraciones para una ventana: el compositor lo cortó
+~cliente hostil: tipo del portapapeles que no es UTF-8: el compositor lo cortó
+~[compositor] error de protocolo de caja-linux: modo que no existe
+~[caja-linux] terminal: pegado (4096 bytes)
+~[caja-linux] terminal: pegado (0 bytes)
+~[caja-linux] linux: la máquina tiene 8192 MB de RAM: hasta 1024 MB para el invitado
+~gtk: empieza
+~título: Linux · GTK Widget Factory
+~[compositor] emergente de caja-linux
+~hostil memoria: empieza con
+~hostil memoria: tail acabó con 137
+~gtk: sigue viva tras el hostil
+~gtk: hecho
+~título: Linux · Firefox en DashOS
+~título: Linux · Index of file:///usr/local/share/dashos/
+~firefox: hecho
+~memoria: RAM
+~[caja-linux] linux: se para la máquina a los
+~Linux apagó la máquina por PSCI
+~[caja-linux] wayland: 
+~sin copia, vistas de la RAM del invitado

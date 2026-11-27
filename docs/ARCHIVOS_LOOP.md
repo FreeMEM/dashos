@@ -6,14 +6,14 @@ también a Redox (arreglos, pruebas, reparación) se les manda, siempre con perm
 
 ## Dónde está
 
-- `archivos/redoxfs/`: RedoxFS como subárbol de git (base: 5ba45a6, 0.9.1, MIT). Para traer sus cambios:
-  `git subtree pull --prefix=archivos/redoxfs https://gitlab.redox-os.org/redox-os/redoxfs.git master --squash`.
+- `archivos/dashfs/`: RedoxFS como subárbol de git (base: 5ba45a6, 0.9.1, MIT). Para traer sus cambios:
+  `git subtree pull --prefix=archivos/dashfs https://gitlab.redox-os.org/redox-os/dashfs.git master --squash`.
   Cada cambio nuestro va en su propio commit. El commit dice si es "para enviar a Redox" o "solo DashOS".
 - `usuario/src/bin/archivos.rs`: el servicio de archivos. Va con la opción `archivos` de `usuario` (RedoxFS y el
   montón), que la caja big-endian no compila.
 - `usuario/src/monton.rs`: el montón de un programa (`dashos::monton!()`), sobre trozos de 4 MB del kernel.
 - `tools/disco_archivos.py`: el disco de prueba del NVMe. El primer MB es de la prueba de U6f y el resto es un RedoxFS
-  hecho con `redoxfs-ar`.
+  hecho con `dashfs-ar`.
 - Prueba: `make -C kernel arranque-virt` (bajo el cerrojo del emulador).
 
 ## Lo que se vio de RedoxFS (2026-11-07)
@@ -34,13 +34,13 @@ también a Redox (arreglos, pruebas, reparación) se les manda, siempre con perm
 |---|---|---|
 | FS0 | RedoxFS en el repo; compila sin std (arreglo para Redox) | hecha |
 | FS1 | Servicio que lee un RedoxFS por el canal "disco", en QEMU virt | hecha |
-| FS2 | Pruebas en Linux de cortar la luz: cortar las escrituras en cada punto y comprobar que el disco abre con lo viejo o lo nuevo | hecha (`archivos/redoxfs/tests/power_cut.rs`) |
+| FS2 | Pruebas en Linux de cortar la luz: cortar las escrituras en cada punto y comprobar que el disco abre con lo viejo o lo nuevo | hecha (`archivos/dashfs/tests/power_cut.rs`) |
 | FS3 | API de ficheros por canal para los clientes (abrir, leer, listar, datos de un fichero), en `docs/referencia/servicios.md` | hecha |
 | FS4 | Escribir desde DashOS (crear, escribir, borrar, renombrar), con las pruebas de FS2 pasando | hecha |
 | FS5 | Formato propio: marca "DashFS", versión propia y conversión desde la anterior | hecha (DashFS 1) |
 | FS6 | Nombres sin distinguir mayúsculas (guardando cómo se escribieron) | hecha (DashFS 2, marca por carpeta) |
 | FS7 | Atributos del Amiga: comentario y bits de protección | hecha (DashFS 3) |
-| FS8 | Herramienta de reparación (comprobar y arreglar) | hecha (`redoxfs-fsck`, orden 16 del servicio) |
+| FS8 | Herramienta de reparación (comprobar y arreglar) | hecha (`dashfs-fsck`, orden 16 del servicio) |
 | FS9 | Instantáneas | hecha (DashFS 4, la época en la dirección de cada bloque) |
 | FS10 | Carpeta cifrada por usuario con Adiantum | decidida: A2 como ZFS |
 | FS11 | Cuidar la SD: escrituras juntas, TRIM, alineación a 4 MB | |
@@ -95,8 +95,8 @@ Pasos:
 | Paso | Qué | Estado |
 |------|-----|--------|
 | FS10a | Adiantum (XChaCha12, AES-256, NH, Poly1305) desde la especificación, con los vectores de Google | hecho |
-| FS10b | Varios volúmenes en un disco: cada uno con su árbol, su lista por soltar, sus instantáneas y sus listas de muertos; el espacio libre es común. El volumen de hoy es el primero | hecho (DashFS 5, `redoxfs-volume`) |
-| FS10c | Cifrar un volumen como ZFS: llave propia envuelta por la contraseña, contenido y nombres con Adiantum (el tweak es la dirección del bloque), firma de cada bloque en el hash de su puntero | hecho (`seal.rs`, `redoxfs-volume create-encrypted`) |
+| FS10b | Varios volúmenes en un disco: cada uno con su árbol, su lista por soltar, sus instantáneas y sus listas de muertos; el espacio libre es común. El volumen de hoy es el primero | hecho (DashFS 5, `dashfs-volume`) |
+| FS10c | Cifrar un volumen como ZFS: llave propia envuelta por la contraseña, contenido y nombres con Adiantum (el tweak es la dirección del bloque), firma de cada bloque en el hash de su puntero | hecho (`seal.rs`, `dashfs-volume create-encrypted`) |
 | FS10d | Comprobar y reparar sin llaves: la estructura sí, el contenido cifrado no | hecho (cada volumen en su turno; dos copias de la lista y de las llaves) |
 | FS10e | DashOS: abrir el volumen del usuario al entrar, y la llave de recuperación | órdenes 21 a 26 del servicio; crear cifrados desde DashOS espera azar de calidad |
 
@@ -135,14 +135,14 @@ espacio cuesta) y B (cifrar fichero a fichero, como fscrypt: más complicado par
   datos que se habían quitado.
 - FS8: `DirList` con la disposición fijada (`repr(C, packed)`, cuentas al final en little-endian), la misma que ya
   dejaba el compilador (694bc7c).
-- FS8: el comprobador y la reparación (`check.rs`, `repair.rs`, `redoxfs-fsck`), sin lo que es solo de DashFS
+- FS8: el comprobador y la reparación (`check.rs`, `repair.rs`, `dashfs-fsck`), sin lo que es solo de DashFS
   (mayúsculas, atributos), y que abrir un disco con la lista de libres rota dé error en vez de abortar.
 
 ## Bitácora
 
 ### 2026-11-07
 
-- FS0: subárbol en `archivos/redoxfs`; compila para `aarch64-unknown-none-softfloat` sin std tras añadir tres `use`.
+- FS0: subárbol en `archivos/dashfs`; compila para `aarch64-unknown-none-softfloat` sin std tras añadir tres `use`.
   `cargo test` de RedoxFS en Linux: 47 pasan.
 - FS1: montón de usuario, servicio `archivos` (solo lectura: el disco devuelve `EROFS` al escribir), disco de 8 MB.
   En QEMU virt abre el RedoxFS, lista la raíz, lee `LEEME.txt`, comprueba los 313.890 bytes de `C/grande.txt` y
@@ -160,12 +160,12 @@ espacio cuesta) y B (cifrar fichero a fichero, como fscrypt: más complicado par
   `ficheros` lo prueba todo en QEMU virt.
 - FS5: el formato se llama DashFS (firma `DashFS\0\0`, versión 1). La versión 1 tiene la misma disposición que RedoxFS
   8: un disco RedoxFS 8 se abre tal cual y la siguiente escritura pone la cabecera nueva (`Header::update`). Prueba
-  `redoxfs_header_becomes_dashfs_on_write` (cabeceras pasadas a RedoxFS 8, abrir, escribir, volver a abrir; firmas
+  `dashfs_header_becomes_dashfs_on_write` (cabeceras pasadas a RedoxFS 8, abrir, escribir, volver a abrir; firmas
   o versiones desconocidas, rechazadas). Solo DashOS: Redox ya no abre nuestros discos. `cargo test`: 39 + 5 + 9
   bien; `make -C kernel arranque-virt` y `prueba`: BIEN; las cabeceras del disco de prueba dicen DashFS.
   Cuando cambie la disposición (FS6, FS7), DashFS 2 y una conversión de verdad.
 - FS6, decidido por el usuario: una marca por carpeta (`NodeFlags::CASEFOLD`), como el casefold de ext4, en vez de
-  todo el sistema. La raíz la lleva (`redoxfs-mkfs --exact-names` la quita) y cada carpeta nueva hereda la de su
+  todo el sistema. La raíz la lleva (`dashfs-mkfs --exact-names` la quita) y cada carpeta nueva hereda la de su
   madre; `Transaction::set_casefold` la cambia solo en una carpeta vacía (como ext4: con nombres dentro, dos podrían
   volverse uno). El nombre se guarda como se escribió y se busca por su clave: NFD(casefold(NFD(c))) por carácter y
   orden canónico de las marcas. Así "Árbol", "ÁRBOL" y "A" + tilde aparte son el mismo nombre, y "Straße" y
@@ -215,7 +215,7 @@ espacio cuesta) y B (cifrar fichero a fichero, como fscrypt: más complicado par
   soltaba (arreglado en su propio commit, para enviar a Redox; la prueba falla sin él: 96 bloques perdidos).
   También: `FileSystem::open_to_check` abre un disco con la lista de libres rota; abrirlo normal da error en vez de
   abortar.
-  Órdenes: `redoxfs-fsck [--data] [--repair] DISCO` en Linux; `ver DISCO DESDE --comprobar`, que ahora usa
+  Órdenes: `dashfs-fsck [--data] [--repair] DISCO` en Linux; `ver DISCO DESDE --comprobar`, que ahora usa
   `tools/disco_archivos.py` tras la prueba en QEMU; la orden 16 "comprobar" del servicio, que `ficheros` pide al
   final (el disco que escribió DashOS, sin un problema).
   Pruebas (`src/tests_check.rs`): discos sanos sin avisos, con cada clase de daño hecha a mano (bloques ilegibles
@@ -237,7 +237,7 @@ espacio cuesta) y B (cifrar fichero a fichero, como fscrypt: más complicado par
   libera, de la lista de muertos de la siguiente, lo escrito después de la anterior. Volver a la más nueva libera lo
   escrito después de ella, bajando por el árbol solo donde hay bloques nuevos. La lista por soltar, la de libres, la
   de muertos y la de instantáneas no son del árbol: se liberan siempre. Los discos de antes tienen época 0 y se abren
-  tal cual. `FileSystem::snapshot_tx` lee una instantánea; `redoxfs-snapshot DISCO [list | take | delete | rollback]`
+  tal cual. `FileSystem::snapshot_tx` lee una instantánea; `dashfs-snapshot DISCO [list | take | delete | rollback]`
   en Linux; órdenes 17 a 20 del servicio. El comprobador recorre también los árboles de las instantáneas (sus
   bloques se comparten, no están "usados dos veces") y mira que cada bloque de una lista de muertos lo vea alguna.
   Encontró otro fallo de RedoxFS: tras acortar un fichero, escribir más allá del final dejaba ver en el hueco los
@@ -269,7 +269,7 @@ espacio cuesta) y B (cifrar fichero a fichero, como fscrypt: más complicado par
   (volúmenes que se crean y se borran, instantáneas en cada uno, dos volúmenes en una transacción, reabrir); al
   final, borrado todo, vuelve todo el espacio. Cortes de luz: 4 pasos más con volúmenes. Si el comprobador no
   recorre los otros volúmenes, las pruebas fallan (bloques perdidos).
-  Pendiente: el máximo por volumen se guarda pero no se aplica; reparar dentro de otros volúmenes (FS10d); el
+  El máximo por volumen se aplica desde S32 (2026-11-15, `docs/bitacoras/dashfs-tamano.md`). Pendiente: reparar dentro de otros volúmenes (FS10d); el
   montaje FUSE y el servicio de DashOS solo ven el principal (FS10e).
   QEMU: `arranque-virt` bien (con el disco leído en Linux). `prueba` (raspi4b) falló una vez en
   `[grupos] cupo agotado` (C43), con el emulador cargado por otras sesiones, y salió bien al repetirla: nada que
@@ -310,7 +310,7 @@ espacio cuesta) y B (cifrar fichero a fichero, como fscrypt: más complicado par
   y lo demás se hace desde ahí; renombrar de un volumen a otro no se deja. Órdenes 22 (lista, con las marcas cifrado
   y abierto), 23 (hacer, sin cifrar), 24 (quitar), 25 (abrir con contraseña) y 26 (cerrar); estado -13 "en uso". Las
   instantáneas (17 a 20) van al volumen de la asa, y volver suelta solo las asas de ese volumen. Prueba en QEMU
-  (`ficheros`, "FS10 volúmenes"): el disco trae "Ana" cifrado (hecho en Linux con `redoxfs-volume create-encrypted
+  (`ficheros`, "FS10 volúmenes"): el disco trae "Ana" cifrado (hecho en Linux con `dashfs-volume create-encrypted
   Ana --test-cost`, Argon2 barato para que QEMU no tarde); cerrado no se lista, con otra contraseña no se abre, con la
   suya sí; se escribe dentro; con algo abierto no se cierra; cerrado no se busca dentro; se reabre y se lee; un
   volumen sin cifrar se hace, no se quita con algo abierto, y se quita; el disco queda sin problemas. En Linux,

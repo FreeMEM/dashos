@@ -1,0 +1,10 @@
+# La caja Amiga de DashOS: Ctrl-C corta un bucle sin fin que no llama a nada. La caja manda Ctrl-C desde otro hilo
+# (una interrupción del 68k); exec entrega la excepción de la tarea (tc_ExceptCode, que pone Dash) y el bucle para con
+# "***Break" y el código 5.
+Main
+    Print "bucle sin fin: espera a Ctrl-C"
+    n = 0
+    while true
+        n = n + 1
+    end
+end

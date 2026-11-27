@@ -18,6 +18,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use amigados::{BLOQUE, Dispositivo, Entrada, Error, Tipo, Volumen};
 use dashos::println;
+use dashos::protocolo::archivos::*;
 
 dashos::programa!(principal);
 dashos::monton!();
@@ -27,40 +28,12 @@ const VA_ARCHIVOS: usize = 0x60_0000_0000;
 /// Las ventanas de los clientes, una cada MB desde aquí.
 const VA_CLIENTES: usize = 0x61_0000_0000;
 const CANAL: u32 = 2;
-const VENTANA: usize = 64 * 1024;
 const MAX_CLIENTES: usize = 8;
-const CABECERA: usize = 32;
 
-const SESION: u32 = 0;
-const BUSCAR: u32 = 1;
-const LEER: u32 = 2;
-const LISTAR: u32 = 4;
-const DATOS: u32 = 5;
-const CERRAR: u32 = 6;
-const VACIAR: u32 = 11;
-const INFO: u32 = 12;
-const COMENTARIO: u32 = 13;
-const COMPROBAR: u32 = 16;
-const INSTANTANEAS: u32 = 17;
-const VOLUMEN: u32 = 21;
-const VOLUMENES: u32 = 22;
 /// Propia de las imágenes: monta la imagen del camino `nombre` (en el volumen principal del servicio de archivos).
 const MONTAR: u32 = 27;
 
-const BIEN: i32 = 0;
-const MAL_FORMADO: i32 = -1;
-const NO_EXISTE: i32 = -2;
-const NO_ES_CAJON: i32 = -3;
-const ES_CAJON: i32 = -4;
-const ASA_MALA: i32 = -5;
-const SIN_SITIO: i32 = -6;
-const ERROR_DEL_DISCO: i32 = -7;
-const SOLO_LECTURA: i32 = -8;
-const EN_USO: i32 = -13;
 
-const FICHERO: u8 = 1;
-const CAJON: u8 = 2;
-const ENLACE: u8 = 3;
 
 /// Lo que se lee de la imagen de una vez, y cuántos trozos se guardan (16 KB × 32 = 512 KB).
 const TROZO: usize = 16 * 1024;
@@ -299,7 +272,7 @@ fn atender(vol: &mut Option<Vol>, c: &mut Cliente, orden: u32, asa: u32, a: u64,
             Err(e) => return mal(e),
         };
         return match Volumen::abrir(imagen) {
-            Ok(v) => {
+            Ok(mut v) => {
                 println!(
                     "  [imagen] {} montado: {}{}, {} bloques",
                     v.nombre(),
@@ -307,6 +280,12 @@ fn atender(vol: &mut Option<Vol>, c: &mut Cliente, orden: u32, asa: u32, a: u64,
                     if v.internacional() { " internacional" } else { "" },
                     v.bloques()
                 );
+                // S28: qué tiene su bloque de arranque, sin firmas (lo que haría al arrancar de él un Amiga real o el
+                // emulador completo; en DashOS no se ejecuta nunca).
+                match v.bloque_de_arranque() {
+                    Ok(b) => println!("  [imagen] {}: bloque de arranque: {}", v.nombre(), amigados::arranque::analizar(&b).frase()),
+                    Err(_) => println!("  [imagen] {}: bloque de arranque: no se lee", v.nombre()),
+                }
                 let r = Respuesta { estado: BIEN, a: v.bloques() as u64, b: v.ffs() as u64 | (v.internacional() as u64) << 1, ..Default::default() };
                 *vol = Some(v);
                 r
@@ -488,15 +467,11 @@ fn principal() -> u64 {
     let mut buf = [0u8; 256];
     loop {
         let mut ll = [0u32; 8];
-        let (n, k, marca) = dashos::canal_leer_marca(CANAL, &mut buf, &mut ll);
-        if n < 0 {
-            if n == -4 {
-                return 0;
-            }
-            dashos::dormir_us(10_000);
-            continue;
-        }
-        let n = n as usize;
+        let (n, k, marca) = match dashos::servicio::recibir(CANAL, &mut buf, &mut ll) {
+            dashos::servicio::Recibido::Mensaje { n, k, marca } => (n, k, marca),
+            dashos::servicio::Recibido::Cerrado => return 0,
+            dashos::servicio::Recibido::Nada => continue,
+        };
         let u32_en = |i: usize| u32::from_le_bytes(buf[i..i + 4].try_into().unwrap());
         let u64_en = |i: usize| u64::from_le_bytes(buf[i..i + 8].try_into().unwrap());
         if marca == 0 || n < CABECERA {

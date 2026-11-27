@@ -1,0 +1,28 @@
+# Rama `fondos` (`make arranque-virt-fondos`, `tools/guion_fondos.py`): con la imagen de usar, entra Ana; un guion del
+# Shell cambia de fondo con cada transición; la orden `Fondo` abre la herramienta de fondos, la vista previa sale al
+# dejar el ratón quieto en una miniatura, y se aplica la aurora; luego cada fondo animado en reposo, con lo que gasta.
+~│   [guardian] entra Ana
+~│   [fondo] vigila ENV:Escritorio (avisos de cambio)
+# Las transiciones (2 s cada una), y la paleta animada de SYS:Fondos/mar.png.
+~│   [fondo] SYS:Fondos/mar.png: paleta animada,
+~transición circulo acabada en
+~transición barrido acabada en
+~transición fundido acabada en
+~transición disolver acabada en
+# La herramienta: abierta por la orden `Fondo`, la vista previa al pasar el ratón, los animados y Aplicar.
+~│   [fondo] herramienta abierta:
+~│   [fondo] herramienta en pantalla: miniatura 0 en
+~│   [fondo] herramienta: vista previa de
+~│   [fondo] herramienta: carpeta Animados, 4 fondos
+~│   [fondo] herramienta: vista previa de animado:aurora
+~│   [fondo] herramienta: aplicado animado:aurora (ENV: 0, ENVARC: 0)
+~│   [fondo] herramienta cerrada
+# Lo que gasta cada uno en reposo (cada 10 s), y el compositor.
+~│   [fondo] DASHOS-1: aurora: 
+~│   [fondo] DASHOS-1: luciernagas: 
+~│   [fondo] DASHOS-1: nieve: 
+~│   [fondo] DASHOS-1: respira: 
+~│   [fondo] DASHOS-1: ciclos: 
+~│   [compositor] en 10 s: 
+# Al final, la pantalla bloqueada: la aurora no se ve y no pinta nada.
+~│   [fondo] DASHOS-1: aurora: 0 cuadros en 10 s

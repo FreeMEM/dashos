@@ -60,6 +60,7 @@ tiene AES. FAT32 para el arranque, FFS, SFS y PFS3 para discos Amiga, ext4 de le
 - **Usuarios, grupos y permisos como en Linux, y PID por proceso** (decidido), sobre capacidades.
 - Permisos por aplicación, como Android o macOS; el selector de ficheros da una llave para el fichero elegido.
 - Sin superusuario: administradores que confirman cada acción.
+- El diseño concreto, con fases, en `S6b-usuarios-y-permisos.md` (aprobado el 2026-11-10).
 - Paquetes firmados con Ed25519. El arranque verificado de la Pi 4 solo como opción, porque es irreversible.
 
 ## Linux (S7)
@@ -80,8 +81,8 @@ escritorio, como ChromeOS y WSL2; y la capa de llamadas de Linux solo más adela
   (decidido). La pantalla de bloqueo es del compositor.
 - **Personalización completa** (decidido): colores del fondo, fondos de vídeo, barra editable, temas como paquetes
   y módulos de terceros en Dash; Prefs con Usar, Guardar y Cancelar, como en el Amiga.
-- Escritorios virtuales como "pantallas" del Amiga; mosaico a lo niri y mango; Workbench;
-  barra con los menús al botón derecho; lanzador; Commodities; ARexx.
+- Escritorios virtuales como "pantallas" del Amiga (desde el 2026-11-16 se llaman espacios de trabajo, S36); mosaico a
+  lo niri y mango; Workbench; barra con los menús al botón derecho; lanzador; Commodities; ARexx.
 - **Aspecto de Material Design** (decidido), con colores del fondo de pantalla, y un tema "Amiga clásico".
 
 ## Programar (S11)
@@ -142,3 +143,44 @@ es el oráculo). Controladores por orden: virtio-sound, auriculares de la Pi 4, 
 permiso y el compositor enseña un aviso. Se programa detrás de los gráficos, el compositor Wayland y el kit (decidido el 2026-11-09); lo demás,
 pendiente de visto bueno (`S19-sonido.md`).
 
+## Cada trabajo a su chip (S21), sonido de estudio (S19b) y controladores de Linux (S12b)
+
+Del 2026-11-10, aceptados por el usuario.
+
+- **S21**: cada trabajo al chip que mejor lo hace, sin copias y medido. DMA para mover datos, HVS para juntar
+  ventanas, GPU para pintar y para el sonido pesado, decodificadores para el vídeo, CPU con NEON para la mezcla y los
+  chips. Tabla para la Pi 3, la 4 y la 5, con el uso de CPU al lado.
+- **S19b**: el sonido como grafo (JACK), períodos de 64 muestras, USB Audio 2 e I2S, MIDI 2.0 y `camd.library`, los
+  chips como instrumentos (Paula, SID con reSID en la zona GPL y después uno propio, OPL, AY/YM), SID de verdad por
+  USB, plugins CLAP en su proceso y una API compatible con JACK para programas portados.
+- **S12b**: los controladores de Linux con LKL (Linux como biblioteca) en la zona GPL, empezando por el Wi-Fi de la
+  Pi; antes, hilos en los procesos. Red: SACK si hace falta y `amissl.library` nativa antes.
+- Orden: revisión y Wayland con el puente; después el sonido de estudio; después hilos, LKL y Wi-Fi.
+- **2026-11-16**: LKL se retira. Los controladores de Linux van en máquinas virtuales (S35); de S12b sigue lo de red,
+  y los hilos hacen falta igual.
+- **Caja Linux de serie** (2026-11-10): Arch Linux ARM con pacman, Flatpak con Flathub para el escritorio, Docker y
+  Podman con pacman, y la terminal como la del usuario (zsh, Oh My Zsh con `agnosterzak`, autosugerencias, colores,
+  `lsd`, `fastfetch`, Terminator). Hangar como escaparate único de los tres mundos (S7, S8).
+- **La caja Linux como servicio** (2026-11-10): `servicio activar caja-linux` la arranca con el sistema, vigilada,
+  con memoria reservada, apagado ordenado y puertos publicados. Dentro, systemd como siempre. La orden `servicio`
+  hace de `systemctl` para todo DashOS (S14).
+- **Suspender e hibernar sin fallos** (S22, 2026-11-10): los controladores no guardan estado, se relanzan al
+  despertar; cada fase de dormirse tiene plazo y lo que no contesta se para; la imagen de hibernación va cifrada con
+  la contraseña y, si no cuadra, se arranca normal sin perder el disco.
+- **El escritorio**: fase E3b de S10b, mosaico y flotantes sin modos, detrás de E3 (2026-11-10).
+- **Las pantallas del Amiga** (S23, 2026-11-10): cada pantalla del Amiga es un espacio de trabajo más de DashOS
+  (antes "pantalla de DashOS"), con su mapa de bits de fondo y sus ventanas como ventanas del compositor. Workbench, pantallas públicas,
+  propias (base de modos con PAL, HAM, AGA y RTG, escalado con su proporción) y clonadas; arrastrar dejando dos a la
+  vez; menús en la barra; ficha de compatibilidad por programa.
+
+- **El aspecto de las cajas** (S26, 2026-11-13): un tema único que sale del fondo (como Material You y DMS) y llega
+  a todo; los programas de las cajas Amiga y Linux, "como DashOS" u "originales", con excepciones por caja y por
+  programa. El centro de control hace de servicio del tema, el compositor lo reparte (`dashos_tema_v1`, versión 3) y en
+  cada caja algo lo aplica: plumas de Material y un pintor Material para GadTools e intuition en la Amiga; un agente
+  dentro de Arch que rellena las plantillas de GTK, libadwaita, Qt y foot en la Linux.
+- **El malware del Amiga** (S28, 2026-11-13): por familias (bloque de arranque, enlace, troyanos, residentes,
+  parches, disco directo, memoria de otros, arranque), qué puede en la caja y qué lo para. Capas sin firmas: el
+  proceso; `SYS:` de solo lectura también en el servicio; una guardia de dos que no deja cambiar ejecutables, iconos,
+  guiones de arranque ni bloques de arranque de imágenes; lo que un programa deja en exec, deshecho al acabar; la
+  memoria soltada, a cero. Siete virus de laboratorio en la prueba de siempre. Lo primero que falta: sacar el
+  ejecutable de la caja de los 4 GB del 68k.

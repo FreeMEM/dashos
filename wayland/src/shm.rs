@@ -8,7 +8,7 @@
 
 use alloc::collections::BTreeMap;
 
-use crate::servidor::ErrorProtocolo;
+use crate::servidor::{ErrorProtocolo, NO_MEMORY};
 
 /// Formatos (de `wl_shm.format`): los dos que todo compositor anuncia.
 pub const ARGB8888: u32 = 0;
@@ -21,6 +21,8 @@ pub const INVALID_FD: u32 = 2;
 
 /// Lo más grande que se acepta de un pool: 64 MB (una pantalla 4K a 32 bits, dos veces, cabe).
 pub const MAX_POOL: usize = 64 << 20;
+/// Lo más de pools de un cliente (E3): cada uno es una proyección en el compositor.
+pub const MAX_POOLS: usize = 16;
 
 /// Quien proyecta los objetos de memoria: en DashOS, `memoria_proyectar` solo para leer; en las pruebas, vectores.
 pub trait Memorias {
@@ -33,6 +35,15 @@ pub trait Memorias {
     fn llave_vacia(&mut self) -> Option<u32> {
         None
     }
+
+    /// Una llave de solo lectura de una memoria con `datos`, para dar a un cliente (el mapa de teclado, G2). La
+    /// memoria se puede crear una vez y dar copias. `None` si no se puede: entonces va sin mapa.
+    fn llave_con(&mut self, _datos: &'static [u8]) -> Option<u32> {
+        None
+    }
+
+    /// Antes de leer un búfer de dmabuf tras su commit (G6): en Linux, esperar a que la tarjeta acabe de pintarlo.
+    fn antes_de_leer(&mut self, _llave: u32) {}
 }
 
 struct Pool {
@@ -43,9 +54,11 @@ struct Pool {
     buferes: u32,
     /// El cliente ya lo destruyó: se suelta con el último búfer.
     destruido: bool,
+    /// Es la memoria de un búfer de dmabuf (G6), no un pool del cliente.
+    dmabuf: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Bufer {
     pub pool: u32,
     pub desplazamiento: usize,
@@ -55,11 +68,15 @@ pub struct Bufer {
     pub formato: u32,
 }
 
+/// Desde aquí, los números privados de lo que el cliente destruyó y aún se usa (por debajo de los del servidor).
+pub const PRIMERO_PRIVADO: u32 = 0xFE00_0000;
+
 /// Los pools y búferes de una conexión, por número de objeto.
 #[derive(Default)]
 pub struct Shm {
     pools: BTreeMap<u32, Pool>,
     pub buferes: BTreeMap<u32, Bufer>,
+    siguiente_privado: u32,
 }
 
 impl Shm {
@@ -74,11 +91,14 @@ impl Shm {
         if tamano <= 0 || tamano as usize > MAX_POOL {
             return Err(ErrorProtocolo::new(shm, INVALID_STRIDE, "tamaño de pool malo"));
         }
+        if self.pools.len() >= MAX_POOLS {
+            return Err(ErrorProtocolo::new(1, NO_MEMORY, "demasiados pools"));
+        }
         let tamano = tamano as usize;
         let Some(base) = memorias.proyectar(llave, tamano) else {
             return Err(ErrorProtocolo::new(shm, INVALID_FD, "memoria que no se puede proyectar"));
         };
-        self.pools.insert(id, Pool { llave, base, tamano, buferes: 0, destruido: false });
+        self.pools.insert(id, Pool { llave, base, tamano, buferes: 0, destruido: false, dmabuf: false });
         Ok(())
     }
 
@@ -135,12 +155,85 @@ impl Shm {
         Ok(())
     }
 
+    /// Un búfer de dmabuf (G6): un plano lineal de una memoria. Va como un pool con un solo búfer, que se suelta con
+    /// él. `formato`, ya en el de `wl_shm`. Falso si la memoria no se puede proyectar o no mide eso (importación
+    /// fallida: lo decide quien llama).
+    #[allow(clippy::too_many_arguments)]
+    pub fn crear_dmabuf(
+        &mut self,
+        memorias: &mut impl Memorias,
+        id: u32,
+        llave: u32,
+        desplazamiento: u32,
+        ancho: i32,
+        alto: i32,
+        linea: u32,
+        formato: u32,
+    ) -> bool {
+        let tamano = desplazamiento as u64 + linea as u64 * alto as u64;
+        if tamano as usize > MAX_POOL || self.pools.len() >= MAX_POOLS * 4 {
+            memorias.soltar(llave, core::ptr::null(), 0);
+            return false;
+        }
+        let Some(base) = memorias.proyectar(llave, tamano as usize) else {
+            memorias.soltar(llave, core::ptr::null(), 0);
+            return false;
+        };
+        let k = self.privado();
+        self.pools.insert(k, Pool { llave, base, tamano: tamano as usize, buferes: 1, destruido: true, dmabuf: true });
+        self.buferes.insert(
+            id,
+            Bufer {
+                pool: k,
+                desplazamiento: desplazamiento as usize,
+                ancho: ancho as u32,
+                alto: alto as u32,
+                linea: linea as usize,
+                formato,
+            },
+        );
+        true
+    }
+
+    /// La llave de un búfer si es de dmabuf (para esperar a la tarjeta antes de leerlo).
+    pub fn llave_dmabuf(&self, id: u32) -> Option<u32> {
+        let p = self.pools.get(&self.buferes.get(&id)?.pool)?;
+        p.dmabuf.then_some(p.llave)
+    }
+
     /// El cliente destruyó un pool: se suelta ya si no lo usa ningún búfer.
     pub fn destruir_pool(&mut self, memorias: &mut impl Memorias, id: u32) {
-        if let Some(p) = self.pools.get_mut(&id) {
+        // Si aún tiene búferes, sigue vivo con un número privado: el cliente puede usar el suyo para otro pool (G4,
+        // swaybg lo hace).
+        if self.pools.get(&id).is_some_and(|p| p.buferes > 0 && !p.dmabuf) {
+            let mut p = self.pools.remove(&id).unwrap();
+            p.destruido = true;
+            let k = self.privado();
+            self.pools.insert(k, p);
+            for b in self.buferes.values_mut().filter(|b| b.pool == id) {
+                b.pool = k;
+            }
+            return;
+        }
+        if let Some(p) = self.pools.get_mut(&id).filter(|p| !p.dmabuf) {
             p.destruido = true;
         }
         self.soltar_si_toca(memorias, id);
+    }
+
+    /// Un número que ningún cliente usa, para lo que sigue vivo después de que el cliente lo destruyó.
+    fn privado(&mut self) -> u32 {
+        self.siguiente_privado = self.siguiente_privado.max(PRIMERO_PRIVADO).wrapping_add(1);
+        self.siguiente_privado
+    }
+
+    /// Un búfer que el cliente destruye mientras se ve: pasa a un número privado y sigue viéndose hasta que la
+    /// superficie ponga otro (como wlroots; swaybg destruye el suyo tras el commit). Devuelve su número nuevo.
+    pub fn apartar_bufer(&mut self, id: u32) -> Option<u32> {
+        let b = self.buferes.remove(&id)?;
+        let k = self.privado();
+        self.buferes.insert(k, b);
+        Some(k)
     }
 
     pub fn destruir_bufer(&mut self, memorias: &mut impl Memorias, id: u32) {

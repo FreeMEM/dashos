@@ -1,0 +1,29 @@
+[package]
+name = "dashos-puente"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "El puente de Wayland para la caja Linux y el compositor de DashOS en el PC (G0, G1 de docs/GRAFICOS_LOOP.md)"
+
+[dependencies]
+wayland = { package = "dashos-wayland", path = "../wayland" }
+libc = "0.2"
+# Los .desktop y los temas de iconos, sin el kit (plan de iconos, parte 3).
+iconos-cajas = { package = "dashos-iconos-cajas", path = "../iconos-cajas", default-features = false }
+
+[lib]
+name = "dashos_puente"
+path = "src/lib.rs"
+
+[[bin]]
+name = "compositor-pc"
+path = "src/bin/compositor_pc.rs"
+
+[[bin]]
+name = "puente"
+path = "src/bin/puente.rs"
+
+# Plan de iconos, parte 3: los programas instalados en el invitado, con su icono.
+[[bin]]
+name = "programas"
+path = "src/bin/programas.rs"

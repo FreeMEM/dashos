@@ -18,9 +18,9 @@ pub struct Marco {
 }
 
 impl Marco {
-    /// x0 a x30 tal como los dejó el proceso.
-    pub fn x(&self) -> [u64; 31] {
-        self.x
+    /// Una llamada al sistema (`svc`): el número (x8) y los argumentos (x0 a x4).
+    pub fn llamada(&self) -> (u64, [u64; 5]) {
+        (self.x[8], [self.x[0], self.x[1], self.x[2], self.x[3], self.x[4]])
     }
 
     /// El resultado de una llamada al sistema: x0 y, si hace falta, x1.
@@ -35,6 +35,11 @@ impl Marco {
     /// Un tercer resultado, para `canal_leer` (la marca del que escribió, C41).
     pub fn poner_x2(&mut self, v: u64) {
         self.x[2] = v;
+    }
+
+    /// Un cuarto (`grupo_uso`: las veces que el grupo topó con un tope, S3).
+    pub fn poner_x3(&mut self, v: u64) {
+        self.x[3] = v;
     }
 }
 
@@ -101,12 +106,16 @@ fn tratar(marco: &mut Marco, tipo: u64) {
         let iar = crate::gic::reconocer();
         let intid = crate::gic::numero(iar);
         if intid != crate::gic::FALSA {
+            // Las del GIC virtual (el temporizador de un invitado, el mantenimiento) ya hicieron su trabajo al sacar al
+            // invitado (H9): solo se terminan.
+            let del_invitado = super::hiper::interrupcion(intid);
             // Software (otro núcleo pide que se replanifique, C17) o el reloj: los dos acaban en el planificador.
             // Las de aparatos con dueño fuera del kernel van al repartidor (C20), y también se replanifica.
-            let planificar = intid == crate::gic::SGI_PLANIFICAR
-                || crate::reloj::interrupcion(intid)
-                || crate::interrupciones::atender(intid);
-            if !planificar {
+            let planificar = !del_invitado
+                && (intid == crate::gic::SGI_PLANIFICAR
+                    || crate::reloj::interrupcion(intid)
+                    || crate::interrupciones::atender(intid));
+            if !planificar && !del_invitado {
                 kprintln!("IRQ {} sin dueño", intid);
             }
             // Terminar antes de cambiar de hilo: si no, la interrupción seguiría activa hasta volver a este hilo.

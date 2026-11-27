@@ -1,0 +1,178 @@
+[package]
+name = "dashos-ordenes"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "El Shell nativo de DashOS (SYS:System/Shell) y las órdenes de SYS:C, un programa cada una"
+
+# Aparte de `usuario/` por su perfil: las órdenes son muchos programas pequeños que llevan cada uno su copia de lo
+# común (DashOS no tiene aún bibliotecas compartidas), así que se compilan para ocupar poco.
+
+[lib]
+name = "ordenes"
+path = "src/lib.rs"
+test = false
+
+[dependencies]
+dashos = { package = "dashos-usuario", path = "../usuario", features = ["monton"] }
+shell = { package = "dashos-shell", path = "../shell" }
+wayland = { package = "dashos-wayland", path = "../wayland" }
+kit = { package = "dashos-kit", path = "../kit" }
+# S8: Paq, el gestor de paquetes (la orden `C:Paq` y el servicio `paq`), y el formato de paquetes 2 de Hangar.
+paq = { package = "dashos-paq", path = "../paq" }
+pkg2 = { path = "../third_party/pkg2" }
+
+[profile.release]
+panic = "abort"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+
+[[bin]]
+name = "shell"
+path = "src/bin/shell.rs"
+test = false
+
+# Las órdenes de base, juntas.
+[[bin]]
+name = "ordenes"
+path = "src/bin/ordenes.rs"
+test = false
+
+# Y cada una en su programa.
+
+[[bin]]
+name = "orden-abrir"
+path = "src/bin/sueltas/abrir.rs"
+test = false
+
+[[bin]]
+name = "orden-administrar"
+path = "src/bin/sueltas/administrar.rs"
+test = false
+
+[[bin]]
+name = "orden-ask"
+path = "src/bin/sueltas/ask.rs"
+test = false
+
+[[bin]]
+name = "orden-assign"
+path = "src/bin/sueltas/assign.rs"
+test = false
+
+[[bin]]
+name = "orden-cd"
+path = "src/bin/sueltas/cd.rs"
+test = false
+
+[[bin]]
+name = "orden-copy"
+path = "src/bin/sueltas/copy.rs"
+test = false
+
+[[bin]]
+name = "orden-date"
+path = "src/bin/sueltas/date.rs"
+test = false
+
+[[bin]]
+name = "orden-delete"
+path = "src/bin/sueltas/delete.rs"
+test = false
+
+[[bin]]
+name = "orden-dir"
+path = "src/bin/sueltas/dir.rs"
+test = false
+
+[[bin]]
+name = "orden-echo"
+path = "src/bin/sueltas/echo.rs"
+test = false
+
+[[bin]]
+name = "orden-filenote"
+path = "src/bin/sueltas/filenote.rs"
+test = false
+
+[[bin]]
+name = "orden-info"
+path = "src/bin/sueltas/info.rs"
+test = false
+
+[[bin]]
+name = "orden-list"
+path = "src/bin/sueltas/list.rs"
+test = false
+
+[[bin]]
+name = "orden-makedir"
+path = "src/bin/sueltas/makedir.rs"
+test = false
+
+# S8: Paq, siempre suelto (`SYS:C/Paq`): lleva las firmas y el gzip, que no hacen falta a las demás.
+[[bin]]
+name = "orden-paq"
+path = "src/bin/sueltas/paq.rs"
+test = false
+
+# S8: el servicio `paq`, que lanza `inicio`: el único que escribe en `Paquetes:`.
+[[bin]]
+name = "paq"
+path = "src/bin/paq.rs"
+test = false
+
+[[bin]]
+name = "orden-permiso"
+path = "src/bin/sueltas/permiso.rs"
+test = false
+
+[[bin]]
+name = "orden-protect"
+path = "src/bin/sueltas/protect.rs"
+test = false
+
+[[bin]]
+name = "orden-registro"
+path = "src/bin/sueltas/registro.rs"
+test = false
+
+[[bin]]
+name = "orden-rename"
+path = "src/bin/sueltas/rename.rs"
+test = false
+
+[[bin]]
+name = "orden-type"
+path = "src/bin/sueltas/type.rs"
+test = false
+
+[[bin]]
+name = "orden-usuario"
+path = "src/bin/sueltas/usuario.rs"
+test = false
+
+[[bin]]
+name = "orden-version"
+path = "src/bin/sueltas/version.rs"
+test = false
+
+[[bin]]
+name = "orden-wait"
+path = "src/bin/sueltas/wait.rs"
+test = false
+
+# S10, Commodities (docs/bitacoras/commodities.md): FKey (SYS:Tools/Commodities) y Exchange (SYS:C y
+# SYS:Tools/Commodities). Comparten con `usuario/` el cliente de Wayland y el de las commodities.
+[[bin]]
+name = "fkey"
+path = "src/bin/fkey.rs"
+test = false
+
+[[bin]]
+name = "exchange"
+path = "src/bin/exchange.rs"
+test = false
+

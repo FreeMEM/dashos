@@ -1,5 +1,11 @@
 # S12. Controladores de la Pi 4
 
+> **2026-11-10.** Los controladores de Linux con LKL, y el Wi-Fi y las mejoras de red, en [S12b](S12b-controladores-de-linux.md).
+>
+> **2026-11-16.** LKL se retira (decidido por el usuario, S36). Los controladores de Linux van en máquinas virtuales:
+> los dominios de [S35](S35-controladores-de-linux.md). De S12b sigue lo de red. Los hilos en los procesos siguen
+> haciendo falta, pero ya no por LKL.
+
 > **Nota del 2026-11-03 por la tarde.** El usuario decidió que lo nativo sea little-endian y solo la caja Amiga
 > big-endian. Donde este documento dice big-endian para lo nativo, manda `PLAN.md`.
 
@@ -87,7 +93,11 @@ con un controlador CDC Ethernet. No se ha comprobado.
   Nada más (S6).
 - Lo escribe en Rust, con el tipo de registro que da la vuelta a los bytes.
 - Habla con sus clientes por canales y anillos en memoria compartida (S1).
-- Si se cuelga, el gestor de servicios lo reinicia, y sus clientes reintentan.
+- Si se cuelga, el gestor de servicios lo reinicia, y sus clientes reintentan. Cada reinicio deja una línea en
+  `Estado:Registros/` (S6, S14) con el controlador, el motivo y la hora; se lee con la orden `Registro`. Si pasa varias
+  veces seguidas, sale un aviso en llano ("El USB está fallando"), con el detalle a un clic.
+- Se deja mirar. `Status` (S2) lista cada controlador con su aparato, su estado y sus llaves: registros, interrupción
+  y memoria para DMA. El Monitor del sistema enseña lo mismo. Los dominios de S35 salen en la misma lista.
 
 ## Lo que queda abierto
 
@@ -126,6 +136,9 @@ con un controlador CDC Ethernet. No se ha comprobado.
 Lo que no se comprobó: el RNG200 en QEMU, la red USB en QEMU, y el estado de GENET en FreeBSD y NetBSD.
 
 ## Decisión del 2026-11-07: controladores de Linux en procesos aparte (opción C)
+
+> Sustituida el 2026-11-16 por S35: ni una capa que imite al kernel de Linux ni LKL. Los controladores de Linux corren
+> en un dominio (una máquina virtual pequeña) y sirven su aparato por virtio. Se deja el texto como estaba.
 
 El usuario eligió la mezcla. Los controladores básicos son propios y MPL: Pi, USB (xHCI, DWC2), NVMe, consola,
 pantalla de las placas soportadas. Para lo demás (Wi-Fi, GPU de portátiles, aparatos USB raros) se usan los de

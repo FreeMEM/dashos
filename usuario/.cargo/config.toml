@@ -12,3 +12,9 @@ rustflags = ["-C", "link-arg=-Tenlace.ld", "-C", "relocation-model=static"]
 
 [target.aarch64_be-unknown-none-softfloat]
 rustflags = ["-C", "link-arg=-Tenlace.ld", "-C", "relocation-model=static"]
+
+# x86-64 (S30, X4): sin SSE, como el kernel (la FPU se usa con ensamblador); en direcciones fijas por debajo de 2 GB.
+# Sin RELRO: si no, la GOT va en un segmento aparte que comparte página con .bss, y el cargador lo rechaza.
+# AES y Poly1305 (de RedoxFS, X5) por software: sus versiones con AES-NI y SIMD no compilan sin SSE.
+[target.x86_64-unknown-none]
+rustflags = ["-C", "link-arg=-Tenlace_x86.ld", "-C", "link-arg=-znorelro", "-C", "relocation-model=static", "-C", "code-model=small", "--cfg", "aes_force_soft", "--cfg", "poly1305_force_soft"]

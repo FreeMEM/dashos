@@ -38,7 +38,8 @@ su nombre).
 ### PID y matar procesos
 
 - El kernel da a cada proceso un PID único mientras vive. Hay un servicio de procesos que los lista con su dueño, su
-  consumo y su programa.
+  consumo y su programa. Desde el Shell, con las órdenes `Status` (listar) y `Break` (pedir cierre y matar) de `C:`,
+  como en el Amiga; con el ratón, en el Monitor del sistema (S4b). Las dos caras piden lo mismo al servicio.
 - Pedirle al servicio que mate un PID funciona si eres su dueño o administrador. El servicio comprueba la identidad
   del canal y usa la capacidad de terminar que tiene sobre todos los procesos (S2).
 - Los procesos del sistema solo los puede parar un administrador.
@@ -50,9 +51,36 @@ En Linux, `root` lo puede todo. Si un programa consigue ser `root`, el sistema e
 - **En DashOS hay administradores, no un superusuario.** Un administrador es un usuario del grupo `admin`.
 - **Para hacer algo de administrador hay que confirmarlo con la contraseña**, en una ventana que dibuja el sistema, no
   el programa. Es lo que hacen macOS y polkit. La confirmación da una capacidad para esa acción concreta, no un
-  permiso para todo.
+  permiso para todo. No hay "vale durante 5 minutos": ese rato es justo lo que aprovecha un programa malo para colar
+  su acción detrás de la del usuario.
+- **Una tanda es una acción** (decidido el 2026-11-16, S36). Instalar diez paquetes de un plan de `Paq`, o crear un
+  usuario con sus grupos, es una sola ventana que enseña la lista entera y pide la contraseña una vez. Lo que no
+  está en la lista enseñada no se hace.
+  Hecho (rama `admin-desarrollo`): la orden `Administrar` y la ventana de `guardian` con la lista entera; se para en
+  la primera que falle (S6b, "Administradores").
 - **`SYS:` no lo cambia ni un administrador.** Solo las actualizaciones del sistema, firmadas (S8, S14). Un
   administrador puede instalar paquetes en `Paquetes:`, pero no tocar el sistema base a mano.
+
+### El modo de desarrollo (2026-11-15, S36)
+
+S0 pide que quien quiera sustituir una pieza lo haga "en su capa o con un modo de desarrollo explícito, no apagando
+la seguridad". Para `C:`, `LIBS:` y `FONTS:` ya hay capa del usuario (S4b). Para un servicio, un manejador de `L:`,
+un controlador o una imagen de dominio (S35) no la hay, y la única salida era el Shell, que quita todo el encierro.
+
+Tiene que existir un **modo de desarrollo**, con estas condiciones:
+
+- **Se activa a propósito**, como acción de administrador, con su contraseña. Nunca solo ni por un paquete.
+- **Se ve siempre**: mientras está activo hay una marca fija en pantalla.
+- **Queda en el registro** (`Estado:Registros/`, abajo): quién lo activó, cuándo y qué pieza se cambió.
+- **Vive en la capa del usuario o en la de la máquina** (`Home:` o `Estado:`, S4b). `SYS:` sigue sin tocarse y su
+  firma se sigue comprobando.
+- **Se quita** desde Ajustes, con una orden o desde el menú de arranque (S14), y el sistema vuelve a ser el de serie.
+
+Qué piezas se pueden sustituir, con qué clave se firman las propias y cómo se montan encima de `SYS:`: por diseñar
+al hacerlo, con revisión de seguridad. Activarlo habrá que añadirlo entonces a la lista de acciones de administrador
+de S6b. Lo que no cambia: las aplicaciones encerradas siguen sin cargar de `Home:Libs` (S6b, decisión 9). Para
+probar una biblioteca propia con una de ellas está el modo de desarrollo por aplicación (S6b, "Perfiles"; hecho en la
+rama `admin-desarrollo`: el permiso `desarrollo` y la orden `Abrir`).
 
 ## Permisos de cada aplicación
 
@@ -82,7 +110,9 @@ Lo mismo vale para arrastrar un fichero a una ventana o abrirlo con doble clic d
 - Actuar sobre otras ventanas: capturas de pantalla, automatizar el teclado.
 
 Cada paquete declara lo que necesita en sus datos (S8). La primera vez que lo usa, el sistema pregunta al usuario.
-El usuario puede revisarlo y quitarlo en `Prefs`.
+El usuario puede revisarlo y quitarlo en Ajustes (categoría Permisos, S27) o con la orden `Permiso` (listar, dar,
+quitar). Lo concedido está en un solo sitio, en texto que su dueño puede leer (`Home:Prefs/Permisos/`, S6b). Ver los
+permisos propios es libre; cambiarlos desde el Shell pide la confirmación de `guardian`.
 
 ### La caja Amiga y los programas de Linux
 
@@ -128,18 +158,53 @@ cambiar el kernel; pero un programa malicioso no puede cambiar el sistema.
 - Direcciones aleatorias, y nada escribible y ejecutable a la vez (S3).
 - Sin intercambio a disco, así que las claves en memoria no acaban en la tarjeta (S3).
 - Cortafuegos que cierra las entradas por defecto (S13).
-- Registro de seguridad: inicios de sesión, confirmaciones de administrador, permisos concedidos y avisos del
-  Enforcer (S3).
+- Registro de seguridad: inicios de sesión, confirmaciones de administrador, permisos concedidos y negados, el modo
+  de desarrollo y avisos del Enforcer (S3). Es uno de los registros de abajo: `Estado:Registros/seguridad`.
+
+## El registro: uno solo y legible (2026-11-15, S36)
+
+S0: "Nada pasa sin dejar rastro que se pueda leer". Hasta ahora cada diseño nombraba "un registro" sin decir dónde.
+Es uno solo para todo el sistema:
+
+- **Texto en `Estado:Registros/<nombre>`** (S4b): `seguridad`, uno por servicio (S14) y los que nombren los demás
+  diseños. Una línea por hecho, con el programa, el motivo y la hora.
+- **Qué se apunta**: todo lo que el sistema para, reinicia, niega o deshace. Un permiso negado, una vuelta atrás del
+  arranque (S14), un servicio, un controlador o la GPU reiniciados (S12, S25, S35), un programa que topa con su cupo
+  (S3), un fichero dañado (S5), cada ciclo de dormir (S22).
+- **La orden `Registro`**: leer, filtrar (por programa, por fecha, por clase) y seguir en vivo. La misma lista sale
+  en Ajustes.
+- **Quién lee**: cada usuario, lo suyo; un administrador, todo. Nadie lo escribe a mano: cada servicio apunta lo
+  suyo.
+- **Aviso en pantalla** solo si el usuario lo nota o si se repite, y en llano, con el detalle a un clic.
+
+El formato de la línea, cuánto se guarda y cómo se separa lo de cada usuario: por diseñar al hacerlo.
+
+**Hecho** (rama `registro-permisos`, 2026-11-16; bitácora `docs/bitacoras/registro-permisos.md`). Tres ficheros de
+texto: `seguridad`, `sistema` y `programas`, para que lo que manda un programa no se coma lo de seguridad. Una línea:
+`2026-11-16T08:41:30Z editor Ana permiso no se da "red" (usar la red): el usuario dijo que no` (hora en UTC, programa,
+usuario, clase y qué, con el motivo tras ": "). Solo escribe `sesiones`, que pone la hora, el programa y el usuario
+(sabe quién es cada uno por la marca de su llave); solo añade al final, y a los 64 KB el fichero pasa a `.1`. Cada uno
+lee lo suyo y lo del sistema; todo, con la acción de administrador "registro". Lo que apunta un programa va con un
+ritmo por programa y usuario, y lo que se pierde por ir deprisa se dice. La orden `Registro` lee, filtra (programa,
+clase, fechas), sigue en vivo y apunta. Pendiente del usuario: que leer el de todos pida contraseña; los tres ficheros
+y su tope; que cada persona no pueda leer el suyo con `Type` (está en el cajón de `sesiones`, 0700). La lista en
+Ajustes, no hecha.
 
 La A72 de la Pi 4 no tiene las defensas por hardware de CPUs más nuevas, como PAN, PAC, BTI o MTE (S3). La A76 de la
 Pi 5 añade PAN, pero tampoco tiene PAC, BTI ni MTE. Lo que se hace a mano en su lugar está en S16.
 
+## El diseño concreto
+
+Cómo se hace todo esto con lo que ya hay (llaves con marca, grupos de recursos, dueño y modo en los ficheros), y en
+qué fases, está en [S6b](S6b-usuarios-y-permisos.md). Cambia una cosa de este documento, aprobada el 2026-11-10: la
+identidad de un proceso va en la marca de sus llaves y no la guarda el kernel.
+
 ## Lo que queda abierto
 
 1. ¿Sin superusuario: administradores que confirman cada acción con contraseña, y `SYS:` intocable salvo por
-   actualizaciones? Recomendado: sí.
+   actualizaciones? Recomendado: sí. **Decidido: sí** (2026-11-10, con S6b).
 2. ¿Permisos por aplicación preguntados en el primer uso, como macOS, o todos al instalar, como el Android antiguo?
-   Recomendado: en el primer uso.
+   Recomendado: en el primer uso. **Decidido: en el primer uso** (2026-11-10).
 3. ¿Arranque verificado de la Pi 4 solo como opción documentada, porque es irreversible? Recomendado: sí.
 
 ## Cómo encaja
@@ -149,7 +214,7 @@ Pi 5 añade PAN, pero tampoco tiene PAC, BTI ni MTE. Lo que se hace a mano en su
 - Con S2: matar con PID, si eres dueño o administrador; la clase de plazo es un permiso.
 - Con S3: direcciones aleatorias, sin intercambio y el Enforcer.
 - Con S4: la caja es una aplicación; las cajas aparte pueden ir cerradas.
-- Con S4b: el cajón de datos de cada aplicación vive en `Home:`.
+- Con S4b: el cajón de datos de cada aplicación vive en `Home:Datos`; los registros, en `Estado:Registros/`.
 - Con S5: dueño, grupo, permisos y sumas de comprobación.
 - S7 aplica permisos tipo Flatpak a los programas de Linux.
 - S8 declara los permisos de cada paquete y verifica firmas.

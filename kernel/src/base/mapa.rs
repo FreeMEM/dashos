@@ -135,7 +135,10 @@ pub fn construir() {
     let fin_fino = (bajo + tamano).div_ceil(MB2) * MB2;
     let hueco = |b: u64| destino != 0 && (destino..destino + reservado).contains(&b);
     let l1 = tabla_nueva();
-    for g in 0..4u64 {
+    // Los cuatro primeros GB siempre (los periféricos de la Pi 4 están en el cuarto); por encima, hasta donde llegue la
+    // RAM que se reparte (en `virt` con highmem, caja-linux-grandes).
+    let gbs = paginas().fin_de_la_ram().div_ceil(GB).max(4);
+    for g in 0..gbs {
         let base = g * GB;
         let cruza_perifericos = base < PERIFERICOS.1 && base + GB > PERIFERICOS.0;
         let especial = (base + GB > bajo && base < fin_fino) || cruza_perifericos || (destino != 0 && destino < base + GB && destino + reservado > base);
@@ -170,6 +173,15 @@ pub fn construir() {
                 poner(l2, i as usize, b | BLOQUE | atributos(Tipo::Datos));
             }
         }
+    }
+    // Los periféricos por encima de los 4 GB (la Pi 5, placa.rs: los GB 64, 65 y 124): bloques de 1 GB de dispositivo,
+    // fuera del mapa lineal.
+    let mut g = PERIFERICOS.0 / GB;
+    while g < PERIFERICOS.1.div_ceil(GB) {
+        if g >= 4 && es_periferico(g * GB) {
+            poner(l1, g as usize, (g * GB) | BLOQUE | atributos(Tipo::Dispositivo));
+        }
+        g += 1;
     }
     // Zona de las pilas de los hilos: el GB 256 de la mitad alta, con su nivel 2. Los niveles 3 se hacen al usarlos.
     let l2 = tabla_nueva();
@@ -245,6 +257,8 @@ pub fn pila_nueva() -> Option<Pila> {
             }
             return None;
         };
+        // S6: a cero; si no, el hilo nuevo podría leer en su pila lo que dejó el anterior.
+        unsafe { core::ptr::write_bytes(mmu::virt(p as usize) as *mut u8, 0, PAGINA as usize) };
         pila.paginas[i] = p;
     }
     for (i, &p) in pila.paginas.iter().enumerate() {
@@ -283,7 +297,8 @@ pub fn activar() {
     let ttbr1: u64;
     unsafe { core::arch::asm!("mrs {}, ttbr1_el1", out(reg) ttbr1) };
     if ttbr1 & DIRECCION == l1 {
-        return; // ya está (los núcleos 1 a 3 cambian en arranque.s)
+        wxn(); // ya está (los núcleos 1 a 3 cambian en arranque.s)
+        return;
     }
     let vacia = crate::espacio::vacia_fisica();
     let arranque = mmu::fisica(unsafe { va(&__tabla_l1) }) as u64;
@@ -298,6 +313,32 @@ pub fn activar() {
     } else {
         unsafe { cambiar_ttbr1(l1, vacia, arranque) };
     }
+    wxn();
+}
+
+/// S6: con el mapa del kernel puesto (ya sin bloques del arranque que se escriben y ejecutan), la CPU hace cumplir
+/// W^X ella misma: con SCTLR_EL1.WXN, lo que se puede escribir nunca se ejecuta, en EL1 ni en EL0, aunque una
+/// entrada de las tablas se equivoque. El bit puede guardarse en la TLB: se vacía.
+///
+/// H4: también UCT (bit 15) y UCI (bit 26), para el JIT de la caja Amiga, que escribe su código en una dirección y lo
+/// ejecuta en otra: EL0 puede leer CTR_EL0 (el tamaño de las líneas de caché) y limpiar o invalidar por dirección
+/// virtual (`dc cvau`, `dc civac`, `ic ivau`), como en Linux. Pasan por la MMU con los permisos de EL0: solo sobre su
+/// propia memoria. `dc ivac` (tirar datos sin escribirlos) sigue prohibido en EL0.
+fn wxn() {
+    unsafe {
+        core::arch::asm!(
+            "mrs {t}, sctlr_el1",
+            "orr {t}, {t}, #(1 << 19)",
+            "orr {t}, {t}, #(1 << 15)",
+            "orr {t}, {t}, #(1 << 26)",
+            "msr sctlr_el1, {t}",
+            "isb",
+            "tlbi vmalle1",
+            "dsb nsh",
+            "isb",
+            t = out(reg) _,
+        )
+    };
 }
 
 /// Con los cuatro núcleos ya en el mapa nuevo, borra las tablas del arranque: la proyección identidad deja de existir

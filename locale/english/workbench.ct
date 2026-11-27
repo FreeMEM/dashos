@@ -1,0 +1,124 @@
+## version $VER: workbench.catalog 1.0 (15.11.2026)
+## language english
+## codeset 106
+;
+MSG_1
+1 byte
+; 1 byte
+MSG_2
+{} bytes
+; {} bytes
+MSG_3
+{} KB
+; {} KB
+MSG_4
+{}.{} MB
+; {},{} MB
+MSG_5
+Empty
+; Vacío
+MSG_6
+Name
+; Nombre
+MSG_7
+Size
+; Tamaño
+MSG_8
+Date
+; Fecha
+MSG_9
+Close
+; Cerrar
+MSG_10
+List
+; Lista
+MSG_11
+Information
+; Información
+MSG_12
+1 item
+; 1 elemento
+MSG_13
+{} items
+; {} elementos
+MSG_14
+Running: {}
+; En marcha: {}
+MSG_15
+Could not launch ({})
+; No se lanzó ({})
+MSG_16
+Only programs in Programas can be launched
+; Solo se lanzan los de Programas
+MSG_17
+No permission to open {}
+; Sin permiso para abrir {}
+MSG_18
+Cannot open {} ({})
+; No se abre {} ({})
+MSG_19
+Icons
+; Iconos
+MSG_20
+No access to {}
+; Sin acceso a {}
+MSG_21
+Through SYS: read-only
+; Por SYS: solo se puede leer
+MSG_22
+Only its owner can change it
+; Solo lo puede cambiar su dueño
+MSG_23
+Volume · changed on {}
+; Volumen · cambiado el {}
+MSG_24
+Drawer · changed on {}
+; Cajón · cambiado el {}
+MSG_25
+Program · {} · changed on {}
+; Programa · {} · cambiado el {}
+MSG_26
+File · {} · changed on {}
+; Fichero · {} · cambiado el {}
+MSG_27
+Owner: user {} (you) · group {}
+; Dueño: usuario {} (tú) · grupo {}
+MSG_28
+Owner: user {} · group {}
+; Dueño: usuario {} · grupo {}
+MSG_29
+Comment
+; Comentario
+MSG_30
+Cancel
+; Cancelar
+MSG_31
+Save
+; Guardar
+MSG_32
+Information on {}
+; Información de {}
+MSG_33
+The comment is too long
+; El comentario es demasiado largo
+MSG_34
+Could not change the comment
+; No se pudo cambiar el comentario
+MSG_35
+Could not change the protection
+; No se pudo cambiar la protección
+MSG_36
+Open
+; Abrir
+MSG_37
+Information
+; Información
+MSG_38
+Disks
+; Discos
+MSG_39
+{} free of {}
+; {} libres de {}
+MSG_40
+not measured
+; sin medir

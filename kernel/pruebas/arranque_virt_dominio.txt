@@ -1,0 +1,62 @@
+# Un dominio de controladores (S35, paso 2 con USB; `make arranque-virt-dominio`, docs/bitacoras/dominio-usb.md): el
+# xHCI de DashOS presta el adaptador de red USB de QEMU (usb-net) a un Linux mínimo en una máquina virtual, que lo
+# engancha por USB/IP (vhci-hcd) y lo lleva con su controlador; DashOS usa la red virtio que ese Linux le devuelve.
+Hipervisor: el kernel arrancó en EL2
+DashOS en marcha con 4 núcleos
+~[xhci] presta aparatos a un dominio de controladores, si lo pide
+~[dominio] dominio de red: aparatos USB prestados por el xHCI
+~[xhci] un dominio de controladores pide aparatos prestados
+~[xhci] ofrece al dominio el aparato
+~[dominio] el xHCI presta el aparato
+~[sesiones] dominio es del sistema: maquinas sin preguntar
+~[dominio] generación 1: el dominio ofrece una red virtio
+~[dominio] generación 1: listo a los
+# (DHCP implica que virtio-red montó el aparato del dominio.)
+~[dominio-prueba] DHCP por el dominio: 10.0.2.15
+~[dominio-prueba] normal: eco TCP de 64 KB con 10.0.2.100:7 por el dominio en
+~[dominio-prueba] eco UDP con el vecino 10.0.2.53:4007: bien
+# Hostil: virtio (oferta que miente, usados ajenos, leer fuera) y USB/IP (otro aparato, peticiones falsas o enormes,
+# tormenta); el servicio pide al xHCI aparatos que no le ofreció.
+~[xhci] aparato
+~devuelto (lo devuelve el dominio
+~vuelve limpio como aparato
+~[dominio] el xHCI no presta el aparato
+~[dominio] generación 2: el dominio ofrece algo que no vale
+~hostil: 4 peticiones para aparatos que no se le prestaron: estados -19,-19,-19,-19
+~hostil: USB/IP falso o enorme (11 peticiones)
+~hostil: tormenta de
+~[dominio] generación 2: el dominio ofrece una red virtio
+~[dominio] el dominio toca 0x80000000, donde no tiene nada: se le da un aborto
+~hostil: leer en 0xf0000000: el hijo muere con SIGBUS
+~[dominio-prueba] hostil, virtio y USB: eco TCP de 64 KB
+~[dominio-prueba] eco UDP con el vecino 10.0.2.53:4007: bien
+# Hostil: basura en el flujo de USB/IP: se da por roto y se relanza.
+~el dominio rompe el protocolo de USB/IP
+~[dominio-prueba] hostil, basura en USB/IP: el dominio rompió el protocolo, se relanzó
+~[dominio-prueba] hostil, basura en USB/IP: eco TCP de 16 KB
+# Se desenchufa a media transferencia y vuelve.
+~[dominio-prueba] pide desenchufar el adaptador USB
+~se desenchufa el aparato
+~[dominio] el aparato
+~[dominio-prueba] pide enchufar el adaptador USB
+~se enchufa: ranura
+~[dominio-prueba] se desenchufa: el adaptador se fue a media transferencia y volvió
+# Hostil: se cuelga y muere con un eco en marcha; el aparato vuelve limpio y se presta otra vez.
+~: el dominio dejó de latir (colgado); se relanza
+~[dominio-prueba] hostil, se cuelga: el dominio cayó a media transferencia y volvió
+~: el dominio pidió reiniciar (pánico de su kernel); se relanza
+~[dominio-prueba] hostil, muere: el dominio cayó a media transferencia y volvió
+# Se cae el conductor (virtio-red): inicio lo relanza y el servicio se le vuelve a presentar.
+~[dominio-prueba] mata al conductor
+~[dominio] el conductor (virtio-red) se fue: se le vuelve a saludar
+~se le presenta un aparato nuevo
+~[dominio-prueba] la red vuelve con el conductor relanzado
+# Tres caídas seguidas: el aviso al usuario.
+~[dominio] aviso al usuario: "La red está fallando"
+~avisa: "La red está fallando"
+~[dominio-prueba] tres caídas seguidas y el aviso: bien
+~[dominio-prueba] al final: eco TCP de 16 KB
+# Cada caída, en el registro común (Estado:Registros/sistema); la consola y los reinicios, en el del dominio.
+~[dominio-prueba] el registro común tiene
+~[dominio-prueba] el registro del dominio (dominio-red) tiene su consola
+~[dominio-prueba] el dominio de red de punta a punta: bien

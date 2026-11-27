@@ -305,6 +305,14 @@ resumido, en `docs/diseño/RESUMEN.md`.
   (`ID_AA64MMFR0_EL1`, campos `BigEnd` y `BigEndEL0`). Si no, la caja necesita el modo del JIT que da la vuelta a
   los bytes (decisión del 2026-11-04); el resto del sistema va igual. Lo mismo para cualquier otra placa ARM y para
   los Snapdragon X de los portátiles (sin comprobar).
+  - Dato del 2026-11-12 (lo buscó la sesión "telegram" a petición del usuario): el manual técnico del Cortex-A76
+    (Arm, doc 100798, registro `ID_AA64MMFR0_EL1`) da `BigEnd` = 1, mixed-endian con `SCTLR_ELx.EE` y
+    `SCTLR_EL1.E0E` configurables, y `BigEndEL0` = 0, que con `BigEnd` = 1 no quita el big-endian en EL0. Así que
+    la caja Amiga big-endian debería ir en la Pi 5 sin el modo que da la vuelta a los bytes. Falta leerlo en una
+    Pi 5 real: la línea "CPU: ..." del arranque ya dice si hay big-endian en EL0. Fuente:
+    https://support.arm.com/documentation/100798/0401/AArch64-System-registers/ID-AA64MMFR0-EL1--AArch64-Memory-Model-Feature-Register-0--EL1
+  - Para leerlo (2026-11-12, rama `pi5`): una imagen para la Pi 5 que lo pinta en la pantalla y lo prueba de verdad
+    con un programa big-endian en EL0, y corre la caja Amiga (`docs/PI5_PRIMER_ARRANQUE.md`, `docs/bitacoras/pi5.md`).
 - Comprobar que "DashOS" no choca con otro proyecto conocido antes de publicar.
 
 ## Herramientas
@@ -349,7 +357,8 @@ resumido, en `docs/diseño/RESUMEN.md`.
     exacta a nivel de línea (el ciclo, fase opcional); el kernel entregará los fallos de página al propio proceso;
     el núcleo de vAmiga (MPL-2.0) se puede leer y reutilizar; UAE solo por un analista y en casos concretos
     (`AGENTS.md`, regla 1); velocidad A500 u A1200 por defecto; fases 1 a 3 en el banco si hay manos; ROM de AROS
-    como extra.
+    como extra. Cambiado el 2026-11-16 (S36): la ROM de AROS deja de ser un extra. Va de serie en la imagen de
+    `SYS:`, bajada al construir con su huella comprobada, nunca en git; si el usuario tiene Kickstart, manda el suyo.
   - S10b (`docs/diseño/S10b-escritorios.md`): compositor oficial de confianza, servicios con el estado y escritorios
     de terceros sin privilegios, por Wayland estándar y una extensión propia ("inestable" hasta la 1.0); kit oficial
     en Dash compilado; política de ventanas en el compositor; la contraseña la dibuja el compositor; módulos que
@@ -373,4 +382,76 @@ resumido, en `docs/diseño/RESUMEN.md`.
   reservada, un volumen cifrado por usuario, que aguanta caídas y el reinicio en caliente propio, con copia opcional a
   la tarjeta; ADF y HDF montables como volúmenes, con copia al escribir (guardar o tirar los cambios al desmontar).
 - **El catálogo de programas es Hangar** (S8): DashOS es una arquitectura más de su catálogo.
+
+
+## Decisiones del usuario del 2026-11-12 (caja Linux)
+
+Las cuatro que dejó abiertas el primer paso de la caja Linux (`docs/bitacoras/caja-linux.md`, rama `caja-linux`), como
+se recomendaban:
+
+- **El permiso de máquinas virtuales lo reparte `sesiones`** como permiso de aplicación (S6b): se ve y se quita en el
+  centro de control y queda en el registro de seguridad. `inicio` solo se lo da a `sesiones`. A la caja Linux del
+  sistema se le concede sin preguntar; a cualquier otro programa, se le pregunta a quien está delante.
+- **La caja Linux va en la imagen de la Pi 4, no en la de la Pi 3.** La Cortex-A72 y el GIC-400 de la Pi 4 tienen
+  virtualización; la Pi 3 tiene otro controlador de interrupciones (QA7) sin ella, y 1 GB. En la Pi 4 solo se activa
+  si el firmware entra en EL2.
+- **El hipervisor no se apaga.** Sin invitados no debe atrapar nada ni costar; se mide en la Pi y, si cuesta, se
+  vuelve a mirar.
+- **La memoria de la caja Linux se calcula:** la del invitado más unos 32 MB del servicio. La del invitado se puede
+  cambiar; de serie, 256 MB con 2 GB de RAM y 512 MB con 4 GB o más (Firefox pedirá más: `maquina_memoria` la añade).
+  Los 96 MB de hoy valen hasta entonces.
+## Decisiones del usuario del 2026-11-14
+
+- **Nombre público futuro: UsirOS** (Usir es el nombre egipcio de Osiris: lo despedazaron, Isis reunió sus pedazos y
+  volvió a la vida, como el Amiga), por problemas con las marcas. Antes se pensó en AlborOS. Suena casi a "user OS":
+  un sistema para quien lo usa, sencillo como AmigaOS. Logo: el sol naciente (`docs/marca/`). Mientras se desarrolla, el
+  sistema se sigue llamando DashOS en el código, el repositorio y GitHub; se cambia a UsirOS cuando sea estable y se
+  publique en serio (usuario, 2026-11-14). Comprobado en TMview el 2026-11-14: ninguna marca "usiros" ni "useros"
+  en la clase 9 (OEPM, EUIPO, USPTO, OMPI). Registro en la EUIPO: 850 € una clase, +50 € la segunda.
+  Plan: registrar UsirOS (EUIPO, clase 9, y la 42 si hay servicios) antes de anunciarlo en público, para que nadie
+  lo registre antes (lo que le pasó a Linux en 1994). Mientras tanto, DashOS en todo.
+
+- **x86-64 también es plataforma objetivo** ("vamos también a por x86"). ARM vale a corto plazo, pero tiene dos
+  problemas: los ARM nuevos están dejando el big-endian, y los controladores de los portátiles y máquinas ARM nuevas
+  no están resueltos ni en Linux. En x86 la caja Amiga va siempre con el modo U7 (dar la vuelta a los bytes), y el JIT
+  68k se escribe nuevo: Emu68 no se puede portar. **El JIT de x86 va en un proyecto aparte en GitHub**, para que lo
+  use más gente; DashOS lo usa como usa Emu68. Se llama **RelevoJIT**, con licencia MPL-2.0, y es una biblioteca.
+  Diseño y decisiones en `docs/diseño/S30-x86.md`:
+  - Intérprete y JIT, con los registros del 68k en memoria y cargados en registros de x86 por bloque.
+  - U7 (dar la vuelta a los bytes) pasa a ser el modo por defecto también en ARM.
+  - El kernel x86 y el JIT avanzan a la vez. De momento en QEMU; después, gráficos de Intel, AMD y NVIDIA.
+  - ARM se queda en las placas (Pi 3, 4 y 5, THEA). Los portátiles, en x86, que son baratos. Los portátiles ARM y los
+    Mac bajan de prioridad (cambia "Otros ordenadores ARM", arriba).
+
+## Decisiones del usuario del 2026-11-15
+
+Tras la revisión de arquitectura (`docs/diseño/S31-revision-arquitectura.md`; antes S22, renumerado al fusionar
+`revision`, que ya tenía otro S22) y la de RelevoJIT (`~/Projects/RelevoJIT/docs/REVISION.md`). Prioridades: compatibilidad,
+estabilidad y velocidad, por ese orden.
+
+- **La rama `x86` se pone al día con `revision`** antes de seguir (la caja Amiga, los hilos de usuario y el permiso
+  de ejecutar están allí).
+- **Interfaz de motor en la caja Amiga**, con Emu68 detrás al principio. **RelevoJIT como único motor es la meta**,
+  también en ARM; el cambio en ARM, solo tras programas reales, un generador para AArch64 y medirlo contra Emu68.
+  Con un solo motor que gira los bytes, la caja es little-endian en todas partes.
+- **RelevoJIT:** memoria 68k en la dirección 0, reentrada (`relevo_run` desde una función del anfitrión), MMU del
+  68030 y 68040, y el 68060 de verdad.
+- **Las bibliotecas de la caja siguen en Rust** (es lo que hay; corrige "las bibliotecas Amiga, en Dash" de arriba).
+  Las que se escriban en Dash se compilan a 68k y corren dentro del JIT.
+- **PCID apagado por defecto** en x86 hasta probarlo en hardware.
+- **Caja PowerPC en x86: aplazada.** Sin tercer JIT.
+- **Dash para x86-64, por la vía de C** (sesiones de Dash).
+
+- **Caja Linux en dos perfiles** (usuario, 2026-11-15; cambia "caja Linux solo desde 4 GB" de S7): la **caja completa**
+  (escritorio, navegador, ofimática), desde 4 GB; la **caja de terminal** (Claude Code, herramientas, compilar), sin
+  escritorio, desde 2 GB, con globo de memoria (virtio-balloon), memoria comprimida (S3) y carpetas compartidas con
+  DAX. Con 1 GB o menos (Pi 3, THEA), sin caja Linux.
+- **Claude Code en DashOS** (usuario, 2026-11-15): a corto plazo, en la caja Linux (terminal y escritorio), con su
+  ventana en el escritorio de DashOS y carpetas compartidas. A largo plazo, la terminal nativa: capa POSIX (S11) y
+  Node.js portado encima. El escritorio nativo (Electron/Chromium), no.
+- **La gráfica compartida en PC** (usuario, 2026-11-15; `docs/diseño/S34-grafica-compartida.md`, sustituye la sección
+  de gráficas en PC de S33): un dominio de gráficos (máquina virtual con Linux mínimo y los controladores del
+  fabricante) lleva las gráficas; DashOS y la caja Linux son clientes. La caja Linux sigue como máquina virtual
+  aparte; CUDA, por reenvío de la interfaz de Nvidia. Con dos gráficas, dos dominios: pantalla (integrada, con el
+  monitor) y cómputo (dedicada). Dominio desde 4 GB y apagable. En la Pi, sin dominio.
 

@@ -1,0 +1,89 @@
+# La caja Linux con un Linux de verdad (`make arranque-virt-linux`): lo de `arranque_virt_vm.txt` y, con la Image de
+# un kernel de Linux 6.18 para arm64 y su initramfs con busybox (fuera de git), Linux hasta el /init de busybox, que
+# lee y escribe el disco virtio; después, una shell en la ventana de terminal de la caja, hasta que se apaga la máquina
+# por PSCI. El permiso de máquinas virtuales lo da `sesiones` (sin preguntar a la caja del sistema; a `sin-maquina`,
+# no: sin `guardian` en esta imagen, se le niega sin preguntar).
+Nivel de excepción: EL1
+Hipervisor: el kernel arrancó en EL2
+Hipervisor: EL2 instalado en 4 núcleos
+DashOS en marcha con 4 núcleos
+~[sesiones] caja-linux es del sistema: maquinas sin preguntar
+~[caja-linux] sesiones le da el permiso de máquinas virtuales
+~[caja-linux] el invitado dice: Hola desde el invitado, por el UART emulado
+~[caja-linux] el invitado acaba con HVC #0: bien
+~[caja-linux] ida y vuelta al invitado:
+~[caja-linux] hostil (leer fuera): lee fuera de su memoria (0x70000000); se para su máquina: bien
+~[caja-linux] hostil (escribir en el kernel): escribe fuera de su memoria (0x40200000); se para su máquina: bien
+~[caja-linux] hostil (bucle sin fin): no acaba: el reloj lo sacó
+~[caja-linux] hostil (apagar por SMC): trampa en
+~[caja-linux] hostil (temporizador del kernel): escribe en un registro del sistema atrapado (codificación 0x32f804); se para su máquina: bien
+~[caja-linux] tras los hostiles, una máquina nueva sigue en marcha: bien
+~[caja-linux] primer paso de la caja Linux: bien
+~[caja-linux] interrupciones: el temporizador virtual 3 veces, la SPI 48 del servicio 1 (su registro de lista, libre al terminarla: sí), PSCI 1.0 en x0
+~[caja-linux] hostil (GIC al azar): 4096 escrituras en su GICV
+~toca la GICH del anfitrión: acaba con 2 abortos externos; bien
+~[caja-linux] hostil (tormenta del temporizador): no la reconoce nunca; el reloj lo sacó
+~[caja-linux] hostil (registro de EL2): trampa en
+~[caja-linux] interrupciones del invitado: bien
+# aviso-cajas: el globo de una máquina (llamada 55): suelta y repone páginas (lo repuesto, a cero), y no suelta memoria
+# que tenga alguien más (en un mensaje o en una vista) ni direcciones que no son suyas.
+~[caja-linux] globo (llamada 55): bien
+# Varias vCPU (invitados/smp.s, cada vCPU en un hilo del servicio): PSCI y SGI entre ellas, y dos hostiles que acaban
+# con una vCPU aún dentro (una tormenta de SGI y un bucle sin fin con todo enmascarado): se paran y los hilos se unen.
+~[caja-linux] varias vCPU: PSCI (CPU_ON a una que no existe y dos veces a la misma, rechazados; AFFINITY_INFO), 100 idas y vueltas de SGI entre dos vCPU:
+~[caja-linux] hostil (tormenta de SGI):
+~se para con la tormenta dentro, 2 hilos unidos: bien
+~[caja-linux] hostil (una vCPU en bucle): la otra trabaja
+~y apaga la máquina con ella dentro; 2 hilos unidos: bien
+~[caja-linux] varias vCPU: bien
+~[sin-maquina] pedir el permiso a sesiones: -2 (negado)
+~[sin-maquina] sin el permiso: 1024 llaves probadas, crean una máquina 0; con su memoria por permiso, -6: bien
+~[caja-linux] linux: Image de
+~[caja-linux] linux: [    0.000000] Booting Linux on physical CPU 0x0000000000
+~[caja-linux] linux: [    0.000000] psci: PSCIv1.0 detected in firmware.
+~arch_timer: cp15 timer running at
+# Cuatro vCPU, cada una en un hilo del servicio: Linux las enciende por PSCI CPU_ON y las usa todas.
+~smp: Brought up 1 node, 4 CPUs
+~[caja-linux] linux: caja-linux: init en marcha
+~[caja-linux] linux: caja-linux: BusyBox v
+# "cpus 4" vale con el /init de antes y con el nuevo (que dice también nproc y las CPU en línea, y con caja.paralelo
+# corre el mismo trabajo cuatro veces seguidas y a la vez: hay que rehacer el initramfs con tools/caja_linux_invitado.py).
+~[caja-linux] linux: caja-linux: cpus 4
+~[caja-linux] linux: caja-linux: vda 2048 sectores, primeros bytes: DISCO-CAJA-LINUX
+~[caja-linux] linux: caja-linux: escrito en vda: ESCRITO-POR-LINUX
+~[red] puerto para la caja Linux con MAC
+# Sin disco, el servicio de red no lee sus ajustes: sin servidor de hora, y `hora` no pregunta a nadie (ninguna prueba
+# sale a Internet; docs/bitacoras/red.md, 2026-11-16).
+~[red] sin Prefs/Red (el servicio de archivos no da sesión): 0 nombres en hosts; servidor de hora ninguno
+~[hora] sin servidor de hora
+~[caja-linux] linux: caja-linux: eth0 02:da:50:
+~[caja-linux] linux: caja-linux: ping 3 packets transmitted, 3 packets received, 0% packet loss
+~[caja-linux] linux: caja-linux: fin de la prueba
+# aviso-cajas: con el invitado en marcha, `presion` llena la memoria de DashOS hasta el aviso de memoria baja; `sesiones`
+# se lo pasa a las cajas. La Linux pide al invitado un globo (virtio-balloon) de la cuarta parte de su RAM: lo que mete
+# en él vuelve a DashOS (llamada 55) y `sesiones` ve bajar lo cobrado al grupo de la caja. Cuando `presion` suelta, el
+# globo se vacía y el invitado recupera su RAM. La caja Amiga suelta también (su manejador y lo crecido libre).
+~[sesiones] caja-linux escucha el aviso de memoria baja
+~[caja-linux] escucha el aviso de memoria baja (globo de
+~[presion] caja-linux tiene algo que soltar: se llena la memoria
+~[caja-linux] memoria baja: se pide al invitado un globo de 64 MB (de 256 MB de RAM)
+~[caja-linux] globo: el invitado dio 64 MB; DashOS recuperó 64 MB de su RAM
+~[sesiones] caja-linux suelta memoria con el aviso: bien
+~[caja-linux] memoria otra vez normal: el globo baja a 0 MB
+~[caja-linux] globo: vacío; el invitado tiene otra vez toda su RAM
+~[presion] caja-amiga tiene algo que soltar: se llena la memoria
+~[caja-amiga] memh: su manejador se llamo 1 veces y solto 2048 KB de cache
+~[sesiones] caja-amiga suelta memoria con el aviso: bien
+# La terminal: una ventana en el escritorio con hvc0; el guion (tools/guion_caja_linux.py) teclea en ella, la inunda
+# con `seq 1 30000` y sigue contestando, y apaga con `poweroff -f`.
+~[caja-linux] terminal: ventana en pantalla (80x25 letras
+~[caja-linux] linux: caja-linux: terminal lista
+~[caja-linux] terminal: primera tecla para Linux
+~[caja-linux] linux: Linux caja 6.18
+~[caja-linux] linux: hola desde DashOS
+~[caja-linux] linux: sigue viva
+~[caja-linux] linux: 2 packets transmitted, 2 packets received
+~[caja-linux] linux: se para la máquina a los
+~Linux apagó la máquina por PSCI
+~[caja-linux] linux: hilos de las 4 vCPU unidos al acabar: 4
+~busybox en marcha: sí, el disco escrito por Linux: sí: bien

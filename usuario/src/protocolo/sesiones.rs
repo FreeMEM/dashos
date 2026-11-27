@@ -1,0 +1,477 @@
+//! El protocolo de `sesiones` (U2 de `docs/diseño/S6b-usuarios-y-permisos.md`), para el servicio, `inicio` y los
+//! programas (E7).
+
+/// De `inicio`, sin marca: el alta de un programa (marca u64, uid u32, gid u32, 16 bytes de nombre; con la llave de
+/// su grupo).
+pub const ALTA: u32 = 1;
+/// De un programa: la lista de procesos desde la ficha que se diga (u64), por páginas de `POR_PAGINA`. Solo los de su
+/// usuario y los del sistema (U6); `guardian`, todos.
+pub const PROCESOS: u32 = 1;
+/// De un programa: matar al de la marca que se diga (u64). Solo si es del mismo usuario. Uno de otra persona da
+/// `NO_EXISTE`, como si no estuviera (U6: tampoco sale en su lista).
+pub const MATAR: u32 = 2;
+/// Fichas por respuesta de `PROCESOS`: 8 + 7 × 32 = 232 bytes, dentro de los 256 de un mensaje.
+pub const POR_PAGINA: usize = 7;
+/// Lo que mide cada ficha en la lista: marca, uid, gid y nombre.
+pub const FICHA: usize = 32;
+
+/// De `guardian` (U3): entrar, con el nombre del usuario y su contraseña: orden, largo del nombre (u32), largo de la
+/// contraseña (u32), el nombre y la contraseña. `sesiones` abre su volumen cifrado. Contesta un i32: 0 dentro, -12
+/// contraseña mala (o quien pide no es `guardian`), -2 no hay volumen con ese nombre.
+pub const ENTRAR: u32 = 3;
+/// De `guardian`: salir (orden, largo del nombre, 0, el nombre). Cierra el volumen; contesta como `ENTRAR`, o -13 si
+/// algo suyo sigue abierto.
+pub const SALIR: u32 = 4;
+/// De `guardian`: volver de un bloqueo (como `ENTRAR`). Comprueba la contraseña sin tocar el volumen, que sigue
+/// abierto. Con la buena, su sesión pasa a ser la de delante (U6); `ENTRAR` con una sesión ya abierta hace lo mismo.
+/// Tras una mala, `sesiones` tarda un poco en contestar (contra probar contraseñas a ciegas).
+/// Rama `cuentas-2`: y tras varias malas seguidas con la misma cuenta, una espera que crece (`cuentas::Esperas`):
+/// mientras, no se prueba ninguna y se contesta `OCUPADO` con 8 bytes (el estado y los segundos que faltan, u32). Las de
+/// `ENTRAR`, `VOLVER`, `RECUPERAR`, `RESPUESTA_CLAVE` y la contraseña de un administrador cuentan juntas.
+pub const VOLVER: u32 = 5;
+/// De un programa (U4): la llave de un servicio (orden, largo del nombre, 0, el nombre). Si su ficha tiene el permiso,
+/// contesta 0 con la llave: marcada con su número, revocable y sin derecho de transferirla; si no, -2.
+///
+/// S28: también un permiso **sin llave**, de la guardia de ficheros de la caja Amiga (`usuario/src/preguntas_ficheros.rs`):
+/// orden, largo del nombre, largo del detalle, el nombre (`ejec:<programa 68k>`, `icono:`, `guion:` o `disco:`) y el
+/// detalle (el programa 68k, un 0 y el fichero; `DETALLE` bytes como mucho). Solo de los programas de `PIDEN`. Se
+/// concede como los demás (por programa y usuario, guardado si el usuario dice "siempre") pero no da llave: contesta el
+/// estado (i32) y cómo se decidió (u32: `RECORDADO`, `SIEMPRE`, `ESTA_VEZ`, `DIJO_NO`, `SIN_PREGUNTAR`, `OCUPADO`).
+/// Una pregunta sin contestar a la vez por programa.
+pub const SERVICIO: u32 = 6;
+/// De un programa: renunciar a la llave de un servicio (como `SERVICIO`). `sesiones` la revoca: deja de servir.
+pub const DEJAR: u32 = 7;
+/// De `guardian` o del centro de control (U6, S10c): el registro de seguridad desde la entrada que se diga (u64), por páginas de
+/// `POR_PAGINA_REGISTRO`: cuántas van (u32), cuántas hay (u32) y las entradas de `ENTRADA_REGISTRO` bytes (tipo u32,
+/// estado i32, quién 16 bytes, qué 16 bytes). A cualquier otro le contesta -2 (cuatro bytes).
+pub const REGISTRO: u32 = 8;
+/// De `guardian` y de la barra (S10) (U2): lanzar un programa del disco (orden, largo del camino, como quién (u32: 0,
+/// como quien pide; si no, el usuario, que tiene que haber entrado), el camino). La barra, solo con 0 y solo de
+/// `Programas/`: lo lanza como la persona que está delante.
+/// `sesiones` lo lee por el servicio de archivos, lo crea en su propio grupo y le da ficha.
+/// Contesta un i32 (0, o el error) y el número del proceso nuevo (u64).
+/// Si la petición trae una llave más (tras la de contestar), es el canal de arranque del programa ("arranque" en su tabla de llaves)
+/// (`shell::protocolo`), por donde quien lo lanza le da argumentos.
+pub const LANZAR: u32 = 9;
+/// El nombre del canal de arranque en la tabla de llaves del programa lanzado (el mismo que `shell::protocolo`, que no
+/// depende de esta biblioteca).
+pub const NOMBRE_ARRANQUE: &str = "arranque";
+/// De un programa (U2): su tabla de nombres. Contesta cuántos (u32) y hasta `MAX_NOMBRES` entradas de
+/// `ENTRADA_NOMBRE` bytes: el nombre (12, sin los dos puntos), la raíz del servicio de archivos donde está (1 byte;
+/// `SIN_RAIZ` si no tiene una propia y va por volumen y subcamino desde su raíz 0), el volumen (11; vacío es el disco)
+/// y el subcamino dentro de la raíz (24). Depende de quien pide (por su marca): su usuario da `Home:`, y el cajón de
+/// donde se lanzó, `PROGDIR:`. Lo que lanza `sesiones` nace con esas raíces (su alta en archivos).
+pub const NOMBRES: u32 = 10;
+pub const ENTRADA_NOMBRE: usize = 48;
+pub const MAX_NOMBRES: usize = 5;
+pub const SIN_RAIZ: u8 = 0xff;
+/// De un programa (paso 2 de las asignaciones, `docs/bitacoras/asignaciones.md`): su tabla de nombres entera, por
+/// páginas (orden, desde qué byte u32). Contesta cuánto mide (u32), cuántos bytes van (u32) y hasta
+/// `POR_PAGINA_ASIGNACIONES` bytes del texto desde ahí. El texto lo lee `dashos::asignaciones::Tabla`: volúmenes
+/// (según las raíces que `sesiones` le dio), `PROGDIR` y las asignaciones, heredadas de quien lo lanzó.
+pub const ASIGNACIONES: u32 = 30;
+pub const POR_PAGINA_ASIGNACIONES: usize = 248;
+/// De un programa: cambiar una de sus asignaciones (orden, cambio u32 (`dashos::asignaciones::Cambio`: 0 poner, 1
+/// añadir detrás, 2 añadir delante, 3 quitar), largo u32, "Nombre=capa,capa" o "Nombre"). Solo capas con nombre, ni
+/// volúmenes ni `PROGDIR`; lo que deja un bucle, no. Lo que lance después lo hereda. Contesta un i32: 0, o el error
+/// (`dashos::asignaciones::Error::estado`).
+pub const ASIGNAR: u32 = 31;
+/// De un programa lanzado del disco (el Shell nativo, `docs/bitacoras/shell-nativa.md`): lanzar un ayudante **con su
+/// misma ficha** (S6b: "lanzar ... con la misma ficha (un ayudante)"). El programa lo lee quien lo pide, con sus raíces
+/// y sus permisos, y manda el ELF en un objeto de memoria: `sesiones` no abre nada por él. Orden, lo que mide el ELF
+/// (u32), la raíz de quien pide donde estaba (u8, `RAIZ_*`; `SIN_RAIZ` si no se dice), el largo del nombre (u8) y el
+/// del cajón dentro de esa raíz (u16), el nombre (como `lanzables::nombre_valido`) y el cajón (hasta
+/// `MAX_CAJON_AYUDANTE` bytes). Llaves: la de contestar, la memoria (con leer) y, si se quiere, una más, que será la
+/// del canal de arranque del ayudante ("arranque", `shell::protocolo`). Nace con las llaves y la tabla de llaves de lo que
+/// lanza `LANZAR` (con el selector, si la persona tiene uno).
+///
+/// El ayudante nace con el usuario, el grupo, la identidad (el nombre de la ficha, por el que van los permisos), las
+/// raíces y las asignaciones de quien lo lanza. Su `PROGDIR:` es una raíz más (`RAIZ_PROGDIR_AYUDANTE`) en el cajón
+/// dicho, con el tope de la raíz de origen (por `SYS:` solo se lee). Como mucho `MAX_AYUDANTES` procesos lanzados del
+/// disco por usuario a la vez. Contesta como `LANZAR`: un i32 (0, `PROTEGIDO`, -6 sin sitio, o el error del kernel) y
+/// el número del proceso (u64).
+pub const LANZAR_AYUDANTE: u32 = 40;
+pub const MAX_CAJON_AYUDANTE: usize = 80;
+pub const MAX_AYUDANTES: usize = 32;
+/// La raíz del servicio de archivos donde está el `PROGDIR:` de un ayudante.
+pub const RAIZ_PROGDIR_AYUDANTE: u8 = 5;
+/// Los huecos de raíz del servicio de archivos de cada volumen (la tabla de nombres dice "`SYS:` es la raíz 1"). Así los
+/// da `sesiones` a lo que lanza (`PROGDIR:` es la 0, el cajón de donde salió), y así se los cede el escritorio
+/// (Workbench, explorador). `RAM:` es el volumen en memoria de la sesión (`sesiones` lo crea al entrar y da su raíz a
+/// lo que lanza y al escritorio); `Work:`, provisional: un cajón del disco (`Work`).
+pub const RAIZ_PROGDIR: u8 = 0;
+pub const RAIZ_SYS: u8 = 1;
+pub const RAIZ_HOME: u8 = 2;
+pub const RAIZ_RAM: u8 = 3;
+pub const RAIZ_WORK: u8 = 4;
+/// El cajón de `Work:`, desde la raíz del disco (provisional: no es aún un disco aparte).
+pub const CAMINO_WORK: &str = "Work";
+/// De `guardian` (U4): mándame las preguntas por esta llave (la segunda del mensaje). Contesta 0.
+pub const PREGUNTAS: u32 = 11;
+/// De `guardian`: la respuesta a una pregunta (orden, número de la pregunta u32, 1 sí o 0 no u32). Contesta 0.
+/// S28: 2 es "sí, solo esta vez": se da (la llave, o el permiso sin llave) sin guardarlo; la próxima vez se pregunta.
+pub const RESPUESTA: u32 = 12;
+/// De `guardian` o de `centro` (el centro de control, S10c): retirar lo concedido (orden, largo del programa u32, largo
+/// del servicio u32, programa, servicio). `sesiones` lo borra de lo guardado y revoca las llaves de ese servicio que
+/// tenga ese programa. Contesta 0, o -1 si no estaba concedido; a otro, -2.
+pub const RETIRAR: u32 = 13;
+/// De un programa (U5): una acción de administrador de la lista cerrada (`ACCIONES`) (orden, largo, 0, la acción).
+/// `sesiones` le pregunta a `guardian`, que pide la contraseña de un administrador; si es buena, la hace el servicio
+/// que la tiene a su cargo. Contesta el estado y lo que dé la acción (i32 y u64). Sin `guardian`, -2.
+pub const ADMINISTRAR: u32 = 14;
+/// De `guardian`: la respuesta a una acción de administrador (orden, número u32, largo del usuario u32, largo de la
+/// contraseña u32, el usuario y la contraseña). Contesta 0. Con usuario vacío, el usuario dijo que no.
+/// Rama `cuentas`: detrás, si la tanda crea una cuenta, el largo de su contraseña (u32) y la contraseña, que también se
+/// teclea en la ventana de `guardian`.
+pub const RESPUESTA_ADMIN: u32 = 15;
+/// Las acciones de administrador que hay: comprobar el disco (la hace `archivos`) y matar un proceso de otro usuario o
+/// del sistema (su número, u64, tras el nombre de la acción).
+/// S6, S36: y leer el registro de todos ("registro"): quien la pide lee todo con `REGISTRO_LEER` mientras viva.
+pub const ACCIONES: &[&str] = &["comprobar", "matar", "registro"];
+/// De un programa (U3): bloquear la sesión de su usuario (orden). Solo si su usuario tiene la sesión abierta; `sesiones`
+/// se lo pide a `guardian` (por su llave de preguntas, con "*bloquear" y el nombre del usuario en lugar del programa).
+/// Contesta 0, o -2.
+pub const BLOQUEAR: u32 = 16;
+/// De `centro` o de `guardian` (S10c, C1): lo concedido, desde el número `desde` (orden, desde u32). Contesta el estado
+/// (i32), cuántos hay en total (u32) y cuántos van (u32), 4 bytes sin usar y hasta `POR_PAGINA_CONCEDIDOS` entradas de
+/// `CONCEDIDO` bytes: programa (16) y servicio (16), rellenos de ceros. A otro, -2 y nada.
+pub const CONCEDIDOS: u32 = 17;
+pub const CONCEDIDO: usize = 32;
+pub const POR_PAGINA_CONCEDIDOS: usize = 7;
+/// De un programa (U6, cambio rápido de usuario): si su sesión es la de delante (orden). Contesta un i32: 1 delante, 0
+/// abierta pero detrás (entró otra persona; sus programas siguen en marcha), -2 su usuario no tiene sesión.
+pub const ACTIVA: u32 = 18;
+/// De `inicio`, sin marca (U6, paso 2): la llave sin marca de un servicio que sigue las sesiones (el compositor y el
+/// sonido): orden y 16 bytes con el nombre del programa que lo sirve, con la llave. Con ella `sesiones` les avisa
+/// (`AVISO_PERSONA`, `AVISO_DETRAS`) y da a lo que lanza su llave marcada.
+pub const CANAL_SISTEMA: u32 = 19;
+/// De un programa: la memoria de cada proceso desde la ficha que se diga (u64), por páginas de `POR_PAGINA`, con la
+/// misma vista que `PROCESOS` (los de su usuario y los del sistema; `guardian`, todos). Contesta cuántas van (u32),
+/// cuántas hay (u32) y entradas de `ENTRADA_MEMORIA` bytes: nombre (16), usuario (u32), el límite de su grupo en KB
+/// (u32) y lo que su grupo tiene cobrado en bytes (u64): páginas, canales y lo que crea, lo que el kernel le cobra.
+pub const MEMORIA: u32 = 20;
+pub const ENTRADA_MEMORIA: usize = 32;
+/// Del panel rápido o de la barra (S27, oleada 2): quién está delante (orden). Contesta un i32 (0, o -2 si quien pide no
+/// es uno de ellos o no hay nadie delante) y 16 bytes con el nombre de la persona, rellenos de ceros. A otro, -2 y nada
+/// más: el nombre de quien está sentado no se le dice a cualquier programa.
+pub const DELANTE: u32 = 21;
+pub const LARGO_DELANTE: usize = 20;
+/// Del panel rápido (decisión del usuario del 2026-11-13): apagar, reiniciar o cerrar la sesión de delante (orden y
+/// `MODO_*` u32). A otro, -2. Si hay otras sesiones abiertas (además de la de delante), antes se pregunta a `guardian`
+/// (con "*apagar" o "*reiniciar" en vez del servicio; contesta con `RESPUESTA`), y sin `guardian`, no. Cerrar la sesión
+/// se lo pide a `guardian` ("*salir", con el nombre del usuario en lugar del programa), como `BLOQUEAR`. Contesta un
+/// i32 (0, o -2) antes de apagar; la máquina se apaga justo después.
+pub const APAGAR: u32 = 22;
+pub const MODO_APAGAR: u32 = 0;
+pub const MODO_REINICIAR: u32 = 1;
+pub const MODO_SALIR: u32 = 2;
+/// Trasfondo (el monitor del sistema): de un programa, la orden y desde qué entrada (u32). Contesta cuántas van (u32),
+/// cuántas hay (u32) y entradas de `ENTRADA_MONITOR` bytes (`MONITOR_POR_PAGINA` como mucho): marca (u64; 0 en una
+/// suma), CPU en µs desde que nació (u64), memoria que tiene cobrada su grupo en bytes (u64), usuario (u32), grupo (u32),
+/// clase (u32, `M_*`), cuántos procesos van en ella (u32) y nombre (16). Privacidad (decisión del usuario del
+/// 2026-11-13): quien mira ve con detalle solo sus procesos (los de su usuario; el escritorio, `MONITORES`, mira por la
+/// persona de delante); las cajas Amiga y Linux, por su nombre, si son suyas o del sistema; lo demás del sistema, en una
+/// suma "sistema", y lo de otras personas, en una suma "otros", sin nombres. Pedir la primera página más de una vez cada
+/// `MONITOR_CADA_US` da `OCUPADO` (las demás páginas, no): mirar muy deprisa no gasta a `sesiones`.
+pub const MONITOR: u32 = 24;
+pub const ENTRADA_MONITOR: usize = 56;
+pub const MONITOR_POR_PAGINA: usize = 4;
+pub const MONITOR_CADA_US: u64 = 200_000;
+pub const OCUPADO: i32 = -3;
+/// Las clases de una entrada del monitor: un proceso de quien mira, una caja (68K o LINUX), la suma del sistema y la de
+/// otras personas.
+pub const M_PROPIO: u32 = 0;
+pub const M_CAJA_AMIGA: u32 = 1;
+pub const M_CAJA_LINUX: u32 = 2;
+pub const M_SISTEMA: u32 = 3;
+pub const M_OTROS: u32 = 4;
+/// Un bit más en la clase: un programa del escritorio (`ESCRITORIO` en `sesiones`). Se ve, pero no se cierra desde el
+/// monitor ni con `MATAR` (decisión del coordinador del 2026-11-14; el usuario puede cambiarla).
+pub const M_ESCRITORIO: u32 = 0x100;
+/// De `inicio`, sin marca: el permiso de apagar y reiniciar del kernel (llamada 51), con la llave. `sesiones` ya tiene
+/// las 8 llaves con que se lanza un programa: este le llega así.
+pub const PERMISO_APAGAR: u32 = 23;
+/// De `inicio`, sin marca: el permiso del aviso de memoria baja del kernel (llamada 53, S3), con la llave. Como
+/// `PERMISO_APAGAR`.
+pub const PERMISO_MEMORIA: u32 = 25;
+/// Del centro de control (S3), al arrancar y cada vez que cambia: el ajuste `memoria amiga` (u32, MB), con una llave
+/// para contestar. `sesiones` pone a la caja Amiga el tope de su grupo: ese ajuste más 32 MB (llamada 54). Contesta un
+/// i32: 0, o negativo. Solo se le acepta al centro (`PROTEGIDO` a cualquier otro).
+pub const CAJAS_CAMBIADAS: u32 = 26;
+/// De una caja del sistema (`caja-amiga` o `caja-linux`, por el nombre que da `inicio`; aviso-cajas): "dime cuándo
+/// soltar memoria". Trae dos llaves: la de contestar y el lado de escribir de un canal que solo lee la caja. Por él le
+/// manda `sesiones`, y nadie más (nadie más tiene esa llave), `SOLTAR`. Contesta un i32: 0, o `PROTEGIDO` a cualquier
+/// otro programa (que se queda sin ser oído). Una caja que vuelve (relanzada) se apunta otra vez y la llave vieja se
+/// cierra.
+pub const ESCUCHAR_MEMORIA: u32 = 27;
+/// De `sesiones` a una caja, por su canal de `ESCUCHAR_MEMORIA`: el aviso de memoria baja del kernel (llamada 53). La
+/// orden, el nivel (u32: 1 memoria baja, que suelte lo que pueda; 0 otra vez normal), los bytes libres para procesos
+/// (u64) y los que había al arrancar (u64). 24 bytes.
+pub const SOLTAR: u32 = 28;
+pub const LARGO_SOLTAR: usize = 24;
+/// De una caja, tras soltar por un `SOLTAR` de nivel 1: lo que soltó, en bytes (u64), con una llave de contestar.
+/// `sesiones` mira lo que tiene cobrado su grupo y lo apunta en el registro, con lo que tenía antes del aviso. Contesta
+/// un i32 (0, o `PROTEGIDO` si no es una caja apuntada).
+pub const SOLTADO: u32 = 29;
+/// Ajustes en texto (`docs/bitacoras/ajustes-texto.md`): guardar un fichero de ajustes de `ENV:` en `ENVARC:`, como el
+/// "Save" del Amiga, para un programa del escritorio que no tiene el `Home:` del usuario (el centro de control). Bytes 4
+/// a 7: lo que mide el nombre (`Escritorio/apariencia`), que va desde el byte 8 y tiene que valer
+/// (`archivos::ajuste_valido`: no sale del cajón). Siempre de la sesión de quien lo pide (su usuario), nunca de otra:
+/// el mensaje no la nombra. Solo de los programas que lo tienen permitido (por el nombre que da `inicio`). Contesta
+/// 4 bytes: el estado (`BIEN`, `PROTEGIDO` si no puede, `NO_EXISTE` sin la sesión abierta o sin el fichero en `ENV:`,
+/// -3 si el nombre no vale, u otro del servicio de archivos). Lo negado queda en el registro (`R_AJUSTE`). Número alto,
+/// para no chocar con otras ramas.
+pub const GUARDAR_ENV: u32 = 90;
+/// S27 (el dock): escribir un fichero de ajustes en el `ENV:` de la sesión de quien lo pide, para un programa del
+/// escritorio que solo lee `ENV:`. Orden, lo que mide el nombre (u32, como en `GUARDAR_ENV`), cuántos bytes (u32) y el
+/// nombre desde el byte 12. Llaves: la de contestar y un objeto de memoria con los bytes (para leer). Solo lo que esté
+/// en la lista de ese programa (por el nombre que da `inicio`; el centro de control, todo); lo demás se niega y queda en
+/// el registro común. Contesta 4 bytes: el estado (`BIEN`, `PROTEGIDO`, -3 si el nombre no vale, `NO_EXISTE` sin la
+/// sesión abierta, u otro del servicio de archivos).
+pub const ESCRIBIR_ENV: u32 = 91;
+/// De `sesiones` al compositor y al sonido, sin marca (U6, paso 2): solo `inicio` y `sesiones` tienen una llave sin
+/// marca de sus canales, así que ningún programa puede mandarlos. De quién es un programa: orden, usuario (u32; por
+/// debajo de `PRIMERA_PERSONA`, del sistema; 0, que se olvide), su marca (u64) y 16 bytes de nombre (solo para los
+/// mensajes: los poderes siguen siendo por el nombre que da `inicio`). 32 bytes. Los mismos números en `wayland::escena`.
+pub const AVISO_PERSONA: u32 = 0x5536_0001;
+pub const LARGO_AVISO_PERSONA: usize = 32;
+/// Las personas con su sesión abierta detrás: orden, cuántas (u32) y `MAX_DETRAS` usuarios (u32). 40 bytes. Lo suyo no
+/// se ve, no recibe entrada y no suena.
+pub const AVISO_DETRAS: u32 = 0x5536_0002;
+pub const LARGO_AVISO_DETRAS: usize = 40;
+pub const MAX_DETRAS: usize = 8;
+/// S27, oleada 6: al servicio de avisos, con la llave de `guardian` para contestar: lo que se ve de los avisos en la
+/// pantalla de bloqueo de la persona de delante. Orden y su usuario (u32): 8 bytes. Lo pide `guardian` con
+/// `AVISOS_BLOQUEO`; el servicio le contesta a él (`protocolo::avisos::resumen_bloqueo`).
+pub const AVISO_RESUMEN: u32 = 0x5536_0003;
+pub const LARGO_AVISO_RESUMEN: usize = 8;
+/// S10, Commodities (`docs/bitacoras/commodities.md`): los permisos de commodities de un programa, al compositor.
+/// Orden, permisos (u32, los `PODER_*`), su marca (u64), dar (1) o quitar (0) (u32) y 4 de relleno: 24 bytes. Número
+/// alto, aparte de los de U6. Los mismos números en `wayland::escena` y `wayland::escena::commodities`.
+pub const AVISO_PODER: u32 = 0x5536_0010;
+pub const LARGO_AVISO_PODER: usize = 24;
+pub const PODER_ATAJOS: u32 = 1;
+pub const PODER_FONDO: u32 = 2;
+pub const PODER_COMMODITIES: u32 = 4;
+/// Los permisos que no dan una llave sino un poder del compositor (S10): su nombre y su bit. Su frase en llano está con
+/// las de los demás, en `permisos_texto::FRASES`.
+pub const PODERES_COMPOSITOR: &[(&str, u32)] = &[("atajos", PODER_ATAJOS), ("fondo", PODER_FONDO), ("commodities", PODER_COMMODITIES)];
+/// Las personas tienen el usuario 1000 o más (S6b); lo de debajo es del sistema. Un programa ve los procesos de su
+/// usuario y los del sistema, no los de otras personas (U6).
+pub const PRIMERA_PERSONA: u32 = 1000;
+/// Lo que llega a `guardian` por su llave de preguntas: número (u32), usuario (u32), programa (16) y servicio (16). Si
+/// es una acción de administrador, en vez del servicio va la acción tras un "*": se contesta con `RESPUESTA_ADMIN`.
+/// S28: y 128 bytes de detalle (ceros, salvo en un permiso sin llave: el programa 68k, un 0 y el fichero).
+pub const PREGUNTA: usize = 40 + 128;
+pub const ENTRADA_REGISTRO: usize = 40;
+pub const POR_PAGINA_REGISTRO: usize = 5;
+/// Lo que se apunta: matar negado, llave de servicio negada, entrar o volver negado, un proceso que muere por un fallo.
+pub const R_MATAR: u32 = 1;
+pub const R_SERVICIO: u32 = 2;
+pub const R_ENTRAR: u32 = 3;
+pub const R_FALLO: u32 = 4;
+pub const R_LANZAR: u32 = 5;
+pub const R_ADMIN: u32 = 6;
+/// Apagar, reiniciar o cerrar la sesión (`APAGAR`): lo hecho y lo negado.
+pub const R_APAGAR: u32 = 7;
+/// Ajustes en texto: guardar un ajuste de `ENV:` en `ENVARC:` (`GUARDAR_ENV`), negado.
+pub const R_AJUSTE: u32 = 90;
+/// S27: escribir un ajuste en `ENV:` (`ESCRIBIR_ENV`), negado.
+pub const R_AJUSTE_ESCRIBIR: u32 = 91;
+
+/// S6, S36 (regla 2): leer el registro común (`dashos::registro`), de cualquier programa: orden, fichero (u32: 0
+/// seguridad, 1 sistema, 2 programas, 3 dominio-red: `registro::FICHEROS`), parte (u32: 0 el de ahora, 1 el `.1` de antes de rotar), desde (u64: el byte
+/// del de ahora desde el que se lee; si pasa del final, es que rotó, y se lee desde el principio) y una llave para
+/// contestar. Contesta el estado (i32), cuántas veces ha rotado ese fichero (u32), hasta qué byte llegó (u64: el `desde`
+/// de la próxima vez), lo que miden las líneas (u64) y, si hay alguna, una llave de memoria solo para leer con ellas:
+/// las de su usuario y las del sistema; todas, si quien pide confirmó antes la acción de administrador "registro".
+/// Número alto, para no chocar con las órdenes de otras ramas.
+pub const REGISTRO_LEER: u32 = 80;
+pub const LARGO_REGISTRO_LEER: usize = 24;
+/// S6, S36: apuntar en el registro común, de cualquier programa con ficha: orden, largo del qué (u32), largo del
+/// motivo (u32), clase (16 bytes, rellenos de ceros: solo cuenta en los programas del sistema, y de
+/// `registro::CLASES_DEL_SISTEMA`; los demás apuntan "programa"), el qué y el motivo. La hora, el programa y el usuario
+/// los pone `sesiones`. Va a `programas` (o a `sistema`, de un programa del sistema con otra clase; o, con "consola",
+/// al fichero de su dominio, solo del servicio de un dominio: `registro::DOMINIOS`). Contesta un i32:
+/// 0, o `OCUPADO` si va más deprisa que `registro::RAFAGA` (no se apunta; se cuenta y se dice luego).
+pub const APUNTAR: u32 = 81;
+/// S6b, S36 (regla 3): lo concedido a los programas del usuario de quien pide, para la orden `Permiso`; ver lo propio es
+/// libre. Como `CONCEDIDOS` (orden y desde u32; la misma respuesta), pero de cualquier programa y solo lo de su usuario.
+pub const PERMISOS_PROPIOS: u32 = 82;
+/// S6b, S36: dar o quitar un permiso a un programa del usuario de quien pide (orden, 1 dar o 0 quitar u32, largo del
+/// programa u32, largo del permiso u32, el programa y el permiso). Lo confirma el usuario en `guardian` (una pregunta
+/// con "+dar" o "+quitar" donde va el servicio, y en el detalle el programa, un 0 y el permiso): un guion no se concede
+/// nada a escondidas. Solo desde la sesión de delante. Quitar revoca en el acto las llaves que tenga. Contesta un i32:
+/// 0 hecho, `NO_EXISTE` si el permiso no existe o (quitar) no estaba concedido, `PROTEGIDO` si el usuario dijo que no o
+/// no hay a quién preguntar.
+pub const PERMISO_CAMBIAR: u32 = 83;
+
+/// S36, decisión 1 (rama `admin-desarrollo`): una **tanda** de acciones de administrador, que es una sola acción. De un
+/// programa con ficha: la orden y lo que mide la lista (u32), con dos llaves: la de contestar y una memoria (con leer,
+/// de 64 KB como mucho) con la lista en texto, una acción por línea (`dashos::tanda`: "matar 65540", "registro"...), de
+/// `tanda::MAX_TEXTO` bytes como mucho.
+/// `sesiones` la copia al recibirla (lo que el programa cambie después en su memoria no cuenta) y la lee entera: si una
+/// línea no vale (una acción que no es de administrador, un proceso que no existe, más de `tanda::MAX_ACCIONES`), no
+/// pregunta ni hace nada. Si vale, `guardian` recibe una pregunta con "*tanda" y pide la lista en llano
+/// (`TANDA_LISTA`); con la contraseña de un administrador (`RESPUESTA_ADMIN`), `sesiones` hace las de la lista, en orden,
+/// y se para en la primera que falle. Contesta `tanda::LARGO_RESPUESTA` bytes (`tanda::Resultado`): el estado (0 todas
+/// hechas; `NO_EXISTE` o `MAL_FORMADO` si la lista no vale; `PROTEGIDO` si no se confirmó; `OCUPADO` si ya tiene una
+/// sin contestar; o el de la que falló), cuántas se hicieron, cuántas había, en cuál se paró y el resultado de cada una.
+/// Una tanda sin contestar a la vez por programa. Desde una sesión de detrás, no.
+///
+/// Rama `cuentas` (S6b): las acciones de cuentas (`crear`, `borrar`, `devolver`, `meter`, `sacar`; `dashos::tanda`)
+/// se prueban antes de preguntar, en orden, sobre una copia de las cuentas: si una no se podría hacer (un nombre
+/// repetido, un número usado, la cuenta propia, el último administrador...), no se pregunta, y el estado es el de
+/// `cuentas::Fallo::estado` (de -101 en adelante). En la pregunta a `guardian`, si crea una cuenta, su nombre en los
+/// bytes 48 a 63: `guardian` pide también su contraseña. Hecha la cuenta, `sesiones` manda a `guardian` otra pregunta,
+/// "*codigo", con el nombre de la cuenta donde va el programa y su código de recuperación en los bytes 40 a 68, que
+/// `guardian` enseña para apuntarlo; no se contesta. En la respuesta, el dato de `crear` es el número de la cuenta.
+pub const TANDA: u32 = 120;
+/// De `guardian`: la lista de la tanda `id` en llano, para enseñarla (orden, id u32, desde u32: el byte desde el que se
+/// lee). Contesta el estado (i32), lo que mide el texto (u32), cuántos bytes van (u32), cuántas acciones hay (u32), el
+/// administrador que se propone (16 bytes: la persona de delante si es administradora; si no, vacío) y hasta
+/// `POR_PAGINA_TANDA` bytes del texto: una línea por acción, numerada ("2. Cerrar "espera", de Ana (proceso 65540)").
+/// A otro, -2 y nada más.
+pub const TANDA_LISTA: u32 = 121;
+pub const POR_PAGINA_TANDA: usize = 256 - 32;
+
+/// Rama `cuentas-2` (S6b): **cambiar la propia contraseña**. De un programa con ficha: la orden, lo que mide el nombre
+/// (u32) y el nombre de la cuenta, que puede ir vacío. Es siempre la de la persona del programa (la de delante, si lo
+/// pide el centro de control), desde su sesión, delante; si el nombre es el de otra cuenta, no se pregunta
+/// (`PROTEGIDO`). `sesiones` se lo pregunta a `guardian` ("*clave", con el nombre de la cuenta donde va el programa y
+/// quién lo pide en el detalle), que pide la de ahora y la nueva dos veces en su ventana: el programa no ve ninguna. La
+/// cambia el servicio de archivos sin reescribir los datos (`archivos::CAMBIAR_CLAVE`). Contesta un i32 al acabar: 0
+/// cambiada; `PROTEGIDO` si no (dijo que no, otro nombre, sin `guardian`, su sesión detrás o sin abrir); `NO_EXISTE` si
+/// el programa no es de una persona con cuenta; `OCUPADO` si ya hay otro cambio de contraseña sin acabar.
+pub const CLAVE_PROPIA: u32 = 130;
+/// De `guardian`: un intento de la ventana de `CLAVE_PROPIA` (orden, número u32, lo que miden la de ahora y la nueva
+/// (u32 y u32), la de ahora y la nueva). Las dos vacías: el usuario dijo que no. Contesta `LARGO_RESPUESTA_CLAVE` bytes:
+/// el estado (i32: 0 cambiada; `PROTEGIDO`, la de ahora no es; `OCUPADO`, hay que esperar, tras varios intentos malos;
+/// `cuentas::Fallo::NuevaCorta`; otro del servicio de archivos) y los segundos que quedan de espera (u32). Si va bien o
+/// el usuario dijo que no, se acaba y se contesta al programa; si no, la ventana sigue y se puede probar otra vez.
+pub const RESPUESTA_CLAVE: u32 = 131;
+pub const LARGO_RESPUESTA_CLAVE: usize = 8;
+/// De `guardian`, en la pantalla de entrada: **contraseña nueva con el código de recuperación** (orden, lo que miden el
+/// nombre, el código y la nueva (tres u32), el nombre, el código y la nueva). El código vale como se teclee
+/// (`cuentas::normalizar_codigo`). Las contraseñas de antes se van y el código se gasta (`archivos::CON_CODIGO`).
+/// Contesta `LARGO_RECUPERAR` bytes: el estado (i32: 0; `PROTEGIDO` si la cuenta no existe o el código no es, que cuenta
+/// como un intento malo; `OCUPADO` si hay que esperar; `cuentas::Fallo::NuevaCorta`), los segundos de espera (u32) y, si
+/// fue bien, el código nuevo (`cuentas::LARGO_CODIGO` bytes), que `guardian` enseña para apuntarlo. A otro, `PROTEGIDO`.
+pub const RECUPERAR: u32 = 132;
+pub const LARGO_RECUPERAR: usize = 8 + crate::cuentas::LARGO_CODIGO;
+/// De `guardian`, solo en el **primer arranque** (sin ninguna cuenta: no hay `Estado:Cuentas/usuarios`, o está vacío):
+/// crear la primera cuenta, que es administradora, con su volumen cifrado y su código de recuperación (orden, lo que miden
+/// el nombre, el nombre completo y la contraseña (tres u32), y los tres). Contesta como `RECUPERAR` (el estado, 0 y el
+/// código). Si ya hay cuentas, `cuentas::Fallo::HayCuentas`, y queda en el registro de seguridad; a otro, `PROTEGIDO`.
+pub const PRIMERA_CUENTA: u32 = 133;
+/// De `guardian`: las cuentas para la pantalla de entrada, desde la que se diga (orden, desde u32). Contesta el estado
+/// (i32), cuántas hay (u32), cuántas van (u32), si toca el primer arranque (u32: 1 si no hay ninguna y se puede crear la
+/// primera) y hasta `POR_PAGINA_ENTRADA` entradas de `ENTRADA_CUENTA` bytes: el nombre (16) y el nombre completo (48),
+/// rellenos de ceros. Solo las activas. A otro, `PROTEGIDO` y nada más.
+pub const CUENTAS_ENTRADA: u32 = 134;
+/// S27, oleada 6: de `guardian`, lo que dejan ver los avisos en su pantalla de bloqueo (orden). `sesiones` se lo pasa al
+/// servicio de avisos (`AVISO_RESUMEN`, sin marca, con la llave para contestar y el usuario de delante), y el servicio
+/// contesta a `guardian` directamente, según el ajuste `bloqueo` de los avisos. A otro, sin nadie delante o sin el
+/// servicio, `PROTEGIDO` (4 bytes).
+pub const AVISOS_BLOQUEO: u32 = 135;
+pub const ENTRADA_CUENTA: usize = 64;
+pub const POR_PAGINA_ENTRADA: usize = 3;
+/// S6b, S36 (rama `admin-desarrollo`): abrir un programa instalado **encerrado**, con la ficha que tendría al abrirlo
+/// con doble clic (perfil "aplicación"), para probarlo como lo verá el usuario: su propia identidad (sus permisos, no
+/// los de quien lo abre), solo su cajón `Home:Datos/<programa>` (`Datos:`), `SYS:` y su `PROGDIR:` para leer, sin
+/// `Home:`, `Work:` ni `RAM:`, y sin la capa del usuario en `C:`, `LIBS:`, `FONTS:` ni `CLASSES:` (S6b, regla 6),
+/// salvo que el usuario lo tenga en modo de desarrollo (`PERMISO_DESARROLLO`). Orden, largo del camino (u32), 0 (u32)
+/// y el camino (un programa de `Programas/`, como los que lanza la barra). De un programa de una persona con su sesión
+/// abierta, que no esté él mismo encerrado. Contesta como `LANZAR`: un i32 y el número del proceso (u64).
+pub const ABRIR: u32 = 122;
+/// Los perfiles de S6b que lleva hoy una ficha: el de siempre (como el Shell: `Home:`, `Work:`, `RAM:` y las capas del
+/// usuario) y el encerrado de una aplicación (`ABRIR`).
+pub const PERFIL_LIBRE: u8 = 0;
+pub const PERFIL_APLICACION: u8 = 1;
+/// La raíz del cajón de datos de una aplicación encerrada (`Home:Datos/<programa>`, que se ve como `Datos:`).
+pub const RAIZ_DATOS: u8 = 10;
+pub const VOLUMEN_DATOS: &str = "Datos";
+pub const CAJON_DATOS: &str = "Datos";
+/// S6b, S36: el **modo de desarrollo** de una aplicación es un permiso más de lo concedido (en
+/// `Home:Prefs/Permisos/concedidos`, con la orden `Permiso` y en Ajustes, Permisos), que no se pide con `SERVICIO`: solo
+/// se da con `PERMISO_CAMBIAR` (con la confirmación de `guardian`) y nunca desde un programa encerrado. Con él, la
+/// aplicación abierta encerrada (`ABRIR`) carga también de la capa del usuario: estas raíces, solo para leer, con su
+/// volumen (hueco, volumen que ve el programa, cajón de `Home:` y la asignación a la que se pone delante).
+pub const PERMISO_DESARROLLO: &str = "desarrollo";
+pub const RAICES_DESARROLLO: &[(u8, &str, &str, &str)] = &[
+    (11, "HomeC", "C", "C"),
+    (12, "HomeLibs", "Libs", "LIBS"),
+    (13, "HomeFonts", "Fonts", "FONTS"),
+    (14, "HomeClasses", "Classes", "CLASSES"),
+];
+/// S6b, S36: de `sesiones` al compositor, sin marca: las ventanas del programa de esta marca van en modo de desarrollo
+/// (el compositor les pone su marca, que el programa no puede quitar). Orden, 0 (u32) y la marca (u64): 16 bytes. Los
+/// mismos números en `wayland::escena`.
+pub const AVISO_DESARROLLO: u32 = 0x5536_0020;
+pub const LARGO_AVISO_DESARROLLO: usize = 16;
+
+// Lo que contesta `MATAR`.
+pub const BIEN: i32 = 0;
+pub const NO_EXISTE: i32 = -1;
+pub const PROTEGIDO: i32 = -2;
+
+
+/// La tabla de nombres de un programa (U2), tal como llega de `NOMBRES`. La resuelve el propio programa: los nombres
+/// son cosa del cliente (S6b). No es una frontera de seguridad: lo que se alcanza lo decide el servicio de archivos
+/// con las raíces del cliente; esto solo traduce.
+pub struct Nombres {
+    n: usize,
+    e: [[u8; ENTRADA_NOMBRE]; MAX_NOMBRES],
+}
+
+fn campo(b: &[u8]) -> &[u8] {
+    &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
+}
+
+impl Nombres {
+    /// Desde la respuesta de `NOMBRES`. Lo que no cuadre, fuera.
+    pub fn desde(r: &[u8]) -> Self {
+        let mut t = Self { n: 0, e: [[0; ENTRADA_NOMBRE]; MAX_NOMBRES] };
+        let dice = r.get(0..4).map_or(0, |x| u32::from_le_bytes(x.try_into().unwrap()) as usize);
+        for i in 0..dice.min(MAX_NOMBRES) {
+            let Some(e) = r.get(4 + i * ENTRADA_NOMBRE..4 + (i + 1) * ENTRADA_NOMBRE) else { break };
+            t.e[t.n].copy_from_slice(e);
+            t.n += 1;
+        }
+        t
+    }
+
+    pub fn len(&self) -> usize {
+        self.n
+    }
+
+    /// La entrada `i`: (nombre, raíz, volumen, subcamino).
+    pub fn entrada(&self, i: usize) -> Option<(&[u8], Option<u8>, &[u8], &[u8])> {
+        let e = self.e.get(i).filter(|_| i < self.n)?;
+        Some((campo(&e[..12]), Some(e[12]).filter(|&r| r != SIN_RAIZ), campo(&e[13..24]), campo(&e[24..])))
+    }
+
+    /// Traduce "Nombre:resto" a (raíz, volumen, camino), con el camino escrito en `sal`: con raíz, el camino es desde
+    /// ella; sin ella, desde la raíz del volumen. El nombre no distingue mayúsculas,
+    /// como en el Amiga. `None` si no hay ese nombre, si no cabe, o si el resto intenta salir del subcamino (un "/" al
+    /// principio, que en el Amiga es subir, o un componente "..").
+    pub fn resolver<'a>(&self, camino: &str, sal: &'a mut [u8]) -> Option<(Option<u8>, &[u8], &'a str)> {
+        let (nombre, resto) = camino.split_once(':')?;
+        if resto.starts_with('/') || resto.split('/').any(|c| c == "..") {
+            return None;
+        }
+        let (_, raiz, vol, sub) = (0..self.n).filter_map(|i| self.entrada(i)).find(|(n, ..)| n.eq_ignore_ascii_case(nombre.as_bytes()))?;
+        let mut largo = 0;
+        let mut poner = |x: &[u8]| -> Option<()> {
+            sal.get_mut(largo..largo + x.len())?.copy_from_slice(x);
+            largo += x.len();
+            Some(())
+        };
+        poner(sub)?;
+        if !sub.is_empty() && !resto.is_empty() {
+            poner(b"/")?;
+        }
+        poner(resto.as_bytes())?;
+        Some((raiz, vol, core::str::from_utf8(&sal[..largo]).ok()?))
+    }
+}

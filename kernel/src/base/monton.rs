@@ -34,6 +34,10 @@ pub struct Asignador;
 
 unsafe impl GlobalAlloc for Asignador {
     unsafe fn alloc(&self, l: Layout) -> *mut u8 {
+        #[cfg(feature = "pruebas")]
+        if fallar_aqui() {
+            return ptr::null_mut();
+        }
         let tam = l.size().max(l.align());
         if tam <= MAXIMO {
             let c = clase(tam);
@@ -42,6 +46,8 @@ unsafe impl GlobalAlloc for Asignador {
                 let Some(fis) = paginas().pagina(Zona::Normal) else { return ptr::null_mut() };
                 m.paginas_pequenas += 1;
                 let base = mmu::virt(fis as usize);
+                // S6: la página entra a cero; si no, un bloque recién dado podría traer datos de otro dueño.
+                unsafe { ptr::write_bytes(base as *mut u8, 0, PAGINA as usize) };
                 let bloque = MINIMO << c;
                 // Encadenar los bloques de la página nueva.
                 let mut off = 0;
@@ -59,10 +65,24 @@ unsafe impl GlobalAlloc for Asignador {
             let n = l.size().div_ceil(PAGINA as usize);
             let alin = (l.align() / PAGINA as usize).max(1);
             match paginas().reservar(Zona::Normal, n, alin) {
-                Some(fis) => mmu::virt(fis as usize) as *mut u8,
+                Some(fis) => {
+                    GRANDES.fetch_add(n, core::sync::atomic::Ordering::Relaxed);
+                    let p = mmu::virt(fis as usize) as *mut u8;
+                    unsafe { ptr::write_bytes(p, 0, n * PAGINA as usize) }; // S6, como arriba
+                    p
+                }
                 None => ptr::null_mut(),
             }
         }
+    }
+
+    unsafe fn alloc_zeroed(&self, l: Layout) -> *mut u8 {
+        // Lo grande ya sale a cero de `alloc`: no ponerlo a cero dos veces.
+        let p = unsafe { self.alloc(l) };
+        if !p.is_null() && l.size().max(l.align()) <= MAXIMO {
+            unsafe { ptr::write_bytes(p, 0, l.size()) };
+        }
+        p
     }
 
     unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
@@ -74,6 +94,7 @@ unsafe impl GlobalAlloc for Asignador {
             m.libres[c] = p as usize;
         } else {
             let n = l.size().div_ceil(PAGINA as usize);
+            GRANDES.fetch_sub(n, core::sync::atomic::Ordering::Relaxed);
             unsafe { paginas().liberar(mmu::fisica(p as usize) as u64, n) };
         }
     }
@@ -84,4 +105,46 @@ static ASIGNADOR: Asignador = Asignador;
 
 pub fn paginas_pequenas() -> usize {
     MONTON.tomar().paginas_pequenas
+}
+
+/// Páginas de lo grande (más de 2 KB) que hay pedidas ahora.
+static GRANDES: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Todas las páginas del montón del kernel: las troceadas para lo pequeño (no se devuelven) y las de lo grande.
+pub fn paginas_en_uso() -> usize {
+    paginas_pequenas() + GRANDES.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// Pruebas de S1: hace fallar la reserva número `k` (desde 1) que se pida en este núcleo; 0 = ninguna. Solo este núcleo,
+/// para no tumbar lo que corre en los otros.
+#[cfg(feature = "pruebas")]
+static FALLAR: [core::sync::atomic::AtomicUsize; 4] = [const { core::sync::atomic::AtomicUsize::new(0) }; 4];
+
+#[cfg(feature = "pruebas")]
+fn fallar_aqui() -> bool {
+    use core::sync::atomic::Ordering::Relaxed;
+    let f = &FALLAR[crate::nucleos::numero() as usize % 4];
+    match f.load(Relaxed) {
+        0 => false,
+        1 => {
+            f.store(0, Relaxed);
+            true
+        }
+        k => {
+            f.store(k - 1, Relaxed);
+            false
+        }
+    }
+}
+
+/// Hace fallar la reserva número `k` de este núcleo desde ahora (0 = ninguna).
+#[cfg(feature = "pruebas")]
+pub fn fallar_reserva(k: usize) {
+    FALLAR[crate::nucleos::numero() as usize % 4].store(k, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// Cuántas reservas faltan para la que fallará (0 = ya falló o no hay ninguna puesta).
+#[cfg(feature = "pruebas")]
+pub fn reserva_pendiente() -> usize {
+    FALLAR[crate::nucleos::numero() as usize % 4].load(core::sync::atomic::Ordering::Relaxed)
 }

@@ -1,0 +1,12 @@
+# El sonido por virtio-sound (`make -C kernel arranque-x86 SONIDO_X86=virtio`): el controlador, el servicio y dos
+# programas que suenan a la vez; tools/sonido_wav.py mira el WAV de QEMU.
+~virtio-sonido: en el PCIe 0:
+~│   [sonido] salida por virtio-sonido: 8 ranuras de 256 cuadros a 48 kHz
+~│   [virtio-sonido] suena el flujo 0 para el servicio
+~│   [virtio-sonido] avisos por su interrupción
+~│   [sonido] tono-a abre un flujo: I16, 1 canales, 48000 Hz
+~│   [sonido] tono-b abre un flujo: F32, 2 canales, 44100 Hz
+~│   [tono-a] 1,5 s escritos; ahora falla a propósito
+~│   [sonido] tono-a ya no está: su flujo sale con fundido
+~│   [sonido] tono-a: flujo cerrado
+~│   [sonido] tono-b: flujo cerrado

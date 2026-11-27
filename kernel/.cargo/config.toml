@@ -9,3 +9,8 @@ build-std-features = ["compiler-builtins-mem"]
 # La MMU se enciende en arranque.s antes de entrar en Rust, así que no hace falta strict-align (C6).
 # El guion de enlace lo elige build.rs: enlace.ld (la Pi) o enlace_virt.ld (QEMU virt, característica "virt").
 rustflags = ["-C", "force-frame-pointers=yes"]
+
+[target.x86_64-unknown-none]
+# x86-64 (S30, X1): `cargo build --target x86_64-unknown-none` (make arranque-x86). Sin PIE: el kernel va en su
+# dirección (enlace_x86.ld, que pone build.rs).
+rustflags = ["-C", "force-frame-pointers=yes", "-C", "relocation-model=static"]

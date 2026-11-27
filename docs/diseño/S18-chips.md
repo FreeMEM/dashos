@@ -19,7 +19,8 @@ Lo que ya está decidido y condiciona el diseño:
   reales del proceso (S3; `jit-host/host.c`).
 - El código traducido tiene una dirección para escribir y otra para ejecutar (S3).
 - Matar siempre funciona (PLAN). La caja no es una excepción.
-- Nada de código de la ROM en el repositorio, y la ROM la pone el usuario (AGENTS, reglas 1 y 2).
+- Nada de código de la ROM en el repositorio, y la ROM la pone el usuario (AGENTS, reglas 1 y 2). Desde el
+  2026-11-16, además, la imagen de `SYS:` lleva la ROM libre de AROS para quien no tenga Kickstart (sección 1).
 - Cada pieza llega con su prueba del oráculo (AGENTS, regla 5).
 
 Este documento resuelve: qué modos de caja hay, cómo se capturan los accesos a los chips con el JIT en marcha, cómo se
@@ -91,7 +92,8 @@ Enforcer lo apunta (S3). Es el modo para el Workbench, las aplicaciones y todo l
 Para los programas que se apoderan del Amiga: arrancan de disquete o con WHDLoad, apagan el sistema y hablan con los
 chips. La caja es un Amiga completo:
 
-- **El Kickstart lo pone el usuario.** Se carga de sus ficheros en `$F80000`. Nunca va en el repositorio.
+- **El Kickstart del usuario manda, si lo tiene.** Se carga de sus ficheros en `$F80000`. Nunca va en el
+  repositorio. Si no lo tiene, la caja arranca con la ROM de AROS, sin preguntar (abajo, "La ROM de AROS, de serie").
 - **La memoria es la del Amiga.** Chip RAM desde 0 (512 KB, 1 MB o 2 MB), "slow RAM" en `$C00000`, RAM rápida
   donde la ponga la autoconfiguración. La CPU corre en modo supervisor, con sus vectores y sus interrupciones. Es el
   modo en que Emu68 ya corre en la PiStorm, así que es el que menos cambia el JIT.
@@ -106,6 +108,21 @@ También sirve para quien quiera un Amiga clásico entero, con su AmigaOS 3.x in
 Sin Kickstart del usuario, el ROM de AROS para 68k (licencia APL, se puede repartir) podría arrancar. Usarlo como
 programa no choca con la regla 1, porque no se lee su código. No se comprobó qué tal funciona con juegos.
 
+### La ROM de AROS, de serie (decidido por el usuario el 2026-11-16, S36)
+
+Para que un juego del Amiga sirva recién instalado, sin poner antes una ROM:
+
+- **Qué es**: la ROM de AROS para 68k. Es libre (licencia APL) y se puede repartir. No es la de Commodore.
+- **Dónde va**: en la imagen de `SYS:`. Se baja al construir la imagen, con su huella comprobada, y la imagen dice
+  dónde está su código fuente (lo pide su licencia). **Nunca en git**: la regla "nada de ROMs en el repositorio" sigue.
+- **No rompe la sala limpia**: esa regla es no leer su código para escribir el nuestro. Repartir su binario no lo es.
+- **Quién manda**: si el usuario tiene su Kickstart, manda el suyo, y sigue siendo la referencia de las pruebas (el
+  oráculo). Si no, la caja arranca con la de AROS.
+- **Lo que se dice claro**: con la ROM de AROS no irán todos los juegos. Cuántos, no se sabe: no está medido. Cuando
+  uno falle, el aviso lo dice en llano ("Este juego no funciona con la ROM que trae DashOS") y ofrece poner un
+  Kickstart propio, con el cajón donde soltarlo.
+- **Cuándo**: en la fase 2 (sección 10). Deja de ser un extra.
+
 ### Mixta
 
 Un programa que usa el sistema pero toca algún chip. Los casos más comunes, de más fácil a más difícil:
@@ -119,6 +136,23 @@ Un programa que usa el sistema pero toca algún chip. Los casos más comunes, de
 
 Los chips de la máquina entera sirven tal cual para los casos 1 a 3. El 4 se deja hasta que un programa concreto lo
 pida.
+
+### Quién elige el modo, y dónde queda la configuración (repaso S36, 2026-11-15)
+
+El usuario no tiene que saber que hay tres modos ni qué es la chip RAM (S0):
+
+- **La caja elige sola el modo** (decidido el 2026-11-16). Un ADF que arranca y un juego de WHDLoad van directos a
+  la máquina entera. Si un programa de la caja nativa toca los chips, en vez de un error mudo la caja lo pasa a
+  máquina entera en ese primer acceso, sin preguntar, y lo recuerda en su icono (un tooltype). El Enforcer lo apunta
+  igual en su registro (S3). Cómo se hace el paso (volver a abrir el programa como máquina entera), por diseñar.
+- **La configuración sale sola**: modelo, memoria y velocidad salen de los perfiles de la sección 3 y, en WHDLoad, de
+  lo que dice su cabecera. Solo se toca si algo va mal. De dónde sale para lo demás, por diseñar al hacerlo.
+- **Queda en texto, junto al juego**: un fichero de texto al lado del disco, o los tooltypes de su icono, con el
+  modelo, la memoria, la velocidad y el Kickstart. La ventana de la máquina escribe ahí, se edita a mano y un guion
+  lo cambia. Una orden de Shell lanza una máquina con ese fichero (la orden `Caja` de S7, o una opción suya). Cuál de
+  las dos formas y el formato, por diseñar al hacerlo.
+- **El Kickstart** propio se pone en el cajón de las ROM de `Home:Amiga` (S4, sección 6). Si no hay, se usa la ROM
+  de AROS que viene en `SYS:`; si con ella un juego falla, se dice en llano y se enseña dónde soltar el Kickstart.
 
 ### Por cuál empezar
 
@@ -383,7 +417,9 @@ emulador. **Falta el servidor de audio** de DashOS: es una dependencia.
   bruto: el ADF ampliado o el IPF. El IPF se lee con una biblioteca de SPS con licencia propia (sin revisar). Va
   después.
 - **Velocidad**: real por defecto, porque hay cargadores que cuentan con ella. Rápida como opción.
-- El disco escribe en una copia, no en el fichero original, salvo que el usuario lo pida.
+- El disco escribe en una copia, no en el fichero original, salvo que el usuario lo pida. Esa copia es la capa de
+  cambios de S20: queda al lado de la imagen, como un fichero que se ve, con "Aplicar a la imagen" y "Descartar
+  cambios" en el menú del icono. Ahí están las partidas guardadas, donde el usuario las encuentra.
 
 ### El disco duro de la caja
 
@@ -410,7 +446,8 @@ Amiga y los comentarios (FS7) y la fecha (no hay reloj de la hora).
 
 Toda la máquina está en un proceso: chip RAM, registros, chips y la CPU. Guardar y cargar el estado es copiar eso; las
 traducciones del JIT se tiran. Encaja con "congelar un programa y llevárselo a otra máquina" de las propuestas de la
-visión (PLAN, 2026-11-07).
+visión (PLAN, 2026-11-07). Cada estado guardado es un fichero con nombre claro, al lado del disco o en un cajón de
+`Home:Amiga`: nada queda donde el usuario no lo encuentre (S0). Cuál de los dos sitios, por diseñar al hacerlo.
 
 ## 6. Pruebas
 
@@ -519,7 +556,7 @@ la caja en DashOS: entrega del fallo, ejecución, hilos, superficie del composit
 | Fase | Qué | Se enseña (la prueba) | Tamaño (estimado, sin medir) |
 |---|---|---|---|
 | 1 | Captura de accesos: fallo, decodificación, reescritura, llamadas directas al traducir, 24 bits. Reloj virtual con contador hacia atrás. Las dos CIA | Programas propios que leen temporizadores y `VPOSR`: mismo orden de sucesos que en FS-UAE. Coste por acceso medido | 2.000 a 3.000 líneas, parte en el traductor de Emu68 |
-| 2 | Máquina entera mínima: memoria del Amiga, `OVL`, haz e interrupciones, Copper, planos básicos, Blitter entero (copia, relleno, líneas), unidades de disco sin disco | El Kickstart 3.1 de A500 del usuario hasta la pantalla de "inserta un disco", igual que en FS-UAE | 6.000 a 9.000 líneas |
+| 2 | Máquina entera mínima: memoria del Amiga, `OVL`, haz e interrupciones, Copper, planos básicos, Blitter entero (copia, relleno, líneas), unidades de disco sin disco | El Kickstart 3.1 de A500 del usuario hasta la pantalla de "inserta un disco", igual que en FS-UAE. La ROM de AROS en la imagen de `SYS:`, y el arranque con ella si no hay Kickstart | 6.000 a 9.000 líneas |
 | 3 | Denise completa (OCS y ECS): resoluciones, entrelazado, dos campos, HAM, EHB, desplazamiento, sprites, choques, cambios a mitad de línea | Programas propios con barras de Copper, sprites y modos: la misma imagen que FS-UAE | 4.000 a 6.000 líneas |
 | 4 | Paula (audio e interrupciones), disco ADF por DMA, teclado, ratón y joystick. Ya en DashOS: ventana, audio y entrada | Un ADF propio que arranca y suena; un juego del usuario jugable (en local) | 4.000 a 6.000 líneas |
 | 5 | Disco duro: placa de autoconfiguración, ROM y gestor de DOS sobre "archivos". WHDLoad | El Workbench 3.1 del usuario y una lista de juegos WHDLoad, con su tabla de resultados | 2.000 a 4.000 líneas (68k y nativo) |
@@ -566,7 +603,8 @@ Decidido por el usuario el 2026-11-08: todas como se recomienda ("vale a todo").
    "rápido" a mano.
 7. ¿Las fases 1 a 3 en el banco ya, en paralelo con H4 y H5? Recomendado: sí, si hay manos libres.
 8. ¿El ROM de AROS como Kickstart libre para quien no tenga uno? Recomendado: probarlo en la fase 2 como extra; el
-   oráculo sigue siendo el Kickstart real.
+   oráculo sigue siendo el Kickstart real. **Decidido el 2026-11-16 (S36)**: sí, y deja de ser un extra. Va de serie
+   en la imagen de `SYS:` (nunca en git) y se hace en la fase 2. El oráculo sigue siendo el Kickstart real.
 
 ## Cómo encaja
 
@@ -579,6 +617,7 @@ Decidido por el usuario el 2026-11-08: todas como se recomienda ("vale a todo").
 - Con S9 y S10: la pantalla de la máquina es una superficie más, en ventana o a pantalla completa; a pantalla
   completa, mejor un modo de 50 Hz.
 - Con S6: la máquina entera solo ve su ventana, su audio, su entrada y los ficheros que se le dan (ADF, cajones).
+- Con S20: la copia en la que escribe el disquete es la capa de cambios de la imagen, que se ve y se deshace.
 - Con S16: la llamada nueva del kernel cumple sus reglas: el marco se escribe con accesos sin privilegio y un fallo en
   el manejador termina el proceso.
 - Con S17: el mismo banco y el mismo tipo de oráculo (`qemu-ppc` allí, FS-UAE aquí).

@@ -1,0 +1,7 @@
+[HOST] Programa t5.bin (1144 bytes)
+[JIT] D0=00000000 D1=00000000 D2=00000000 D3=00000001 D4=0000ffff D5=00000001 D6=00000000 D7=00000001
+[JIT] A0=00000000 A1=00000000 A2=00000000 A3=00000000 A4=00000000 A5=00140438 A6=00000000 A7=001ff000
+[JIT] PC=00000000 SR=2700
+[JIT] FP0=7fffffffffffffff FP1=7fffffffffffffff FP2=7fffffffffffffff FP3=7fffffffffffffff FP4=7fffffffffffffff FP5=7fffffffffffffff FP6=7fffffffffffffff FP7=7fffffffffffffff
+[JIT] FPSR=00000000 FPCR=00000000
+[HOST] Suma de la memoria del 68k: ca5a191233ec0b4d
