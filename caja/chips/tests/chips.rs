@@ -251,10 +251,10 @@ fn accesos_de_2_bytes_a_los_cia() {
 #[test]
 fn direcciones_de_nadie() {
     let mut c = Chips::nuevo();
-    assert_eq!(c.leer(0xDFF180, 2, 0), 0, "COLOR00 es de solo escritura y no se imita");
+    assert_eq!(c.leer(0xDFF180, 2, 0), 0, "COLOR00 es de solo escritura: se guarda, pero no se lee");
     assert_eq!(c.accesos_a_nadie, 1);
-    c.escribir(0xDFF180, 0x0F00, 2, 0);
-    assert_eq!(c.accesos_a_nadie, 2);
+    c.escribir(0xDFF110, 0x0F00, 2, 0);
+    assert_eq!(c.accesos_a_nadie, 2, "BPL1DAT no se imita");
     assert_eq!(c.leer(0xBFE003, 1, 0), 0, "espejo del CIA-A");
     assert_eq!(c.leer(0xBFC001, 1, 0), 0);
     // Fuera de los chips, uno de 2 bytes son dos de 1.

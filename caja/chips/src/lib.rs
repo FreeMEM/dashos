@@ -1,8 +1,9 @@
 //! Los chips del Amiga para la caja (S18, fase 1): los dos CIA 8520, un Agnus mínimo y el reloj. PAL y OCS. Y,
-//! adelantado de la fase 2, el Blitter ([`blitter`]).
+//! adelantados de la fase 2, el Blitter ([`blitter`]) y el Copper ([`copper`]).
 //!
-//! Escrito desde el Amiga Hardware Reference Manual y la hoja de datos del MOS 8520. No se ha leído código de UAE,
-//! WinUAE, FS-UAE, Amiberry ni AROS. No sabe nada del motor 68k: el motor le pasa cada acceso con su hora.
+//! Escrito desde el Amiga Hardware Reference Manual y la hoja de datos del MOS 8520; el Copper, también desde el de
+//! vAmiga (MPL-2.0, ver [`copper`]). No se ha leído código de UAE, WinUAE, FS-UAE, Amiberry ni AROS. No sabe nada del
+//! motor 68k: el motor le pasa cada acceso con su hora.
 //!
 //! # El tiempo
 //!
@@ -17,8 +18,12 @@
 //!   cifra de NTSC.
 //! - Cuadro: 313 líneas si `LOF` (cuadro largo) y 312 si no. Sin entrelazado (`BPLCON0` bit `LACE`), `LOF` se queda
 //!   como está (de serie, 1: 313 líneas, 49,92 Hz); con entrelazado cambia en cada cuadro.
-//! - `VERTB` sube al empezar cada cuadro (línea 0). El TOD del CIA-A cuenta un pulso por cuadro (VSYNC) y el del CIA-B
+//! - `VERTB` sube al empezar cada cuadro (línea 0), y el Copper vuelve a `COP1LC`. El TOD del CIA-A cuenta un pulso por cuadro (VSYNC) y el del CIA-B
 //!   uno por línea (HSYNC).
+//!
+//! Los chips no tienen la chip RAM: el Copper la lee por [`MemoriaChip`], que da la caja en [`Chips::avanzar_con`],
+//! [`Chips::leer_con`] y [`Chips::escribir_con`]. [`Chips::avanzar`], [`Chips::leer`] y [`Chips::escribir`] van sin ella
+//! ([`SinMemoria`]: el Copper lee 0, un `MOVE` prohibido, y se para hasta el cuadro siguiente).
 //!
 //! Duda: en el Amiga, el pulso de VSYNC y el de HSYNC no caen al principio del cuadro ni de la línea, sino unas
 //! líneas o unos ciclos de color después. Aquí caen al principio. Comprobar con el oráculo (K4) cuánto se separan del
@@ -52,11 +57,13 @@
 
 pub mod blitter;
 pub mod cia;
+pub mod copper;
 pub mod memoria;
 
 use blitter::Blitter;
 use cia::Cia;
-use memoria::{MemoriaChip, SinMemoria};
+use copper::Copper;
+pub use memoria::{MemoriaChip, SinMemoria};
 
 /// Ciclos del 68000 por segundo en un Amiga PAL (7,09379 MHz).
 pub const RELOJ_CPU_PAL: u64 = 7_093_790;
@@ -96,11 +103,26 @@ pub mod custom {
     pub const INTREQR: u32 = 0x01E;
     pub const VPOSW: u32 = 0x02A;
     pub const VHPOSW: u32 = 0x02C;
+    pub const COPCON: u32 = 0x02E;
+    pub const COP1LCH: u32 = 0x080;
+    pub const COP1LCL: u32 = 0x082;
+    pub const COP2LCH: u32 = 0x084;
+    pub const COP2LCL: u32 = 0x086;
+    pub const COPJMP1: u32 = 0x088;
+    pub const COPJMP2: u32 = 0x08A;
+    pub const COPINS: u32 = 0x08C;
     pub const DMACON: u32 = 0x096;
     pub const INTENA: u32 = 0x09A;
     pub const INTREQ: u32 = 0x09C;
-    /// Solo se usa su bit `LACE` (2), para la duración del cuadro.
+    /// Se guarda (para Denise); de momento solo se usa su bit `LACE` (2), para la duración del cuadro.
     pub const BPLCON0: u32 = 0x100;
+    /// Se guarda, para Denise.
+    pub const BPLCON1: u32 = 0x102;
+    /// Se guarda, para Denise.
+    pub const BPLCON2: u32 = 0x104;
+    /// Los 32 registros de color, de `COLOR00` a `COLOR31`, se guardan para Denise.
+    pub const COLOR00: u32 = 0x180;
+    pub const COLOR31: u32 = 0x1BE;
 }
 
 /// Los bits de `DMACON` y `DMACONR`.
@@ -159,6 +181,11 @@ pub struct Chips {
     /// Cuadro largo (313 líneas).
     lof: bool,
     bplcon0: u16,
+    bplcon1: u16,
+    bplcon2: u16,
+    /// `COLOR00` a `COLOR31`, en 12 bits.
+    colores: [u16; 32],
+    copper: Copper,
     intena: u16,
     intreq: u16,
     dmacon: u16,
@@ -185,6 +212,10 @@ impl Chips {
             cuadro_inicio: 0,
             lof: true,
             bplcon0: 0,
+            bplcon1: 0,
+            bplcon2: 0,
+            colores: [0; 32],
+            copper: Copper::nuevo(),
             intena: 0,
             intreq: 0,
             dmacon: 0,
@@ -197,6 +228,16 @@ impl Chips {
     /// Hasta qué hora están al día.
     pub fn hora(&self) -> u64 {
         self.hora
+    }
+
+    /// El registro de color `n` (0 a 31), como lo escribieron el 68k o el Copper (12 bits).
+    pub fn color(&self, n: usize) -> u16 {
+        self.colores[n % 32]
+    }
+
+    /// `BPLCON0`, `BPLCON1` y `BPLCON2`.
+    pub fn bplcon(&self) -> [u16; 3] {
+        [self.bplcon0, self.bplcon1, self.bplcon2]
     }
 
     // --- El haz ---
@@ -280,15 +321,46 @@ impl Chips {
     // --- El tiempo ---
 
     /// Pone todo al día hasta `hora`: los temporizadores, el TOD, el haz, el fin del blit y lo que suba a `INTREQ`.
-    /// Sin chip RAM ([`SinMemoria`]).
+    /// Sin chip RAM: ver [`Chips::avanzar_con`].
     pub fn avanzar(&mut self, hora: u64) {
         self.avanzar_con(hora, &mut SinMemoria);
     }
 
-    /// [`Chips::avanzar`] con la chip RAM `mem`, para el DMA.
-    pub fn avanzar_con(&mut self, hora: u64, _mem: &mut dyn MemoriaChip) {
+    /// Pone todo al día hasta `hora`, con el Copper, que lee la lista de `mem`. Cada paso del Copper se da a su hora,
+    /// con lo demás al día hasta ella: lo que escribe queda en orden con el haz, los CIA y `VERTB`.
+    pub fn avanzar_con(&mut self, hora: u64, mem: &mut dyn MemoriaChip) {
+        loop {
+            if !self.copper_dma() {
+                // Sin su DMA, el Copper solo vuelve a COP1LC en cada cuadro.
+                if self.avanzar_base(hora) > 0 {
+                    self.copper_cuadro();
+                }
+                return;
+            }
+            let fin = self.inicio_cuadro(1);
+            let mut t = self.copper_proximo().map_or(fin, |c| c.min(fin)).max(self.hora);
+            if self.copper_espera_blit() {
+                // El Copper sigue cuando acaba el blit (`WAIT` con `BFD` a 0).
+                if let Some(b) = self.blitter.siguiente_suceso() {
+                    t = t.min(b);
+                }
+            }
+            if t > hora {
+                break;
+            }
+            if self.avanzar_base(t) > 0 {
+                self.copper_cuadro();
+            } else {
+                self.paso_copper(mem);
+            }
+        }
+        self.avanzar_base(hora);
+    }
+
+    /// Pone al día hasta `hora` todo menos el Copper. Dice cuántos cuadros han empezado.
+    fn avanzar_base(&mut self, hora: u64) -> u64 {
         if hora <= self.hora {
-            return;
+            return 0;
         }
         let pulsos_e = hora / CICLOS_POR_E - self.hora / CICLOS_POR_E;
         self.cia_a.ticks(pulsos_e);
@@ -304,14 +376,19 @@ impl Chips {
         }
         self.hora = hora;
         self.reflejar_cias();
+        cuadros
     }
 
     /// La hora del próximo suceso: el fin del cuadro (`VERTB`), el desborde de un temporizador en marcha, la alarma
-    /// de un TOD o el fin del blit (`BLIT`). Siempre es posterior a [`Chips::hora`].
+    /// de un TOD, el fin del blit (`BLIT`) o, con el Copper en marcha, su siguiente paso (puede escribir en
+    /// `INTREQ`). Siempre es posterior a [`Chips::hora`].
     pub fn siguiente_suceso(&self) -> u64 {
         let mut t = self.inicio_cuadro(1);
         if let Some(fin) = self.blitter.siguiente_suceso() {
             t = t.min(fin);
+        }
+        if let Some(c) = self.copper_proximo() {
+            t = t.min(c.max(self.hora + 1));
         }
         for cia in [&self.cia_a, &self.cia_b] {
             if let Some(m) = cia.ticks_hasta_desborde() {
@@ -362,9 +439,14 @@ impl Chips {
 
     // --- El bus ---
 
-    /// Lee `tam` bytes (1, 2 o 4) en `dir` a la hora `hora`.
+    /// Lee `tam` bytes (1, 2 o 4) en `dir` a la hora `hora`. Sin chip RAM: ver [`Chips::leer_con`].
     pub fn leer(&mut self, dir: u32, tam: u8, hora: u64) -> u32 {
-        self.avanzar(hora);
+        self.leer_con(dir, tam, hora, &mut SinMemoria)
+    }
+
+    /// Lee `tam` bytes (1, 2 o 4) en `dir` a la hora `hora`, con el Copper al día leyendo de `mem`.
+    pub fn leer_con(&mut self, dir: u32, tam: u8, hora: u64, mem: &mut dyn MemoriaChip) -> u32 {
+        self.avanzar_con(hora, mem);
         match tam {
             1 => u32::from(self.leer8(dir)),
             2 => u32::from(self.leer16(dir)),
@@ -376,13 +458,15 @@ impl Chips {
         }
     }
 
-    /// Escribe los `tam` bytes bajos de `valor` (1, 2 o 4) en `dir` a la hora `hora`. Sin chip RAM
-    /// ([`SinMemoria`]): un blit lee 0 y no escribe.
+    /// Escribe los `tam` bytes bajos de `valor` (1, 2 o 4) en `dir` a la hora `hora`. Sin chip RAM (un blit lee 0
+    /// y no escribe): ver [`Chips::escribir_con`].
     pub fn escribir(&mut self, dir: u32, valor: u32, tam: u8, hora: u64) {
         self.escribir_con(dir, valor, tam, hora, &mut SinMemoria);
     }
 
-    /// [`Chips::escribir`] con la chip RAM `mem`, para el DMA (el Blitter).
+    /// Escribe los `tam` bytes bajos de `valor` (1, 2 o 4) en `dir` a la hora `hora`, con el Copper al día leyendo de
+    /// `mem` y el Blitter haciendo su DMA en ella. Lo que haga el Copper a esa misma hora (tras un `COPJMP`, o al
+    /// encender su DMA) va después.
     pub fn escribir_con(&mut self, dir: u32, valor: u32, tam: u8, hora: u64, mem: &mut dyn MemoriaChip) {
         self.avanzar_con(hora, mem);
         match tam {
@@ -395,6 +479,7 @@ impl Chips {
             _ => self.nadie(dir),
         }
         self.reflejar_cias();
+        self.avanzar_con(self.hora, mem);
     }
 
     fn nadie(&mut self, dir: u32) {
@@ -504,23 +589,33 @@ impl Chips {
                 let (vpos, h) = self.posicion();
                 self.lof = v & 0x8000 != 0;
                 self.poner_posicion((vpos & 0xFF) | (u64::from(v & 1) << 8), h);
+                self.copper_haz_movido();
             }
             custom::VHPOSW => {
                 // V7-V0 en el byte alto y H8-H1 en el bajo. V8 no cambia.
                 let (vpos, _) = self.posicion();
                 self.poner_posicion((vpos & 0x100) | u64::from(v >> 8), u64::from(v & 0xFF));
+                self.copper_haz_movido();
             }
             custom::DMACON => {
-                let antes = self.dma_blitter();
+                let antes_copper = self.copper_dma();
+                let antes_blitter = self.dma_blitter();
                 set_clr(&mut self.dmacon, v, DMACON_ESCRIBIBLES);
-                if !antes && self.dma_blitter() {
+                if !antes_blitter && self.dma_blitter() {
                     self.blitter.dma_encendido(self.hora, mem);
+                }
+                if !antes_copper && self.copper_dma() {
+                    self.copper_encendido();
                 }
             }
             custom::INTENA => set_clr(&mut self.intena, v, 0x7FFF),
             // Duda: el bit 14 de INTREQ no tiene uso; aquí se guarda como en INTENA. Comprobar qué lee INTREQR.
             custom::INTREQ => set_clr(&mut self.intreq, v, 0x7FFF),
             custom::BPLCON0 => self.bplcon0 = v,
+            custom::BPLCON1 => self.bplcon1 = v,
+            custom::BPLCON2 => self.bplcon2 = v,
+            custom::COLOR00..=custom::COLOR31 => self.colores[((off - custom::COLOR00) / 2) as usize] = v & 0x0FFF,
+            _ if self.escribir_copper(off, v) => {}
             _ => self.nadie(dir),
         }
     }
