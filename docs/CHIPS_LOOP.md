@@ -91,6 +91,14 @@ S18 es del 2026-11-08 y piensa solo en Emu68. Desde entonces:
 Lo que no es de la fase 1: el Copper, el Blitter, Denise, Paula, el disco, la máquina entera y AGA (fases 2 a 7
 de S18).
 
+### Fase 2 (adelantada)
+
+- [x] B2 **El Copper.** `caja/chips/src/copper.rs`, cableado a `Chips`: `COP1LC`, `COP2LC`, `COPJMP1`, `COPJMP2`,
+  `COPCON` (`CDANG`) y `COPINS`; `COPEN` y `DMAEN` en `DMACON`. `MOVE` (con los registros prohibidos), `WAIT` y `SKIP`
+  con sus máscaras y `BFD`, contra la posición del haz y con pereza. La chip RAM la da la caja (`src/memoria.rs`,
+  `MemoriaChip`). Los registros de color y `BPLCON0`/`1`/`2` se guardan para Denise. Oráculo:
+  `caja/pruebas68k/copper.c`.
+
 ## Bloqueos
 
 (ninguno)
@@ -195,3 +203,42 @@ de S18).
   sin compilarlos para x86); arreglado (04e2f684). Ahora falla en "cuentas-2" del guardián: en x86 el guardián da el
   Shell por acabado antes de que acabe (línea 3187 frente al fin del Shell en la 3827), y Berta aún no existe. Viene
   de `main` (PR #11) y no de los chips: avisado a `jefe-dash`.
+
+- B2 hecho (papel de implementador; rama `chips-copper`, sale de `chips`). Fuentes: el Hardware Reference Manual, de
+  memoria, y el Copper del núcleo de vAmiga (`Core/Components/Agnus/Copper`, cabeceras MPL-2.0 revisadas), del que se
+  toman los pasos de cada instrucción, el comparador y los registros prohibidos; el código está escrito de nuevo y lleva
+  el aviso de dónde sale. No se leyó UAE, WinUAE, FS-UAE (su código), Amiberry ni AROS.
+  - `src/copper.rs`: una máquina de estados por pasos de bus, cada uno a su hora (`Chips::avanzar_con` da cada paso con
+    lo demás al día hasta él, así que lo que escribe queda en orden con `VPOSR`, `VERTB` y los CIA). Un `MOVE` son dos
+    pasos (4 ciclos de color); un `WAIT`, tres y despierta 2 ciclos antes de la posición; un `SKIP`, cuatro. Solo
+    ciclos pares, y nunca el `$E0`. La línea se compara en 8 bits (el `WAIT $FFDF` funciona por esos tiempos: el
+    `WAIT` siguiente ya mira en la 256). Un `WAIT` que no llega en el cuadro y un `MOVE` prohibido lo paran hasta el
+    cuadro siguiente; al empezar cada uno vuelve a `COP1LC`. Prohibidos (OCS): sin `CDANG`, `$000`-`$07E`; con él,
+    `$000`-`$03E`. Un `MOVE` escribe por `escribir_custom`, el mismo camino que el 68k. `blitter_ocupado()` da `false`
+    hasta que llegue el Blitter.
+  - `src/memoria.rs` (`MemoriaChip`, `SinMemoria`), igual que en la rama del Blitter. `Chips` gana `avanzar_con`,
+    `leer_con` y `escribir_con`; `avanzar`, `leer` y `escribir` llaman a esas con `SinMemoria`, y `pegamento/`
+    no cambia.
+    `MASCARA_CHIP` = 512 KB (OCS). `siguiente_suceso` no pasa del siguiente paso del Copper si está en marcha (en un
+    `WAIT`, la hora en que despierta).
+  - `COLOR00`-`COLOR31` (12 bits) y `BPLCON0`/`1`/`2` se guardan (`Chips::color`, `Chips::bplcon`). Escribir `COLOR00`
+    ya no cuenta como acceso a nadie (cambiada esa línea de `direcciones_de_nadie`).
+  - Oráculo: `caja/pruebas68k/copper.c` (`copper.exe`, en `make` de `pruebas68k` y en git). Una lista propia en chip RAM
+    avisa con `MOVE` a `INTREQ` (`SOFT` o `COPER`) y el 68k, con `Disable` y `OwnBlitter`, apunta en qué línea ve cada
+    bit. En FS-UAE con el Kickstart 3.1 del A1200 (`--machine a1200`): las ocho "bien", líneas 40, 80, 120, 286, 300 y
+    40 (`WAIT`, `SKIP` que se cumple y que no, `WAIT $FFDF` y la línea 30, `COPJMP2` desde la lista, vuelta a `COP1LC`),
+    sin `CDANG` el `MOVE` a `$044` para el Copper todo el cuadro, y con `CDANG` se hace (línea 40). La misma lista en
+    `tests/copper.rs` (`oraculo_copper_c`) da las mismas líneas exactas.
+  - Comprobado: `cargo test` (37 + 20 pruebas, más 2 internas), `cargo clippy --all-targets` sin avisos, que compila sin
+    `std` para `x86_64-unknown-none`, `aarch64-unknown-none-softfloat` y `aarch64_be-unknown-none-softfloat`
+    (`-Zbuild-std=core`), y `make -C kernel caja-x86` (BIEN; en este worktree hizo falta enlazar `third_party/Emu68` y
+    `pkg2` del de `chips` y `make -C kernel usuario` antes).
+  - No comprobado: la exactitud al ciclo frente al Amiga (el oráculo solo distingue líneas); el robo de ciclos de los
+    planos y los demás DMA (aquí el Copper tiene todos los pares); `BFD` con un Blitter de verdad; ECS (con `CDANG`
+    puede escribir todo) y AGA. La caja aún no da chip RAM a los chips, así que `copper.exe` no va en `caja-x86`.
+  - Dudas: el oráculo es un A1200 (AGA): la diferencia de OCS con `CDANG` (`$000`-`$03E` prohibidos) no se pudo ver
+    ahí, sale de vAmiga. Un `SKIP` que se cumple solo salta un `MOVE`; si lo siguiente es un `WAIT`, espera igual (como
+    vAmiga; el manual dice "la instrucción siguiente"). Escribir `COPINS` no hace nada. Escribir `COP1LC` o `COP2LC`
+    mueve también el contador si el cuadro empezó con el DMA del Copper apagado (como vAmiga). Al encender el DMA, el
+    Copper sigue donde estaba, sin esperar a un ciclo par.
+
