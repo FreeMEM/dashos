@@ -23,6 +23,13 @@ pub fn mmfr0() -> u64 {
     v
 }
 
+/// Si la CPU admite big-endian en EL0 (SCTLR_EL1.E0E): ID_AA64MMFR0_EL1.BigEnd (bits 11-8, en EL0 y EL1) o
+/// BigEndEL0 (19-16, solo en EL0). Las de Apple no lo tienen (U7).
+pub fn big_endian_el0() -> bool {
+    let m = mmfr0();
+    (m >> 8) & 0xf != 0 || (m >> 16) & 0xf != 0
+}
+
 /// Frecuencia del contador del sistema (CNTFRQ_EL0).
 pub fn frecuencia() -> u64 {
     let f: u64;

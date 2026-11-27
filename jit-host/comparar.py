@@ -14,8 +14,10 @@
     python3 comparar.py --solo-be     # solo el punto 2
     python3 comparar.py ... t4 t5     # solo esos programas
 
-La referencia de ahora sale de Emu68 con 0001-0003, 0008 y el arreglo de 0013 en su versión sin U7
-(pruebas68k/ref/0013-sin-u7.patch): 0013 cambia el código de los modos indirectos en memoria también en big-endian.
+La referencia de ahora (2026-11-27) sale de Emu68 con 0001-0003, 0008, el arreglo de 0013 en su versión sin U7
+(pruebas68k/ref/0013-sin-u7.patch) y 0014 tal cual. 0013 cambia el código de los modos indirectos en memoria también
+en big-endian; 0014 (direcciones de 64 bits) añade dos MOVK donde se cargan direcciones de funciones de C. 0015 y 0016
+no cambian el código que genera el JIT.
 """
 import re
 import resource

@@ -30,6 +30,13 @@ fn main() {
             comprimir_programas(&dir, "src/inicio_x86.rs", "x86_64-unknown-none");
         }
     }
+    // U7: con DASHOS_CAJA_ORDEN=le (`make CAJA_ORDEN=le`), `inicio` da la caja Amiga en little-endian aunque la CPU
+    // tenga big-endian en EL0 (QEMU lo tiene): para probar en `virt` lo que harán las CPU sin él.
+    println!("cargo::rustc-check-cfg=cfg(caja_le)");
+    println!("cargo:rerun-if-env-changed=DASHOS_CAJA_ORDEN");
+    if std::env::var("DASHOS_CAJA_ORDEN").as_deref() == Ok("le") {
+        println!("cargo:rustc-cfg=caja_le");
+    }
     // La prueba de kit-c va en la imagen solo si se pudo compilar (hace falta Dash: `make kit-c`). Es de ARM.
     println!("cargo::rustc-check-cfg=cfg(dash_ventana)");
     if !x86 && std::path::Path::new(&format!("{}/../build/dash-ventana", dir)).exists() {
@@ -71,6 +78,9 @@ fn comprimir_programas(dir: &str, fuente: &str, destino: &str) {
             format!("{}/../caja/build-x86/{}", dir, nombre)
         } else if nombre == "caja-amiga" {
             format!("{}/../caja/build/{}", dir, nombre)
+        } else if nombre == "caja-amiga-le" {
+            // U7: la caja en little-endian (`make -C caja ORDEN=le`), para las CPU sin big-endian en EL0.
+            format!("{}/../caja/build-le/caja-amiga", dir)
         } else if nombre == "dash-ventana" {
             format!("{}/../build/{}", dir, nombre)
         } else if nombre == "paq" {

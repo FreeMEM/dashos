@@ -386,12 +386,12 @@ fn cpu_y_orden_de_bytes() {
         _ => "",
     };
     let big = (m >> 8) & 0xf != 0;
-    let big_el0 = big || (m >> 16) & 0xf != 0;
+    let big_el0 = base::cpu::big_endian_el0();
     let pag4 = (m >> 28) & 0xf != 0xf;
     kprintln!(
         "CPU: fabricante {:#x}, pieza {:#x} {}; big-endian en EL0: {}{}; páginas de 4 KB: {}",
         fab, pieza, nombre,
-        if big_el0 { "sí" } else { "no (la caja Amiga necesitará dar la vuelta a los bytes, U7)" },
+        if big_el0 { "sí" } else { "no (la caja Amiga, en little-endian: da la vuelta a los bytes, U7)" },
         if big { " (y en EL1)" } else { "" },
         if pag4 { "sí" } else { "no" }
     );

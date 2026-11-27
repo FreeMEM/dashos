@@ -36,6 +36,25 @@ macro_rules! programa {
 
 static INICIO: &[u8] = programa!("inicio");
 
+/// U7: la caja Amiga en little-endian (`caja/build-le`): el JIT de Emu68 da la vuelta a los bytes del 68k, para las
+/// CPU sin big-endian en EL0 (las de Apple). Va en la imagen de `virt` (UEFI, otros ordenadores ARM) junto a la de
+/// big-endian; las Pi tienen big-endian y no la llevan.
+#[cfg(feature = "virt")]
+static CAJA_LE: &[u8] = programa!("caja-amiga-le");
+
+/// La caja Amiga que puede correr esta CPU: la de big-endian si la CPU lo admite en EL0; si no, la de little-endian.
+/// Con `make CAJA_ORDEN=le` (cfg `caja_le`), la de little-endian siempre, para probarla en QEMU, que sí lo admite.
+fn caja_de_esta_cpu(nombre: &str, elf: &'static [u8]) -> &'static [u8] {
+    #[cfg(feature = "virt")]
+    if nombre == "caja-amiga" && (cfg!(caja_le) || !crate::base::cpu::big_endian_el0()) {
+        kprintln!("inicio: caja-amiga en little-endian (U7: {})",
+            if cfg!(caja_le) { "pedida al compilar" } else { "la CPU no tiene big-endian en EL0" });
+        return CAJA_LE;
+    }
+    let _ = nombre;
+    elf
+}
+
 /// El diagnóstico de una placa nueva (opción `diagnostico`, la Pi 5): solo la consola por el puerto serie y la caja Amiga,
 /// sin escritorio, ni USB, ni disco. La caja no tiene "ventanas" ni "archivos": se queda sin compositor y sin SYS:, y
 /// prueba lo suyo (el JIT, exec y dos nativas, saludo.exe); ventana.exe y hostil.exe, que necesitan el compositor, salen
@@ -882,6 +901,8 @@ pub fn lanzar() -> bool {
             }
             falta.is_none()
         })
+        // U7: la caja Amiga en el orden de bytes que admite la CPU.
+        .map(|&(nombre, elf, aparatos, suyos)| (nombre, caja_de_esta_cpu(nombre, elf), aparatos, suyos))
         .collect();
     let mut paquete: Vec<u8> = Vec::new();
     paquete.extend_from_slice(&(manifiesto.len() as u32).to_le_bytes());

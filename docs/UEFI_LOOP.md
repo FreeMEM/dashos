@@ -47,8 +47,9 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   U7a banco de pruebas en los dos órdenes, U7b parche base, U7c direcciones efectivas, U7d instrucciones, U7e FPU.
   Prueba: `make -C jit-host && make -C jit-host ORDEN=le && python3 jit-host/comparar.py`.
   Hecho en el banco (`jit-host`) del 2026-11-07, U7a a U7g: el JIT corre en little-endian con los cinco programas de
-  prueba iguales que en big-endian. Falta llevarlo a la caja de DashOS cuando la caja exista (hoy el JIT solo corre
-  en el banco) y probarlo en una CPU sin big-endian de verdad.
+  prueba iguales que en big-endian. Hecho en la caja de DashOS el 2026-11-27 (U7h y U7i, rama `aarch64-le`): la caja
+  en little-endian pasa `arranque-virt` entera, y la imagen de `virt` la elige si la CPU no tiene big-endian en EL0.
+  Falta probarlo en una CPU sin big-endian de verdad (un Mac con Asahi) y medir lo que cuesta en tiempo.
 
 ## Herramientas
 
@@ -448,3 +449,57 @@ comprobado si lo tienen).
   (0008 es solo del banco). Se aplican limpios sobre Emu68 af63580 tras 0001 a 0003, y un banco compilado desde ahí da
   las mismas sumas. **No comprobado:** interrupciones, fallos de bus y de MMU (formatos 3 y 4), MOVES, la parte de PPC
   de Emu68, y nada fuera de QEMU de usuario.
+
+### 2026-11-26 noche — U7h (la caja de DashOS en little-endian)
+
+Retomado por encargo del usuario (26/11), en la rama `aarch64-le` (sale de `motor`, con la interfaz de motor de X7),
+worktree `.worktrees/aarch64`.
+
+- `make -C caja ORDEN=le` saca la caja en little-endian (`caja/build-le/caja-amiga`), como `jit-host` con
+  `ORDEN=le`: la misma cadena de Bootlin con `-mlittle-endian` y `-Wl,-EL`, `jit-host/include-le`, y pegamento/ para
+  `aarch64-unknown-none-softfloat`. Emu68 con todos los parches de `patches/emu68` (los de U7, 0004 a 0009 y 0012, se
+  activan solos en little-endian). Los programas de Dash son 68k: los dos órdenes usan los de `caja/build/dash`.
+- El C común (caja.c, hunk.c) y las bibliotecas de Rust ya eran de los dos órdenes desde X7 (la caja de x86 es
+  little-endian): no hubo que tocarlos. `motor_emu68.c` solo cambia el nombre que dice al arrancar.
+- `make -C kernel ... CAJA_ORDEN=le` mete esa caja en la imagen (build.rs, con `DASHOS_CAJA_ORDEN`). El kernel no
+  cambia: pone o quita SCTLR_EL1.E0E por proceso según el EI_DATA de su ELF, así que esta caja corre sin E0E.
+- **Comprobado:** `make -C kernel arranque-virt CAJA_ORDEN=le` bien entera (486 líneas de la caja: hunks, ventanas,
+  GadTools, ReAction, procesos, el malware de laboratorio, la FPU), con el disco, la captura y el sonido bien. Es la
+  primera vez que el JIT en little-endian corre con interrupciones y con las bibliotecas nativas.
+- Sin `CAJA_ORDEN`, todo como antes: `make -C kernel prueba` y `caja-x86` bien; `arranque-virt` con la caja
+  big-endian, sus 486 líneas bien, pero las dos vueltas se pararon en `[ram]` (una en "crear y borrar en el cajón", otra
+  en "avisos hostiles"): el intermitente del servicio de archivos que ya apunta `docs/X86_LOOP.md`, no de la caja.
+- **No comprobado:** una CPU sin big-endian en EL0 de verdad (en QEMU la CPU lo tiene; la caja solo no lo usa), la Pi
+  con esta caja, y cuánto cuesta girar los bytes.
+
+### 2026-11-27 madrugada — U7i (la imagen de `virt` elige la caja según la CPU)
+
+- La imagen de `virt` (la de UEFI, para otros ordenadores ARM) lleva la caja Amiga en los dos órdenes, y `inicio`
+  (`kernel/src/inicio.rs`, `caja_de_esta_cpu`) da la de little-endian si la CPU no tiene big-endian en EL0
+  (`base::cpu::big_endian_el0`: ID_AA64MMFR0_EL1.BigEnd o BigEndEL0). Lo dice al arrancar: "inicio: caja-amiga en
+  little-endian (U7: ...)". La de big-endian, cuando se puede: no gira bytes. Las Pi no llevan la otra.
+- `make -C kernel` compila siempre las dos cajas (`caja/build` y `caja/build-le`). `CAJA_ORDEN=le` ya no cambia de
+  fichero: pone el cfg `caja_le` (build.rs) y `inicio` da la de little-endian aunque la CPU tenga big-endian, para
+  probar en QEMU el camino de las CPU sin él.
+- La imagen de `virt` crece 2 MB (la caja comprimida, con LZ4).
+- **Comprobado:** `make -C kernel arranque-virt CAJA_ORDEN=le` bien entera, con la caja elegida por `inicio`. Sin
+  `CAJA_ORDEN`, `inicio` da la de big-endian y la caja hace sus 486 líneas bien; la vuelta se paró en "[ram] Ana:
+  avisos hostiles", el intermitente de arriba. Van tres de tres vueltas con la caja big-endian paradas en `[ram]` y
+  dos de dos con la little-endian enteras: el intermitente depende de los tiempos (la caja que gira bytes va algo más
+  lenta) y ya salía en `motor` con la caja de siempre (`docs/X86_LOOP.md`). `make -C kernel prueba` (la Pi), bien.
+- Cuánto código de más pone el giro (banco `jit-host`, instrucciones ARM que genera el JIT para los programas de
+  `pruebas68k`, contadas en el volcado; no es tiempo): C con `-O2` (`c1`) +3,6 %, C con `-O0` (`c1-o0`, todo pasa
+  por la pila) +16,5 %, las 3000 instrucciones al azar (`t3`, casi todas con memoria) +13,7 %, excepciones (`t2`)
+  +3,3 %; en total +12 %. Cada giro es un REV, de un ciclo: el coste en tiempo será menor, pero falta medirlo en una
+  CPU de verdad.
+- `comparar.py` sigue bien en little-endian (los siete programas, la misma salida que en big-endian). En big-endian
+  daba "MAL" en seis (bloques algo más largos que en la referencia). La referencia (`pruebas68k/ref`, del 16/11) se
+  sacó con 0001-0003, 0008 y 0013 sin U7, sin 0014 (direcciones de 64 bits), que añade dos MOVK también en
+  big-endian. Rehecha el 27/11 con 0014 encima (`make EMU68=<clon> B=build-ref`, `comparar.py --guardar-ref`): los
+  siete programas bien en big-endian (solo cambian direcciones) y en little-endian. Las salidas (`ref/*.txt`) no
+  cambian; solo los volcados.
+- Tras unir `motor` (la FPU extendida entre tareas, X7 paso 4): `make -C kernel prueba` bien, `make -C kernel
+  caja-x86` bien y `arranque-virt CAJA_ORDEN=le` con la caja de little-endian elegida por `inicio` y entera bien.
+  La vuelta acabó con un solo fallo: "[ram] Ana: avisos de ENV:Sys ... cuentan [201, 201]". Es el otro intermitente
+  del servicio de archivos, el del aviso de más, que ya salió dos veces en x86 (`docs/X86_LOOP.md`). Con él, las
+  tres vueltas con la caja de little-endian han dado la caja entera bien.
