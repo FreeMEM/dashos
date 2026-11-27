@@ -1315,3 +1315,11 @@ bien):
 No comprobado: con `ACCEL=kvm`, con `IOMMU`, con `SONIDO_X86=virtio` ni con otras tarjetas de red (lo esperado de esas
 variantes es el de siempre, añadido detrás). Ni medir contra Emu68 en máquinas de verdad.
 
+### 2026-11-27 — Revisión de X7 paso 4 (la caja en arranque-x86)
+
+Revisado por la sesión del bucle (acd062ef): `make -C kernel prueba` (ARM) BIEN; `arranque-x86`, con la caja y el guion
+largo, entero salvo "[ram] Ana: avisos hostiles": el mismo intermitente de ARM, ya en las dos arquitecturas y siempre
+con la misma cara (todo lo impreso como debe, y MAL). La prueba dice ahora, si sale MAL, lo que no se veía: cuántas
+vigilancias se pusieron, los timbres que faltan o sobran y los avisos con otra cuenta. Así, la próxima vez que salga,
+se sabrá cuál de las tres cosas es.
+

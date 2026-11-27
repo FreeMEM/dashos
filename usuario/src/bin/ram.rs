@@ -478,6 +478,20 @@ fn avisos_hostiles(arch: &Archivos) -> bool {
         sigue,
         if bien { "bien" } else { "MAL" }
     );
+    // El intermitente de ARM y x86 (docs/X86_LOOP.md, 2026-11-26): todo lo de arriba sale como debe y aun así MAL. Lo
+    // que no se ve: cuántas vigilancias se pusieron, qué números sobran o faltan y los avisos con otra cuenta.
+    if !bien {
+        let faltan: Vec<u32> = ids.iter().copied().filter(|i| !llegados.contains(i)).collect();
+        let sobran: Vec<u32> = llegados.iter().copied().filter(|i| !ids.contains(i)).collect();
+        let raros: Vec<(u32, u32, u64)> = av.iter().copied().filter(|x| x.1 != a::AVISO_CAMBIO || x.2 != 2).collect();
+        println!(
+            "  [ram] Ana: avisos hostiles, detalle: {} puestas; timbres que faltan {:?}, que sobran {:?}; avisos raros {:?}",
+            ids.len(),
+            faltan,
+            sobran,
+            raros
+        );
+    }
     // Se va con las 64 puestas y su canal abierto (`lect` no se cierra): al acabar el programa, el servicio las suelta
     // (lo mira Carla).
     bien
