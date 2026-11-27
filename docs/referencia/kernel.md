@@ -80,9 +80,45 @@ El programa decide dónde proyecta su memoria. El kernel no le busca sitio.
   que alguien se une a él (o acaba el proceso). En x86-64, 24 KB: su estado de coma flotante (XSAVE) ocupa 4 KB.
 - Una excepción del programa, en cualquiera de sus hilos, termina el proceso entero, no el sistema. Por ejemplo, un fallo de página, una instrucción
   ilegal o una alineación incorrecta. El kernel escribe en la consola la clase de la excepción, la dirección de la
-  instrucción y la dirección del fallo.
+  instrucción y la dirección del fallo. Salvo que el hilo tenga un manejador de fallos (llamada 61, solo ARM): ver
+  "Fallos del propio proceso".
 - Al morir el último hilo se liberan la tabla de llaves, el espacio de direcciones y las páginas que solo usaba ese
   proceso (C18).
+
+### Fallos del propio proceso
+
+K5 (S18, "Lo que pide al kernel", punto 1). Solo en ARM; en x86, las llamadas 61 y 62 devuelven `E_NO_HAY`.
+
+- Un hilo pone su manejador con `fallo_manejador(entrada, pila, tamaño)` (61). Es de cada hilo: los hilos nuevos
+  nacen sin él. Con `entrada` 0 se quita.
+- Con manejador puesto, estas excepciones de EL0 no matan el proceso: fallo de instrucción (clase 0x20), PC sin
+  alinear (0x22), fallo de datos (0x24, traducción, permisos o alineación), SP sin alinear (0x26) e instrucción no
+  definida (0x00). Las demás siguen como siempre: la FPU atrapada se trata antes (C28), y un SError, un BRK o un registro
+  del sistema que EL0 no puede usar (clase 0x18) terminan el proceso.
+- El kernel escribe el marco en lo alto de la pila del manejador, en `pila + tamaño - 288`, con los permisos de EL0
+  (como las copias de C31). Después vuelve a EL0 en `entrada` con x0 y SP apuntando al marco y x30 a 0: volver con
+  `ret` es un fallo dentro del manejador. Los demás registros quedan como al fallar, y PSTATE también, con BTYPE a 0.
+- El marco son 36 palabras de 64 bits, en el orden de bytes del proceso:
+
+  | Bytes | Qué |
+  |---|---|
+  | 0 a 247 | x0 a x30 al fallar |
+  | 248 | SP |
+  | 256 | PC: la instrucción que falló |
+  | 264 | PSTATE (el SPSR al fallar) |
+  | 272 | ESR: la clase en los bits 31 a 26 y el detalle debajo (en un fallo de datos, el bit 6 dice si fue escritura) |
+  | 280 | FAR: la dirección que falló, en los fallos de datos y de instrucción (si ESR no lleva FnV, el bit 10) y con el PC sin alinear; si no, 0 |
+
+- El manejador vuelve con `reanudar(marco)` (62). El kernel lee el marco con los permisos de EL0 y repone x0 a x30,
+  SP y PC. De PSTATE solo toma NZCV; el resto sigue siendo el de EL0 que tenía el hilo al llamar. Así el manejador
+  puede cambiar registros, flags y PC (por ejemplo, `pc + 4` para saltar la instrucción).
+- Un fallo dentro del manejador, entre la entrega y `reanudar`, termina el proceso como siempre, igual que si no se
+  puede escribir el marco (la pila no es suya o no se puede escribir). Así no hay bucles. Cambiar de manejador dentro
+  del manejador no lo saca de él.
+- Los registros de FP y SIMD no van en el marco: el manejador no debe tocarlos, o los guarda y los repone él.
+- En la biblioteca, `dashos::fallos`: `fallo_manejador`, `fallo_quitar`, `reanudar` y el tipo `MarcoFallo`
+  (`#[repr(C)]`, con una comprobación de que mide 288 bytes). La prueba es `usuario/src/bin/fallos.rs`, en
+  little-endian y en big-endian (`make -C kernel prueba`).
 
 ### FPU y SIMD
 
@@ -197,6 +233,8 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 49 | `pagina_cero` | `x0` permiso de página 0 (con escribir), `x1` llave de memoria de una página (con leer; no revocable) | 0. La proyecta en la dirección 0, de solo lectura y sin ejecutar (H4). `E_TIPO` si `x0` no es el permiso, `E_TAMANO` si el objeto no mide una página, `E_ARGUMENTO` si ya hay página 0 o la llave es revocable |
 | 59 | `puertos_permitir` | `x0` llave de puertos de E/S (solo x86) | 0 |
 | 60 | `maquina_aparato` | `x0` vCPU (con escribir), `x1` llave de aparato del PCIe (con escribir), `x2` operación (0 asignar, 1 proyectar una BAR, 2 información de una BAR, 3 leer la configuración, 4 escribirla, 5 una interrupción de su MSI-X), `x3` y `x4` según la operación | Solo x86 (X11); en ARM, `E_NO_HAY`. Ver "Pasar un aparato a una máquina" en la sección de x86-64 |
+| 61 | `fallo_manejador` | `x0` entrada del manejador (0 lo quita), `x1` su pila, `x2` tamaño de la pila | 0. Desde aquí los fallos de EL0 de este hilo van a su manejador (K5). `E_ARGUMENTO` si la entrada no está alineada a 4 o no es de la mitad baja, si la pila o su tamaño no están alineados a 16, si no cabe un marco (288 bytes) o si se sale de la mitad baja. Solo ARM; en x86, `E_NO_HAY`. Ver "Fallos del propio proceso" |
+| 62 | `reanudar` | `x0` dirección del marco | No vuelve: sigue en el PC del marco con sus registros. `E_ARGUMENTO` si el marco no se puede leer, si su PSTATE pide otro nivel, AArch32 o enmascarar D, A o I, o si su PC no es de la mitad baja. Solo ARM; en x86, `E_NO_HAY`. Ver "Fallos del propio proceso" |
 
 ### Detalles
 
@@ -485,7 +523,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | −7 | `E_MEMORIA` | No queda memoria para procesos |
 | −8 | `E_LIMITE` | Un límite: tabla de llaves llena, cola del canal llena o demasiadas proyecciones |
 | −9 | `E_PLAZO` | Venció el plazo de `canal_leer_plazo` sin mensaje (K7). `canal_leer` ya no dice `E_CERRADO` por falta de memoria: `E_MEMORIA` |
-| −10 | `E_NO_HAY` | Sin hipervisor: el kernel no arrancó en EL2, o en x86 no hay AMD-V con NPT ni VT-x con EPT (`maquina_crear`, `maquina_correr`) |
+| −10 | `E_NO_HAY` | Sin hipervisor: el kernel no arrancó en EL2, o en x86 no hay AMD-V con NPT ni VT-x con EPT (`maquina_crear`, `maquina_correr`). También lo que esta arquitectura aún no tiene (en x86, las llamadas 61 y 62; en ARM, la 60 y la 64) |
 
 ### Topes de trabajo
 
@@ -558,7 +596,8 @@ Tipos de objeto:
 `usuario/src/lib.rs` (crate `dashos`) envuelve las llamadas: `escribir`, `salir`, `canal_crear`, `canal_escribir`,
 `canal_leer`, `memoria_crear`, `memoria_proyectar`, `registros_proyectar`, `interrupcion_asociar` e
 `interrupcion_terminar`. `dashos::hilos` tiene las de hilos (`crear`, `unir`, `esperar`, `despertar`,
-`proceso_salir`) y un `Cerrojo` hecho con la espera. `dashos::llaves` tiene la tabla de llaves (`Tabla::leer`,
+`proceso_salir`) y un `Cerrojo` hecho con la espera. `dashos::fallos` tiene las de los fallos del propio proceso
+(`fallo_manejador`, `fallo_quitar`, `reanudar` y `MarcoFallo`). `dashos::llaves` tiene la tabla de llaves (`Tabla::leer`,
 `buscar("ventanas")`) y `proceso_crear_con_nombres` lanza diciendo qué es cada llave. También tiene `println!` y la macro `programa!(principal)`, que pone `_start` y el
 manejador de pánico.
 
