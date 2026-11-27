@@ -64,9 +64,14 @@ static void mira(int bien, const char *que)
     di("chips: %s: %s\n", (LONG)que, (LONG)(bien ? "bien" : "MAL"), 0, 0);
 }
 
+/* La línea del haz. En el Amiga, el acceso largo son dos lecturas de 16 bits: si entre VPOSR y VHPOSR la línea pasa
+   de la 255 a la 256, sale V8 = 0 con V7-V0 = 0, la línea 0 (lo vio el oráculo, K4: un cuadro de más). Se lee hasta
+   que dos lecturas seguidas dan la misma línea. */
 static UWORD linea(void)
 {
-    return (UWORD)((VPOSR_VHPOSR >> 8) & 0x1FF);
+    UWORD a = (UWORD)((VPOSR_VHPOSR >> 8) & 0x1FF), b;
+    while ((b = (UWORD)((VPOSR_VHPOSR >> 8) & 0x1FF)) != a) a = b;
+    return a;
 }
 
 /* Espera al principio de un cuadro (la línea vuelve atrás) y después a LINEA_TOD. 0 si no llega. */
