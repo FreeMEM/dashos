@@ -17,6 +17,8 @@ caja_dos = { package = "dashos-caja-dos", path = "../dos" }
 caja_intuition = { package = "dashos-caja-intuition", path = "../intuition" }
 caja_utility = { package = "dashos-caja-utility", path = "../utility" }
 caja_timer = { package = "dashos-caja-timer", path = "../timer" }
+# K2: los chips del Amiga (los CIA, un Agnus mínimo y el reloj), para el motor (chips.rs).
+caja_chips = { package = "dashos-caja-chips", path = "../chips" }
 dashos = { package = "dashos-usuario", path = "../../usuario", default-features = false }
 wayland = { package = "dashos-wayland", path = "../../wayland" }
 # S26: el esquema de Material 3 del tema de DashOS (las plumas de los programas Amiga "como DashOS").

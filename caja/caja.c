@@ -176,11 +176,16 @@ static long proyecta(uintptr_t va, size_t len, int permisos)
 #define MAX_CRECIDOS 256
 static struct { uint64_t va, largo; long llave; } crecidos[MAX_CRECIDOS];
 static unsigned n_crecidos;
+/* K2: los chips del Amiga, encendidos para el programa en marcha (chips, más abajo): la RAM no crece hasta ellos. */
+static int chips_encendidos;
+#define CHIPS_DESDE 0x00BF0000UL   /* la primera de sus páginas, la de los CIA (motor.h, motor_chips) */
+
 uint32_t caja_ampliar_ram(uint32_t minimo, uint32_t tope)
 {
     uint64_t fin = m68k_ram_fin;
     uint64_t techo = (uint64_t)M68K_RAM + tope;
     if (techo > M68K_RAM_MAX) techo = M68K_RAM_MAX;
+    if (chips_encendidos && techo > CHIPS_DESDE) techo = CHIPS_DESDE;
     /* Lo que no cabe ni con todo lo que queda, ni se intenta: un AllocMem absurdo no hace crecer la caja hasta el tope. */
     if (fin >= techo || (uint64_t)minimo > techo - fin) return (uint32_t)fin;
     uint64_t quiero = ((uint64_t)minimo + (64UL << 10) + TROZO_RAM - 1) & ~(uint64_t)(TROZO_RAM - 1);
@@ -518,6 +523,7 @@ extern const uint8_t prog_procesos[], prog_procesos_fin[];
 extern const uint8_t prog_ils[], prog_ils_fin[];
 extern const uint8_t prog_dtprueba[], prog_dtprueba_fin[];
 extern const uint8_t prog_cgx[], prog_cgx_fin[];
+extern const uint8_t prog_chips[], prog_chips_fin[];
 extern const uint8_t prog_dash_test_reaction[], prog_dash_test_reaction_fin[];
 extern const uint8_t prog_dash_test_doc_reaction[], prog_dash_test_doc_reaction_fin[];
 extern const uint8_t prog_dash_ctrl_c[], prog_dash_ctrl_c_fin[];
@@ -739,6 +745,31 @@ static int ejecuta_hunk(const char *nombre, const uint8_t *datos, size_t largo, 
     *llamadas = llamadas_nativas;
     hunk_soltar(&hunks_ops, &c);
     return v;
+}
+
+/* --- K2: los chips del Amiga (motor_chips en motor.h; su estado, en pegamento/src/chips.rs) --- */
+
+uint32_t caja_chips_poner(int encendidos, uint64_t hora);
+
+/* Los enciende, con su hora 0 en la de ahora, o los apaga; con el 68k parado. 1 si quedan como se pide (encenderlos
+   no se puede con Emu68 hasta K6, ni con la RAM del 68k en sus direcciones). Al apagarlos, en *nadie, los accesos a
+   direcciones donde no hay nada que se imite. */
+static int chips(int encendidos, uint32_t *nadie)
+{
+    if (encendidos) {
+        caja_chips_poner(1, motor_ciclos());
+        if (!motor_chips(1)) {
+            caja_chips_poner(0, 0);
+            return 0;
+        }
+        chips_encendidos = 1;
+        return 1;
+    }
+    motor_chips(0);
+    chips_encendidos = 0;
+    uint32_t n = caja_chips_poner(0, 0);
+    if (nadie) *nadie = n;
+    return 1;
 }
 
 /* --- El vigilante: corta un programa 68k que no acaba --- */
@@ -1058,6 +1089,27 @@ int caja_main(void)
         di("saludo.exe acabó con %d (vector %d), %d llamadas nativas, en %u ms, sin memoria perdida: %s\n", (int)d0, v,
            llamadas, (uint32_t)((t1 - t0) / 1000), bien ? "bien" : "MAL");
         if (!bien) { motor_volcar(); fallos++; }
+
+        /* 4b. K3: los chips del Amiga (chips.c): el haz, el temporizador A, el ICR y el TOD del CIA-A, e INTREQ. La caja
+           los enciende solo para él y pone su marca delante de lo que escribe ("chips: ...: bien"); acaba con sus
+           fallos. En un motor que aún no los captura (Emu68, hasta K6) no se lanza. */
+        if (chips(1, 0)) {
+            static const char prefijo_chips[] = "  [caja-amiga] ";
+            uint32_t nadie = 0;
+            caja_consola_prefijo(prefijo_chips, sizeof(prefijo_chips) - 1);
+            t0 = ahora_us();
+            v = ejecuta_hunk("chips.exe", prog_chips, (size_t)(prog_chips_fin - prog_chips), execbase, &d0, &llamadas,
+                             &sobras);
+            t1 = ahora_us();
+            caja_consola_prefijo(NULL, 0);
+            chips(0, &nadie);
+            bien = v == -1 && d0 == 0 && sobras == 0 && nadie == 0 && caja_bloques(0) == sistema && caja_avisos() == 0;
+            di("chips.exe acabó con %d (vector %d), %d llamadas nativas, en %u ms, %u accesos a nadie: %s\n", (int)d0, v,
+               llamadas, (uint32_t)((t1 - t0) / 1000), nadie, bien ? "bien" : "MAL");
+            if (!bien) { motor_volcar(); fallos++; }
+        } else {
+            di("chips: sin chips en este motor\n");
+        }
 
         /* 5. Hostil: el mismo ejecutable cortado por cada byte y estropeado al azar. Ningún caso rompe la caja ni
            escribe fuera de lo que reserva; los que fallan devuelven toda su memoria (los cortes y 20.000 mutaciones con el

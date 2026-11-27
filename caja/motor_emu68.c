@@ -126,6 +126,24 @@ int motor_iniciar(void)
 }
 
 uint32_t motor_unidades(void) { return m68k.JIT_UNIT_COUNT; }
+
+/* K2: Emu68 no cuenta ciclos. Con su contador de instrucciones (EMU68_INSN_COUNTER, en CTX_INSN_COUNT: v20.d[0],
+   fijo con -ffixed-v20), una estimación a tanto por instrucción, que es lo que se espera en K6 hasta que el traductor
+   sume ciclos; sin él, 0. */
+#define CICLOS_POR_INSTRUCCION 8
+uint64_t motor_ciclos(void)
+{
+#if EMU68_INSN_COUNTER
+    uint64_t n;
+    __asm__ volatile("umov %0, " CTX_INSN_COUNT_ASM : "=r"(n));
+    return n * CICLOS_POR_INSTRUCCION;
+#else
+    return 0;
+#endif
+}
+
+/* K2: los accesos a los chips aún no se capturan en ARM (K5 y K6): apagados siempre. */
+int motor_chips(int encendidos) { return !encendidos; }
 void motor_memoria(uint32_t desde, uint32_t hasta, int ram) { (void)desde; (void)hasta; (void)ram; }
 void motor_zonas(uintptr_t z[MOTOR_ZONAS]) { z[0] = (uintptr_t)&m68k; z[1] = JIT_RW; z[2] = JIT_RX; }
 uint32_t motor_d0(void) { return m68k.D[0].u32; }

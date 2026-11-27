@@ -18,6 +18,7 @@ extern crate alloc;
 
 mod archivos;
 mod aviso;
+mod chips;
 mod compositor;
 mod defensa;
 mod faltan;
@@ -179,6 +180,8 @@ struct Caja {
     por_reloj: u32,
     /// Lo que hay que hacer cuando acabe cada proceso de `CreateNewProc` (`procesos.rs`).
     al_acabar: alloc::collections::BTreeMap<u32, procesos::AlAcabar>,
+    /// K2: los chips del Amiga, si están encendidos (`chips.rs`).
+    chips: Option<chips::Encendidos>,
 }
 
 /// El estado, para las funciones `extern "C"`.
@@ -463,6 +466,7 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         procesos_creados: 0,
         por_reloj: 0,
         al_acabar: alloc::collections::BTreeMap::new(),
+        chips: None,
     };
     // ramlib: lo que no está en memoria, de disco (`ramlib.rs`). Sus asignaciones, a los cajones que haya.
     c.ex.poner_ramlib(N_RAMLIB_CARGAR, N_RAMLIB_SOLTAR);

@@ -23,6 +23,12 @@ typedef struct motor_regs {
 /* Una llamada nativa: el 68k ejecutó "$A0FF <índice>" (la tabla de saltos de una biblioteca). Con los registros en
    `r`; lo que cambie en ellos, el 68k lo ve al volver. */
 void caja_nativa(motor_regs *r, uint32_t indice);
+/* K2 (docs/CHIPS_LOOP.md): con los chips encendidos (motor_chips), un acceso del 68k a $BF0000-$BFFFFF (los CIA) o a
+   $DF0000-$DFFFFF (los registros de los chips): `tam` bytes (1, 2 o 4) en `dir`, a la hora `hora` (motor_ciclos, la
+   del acceso). Los valores, en el orden del 68k (el byte de la dirección menor, el más alto). Los da pegamento/
+   (chips.rs, sobre caja/chips). Lo que no se imita lee 0 y no escribe. */
+uint32_t caja_chip_leer(uint32_t dir, unsigned tam, uint64_t hora);
+void caja_chip_escribir(uint32_t dir, uint32_t valor, unsigned tam, uint64_t hora);
 
 /* --- Lo que el motor da a la caja --- */
 
@@ -63,6 +69,20 @@ uint32_t motor_unidades(void);
    comprueba que nada de eso está al alcance del 68k (por encima de 4 GB). */
 #define MOTOR_ZONAS 3
 void motor_zonas(uintptr_t z[MOTOR_ZONAS]);
+/* K2: la hora del 68k, en ciclos de 68000 (7.093.790 por segundo en PAL) desde que arrancó el motor: siempre crece.
+   Exacta con un intérprete que cuenta los ciclos; aproximada con un JIT que los estima (o que cuenta instrucciones). */
+uint64_t motor_ciclos(void);
+/* K2: los chips del Amiga, encendidos (`encendidos` distinto de 0) o apagados, con el 68k parado (entre programas).
+   Encendidos, el motor manda a caja_chip_leer y caja_chip_escribir los accesos a $BF0000-$BFFFFF y $DF0000-$DFFFFF;
+   apagados (de serie), ahí no hay nada, como hasta ahora: un acceso es un fallo (el Enforcer, o el proceso muere).
+   Devuelve 1 si quedan como se pide; 0 si el motor aún no sabe capturar esos accesos (Emu68, hasta K6) o si la RAM
+   del 68k llega a $BF0000 (no se pueden quitar de debajo de exec). Con ellos encendidos, la caja no crece la RAM
+   hasta ahí (caja_ampliar_ram).
+   Quién los enciende: la caja (chips, en caja.c), entre programas, para el que los necesita: primero los de
+   pegamento/ (caja_chips_poner, con su hora 0 en motor_ciclos()) y después este. Hoy solo para pruebas68k/chips.c, que
+   no hace nada para encenderlos: el mismo binario corre en un Amiga de verdad (K4). Más adelante, una marca del
+   programa. */
+int motor_chips(int encendidos);
 /* Escribe los registros del 68k en la consola (cuando una prueba sale mal). */
 void motor_volcar(void);
 /* La coma flotante del 68k para pegamento/ (multitarea), en 13 u64: FPSR, FPIAR y FPCR en v[8..10]. FP0-FP7 en

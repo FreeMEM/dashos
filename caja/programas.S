@@ -27,6 +27,8 @@ prog_\nombre\()_fin:
         programa ils, "pruebas68k/ils.exe"
         programa dtprueba, "pruebas68k/dtprueba.exe"
         programa cgx, "pruebas68k/cgx.exe"
+// K3: los chips del Amiga (los CIA y el haz).
+        programa chips, "pruebas68k/chips.exe"
 // S28: los virus de laboratorio (pruebas68k/malware/).
         programa mal_arranque, "pruebas68k/malware/arranque.exe"
         programa mal_enlace, "pruebas68k/malware/enlace.exe"

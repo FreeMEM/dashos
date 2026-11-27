@@ -1203,6 +1203,19 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] hunk: Write() en Output(): bien
 ~│   [caja-amiga] saludo.exe acabó con 0 (vector -1), 7 llamadas nativas
 ~sin memoria perdida: bien
+# K3: los chips del Amiga (chips.c): el haz, el temporizador A, el ICR y el TOD del CIA-A, e INTREQ. En x86, RelevoJIT
+# manda sus accesos a caja/chips; en ARM, Emu68 aún no los captura (K6) y la prueba no se lanza.
+#[arm: los chips, aún solo con RelevoJIT
+~│   [caja-amiga] chips: sin chips en este motor
+#]
+#x86 ~│   [caja-amiga] chips: VPOSR y VHPOSR: la linea cambia a la siguiente: bien
+#x86 ~│   [caja-amiga] chips: temporizador A del CIA-A, una vez (709 tics): el bit TA del ICR sube a su hora: bien
+#x86 ~│   [caja-amiga] chips: temporizador A del CIA-A: se para solo (START a 0): bien
+#x86 ~│   [caja-amiga] chips: ICR del CIA-A: leerlo lo borra: bien
+#x86 ~│   [caja-amiga] chips: TOD del CIA-A: 1 por cuadro: bien
+#x86 ~│   [caja-amiga] chips: INTREQ: SOFT sube con SET y baja con CLR: bien
+#x86 ~│   [caja-amiga] chips: 0 fallos
+#x86 ~│   [caja-amiga] chips.exe acabó con 0 (vector -1), 
 ~│   [caja-amiga] hunk hostil: 9216 cortes y 21000 mutaciones de saludo.exe (1000 con AllocMem)
 # H5: una ventana Amiga en el escritorio. ventana.exe lee SYS:LEEME.txt por dos.library (el servicio de archivos
 # debajo), abre una ventana con OpenWindowTags, dibuja fuera (nada) y dentro (rectángulos, líneas, texto) y espera; el
