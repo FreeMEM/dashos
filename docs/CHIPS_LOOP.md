@@ -109,6 +109,13 @@ de S18).
   sucesos de `siguiente_suceso`, `ADKCON`/`ADKCONR` con la modulación de volumen y de periodo, y la salida en muestras
   estéreo i16 a una frecuencia dada (`Chips::sonido`, `Chips::muestras`), con un filtro de paso bajo que se puede
   apagar. Oráculo: `caja/pruebas68k/paula.c`.
+- [x] B4 **Los planos y Denise.** `caja/chips/src/denise.rs`: el DMA de planos de Agnus (`BPL1PT`-`BPL6PT`,
+  `BPL1MOD`/`BPL2MOD`, `DDFSTRT`/`DDFSTOP`, la ventana vertical, `BPLEN`; los ciclos que usa no los tiene el Copper) y
+  Denise de OCS (`BPLxDAT`, `BPLCON0`-`2`, `COLOR00`-`31`, la ventana horizontal): baja y alta, 1 a 6 planos, EHB,
+  HAM6, campos dobles con `PF2PRI`, desplazamiento fino, borde en `COLOR00`, campos del entrelazado. A nivel línea,
+  con los cambios a mitad de línea en su sitio. La imagen (752 x 286, `0x00RRGGBB`) la recibe quien da la chip RAM
+  (`MemoriaChip::linea_de_video`, `ConPantalla`). Oráculo: `caja/pruebas68k/denise.c` con `denise_modos.h`, contra
+  capturas de FS-UAE.
 
 ## Bloqueos
 
@@ -340,3 +347,53 @@ de S18).
   (`avanzar_base`) recibe ahora la chip RAM, para que el DMA de audio lea a la hora de cada paso; los comentarios,
   juntados. Comprobado: `cargo test` (todas) y `cargo clippy --all-targets` sin avisos; `make -C kernel caja-x86`
   BIEN. No comprobado: el Copper escribiendo en los registros de audio en el oráculo.
+
+- B4 hecho (papel de implementador; rama `chips-denise`, sale de `chips-blitter`): los planos y Denise de OCS.
+  - Fuentes: el Hardware Reference Manual, de memoria, y vAmiga (`Core/Components/Denise` y
+    `Core/Components/Agnus/Sequencer`, cabeceras MPL-2.0 revisadas): el orden de los planos en la unidad de lectura y
+    la máquina de `DDFSTRT`/`DDFSTOP` de OCS, el biestable vertical, cuándo carga Denise sus registros según `BPLCON1`
+    y dónde caen los 16 píxeles, el contador horizontal y el biestable de la ventana (borde hasta el primer
+    `BPL1DAT`), y la traducción de campos dobles, EHB y HAM. Reescrito en Rust, con el aviso MPL y el origen en la
+    cabecera de `denise.rs`. Nada de UAE, WinUAE, FS-UAE (su código), Amiberry ni AROS.
+  - Cómo es: con pereza, ciclo de color a ciclo de color dentro de la línea. `Chips::avanzar_con` pone la imagen al
+    día cuadro a cuadro (`pantalla_hasta`) antes de lo demás; antes de cada escritura en un color, `BPLCON0`,
+    `BPLCON2` o la ventana, Denise traduce a colores lo que ya se ve con lo de antes (un cambio en el ciclo `h` vale
+    desde la posición `2h`). `MemoriaChip` gana tres métodos con valor de serie (`quiere_video`, `linea_de_video`,
+    `cuadro_de_video`): sin imagen (`SinMemoria`, `pegamento/`), Denise no pinta y Agnus solo lleva sus punteros, así
+    que `pegamento/` no cambia. `Chips::cuadros_pintados()` dice cuántos cuadros hay y si el último era largo. Sin
+    sprites: su sitio está marcado en `traducir`.
+  - La imagen: 752 x 286, posiciones horizontales `$5C` a `$1D3` (en píxeles de baja, una columna por píxel de alta)
+    y líneas 26 a 311: lo mismo que el cuadro entero de FS-UAE (su captura "full").
+  - El Copper no usa los ciclos de los planos (`planos_usan_ciclo`): en alta con 4 planos, un `MOVE` pedido a mitad
+    de la lectura cae al acabarla; en baja con 6, solo le quedan dos ciclos de cada 8.
+  - Oráculo: `caja/pruebas68k/denise.c` (`denise.exe` en git) pone, con `Disable`, seis modos de
+    `denise_modos.h` cuatro segundos cada uno, con su lista de Copper (barras de `COLOR00` en seis líneas, 16 `MOVE`
+    seguidos en una, un cambio de `COLOR01` a mitad de una línea de la imagen y `BPLCON2` a mitad de pantalla): baja
+    con 5 planos, alta con 4, EHB, HAM6, campos dobles con `PF2PRI` desde la línea `$AC`, y baja con 3 planos,
+    desplazamiento fino distinto en cada campo, una palabra más de lectura con módulo y otra ventana. La captura no
+    sirve con `--screenshot` de `emu_run.py` (la saca `shot.c` de la pantalla de Intuition): se corre FS-UAE con su
+    ventana en un Xvfb propio y se pulsa F10 cada segundo con `action_screenshot`
+    (`caja/chips/tests/denise_oraculo/captura.sh` y `teclas.py`). Su captura "full" es 752 x 572, sin filtro, con las
+    líneas dobladas. `huellas.py` toma los grupos de capturas iguales (un modo cada uno) y guarda la huella de cada
+    línea (`huellas.txt`, 26 KB); `tests/denise_oraculo.rs` pinta los mismos modos con los Chips y compara línea a
+    línea: **los seis iguales, píxel a píxel**, con las barras, las bandas de los `MOVE` seguidos y el `MOVE`
+    retrasado por los planos en alta (quitando ese retraso, la línea `$90` del modo 2 sale distinta). En EHB, el
+    A1200 (AGA) parte a la mitad la componente de 8 bits y OCS la de 4: las 71.680 diferencias del modo 3 eran todas
+    esa, y `huellas.py` la pasa a la de OCS antes de sacar la huella.
+  - Comprobado: `cargo test` (18 pruebas nuevas en `tests/denise.rs` y el oráculo en `tests/denise_oraculo.rs`; las
+    de antes siguen, con `direcciones_de_nadie` probando `SPR0POS` en vez de `BPL1DAT`), `cargo clippy --all-targets`
+    sin avisos, que compila sin `std` para `x86_64-unknown-none` y `aarch64-unknown-none-softfloat`
+    (`-Zbuild-std=core`), y `make -C kernel caja-x86` (BIEN).
+  - No comprobado: el oráculo es un A1200 (Lisa), no un OCS; FS-UAE corre con la CPU a "max" (no exacto al ciclo). No
+    se probaron en el oráculo: entrelazado, `BPLxDAT` escritos por el 68k, `BPU` = 7, DDF fuera de `$18`-`$D8`,
+    cambios de `BPLCON1` o de DDF a mitad de línea, ni ventanas que se abren o cierran a mitad de línea. El robo de
+    ciclos a la CPU no se imita. La caja aún no da chip RAM ni recibe la imagen.
+  - Dudas, en la cabecera de `denise.rs`: `BPU` = 7 en OCS (aquí lee 4 y pinta 6); `PF2P` mayor que 4; las
+    escrituras en `DDFSTRT`, `DDFSTOP`, `BPLCON0` y los punteros llegan a Agnus enseguida (en el Amiga, unos ciclos
+    después); los píxeles que caen tras el final de la línea del haz van con su línea.
+
+- Unión de B4 en `chips-blitter` (la sesión), sobre B1-B3. Conflictos en `lib.rs`: B3 y B4 habían dado los dos la
+  chip RAM a `avanzar_base`; queda el reparto de B4 (la imagen cuadro a cuadro y después lo demás) y
+  `avanzar_sin_pantalla` recibe también la chip RAM, para el DMA de audio. Comprobado: `cargo test` (todas, con el
+  oráculo de la imagen) y `cargo clippy --all-targets` sin avisos; `make -C kernel caja-x86` BIEN. No comprobado: el
+  audio con los planos a la vez (el DMA de audio no quita ciclos al Copper).

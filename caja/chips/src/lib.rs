@@ -1,6 +1,6 @@
 //! Los chips del Amiga para la caja (S18, fase 1): los dos CIA 8520, un Agnus mínimo y el reloj. PAL y OCS. Y,
-//! adelantados de la fase 2, el Blitter ([`blitter`]) y el Copper ([`copper`]), y de la fase 4, el audio de Paula
-//! ([`paula`]).
+//! adelantados de la fase 2, el Blitter ([`blitter`]), el Copper ([`copper`]) y los planos de imagen con Denise
+//! ([`denise`]), y de la fase 4, el audio de Paula ([`paula`]).
 //!
 //! Escrito desde el Amiga Hardware Reference Manual y la hoja de datos del MOS 8520; el Copper, también desde el de
 //! vAmiga (MPL-2.0, ver [`copper`]). No se ha leído código de UAE, WinUAE, FS-UAE, Amiberry ni AROS. No sabe nada del
@@ -22,7 +22,7 @@
 //! - `VERTB` sube al empezar cada cuadro (línea 0), y el Copper vuelve a `COP1LC`. El TOD del CIA-A cuenta un pulso por cuadro (VSYNC) y el del CIA-B
 //!   uno por línea (HSYNC).
 //!
-//! Los chips no tienen la chip RAM: el Copper la lee por [`MemoriaChip`], que da la caja en [`Chips::avanzar_con`],
+//! Los chips no tienen la chip RAM: el Copper y los planos la leen por [`MemoriaChip`], que da la caja en [`Chips::avanzar_con`],
 //! [`Chips::leer_con`] y [`Chips::escribir_con`]. [`Chips::avanzar`], [`Chips::leer`] y [`Chips::escribir`] van sin ella
 //! ([`SinMemoria`]: el Copper lee 0, un `MOVE` prohibido, y se para hasta el cuadro siguiente).
 //!
@@ -64,12 +64,14 @@
 pub mod blitter;
 pub mod cia;
 pub mod copper;
+pub mod denise;
 pub mod memoria;
 pub mod paula;
 
 use blitter::Blitter;
 use cia::Cia;
 use copper::Copper;
+use denise::Planos;
 pub use memoria::{MemoriaChip, SinMemoria};
 use paula::Paula;
 
@@ -122,13 +124,11 @@ pub mod custom {
     pub const DMACON: u32 = 0x096;
     pub const INTENA: u32 = 0x09A;
     pub const INTREQ: u32 = 0x09C;
-    /// Se guarda (para Denise); de momento solo se usa su bit `LACE` (2), para la duración del cuadro.
+    /// Para Agnus y Denise ([`crate::denise`]); su bit `LACE` (2) da también la duración del cuadro.
     pub const BPLCON0: u32 = 0x100;
-    /// Se guarda, para Denise.
     pub const BPLCON1: u32 = 0x102;
-    /// Se guarda, para Denise.
     pub const BPLCON2: u32 = 0x104;
-    /// Los 32 registros de color, de `COLOR00` a `COLOR31`, se guardan para Denise.
+    /// Los 32 registros de color, de `COLOR00` a `COLOR31`, para Denise.
     pub const COLOR00: u32 = 0x180;
     pub const COLOR31: u32 = 0x1BE;
 }
@@ -203,6 +203,8 @@ pub struct Chips {
     dmacon: u16,
     blitter: Blitter,
     paula: Paula,
+    /// El DMA de planos y Denise.
+    planos: Planos,
     /// Accesos a direcciones sin nada que se imite: leen 0 y no escriben.
     pub accesos_a_nadie: u64,
     /// La última de esas direcciones.
@@ -234,6 +236,7 @@ impl Chips {
             dmacon: 0,
             blitter: Blitter::default(),
             paula: Paula::default(),
+            planos: Planos::default(),
             accesos_a_nadie: 0,
             ultimo_a_nadie: 0,
         }
@@ -371,8 +374,20 @@ impl Chips {
         self.avanzar_base(hora, mem);
     }
 
-    /// Pone al día hasta `hora` todo menos el Copper. Dice cuántos cuadros han empezado.
+    /// Pone al día hasta `hora` todo menos el Copper: los planos y la imagen, cuadro a cuadro, y lo demás. Dice
+    /// cuántos cuadros han empezado.
     fn avanzar_base(&mut self, hora: u64, mem: &mut dyn MemoriaChip) -> u64 {
+        let mut cuadros = 0;
+        while hora > self.hora {
+            let t = hora.min(self.inicio_cuadro(1));
+            self.pantalla_hasta(t, mem);
+            cuadros += self.avanzar_sin_pantalla(t, mem);
+        }
+        cuadros
+    }
+
+    /// Pone al día hasta `hora` los CIA, el haz, el Blitter y el audio. Dice cuántos cuadros han empezado.
+    fn avanzar_sin_pantalla(&mut self, hora: u64, mem: &mut dyn MemoriaChip) -> u64 {
         if hora <= self.hora {
             return 0;
         }
@@ -663,10 +678,7 @@ impl Chips {
             custom::INTENA => set_clr(&mut self.intena, v, 0x7FFF),
             // Duda: el bit 14 de INTREQ no tiene uso; aquí se guarda como en INTENA. Comprobar qué lee INTREQR.
             custom::INTREQ => set_clr(&mut self.intreq, v, 0x7FFF),
-            custom::BPLCON0 => self.bplcon0 = v,
-            custom::BPLCON1 => self.bplcon1 = v,
-            custom::BPLCON2 => self.bplcon2 = v,
-            custom::COLOR00..=custom::COLOR31 => self.colores[((off - custom::COLOR00) / 2) as usize] = v & 0x0FFF,
+            _ if self.escribir_planos(off, v, mem) => {}
             _ if self.escribir_copper(off, v) => {}
             _ => self.nadie(dir),
         }
