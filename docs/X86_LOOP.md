@@ -1392,3 +1392,22 @@ además, `hostil` no recibió a tiempo su primera acción de administrador (-214
 
 No comprobado: con IOMMU, con `SONIDO_X86=virtio` ni con otras redes; `arranque-x86` con `ACCEL=kvm`; contra Emu68 en
 máquinas de verdad.
+
+### 2026-11-27 — Cierre del bucle (todo lo encargado, hecho)
+
+Revisado X8 (7b206274) por la sesión del bucle: `make -C kernel prueba` (ARM) y `caja-x86` (con el JIT) BIEN.
+
+El intermitente "[ram] Ana: avisos hostiles", con su detalle (ff0edb54), salió igual en ARM y en x86: las 63
+vigilancias y sus timbres, bien; los 63 avisos llegan con 3 cambios en vez de 2. Ningún otro programa escribe
+`ENV:Sys/teclado` (solo `ram.rs`), así que el cambio de más sale del servicio de archivos. Sin mirar su código: para la
+sesión de ese servicio. Probablemente es la misma causa que la "cuenta 201" (en vez de 200) de "avisos de ENV:Sys".
+
+## Resumen (2026-11-26 y 27)
+
+Rama `motor`, sin subir: 53876712 (FPU extendida de la caja x86), d331d6f7 (azar de x86 con RDSEED o RDRAND),
+b37854ea y acd062ef (X7 paso 4: `arranque-x86` con el escritorio, el guion largo y lo esperado compartido con ARM, y la
+caja dentro), ff0edb54 (detalle del intermitente de `ram`) y 7b206274 (X8: la caja con el JIT; 13 a 15 veces más rápida
+en cálculo puro, igual o algo más lenta en TCG donde se traduce mucho). ARM pasa en cada vuelta. Lo que queda:
+medir contra Emu68 y X9 en máquinas de verdad; X5c (aparatos de un PC) sin hardware; los intermitentes de `ram` y la
+pregunta del Shell que pierde el teclado en `arranque-x86`; subir `motor` (espera el sí del usuario).
+
