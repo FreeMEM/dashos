@@ -470,3 +470,28 @@ worktree `.worktrees/aarch64`.
   en "avisos hostiles"): el intermitente del servicio de archivos que ya apunta `docs/X86_LOOP.md`, no de la caja.
 - **No comprobado:** una CPU sin big-endian en EL0 de verdad (en QEMU la CPU lo tiene; la caja solo no lo usa), la Pi
   con esta caja, y cuánto cuesta girar los bytes.
+
+### 2026-11-27 madrugada — U7i (la imagen de `virt` elige la caja según la CPU)
+
+- La imagen de `virt` (la de UEFI, para otros ordenadores ARM) lleva la caja Amiga en los dos órdenes, y `inicio`
+  (`kernel/src/inicio.rs`, `caja_de_esta_cpu`) da la de little-endian si la CPU no tiene big-endian en EL0
+  (`base::cpu::big_endian_el0`: ID_AA64MMFR0_EL1.BigEnd o BigEndEL0). Lo dice al arrancar: "inicio: caja-amiga en
+  little-endian (U7: ...)". La de big-endian, cuando se puede: no gira bytes. Las Pi no llevan la otra.
+- `make -C kernel` compila siempre las dos cajas (`caja/build` y `caja/build-le`). `CAJA_ORDEN=le` ya no cambia de
+  fichero: pone el cfg `caja_le` (build.rs) y `inicio` da la de little-endian aunque la CPU tenga big-endian, para
+  probar en QEMU el camino de las CPU sin él.
+- La imagen de `virt` crece 2 MB (la caja comprimida, con LZ4).
+- **Comprobado:** `make -C kernel arranque-virt CAJA_ORDEN=le` bien entera, con la caja elegida por `inicio`. Sin
+  `CAJA_ORDEN`, `inicio` da la de big-endian y la caja hace sus 486 líneas bien; la vuelta se paró en "[ram] Ana:
+  avisos hostiles", el intermitente de arriba. Van tres de tres vueltas con la caja big-endian paradas en `[ram]` y
+  dos de dos con la little-endian enteras: el intermitente depende de los tiempos (la caja que gira bytes va algo más
+  lenta) y ya salía en `motor` con la caja de siempre (`docs/X86_LOOP.md`). `make -C kernel prueba` (la Pi), bien.
+- Cuánto código de más pone el giro (banco `jit-host`, instrucciones ARM que genera el JIT para los programas de
+  `pruebas68k`, contadas en el volcado; no es tiempo): C con `-O2` (`c1`) +3,6 %, C con `-O0` (`c1-o0`, todo pasa
+  por la pila) +16,5 %, las 3000 instrucciones al azar (`t3`, casi todas con memoria) +13,7 %, excepciones (`t2`)
+  +3,3 %; en total +12 %. Cada giro es un REV, de un ciclo: el coste en tiempo será menor, pero falta medirlo en una
+  CPU de verdad.
+- `comparar.py` sigue bien en little-endian (los seis programas, la misma salida que en big-endian). En big-endian da
+  "MAL" en cinco (bloques algo más largos que en la referencia). La referencia (`pruebas68k/ref`, del 16/11) se saca
+  con 0001-0003, 0008 y 0013 sin U7, así que no lleva 0014 (direcciones de 64 bits), que puede añadir instrucciones
+  también en big-endian. Sin comprobar que sea solo eso; queda mirarlo y rehacer la referencia.
