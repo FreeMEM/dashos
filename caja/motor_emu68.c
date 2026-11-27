@@ -142,8 +142,116 @@ uint64_t motor_ciclos(void)
 #endif
 }
 
-/* K2: los accesos a los chips aún no se capturan en ARM (K5 y K6): apagados siempre. */
-int motor_chips(int encendidos) { return !encendidos; }
+/* --- K6 (docs/CHIPS_LOOP.md): los chips del Amiga, por el fallo de página --- */
+
+/* En la caja de ARM no hay nada proyectado en $BF0000-$BFFFFF ni en $DF0000-$DFFFFF: la RAM del 68k empieza en
+   $100000 y, con los chips encendidos, no crece hasta $BF0000 (caja_ampliar_ram); lo demás de la caja está por encima
+   de 4 GB. Así un acceso del código traducido a los chips es un fallo de datos, que el kernel entrega al propio hilo
+   (K5: llamadas 61 y 62, docs/referencia/kernel.md, "Fallos del propio proceso"). El manejador decodifica la carga o
+   el guardado de A64, llama a caja_chip_leer o caja_chip_escribir, pone el registro y sigue en PC + 4.
+
+   Lo que no es suyo (un fallo fuera del código traducido, fuera de las dos zonas, o una instrucción que no sabe
+   decodificar) acaba como sin chips: quita el manejador y reanuda en la misma instrucción, que vuelve a fallar y el
+   kernel termina el proceso con su aviso de siempre. Antes lo dice con di(). */
+#include "fallo_a64.h"
+
+#define SC_FALLO_MANEJADOR 61
+#define SC_REANUDAR        62
+#define CLASE_DATOS_EL0    0x24
+
+/* La pila del manejador: en los datos de la caja, por encima de 4 GB (el 68k no llega). Arriba, el marco. */
+#define PILA_FALLOS (64u << 10)
+static uint8_t pila_fallos[PILA_FALLOS] __attribute__((aligned(16)));
+static int chips_en;
+
+uint64_t chips_fallos;   /* accesos atendidos (para las pruebas y para K7) */
+
+/* Lo llama caja_entrada_fallo con el marco. 1: atendido; 0: no es de los chips (y lo dice, si caía en ellos). */
+int chips_fallo(marco_fallo *m);
+__attribute__((used, noipa)) int chips_fallo(marco_fallo *m)
+{
+    if (((m->esr >> 26) & 0x3f) != CLASE_DATOS_EL0 || !en_zona(m->far, 1)) return 0;
+    if (m->pc < JIT_RX || m->pc >= JIT_RX + JIT_LEN || (m->pc & 3)) {
+        di("chips: acceso a %08x fuera del código traducido (PC %p)\n", (uint32_t)m->far, (void *)m->pc);
+        return 0;
+    }
+    /* Las instrucciones de A64 van siempre en little-endian, también en la caja big-endian. */
+    const volatile uint8_t *p = (const volatile uint8_t *)m->pc;
+    uint32_t ins = p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+    struct acceso a;
+    int r = chips_atiende(m, ins, motor_ciclos(), &a);
+    if (r == 0)
+        di("chips: no sé decodificar la instrucción %08x (en %p, acceso a %08x)\n", ins, (void *)m->pc,
+           (uint32_t)m->far);
+    else if (r < 0)
+        di("chips: la instrucción %08x (en %p) toca %u bytes en %p: no caben en los chips\n", ins, (void *)m->pc,
+           a.tam * a.pares, (void *)a.dir);
+    else
+        chips_fallos++;
+    return r > 0;
+}
+
+/* La entrada del manejador (K5): x0 = SP = el marco. Los registros de la FPU y SIMD no van en el marco y el JIT tiene
+   vivos los suyos (v8-v15, la FPU del 68k; v19-v31, el SR, las pilas, el contador...): se guardan todos, con FPCR y
+   FPSR, antes de entrar en C (que puede usar v0-v7 y v16-v18), y se reponen antes de `reanudar`. v20, el contador de
+   instrucciones, sigue como estaba al fallar: motor_ciclos() lo lee dentro. En un asm suelto: GCC no hace `naked` en
+   AArch64. Si no es de los chips, quita el manejador y reanuda igual: la instrucción vuelve a fallar, ya sin
+   manejador, y el kernel termina el proceso como siempre. Si `reanudar` volviera (un marco que no vale), el UDF es un
+   fallo dentro del manejador: también lo termina. */
+void caja_entrada_fallo(void);
+__asm__(
+    ".text\n"
+    ".balign 16\n"
+    ".type caja_entrada_fallo, %function\n"
+    "caja_entrada_fallo:\n"
+    "sub sp, sp, #528\n"
+    "mrs x1, fpcr\n" "mrs x2, fpsr\n" "stp x1, x2, [sp, #0]\n"
+    "stp q0, q1, [sp, #16]\n"    "stp q2, q3, [sp, #48]\n"    "stp q4, q5, [sp, #80]\n"
+    "stp q6, q7, [sp, #112]\n"   "stp q8, q9, [sp, #144]\n"   "stp q10, q11, [sp, #176]\n"
+    "stp q12, q13, [sp, #208]\n" "stp q14, q15, [sp, #240]\n" "stp q16, q17, [sp, #272]\n"
+    "stp q18, q19, [sp, #304]\n" "stp q20, q21, [sp, #336]\n" "stp q22, q23, [sp, #368]\n"
+    "stp q24, q25, [sp, #400]\n" "stp q26, q27, [sp, #432]\n" "stp q28, q29, [sp, #464]\n"
+    "stp q30, q31, [sp, #496]\n"
+    "mov x19, x0\n"
+    "bl chips_fallo\n"
+    "cbnz w0, 1f\n"
+    "mov x0, #0\n" "mov x1, #0\n" "mov x2, #0\n" "mov x8, #61\n" "svc #0\n"   /* fallo_manejador(0) */
+    "1:\n"
+    "ldp x1, x2, [sp, #0]\n" "msr fpcr, x1\n" "msr fpsr, x2\n"
+    "ldp q0, q1, [sp, #16]\n"    "ldp q2, q3, [sp, #48]\n"    "ldp q4, q5, [sp, #80]\n"
+    "ldp q6, q7, [sp, #112]\n"   "ldp q8, q9, [sp, #144]\n"   "ldp q10, q11, [sp, #176]\n"
+    "ldp q12, q13, [sp, #208]\n" "ldp q14, q15, [sp, #240]\n" "ldp q16, q17, [sp, #272]\n"
+    "ldp q18, q19, [sp, #304]\n" "ldp q20, q21, [sp, #336]\n" "ldp q22, q23, [sp, #368]\n"
+    "ldp q24, q25, [sp, #400]\n" "ldp q26, q27, [sp, #432]\n" "ldp q28, q29, [sp, #464]\n"
+    "ldp q30, q31, [sp, #496]\n"
+    "mov x0, x19\n"
+    "mov x8, #62\n"                                               /* reanudar(marco) */
+    "svc #0\n"
+    "udf #0\n"
+    ".size caja_entrada_fallo, . - caja_entrada_fallo\n");
+
+/* K2 y K6: encendidos, el manejador de fallos del hilo de la caja (el que ejecuta el 68k) atiende las dos zonas;
+   apagados, se quita. Sin chips, un acceso ahí acaba como siempre. */
+int motor_chips(int encendidos)
+{
+    encendidos = encendidos != 0;
+    if (encendidos == chips_en) return 1;
+    if (encendidos) {
+        /* La RAM del 68k empieza en M68K_RAM y no tiene huecos: si llega a la primera zona, exec puede tener bloques
+           ahí. */
+        if (m68k_ram_fin > CHIPS_CIA) return 0;
+        if (caja_sc(SC_FALLO_MANEJADOR, (long)(uintptr_t)caja_entrada_fallo, (long)(uintptr_t)pila_fallos, PILA_FALLOS, 0,
+                    0) != 0) {
+            di("chips: el kernel no da el manejador de fallos\n");
+            return 0;
+        }
+        chips_fallos = 0;
+    } else {
+        caja_sc(SC_FALLO_MANEJADOR, 0, 0, 0, 0, 0);
+    }
+    chips_en = encendidos;
+    return 1;
+}
 void motor_memoria(uint32_t desde, uint32_t hasta, int ram) { (void)desde; (void)hasta; (void)ram; }
 void motor_zonas(uintptr_t z[MOTOR_ZONAS]) { z[0] = (uintptr_t)&m68k; z[1] = JIT_RW; z[2] = JIT_RX; }
 uint32_t motor_d0(void) { return m68k.D[0].u32; }

@@ -77,7 +77,7 @@ S18 es del 2026-11-08 y piensa solo en Emu68. Desde entonces:
 - [x] K5 **El kernel entrega el fallo al proceso** (ARM primero, x86 después). Una llamada nueva para registrar un
   manejador y otra para reanudar desde un marco (S18, sección 2, "Lo que pide al kernel"). Un fallo dentro del
   manejador mata el proceso, como hoy. Con su prueba en `pruebas.rs` y su entrada en `docs/referencia/kernel.md`.
-- [ ] K6 **Emu68 (ARM).** Con los chips encendidos, la caja deja sin proyectar `$BF0000`-`$BFFFFF` y
+- [x] K6 **Emu68 (ARM).** Con los chips encendidos, la caja deja sin proyectar `$BF0000`-`$BFFFFF` y
   `$DF0000`-`$DFFFFF`. El manejador de K5 decodifica el `ldr`/`str` de A64 (tamaño, registro, dirección y
   actualización de la base), llama a K2 y sigue tras la instrucción. La hora sale del contador de instrucciones de
   Emu68 por un coste medio: es aproximada hasta que el traductor sume ciclos. `chips.exe` pasa en `arranque-virt`.
@@ -397,3 +397,48 @@ de S18).
   `avanzar_sin_pantalla` recibe también la chip RAM, para el DMA de audio. Comprobado: `cargo test` (todas, con el
   oráculo de la imagen) y `cargo clippy --all-targets` sin avisos; `make -C kernel caja-x86` BIEN. No comprobado: el
   audio con los planos a la vez (el DMA de audio no quita ciclos al Copper).
+- K6 hecho (papel de implementador; fuentes: el manual de ARMv8-A para la codificación de las cargas y los guardados,
+  el código de DashOS y el de Emu68: sus emisores en `M68k_EA.c`, `M68k_MOVE.c`, `M68k_LINE*.c` y `M68k_Endian.h`).
+  - La memoria: en la caja de ARM ya no había nada en `$BF0000`-`$BFFFFF` ni en `$DF0000`-`$DFFFFF` (la RAM del 68k
+    empieza en `$100000` con 4 MB; lo demás de la caja está por encima de 4 GB), así que no se quita nada: basta la
+    regla de K2 de que la RAM no crezca hasta `$BF0000` y que `motor_chips(1)` diga 0 si ya llega.
+  - `motor_chips(1)` (`motor_emu68.c`) pone un manejador de fallos (llamada 61) para el hilo de la caja, con una pila de
+    64 KB en sus datos; `motor_chips(0)` lo quita (entrada 0). La entrada (`caja_entrada_fallo`, un asm suelto: GCC no
+    hace `naked` en AArch64) guarda q0-q31, FPCR y FPSR (el JIT tiene vivos v8-v15 y v19-v31), llama a `chips_fallo` y
+    reanuda (62). Atiende solo los fallos de datos con FAR en una de las dos zonas y PC en el código traducido; lo
+    demás, y lo que no sabe decodificar, lo dice con `di()`, quita el manejador y reanuda en la misma instrucción: vuelve
+    a fallar y el kernel termina el proceso como antes.
+  - El decodificador va en `caja/fallo_a64.h`. Cubre las formas que emite el traductor para la memoria del 68k: LDR/STR
+    de 1, 2, 4 y 8 bytes con desplazamiento sin signo, sin escalar (LDUR/STUR), pre y post-índice y con registro (UXTW,
+    LSL, SXTW, SXTX, escalado o no); LDRSB, LDRSH y LDRSW a W y a X; LDP/STP de W y de X (desplazamiento, pre y
+    post-índice, LDNP/STNP) y LDPSW; y las exclusivas de un registro (LDXR, LDAXR, STXR, STLXR, de 1 a 8 bytes; el
+    guardado deja el estado a 0). No cubre las de la FPU (FMOVE a un registro de los chips), las atómicas de LSE ni
+    LDAR/STLR, que el traductor no emite para esto.
+  - Un acceso tiene que caer entero en una zona de 64 KB (la dirección sale de la instrucción, y FAR tiene que estar
+    dentro); si cruza a RAM, a la otra zona o a nada, no se parte: acaba como sin chips. Un registro de 8 bytes son dos
+    accesos de 4 a los chips y un par son dos registros, siempre el de la dirección menor primero, todos a la misma
+    hora.
+  - El orden de los bytes: lo que dan los chips se pone en un trozo de memoria con los bytes en el orden del 68k, y se
+    carga de ahí en el orden de la caja (con la extensión de signo después); el guardado, al revés. Así el registro
+    queda como con la carga de verdad: en big-endian, el valor; en little-endian, los bytes girados, que el REV que
+    sigue en el código traducido endereza. La instrucción se lee siempre en little-endian.
+  - La hora: `motor_ciclos()` dentro del manejador. El kernel no toca los registros de la FPU al entregar el fallo, y
+    la entrada no pisa v20 antes de leerlo, así que es el contador de instrucciones (por 8) como estaba al fallar. Emu68
+    lo suma al salir de cada bloque, así que dentro de un bloque la hora se queda en la de su entrada.
+  - Prueba nueva en el PC: `caja/pruebas_fallo` (la lanza `make -C kernel prueba`): 83 instrucciones de todas esas
+    formas se ejecutan de verdad con qemu-user sobre una memoria en `$BF0000` y se imitan con el decodificador sobre una
+    copia; registros y memoria tienen que acabar iguales, en big-endian y en little-endian (20 vueltas al azar). Con un
+    fallo metido a propósito (el giro de 16 bits), salen 299 errores.
+  - `chips.exe` corre en ARM: fuera "chips: sin chips en este motor" en `arranque_virt.txt`, y las líneas "bien" son las
+    mismas en ARM y en x86. Medidas en ARM, en las dos cajas: 3 lecturas del haz por línea (4 en x86), TA tras 15 líneas
+    (16 en x86), TOD +1 y +5. Los márgenes de la prueba no se tocaron. `chips.exe` tarda unos 0,4-0,6 s en big-endian y
+    de 0,6 a 2,2 s en little-endian (QEMU, no vale como medida).
+  - Comprobado: `make -C caja/pruebas_fallo` (BE y LE, 0 fallos); `make -C kernel prueba` (BIEN); `make -C kernel
+    caja-x86` (BIEN); `make -C kernel arranque-virt` con la caja big-endian (BIEN a la segunda: la primera falló en el
+    guion del selector de guardar, el intermitente de siempre); con `CAJA_ORDEN=le`, BIEN a la tercera (las líneas de
+    los chips, bien en las tres; las dos primeras fallaron lejos de la caja, una en el guion de `ajustes` y otra en los
+    avisos hostiles del disco RAM, `avisos raros`: sin mirar, apuntado por si se repite).
+  - No comprobado: la Pi de verdad; el coste por fallo (eso es K7); FS-UAE (no hacía falta: el binario no cambió).
+  - Toca `caja/caja.c` solo en dos comentarios (regla 9: avisar a `dashos-aarch64`). No toca `caja/programas.S` ni
+    `caja/Makefile`: `fallo_a64.h` es una cabecera. Toca `kernel/Makefile` (la línea de `pruebas_fallo`) y `caja/motor.h`
+    (el comentario de `motor_chips`).
