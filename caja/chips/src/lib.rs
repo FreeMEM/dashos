@@ -1,5 +1,5 @@
 //! Los chips del Amiga para la caja (S18, fase 1): los dos CIA 8520, un Agnus mínimo y el reloj. PAL y OCS. Y,
-//! adelantado de la fase 2, el Blitter ([`blitter`]).
+//! adelantados de la fase 2, el Blitter ([`blitter`]) y el audio de Paula ([`paula`]).
 //!
 //! Escrito desde el Amiga Hardware Reference Manual y la hoja de datos del MOS 8520. No se ha leído código de UAE,
 //! WinUAE, FS-UAE, Amiberry ni AROS. No sabe nada del motor 68k: el motor le pasa cada acceso con su hora.
@@ -40,9 +40,14 @@
 //!
 //! # La chip RAM
 //!
-//! Los chips no la tienen: la da la caja con [`memoria::MemoriaChip`] en [`Chips::escribir_con`] y
-//! [`Chips::avanzar_con`]. [`Chips::escribir`] y [`Chips::avanzar`] son esas con [`memoria::SinMemoria`]: el DMA lee
-//! 0 y no escribe.
+//! Los chips no la tienen: la da la caja con [`memoria::MemoriaChip`] en [`Chips::leer_con`], [`Chips::escribir_con`]
+//! y [`Chips::avanzar_con`]. [`Chips::leer`], [`Chips::escribir`] y [`Chips::avanzar`] son esas con
+//! [`memoria::SinMemoria`]: el DMA lee 0 y no escribe.
+//!
+//! # El sonido
+//!
+//! [`Chips::sonido`] enciende la salida de Paula a una frecuencia, y [`Chips::muestras`] pone los chips al día y saca
+//! las muestras estéreo hechas hasta entonces (ver [`paula`]). Apagada de serie.
 //!
 //! Duda: en el Amiga, los CIA responden en toda `$BFxxxx` según los bits 12 y 13 de la dirección (espejos). Aquí solo
 //! en las direcciones del manual. Si algún programa usa un espejo, se verá en el contador.
@@ -53,10 +58,12 @@
 pub mod blitter;
 pub mod cia;
 pub mod memoria;
+pub mod paula;
 
 use blitter::Blitter;
 use cia::Cia;
 use memoria::{MemoriaChip, SinMemoria};
+use paula::Paula;
 
 /// Ciclos del 68000 por segundo en un Amiga PAL (7,09379 MHz).
 pub const RELOJ_CPU_PAL: u64 = 7_093_790;
@@ -117,6 +124,10 @@ pub mod dma {
     pub const BPLEN: u16 = 0x0100;
     pub const COPEN: u16 = 0x0080;
     pub const BLTEN: u16 = 0x0040;
+    pub const AUD3EN: u16 = 0x0008;
+    pub const AUD2EN: u16 = 0x0004;
+    pub const AUD1EN: u16 = 0x0002;
+    pub const AUD0EN: u16 = 0x0001;
 }
 
 /// Los bits de `INTENA` e `INTREQ`.
@@ -163,6 +174,7 @@ pub struct Chips {
     intreq: u16,
     dmacon: u16,
     blitter: Blitter,
+    paula: Paula,
     /// Accesos a direcciones sin nada que se imite: leen 0 y no escriben.
     pub accesos_a_nadie: u64,
     /// La última de esas direcciones.
@@ -189,6 +201,7 @@ impl Chips {
             intreq: 0,
             dmacon: 0,
             blitter: Blitter::default(),
+            paula: Paula::default(),
             accesos_a_nadie: 0,
             ultimo_a_nadie: 0,
         }
@@ -279,14 +292,15 @@ impl Chips {
 
     // --- El tiempo ---
 
-    /// Pone todo al día hasta `hora`: los temporizadores, el TOD, el haz, el fin del blit y lo que suba a `INTREQ`.
+    /// Pone todo al día hasta `hora`: los temporizadores, el TOD, el haz, el fin del blit, el audio y lo que suba a
+    /// `INTREQ`.
     /// Sin chip RAM ([`SinMemoria`]).
     pub fn avanzar(&mut self, hora: u64) {
         self.avanzar_con(hora, &mut SinMemoria);
     }
 
     /// [`Chips::avanzar`] con la chip RAM `mem`, para el DMA.
-    pub fn avanzar_con(&mut self, hora: u64, _mem: &mut dyn MemoriaChip) {
+    pub fn avanzar_con(&mut self, hora: u64, mem: &mut dyn MemoriaChip) {
         if hora <= self.hora {
             return;
         }
@@ -302,12 +316,14 @@ impl Chips {
         if self.blitter.avanzar(hora) {
             self.intreq |= int::BLIT;
         }
+        self.paula.avanzar(hora, self.cuadro_inicio, &mut self.intreq, mem);
         self.hora = hora;
         self.reflejar_cias();
     }
 
     /// La hora del próximo suceso: el fin del cuadro (`VERTB`), el desborde de un temporizador en marcha, la alarma
-    /// de un TOD o el fin del blit (`BLIT`). Siempre es posterior a [`Chips::hora`].
+    /// de un TOD, el fin del blit (`BLIT`) o una interrupción de audio (`AUDx`, la tenga habilitada `INTENA` o no).
+    /// Siempre es posterior a [`Chips::hora`].
     pub fn siguiente_suceso(&self) -> u64 {
         let mut t = self.inicio_cuadro(1);
         if let Some(fin) = self.blitter.siguiente_suceso() {
@@ -326,7 +342,31 @@ impl Chips {
             let siguiente = self.cuadro_inicio.wrapping_add((off / CICLOS_POR_LINEA + 1) * CICLOS_POR_LINEA);
             t = t.min(siguiente + (n - 1) * CICLOS_POR_LINEA);
         }
+        // El audio mira adelante solo hasta lo que ya se sabe (como mucho, un cuadro).
+        if let Some(a) = self.paula.siguiente_suceso(t, self.cuadro_inicio, self.intreq) {
+            t = t.min(a);
+        }
         t
+    }
+
+    // --- El sonido ---
+
+    /// Enciende la salida de Paula a `frecuencia` Hz desde ahora (0 la apaga), con el filtro de paso bajo o sin él.
+    pub fn sonido(&mut self, frecuencia: u32, filtro: bool) {
+        self.paula.sonido(frecuencia, filtro, self.hora);
+    }
+
+    /// Pone todo al día hasta `hora`, con la chip RAM `mem`, y saca en `buf` las muestras estéreo hechas (izquierda y
+    /// derecha alternas, en i16). Dice cuántas muestras estéreo ha puesto; las que no caben se quedan para la
+    /// siguiente vez.
+    pub fn muestras(&mut self, hora: u64, mem: &mut dyn MemoriaChip, buf: &mut [i16]) -> usize {
+        self.avanzar_con(hora, mem);
+        self.paula.sacar(buf)
+    }
+
+    /// Las muestras de la salida que se perdieron porque nadie las sacó a tiempo.
+    pub fn muestras_perdidas(&self) -> u64 {
+        self.paula.perdidas()
     }
 
     /// La línea /IRQ de cada CIA llega a Paula: la del CIA-A a `PORTS` (nivel 2) y la del CIA-B a `EXTER` (nivel 6).
@@ -362,9 +402,14 @@ impl Chips {
 
     // --- El bus ---
 
-    /// Lee `tam` bytes (1, 2 o 4) en `dir` a la hora `hora`.
+    /// Lee `tam` bytes (1, 2 o 4) en `dir` a la hora `hora`. Sin chip RAM ([`SinMemoria`]): el DMA de audio lee 0.
     pub fn leer(&mut self, dir: u32, tam: u8, hora: u64) -> u32 {
-        self.avanzar(hora);
+        self.leer_con(dir, tam, hora, &mut SinMemoria)
+    }
+
+    /// [`Chips::leer`] con la chip RAM `mem`, para el DMA (el audio).
+    pub fn leer_con(&mut self, dir: u32, tam: u8, hora: u64, mem: &mut dyn MemoriaChip) -> u32 {
+        self.avanzar_con(hora, mem);
         match tam {
             1 => u32::from(self.leer8(dir)),
             2 => u32::from(self.leer16(dir)),
@@ -476,6 +521,7 @@ impl Chips {
             }
             custom::INTENAR => self.intena,
             custom::INTREQR => self.intreq,
+            paula::reg::ADKCONR => self.paula.adkcon(),
             _ => {
                 self.nadie(dir);
                 0
@@ -488,8 +534,16 @@ impl Chips {
         self.dmacon & (dma::DMAEN | dma::BLTEN) == dma::DMAEN | dma::BLTEN
     }
 
+    /// `AUDxON` de los cuatro canales (bits 0-3): `DMAEN` y `AUDxEN`.
+    fn dma_audio(&self) -> u16 {
+        if self.dmacon & dma::DMAEN != 0 { self.dmacon & 0xF } else { 0 }
+    }
+
     fn escribir_custom(&mut self, dir: u32, off: u32, v: u16, mem: &mut dyn MemoriaChip) {
         if self.blitter.escribir_registro(off, v) {
+            return;
+        }
+        if self.paula.escribir_registro(off, v, self.hora, self.cuadro_inicio, &mut self.intreq) {
             return;
         }
         match off {
@@ -516,6 +570,8 @@ impl Chips {
                 if !antes && self.dma_blitter() {
                     self.blitter.dma_encendido(self.hora, mem);
                 }
+                let audio = self.dma_audio();
+                self.paula.dma(audio, self.hora, self.cuadro_inicio, &mut self.intreq);
             }
             custom::INTENA => set_clr(&mut self.intena, v, 0x7FFF),
             // Duda: el bit 14 de INTREQ no tiene uso; aquí se guarda como en INTENA. Comprobar qué lee INTREQR.

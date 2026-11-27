@@ -98,6 +98,12 @@ de S18).
   `SING`, textura, acumulador en `BLTAPT`), todo de una vez al escribir `BLTSIZE`; `BZERO`, y `BBUSY` hasta una hora
   estimada en la que sube `BLIT`. La chip RAM la da la caja (`src/memoria.rs`, `Chips::escribir_con` y
   `Chips::avanzar_con`). Oráculo: `caja/pruebas68k/blitter.c` con los casos de `blitter_casos.h`.
+- [x] B3 **El audio de Paula.** De OCS, en `caja/chips/src/paula.rs`, cableado al bus de `Chips`. Los cuatro canales
+  (`AUDxLC`, `AUDxLEN`, `AUDxPER`, `AUDxVOL`, `AUDxDAT`) con la máquina de estados del manual, el DMA de audio
+  (`AUDxEN` y `DMAEN`, una palabra por línea en el ciclo de cada canal), el modo manual, `AUD0`-`AUD3` en `INTREQ` como
+  sucesos de `siguiente_suceso`, `ADKCON`/`ADKCONR` con la modulación de volumen y de periodo, y la salida en muestras
+  estéreo i16 a una frecuencia dada (`Chips::sonido`, `Chips::muestras`), con un filtro de paso bajo que se puede
+  apagar. Oráculo: `caja/pruebas68k/paula.c`.
 
 ## Bloqueos
 
@@ -237,3 +243,46 @@ de S18).
   - Dudas, en la cabecera de `blitter.rs`: qué pasa al escribir `BLTSIZE` con un blit en marcha (aquí el anterior se
     da por acabado y sube su `BLIT`); una línea con `USEB` o con ancho distinto de 2; `BZERO` antes del primer blit.
 
+- B3 hecho (papel de implementador; rama `chips-paula`, sale de `chips-blitter`): el audio de Paula de OCS, adelantado
+  de la fase 2.
+  - Fuentes: el Hardware Reference Manual (capítulo 5 y su diagrama de estados), de memoria, y vAmiga
+    (`Core/Components/Paula/Audio/StateMachine*.cpp` y, de `Core/Components/Agnus`, `Agnus.cpp`, `AgnusEvents.cpp`,
+    `AgnusDma.cpp` y `Sequencer/SequencerDas.cpp`; MPL-2.0, cabeceras revisadas): las transiciones y lo que hace cada
+    una, el contador de largo, el retraso de un ciclo de color de `AUDx`, y que una petición de DMA pasa a Agnus al
+    acabar la línea y se sirve en la siguiente en el ciclo `$0D` + 2 × canal. Reescrito en Rust, con el aviso MPL y
+    el origen en la cabecera de `paula.rs`. Nada de UAE, WinUAE, FS-UAE (su código), Amiberry ni AROS.
+  - Cómo es: con pereza, de suceso en suceso (fin de periodo, lectura de DMA, subida de `AUDx`) en orden entre los
+    cuatro canales. `siguiente_suceso` mira adelante en una copia, sin chip RAM, hasta la primera `AUDx` o el resto
+    de sucesos (como mucho un cuadro); si un canal que modula lee una palabra antes, da esa hora. `AUDx` sube siempre;
+    la enmascara `INTENA`. `Chips::leer_con` es nuevo: una lectura también pone al día el DMA de audio, y con `leer`
+    (sin chip RAM) lee 0.
+  - La salida: apagada de serie. `Chips::sonido(frecuencia, filtro)` la enciende; al poner al día los chips se toma una
+    muestra en cada instante de salida con lo que suena entonces (canales 0 y 3 a la izquierda, 1 y 2 a la derecha,
+    byte × volumen × 2), en un anillo de 2048 (unos 43 ms a 48 kHz) dentro de `Chips` (8 KB más); `Chips::muestras`
+    pone al día y saca. Si nadie las saca se pierden las viejas (`muestras_perdidas`). El filtro es un polo a 4500 Hz,
+    aproximado al fijo del A500; el del LED no está. No la usa nadie todavía.
+  - Lo que se vio: tras cada `AUDx` se escriben `AUDxLC`/`AUDxLEN` del bloque siguiente al que empieza (el que empieza
+    ya los tomó). La primera `AUDx` llega en la línea siguiente al encendido. Con `AUDxLEN` 1 el primer bloque dura
+    dos palabras. Con un periodo bajo 124, el DMA da una palabra por línea y el bloque dura unas `AUDxLEN` líneas.
+    Apagar el DMA no para el canal en seco: acaba la palabra y, con `AUDx` a 0, suena una más en modo manual (el
+    oráculo lo vio: los casos seguidos en el mismo canal empezaban con el canal aún sonando; ahora `paula.c` espera a
+    que se pare).
+  - Oráculo: `caja/pruebas68k/paula.c` (`paula.exe` en git; no va en la caja), con `Disable`, mide en FS-UAE (A1200,
+    Kickstart 3.1, `emu_run.py --machine a1200`) las líneas hasta la primera `AUDx` y entre las cuatro siguientes en
+    11 medidas (`AUDxLEN` de 1 a 500, `AUDxPER` de 60 a 2000, los cuatro canales, `AUDxLEN` cambiado a mitad, dos
+    canales a la vez) y el modo manual (20 palabras, canales 0 y 3): **0 fallos**. `tests/paula.rs` repite lo mismo y
+    da las mismas líneas con una de diferencia como mucho (4 de las 11 medidas, iguales en todo).
+  - Comprobado: `cargo test` (16 pruebas nuevas en `tests/paula.rs`: la hora exacta de cada `AUDx`, el ciclo de cada
+    canal, `AUDxLEN` y `AUDxPER` 0, las direcciones que lee el DMA en varios bloques y al cambiar `AUDxLC`/`AUDxLEN`,
+    apagar el DMA, sin `DMAEN`, el modo manual, sin `INTENA`, `ADKCONR`, las muestras con su volumen y su lado, el
+    volumen nuevo en la palabra siguiente, el anillo lleno, el filtro, la modulación de volumen y los dos oráculos),
+    `cargo clippy --all-targets` sin avisos, compila sin `std` para `x86_64-unknown-none` y
+    `aarch64-unknown-none-softfloat` (`-Zbuild-std=core`), y `make -C kernel caja-x86` (BIEN; `chips.exe` bien, con 3
+    lecturas del haz por línea en vez de 4: cada acceso pone al día también el audio, aunque esté parado).
+  - No comprobado: el sonido de verdad (las muestras solo se miran en las pruebas; FS-UAE corre con
+    `uae_sound_output = interrupts` y no se compara su salida); la modulación de periodo y la de los dos a la vez (solo
+    se prueba la de volumen, y no con el oráculo); el filtro frente a un A500; el robo de ciclos; un Amiga de verdad.
+  - Dudas, en la cabecera de `paula.rs`: el puntero de la primera palabra (la que no suena) al encender el DMA (aquí
+    el que había, como vAmiga); una escritura de `AUDxDAT` por la CPU con el DMA en marcha cuenta como palabra; el
+    orden de dos sucesos a la misma hora; que un canal que modula no suene (del manual; vAmiga repite su último
+    byte). Coste: un canal con un periodo muy corto da un suceso por periodo (con `AUDxPER` 1, uno por ciclo de color).
