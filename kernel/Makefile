@@ -747,7 +747,7 @@ RELEVO_PATCH := $(if $(RELEVO_DIR),--config 'patch."https://github.com/FreeMEM/R
 # X7, paso 4: los de `arranque-virt` (`inicio.rs` con `virt`) que no son de ARM, más los controladores de un PC. `paq`
 # sale de `ordenes/`, como en ARM. Y los programas del disco de la prueba (`tools/disco_archivos.py`), también de x86.
 SERVICIOS_X86 := inicio consola compositor xhci nvme disco ahci disco-sata archivos comprobador eco sesiones red virtio-red intel-red rtl-red fondo centro guardian pide entrada ficheros imagen adf-prueba ventana-a ventana-b ajustes sonido avisos barra dock avisador virtio-sonido hda tono-a tono-b selector hostil presa red-gloton red-prueba sin-red panel caida explorador workbench hola virtio-gpu presion sin-maquina espia hora commodity-prueba mezclador
-DISCO_PROGRAMAS_PRUEBA_X86 := pide cambio ram avisa guarda espera
+DISCO_PROGRAMAS_PRUEBA_X86 := pide cambio ram avisa guarda espera blanker nocapslock
 
 # X5c: el firmware del PHY de la RTL8125B (`rtl8125b-2.fw` de linux-firmware), si este sistema lo tiene: va dentro del
 # kernel de x86 (`inicio_x86.rs`) y `rtl-red` lo aplica. No va en git. Se descomprime (.zst o .xz) en

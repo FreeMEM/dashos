@@ -747,7 +747,17 @@ fn lanzar_con_argumentos(camino: &str, como: u32, args: &str) -> (i32, u64) {
 }
 
 /// U6: si el proceso `pid` sigue en la lista de `sesiones` (`guardian` los ve todos).
+///
+/// La lista va por páginas, pedidas una a una: si entre dos acaba un proceso de delante, los de detrás suben un puesto
+/// y uno puede caer en la página ya leída. Por eso se da por acabado solo si falta en dos vueltas seguidas (en x86, con
+/// más procesos y los Shell de ayuda del guion naciendo y acabando, el guardián dio el Shell por acabado a media prueba
+/// y cuentas-2 no encontraba a Berta). Si `sesiones` no contesta, se cuenta como vivo: quien espera tiene su plazo.
 fn vivo(pid: u64) -> bool {
+    vuelta_procesos(pid) != Some(false) || vuelta_procesos(pid) != Some(false)
+}
+
+/// Una vuelta a la lista de procesos de `sesiones`: si está `pid`, o `None` si no contesta.
+fn vuelta_procesos(pid: u64) -> Option<bool> {
     let mut desde = 0u64;
     loop {
         let mut p = [0u8; 12];
@@ -758,14 +768,14 @@ fn vivo(pid: u64) -> bool {
         let n = if dashos::canal_escribir(SESIONES, &p, &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 3_000_000).0 } else { -1 };
         dashos::cerrar(lectura);
         if n < 8 {
-            return false;
+            return None;
         }
         let van = u32::from_le_bytes(r[0..4].try_into().unwrap()) as usize;
         if (0..van.min(POR_PAGINA)).any(|i| r[8 + FICHA * i..8 + FICHA * i + 8] == pid.to_le_bytes()) {
-            return true;
+            return Some(true);
         }
         if van < POR_PAGINA {
-            return false;
+            return Some(false);
         }
         desde += van as u64;
     }
