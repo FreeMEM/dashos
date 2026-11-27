@@ -492,10 +492,12 @@ worktree `.worktrees/aarch64`.
   por la pila) +16,5 %, las 3000 instrucciones al azar (`t3`, casi todas con memoria) +13,7 %, excepciones (`t2`)
   +3,3 %; en total +12 %. Cada giro es un REV, de un ciclo: el coste en tiempo será menor, pero falta medirlo en una
   CPU de verdad.
-- `comparar.py` sigue bien en little-endian (los seis programas, la misma salida que en big-endian). En big-endian da
-  "MAL" en cinco (bloques algo más largos que en la referencia). La referencia (`pruebas68k/ref`, del 16/11) se saca
-  con 0001-0003, 0008 y 0013 sin U7, así que no lleva 0014 (direcciones de 64 bits), que puede añadir instrucciones
-  también en big-endian. Sin comprobar que sea solo eso; queda mirarlo y rehacer la referencia.
+- `comparar.py` sigue bien en little-endian (los siete programas, la misma salida que en big-endian). En big-endian
+  daba "MAL" en seis (bloques algo más largos que en la referencia). La referencia (`pruebas68k/ref`, del 16/11) se
+  sacó con 0001-0003, 0008 y 0013 sin U7, sin 0014 (direcciones de 64 bits), que añade dos MOVK también en
+  big-endian. Rehecha el 27/11 con 0014 encima (`make EMU68=<clon> B=build-ref`, `comparar.py --guardar-ref`): los
+  siete programas bien en big-endian (solo cambian direcciones) y en little-endian. Las salidas (`ref/*.txt`) no
+  cambian; solo los volcados.
 - Tras unir `motor` (la FPU extendida entre tareas, X7 paso 4): `make -C kernel prueba` bien, `make -C kernel
   caja-x86` bien y `arranque-virt CAJA_ORDEN=le` con la caja de little-endian elegida por `inicio` y entera bien.
   La vuelta acabó con un solo fallo: "[ram] Ana: avisos de ENV:Sys ... cuentan [201, 201]". Es el otro intermitente
