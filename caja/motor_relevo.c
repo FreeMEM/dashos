@@ -13,8 +13,8 @@
       anidada de RelevoJIT), con los registros de fuera guardados aquí.
     - Las interrupciones: la de la caja es el nivel 6 y la NMI (cortar el programa) el 7, por relevo_set_ipl, que vale
       desde cualquier hilo.
-    - La FPU para pegamento/ (multitarea): RelevoJIT tiene registros de 80 bits y pegamento guarda 64 por registro
-      (los de Emu68 son double): se convierten, y entre cambios de tarea se pierde la precisión extendida (pendiente).
+    - La FPU para pegamento/ (multitarea): los registros de 80 bits de RelevoJIT pasan tal cual (la mantisa y, aparte,
+      el signo y el exponente; motor.h): la precisión extendida no se pierde al cambiar de tarea.
 */
 
 #include <stdint.h>
@@ -215,38 +215,16 @@ void motor_zonas(uintptr_t z[MOTOR_ZONAS])
 
 void motor_volcar(void) { volcar(relevo_get_regs(cpu)); }
 
-/* --- La coma flotante: 80 bits en RelevoJIT, double (64) en lo que guarda pegamento --- */
-
-static uint64_t a_double(relevo_fpreg f)
-{
-    uint64_t signo = (uint64_t)(f.sign_exponent >> 15) << 63;
-    uint32_t e = f.sign_exponent & 0x7fff;
-    uint64_t fr = (f.mantissa << 1) >> 12;                  /* sin el bit entero, 52 bits */
-    if (e == 0x7fff) return signo | 0x7ffULL << 52 | (fr ? fr | 1ULL << 51 : 0);
-    if (e == 0 || !(f.mantissa >> 63)) return signo;        /* cero (y los subnormales, a cero) */
-    int64_t de = (int64_t)e - 16383 + 1023;
-    if (de >= 0x7ff) return signo | 0x7ffULL << 52;
-    if (de <= 0) return signo;
-    return signo | (uint64_t)de << 52 | fr;
-}
-
-static relevo_fpreg de_double(uint64_t d)
-{
-    relevo_fpreg f;
-    uint16_t signo = (uint16_t)(d >> 63) << 15;
-    uint32_t e = (d >> 52) & 0x7ff;
-    uint64_t fr = d & ((1ULL << 52) - 1);
-    if (e == 0x7ff) { f.sign_exponent = signo | 0x7fff; f.mantissa = fr ? 1ULL << 63 | fr << 11 : 0; return f; }
-    if (e == 0) { f.sign_exponent = signo; f.mantissa = 0; return f; }
-    f.sign_exponent = signo | (uint16_t)(e - 1023 + 16383);
-    f.mantissa = 1ULL << 63 | fr << 11;
-    return f;
-}
+/* --- La coma flotante: 80 bits, tal cual (la mantisa en v[i] y el signo y el exponente en v[11..12], motor.h) --- */
 
 void caja_fp_leer(uint64_t *v)
 {
     relevo_regs *r = relevo_get_regs(cpu);
-    for (int i = 0; i < 8; i++) v[i] = a_double(r->fp[i]);
+    v[11] = v[12] = 0;
+    for (int i = 0; i < 8; i++) {
+        v[i] = r->fp[i].mantissa;
+        v[11 + i / 4] |= (uint64_t)r->fp[i].sign_exponent << (16 * (i % 4));
+    }
     v[8] = r->fpsr;
     v[9] = r->fpiar;
     v[10] = r->fpcr;
@@ -255,7 +233,10 @@ void caja_fp_leer(uint64_t *v)
 void caja_fp_poner(const uint64_t *v)
 {
     relevo_regs *r = relevo_get_regs(cpu);
-    for (int i = 0; i < 8; i++) r->fp[i] = de_double(v[i]);
+    for (int i = 0; i < 8; i++) {
+        r->fp[i].mantissa = v[i];
+        r->fp[i].sign_exponent = (uint16_t)(v[11 + i / 4] >> (16 * (i % 4)));
+    }
     r->fpsr = (uint32_t)v[8];
     r->fpiar = (uint32_t)v[9];
     r->fpcr = (uint32_t)v[10];

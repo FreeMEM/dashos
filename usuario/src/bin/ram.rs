@@ -219,8 +219,10 @@ fn ana(arch: &Archivos, t: &Tabla) -> bool {
         en_envarc.as_deref() == Ok(b"es\n"),
         if env { "bien" } else { "MAL" }
     );
-    // El secreto que Carla no tiene que ver.
-    let secreto = arch.poner(RAM, b"secreto.txt", b"lo de Ana en su RAM:\n");
+    // El secreto que Carla no tiene que ver. No se llama "secreto.txt": este programa va en el disco de las pruebas, y
+    // `tools/disco_archivos.py --comprobar` busca ese nombre (el de `ficheros` en el volumen cifrado de Ana) en claro en
+    // el disco; en x86, DashFS guardaba este programa sin comprimir y el nombre salía (X7, paso 4).
+    let secreto = arch.poner(RAM, b"secreto-ram.txt", b"lo de Ana en su RAM:\n");
     // Llenarla: de mega en mega y, cuando no cabe uno, de 64 KB en 64 KB, hasta que diga que no.
     let (mide, libre_antes) = sitio(arch);
     let maquina_antes = libres();
@@ -254,7 +256,7 @@ fn ana(arch: &Archivos, t: &Tabla) -> bool {
     } else {
         otro.e
     };
-    let sigue = arch.orden(a::BUSCAR, RAM, 0, 0, b"secreto.txt");
+    let sigue = arch.orden(a::BUSCAR, RAM, 0, 0, b"secreto-ram.txt");
     let leido = if sigue.e == a::BIEN { arch.leer(sigue.asa) } else { Err(sigue.e) };
     let sistema = arch.esta(s::RAIZ_SYS as u32, b"C/grande.txt");
     // Borrar, llena: se puede, y la memoria vuelve.
@@ -476,6 +478,20 @@ fn avisos_hostiles(arch: &Archivos) -> bool {
         sigue,
         if bien { "bien" } else { "MAL" }
     );
+    // El intermitente de ARM y x86 (docs/X86_LOOP.md, 2026-11-26): todo lo de arriba sale como debe y aun así MAL. Lo
+    // que no se ve: cuántas vigilancias se pusieron, qué números sobran o faltan y los avisos con otra cuenta.
+    if !bien {
+        let faltan: Vec<u32> = ids.iter().copied().filter(|i| !llegados.contains(i)).collect();
+        let sobran: Vec<u32> = llegados.iter().copied().filter(|i| !ids.contains(i)).collect();
+        let raros: Vec<(u32, u32, u64)> = av.iter().copied().filter(|x| x.1 != a::AVISO_CAMBIO || x.2 != 2).collect();
+        println!(
+            "  [ram] Ana: avisos hostiles, detalle: {} puestas; timbres que faltan {:?}, que sobran {:?}; avisos raros {:?}",
+            ids.len(),
+            faltan,
+            sobran,
+            raros
+        );
+    }
     // Se va con las 64 puestas y su canal abierto (`lect` no se cierra): al acabar el programa, el servicio las suelta
     // (lo mira Carla).
     bien
@@ -490,13 +506,13 @@ fn en_la_raiz(arch: &Archivos) -> u64 {
 fn carla_primera(arch: &Archivos, t: &Tabla) -> bool {
     // Su `RAM:` es otra: recién hecha, con `T` y `Env` y nada de Ana.
     let entradas = en_la_raiz(arch);
-    let secreto = arch.esta(RAM, b"secreto.txt");
+    let secreto = arch.esta(RAM, b"secreto-ram.txt");
     // Por ningún sitio: ninguna de sus raíces lleva a la `RAM:` de Ana, ni subiendo, ni por el cajón que tuvo en el
     // disco, ni pidiendo el volumen por un nombre; y las órdenes de los volúmenes en memoria (crear, quitar, dar una
     // raíz, copiar) son de `sesiones`: con la llave de un programa no existen.
     let mut llega = 0;
     for raiz in 0..16 {
-        for camino in [&b"secreto.txt"[..], b"../secreto.txt", b"Estado/RAM/Ana/secreto.txt", b"RAM/secreto.txt", b"Ana/secreto.txt"] {
+        for camino in [&b"secreto-ram.txt"[..], b"../secreto-ram.txt", b"Estado/RAM/Ana/secreto-ram.txt", b"RAM/secreto-ram.txt", b"Ana/secreto-ram.txt"] {
             llega += (arch.esta(raiz, camino) == a::BIEN) as u32;
         }
     }

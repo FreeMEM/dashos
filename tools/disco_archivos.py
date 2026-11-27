@@ -718,7 +718,7 @@ CATALOGO_DASH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "
 DASH_VENTANA = "Estado/Servicios/dash-ventana"
 
 if sys.argv[1] in ("--comprobar", "--comprobar-basico"):
-    # Con --comprobar-basico (make arranque-x86): solo lo que escriben los servicios que hay en x86 (`ficheros`, por el
+    # Con --comprobar-basico (make sata-x86): solo lo que escriben los servicios que hay en x86 (`ficheros`, por el
     # servicio de archivos y el NVMe). Sin el árbol entero, que depende del escritorio completo de arranque-virt (las
     # sesiones, el centro, el explorador, la caja Amiga), ni la fecha (en x86 no se lee todavía el reloj del PC).
     basico = sys.argv[1] == "--comprobar-basico"
@@ -943,7 +943,8 @@ if sys.argv[1] in ("--comprobar", "--comprobar-basico"):
             hay = subprocess.run([ver, disco, desde, f"{CUENTAS}/{n}"], capture_output=True).stdout
             if hay != quiere:
                 fallos.append(f"{CUENTAS}/{n}: {hay!r}")
-        salida = os.path.join(os.path.dirname(os.path.abspath(disco)), "salida_virt.txt")
+        # La salida de la prueba: la de arranque-virt, junto al disco; DASHOS_SALIDA=fichero, otra (arranque-x86).
+        salida = os.environ.get("DASHOS_SALIDA") or os.path.join(os.path.dirname(os.path.abspath(disco)), "salida_virt.txt")
         codigo = re.findall(r"el código de recuperación de Berta es ([A-Z0-9-]{29})", open(salida, errors="replace").read()) if os.path.exists(salida) else []
         if len(codigo) != 2 or codigo[0] == codigo[1]:
             fallos.append(f"los códigos de recuperación de Berta en la consola: {codigo}")
@@ -1235,6 +1236,11 @@ with tempfile.TemporaryDirectory() as t:
     # La caja Amiga, paso 2: con DASHOS_AMIGAOS=carpeta (la del AmigaOS del usuario, de su equipo: nunca va a git), una
     # copia en Amiga/AmigaOS y su ajuste en C/Prefs/amigaos, y el disco crece lo que haga falta.
     tamano = 7 << 20
+    # X7, paso 4: con DASHOS_DISCO_MAS_KB=n, n KB más (`make arranque-x86`, el disco de ARM con los programas de x86). El
+    # código de x86 ocupa más una vez comprimido por DashFS (los ELF de ARM llevan relleno de ceros, que no ocupa): con el
+    # mismo tamaño quedarían unos 150 KB menos libres que en ARM, y las pruebas que llenan el disco (la copia del
+    # explorador) no caben.
+    tamano += int(os.environ.get("DASHOS_DISCO_MAS_KB", "0")) << 10
     amigaos = os.environ.get("DASHOS_AMIGAOS")
     if amigaos:
         import shutil

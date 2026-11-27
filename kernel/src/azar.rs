@@ -2,7 +2,7 @@
 //!
 //! Un generador ChaCha20 (RFC 8439, sección 2.3) con la llave que se cambia tras cada uso ("fast key erasure"): quien
 //! vea el estado después no puede saber lo que salió antes. La llave sale de la semilla que el firmware deja en el
-//! árbol de dispositivos (`/chosen/rng-seed` y `/chosen/kaslr-seed`: la ponen el firmware de la Pi y QEMU). Sin
+//! árbol de dispositivos (`/chosen/rng-seed` y `/chosen/kaslr-seed`: la ponen el firmware de la Pi y QEMU); en x86, de la CPU (RDSEED o RDRAND). Sin
 //! semilla, se mezcla el contador del sistema, que se puede adivinar: vale para colocar programas, no para llaves. La
 //! llamada 34 dice cuál de los dos casos es. Falta el generador de la Pi 4 (RNG200), que sumará su parte.
 
@@ -126,6 +126,26 @@ pub fn sembrar(d: &crate::dtb::Dtb) -> usize {
     }
     e.sembrado += total;
     total
+}
+
+/// x86 (X7, paso 4): sin árbol de dispositivos, la semilla sale de la CPU (RDSEED o, sin ella, RDRAND; 256 bytes).
+/// Las dos cuentan como semilla de verdad, como hace Linux por omisión (`random.trust_cpu`). Devuelve la fuente y los
+/// bytes que dio.
+#[cfg(target_arch = "x86_64")]
+pub fn sembrar() -> Option<(crate::base::cpu::FuenteAzar, usize)> {
+    let mut palabras = [0u64; 32];
+    let (fuente, n) = crate::base::cpu::semilla(&mut palabras)?;
+    let mut bytes = [0u8; 256];
+    for (i, p) in palabras[..n].iter().enumerate() {
+        bytes[8 * i..8 * i + 8].copy_from_slice(&p.to_le_bytes());
+    }
+    let mut e = ESTADO.tomar();
+    e.mezclar(&bytes[..8 * n]);
+    e.sembrado += 8 * n;
+    bytes.fill(0);
+    palabras.fill(0);
+    core::hint::black_box((&bytes, &palabras));
+    Some((fuente, 8 * n))
 }
 
 /// Si el azar viene de una semilla de verdad (al menos 128 bits).

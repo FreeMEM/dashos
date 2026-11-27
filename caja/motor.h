@@ -65,7 +65,9 @@ uint32_t motor_unidades(void);
 void motor_zonas(uintptr_t z[MOTOR_ZONAS]);
 /* Escribe los registros del 68k en la consola (cuando una prueba sale mal). */
 void motor_volcar(void);
-/* La coma flotante del 68k para pegamento/ (multitarea): FP0-FP7 (64 bits), FPSR, FPIAR y FPCR en v[0..10]. */
+/* La coma flotante del 68k para pegamento/ (multitarea), en 13 u64: FPSR, FPIAR y FPCR en v[8..10]. FP0-FP7 en
+   v[0..7]: con Emu68, el double (y v[11..12] sin tocar); con un motor de 80 bits, la mantisa, y el signo y el
+   exponente en v[11] (FP0-FP3) y v[12] (FP4-FP7), 16 bits cada uno, FP0 en los de abajo. */
 void caja_fp_leer(uint64_t *v);
 void caja_fp_poner(const uint64_t *v);
 

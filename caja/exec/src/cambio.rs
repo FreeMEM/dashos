@@ -29,12 +29,14 @@ pub enum Modo {
 }
 
 /// Lo que se guarda de una tarea que no corre: sus registros, cómo retomarla y su coma flotante (FP0-FP7 como
-/// los guarda el JIT, en dobles; FPCR, FPSR y FPIAR).
+/// los da el motor: en dobles con Emu68; con uno de 80 bits, la mantisa en `fp` y el signo y el exponente en
+/// `fp_ext`; FPCR, FPSR y FPIAR).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Contexto {
     pub regs: Registros,
     pub modo: Modo,
     pub fp: [u64; 8],
+    pub fp_ext: [u16; 8],
     pub fpcr: u32,
     pub fpsr: u32,
     pub fpiar: u32,
@@ -43,11 +45,13 @@ pub struct Contexto {
 /// Lo que hay en los registros de coma flotante de una tarea que aún no ha corrido (lo mismo que pone la caja al
 /// arrancar un programa).
 pub const FP_INICIAL: u64 = 0x7fff_ffff_ffff_ffff;
+/// El signo y el exponente de una tarea nueva con un motor de 80 bits: con `FP_INICIAL` de mantisa, un NaN positivo.
+pub const FP_EXT_INICIAL: u16 = 0x7fff;
 
 impl Contexto {
     /// Un contexto con esos registros y la coma flotante de una tarea nueva.
     pub fn nuevo(regs: Registros, modo: Modo) -> Contexto {
-        Contexto { regs, modo, fp: [FP_INICIAL; 8], fpcr: 0, fpsr: 0, fpiar: 0 }
+        Contexto { regs, modo, fp: [FP_INICIAL; 8], fp_ext: [FP_EXT_INICIAL; 8], fpcr: 0, fpsr: 0, fpiar: 0 }
     }
 }
 

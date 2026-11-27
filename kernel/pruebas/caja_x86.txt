@@ -9,6 +9,9 @@ DashOS: arranque por UEFI en x86-64
 ~│   [caja-amiga] línea A desconocida: excepción 10 del 68k, 1 rechazada, 1 llamada buena: bien
 ~│   [caja-amiga] exec, dos, graphics e intuition nativas (Rust): ExecBase $
 ~│   [caja-amiga] saludo.exe acabó con 0 (vector -1), 7 llamadas nativas
+# Las tareas de procesos.c (modo a), con la coma flotante extendida guardada al cambiar de tarea.
+~│   [caja-amiga] procesos: la coma flotante extendida sigue igual tras cambiar de tarea: bien
+~│   [caja-amiga] procesos: 0 fallos (modo a)
 # La tanda entera, hasta la prueba 9: el 68k escribe en la página 0 y el kernel termina la caja, como en ARM.
 ~│   [caja-amiga] el 68k escribe en la dirección 4 (ExecBase), en la página 0 de solo lectura: la caja tiene que morir
 ~se termina

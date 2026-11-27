@@ -170,7 +170,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 30 | `dormir` | `x0` microsegundos (como mucho una hora) | 0, al despertar (antes si lo matan) |
 | 31 | `fijar` | `x0` 1: el hilo que llama no se mueve de su núcleo; 0: el reparto entre núcleos puede moverlo | 0 |
 | 32, 33 | — | Reservadas para la ida y vuelta con paso directo (K6) | |
-| 34 | `azar` | `x0` búfer, `x1` bytes (hasta 256) | `x0` bytes; `x1` 1 si son de calidad (el kernel tuvo semilla del firmware), 0 si no |
+| 34 | `azar` | `x0` búfer, `x1` bytes (hasta 256) | `x0` bytes; `x1` 1 si son de calidad (el kernel tuvo semilla del firmware, o de la CPU en x86), 0 si no |
 | 35 | `canal_leer_plazo` | Como 5, pero `x4` lleva en sus 16 bits bajos cuántas llaves caben y en el resto el plazo en µs (0: sin plazo) | Como 5, o `E_PLAZO` si vence sin mensaje (K7) |
 | 36 | `proceso_avisar` | `x0` proceso (con leer), `x1` canal (con escribir) | 0. Cuando el proceso acabe (o ya, si acabó), el kernel escribe por el canal 16 bytes: clase y código como en `proceso_esperar` (u64 little-endian), con la marca de la llave del canal. Hasta 16 por proceso (`E_LIMITE`); con la cola llena, el aviso se pierde (K7) |
 | 37 | `proceso_numero` | `x0` proceso (con leer) | Su número de proceso en el kernel: no se repite, desde 1 (U6) |
@@ -597,13 +597,14 @@ mismos límites. Cambian los registros y lo que es de la CPU:
   la entrada no tiene que estar alineada; el hilo empieza con `rdi` = argumento, la base de FS = TLS y `rsp` = pila
   menos 8 (como tras un `call`: la entrada puede ser una función de C); y cuesta 24 KB al grupo, no 20 (su zona de
   XSAVE). La prueba es la misma (`hilos`, C52 en `make -C kernel prueba-x86`).
-- **Lo que no hay todavía en x86.** El globo de las máquinas virtuales (55) da `E_NO_HAY`, y las llaves de arranque
-  no traen el permiso de máquinas (`inicio_x86.rs` no lanza la caja Linux). `apagar` (51) reinicia (puerto 0xCF9 y, si no,
+- **Lo que no hay todavía en x86.** El globo de las máquinas virtuales (55) da `E_NO_HAY`, y no hay caja Linux
+  (`inicio_x86.rs` no la lanza; el permiso de máquinas va en las llaves de arranque, para `sesiones`). `apagar` (51) reinicia (puerto 0xCF9 y, si no,
   el controlador del teclado), pero no apaga: da `E_NO_HAY` (haría falta leer `\_S5` del AML de ACPI). `hora` (39) da
-  0: no se lee el reloj del PC. `azar` (34) dice siempre que no es de calidad: no hay semilla del firmware (falta
-  RDRAND o RDSEED). No hay orden de bytes por proceso: todo es little-endian. Las llaves de arranque no traen los
-  permisos de página 0, de apagar ni del aviso de memoria (`inicio_x86.rs` no lanza `sesiones` ni la caja Amiga);
-  las llamadas 49, 53 y 54 sí están.
+  0: no se lee el reloj del PC. `azar` (34) se siembra al arrancar con 256 bytes de RDSEED (o RDRAND, sin ella) y es
+  de calidad si la CPU los da; sin ninguna de las dos, no. No hay orden de bytes por proceso: todo es little-endian. Las llaves de arranque traen,
+  como en ARM, los permisos de página 0, de apagar y del aviso de memoria; desde X7 (paso 4), la imagen de
+  `arranque-x86` lanza el escritorio de `arranque-virt` (`sesiones` y la caja Amiga, con RelevoJIT, incluidos), salvo
+  lo que es de ARM.
 - **Máquinas virtuales** (X10; `kernel/src/maquinas_x86.rs`, `base/x86_64/hiper.rs`). Las llamadas 45 a 48, con los
   mismos números, llaves, informe (13 u64) y bloque de interrupciones (10 u64) que en ARM, con AMD-V (SVM) y NPT o con
   VT-x y EPT (con invitado sin restricciones). Sin ninguno de los dos, `maquina_crear` da `E_NO_HAY`. El kernel dice

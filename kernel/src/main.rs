@@ -292,6 +292,12 @@ pub fn kmain() -> ! {
     kprintln!("MMU: tablas propias (CR3 {:#x}, CR0 {:#x}, CR4 {:#x}, EFER {:#x}); kmain en {:#x}", cr3, cr0, cr4, efer, kmain as *const () as usize);
     let (nx, smep, smap, wp) = cpu::defensas_activas();
     kprintln!("Defensas: NX {}, SMEP {}, SMAP {}, WP {}", si(nx), si(smep), si(smap), si(wp));
+    // La semilla del azar (R10), de la CPU: sin árbol de dispositivos, no hay otra.
+    match azar::sembrar() {
+        Some((fuente, n)) if azar::de_calidad() => kprintln!("Azar: semilla de la CPU ({:?}), {} bytes", fuente, n),
+        Some((fuente, n)) => kprintln!("Azar: la CPU ({:?}) dio {} bytes, poco: solo el contador", fuente, n),
+        None => kprintln!("Azar: sin RDSEED ni RDRAND, solo el contador"),
+    }
 
     // Las de X2 cuentan la memoria libre: antes de que se reparta nada más.
     #[cfg(feature = "pruebas")]
@@ -338,7 +344,8 @@ pub fn kmain() -> ! {
     #[cfg(feature = "pruebas")]
     pruebas::ejecutar(&a, n, &funciones);
 
-    kprintln!("DashOS en marcha (x86-64) con {} núcleos.", n + 1);
+    // Como en ARM ("DashOS en marcha con N núcleos."): así lo esperado de `arranque-virt` vale también aquí (X7).
+    kprintln!("DashOS en marcha con {} núcleos. (x86-64)", n + 1);
     // La imagen normal pasa el sistema al programa de inicio (X5), como en ARM. La consola es un proceso (X6).
     #[cfg(not(feature = "pruebas"))]
     if !inicio_x86::lanzar(&a, &funciones) {

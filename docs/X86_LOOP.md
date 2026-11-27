@@ -209,11 +209,10 @@ Dos líneas a la vez (decisión 4 de S30):
     cambiar lo que hace en ARM. Las funciones nativas de Rust reciben `motor_regs` (`Registros`, `#[repr(C)]`).
   - [x] 3. La caja para x86: `motor_relevo`, la plataforma (llamadas al sistema, reloj, orden de bytes de
     `lee32`/`pon32`), el pegamento para `x86_64-unknown-none` y su Makefile. Prueba: `make -C kernel caja-x86`.
-  - [ ] 4. Medir contra Emu68 (en máquinas de verdad: aquí ARM va por TCG y x86 por KVM) y, con el guion largo en x86,
-    la caja dentro de `arranque-x86`. Mirado el 2026-11-22: metida en `arranque-x86`, su ventana se queda el teclado y
-    falta "[ventana] tecla 30 recibida" (el guion corto de x86 manda la "a" a ciegas); y salió "[ficheros] memoria: ...
-    sin memoria MAL" (no está en lo esperado de x86: sin saber si ya salía antes). Queda en su prueba, `caja-x86`. En la
-    imagen de usar, como en ARM, fuera de momento (corre sus programas de prueba).
+  - [x] 4. Con el guion largo en x86, la caja dentro de `arranque-x86` (2026-11-27): el escritorio de `arranque-virt`,
+    su guion (`TECLAS=1`) y lo esperado compartido con ARM (`arranque_virt.txt` sin sus bloques "#[arm"). Pendiente
+    todavía: medir contra Emu68 en máquinas de verdad (aquí ARM va por TCG y x86 por TCG o KVM). En la imagen de usar,
+    como en ARM, fuera de momento (corre sus programas de prueba).
 - [ ] X8 **La caja con el JIT** de RelevoJIT (necesita R6).
 - [ ] X9 **Un PC de verdad**, arrancando desde USB (necesita la máquina; decisión 5 de S30).
 
@@ -1251,3 +1250,76 @@ ficheros, `actualiza.exe`, los programas de Dash (texto, ventana, Ctrl-C, trampa
 cybergraphics, la multitarea (20.002 cambios de tarea en 133 ms) y, al final, la caja muere al escribir en la página 0
 ("caja-amiga acabó: clase 2"). Igual que en ARM: `ventana.exe` y la ventana de Dash se cierran solas por tiempo (en esta
 imagen no hay guion que pulse su gadget).
+
+### 2026-11-26 — La FPU extendida en la caja de x86 y el azar de x86
+
+Bucle reanudado (lo pidió el usuario el 2026-11-26). La cuota la manda `cuota.py` de `/trabajo`. Rama `motor`.
+
+- **La FPU extendida entre cambios de tarea** (53876712). `caja_fp_leer`/`caja_fp_poner` pasan 13 u64. Con RelevoJIT,
+  la mantisa en v[0..7] y el signo y el exponente en v[11..12]. Emu68 no cambia: sigue con double y no toca v[11..12].
+  `Contexto` de `caja_exec` lleva `fp_ext`. Prueba nueva en `procesos.c` (modo a): 1 + 2^-60 en FP2 (no cabe en un
+  double) y otra tarea que pone otro valor en su FP2. Sin el arreglo, MAL en `caja-x86` (la mantisa baja se perdía);
+  con él, bien en `caja-x86` y en `arranque-virt` de ARM (con Emu68 el valor ya era 1 antes, y sigue igual).
+- **El azar de x86** (d331d6f7). El "[ficheros] memoria ... sin memoria MAL" del paso 4 era `SIN_AZAR` (-14): x86
+  no tenía semilla (en ARM sale del árbol de dispositivos), así que el servicio de archivos no cifraba ni hacía
+  volúmenes de usuario. Ahora 256 bytes de RDSEED (o RDRAND) al arrancar, contados como semilla de verdad (como
+  `random.trust_cpu` de Linux). `arranque-x86` espera ya "FS10 cifrado hecho aquí: bien" y "[ficheros] memoria: bien".
+
+Comprobado: `make -C kernel prueba` (ARM) BIEN; `prueba-x86`, `arranque-x86` y `caja-x86` BIEN. La primera vuelta de
+`arranque-x86` falló solo en el sonido grabado (huecos en el tono de 600 Hz, con la máquina a carga 6); la segunda,
+entera bien. `arranque-virt` (ARM): la caja entera bien; solo faltó el intermitente de "[ram] Ana: avisos hostiles",
+esta vez con otra cara: llegan los 63 timbres y los 63 avisos y aun así MAL (lo que queda en la condición es
+`llegados == ids`: los números de las vigilancias). Sigue siendo para la sesión del servicio de archivos.
+No comprobado: RDSEED en un PC de verdad, ni una CPU sin RDSEED (el camino de RDRAND).
+
+### 2026-11-27 — X7, paso 4: el guion largo y la caja Amiga en `arranque-x86`
+
+Rama `motor`. Dos commits:
+
+- **El escritorio y el guion largo** (b37854ea). `inicio_x86.rs` lanza la lista de `arranque-virt`, en su orden y con sus
+  canales (las mismas llaves en los dos), con los controladores de un PC junto a los de ARM, comprimidos como en ARM
+  (`build.rs`). Fuera por ser de ARM: la caja Linux (su VMM: virtio por MMIO, GIC, PSCI, árbol), `dash-ventana` (Dash
+  compila para ARM) y el buzón, el USB y la GPU de la Pi. `sin-maquina` sí va: no es de ARM. `TECLAS=1` con el
+  reinicio del final, a 800x600 (`DASHOS_PANTALLA`, como la ramfb de virt: el guion pulsa en sitios de esa pantalla);
+  fuera el guion corto. x86 dice "DashOS en marcha con N núcleos. (x86-64)", como ARM.
+- **Lo esperado, compartido**: el de x86 sale de `arranque_virt.txt` sin los bloques "#[arm" ... "#]" y con las líneas
+  "#x86 " (que ARM lee como comentarios), detrás de `arranque_x86.txt` (el arranque de x86, el AHCI y sus discos) y
+  delante de los ficheros de sonido y red de siempre (comentario en el Makefile). Solo de ARM: el sitio del xHCI, Dash,
+  virtio-sound, el tamaño del disco y cómo se cuenta el fallo de página de la caja.
+- **El disco de x86**: el de ARM con los programas de x86 y 256 KB más (`DASHOS_DISCO_MAS_KB`). El código de x86 ocupa
+  más en DashFS una vez comprimido (los ELF de ARM llevan relleno de ceros): 1344 KB libres al abrirlo frente a 1492, y
+  la copia del explorador (928 KB) se quedaba sin sitio. `--comprobar` entero, como en ARM (`DASHOS_SALIDA` para los
+  códigos de Berta). `ram` ya no llama "secreto.txt" a su fichero de `RAM:`: en x86 el programa quedaba sin comprimir en
+  el disco y la comprobación de FS10 lo veía en claro.
+- **La caja Amiga** (commit siguiente): `caja/build-x86/caja-amiga` con su permiso de página 0, "ventanas", "archivos",
+  "sesiones" y "presion", como en ARM. `make -C kernel x86` compila la caja (`make -C caja x86`). Sus líneas, las de ARM;
+  solo cambia la del fallo de página del final ("CR2 0x4" en vez de "FAR 0x4").
+
+Comprobado (TCG): `make -C kernel arranque-x86` con la caja, entero bien: el guion, el reinicio, el disco en Linux, los
+SATA, la captura, el sonido (HDA) y la ventana de Ana (U6). `prueba-x86` y `caja-x86` bien. ARM: `make -C kernel prueba`
+bien; `arranque-virt`, con el commit 1, solo faltó el intermitente de "[ram] Ana: avisos hostiles" (y lo que el guion
+deja para después de él: `guarda` y la commodity); con el de la caja, una vuelta falló en `guarda` (el clic en
+"Guardar" cayó en la ventana de la prueba de cancelar, que se cierra sola: del guion, no de este cambio, que en ARM solo
+toca comentarios) y la siguiente, entera bien.
+
+Intermitentes de x86, sin mirar la causa (siete vueltas sin la caja, una con el guion entero bien; la de la caja, entera
+bien):
+
+- "[ram] Ana: avisos de ENV:Sys y ENV:Sys/teclado ... cuentan [201, 201]" (en dos vueltas): un aviso de más en la
+  vigilancia de `RAM:`. Del servicio de archivos, como el de "avisos hostiles" (que salió también en x86, una vez).
+- La pregunta del Shell "cambiar permiso: Shell quiere dar a pide eco": la ventana de `guardian` tiene el teclado y lo
+  pierde enseguida; la "D" y la "S" del guion van a otra ventana y la pregunta caduca (dos vueltas, una con ARM a la
+  vez).
+- Con ARM corriendo a la vez: `hostil` no recibe a tiempo (5 s) la respuesta a su primera acción de administrador.
+
+No comprobado: con `ACCEL=kvm`, con `IOMMU`, con `SONIDO_X86=virtio` ni con otras tarjetas de red (lo esperado de esas
+variantes es el de siempre, añadido detrás). Ni medir contra Emu68 en máquinas de verdad.
+
+### 2026-11-27 — Revisión de X7 paso 4 (la caja en arranque-x86)
+
+Revisado por la sesión del bucle (acd062ef): `make -C kernel prueba` (ARM) BIEN; `arranque-x86`, con la caja y el guion
+largo, entero salvo "[ram] Ana: avisos hostiles": el mismo intermitente de ARM, ya en las dos arquitecturas y siempre
+con la misma cara (todo lo impreso como debe, y MAL). La prueba dice ahora, si sale MAL, lo que no se veía: cuántas
+vigilancias se pusieron, los timbres que faltan o sobran y los avisos con otra cuenta. Así, la próxima vez que salga,
+se sabrá cuál de las tres cosas es.
+

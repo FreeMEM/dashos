@@ -1,3 +1,7 @@
+# Lo esperado de `make -C kernel arranque-virt` y, desde X7 (paso 4), también de `arranque-x86`: el Makefile saca el
+# de x86 de este fichero, sin los bloques solo de ARM (entre una línea que empieza por "#[arm" y otra "#]") y con las
+# líneas solo de x86 (las que empiezan por "#x86 ", que aquí son comentarios). Ver kernel/Makefile, arranque-x86.
+#
 # U3: la imagen normal en QEMU virt, arrancada por EDK2 con el programa de UEFI: llega a inicio, que lanza la consola
 # y los servicios que tienen sus aparatos (en virt, ni USB ni buzón ni GPU).
 DashOS: fuera de los servicios de arranque
@@ -14,7 +18,10 @@ DashOS en marcha con 4 núcleos.
 # U6: el xHCI del PCIe (con highmem=off, por debajo de 4 GB), con un teclado y un ratón.
 # U6g y U6h: por MSI-X, con GICv2 por el marco GICv2m (desde la SPI 80) y con GICv3 por el ITS (desde la LPI 8192),
 # con árbol y con ACPI. Sin ninguno de los dos, la INTx (U6e) o, con ACPI, el temporizador.
+#[arm: el sitio del xHCI en el PCIe de virt
 ~xhci: en el PCIe 0:1.0, registros en 
+#]
+#x86 ~xhci: en el PCIe 0:2.0, registros en 
 # U6k: el teclado, detrás de un concentrador.
 ~│   [xhci] puerto 5: ranura 1, concentrador
 ~│   [xhci] puerto 5 ruta 1: ranura 2, teclado
@@ -23,13 +30,19 @@ DashOS en marcha con 4 núcleos.
 ~│   [xhci] avisos por su interrupción
 # U6d: un disco NVMe de 8 MB (target/nvme.img), su modelo y sus dos primeros sectores.
 ~nvme: en el PCIe 0:
+#[arm: el disco de x86 es 256 KB más grande (kernel/Makefile, arranque-x86)
 ~│   [nvme] disco de 16384 sectores de 512 bytes (8192 KB)
+#]
+#x86 ~│   [nvme] disco de 16896 sectores de 512 bytes (8448 KB)
 ~│   [nvme] sector 0: "DashOS: sector 0 del disco NVMe", firma 0xaa55
 ~│   [nvme] sector 1: "DashOS: sector 1", firma 0x0000
 # U6i: el NVMe espera sus órdenes con su interrupción.
 ~│   [nvme] avisos por su interrupción
 ~│   [nvme] descartar: sí
+#[arm: el disco de x86 es 256 KB más grande (kernel/Makefile, arranque-x86)
 ~│   [nvme] particiones: MBR; DashOS, sectores 2048 a 16383
+#]
+#x86 ~│   [nvme] particiones: MBR; DashOS, sectores 2048 a 16895
 # U6f: el servicio de disco, con un cliente de prueba.
 ~│   [disco] abierto: 2048 sectores de 512 bytes
 ~│   [disco] leer: bien; escribir y releer: bien; cruzando páginas: bien; rechazos: bien; vaciar: bien
@@ -41,9 +54,15 @@ DashOS en marcha con 4 núcleos.
 ~│   [disco] anillo con órdenes a la vez, en su orden: bien
 ~│   [disco] anillo otra vez: el nuevo va: bien; el viejo ya no se atiende: bien
 # A15: el comprobador aparte, con la partición de DashOS solo para leer (escribir y descartar, -6).
+#[arm: el disco de x86 es 256 KB más grande (kernel/Makefile, arranque-x86)
 ~│   [comprobador] la partición de DashOS, solo para leer: 14336 sectores, firma DashFS; escribir -6, descartar -6, fuera -2: bien
+#]
+#x86 ~│   [comprobador] la partición de DashOS, solo para leer: 14848 sectores, firma DashFS; escribir -6, descartar -6, fuera -2: bien
 # FS1: el servicio de archivos abre el RedoxFS que empieza en el MB 1 del disco, sin escribir nada.
+#[arm: el disco de x86 es 256 KB más grande (kernel/Makefile, arranque-x86)
 ~│   [archivos] RedoxFS abierto: 7168 KB,
+#]
+#x86 ~│   [archivos] RedoxFS abierto: 7424 KB,
 # FS3: un cliente del protocolo de ficheros por el canal "archivos".
 ~│   [archivos] comprobado al arrancar: 1 problemas; reparado, quedan 0
 # A7: la memoria de la caché de páginas, creada al arrancar (24 MB).
@@ -54,7 +73,10 @@ DashOS en marcha con 4 núcleos.
 # A3 (docs/REVISION_LOOP.md): buscar, leer y cerrar en un viaje.
 ~│   [ficheros] A3 leer por nombre: bien
 ~│   [ficheros] C/grande.txt: 313890 bytes, 25000 líneas: bien
+#[arm: el disco de x86 es 256 KB más grande (kernel/Makefile, arranque-x86)
 ~│   [ficheros] datos: bien; volumen: 7168 KB,
+#]
+#x86 ~│   [ficheros] datos: bien; volumen: 7424 KB,
 ~│   [ficheros] rechazos: bien; desde un cajón: bien
 # FS4: escribir; tools/disco_archivos.py --comprobar mira después el disco en Linux.
 ~│   [ficheros] escribir 200 KB: bien; releer: bien; ocupa sitio: bien
@@ -108,6 +130,7 @@ DashOS en marcha con 4 núcleos.
 # El desplegable de Ajustes: un clic lo abre (el menú, dentro de la ventana) y otro, en la segunda opción, la elige.
 ~│   [ajustes] menú abierto; la segunda opción en (
 ~│   [ajustes] el desplegable dice: Destello
+#[arm: Dash compila para ARM; en x86 no hay `dash-ventana`
 # Las ventanas de Dash en DashOS (kit-c): un programa de Dash con mui_* (`kit-c/pruebas/ventana.dash`, compilado con
 # `./dash --dashos` al hacer la imagen; sin Dash no está y estas líneas faltan) abre su ventana con el kit (Material 3),
 # y el guion pulsa su botón "Añadir": añade una línea a la lista y cambia el texto. Su título y su primera línea, del
@@ -136,13 +159,16 @@ DashOS en marcha con 4 núcleos.
 ~│   [selector] el usuario elige la carpeta C: se cede para leer y escribir: 0 (hueco 3)
 ~│ [dash-ventana] guardada en Carpeta:dash-lista.txt: true, leída igual true, borrada true
 ~│ [dash-ventana] fin
+#]
 # W8: el cursor entra en una ventana; el clic le da el teclado y le llega la "a".
 ~│   [ventana] ratón dentro
 ~│   [ventana] tecla 30 recibida
+#[arm: virtio-sound; en x86, el sonido de un PC (HDA) o virtio-sound, en arranque_x86_sonido_*.txt
 # A3, A4 y A5 (S19): el controlador de virtio-sound suena lo que mezcla el servicio; dos programas suenan a la vez y uno
 # muere a mitad (su flujo sale con fundido). El WAV de QEMU lo comprueba tools/sonido_wav.py.
 ~│   [sonido] salida por virtio-sonido: 8 ranuras de 256 cuadros a 48 kHz
 ~│   [virtio-sonido] suena el flujo 0 para el servicio
+#]
 ~│   [sonido] tono-a abre un flujo: I16, 1 canales, 48000 Hz
 ~│   [sonido] tono-b abre un flujo: F32, 2 canales, 44100 Hz
 ~│   [tono-a] 1,5 s escritos; ahora falla a propósito
@@ -256,7 +282,10 @@ DashOS en marcha con 4 núcleos.
 # Y Seguridad: el registro de sesiones, con lo que se le negó al hostil.
 ~│   [centro] Seguridad, con negativas del hostil: sí;
 # Discos: el disco de pruebas, 7 MB (sin derechos: solo INFO).
+#[arm: el disco de x86 es 256 KB más grande (kernel/Makefile, arranque-x86)
 ~│   [centro] Discos: Disco del sistema: 7,0 MB; Ocupado: 
+#]
+#x86 ~│   [centro] Discos: Disco del sistema: 7,2 MB; Ocupado: 
 # Y comprobar el disco desde ahí: acción de administrador; `guardian` contesta (en la prueba, como Ana).
 ~│   [guardian] centro pide comprobar: contesta como Ana
 # S10c: la pantalla de bloqueo y la de entrada siguen el tema del sistema (el del centro: oscuro, del fondo, C3).
@@ -1377,6 +1406,7 @@ DashOS en marcha con 4 núcleos.
 # tarea que quita la del programa (c); tareas y un proceso que caen por una excepción y se quitan solos (d). Y
 # CreateNewProc (con NP_Entry, NP_Seglist, CreateProc; NULL y etiquetas absurdas dan 0).
 ~│   [caja-amiga] procesos: Wait y Signal entre dos tareas: bien
+~│   [caja-amiga] procesos: la coma flotante extendida sigue igual tras cambiar de tarea: bien
 ~│   [caja-amiga] procesos: 0 fallos (modo a)
 ~│   [caja-amiga] procesos-a acabó por el vector -1 (D0 0)
 ~│   [caja-amiga] procesos: CreateNewProc con NP_Entry: bien
@@ -1403,7 +1433,10 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] dash: fin
 ~│   [caja-amiga] Dash test_doc_reaction acabó con 0 (vector -1)
 ~│   [caja-amiga] Dash test_reaction acabó con 
+#[arm: el fallo de página lo cuenta cada arquitectura a su modo
 ~(FAR 0x4); se termina
+#]
+#x86 ~(CR2 0x4, código 0x7); se termina
 ~│   [inicio] caja-amiga acabó: clase 2, código 0
 # S29 (docs/diseño/S29-malware-linux-y-dashos.md): el malware de laboratorio de DashOS, un programa cualquiera con
 # ventanas. No pasa de su cupo de memoria, no ve ni enlaza protocolos para capturar la pantalla, mandar teclas o leer el

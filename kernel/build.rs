@@ -20,10 +20,14 @@ fn main() {
         comprimir_programas(&dir, "src/inicio.rs", "aarch64-unknown-none-softfloat");
     } else {
         firmware_rtl8125(&dir);
-        if std::env::var_os("CARGO_FEATURE_USO").is_some() {
+        let con = |f: &str| std::env::var_os(format!("CARGO_FEATURE_{}", f)).is_some();
+        if con("USO") {
             // La imagen de usar de x86 (`make x86-uso`) lleva todo el escritorio: sin comprimir no cabe por debajo de lo
             // que ocupa OVMF desde 8 MB (el kernel de x86 se cargaba en 1 MB; desde el 2026-11-22, en 64 MB). Sus programas, como los de ARM.
             comprimir_programas(&dir, "src/inicio_x86_uso.rs", "x86_64-unknown-none");
+        } else if !con("GRAFICOS") && !con("CAJA") && !con("PRUEBAS") {
+            // X7, paso 4: la de `arranque-x86`, con el escritorio de `arranque-virt`, también comprimida.
+            comprimir_programas(&dir, "src/inicio_x86.rs", "x86_64-unknown-none");
         }
     }
     // U7: con DASHOS_CAJA_ORDEN=le (`make CAJA_ORDEN=le`), `inicio` da la caja Amiga en little-endian aunque la CPU
@@ -69,6 +73,9 @@ fn comprimir_programas(dir: &str, fuente: &str, destino: &str) {
         // La demo (`make demo`) lleva la caja de las capturas, compilada aparte en caja/build-demo.
         let ruta = if nombre == "caja-amiga" && std::env::var_os("CARGO_FEATURE_DEMO").is_some() {
             format!("{}/../caja/build-demo/{}", dir, nombre)
+        } else if nombre == "caja-amiga" && destino.starts_with("x86_64") {
+            // X7: la de x86-64, con RelevoJIT (`make -C caja x86`).
+            format!("{}/../caja/build-x86/{}", dir, nombre)
         } else if nombre == "caja-amiga" {
             format!("{}/../caja/build/{}", dir, nombre)
         } else if nombre == "caja-amiga-le" {
