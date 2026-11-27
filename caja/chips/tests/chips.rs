@@ -1,11 +1,13 @@
 //! Pruebas de los chips por el bus, como los ve el 68k.
 
 use caja_chips::cia::{cr, icr, reg};
-use caja_chips::{CICLOS_POR_LINEA, Chips, int};
+use caja_chips::{CICLOS_POR_LINEA, Chips, LINEA_VSYNC, int};
 
 const LINEA: u64 = CICLOS_POR_LINEA;
 const CUADRO_LARGO: u64 = 313 * LINEA;
 const CUADRO_CORTO: u64 = 312 * LINEA;
+/// El pulso de VSYNC al TOD del CIA-A, desde el principio del cuadro.
+const VSYNC: u64 = LINEA_VSYNC * LINEA;
 
 const DMACONR: u32 = 0xDFF002;
 const VPOSR: u32 = 0xDFF004;
@@ -233,19 +235,22 @@ fn accesos_de_1_2_y_4_bytes() {
 #[test]
 fn accesos_de_2_bytes_a_los_cia() {
     let mut c = Chips::nuevo();
-    // El byte alto de $BFE000 no es de nadie; el bajo es PRA del CIA-A.
+    // $BFE200 elige solo el CIA-A (bit 12 a 0): toma el byte bajo; el alto no es de nadie.
     c.escribir(a(reg::DDRA) - 1, 0x1234, 2, 0);
     assert_eq!(leer_a(&mut c, reg::DDRA, 0), 0x34);
-    assert_eq!(c.accesos_a_nadie, 1);
-    assert_eq!(c.ultimo_a_nadie, 0xBFE200);
-    // En el CIA-B es al revés: el alto es el registro y el bajo es de nadie.
+    assert_eq!(c.leer(a(reg::DDRA) - 1, 2, 0), 0xFF34, "la mitad que no lleva nadie se lee $FF");
+    // En el CIA-B es al revés: el alto es el registro y el bajo no es de nadie.
     c.escribir(b(reg::DDRA), 0x5678, 2, 0);
     assert_eq!(c.leer(b(reg::DDRA), 1, 0), 0x56);
-    assert_eq!(c.leer(b(reg::DDRA), 2, 0), 0x5600);
-    assert_eq!(c.ultimo_a_nadie, 0xBFD201);
-    // Uno de 4 a $BFE000: nadie, PRA (DDRA = $34, entradas a 1), nadie, nadie.
-    assert_eq!(c.leer(0xBFE000, 4, 0), 0x00CB_0000);
-    assert_eq!(c.ultimo_a_nadie, 0xBFE003);
+    assert_eq!(c.leer(b(reg::DDRA), 2, 0), 0x56FF);
+    assert_eq!(c.accesos_a_nadie, 0);
+    // Uno de 4 a $BFE000: dos de 2 al PRA del CIA-A (DDRA = $34, entradas a 1).
+    assert_eq!(c.leer(0xBFE000, 4, 0), 0xFFCB_FFCB);
+    // Con los bits 12 y 13 a 0, los dos: el alto al CIA-B y el bajo al CIA-A (FS-UAE, A500).
+    c.escribir(0xBFCC00, 0x1234, 2, 0);
+    assert_eq!(c.leer(b(reg::SDR), 1, 0), 0x12);
+    assert_eq!(leer_a(&mut c, reg::SDR, 0), 0x34);
+    assert_eq!(c.leer(0xBFCC00, 2, 0), 0x1234);
 }
 
 #[test]
@@ -255,17 +260,19 @@ fn direcciones_de_nadie() {
     assert_eq!(c.accesos_a_nadie, 1);
     c.escribir(0xDFF140, 0x0F00, 2, 0);
     assert_eq!(c.accesos_a_nadie, 2, "SPR0POS no se imita (aún no hay sprites)");
-    assert_eq!(c.leer(0xBFE003, 1, 0), 0, "espejo del CIA-A");
-    assert_eq!(c.leer(0xBFC001, 1, 0), 0);
+    assert_eq!(c.leer(0xBFE003, 1, 0), 0xFF, "espejo del CIA-A: PRA (los bits 1-7 no cuentan)");
+    assert_eq!(c.accesos_a_nadie, 2);
+    assert_eq!(c.leer(0xBFF001, 1, 0), 0xFF, "con los bits 12 y 13 a 1, ningún CIA");
+    assert_eq!(c.accesos_a_nadie, 3);
     // Fuera de los chips, uno de 2 bytes son dos de 1.
     assert_eq!(c.leer(0xDFF200, 2, 0), 0);
-    assert_eq!(c.accesos_a_nadie, 6);
+    assert_eq!(c.accesos_a_nadie, 5);
     assert_eq!(c.ultimo_a_nadie, 0xDFF201);
     assert_eq!(c.leer(VPOSR, 3, 0), 0, "tamaño que no existe");
-    assert_eq!(c.accesos_a_nadie, 7);
+    assert_eq!(c.accesos_a_nadie, 6);
     // VPOSR no se escribe.
     escribir16(&mut c, VPOSR, 0, 0);
-    assert_eq!(c.accesos_a_nadie, 8);
+    assert_eq!(c.accesos_a_nadie, 7);
 }
 
 #[test]
@@ -305,17 +312,18 @@ fn sdr_se_guarda() {
 #[test]
 fn temporizador_una_vez() {
     let mut c = Chips::nuevo();
+    // En modo una vez, escribir TAHI lo pone en marcha: espera 3 pulsos y baja 100.
     arrancar_ta(&mut c, 100, cr::RUNMODE, 0);
-    assert_eq!(c.siguiente_suceso(), 101 * 10);
+    assert_eq!(c.siguiente_suceso(), 103 * 10);
     // A mitad: el contador ha bajado.
     let t = 50 * 10;
     let lo = leer_a(&mut c, reg::TALO, t);
     let hi = leer_a(&mut c, reg::TAHI, t);
-    assert_eq!(u16::from_be_bytes([hi, lo]), 50);
-    assert_eq!(leer_a(&mut c, reg::ICR, 1009), 0);
-    assert_eq!(leer_a(&mut c, reg::ICR, 1010), icr::TA, "sin máscara, IR a 0");
-    assert_eq!(leer_a(&mut c, reg::ICR, 1010), 0, "leer ICR lo borra");
-    assert_eq!(leer_a(&mut c, reg::CRA, 1010) & cr::START, 0, "se para al desbordar");
+    assert_eq!(u16::from_be_bytes([hi, lo]), 100 - (50 - 3));
+    assert_eq!(leer_a(&mut c, reg::ICR, 1029), 0);
+    assert_eq!(leer_a(&mut c, reg::ICR, 1030), icr::TA, "sin máscara, IR a 0");
+    assert_eq!(leer_a(&mut c, reg::ICR, 1030), 0, "leer ICR lo borra");
+    assert_eq!(leer_a(&mut c, reg::CRA, 1030) & cr::START, 0, "se para al desbordar");
     assert_eq!(leer_a(&mut c, reg::TALO, 5000), 100, "vuelve a cargar el latch");
     assert_eq!(leer_a(&mut c, reg::ICR, 100_000), 0, "no vuelve a desbordar");
     assert_eq!(c.siguiente_suceso(), CUADRO_LARGO);
@@ -328,23 +336,28 @@ fn una_vez_arranca_al_escribir_el_byte_alto() {
     escribir_a(&mut c, reg::TALO, 9, 0);
     escribir_a(&mut c, reg::TAHI, 0, 0);
     assert_eq!(leer_a(&mut c, reg::CRA, 0) & cr::START, cr::START);
-    assert_eq!(leer_a(&mut c, reg::ICR, 100), icr::TA);
+    assert_eq!(leer_a(&mut c, reg::ICR, 119), 0);
+    assert_eq!(leer_a(&mut c, reg::ICR, 120), icr::TA);
 }
 
 #[test]
 fn temporizador_continuo() {
     let mut c = Chips::nuevo();
+    // START: 2 pulsos de espera y 9 bajando; luego cada 10 (uno de espera tras cargar y 9 bajando).
     arrancar_ta(&mut c, 9, 0, 0);
-    assert_eq!(c.siguiente_suceso(), 100);
-    assert_eq!(leer_a(&mut c, reg::TALO, 90), 0);
-    assert_eq!(leer_a(&mut c, reg::ICR, 99), 0);
-    assert_eq!(leer_a(&mut c, reg::ICR, 100), icr::TA);
-    assert_eq!(leer_a(&mut c, reg::TALO, 100), 9);
-    assert_eq!(c.siguiente_suceso(), 200);
-    assert_eq!(leer_a(&mut c, reg::ICR, 199), 0);
-    assert_eq!(leer_a(&mut c, reg::ICR, 250), icr::TA);
-    assert_eq!(leer_a(&mut c, reg::TALO, 250), 4);
-    assert_eq!(leer_a(&mut c, reg::CRA, 250), cr::START, "sigue en marcha");
+    assert_eq!(c.siguiente_suceso(), 110);
+    assert_eq!(leer_a(&mut c, reg::TALO, 20), 9, "aún espera");
+    assert_eq!(leer_a(&mut c, reg::TALO, 30), 8);
+    assert_eq!(leer_a(&mut c, reg::TALO, 100), 1);
+    assert_eq!(leer_a(&mut c, reg::ICR, 109), 0);
+    assert_eq!(leer_a(&mut c, reg::ICR, 110), icr::TA);
+    assert_eq!(leer_a(&mut c, reg::TALO, 110), 9);
+    assert_eq!(leer_a(&mut c, reg::TALO, 120), 9, "un pulso de espera tras cargar");
+    assert_eq!(c.siguiente_suceso(), 210);
+    assert_eq!(leer_a(&mut c, reg::ICR, 209), 0);
+    assert_eq!(leer_a(&mut c, reg::ICR, 260), icr::TA);
+    assert_eq!(leer_a(&mut c, reg::TALO, 260), 5);
+    assert_eq!(leer_a(&mut c, reg::CRA, 260), cr::START, "sigue en marcha");
 }
 
 #[test]
@@ -352,11 +365,11 @@ fn escribir_el_byte_alto_en_marcha_solo_cambia_el_latch() {
     let mut c = Chips::nuevo();
     arrancar_ta(&mut c, 9, 0, 0);
     escribir_a(&mut c, reg::TAHI, 1, 30);
-    assert_eq!(leer_a(&mut c, reg::TALO, 30), 6);
+    assert_eq!(leer_a(&mut c, reg::TALO, 30), 8);
     assert_eq!(leer_a(&mut c, reg::TAHI, 30), 0);
     // Tras el desborde carga el latch nuevo, $0109.
-    assert_eq!(leer_a(&mut c, reg::TAHI, 100), 1);
-    assert_eq!(leer_a(&mut c, reg::TALO, 100), 9);
+    assert_eq!(leer_a(&mut c, reg::TAHI, 110), 1);
+    assert_eq!(leer_a(&mut c, reg::TALO, 110), 9);
 }
 
 #[test]
@@ -374,27 +387,32 @@ fn escribir_el_byte_alto_parado_carga_el_contador() {
 fn carga_forzada() {
     let mut c = Chips::nuevo();
     arrancar_ta(&mut c, 99, 0, 0);
-    assert_eq!(leer_a(&mut c, reg::TALO, 500), 49);
+    assert_eq!(leer_a(&mut c, reg::TALO, 500), 99 - 48);
     escribir_a(&mut c, reg::CRA, cr::START | cr::LOAD, 500);
     assert_eq!(leer_a(&mut c, reg::TALO, 500), 99);
     assert_eq!(leer_a(&mut c, reg::CRA, 500), cr::START, "LOAD no se guarda");
-    assert_eq!(c.siguiente_suceso(), 500 + 100 * 10);
+    assert_eq!(c.siguiente_suceso(), 500 + 99 * 10, "en marcha, LOAD carga y sigue bajando sin esperar");
+    // Parado, LOAD con START espera 3 pulsos.
+    escribir_a(&mut c, reg::CRA, 0, 600);
+    escribir_a(&mut c, reg::CRA, cr::START | cr::LOAD, 600);
+    assert_eq!(c.siguiente_suceso(), 600 + (3 + 99) * 10);
 }
 
 #[test]
 fn b_cuenta_los_desbordes_de_a() {
     let mut c = Chips::nuevo();
-    // B: latch 2, cuenta desbordes del A (CRB bits 5-6 = 10).
+    // B: latch 2, cuenta desbordes del A (CRB bits 5-6 = 10): uno de espera y dos bajando.
     escribir_a(&mut c, reg::TBLO, 2, 0);
     escribir_a(&mut c, reg::TBHI, 0, 0);
     escribir_a(&mut c, reg::CRB, 0x40 | cr::START, 0);
     arrancar_ta(&mut c, 9, 0, 0);
-    assert_eq!(c.siguiente_suceso(), 100);
-    assert_eq!(leer_a(&mut c, reg::TBLO, 100), 1);
-    assert_eq!(leer_a(&mut c, reg::ICR, 299), icr::TA);
-    assert_eq!(leer_a(&mut c, reg::TBLO, 299), 0);
-    assert_eq!(leer_a(&mut c, reg::ICR, 300), icr::TA | icr::TB);
-    assert_eq!(leer_a(&mut c, reg::TBLO, 300), 2);
+    assert_eq!(c.siguiente_suceso(), 110);
+    assert_eq!(leer_a(&mut c, reg::TBLO, 110), 2);
+    assert_eq!(leer_a(&mut c, reg::TBLO, 210), 1);
+    assert_eq!(leer_a(&mut c, reg::ICR, 309), icr::TA);
+    assert_eq!(c.siguiente_suceso(), 310);
+    assert_eq!(leer_a(&mut c, reg::ICR, 310), icr::TA | icr::TB);
+    assert_eq!(leer_a(&mut c, reg::TBLO, 310), 2);
 }
 
 #[test]
@@ -420,8 +438,8 @@ fn b_con_el_reloj_e() {
     c.escribir(b(reg::TBLO), 19, 1, 0);
     c.escribir(b(reg::TBHI), 0, 1, 0);
     c.escribir(b(reg::CRB), u32::from(cr::START), 1, 0);
-    assert_eq!(c.siguiente_suceso(), 200);
-    assert_eq!(c.leer(b(reg::ICR), 1, 200) as u8, icr::TB);
+    assert_eq!(c.siguiente_suceso(), 210);
+    assert_eq!(c.leer(b(reg::ICR), 1, 210) as u8, icr::TB);
 }
 
 // --- CIA: ICR, máscara e INTREQ ---
@@ -433,13 +451,13 @@ fn mascara_del_icr() {
     escribir_a(&mut c, reg::ICR, icr::TB, 0);
     arrancar_ta(&mut c, 9, 0, 0);
     escribir16(&mut c, INTENA, 0x8000 | int::INTEN | int::PORTS, 0);
-    c.avanzar(99);
+    c.avanzar(109);
     assert_eq!(c.ipl(), 0);
-    c.avanzar(100);
+    c.avanzar(110);
     assert_eq!(c.ipl(), 2);
-    assert_eq!(leer16(&mut c, INTREQR, 100), int::PORTS);
-    assert_eq!(leer_a(&mut c, reg::ICR, 100), icr::IR_SC | icr::TA);
-    escribir16(&mut c, INTREQ, int::PORTS, 100);
+    assert_eq!(leer16(&mut c, INTREQR, 110), int::PORTS);
+    assert_eq!(leer_a(&mut c, reg::ICR, 110), icr::IR_SC | icr::TA);
+    escribir16(&mut c, INTREQ, int::PORTS, 110);
     assert_eq!(c.ipl(), 0);
 }
 
@@ -458,12 +476,12 @@ fn intreq_vuelve_a_subir_mientras_el_cia_la_pide() {
     let mut c = Chips::nuevo();
     escribir_a(&mut c, reg::ICR, icr::IR_SC | icr::TA, 0);
     arrancar_ta(&mut c, 9, cr::RUNMODE, 0);
-    assert_eq!(leer16(&mut c, INTREQR, 100), int::PORTS);
-    escribir16(&mut c, INTREQ, int::PORTS, 100);
-    assert_eq!(leer16(&mut c, INTREQR, 100), int::PORTS);
-    leer_a(&mut c, reg::ICR, 100);
-    escribir16(&mut c, INTREQ, int::PORTS, 100);
-    assert_eq!(leer16(&mut c, INTREQR, 100), 0);
+    assert_eq!(leer16(&mut c, INTREQR, 120), int::PORTS);
+    escribir16(&mut c, INTREQ, int::PORTS, 130);
+    assert_eq!(leer16(&mut c, INTREQR, 130), int::PORTS, "por nivel (medido en FS-UAE)");
+    leer_a(&mut c, reg::ICR, 130);
+    escribir16(&mut c, INTREQ, int::PORTS, 130);
+    assert_eq!(leer16(&mut c, INTREQR, 130), 0);
 }
 
 #[test]
@@ -474,10 +492,11 @@ fn cia_b_sube_exter_nivel_6() {
     c.escribir(b(reg::TALO), 0, 1, 0);
     c.escribir(b(reg::TAHI), 0, 1, 0);
     escribir16(&mut c, INTENA, 0x8000 | int::INTEN | int::EXTER | int::PORTS, 0);
-    assert_eq!(c.siguiente_suceso(), 10);
-    c.avanzar(10);
+    // Con latch 0 desborda en el último pulso de la espera.
+    assert_eq!(c.siguiente_suceso(), 30);
+    c.avanzar(30);
     assert_eq!(c.ipl(), 6);
-    assert_eq!(leer16(&mut c, INTREQR, 10), int::EXTER);
+    assert_eq!(leer16(&mut c, INTREQR, 30), int::EXTER);
 }
 
 // --- CIA: TOD ---
@@ -485,21 +504,26 @@ fn cia_b_sube_exter_nivel_6() {
 #[test]
 fn tod_de_a_cuenta_cuadros() {
     let mut c = Chips::nuevo();
-    assert_eq!(tod_a(&mut c, CUADRO_LARGO - 1), 0);
-    assert_eq!(tod_a(&mut c, CUADRO_LARGO), 1);
-    assert_eq!(tod_a(&mut c, 3 * CUADRO_LARGO + 100), 3);
-    assert_eq!(tod_a(&mut c, 300 * CUADRO_LARGO), 300);
+    assert_eq!(tod_a(&mut c, 10 * CUADRO_LARGO), 0, "parado tras el reinicio");
+    escribir_a(&mut c, reg::TODLO, 0, 10 * CUADRO_LARGO);
+    let t0 = 10 * CUADRO_LARGO;
+    // El pulso llega al empezar la línea 5 de cada cuadro.
+    assert_eq!(tod_a(&mut c, t0 + VSYNC - 1), 0);
+    assert_eq!(tod_a(&mut c, t0 + VSYNC), 1);
+    assert_eq!(tod_a(&mut c, t0 + CUADRO_LARGO + VSYNC - 1), 1);
+    assert_eq!(tod_a(&mut c, t0 + 3 * CUADRO_LARGO + VSYNC), 4);
+    assert_eq!(tod_a(&mut c, t0 + 300 * CUADRO_LARGO), 300);
     // En cuadros cortos, cada 312 líneas.
-    let mut c = Chips::nuevo();
+    let mut c = Chips::tras_el_arranque();
     escribir16(&mut c, VPOSW, 0, 0);
-    assert_eq!(tod_a(&mut c, CUADRO_CORTO - 1), 0);
-    assert_eq!(tod_a(&mut c, CUADRO_CORTO), 1);
+    assert_eq!(tod_a(&mut c, VSYNC - 1), 0);
+    assert_eq!(tod_a(&mut c, VSYNC), 1);
     assert_eq!(tod_a(&mut c, 50 * CUADRO_CORTO), 50);
 }
 
 #[test]
 fn tod_de_b_cuenta_lineas() {
-    let mut c = Chips::nuevo();
+    let mut c = Chips::tras_el_arranque();
     let tod_b = |c: &mut Chips, t: u64| {
         let hi = c.leer(b(reg::TODHI), 1, t);
         let mid = c.leer(b(reg::TODMID), 1, t);
@@ -514,7 +538,7 @@ fn tod_de_b_cuenta_lineas() {
 
 #[test]
 fn lectura_congelada_del_tod() {
-    let mut c = Chips::nuevo();
+    let mut c = Chips::tras_el_arranque();
     let t1 = 0x123 * CUADRO_LARGO;
     assert_eq!(leer_a(&mut c, reg::TODHI, t1), 0);
     let t2 = t1 + 5 * CUADRO_LARGO;
@@ -537,7 +561,7 @@ fn escribir_el_tod_lo_para_hasta_el_byte_bajo() {
 
 #[test]
 fn alarma_del_tod() {
-    let mut c = Chips::nuevo();
+    let mut c = Chips::tras_el_arranque();
     // Con CRB bit 7, se escribe la alarma; el TOD sigue contando.
     escribir_a(&mut c, reg::CRB, cr::ALARM, 0);
     escribir_a(&mut c, reg::TODHI, 0, 0);
@@ -546,15 +570,17 @@ fn alarma_del_tod() {
     escribir_a(&mut c, reg::CRB, 0, 0);
     escribir_a(&mut c, reg::ICR, icr::IR_SC | icr::ALRM, 0);
     assert_eq!(tod_a(&mut c, 2 * CUADRO_LARGO), 2, "escribir la alarma no toca el TOD");
+    // La alarma llega con el quinto pulso, en la línea 5 del quinto cuadro; antes, los fines de cuadro.
     assert_eq!(c.siguiente_suceso(), 3 * CUADRO_LARGO);
     c.avanzar(3 * CUADRO_LARGO);
     assert_eq!(c.siguiente_suceso(), 4 * CUADRO_LARGO);
-    assert_eq!(leer_a(&mut c, reg::ICR, 5 * CUADRO_LARGO - 1), 0);
-    assert_eq!(c.siguiente_suceso(), 5 * CUADRO_LARGO);
-    assert_eq!(leer16(&mut c, INTREQR, 5 * CUADRO_LARGO), int::VERTB | int::PORTS);
-    assert_eq!(leer_a(&mut c, reg::ICR, 5 * CUADRO_LARGO), icr::IR_SC | icr::ALRM);
+    c.avanzar(4 * CUADRO_LARGO);
+    assert_eq!(leer_a(&mut c, reg::ICR, 4 * CUADRO_LARGO + VSYNC - 1), 0);
+    assert_eq!(c.siguiente_suceso(), 4 * CUADRO_LARGO + VSYNC);
+    assert_eq!(leer16(&mut c, INTREQR, 4 * CUADRO_LARGO + VSYNC), int::VERTB | int::PORTS);
+    assert_eq!(leer_a(&mut c, reg::ICR, 4 * CUADRO_LARGO + VSYNC), icr::IR_SC | icr::ALRM);
     // Saltándola de golpe también salta.
-    let mut c = Chips::nuevo();
+    let mut c = Chips::tras_el_arranque();
     escribir_a(&mut c, reg::CRB, cr::ALARM, 0);
     escribir_a(&mut c, reg::TODLO, 7, 0);
     assert_eq!(leer_a(&mut c, reg::ICR, 100 * CUADRO_LARGO), icr::ALRM);
@@ -562,7 +588,7 @@ fn alarma_del_tod() {
 
 #[test]
 fn alarma_del_tod_de_b_por_lineas() {
-    let mut c = Chips::nuevo();
+    let mut c = Chips::tras_el_arranque();
     c.escribir(b(reg::CRB), u32::from(cr::ALARM), 1, 0);
     c.escribir(b(reg::TODMID), 0x01, 1, 0);
     c.escribir(b(reg::TODLO), 0x00, 1, 0);
@@ -576,15 +602,14 @@ fn alarma_del_tod_de_b_por_lineas() {
 
 #[test]
 fn alarma_con_entrelazado() {
-    let mut c = Chips::nuevo();
+    let mut c = Chips::tras_el_arranque();
     escribir16(&mut c, BPLCON0, 0x0004, 0);
     escribir_a(&mut c, reg::CRB, cr::ALARM, 0);
     escribir_a(&mut c, reg::TODLO, 4, 0);
-    // Largo, corto, largo, corto.
+    // Largo, corto, largo, corto: el cuarto pulso, en la línea 5 del cuarto cuadro.
     assert_eq!(c.siguiente_suceso(), CUADRO_LARGO);
-    c.avanzar(CUADRO_LARGO);
-    let fin = 2 * CUADRO_LARGO + 2 * CUADRO_CORTO;
-    let mut t = CUADRO_LARGO;
+    let fin = 2 * CUADRO_LARGO + CUADRO_CORTO + VSYNC;
+    let mut t = 0;
     while t < fin {
         t = c.siguiente_suceso();
         c.avanzar(t);

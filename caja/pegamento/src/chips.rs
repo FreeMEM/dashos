@@ -3,7 +3,8 @@
 //! (`caja_chip_leer`, `caja_chip_escribir`, en `../motor.h`) con la hora en ciclos de 68000 (`motor_ciclos`).
 //!
 //! Van apagados de serie. `caja.c` los enciende para el programa que los usa (`caja_chips_poner`) y los apaga al
-//! acabar: cada vez, unos chips recién encendidos, con su hora 0 en la hora del motor de ese momento.
+//! acabar: cada vez, unos chips como los deja el arranque del Kickstart (`Chips::tras_el_arranque`: los TOD en marcha y
+//! el teclado sincronizado), con su hora 0 en la hora del motor de ese momento.
 //!
 //! Sin `unsafe` propio: el estado va en la `Caja` (`lib.rs`), y lo toman y lo sueltan en cada acceso, como las
 //! funciones nativas. El motor llama desde el hilo de la caja, con el 68k en marcha, cuando ninguna función de Rust
@@ -32,7 +33,7 @@ impl Encendidos {
 pub extern "C" fn caja_chips_poner(encendidos: i32, hora: u64) -> u32 {
     let Some(c) = caja() else { return 0 };
     let nadie = c.chips.as_ref().map_or(0, |e| e.chips.accesos_a_nadie);
-    c.chips = (encendidos != 0).then(|| Encendidos { chips: Chips::nuevo(), origen: hora });
+    c.chips = (encendidos != 0).then(|| Encendidos { chips: Chips::tras_el_arranque(), origen: hora });
     if encendidos != 0 { 0 } else { u32::try_from(nadie).unwrap_or(u32::MAX) }
 }
 

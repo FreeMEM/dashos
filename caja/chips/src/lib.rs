@@ -1,10 +1,11 @@
 //! Los chips del Amiga para la caja (S18, fase 1): los dos CIA 8520, un Agnus mínimo y el reloj. PAL y OCS. Y,
-//! adelantados de la fase 2, el Blitter ([`blitter`]), el Copper ([`copper`]) y los planos de imagen con Denise
-//! ([`denise`]), y de la fase 4, el audio de Paula ([`paula`]).
+//! adelantados de la fase 2, el Blitter ([`blitter`]), el Copper ([`copper`]), los planos de imagen con Denise
+//! ([`denise`]) y los CIA completos con el teclado ([`cia`], [`teclado`]), y de la fase 4, el audio de Paula
+//! ([`paula`]).
 //!
-//! Escrito desde el Amiga Hardware Reference Manual y la hoja de datos del MOS 8520; el Copper, también desde el de
-//! vAmiga (MPL-2.0, ver [`copper`]). No se ha leído código de UAE, WinUAE, FS-UAE, Amiberry ni AROS. No sabe nada del
-//! motor 68k: el motor le pasa cada acceso con su hora.
+//! Escrito desde el Amiga Hardware Reference Manual y la hoja de datos del MOS 8520; el Copper, el Blitter, el audio,
+//! los CIA, el teclado y Denise, también desde los de vAmiga (MPL-2.0, ver cada módulo). No se ha leído código de
+//! UAE, WinUAE, FS-UAE, Amiberry ni AROS. No sabe nada del motor 68k: el motor le pasa cada acceso con su hora.
 //!
 //! # El tiempo
 //!
@@ -19,30 +20,37 @@
 //!   cifra de NTSC.
 //! - Cuadro: 313 líneas si `LOF` (cuadro largo) y 312 si no. Sin entrelazado (`BPLCON0` bit `LACE`), `LOF` se queda
 //!   como está (de serie, 1: 313 líneas, 49,92 Hz); con entrelazado cambia en cada cuadro.
-//! - `VERTB` sube al empezar cada cuadro (línea 0), y el Copper vuelve a `COP1LC`. El TOD del CIA-A cuenta un pulso por cuadro (VSYNC) y el del CIA-B
-//!   uno por línea (HSYNC).
+//! - `VERTB` sube al empezar cada cuadro (línea 0), y el Copper vuelve a `COP1LC`. El TOD del CIA-A cuenta un pulso
+//!   por cuadro (VSYNC), al empezar la línea [`LINEA_VSYNC`], y el del CIA-B uno por línea (HSYNC), al empezarla.
+//!   Medido en FS-UAE (`caja/pruebas68k/cia.c`): `VERTB` llega al principio de la línea 0; el TOD del CIA-A cambia
+//!   entre el ciclo de color `$D3` de la línea 4 y el `$0B` de la 5; el del CIA-B, entre el `$DE` de una línea y el
+//!   `$0C` de la siguiente. vAmiga pone el del CIA-A en la línea 5 (ciclo 84) y el del CIA-B en el ciclo `$66`, con las
+//!   lecturas del TOD algo retrasadas; aquí manda la medida. En el A500 el TOD del CIA-A puede ir a la red eléctrica
+//!   (50 Hz) en vez de al VSYNC: no se imita.
 //!
-//! Los chips no tienen la chip RAM: el Copper y los planos la leen por [`MemoriaChip`], que da la caja en [`Chips::avanzar_con`],
-//! [`Chips::leer_con`] y [`Chips::escribir_con`]. [`Chips::avanzar`], [`Chips::leer`] y [`Chips::escribir`] van sin ella
+//! Los chips no tienen la chip RAM: el Copper y los planos la leen por [`MemoriaChip`], que da la caja en
+//! [`Chips::avanzar_con`], [`Chips::leer_con`] y [`Chips::escribir_con`]. [`Chips::avanzar`], [`Chips::leer`] y [`Chips::escribir`] van sin ella
 //! ([`SinMemoria`]: el Copper lee 0, un `MOVE` prohibido, y se para hasta el cuadro siguiente).
-//!
-//! Duda: en el Amiga, el pulso de VSYNC y el de HSYNC no caen al principio del cuadro ni de la línea, sino unas
-//! líneas o unos ciclos de color después. Aquí caen al principio. Comprobar con el oráculo (K4) cuánto se separan del
-//! `VERTB`. En el A500 el TOD del CIA-A puede ir a la red eléctrica (50 Hz) en vez de al VSYNC.
 //!
 //! # El bus
 //!
 //! [`Chips::leer`] y [`Chips::escribir`] reciben la dirección del 68k, el tamaño (1, 2 o 4 bytes) y la hora. Los
 //! valores van en el orden del 68k: en un acceso de 2 bytes, el byte de la dirección menor es el alto. Un acceso de 4
-//! son dos de 2 en orden; uno de 2 a la zona de los CIA, dos de 1.
+//! son dos de 2 en orden.
 //!
-//! - CIA-A: `$BFE001 + $100 * r`, bytes impares. CIA-B: `$BFD000 + $100 * r`, bytes pares. `r` (bits 8-11) es el
-//!   registro.
+//! - Los CIA, en `$BF0000`-`$BFFFFF`: el bit 12 a 0 elige el CIA-A, que va en los bits 0-7 del bus de datos (bytes
+//!   impares: `$BFE001 + $100 * r`), y el 13 a 0 el CIA-B, en los bits 8-15 (pares: `$BFD000 + $100 * r`). `r` (bits
+//!   8-11) es el registro; los bits 1-7 no cuentan (espejos). Una escritura de 1 byte llega al CIA elegido sea par o
+//!   impar (el 68000 pone el byte en las dos mitades); una lectura lee el CIA elegido aunque luego tome la otra mitad.
+//!   Con los dos bits a 0, los dos (ver `AMBOS_CIA`); con los dos a 1, ninguno. Lo que no lleva ningún CIA se lee
+//!   `$FF` (en el Amiga, lo que quedó en el bus) y, si es todo el acceso, cuenta como de nadie. Medido en FS-UAE con
+//!   el A500 (`caja/pruebas68k/cia.c`, "espejos"); vAmiga hace lo mismo, y también en `$A00000`-`$BEFFFF`, que aquí
+//!   (y en el A1200, donde está PCMCIA) no son de los CIA.
 //! - Registros de los chips: `$DFF000`-`$DFF1FF`. Una escritura de 1 byte va al registro entero con el byte repetido
 //!   en las dos mitades, como lo pone el 68000 en el bus de datos. Una lectura de 1 byte lee el registro y toma su
 //!   mitad.
-//! - Lo demás (los registros de chips que aún no se imitan y los espejos de los CIA) lee 0, no escribe nada y se cuenta
-//!   en [`Chips::accesos_a_nadie`].
+//! - Lo demás (los registros de chips que aún no se imitan) lee 0, no escribe nada y se cuenta en
+//!   [`Chips::accesos_a_nadie`].
 //!
 //! # La chip RAM
 //!
@@ -55,8 +63,12 @@
 //! [`Chips::sonido`] enciende la salida de Paula a una frecuencia, y [`Chips::muestras`] pone los chips al día y saca
 //! las muestras estéreo hechas hasta entonces (ver [`paula`]). Apagada de serie.
 //!
-//! Duda: en el Amiga, los CIA responden en toda `$BFxxxx` según los bits 12 y 13 de la dirección (espejos). Aquí solo
-//! en las direcciones del manual. Si algún programa usa un espejo, se verá en el contador.
+//! # Los CIA, el teclado y los puertos
+//!
+//! Los dos CIA ([`cia`]) con sus temporizadores, el TOD y el registro serie. El teclado ([`teclado`]) va en el
+//! registro serie del CIA-A: [`Chips::tecla`] lo alimenta, y el saludo es el CIA-A pasando el registro serie a salida
+//! y volviendo. Los puertos: [`Chips::ovl`], [`Chips::led`], [`Chips::fuego`], [`Chips::disco_senales`] y
+//! [`Chips::disco_lineas`]. [`Chips::tras_el_arranque`] los deja como el Kickstart, para la caja nativa.
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -67,6 +79,7 @@ pub mod copper;
 pub mod denise;
 pub mod memoria;
 pub mod paula;
+pub mod teclado;
 
 use blitter::Blitter;
 use cia::Cia;
@@ -74,6 +87,7 @@ use copper::Copper;
 use denise::Planos;
 pub use memoria::{MemoriaChip, SinMemoria};
 use paula::Paula;
+use teclado::Teclado;
 
 /// Ciclos del 68000 por segundo en un Amiga PAL (7,09379 MHz).
 pub const RELOJ_CPU_PAL: u64 = 7_093_790;
@@ -89,6 +103,8 @@ pub const CICLOS_POR_LINEA: u64 = COLOR_POR_LINEA * CICLOS_POR_COLOR;
 pub const LINEAS_CUADRO_LARGO: u64 = 313;
 /// Líneas de un cuadro corto (`LOF` = 0), posiciones verticales 0 a 311.
 pub const LINEAS_CUADRO_CORTO: u64 = 312;
+/// La línea en cuyo principio llega el pulso de VSYNC al TOD del CIA-A (medido en FS-UAE; ver la cabecera).
+pub const LINEA_VSYNC: u64 = 5;
 /// El número de Agnus en los bits 8-14 de `VPOSR`: 8361/8367, OCS PAL.
 pub const ID_AGNUS_OCS_PAL: u16 = 0x00;
 
@@ -175,6 +191,12 @@ pub mod int {
     pub const TBE: u16 = 0x0001;
 }
 
+/// Con los bits 12 y 13 de la dirección a 0 se eligen los dos CIA a la vez. Medido en FS-UAE con el A500
+/// (`cia.c`, "espejos"): un byte escrito en `$BFCC01` llega a los dos, y uno de 2 bytes en `$BFCC00` da el alto al
+/// CIA-B y el bajo al CIA-A; vAmiga hace lo mismo. Con el A1200 (Gayle), FS-UAE no elige ninguno: se lee `$FF` y no
+/// se escribe. Estos chips son de OCS: como el A500.
+const AMBOS_CIA: bool = true;
+
 /// `BPLCON0`: entrelazado.
 const LACE: u16 = 0x0004;
 /// `DMACON`: los bits que se escriben (0-10). `BBUSY` (14) y `BZERO` (13) son de solo lectura.
@@ -187,6 +209,8 @@ pub struct Chips {
     hora: u64,
     cia_a: Cia,
     cia_b: Cia,
+    /// El teclado, en el registro serie del CIA-A.
+    teclado: Teclado,
     /// La hora en que empezó el cuadro actual (línea 0, posición 0). Va con resta modular: tras escribir la posición
     /// del haz al principio puede quedar "antes de 0".
     cuadro_inicio: u64,
@@ -224,6 +248,7 @@ impl Chips {
             hora: 0,
             cia_a: Cia::nuevo(),
             cia_b: Cia::nuevo(),
+            teclado: Teclado::nuevo(),
             cuadro_inicio: 0,
             lof: true,
             bplcon0: 0,
@@ -242,6 +267,29 @@ impl Chips {
         }
     }
 
+    /// Los chips a la hora 0 como los deja el arranque del Kickstart, para quien no tiene Kickstart (la caja nativa):
+    /// los dos TOD en marcha desde 0, el teclado sincronizado y quieto, `OVL` a 0 y el LED encendido (CIA-A: `DDRA`
+    /// `$03`, `PRA` `$00`) y las líneas del disco en salida y sin nada seleccionado (CIA-B: `DDRB` `$FF`, `PRB` `$FF`;
+    /// `DDRA` `$C0`, `PRA` `$00`: RTS y DTR del puerto serie, activas). Los temporizadores, parados; las máscaras del ICR, a 0. Son los puertos que se
+    /// leen en FS-UAE con el Kickstart 3.1 (`caja/pruebas68k/cia.c`), salvo las líneas del puerto serie del CIA-B, que
+    /// FS-UAE da activas.
+    pub fn tras_el_arranque() -> Self {
+        let mut c = Self::nuevo();
+        c.teclado = Teclado::sincronizado();
+        for (r, v) in [(cia::reg::DDRA, 0x03), (cia::reg::PRA, 0x00)] {
+            c.cia_a.escribir(r, v);
+        }
+        for (r, v) in [(cia::reg::DDRB, 0xFF), (cia::reg::PRB, 0xFF), (cia::reg::DDRA, 0xC0), (cia::reg::PRA, 0x00)] {
+            c.cia_b.escribir(r, v);
+        }
+        for cia in [&mut c.cia_a, &mut c.cia_b] {
+            cia.escribir(cia::reg::TODHI, 0);
+            cia.escribir(cia::reg::TODMID, 0);
+            cia.escribir(cia::reg::TODLO, 0);
+        }
+        c
+    }
+
     /// Hasta qué hora están al día.
     pub fn hora(&self) -> u64 {
         self.hora
@@ -255,6 +303,53 @@ impl Chips {
     /// `BPLCON0`, `BPLCON1` y `BPLCON2`.
     pub fn bplcon(&self) -> [u16; 3] {
         [self.bplcon0, self.bplcon1, self.bplcon2]
+    }
+
+    // --- Los puertos de los CIA ---
+
+    /// `OVL` (CIA-A, PA0): la ROM tapa la chip RAM en `$000000`. Sin escribir `DDRA`, el pin es entrada y se lee a 1
+    /// (por eso al encender la ROM está en 0).
+    pub fn ovl(&self) -> bool {
+        self.cia_a.puerto_a() & 0x01 != 0
+    }
+
+    /// El LED de encendido (CIA-A, PA1, `/LED`): encendido (brillante) con el pin a 0. En el A500 y el A1200 el mismo
+    /// pin enciende el filtro de audio.
+    pub fn led(&self) -> bool {
+        self.cia_a.puerto_a() & 0x02 == 0
+    }
+
+    /// El botón de fuego del puerto 0 o 1 (CIA-A, PA6 y PA7, `/FIR0` y `/FIR1`, activos a 0). El del puerto 0 es
+    /// también el botón izquierdo del ratón.
+    pub fn fuego(&mut self, puerto: u8, pulsado: bool) {
+        let bit = if puerto == 0 { 0x40 } else { 0x80 };
+        set_bit(&mut self.cia_a.entrada_a, bit, !pulsado);
+    }
+
+    /// Las líneas que el disco manda al CIA-A (PA2-PA5, activas a 0), para quien haga el disco: `cambio` (`/CHNG`,
+    /// se sacó el disco), `protegido` (`/WPRO`), `pista0` (`/TK0`, el cabezal en la pista 0) y `listo` (`/RDY`).
+    pub fn disco_senales(&mut self, cambio: bool, protegido: bool, pista0: bool, listo: bool) {
+        for (bit, activa) in [(0x04, cambio), (0x08, protegido), (0x10, pista0), (0x20, listo)] {
+            set_bit(&mut self.cia_a.entrada_a, bit, !activa);
+        }
+    }
+
+    /// Las líneas de mando del disco, como están en los pines del puerto B del CIA-B.
+    pub fn disco_lineas(&self) -> LineasDisco {
+        LineasDisco(self.cia_b.puerto_b())
+    }
+
+    // --- El teclado ---
+
+    /// Una tecla del Amiga (código 0-127, el de la tabla del manual) baja o sube ahora (a [`Chips::hora`]). Va a la
+    /// pila del teclado, que la manda por el registro serie del CIA-A cuando puede (ver [`teclado`]).
+    pub fn tecla(&mut self, codigo: u8, pulsada: bool) {
+        self.teclado.tecla(codigo, pulsada, self.hora);
+    }
+
+    /// El saludo más corto que acepta el teclado, en ciclos del 68000 (de serie, 85 µs).
+    pub fn teclado_saludo_minimo(&mut self, ciclos: u64) {
+        self.teclado.saludo_minimo(ciclos);
     }
 
     // --- El haz ---
@@ -394,11 +489,26 @@ impl Chips {
         let pulsos_e = hora / CICLOS_POR_E - self.hora / CICLOS_POR_E;
         self.cia_a.ticks(pulsos_e);
         self.cia_b.ticks(pulsos_e);
+        while let Some(t) = self.teclado.proximo().filter(|&t| t <= hora) {
+            if let Some(f) = self.teclado.paso() {
+                debug_assert_eq!(f.hora, t);
+                self.cia_a.entrada_serie(f.kdat);
+            }
+        }
+        // El VSYNC llega al empezar la línea LINEA_VSYNC de cada cuadro: los que caen en (self.hora, hora].
+        let vsync_en = LINEA_VSYNC * CICLOS_POR_LINEA;
+        let antes = self.hora.wrapping_sub(self.cuadro_inicio) < vsync_en;
         let (cuadros, lineas) = self.avanzar_haz(hora);
+        let despues = hora.wrapping_sub(self.cuadro_inicio) >= vsync_en;
+        let vsync = if cuadros == 0 {
+            u64::from(antes && despues)
+        } else {
+            u64::from(antes) + cuadros - 1 + u64::from(despues)
+        };
         if cuadros > 0 {
             self.intreq |= int::VERTB;
         }
-        self.cia_a.pulsos_tod(cuadros);
+        self.cia_a.pulsos_tod(vsync);
         self.cia_b.pulsos_tod(lineas);
         if self.blitter.avanzar(hora) {
             self.intreq |= int::BLIT;
@@ -410,7 +520,7 @@ impl Chips {
     }
 
     /// La hora del próximo suceso: el fin del cuadro (`VERTB`), el desborde de un temporizador en marcha, la alarma
-    /// de un TOD, el fin del blit (`BLIT`), una interrupción de audio (`AUDx`, la tenga habilitada `INTENA` o no) o,
+    /// de un TOD, lo próximo del teclado (un bit o el fin de una espera), el fin del blit (`BLIT`), una interrupción de audio (`AUDx`, la tenga habilitada `INTENA` o no) o,
     /// con el Copper en marcha, su siguiente paso (puede escribir en `INTREQ`). Siempre es posterior a
     /// [`Chips::hora`].
     pub fn siguiente_suceso(&self) -> u64 {
@@ -427,7 +537,18 @@ impl Chips {
             }
         }
         if let Some(n) = self.cia_a.pulsos_hasta_alarma() {
-            t = t.min(self.inicio_cuadro(n));
+            // El pulso `n` de VSYNC: en este cuadro si aún no ha pasado su línea, o en los siguientes.
+            let vsync_en = LINEA_VSYNC * CICLOS_POR_LINEA;
+            let en_este = self.hora.wrapping_sub(self.cuadro_inicio) < vsync_en;
+            let cuadro = match (en_este, n) {
+                (true, 1) => self.cuadro_inicio,
+                (true, n) => self.inicio_cuadro(n - 1),
+                (false, n) => self.inicio_cuadro(n),
+            };
+            t = t.min(cuadro.wrapping_add(vsync_en));
+        }
+        if let Some(k) = self.teclado.proximo() {
+            t = t.min(k.max(self.hora + 1));
         }
         if let Some(n) = self.cia_b.pulsos_hasta_alarma() {
             let off = self.hora.wrapping_sub(self.cuadro_inicio);
@@ -463,9 +584,10 @@ impl Chips {
 
     /// La línea /IRQ de cada CIA llega a Paula: la del CIA-A a `PORTS` (nivel 2) y la del CIA-B a `EXTER` (nivel 6).
     ///
-    /// Duda: se toma como nivel, no como flanco. Mientras el CIA tenga un bit de `ICR` con su máscara, el bit de
-    /// `INTREQ` vuelve a subir aunque se borre; por eso se lee `ICR` antes de borrar `INTREQ`. Comprobar con el
-    /// oráculo.
+    /// Por nivel, no por flanco: mientras el CIA tenga un bit de `ICR` con su máscara, el bit de `INTREQ` vuelve a
+    /// subir aunque se borre; por eso se lee `ICR` antes de borrar `INTREQ`. Medido en FS-UAE (`cia.c`, "nivel": con
+    /// el temporizador A del CIA-B y su máscara, `EXTER` sigue a 1 tras borrarlo sin leer el `ICR`, y baja tras
+    /// leerlo), y vAmiga hace lo mismo (`Paula::setINTREQ` vuelve a poner el bit si la línea sigue abajo).
     fn reflejar_cias(&mut self) {
         if self.cia_a.irq() {
             self.intreq |= int::PORTS;
@@ -551,12 +673,34 @@ impl Chips {
         (dir::CUSTOM..dir::CUSTOM_FIN).contains(&dir).then(|| (dir - dir::CUSTOM) & !1)
     }
 
-    fn reg_cia_a(dir: u32) -> Option<u8> {
-        (dir & 0xFFFF_F0FF == dir::CIA_A).then_some(((dir >> 8) & 0xF) as u8)
+    /// Si `dir` es de la zona de los CIA (`$BF0000`-`$BFFFFF`): qué CIA elige (A con el bit 12 a 0, B con el 13 a 0) y
+    /// el registro (bits 8-11). Los bits 0-7 no cuentan, salvo el 0 para saber qué mitad del bus de datos se lee. Con
+    /// los dos bits a 0, ver [`AMBOS_CIA`].
+    fn cias(dir: u32) -> Option<(bool, bool, u8)> {
+        if dir & 0xFFFF_0000 != dir::CIA_A & 0xFFFF_0000 {
+            return None;
+        }
+        let (a, b) = (dir & 0x1000 == 0, dir & 0x2000 == 0);
+        let (a, b) = if a && b && !AMBOS_CIA { (false, false) } else { (a, b) };
+        Some((a, b, ((dir >> 8) & 0xF) as u8))
     }
 
-    fn reg_cia_b(dir: u32) -> Option<u8> {
-        (dir & 0xFFFF_F0FF == dir::CIA_B).then_some(((dir >> 8) & 0xF) as u8)
+    /// Lee el registro `r` de los CIA elegidos (aunque luego no se tome su byte: leer el ICR lo borra igual) y da el
+    /// byte del CIA-B (bits 8-15 del bus) y el del CIA-A (bits 0-7). Lo que no lleva nadie se lee a `$FF`.
+    fn leer_cias(&mut self, a: bool, b: bool, r: u8) -> (Option<u8>, Option<u8>) {
+        let vb = b.then(|| self.cia_b.leer(r));
+        let va = a.then(|| self.cia_a.leer(r));
+        (vb, va)
+    }
+
+    /// Escribe en el CIA-A, y avisa al teclado si cambia el sentido del registro serie (KDAT).
+    fn escribir_cia_a(&mut self, r: u8, v: u8) {
+        let antes = self.cia_a.serie_en_salida();
+        self.cia_a.escribir(r, v);
+        let ahora = self.cia_a.serie_en_salida();
+        if antes != ahora {
+            self.teclado.kdat(ahora, self.hora);
+        }
     }
 
     fn leer8(&mut self, dir: u32) -> u8 {
@@ -564,11 +708,13 @@ impl Chips {
             let w = self.leer_custom(dir, off);
             return if dir & 1 == 0 { (w >> 8) as u8 } else { w as u8 };
         }
-        if let Some(r) = Self::reg_cia_a(dir) {
-            return self.cia_a.leer(r);
-        }
-        if let Some(r) = Self::reg_cia_b(dir) {
-            return self.cia_b.leer(r);
+        if let Some((a, b, r)) = Self::cias(dir) {
+            let (vb, va) = self.leer_cias(a, b, r);
+            let v = if dir & 1 == 0 { vb } else { va };
+            if v.is_none() {
+                self.nadie(dir);
+            }
+            return v.unwrap_or(0xFF);
         }
         self.nadie(dir);
         0
@@ -578,6 +724,13 @@ impl Chips {
         if let Some(off) = Self::custom(dir) {
             return self.leer_custom(dir, off);
         }
+        if let (Some((a, b, r)), 0) = (Self::cias(dir), dir & 1) {
+            let (vb, va) = self.leer_cias(a, b, r);
+            if vb.is_none() && va.is_none() {
+                self.nadie(dir);
+            }
+            return u16::from_be_bytes([vb.unwrap_or(0xFF), va.unwrap_or(0xFF)]);
+        }
         (u16::from(self.leer8(dir)) << 8) | u16::from(self.leer8(dir.wrapping_add(1)))
     }
 
@@ -585,11 +738,17 @@ impl Chips {
         if let Some(off) = Self::custom(dir) {
             return self.escribir_custom(dir, off, u16::from_be_bytes([v, v]), mem);
         }
-        if let Some(r) = Self::reg_cia_a(dir) {
-            return self.cia_a.escribir(r, v);
-        }
-        if let Some(r) = Self::reg_cia_b(dir) {
-            return self.cia_b.escribir(r, v);
+        // El 68000 pone el byte en las dos mitades del bus: lo toma el CIA elegido, sea par o impar la dirección.
+        if let Some((a, b, r)) = Self::cias(dir) {
+            if b {
+                self.cia_b.escribir(r, v);
+            }
+            if a {
+                self.escribir_cia_a(r, v);
+            }
+            if a || b {
+                return;
+            }
         }
         self.nadie(dir);
     }
@@ -599,13 +758,26 @@ impl Chips {
             return self.escribir_custom(dir, off, v, mem);
         }
         let [alto, bajo] = v.to_be_bytes();
+        if let (Some((a, b, r)), 0) = (Self::cias(dir), dir & 1) {
+            if b {
+                self.cia_b.escribir(r, alto);
+            }
+            if a {
+                self.escribir_cia_a(r, bajo);
+            }
+            if !a && !b {
+                self.nadie(dir);
+            }
+            return;
+        }
         self.escribir8(dir, alto, mem);
         self.escribir8(dir.wrapping_add(1), bajo, mem);
     }
 
     fn leer_custom(&mut self, dir: u32, off: u32) -> u16 {
         match off {
-            // Duda: BZERO es 0 al encender, hasta el primer blit. Comprobar con el oráculo tras el arranque.
+            // BZERO es 0 al encender, hasta el primer blit (como vAmiga, que lo pone a 0 al reiniciar). No se puede
+            // medir desde un programa: el Kickstart ya ha hecho blits (en FS-UAE se lee a 0 tras el arranque).
             custom::DMACONR => self.dmacon | self.blitter.bits_dmaconr(),
             custom::VPOSR => {
                 let (v, _) = self.posicion();
@@ -676,12 +848,54 @@ impl Chips {
                 self.paula.dma(audio, self.hora, self.cuadro_inicio, &mut self.intreq);
             }
             custom::INTENA => set_clr(&mut self.intena, v, 0x7FFF),
-            // Duda: el bit 14 de INTREQ no tiene uso; aquí se guarda como en INTENA. Comprobar qué lee INTREQR.
+            // El bit 14 de INTREQ no tiene uso, pero se guarda y se lee en INTREQR: medido en FS-UAE (`cia.c`,
+            // "INTREQ bit 14": $4040 tras ponerlo), y vAmiga lo guarda igual (los 15 bits bajos).
             custom::INTREQ => set_clr(&mut self.intreq, v, 0x7FFF),
             _ if self.escribir_planos(off, v, mem) => {}
             _ if self.escribir_copper(off, v) => {}
             _ => self.nadie(dir),
         }
+    }
+}
+
+/// Pone a `v` los bits `bit` de `r`.
+fn set_bit(r: &mut u8, bit: u8, v: bool) {
+    if v {
+        *r |= bit;
+    } else {
+        *r &= !bit;
+    }
+}
+
+/// Las líneas de mando del disco (CIA-B, puerto B), todas activas a 0 salvo `DIR`. Las guarda el CIA; el disco, cuando
+/// lo haya, mirará sus cambios (el motor de cada unidad se toma al bajar su `/SELx`, y el paso al subir `/STEP`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LineasDisco(pub u8);
+
+impl LineasDisco {
+    /// `/STEP` (PB0) abajo: un pulso de paso en curso.
+    pub fn paso(self) -> bool {
+        self.0 & 0x01 == 0
+    }
+
+    /// `DIR` (PB1): a 0, el paso va hacia dentro (pistas más altas); a 1, hacia la pista 0.
+    pub fn hacia_dentro(self) -> bool {
+        self.0 & 0x02 == 0
+    }
+
+    /// `/SIDE` (PB2) abajo: la cara de arriba (cabezal 1).
+    pub fn cara_arriba(self) -> bool {
+        self.0 & 0x04 == 0
+    }
+
+    /// `/SELx` (PB3-PB6) abajo: la unidad `x` (0-3) está elegida.
+    pub fn elegida(self, x: u8) -> bool {
+        self.0 & (0x08 << (x & 3)) == 0
+    }
+
+    /// `/MTR` (PB7) abajo: motor en marcha (lo toma la unidad al bajar su `/SELx`).
+    pub fn motor(self) -> bool {
+        self.0 & 0x80 == 0
     }
 }
 
