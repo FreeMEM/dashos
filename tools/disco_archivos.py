@@ -722,7 +722,6 @@ if sys.argv[1] in ("--comprobar", "--comprobar-basico"):
     # servicio de archivos y el NVMe). Sin el árbol entero, que depende del escritorio completo de arranque-virt (las
     # sesiones, el centro, el explorador, la caja Amiga), ni la fecha (en x86 no se lee todavía el reloj del PC).
     basico = sys.argv[1] == "--comprobar-basico"
-    sin_caja = bool(os.environ.get("DASHOS_SIN_CAJA"))
     disco, ver = sys.argv[2], sys.argv[3]
     FONDOS = os.path.join(os.path.dirname(os.path.abspath(disco)), "fondos-prueba")
     # Por la tabla de particiones, con el mismo lector que el servicio de disco (A14).
@@ -890,10 +889,6 @@ if sys.argv[1] in ("--comprobar", "--comprobar-basico"):
     else:
         # Paso 2 de las asignaciones: los cajones de SYS:, en su sitio del orden de `ver` (el de los nombres).
         esperado = sorted(set(esperado) | sys_esperado(), key=lambda l: [p for p in l.split(" ")[0].split("/")])
-        if sin_caja:
-            # X7, paso 4 (DASHOS_SIN_CAJA=1): una imagen sin la caja Amiga; su cajón no se mira.
-            esperado = [l for l in esperado if not l.startswith(CAJA)]
-            arbol = [l for l in arbol if not l.startswith(CAJA)]
         if arbol != esperado:
             fallos.append(f"árbol: {arbol}")
         # S6b, S36: lo concedido a los programas del sistema (a `pide`, eco y plazo), retirado al final: solo la cabecera.
@@ -932,7 +927,7 @@ if sys.argv[1] in ("--comprobar", "--comprobar-basico"):
                               ("seguridad", " dock Ana ajustes no escribe ENV:Escritorio/menus (estado -2)"),
                               ("seguridad", " dock Ana ajustes no guarda ENV:Sys/locale en ENVARC: (estado -2)"),
                               ("seguridad", " dock Ana ajustes no escribe ENV:Prefs/Red/hora (estado -2)")]:
-                if quiere not in texto[n] and not (sin_caja and "caja-amiga" in quiere):
+                if quiere not in texto[n]:
                     fallos.append(f"Estado/Registros/{n}: falta {quiere!r}")
 
         # S6b, rama `cuentas`: las cuentas, como las dejó la prueba del Shell (reescritas por `sesiones`: sin las líneas
@@ -1022,8 +1017,6 @@ if sys.argv[1] in ("--comprobar", "--comprobar-basico"):
     intactos += [(f"{PAPELERA}/datos.txt", b"datos de la caja\n"), (f"{PAPELERA}/basura.txt", b"1"),
                  (f"{PAPELERA}/basura.txt.1", b"12"), (f"{PAPELERA}/{LARGO}", b"123"),
                  (f"{CAJA}/C/viejo", struct.pack(">8I", 0x3F3, 0, 0, 0, 0, 0, 0, 4))]
-    if sin_caja:
-        intactos = [(c, b) for c, b in intactos if not c.startswith(PAPELERA) and c != f"{CAJA}/C/viejo"]
     if basico:
         intactos = [("LEEME.txt", b"DashOS lee RedoxFS\n"), ("Programas/hola", open(HOLA, "rb").read())]
     for camino, bien in intactos:

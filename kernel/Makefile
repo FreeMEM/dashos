@@ -800,7 +800,9 @@ endif
 endif
 
 # PCID=1 enciende PCID en el kernel de x86 (opción `pcid`); sin él, apagado (decisión del usuario del 2026-11-15).
+# X7, paso 4: con la caja Amiga de x86 (`caja/build-x86/caja-amiga`, RelevoJIT de GitHub o RELEVO_DIR), que va dentro.
 x86: usuario-x86-servicios firmware-x86 FORCE
+	$(MAKE) -C ../caja x86 $(if $(RELEVO_DIR),RELEVO_DIR=$(abspath $(RELEVO_DIR)))
 	cargo build $(CARGO_PERFIL) --target x86_64-unknown-none $(if $(PCID),--features pcid)
 	$(OBJCOPY_X86) --strip-debug $(ELF_X86) $(NUCLEO_X86)
 
@@ -882,7 +884,7 @@ arranque-x86: x86 $(DISCO_NVME_X86)
 	$(ACCEL_QEMU) $(MAQUINA_IOMMU) GUARDAR=$(abspath target/salida_x86.txt) CAPTURA=$(abspath target/captura-x86.ppm) CAPTURA_U6=$(abspath target/u6-x86) REINICIO=$(abspath pruebas/arranque_virt_reinicio.txt) ARQ=x86_64 TECLAS=1 QEMU_EXTRA="$(IOMMU_QEMU) -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME_X86)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv $(SATA_QEMU) -audiodev wav,id=snd0,path=$(abspath target/sonido-x86.wav),out.frequency=48000 $(SONIDO_QEMU) $(RED_HUB_X86) $(RED_TARJETA_X86)" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_arranque_x86.txt $(or $(TIEMPO_X86),900); \
 	R=$$?; $(RED_DESPUES); exit $$R
 	@if grep -q "fallo de DMA\|interrupción bloqueada" target/salida_x86.txt; then echo "MAL: fallos de DMA o interrupciones bloqueadas en el arranque"; grep "fallo de DMA\|interrupción bloqueada" target/salida_x86.txt | head; exit 1; fi
-	DASHOS_ARQ=x86_64 DASHOS_SIN_CAJA=1 DASHOS_SALIDA=$(abspath target/salida_x86.txt) python3 ../tools/disco_archivos.py --comprobar $(DISCO_NVME_X86) $(VER)
+	DASHOS_ARQ=x86_64 DASHOS_SALIDA=$(abspath target/salida_x86.txt) python3 ../tools/disco_archivos.py --comprobar $(DISCO_NVME_X86) $(VER)
 	python3 ../tools/disco_sata.py comprobar target/sata0.img 0
 	python3 ../tools/disco_sata.py comprobar target/sata1.img 1
 	python3 ../tools/captura_ventanas.py target/captura-x86.ppm

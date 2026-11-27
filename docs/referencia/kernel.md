@@ -603,7 +603,8 @@ mismos límites. Cambian los registros y lo que es de la CPU:
   0: no se lee el reloj del PC. `azar` (34) se siembra al arrancar con 256 bytes de RDSEED (o RDRAND, sin ella) y es
   de calidad si la CPU los da; sin ninguna de las dos, no. No hay orden de bytes por proceso: todo es little-endian. Las llaves de arranque traen,
   como en ARM, los permisos de página 0, de apagar y del aviso de memoria; desde X7 (paso 4), la imagen de
-  `arranque-x86` lanza el escritorio de `arranque-virt` (`sesiones` incluido), salvo lo que es de ARM.
+  `arranque-x86` lanza el escritorio de `arranque-virt` (`sesiones` y la caja Amiga, con RelevoJIT, incluidos), salvo
+  lo que es de ARM.
 - **Máquinas virtuales** (X10; `kernel/src/maquinas_x86.rs`, `base/x86_64/hiper.rs`). Las llamadas 45 a 48, con los
   mismos números, llaves, informe (13 u64) y bloque de interrupciones (10 u64) que en ARM, con AMD-V (SVM) y NPT o con
   VT-x y EPT (con invitado sin restricciones). Sin ninguno de los dos, `maquina_crear` da `E_NO_HAY`. El kernel dice

@@ -70,8 +70,7 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
 /// Realtek tras virtio-net, el HDA tras virtio-sound). Comprimidos, como en ARM (`build.rs`).
 ///
 /// Fuera, por ser de ARM: el buzón, el USB y la GPU de la Pi; la caja Linux (su VMM es de ARM: virtio por MMIO, GIC,
-/// PSCI, árbol de dispositivos); `dash-ventana` (Dash compila para ARM). Y la caja Amiga, hasta el commit
-/// que la mete.
+/// PSCI, árbol de dispositivos); `dash-ventana` (Dash compila para ARM).
 #[cfg(not(any(feature = "uso", feature = "graficos", feature = "caja", feature = "pruebas")))]
 static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // La consola (C48), con el registro y los puertos de COM1 (X6).
@@ -139,6 +138,9 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("presion", programa!("presion"), &[], &["presion"]),
     // Sin la caja Linux, pero sí el programa que pide el permiso de máquinas virtuales sin tenerlo (H9): no es de ARM.
     ("sin-maquina", programa!("sin-maquina"), &[("sistema", DATOS)], &["sesiones"]),
+    // X7: la caja Amiga de x86 (`caja/build-x86/caja-amiga`, con RelevoJIT), con sus programas de prueba, como en ARM:
+    // 1 el permiso de página 0, 2 "ventanas", 3 "archivos", 4 "sesiones" y 5 "presion".
+    ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &["ventanas", "archivos", "sesiones", "presion"]),
     ("espia", programa!("espia"), &[], &["ventanas"]),
     ("hora", programa!("hora"), &[("reloj", RELOJ)], &["red"]),
     ("commodity-prueba", programa!("commodity-prueba"), &[], &["ventanas", "sesiones"]),
