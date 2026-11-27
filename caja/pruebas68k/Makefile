@@ -3,7 +3,7 @@
 A := /opt/amiga/bin/m68k-amigaos-
 HUNK2BIN := ../../jit-host/pruebas68k/hunk2bin.py
 
-all: sistema.bin hola.bin lineaa.bin bucle.bin mala.bin saludo.exe ventana.exe hostil.exe anidado.exe gadtools.exe actualiza.exe boopsi.exe ramlib.exe capa.exe glotona.exe memh.exe procesos.exe ils.exe dtprueba.exe cgx.exe chips.exe prueba.library falsa.library miente.library
+all: sistema.bin hola.bin lineaa.bin bucle.bin mala.bin saludo.exe ventana.exe hostil.exe anidado.exe gadtools.exe actualiza.exe boopsi.exe ramlib.exe capa.exe glotona.exe memh.exe procesos.exe ils.exe dtprueba.exe cgx.exe chips.exe blitter.exe prueba.library falsa.library miente.library
 
 sistema.bin: BASE := 0x101600
 hola.bin: BASE := 0x110000
@@ -50,3 +50,6 @@ miente.library: prueba_lib.c biblioteca_entrada.s
 	$(A)as -m68020 --register-prefix-optional biblioteca_entrada.s -o miente_entrada.o
 	$(A)gcc $(CFLAGS_VENTANA) -DVERSION=1 miente_entrada.o prueba_lib.c -o $@ $(LIBGCC)
 	rm -f miente_entrada.o
+
+# B1: blitter.exe lee sus casos de blitter_casos.h (también los lee la prueba de Rust de ../chips).
+blitter.exe: blitter_casos.h

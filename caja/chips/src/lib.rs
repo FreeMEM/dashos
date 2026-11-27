@@ -1,4 +1,5 @@
-//! Los chips del Amiga para la caja (S18, fase 1): los dos CIA 8520, un Agnus mínimo y el reloj. PAL y OCS.
+//! Los chips del Amiga para la caja (S18, fase 1): los dos CIA 8520, un Agnus mínimo y el reloj. PAL y OCS. Y,
+//! adelantado de la fase 2, el Blitter ([`blitter`]).
 //!
 //! Escrito desde el Amiga Hardware Reference Manual y la hoja de datos del MOS 8520. No se ha leído código de UAE,
 //! WinUAE, FS-UAE, Amiberry ni AROS. No sabe nada del motor 68k: el motor le pasa cada acceso con su hora.
@@ -37,15 +38,25 @@
 //! - Lo demás (los registros de chips que aún no se imitan y los espejos de los CIA) lee 0, no escribe nada y se cuenta
 //!   en [`Chips::accesos_a_nadie`].
 //!
+//! # La chip RAM
+//!
+//! Los chips no la tienen: la da la caja con [`memoria::MemoriaChip`] en [`Chips::escribir_con`] y
+//! [`Chips::avanzar_con`]. [`Chips::escribir`] y [`Chips::avanzar`] son esas con [`memoria::SinMemoria`]: el DMA lee
+//! 0 y no escribe.
+//!
 //! Duda: en el Amiga, los CIA responden en toda `$BFxxxx` según los bits 12 y 13 de la dirección (espejos). Aquí solo
 //! en las direcciones del manual. Si algún programa usa un espejo, se verá en el contador.
 
 #![no_std]
 #![forbid(unsafe_code)]
 
+pub mod blitter;
 pub mod cia;
+pub mod memoria;
 
+use blitter::Blitter;
 use cia::Cia;
+use memoria::{MemoriaChip, SinMemoria};
 
 /// Ciclos del 68000 por segundo en un Amiga PAL (7,09379 MHz).
 pub const RELOJ_CPU_PAL: u64 = 7_093_790;
@@ -92,6 +103,22 @@ pub mod custom {
     pub const BPLCON0: u32 = 0x100;
 }
 
+/// Los bits de `DMACON` y `DMACONR`.
+pub mod dma {
+    /// En una escritura: 1 pone los bits que van a 1, 0 los quita.
+    pub const SET_CLR: u16 = 0x8000;
+    /// Solo en `DMACONR`: el Blitter está en marcha.
+    pub const BBUSY: u16 = 0x4000;
+    /// Solo en `DMACONR`: todas las palabras de D del último blit fueron 0.
+    pub const BZERO: u16 = 0x2000;
+    pub const BLTPRI: u16 = 0x0400;
+    /// El interruptor general del DMA.
+    pub const DMAEN: u16 = 0x0200;
+    pub const BPLEN: u16 = 0x0100;
+    pub const COPEN: u16 = 0x0080;
+    pub const BLTEN: u16 = 0x0040;
+}
+
 /// Los bits de `INTENA` e `INTREQ`.
 pub mod int {
     /// En una escritura: 1 pone los bits que van a 1, 0 los quita.
@@ -135,6 +162,7 @@ pub struct Chips {
     intena: u16,
     intreq: u16,
     dmacon: u16,
+    blitter: Blitter,
     /// Accesos a direcciones sin nada que se imite: leen 0 y no escriben.
     pub accesos_a_nadie: u64,
     /// La última de esas direcciones.
@@ -160,6 +188,7 @@ impl Chips {
             intena: 0,
             intreq: 0,
             dmacon: 0,
+            blitter: Blitter::default(),
             accesos_a_nadie: 0,
             ultimo_a_nadie: 0,
         }
@@ -250,8 +279,14 @@ impl Chips {
 
     // --- El tiempo ---
 
-    /// Pone todo al día hasta `hora`: los temporizadores, el TOD, el haz, y lo que suba a `INTREQ`.
+    /// Pone todo al día hasta `hora`: los temporizadores, el TOD, el haz, el fin del blit y lo que suba a `INTREQ`.
+    /// Sin chip RAM ([`SinMemoria`]).
     pub fn avanzar(&mut self, hora: u64) {
+        self.avanzar_con(hora, &mut SinMemoria);
+    }
+
+    /// [`Chips::avanzar`] con la chip RAM `mem`, para el DMA.
+    pub fn avanzar_con(&mut self, hora: u64, _mem: &mut dyn MemoriaChip) {
         if hora <= self.hora {
             return;
         }
@@ -264,14 +299,20 @@ impl Chips {
         }
         self.cia_a.pulsos_tod(cuadros);
         self.cia_b.pulsos_tod(lineas);
+        if self.blitter.avanzar(hora) {
+            self.intreq |= int::BLIT;
+        }
         self.hora = hora;
         self.reflejar_cias();
     }
 
-    /// La hora del próximo suceso: el fin del cuadro (`VERTB`), el desborde de un temporizador en marcha o la alarma
-    /// de un TOD. Siempre es posterior a [`Chips::hora`].
+    /// La hora del próximo suceso: el fin del cuadro (`VERTB`), el desborde de un temporizador en marcha, la alarma
+    /// de un TOD o el fin del blit (`BLIT`). Siempre es posterior a [`Chips::hora`].
     pub fn siguiente_suceso(&self) -> u64 {
         let mut t = self.inicio_cuadro(1);
+        if let Some(fin) = self.blitter.siguiente_suceso() {
+            t = t.min(fin);
+        }
         for cia in [&self.cia_a, &self.cia_b] {
             if let Some(m) = cia.ticks_hasta_desborde() {
                 t = t.min((self.hora / CICLOS_POR_E + m) * CICLOS_POR_E);
@@ -335,15 +376,21 @@ impl Chips {
         }
     }
 
-    /// Escribe los `tam` bytes bajos de `valor` (1, 2 o 4) en `dir` a la hora `hora`.
+    /// Escribe los `tam` bytes bajos de `valor` (1, 2 o 4) en `dir` a la hora `hora`. Sin chip RAM
+    /// ([`SinMemoria`]): un blit lee 0 y no escribe.
     pub fn escribir(&mut self, dir: u32, valor: u32, tam: u8, hora: u64) {
-        self.avanzar(hora);
+        self.escribir_con(dir, valor, tam, hora, &mut SinMemoria);
+    }
+
+    /// [`Chips::escribir`] con la chip RAM `mem`, para el DMA (el Blitter).
+    pub fn escribir_con(&mut self, dir: u32, valor: u32, tam: u8, hora: u64, mem: &mut dyn MemoriaChip) {
+        self.avanzar_con(hora, mem);
         match tam {
-            1 => self.escribir8(dir, valor as u8),
-            2 => self.escribir16(dir, valor as u16),
+            1 => self.escribir8(dir, valor as u8, mem),
+            2 => self.escribir16(dir, valor as u16, mem),
             4 => {
-                self.escribir16(dir, (valor >> 16) as u16);
-                self.escribir16(dir.wrapping_add(2), valor as u16);
+                self.escribir16(dir, (valor >> 16) as u16, mem);
+                self.escribir16(dir.wrapping_add(2), valor as u16, mem);
             }
             _ => self.nadie(dir),
         }
@@ -393,9 +440,9 @@ impl Chips {
         (u16::from(self.leer8(dir)) << 8) | u16::from(self.leer8(dir.wrapping_add(1)))
     }
 
-    fn escribir8(&mut self, dir: u32, v: u8) {
+    fn escribir8(&mut self, dir: u32, v: u8, mem: &mut dyn MemoriaChip) {
         if let Some(off) = Self::custom(dir) {
-            return self.escribir_custom(dir, off, u16::from_be_bytes([v, v]));
+            return self.escribir_custom(dir, off, u16::from_be_bytes([v, v]), mem);
         }
         if let Some(r) = Self::reg_cia_a(dir) {
             return self.cia_a.escribir(r, v);
@@ -406,19 +453,19 @@ impl Chips {
         self.nadie(dir);
     }
 
-    fn escribir16(&mut self, dir: u32, v: u16) {
+    fn escribir16(&mut self, dir: u32, v: u16, mem: &mut dyn MemoriaChip) {
         if let Some(off) = Self::custom(dir) {
-            return self.escribir_custom(dir, off, v);
+            return self.escribir_custom(dir, off, v, mem);
         }
         let [alto, bajo] = v.to_be_bytes();
-        self.escribir8(dir, alto);
-        self.escribir8(dir.wrapping_add(1), bajo);
+        self.escribir8(dir, alto, mem);
+        self.escribir8(dir.wrapping_add(1), bajo, mem);
     }
 
     fn leer_custom(&mut self, dir: u32, off: u32) -> u16 {
         match off {
-            // Sin Blitter, BBUSY y BZERO a 0. Duda: comprobar BZERO tras el arranque con el oráculo.
-            custom::DMACONR => self.dmacon,
+            // Duda: BZERO es 0 al encender, hasta el primer blit. Comprobar con el oráculo tras el arranque.
+            custom::DMACONR => self.dmacon | self.blitter.bits_dmaconr(),
             custom::VPOSR => {
                 let (v, _) = self.posicion();
                 (u16::from(self.lof) << 15) | (ID_AGNUS_OCS_PAL << 8) | ((v >> 8) as u16 & 1)
@@ -436,8 +483,22 @@ impl Chips {
         }
     }
 
-    fn escribir_custom(&mut self, dir: u32, off: u32, v: u16) {
+    /// El DMA del Blitter: `DMAEN` y `BLTEN`.
+    fn dma_blitter(&self) -> bool {
+        self.dmacon & (dma::DMAEN | dma::BLTEN) == dma::DMAEN | dma::BLTEN
+    }
+
+    fn escribir_custom(&mut self, dir: u32, off: u32, v: u16, mem: &mut dyn MemoriaChip) {
+        if self.blitter.escribir_registro(off, v) {
+            return;
+        }
         match off {
+            blitter::reg::BLTSIZE => {
+                let dma = self.dma_blitter();
+                if self.blitter.escribir_tamano(v, self.hora, dma, mem) {
+                    self.intreq |= int::BLIT;
+                }
+            }
             custom::VPOSW => {
                 // LOF (bit 15) y V8 (bit 0). La línea baja y la posición horizontal no cambian.
                 let (vpos, h) = self.posicion();
@@ -449,7 +510,13 @@ impl Chips {
                 let (vpos, _) = self.posicion();
                 self.poner_posicion((vpos & 0x100) | u64::from(v >> 8), u64::from(v & 0xFF));
             }
-            custom::DMACON => set_clr(&mut self.dmacon, v, DMACON_ESCRIBIBLES),
+            custom::DMACON => {
+                let antes = self.dma_blitter();
+                set_clr(&mut self.dmacon, v, DMACON_ESCRIBIBLES);
+                if !antes && self.dma_blitter() {
+                    self.blitter.dma_encendido(self.hora, mem);
+                }
+            }
             custom::INTENA => set_clr(&mut self.intena, v, 0x7FFF),
             // Duda: el bit 14 de INTREQ no tiene uso; aquí se guarda como en INTENA. Comprobar qué lee INTREQR.
             custom::INTREQ => set_clr(&mut self.intreq, v, 0x7FFF),

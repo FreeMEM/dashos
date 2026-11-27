@@ -91,6 +91,14 @@ S18 es del 2026-11-08 y piensa solo en Emu68. Desde entonces:
 Lo que no es de la fase 1: el Copper, el Blitter, Denise, Paula, el disco, la máquina entera y AGA (fases 2 a 7
 de S18).
 
+### Fase 2 (adelantada)
+
+- [x] B1 **El Blitter.** De OCS, en `caja/chips/src/blitter.rs`, cableado al bus de `Chips`. Copia (las cuatro fuentes,
+  minterms, desplazamientos, máscaras, módulos, descendente), relleno (inclusivo, exclusivo, `FCI`) y líneas (octantes,
+  `SING`, textura, acumulador en `BLTAPT`), todo de una vez al escribir `BLTSIZE`; `BZERO`, y `BBUSY` hasta una hora
+  estimada en la que sube `BLIT`. La chip RAM la da la caja (`src/memoria.rs`, `Chips::escribir_con` y
+  `Chips::avanzar_con`). Oráculo: `caja/pruebas68k/blitter.c` con los casos de `blitter_casos.h`.
+
 ## Bloqueos
 
 (ninguno)
@@ -195,3 +203,37 @@ de S18).
   sin compilarlos para x86); arreglado (04e2f684). Ahora falla en "cuentas-2" del guardián: en x86 el guardián da el
   Shell por acabado antes de que acabe (línea 3187 frente al fin del Shell en la 3827), y Berta aún no existe. Viene
   de `main` (PR #11) y no de los chips: avisado a `jefe-dash`.
+
+- B1 hecho (papel de implementador; rama `chips-blitter`, sale de `chips`): el Blitter de OCS, adelantado de la fase 2.
+  - Fuentes: el Hardware Reference Manual (capítulo 6), de memoria, y vAmiga (`Core/Components/Agnus/Blitter`,
+    MPL-2.0, cabeceras revisadas): de `FastBlitter.cpp`, `Blitter.cpp` y `BlitterRegs.cpp` sale el orden de cada
+    palabra y de cada punto, el desplazador, el relleno y lo que hace cada escritura de registro; de los
+    microprogramas de `SlowBlitter.cpp`, los ciclos por palabra según `USEx`. Reescrito en Rust, con el aviso MPL y el
+    origen en la cabecera de `blitter.rs`. Nada de UAE, WinUAE, FS-UAE (su código), Amiberry ni AROS.
+  - `src/memoria.rs`: el trait `MemoriaChip` y `SinMemoria`, tal cual los pide el encargo (la sesión del Copper hace
+    el mismo fichero). `Chips::escribir_con` y `Chips::avanzar_con` reciben la chip RAM; `escribir` y `avanzar` son
+    esas con `SinMemoria`, así que `pegamento/` no cambia (hoy sus blits leen 0 y no escriben). Punteros de 512 KB
+    (`MASCARA_CHIP`, bits 18-1).
+  - Cómo es: el blit entero al escribir `BLTSIZE`. `BBUSY` sigue a 1 hasta (2 + palabras × ciclos por palabra) ciclos
+    de bus, o 4 por punto en líneas, a 2 ciclos de CPU cada uno; entonces baja y sube `BLIT` en `INTREQ`, como un
+    suceso de `siguiente_suceso`. Sin `DMAEN` y `BLTEN`, el blit espera (con `BBUSY` a 1) y se hace al encenderlos.
+    Los registros quedan como los deja el blit (punteros, `ASH`, `BSH`, `SIGN`, la última A y B leídas), y
+    `BLTBDAT` pasa por el desplazador al escribirlo. Los registros del Blitter no se leen (van a "nadie").
+  - Oráculo: `caja/pruebas68k/blitter.c` (`blitter.exe` en git) hace con `OwnBlitter` y `Disable` 42 blits de
+    `blitter_casos.h` (24 de copia y relleno, 18 de líneas: los ocho octantes, horizontal, vertical, 45 grados, un
+    punto, XOR, `SING`, textura, encadenados sin volver a escribir punteros, ancho 0, módulo negativo, relleno
+    ascendente, `IFE` y `EFE` a la vez, `BLTBDAT` desplazada sin `USEB`) sobre 4096 bytes de chip RAM con datos
+    conocidos, y escribe el CRC32 y `BZERO` de cada uno; al final, un blit con `BLTEN` apagado. `tests/blitter.rs`
+    lee el mismo `blitter_casos.h`, hace los mismos blits y compara con las cifras de FS-UAE (A1200, Kickstart 3.1,
+    `emu_run.py --machine a1200`): **los 42 iguales**, y el de sin DMA también (no escribe nada, `BBUSY` a 1, y al
+    encender el DMA da la suma del caso 1). En FS-UAE, `BBUSY` se vio a 1 tras cada `BLTSIZE` y `BLIT` subió en todos.
+  - Comprobado: `cargo test` (18 pruebas nuevas en `tests/blitter.rs`, a mano y el oráculo, y 3 internas),
+    `cargo clippy --all-targets` sin avisos, compila sin `std` para `x86_64-unknown-none` y
+    `aarch64-unknown-none-softfloat` (`-Zbuild-std=core`), y `make -C kernel caja-x86` (BIEN; `chips.exe` sigue igual).
+  - No comprobado: los tiempos (la duración es una estimación; FS-UAE corre con la CPU a "max" y no sirve para
+    medirlos); el robo de ciclos y `BLTPRI`; ECS (`BLTSIZV`/`BLTSIZH`, `BLTCON0L`, más de 512 KB); el Blitter a medias
+    (un programa que lee lo que el Blitter está escribiendo ve ya el resultado); A1200 es AGA en FS-UAE, pero en estos
+    modos el Blitter de AGA es el de OCS.
+  - Dudas, en la cabecera de `blitter.rs`: qué pasa al escribir `BLTSIZE` con un blit en marcha (aquí el anterior se
+    da por acabado y sube su `BLIT`); una línea con `USEB` o con ancho distinto de 2; `BZERO` antes del primer blit.
+
