@@ -42,17 +42,19 @@ propio, `third_party/Emu68` del worktree, con los parches de `patches/emu68/`.
 
 - [x] L1 **El escollo de la página 0** (2026-11-28). Probado en `jit-host` (`make ORDEN=le PAGINA0=1 run`, también en
   big-endian): ver la bitácora.
-- [~] L2 **La capa de plataforma en la caja de DashOS.** L2a (el C de `caja.c`) hecho;
-  L2b, el trait de Rust en `pegamento/`; L2c, `motor_emu68.c` y `motor_relevo.c` (siguen con `caja_sc`), tras K8. Sacar de `caja.c` lo de DashOS (las llamadas al kernel con
-  `svc #0`, la memoria, los fallos) a `plataforma.h` + `plataforma_dashos.c`, y lo del crate `dashos` de `pegamento/`
-  (archivos, compositor, aviso, preguntador, multitarea) a un trait. Cambio mecánico: `caja-x86`, `arranque-virt` y
-  `arranque-virt CAJA_ORDEN=le` tienen que seguir pasando. Antes de tocar `caja.c`, `pegamento/` o `caja/Makefile`,
-  avisar a dashos-2f (chips y motor de ARM) y a quien lleve RelevoJIT. No tocar `caja/chips/`, `motor.h`,
-  `motor_emu68.c` ni `motor_relevo.c` hasta que dashos-2f cierre K8.
-- [ ] L3 **Objetivo de compilación para Linux** (x86-64 y AArch64) con `plataforma_linux.c`, y un programa 68k de
-  consola (`dos.library` `Write` a la salida estándar).
-- [ ] L4 **Ficheros POSIX**: `dos.library` sobre los ficheros de Linux (volúmenes y asignaciones a directorios).
-- [ ] L5 **Ventanas y sonido**: Wayland o SDL; el sonido por lo que haya (PipeWire, ALSA o SDL).
+- [x] L2 **La capa de plataforma en la caja de DashOS** (2026-11-28). L2a, el C de `caja.c` (`plataforma.h`,
+  `plataforma_dashos.c`); L2b, el trait `Plataforma` del pegamento y la opción `dashos`; L2c, los motores (tras K8).
+  Solo `plataforma_dashos.c` llama al kernel de DashOS.
+- [x] L3 **La caja como programa de Linux** (2026-11-28): `make -C caja linux` (AArch64) y `make -C caja linux-x86`;
+  `caja-amiga [-v] programa [argumentos]`.
+- [x] L4 **Ficheros de Linux** (2026-11-28): `Linux:` (la raíz, de arranque; el programa empieza en el directorio
+  actual), `Caja:` y `SYS:` (el cajón de la caja). Pruebas: `caja/pruebas_linux/prueba.sh`.
+- [~] L5 **Ventanas y sonido.** L5a, las ventanas por Wayland (2026-11-28), hecho. Falta comprobar el ratón y el
+  teclado en Linux. El sonido, en espera: la caja de DashOS tampoco saca el de los programas 68k todavía (Paula da
+  muestras y `audio.device` es un programa aparte, sin enganchar; S19 fase 2). Cuando lo tenga, en Linux irá por lo
+  que haya (PipeWire o PulseAudio por su socket, sin libc).
+- [ ] L6 **Lo que falta para usarla de verdad**: `Input()` desde la entrada estándar, Ctrl-C (SIGINT), las rutas de
+  Linux en los argumentos (`/home/...` es otra cosa en el Amiga), páginas de 16 KB (Asahi) y medir en un ARM de verdad.
 
 ## Bitácora
 
@@ -110,3 +112,35 @@ Rama traída a `origin/main` con union-chips (786eb010). `jit-host` con `PAGINA0
   también `caja.c` (la medida tras chips.exe), `programas.S` y `caja/Makefile` (`trampolin_a64.o`): habrá choque
   pequeño con L2a al unir. En Linux, el marco de la señal guarda y repone los registros q, así que el manejador de
   SIGSEGV puede usar la FPU.
+
+### 2026-11-28: L2b, L2c, L3, L4 y L5a
+
+Rama traída a `origin/main` con la fase 1 de los chips (ddc95f84, PR #17). El parche de la página 0 pasa a
+`0018-pagina0-en-linux.patch` (el 0017 es el plazo de los chips); los 18 se aplican sobre el clon. `jit-host/pagina0.c`
+usa `caja/fallo_a64_decodifica.h` y su regreso de la señal va en ensamblador suelto (GCC ignora `naked` en AArch64).
+
+- **L2b.** `pegamento/src/plataforma.rs`: el trait `Plataforma` (reloj, hora, dormir, consola, salida del programa,
+  final), con `Dashos` (el crate de siempre) y `Linux` (las `plat_*` de C). La opción `dashos` (por defecto) trae el
+  crate `dashos` y sus servicios; sin ella, los módulos de `src/linux/`.
+- **L2c.** `motor_emu68.c` pide a la plataforma el código traducido (`plat_codigo`, `plat_codigo_wx`) y el manejador
+  de fallos (`plat_fallos`); la entrada en ensamblador de los fallos de DashOS pasa a `plataforma_dashos.c`.
+  `motor_relevo.c`: `plat_dormir`, y `pagina_leer` lee la página 0 por `PAGINA0_RW` (ahora en `caja.h`).
+- **L3.** `plataforma_linux.c` (mmap con `MAP_FIXED_NOREPLACE`, memfd, clone y futex, SIGSEGV con el `marco_fallo`
+  desde el `ucontext` y el ESR de `__reserved`), `caja_linux.c` (incluye `caja.c` tal cual; sus pruebas del arranque
+  las quita `--gc-sections`), `entrada_linux.S`, `programas_linux.S`. Lo que escribe el programa, a la salida estándar;
+  lo que dice la caja, a la de errores con `-v`.
+- **L4.** `pegamento/src/linux/archivos.rs` y `sys.rs`: `SistemaArchivos` con descriptores (openat, pread, pwrite,
+  getdents64, statx...). No es una jaula: los enlaces simbólicos llevan adonde apunten, como en cualquier programa del
+  usuario. Linux no guarda los bits ni los comentarios del Amiga.
+- **L5a.** El compositor de la caja ya hablaba Wayland estándar: su transporte pasa a `transporte.rs` (DashOS, el
+  canal de siempre) y `linux/transporte.rs` (el socket, con SCM_RIGHTS, y los búferes en memfd).
+
+Comprobado: `prueba.sh` 12 BIEN (saludo.exe y cajones.exe, en x86-64 nativo y en AArch64 con qemu-aarch64);
+texto.exe, interp.exe y listas.exe de Dash dan su salida; ventana.exe abre y dibuja su ventana en niri, en las dos
+cajas. Las cajas de DashOS (be, le y x86) compilan en cada paso. `arranque-virt` (be) BIEN con L3; la tanda entera
+con L5a, abajo. No comprobado: ratón y teclado en las ventanas de Linux; el coste del fallo de la página 0 en un ARM de
+verdad; la caja de AArch64 en un Linux de verdad (solo qemu-user).
+
+Para las capturas de ventanas sin tocar el portapapeles: niri no da la posición de las ventanas en mosaico, así que se
+pone flotante la de la caja (`niri msg action move-window-to-floating --id N` y `move-floating-window -x 200 -y 200`) y
+`grim -g` captura solo su rectángulo.
