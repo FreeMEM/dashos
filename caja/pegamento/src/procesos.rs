@@ -212,7 +212,7 @@ fn montar_dentro(c: &mut Caja, p: &Proceso, hechas: &mut Vec<(u32, u32)>) -> Res
     // crea una biblioteca de disco (sigue cuando acabe el programa que la abrió).
     let sistema = c.ex.dueno_de_lo_nuevo() == 0;
     let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema };
-    let mut fichero = |dos: &mut caja_dos::Dos<caja_dos::guardia::Guardia<crate::archivos::FsDashos>>, cd: &mut CajaDos, dado: Option<u32>, cerrar: bool| -> u32 {
+    let mut fichero = |dos: &mut caja_dos::Dos<caja_dos::guardia::Guardia<crate::archivos::Fs>>, cd: &mut CajaDos, dado: Option<u32>, cerrar: bool| -> u32 {
         match dado {
             // Lo de serie, NIL:, lo abre la caja para él: se cierra al acabar.
             None => match dos.abrir_nil(cd) {
@@ -238,7 +238,7 @@ fn montar_dentro(c: &mut Caja, p: &Proceso, hechas: &mut Vec<(u32, u32)>) -> Res
         None => 0,
         e => fichero(&mut c.dos, &mut cd, e, p.cerrar_error),
     };
-    let mut cerrojo = |dos: &mut caja_dos::Dos<caja_dos::guardia::Guardia<crate::archivos::FsDashos>>, cd: &mut CajaDos, dado: Option<u32>, del_padre: u32| -> u32 {
+    let mut cerrojo = |dos: &mut caja_dos::Dos<caja_dos::guardia::Guardia<crate::archivos::Fs>>, cd: &mut CajaDos, dado: Option<u32>, del_padre: u32| -> u32 {
         let l = match dado {
             Some(l) => l,
             None => dos.duplicar_cerrojo(cd, del_padre).unwrap_or(0),

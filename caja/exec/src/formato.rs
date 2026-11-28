@@ -92,7 +92,8 @@ impl<M: Memoria> Exec<M> {
                     alloc::format!("{v}").into_bytes()
                 }
                 b'u' | b'U' => alloc::format!("{}", leer(self, largo)?).into_bytes(),
-                b'x' => alloc::format!("{:x}", leer(self, largo)?).into_bytes(),
+                // %x en mayúsculas, como en AmigaOS (el oráculo: pruebas68k/formato.c).
+                b'x' => alloc::format!("{:X}", leer(self, largo)?).into_bytes(),
                 b'X' => alloc::format!("{:X}", leer(self, largo)?).into_bytes(),
                 b'c' => alloc::vec![leer(self, largo)? as u8],
                 b's' => {

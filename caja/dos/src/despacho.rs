@@ -165,6 +165,7 @@ impl<F: SistemaArchivos> Dos<F> {
                 Self::poner_fecha(c, d[1], s, us)?;
                 d0(d[1])
             }
+            DATE_TO_STR => d0(self.date_to_str(c, d[1])?),
             DELAY => {
                 r.d[0] = 0;
                 Ok(if (d[1] as i32) > 0 { Accion::Dormir { tics: d[1] } } else { Accion::Seguir })
@@ -393,11 +394,11 @@ impl<F: SistemaArchivos> Dos<F> {
                 let b = self.sitio_de_cerrojo(d[2])?;
                 d0(if a.vol == b.vol { DOSTRUE } else { DOSFALSE })
             }
-            // GetDeviceProc(name, dp): el proceso manejador de un dispositivo, para mandarle paquetes. En la caja no hay
-            // manejadores (los volúmenes los lleva dos con el servicio de archivos de DashOS): 0, con
-            // ERROR_DEVICE_NOT_MOUNTED, como un dispositivo que no está. FreeDeviceProc(dp): nada que soltar.
-            GET_DEVICE_PROC => Err(E::Io(ERROR_DEVICE_NOT_MOUNTED)),
-            FREE_DEVICE_PROC => d0(0),
+            GET_DEVICE_PROC => d0(self.get_device_proc(c, d[1], d[2])?),
+            FREE_DEVICE_PROC => {
+                self.free_device_proc(c, d[1]);
+                d0(0)
+            }
             EXALL => d0(self.ex_all(c, d[1], d[2], d[3], d[4], d[5])?),
             EXALL_END => {
                 Self::ex_all_end(c, d[5])?;

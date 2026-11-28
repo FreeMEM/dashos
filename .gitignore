@@ -2,6 +2,8 @@ third_party/Emu68/
 build/
 uefi/target/
 jit-host/build-le/
+jit-host/build-p0/
+jit-host/build-le-p0/
 jit-host/pruebas68k/*.o
 jit-host/pruebas68k/*.exe
 jit-host/**/*.core
@@ -26,6 +28,9 @@ caja-linux/vhost-prueba/target/
 caja/build-pc/
 caja/build-x86/
 caja/build-le/
+caja/build-linux/
+caja/build-linux-x86/
+caja/pegamento/target-linux/
 caja/pruebas68k/*.o
 caja-linux/aspecto/target/
 caja/build-demo/

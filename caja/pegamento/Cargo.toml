@@ -19,7 +19,8 @@ caja_utility = { package = "dashos-caja-utility", path = "../utility" }
 caja_timer = { package = "dashos-caja-timer", path = "../timer" }
 # K2: los chips del Amiga (los CIA, un Agnus mínimo y el reloj), para el motor (chips.rs).
 caja_chips = { package = "dashos-caja-chips", path = "../chips" }
-dashos = { package = "dashos-usuario", path = "../../usuario", default-features = false }
+# Sin la opción `dashos`, la caja como programa de Linux (docs/CAJA_LINUX_LOOP.md): sin el crate de DashOS.
+dashos = { package = "dashos-usuario", path = "../../usuario", default-features = false, optional = true }
 wayland = { package = "dashos-wayland", path = "../../wayland" }
 # S26: el esquema de Material 3 del tema de DashOS (las plumas de los programas Amiga "como DashOS").
 kit = { package = "dashos-kit", path = "../../kit" }
@@ -27,6 +28,12 @@ kit = { package = "dashos-kit", path = "../../kit" }
 # X7: en x86 el 68k lo ejecuta RelevoJIT (su interfaz de C, include/relevo.h, la usa ../motor_relevo.c). La caja
 # necesita su rama `motor-caja` (f74486e: entrada anidada y base 0). `make -C caja x86 RELEVO_DIR=<ruta>` usa un clon
 # local en su lugar.
+[features]
+# La caja de DashOS: el crate `dashos` y sus servicios (archivos, ventanas, `sesiones`). Sin ella, la de Linux
+# (`src/plataforma.rs`, `src/linux/`).
+default = ["dashos"]
+dashos = ["dep:dashos"]
+
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 relevo = { git = "https://github.com/FreeMEM/RelevoJIT", rev = "f74486e", default-features = false }
 

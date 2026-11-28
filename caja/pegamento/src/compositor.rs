@@ -37,7 +37,8 @@ use caja_intuition::compositor::{Compositor, Evento, NuevaVentana, Superficie, T
 use caja_intuition::escala;
 use caja_intuition::lienzo::Rect;
 use caja_intuition::nitido::{self, Estilo, Letras, TextoNitido};
-use wayland::canal::{self, Juntador, TROZO_CONECTAR, TROZO_DATOS};
+use crate::plataforma;
+use crate::transporte::{Recogido, Transporte};
 use crate::tema::TemaCaja;
 use wayland::tablas::{
     dashos_tema_v1, wl_buffer, wl_callback, wl_compositor, wl_display, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat,
@@ -143,9 +144,8 @@ impl Letras for LetrasKit {
 }
 
 pub struct CompositorWayland {
-    llave: u32,
-    respuesta: u32,
-    juntador: Juntador,
+    /// El canal de DashOS o el socket de Linux (`transporte.rs`).
+    t: Transporte,
     pub conectado: bool,
     siguiente_id: u32,
     compositor: u32,
@@ -194,9 +194,7 @@ impl CompositorWayland {
     /// Sin compositor: no se abre ninguna ventana (`crear_ventana` da `None`) y el escritorio mide 640 x 480.
     pub fn sin_conectar() -> CompositorWayland {
         CompositorWayland {
-            llave: 0,
-            respuesta: 0,
-            juntador: Juntador::new(),
+            t: Transporte::nada(),
             conectado: false,
             siguiente_id: 2,
             compositor: 0,
@@ -231,22 +229,8 @@ impl CompositorWayland {
     /// ata. Si no puede, se queda sin conectar.
     pub fn conectar(llave: u32) -> CompositorWayland {
         let mut c = CompositorWayland::sin_conectar();
-        let (mio, suyo) = dashos::canal_crear();
-        let mut r = -1;
-        for _ in 0..5_000 {
-            r = dashos::canal_escribir(llave, &[TROZO_CONECTAR], &[suyo]);
-            if r == 0 || r == dashos::E_CERRADO {
-                break;
-            }
-            dashos::dormir_us(1_000);
-        }
-        if r != 0 {
-            dashos::cerrar(mio);
-            dashos::cerrar(suyo);
-            return c;
-        }
-        c.llave = llave;
-        c.respuesta = mio;
+        let Some(t) = Transporte::conectar(llave) else { return c };
+        c.t = t;
         c.conectado = true;
         // Los globales, con un sync.
         let registro = c.nuevo_id();
@@ -256,7 +240,7 @@ impl CompositorWayland {
         e.empezar(1, wl_display::req::SYNC).uint(sync).fin();
         c.mandar(&e);
         let mut globales: Vec<(u32, String, u32)> = Vec::new();
-        let hasta = dashos::ahora_us() + 5_000_000;
+        let hasta = plataforma::ahora_us() + 5_000_000;
         loop {
             let Some((o, orden, cuerpo)) = c.siguiente(hasta) else {
                 c.conectado = false;
@@ -331,31 +315,9 @@ impl CompositorWayland {
         if !self.conectado {
             return;
         }
-        let Ok(trozos) = canal::trocear(e) else { return };
-        for t in trozos {
-            let mut hecho = false;
-            for _ in 0..2000 {
-                let r = dashos::canal_escribir(self.llave, &t.bytes, &t.llaves);
-                if r == 0 {
-                    hecho = true;
-                    break;
-                }
-                if r == dashos::E_CERRADO {
-                    break;
-                }
-                // Con su cola llena, el compositor puede estar esperando a que leamos: se recoge lo suyo.
-                if !self.recoger(1) {
-                    dashos::dormir_us(1_000);
-                }
-            }
-            if !hecho {
-                self.dichos.push(String::from("el compositor no admite lo que se le manda: se deja"));
-                self.conectado = false;
-                for l in &t.llaves {
-                    dashos::cerrar(*l);
-                }
-                return;
-            }
+        if !self.t.mandar(e) {
+            self.dichos.push(String::from("el compositor no admite lo que se le manda: se deja"));
+            self.conectado = false;
         }
     }
 
@@ -364,33 +326,24 @@ impl CompositorWayland {
         if !self.conectado {
             return false;
         }
-        let mut buf = [0u8; canal::MAX_CANAL];
-        let mut ll = [0u32; canal::MAX_LLAVES];
-        let (n, k, _) = dashos::canal_leer_plazo(self.respuesta, &mut buf, &mut ll, us.max(1));
-        if n == dashos::E_PLAZO {
-            return false;
+        match self.t.recoger(us) {
+            Recogido::Nada => false,
+            Recogido::Algo => true,
+            Recogido::Cerrado(n) => {
+                self.dichos.push(alloc::format!("el compositor ha cerrado la conexión ({})", n));
+                self.conectado = false;
+                false
+            }
         }
-        if n <= 0 {
-            self.dichos.push(alloc::format!("el compositor ha cerrado la conexión ({})", n));
-            self.conectado = false;
-            return false;
-        }
-        if buf[0] == TROZO_DATOS && self.juntador.meter(&buf[1..n as usize], &ll[..k]).is_ok() {
-            return true;
-        }
-        for &l in &ll[..k] {
-            dashos::cerrar(l);
-        }
-        true
     }
 
     /// El siguiente mensaje, esperando hasta el instante `hasta` (µs).
     fn siguiente(&mut self, hasta: u64) -> Option<(u32, u16, Vec<u8>)> {
         loop {
-            if let Ok(Some(m)) = self.juntador.siguiente() {
-                return Some((m.objeto, m.orden, m.cuerpo));
+            if let Some(m) = self.t.siguiente() {
+                return Some(m);
             }
-            let ahora = dashos::ahora_us();
+            let ahora = plataforma::ahora_us();
             if ahora >= hasta || !self.conectado {
                 return None;
             }
@@ -401,8 +354,8 @@ impl CompositorWayland {
     /// Atiende lo que haya llegado, sin esperar.
     fn bombear(&mut self) {
         while self.recoger(1) {}
-        while let Ok(Some(m)) = self.juntador.siguiente() {
-            self.atender(m.objeto, m.orden, &m.cuerpo);
+        while let Some((o, orden, cuerpo)) = self.t.siguiente() {
+            self.atender(o, orden, &cuerpo);
         }
     }
 
@@ -415,7 +368,7 @@ impl CompositorWayland {
         let mut e = Escritor::new();
         e.empezar(1, wl_display::req::SYNC).uint(id).fin();
         self.mandar(&e);
-        let hasta = dashos::ahora_us() + us;
+        let hasta = plataforma::ahora_us() + us;
         while let Some((o, orden, cuerpo)) = self.siguiente(hasta) {
             self.atender(o, orden, &cuerpo);
             if self.sync_hecho == Some(id) {
@@ -574,8 +527,8 @@ impl CompositorWayland {
         match orden {
             // keymap: formato, la llave (aparte) y su tamaño. La caja no lo usa: la llave se suelta.
             wl_keyboard::ev::KEYMAP => {
-                if let Some(l) = self.juntador.tomar_llave() {
-                    dashos::cerrar(l);
+                if let Some(l) = self.t.tomar_llave() {
+                    Transporte::cerrar(l);
                 }
             }
             // enter: serie, superficie, teclas.
@@ -636,18 +589,7 @@ impl CompositorWayland {
     fn crear_bufer(&mut self, s: Superficie, ancho: u32, alto: u32, e: &mut Escritor) -> Option<(u32, u32, u32, usize)> {
         let tam = (ancho as usize * alto as usize * 4).next_multiple_of(4096);
         let va = VA_BUFERES + (s as usize % MAX_SUPERFICIES as usize) * FRANJA;
-        let m = dashos::memoria_crear(tam);
-        if (m as i32) <= 0 {
-            return None;
-        }
-        let copia = dashos::llave_duplicar(m, dashos::LEER | dashos::TRANSFERIR, 0);
-        if copia <= 0 || dashos::memoria_proyectar(m, va, true) != 0 {
-            if copia > 0 {
-                dashos::cerrar(copia as u32);
-            }
-            dashos::cerrar(m);
-            return None;
-        }
+        let (m, copia) = self.t.memoria(tam, va)?;
         let (pool, buf) = (self.nuevo_id(), self.nuevo_id());
         e.empezar(self.shm, wl_shm::req::CREATE_POOL).uint(pool).llave(copia as u32).int(tam as i32).fin();
         e.empezar(pool, wl_shm_pool::req::CREATE_BUFFER)
@@ -664,8 +606,7 @@ impl CompositorWayland {
     fn soltar_bufer(&mut self, pool: u32, buf: u32, memoria: u32, va: usize, e: &mut Escritor) {
         e.empezar(buf, wl_buffer::req::DESTROY).fin();
         e.empezar(pool, wl_shm_pool::req::DESTROY).fin();
-        dashos::memoria_quitar(va);
-        dashos::cerrar(memoria);
+        self.t.soltar_memoria(memoria, va);
     }
 
     /// Dice al compositor dónde va la marca de la caja en la barra de intuition de la ventana `s` (sin la barra de

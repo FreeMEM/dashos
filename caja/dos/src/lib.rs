@@ -42,6 +42,7 @@ mod cambios;
 mod cerrojos;
 mod despacho;
 mod espacio;
+mod fechas;
 pub mod exall;
 mod ficheros;
 mod patrones;
@@ -344,6 +345,8 @@ pub struct Dos<F: SistemaArchivos> {
     pub(crate) fijos: BTreeMap<u32, u32>,
     /// Búsquedas de MatchFirst en marcha, por la dirección de su `AnchorPath`.
     pub(crate) busquedas: BTreeMap<u32, busqueda::Busqueda>,
+    /// Los `DevProc` dados por GetDeviceProc: dirección → (cerrojo que soltar, o 0; el cajón de la asignación).
+    pub(crate) devprocs: BTreeMap<u32, (u32, Option<usize>)>,
     pub(crate) avisos: Vec<Aviso>,
 }
 
@@ -365,6 +368,7 @@ impl<F: SistemaArchivos> Dos<F> {
             puerto_consola: 0,
             fijos: BTreeMap::new(),
             busquedas: BTreeMap::new(),
+            devprocs: BTreeMap::new(),
             avisos: Vec::new(),
         }
     }
@@ -580,6 +584,11 @@ impl<F: SistemaArchivos> Dos<F> {
     }
 
     // --- Lo que la caja llama por su cuenta ---
+
+    /// Pone `IoErr` de la tarea en marcha (`pr_Result2`), para las bibliotecas nativas de fuera de dos.
+    pub fn poner_io_err_de_fuera<C: Caja>(&mut self, c: &mut C, v: u32) {
+        self.poner_io_err(c, v)
+    }
 
     /// Una tarea ha acabado (o exec la ha matado): dos suelta sus cerrojos, cierra sus ficheros y libera sus
     /// argumentos. Exec suelta después su memoria.

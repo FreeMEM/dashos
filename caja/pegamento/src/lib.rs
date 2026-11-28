@@ -16,23 +16,47 @@
 
 extern crate alloc;
 
+#[cfg(feature = "dashos")]
 mod archivos;
+#[cfg(not(feature = "dashos"))]
+#[path = "linux/archivos.rs"]
+mod archivos;
+#[cfg(feature = "dashos")]
+mod aviso;
+#[cfg(not(feature = "dashos"))]
+#[path = "linux/aviso.rs"]
 mod aviso;
 mod chips;
 mod compositor;
+#[cfg(feature = "dashos")]
+mod transporte;
+#[cfg(not(feature = "dashos"))]
+#[path = "linux/transporte.rs"]
+mod transporte;
 mod defensa;
 mod faltan;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "dashos"))]
 mod jit;
+mod icono;
 mod mates;
 mod memoria;
 mod multitarea;
+mod plataforma;
+#[cfg(feature = "dashos")]
+mod preguntador;
+#[cfg(not(feature = "dashos"))]
+#[path = "linux/preguntador.rs"]
 mod preguntador;
 mod procesos;
 mod ramlib;
+// Las llamadas al sistema de Linux (los ficheros de linux/archivos.rs).
+#[cfg(not(feature = "dashos"))]
+#[path = "linux/sys.rs"]
+mod sys;
 mod tema;
 
 /// S28: lo que comparten la caja, `sesiones` y `guardian` para preguntar por los ficheros protegidos.
+#[cfg(feature = "dashos")]
 #[path = "../../../usuario/src/preguntas_ficheros.rs"]
 #[allow(dead_code)]
 mod pf;
@@ -49,7 +73,7 @@ use caja_intuition::{CajaGrafica, Numeros};
 use caja_timer::{Reloj, Temporizador};
 use caja_utility::Utilidad;
 
-use archivos::FsDashos;
+use archivos::Fs;
 use caja_dos::guardia::Guardia;
 use defensa::{Deshecho, Foto};
 use compositor::CompositorWayland;
@@ -86,10 +110,8 @@ static MONTON: Monton = Monton;
 
 #[panic_handler]
 fn panico(info: &core::panic::PanicInfo) -> ! {
-    dashos::println!("  [caja-amiga] pánico en las bibliotecas nativas: {}", info);
-    // Se acaba el proceso entero (llamada 44): el resto del sistema sigue.
-    dashos::llamada(44, [101, 0, 0, 0, 0]);
-    loop {}
+    plataforma::decir!("  [caja-amiga] pánico en las bibliotecas nativas: {}", info);
+    plataforma::acabar()
 }
 
 // --- El estado de la caja ---
@@ -105,12 +127,16 @@ const N_TIMER: u16 = 0x880;
 const N_OPEN_LIBRARY: u16 = 92;
 /// mathieeesingbas.library (`mates.rs`).
 const N_MATES: u16 = 0xD80;
+/// icon.library (`icono.rs`): sus entradas, desde aquí.
+const N_ICONO: u16 = 0xF00;
 const N_RAMLIB_CARGAR: u16 = 0xD00;
 const N_RAMLIB_SOLTAR: u16 = 0xD01;
 /// Las raíces de la caja en el servicio de archivos (`usuario/src/bin/inicio.rs`, S28): la 0, su cajón (leer y
 /// escribir), que es `Caja:`; la 1, el disco para leer, que es `SYS:`. Con una ficha vieja (solo la 0, el disco), `SYS:`
 /// va en la 0.
+#[cfg(feature = "dashos")]
 const RAIZ_CAJA: u32 = 0;
+#[cfg(feature = "dashos")]
 const RAIZ_SYS: u32 = 1;
 /// Negativas de la guardia que se escriben de cada tarea (las demás solo se cuentan).
 const NEGADOS_A_LA_VISTA: u32 = 4;
@@ -118,6 +144,7 @@ const NEGADOS_A_LA_VISTA: u32 = 4;
 const N_INTERRUPCION: u16 = 0xff01;
 /// Llaves de la caja (`kernel/src/inicio.rs`): 1 el permiso de página 0, 2 el canal "ventanas", 3 "archivos".
 const LLAVE_VENTANAS: u32 = 2;
+#[cfg(feature = "dashos")]
 const LLAVE_ARCHIVOS: u32 = 3;
 /// Lo más que una tarea espera en `Wait` sin que llegue nada antes de que la caja la corte.
 const ESPERA_MAXIMA_US: u64 = 60_000_000;
@@ -127,7 +154,7 @@ const AVISOS_A_LA_VISTA: u32 = 6;
 struct Caja {
     ex: Exec<MemoriaCaja>,
     consola: Consola,
-    dos: caja_dos::Dos<Guardia<FsDashos>>,
+    dos: caja_dos::Dos<Guardia<Fs>>,
     gr: CajaGrafica<CompositorWayland>,
     util: Utilidad,
     timer: Temporizador,
@@ -200,7 +227,7 @@ fn caja() -> Option<&'static mut Caja> {
 
 /// Lo que dice la caja por la consola: "  [caja-amiga] ...".
 pub(crate) fn di(texto: &str) {
-    dashos::println!("  [caja-amiga] {}", texto);
+    plataforma::decir!("  [caja-amiga] {}", texto);
 }
 
 // --- dos sobre exec: la memoria y lo que dos pide a la caja ---
@@ -247,10 +274,10 @@ impl caja_dos::Caja for CajaDos<'_> {
         self.ex.tarea_actual()
     }
     fn hora(&self) -> (u64, u32) {
-        let ns = dashos::hora_ns();
+        let ns = plataforma::hora_ns();
         if ns == 0 {
             // Sin reloj de la hora (la Pi 4, QEMU sin RTC): el 1 de enero de 1978 más lo que lleva encendida.
-            let us = dashos::ahora_us();
+            let us = plataforma::ahora_us();
             return (DE_1970_A_1978 + us / 1_000_000, (us % 1_000_000) as u32);
         }
         (ns / 1_000_000_000, ((ns % 1_000_000_000) / 1000) as u32)
@@ -274,23 +301,33 @@ impl caja_dos::Caja for CajaDos<'_> {
         escribir_latin1(&v);
         datos.len()
     }
+    fn consola_leer(&mut self, buf: &mut [u8]) -> usize {
+        plataforma::leer_consola(buf)
+    }
     fn senales(&mut self, mascara: u32) -> u32 {
         self.ex.set_signal(0, mascara).unwrap_or(0) & mascara
     }
 }
 
-/// Escribe texto del Amiga (Latin-1) en la consola de DashOS (UTF-8), por trozos.
+/// Escribe texto del Amiga (Latin-1) en la consola de la plataforma (UTF-8), por trozos.
 fn escribir_latin1(datos: &[u8]) {
+    // En Linux, lo que ya es UTF-8 va tal cual: el texto de un fichero de Linux que el programa copia a la salida (Type)
+    // no sale doble codificado. El Latin-1 de los programas casi nunca forma UTF-8 válido fuera del ASCII.
+    #[cfg(not(feature = "dashos"))]
+    if let Ok(s) = core::str::from_utf8(datos) {
+        plataforma::consola(s);
+        return;
+    }
     let mut s = String::new();
     for &b in datos {
         s.push(b as char);
         if s.len() >= 200 {
-            dashos::escribir(&s);
+            plataforma::consola(&s);
             s.clear();
         }
     }
     if !s.is_empty() {
-        dashos::escribir(&s);
+        plataforma::consola(&s);
     }
 }
 
@@ -300,7 +337,7 @@ use relevo as _;
 
 /// X7, x86: la frecuencia del TSC que el kernel dio a la caja al arrancar (entrada_x86.S), para `dashos::ahora_us`: la
 /// caja no arranca por `programa!`, que es quien la guarda en los programas de Rust.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "dashos"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn caja_rust_frecuencia(f: u64) {
     dashos::FRECUENCIA.store(f, core::sync::atomic::Ordering::Relaxed);
@@ -343,35 +380,8 @@ pub unsafe extern "C" fn caja_rust_arrancar(
             return 0;
         }
     };
-    let fs = FsDashos::abrir(LLAVE_ARCHIVOS);
-    let hay_fs = fs.is_some();
-    let mut fs = fs.unwrap_or_else(FsDashos::sin_servicio);
-    let con_cajon = hay_fs && caja_dos::SistemaArchivos::mirar(&mut fs, RAIZ_SYS, "").is_ok();
-    // Con su cajón, lo de solo lectura lo ponen dos, volumen a volumen (la guardia; decisión 8), y el servicio con las
-    // raíces; con una ficha vieja, también el adaptador.
-    fs.solo_lectura = !con_cajon;
-    let servicio = if con_cajon { comprobar_servicio(&mut fs) } else { String::new() };
-    let mut dos = caja_dos::Dos::nuevo(Guardia::nueva(fs));
-    // S28: con su cajón, lo que la guardia no deja cambiar se pregunta al usuario por `sesiones` y `guardian`.
-    if con_cajon {
-        dos.fs.poner_preguntador(alloc::boxed::Box::new(preguntador::PorSesiones));
-    }
-    let mut vol = String::from("sin servicio de archivos");
     let mut consola = Consola::default();
-    if hay_fs {
-        let mut cd = CajaDos { ex: &mut ex, consola: &mut consola, sistema: false };
-        let sys = if con_cajon { RAIZ_SYS } else { RAIZ_CAJA };
-        vol = match dos.montar(&mut cd, "SYS", sys, true) {
-            Ok(()) => String::from("SYS: sobre el servicio de archivos (la raíz de su ficha, de solo lectura)"),
-            Err(e) => format!("SYS: no se monta (error {})", e),
-        };
-        if con_cajon {
-            match dos.montar(&mut cd, "Caja", RAIZ_CAJA, false) {
-                Ok(()) => di(&format!("Caja: su cajón, para escribir; {}", servicio)),
-                Err(e) => di(&format!("Caja: no se monta (error {})", e)),
-            }
-        }
-    }
+    let (dos, vol) = montar_volumenes(&mut ex, &mut consola);
     let comp = CompositorWayland::conectar(LLAVE_VENTANAS);
     let conectado = comp.conectado;
     let gr = match CajaGrafica::instalar(&mut ex, comp, Numeros::default()) {
@@ -414,6 +424,10 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         }
     };
     di(&format!("mathieeesingbas.library nativa (Rust): ${:x}", mates_base));
+    match icono::instalar(&mut ex, N_ICONO) {
+        Ok(b) => di(&format!("icon.library nativa (Rust): ${:x}", b)),
+        Err(f) => di(&format!("icon.library no se crea: {:?}", f)),
+    }
     let (capas, teclas) = gr.capas_bases();
     di(&format!("layers.library y keymap.library nativas (Rust): ${:x} y ${:x}", capas, teclas));
     di(&format!("cybergraphics.library y Picasso96API.library nativas (Rust): ${:x} y ${:x}", gr.cgx_base(), gr.p96_base()));
@@ -491,6 +505,11 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         di(&format!("temporales: {}", temporales.join(", ")));
         // El AmigaOS del usuario, si lo dio (`SYS:C/Prefs/amigaos`): detrás de lo nativo y de la caja.
         di(&ramlib::montar_amigaos(&mut c.dos, &mut cd));
+        // En Linux, también el de `$CAJA_AMIGAOS` (una carpeta de Linux con un AmigaOS: Libs, Classes, Devs...).
+        #[cfg(not(feature = "dashos"))]
+        if let Some(ruta) = archivos::amigaos_de_linux() {
+            di(&ramlib::montar_amigaos_en(&mut c.dos, &mut cd, &ruta, ""));
+        }
     }
     c.n_waittof = c.gr.numero_graphics("WaitTOF").unwrap_or(0);
     decir_compositor(&mut c);
@@ -501,6 +520,67 @@ pub unsafe extern "C" fn caja_rust_arrancar(
     // aviso-cajas: el aviso de memoria baja, por `sesiones`.
     aviso::escuchar();
     base
+}
+
+/// Los volúmenes de dos: en DashOS, sobre el servicio de archivos: `SYS:` (el disco, de solo lectura) y `Caja:` (su
+/// cajón). Lo que dice de ellos, para la consola.
+#[cfg(feature = "dashos")]
+fn montar_volumenes(ex: &mut Exec<MemoriaCaja>, consola: &mut Consola) -> (caja_dos::Dos<Guardia<Fs>>, String) {
+    let fs = Fs::abrir(LLAVE_ARCHIVOS);
+    let hay_fs = fs.is_some();
+    let mut fs = fs.unwrap_or_else(Fs::sin_servicio);
+    let con_cajon = hay_fs && caja_dos::SistemaArchivos::mirar(&mut fs, RAIZ_SYS, "").is_ok();
+    // Con su cajón, lo de solo lectura lo ponen dos, volumen a volumen (la guardia; decisión 8), y el servicio con las
+    // raíces; con una ficha vieja, también el adaptador.
+    fs.solo_lectura = !con_cajon;
+    let servicio = if con_cajon { comprobar_servicio(&mut fs) } else { String::new() };
+    let mut dos = caja_dos::Dos::nuevo(Guardia::nueva(fs));
+    // S28: con su cajón, lo que la guardia no deja cambiar se pregunta al usuario por `sesiones` y `guardian`.
+    if con_cajon {
+        dos.fs.poner_preguntador(alloc::boxed::Box::new(preguntador::PorSesiones));
+    }
+    let mut vol = String::from("sin servicio de archivos");
+    if hay_fs {
+        let mut cd = CajaDos { ex, consola, sistema: false };
+        let sys = if con_cajon { RAIZ_SYS } else { RAIZ_CAJA };
+        vol = match dos.montar(&mut cd, "SYS", sys, true) {
+            Ok(()) => String::from("SYS: sobre el servicio de archivos (la raíz de su ficha, de solo lectura)"),
+            Err(e) => format!("SYS: no se monta (error {})", e),
+        };
+        if con_cajon {
+            match dos.montar(&mut cd, "Caja", RAIZ_CAJA, false) {
+                Ok(()) => di(&format!("Caja: su cajón, para escribir; {}", servicio)),
+                Err(e) => di(&format!("Caja: no se monta (error {})", e)),
+            }
+        }
+    }
+    (dos, vol)
+}
+
+/// En Linux (L4, docs/CAJA_LINUX_LOOP.md), sobre sus ficheros (`linux/archivos.rs`): `Linux:` es la raíz de Linux y el
+/// volumen de arranque (el programa empieza en el directorio actual de Linux: `crear_proceso`); `Caja:` y `SYS:`, el
+/// cajón de la caja (`$CAJA_AMIGA_SYS`, o `~/.local/share/caja-amiga`), con `LIBS:`, `T:`, `ENV:`... dentro.
+#[cfg(not(feature = "dashos"))]
+fn montar_volumenes(ex: &mut Exec<MemoriaCaja>, consola: &mut Consola) -> (caja_dos::Dos<Guardia<Fs>>, String) {
+    let cajon = archivos::cajon_de_la_caja();
+    let fs = Fs::abrir_en(&cajon).unwrap_or_else(Fs::sin_servicio);
+    let mut dos = caja_dos::Dos::nuevo(Guardia::nueva(fs));
+    // La guardia de ficheros (S28) pregunta por la terminal, o no pregunta con CAJA_AMIGA_PROTEGER=no.
+    if preguntador::proteger() {
+        dos.fs.poner_preguntador(alloc::boxed::Box::new(preguntador::PorTerminal));
+    } else {
+        dos.fs.poner_preguntador(alloc::boxed::Box::new(preguntador::Nadie));
+    }
+    let mut cd = CajaDos { ex, consola, sistema: false };
+    let mut dichos = Vec::new();
+    for (nombre, raiz) in [("Linux", archivos::RAIZ_LINUX), ("Caja", archivos::RAIZ_CAJA), ("SYS", archivos::RAIZ_SYS)] {
+        match dos.montar(&mut cd, nombre, raiz, false) {
+            Ok(()) => dichos.push(format!("{}:", nombre)),
+            Err(e) => dichos.push(format!("{}: no se monta (error {})", nombre, e)),
+        }
+    }
+    dos.poner_arranque("Linux");
+    (dos, format!("{} sobre los ficheros de Linux (Caja: y SYS: en {})", dichos.join(", "), cajon))
 }
 
 /// aviso-cajas: lo soltado por un aviso de memoria baja, si lo hay, al registro y a `sesiones`.
@@ -523,9 +603,10 @@ pub extern "C" fn caja_atender_memoria() {
     recoger_avisos(c);
 }
 
+#[cfg(feature = "dashos")]
 /// Que el servicio niegue escribir en `SYS:` aunque la caja se lo pida (por debajo de la guardia, como lo haría un
 /// programa que se hubiera hecho con la caja): crear, en la raíz 1 (la del disco, de leer). Lo que dice.
-fn comprobar_servicio(fs: &mut FsDashos) -> String {
+fn comprobar_servicio(fs: &mut Fs) -> String {
     use caja_dos::SistemaArchivos;
     match fs.crear(RAIZ_SYS, "caja-prueba-de-escritura", false) {
         Err(e) => format!("el servicio niega escribir en SYS: aunque la caja lo pida ({:?}): bien", e),
@@ -730,7 +811,7 @@ pub unsafe extern "C" fn caja_tarea_nueva(
     match crear_proceso(c, nombre, pila, pc, vuelta, args, seglist) {
         Ok((t, s)) => {
             c.principal = t;
-            c.inicio_turno = dashos::ahora_us();
+            c.inicio_turno = plataforma::ahora_us();
             // SEGURIDAD: lo garantiza quien llama.
             unsafe { *sp = s };
             t
@@ -806,6 +887,15 @@ fn crear_proceso(
         if let Ok(l) = c.dos.cerrojo_de_ruta(&mut cd, cajon) {
             c.dos.dar_cerrojo(l, t);
             programa = l;
+        }
+    }
+    // En Linux, el programa empieza en el directorio actual de Linux (en DashOS, en la raíz del volumen de arranque).
+    #[cfg(not(feature = "dashos"))]
+    if let Some(ruta) = archivos::cajon_actual() {
+        let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
+        if let Ok(l) = c.dos.cerrojo_de_ruta(&mut cd, ruta.as_bytes()) {
+            c.dos.dar_cerrojo(l, t);
+            c.ex.mem.escribir32(t + pr::PR_CURRENTDIR, l)?;
         }
     }
     let ex = &mut c.ex;
@@ -990,7 +1080,8 @@ enum Fin {
     Rechazada,
     /// Exec pide ejecutar código 68k antes de acabar (una función parcheada, el `Open` de una biblioteca 68k...):
     /// la caja lo ejecuta anidado y sigue con `tras`.
-    Ejecutar { dir: u32, regs: Registros, tras: caja_exec::Continuacion },
+    /// `modo`: el de `caja_ejecutar_68k` (0, el de quien llama; 2, supervisor hasta un RTE).
+    Ejecutar { dir: u32, regs: Registros, tras: caja_exec::Continuacion, modo: i32 },
 }
 
 /// Lo que devuelve `caja_llamada` a caja.c.
@@ -1009,6 +1100,11 @@ fn ajena(c: &mut Caja, n: u16, r: &mut Registros) -> Fin {
     }
     if (N_MATES..N_MATES + mates::FUNCIONES.len() as u16).contains(&n) {
         r.d[0] = mates::llamar((n - N_MATES) as usize, r).unwrap_or(0);
+        return Fin::Seguir;
+    }
+    if (N_ICONO..N_ICONO + icono::FUNCIONES.len() as u16).contains(&n) {
+        let rr = *r;
+        r.d[0] = icono::llamar(c, (n - N_ICONO) as usize, &rr);
         return Fin::Seguir;
     }
     if n == N_RAMLIB_CARGAR {
@@ -1083,7 +1179,10 @@ fn avanzar(c: &mut Caja, n: u16, r: &mut Registros, mut a: Accion) -> Fin {
                 if regs.a[7] == 0 {
                     regs.a[7] = r.a[7];
                 }
-                return Fin::Ejecutar { dir, regs, tras };
+                return Fin::Ejecutar { dir, regs, tras, modo: MODO_DE_QUIEN_LLAMA };
+            }
+            Accion::Llamar { destino: Destino::Supervisor(dir), regs, tras } => {
+                return Fin::Ejecutar { dir, regs, tras, modo: MODO_SUPERVISOR };
             }
             Accion::Ajena => return ajena(c, n, r),
             _ => break,
@@ -1099,11 +1198,22 @@ fn avanzar(c: &mut Caja, n: u16, r: &mut Registros, mut a: Accion) -> Fin {
 /// Quien la llama no puede tener viva ninguna referencia de `caja()`: el 68k de dentro llama a funciones nativas, que
 /// toman la suya. Después, otra con `caja()`.
 fn ejecutar_68k(dir: u32, regs: &Registros, usuario: bool) -> Result<Registros, i32> {
+    ejecutar_68k_en(dir, regs, if usuario { MODO_USUARIO } else { MODO_DE_QUIEN_LLAMA })
+}
+
+/// Los modos de `caja_ejecutar_68k` (caja.c).
+const MODO_DE_QUIEN_LLAMA: i32 = 0;
+const MODO_USUARIO: i32 = 1;
+/// En modo supervisor, con su pila, hasta un RTE (`Supervisor` de exec).
+const MODO_SUPERVISOR: i32 = 2;
+
+/// Como `ejecutar_68k`, en el modo `modo`.
+fn ejecutar_68k_en(dir: u32, regs: &Registros, modo: i32) -> Result<Registros, i32> {
     let mut v = [0u32; 16];
     v[..8].copy_from_slice(&regs.d);
     v[8..].copy_from_slice(&regs.a);
     // SEGURIDAD: `v` son 16 u32 nuestros; caja.c los lee y los escribe y no los guarda. Lo de `caja()`, arriba.
-    let e = unsafe { caja_ejecutar_68k(dir, v.as_mut_ptr(), usuario as i32) };
+    let e = unsafe { caja_ejecutar_68k(dir, v.as_mut_ptr(), modo) };
     if e != 0 {
         return Err(e);
     }
@@ -1255,8 +1365,8 @@ fn poner_hora(c: &mut Caja) {
 /// El reloj de timer.device: el de DashOS, y la hora desde 1978 (sin reloj de la hora, el 1 de enero de 1978 más lo
 /// que lleva encendida, como `CajaDos::hora`).
 fn reloj() -> Reloj {
-    let monotono_us = dashos::ahora_us();
-    let ns = dashos::hora_ns();
+    let monotono_us = plataforma::ahora_us();
+    let ns = plataforma::hora_ns();
     let sistema_us = if ns == 0 { monotono_us } else { (ns / 1000).saturating_sub(DE_1970_A_1978 * 1_000_000) };
     Reloj { monotono_us, sistema_us }
 }
@@ -1323,7 +1433,7 @@ fn para_ctrl_c(c: &Caja, t: u32) -> u32 {
 fn esperar(c: &mut Caja, t: u32) -> Espera {
     let _ = c.ex.elegir_siguiente();
     let maxima = espera_maxima();
-    let mut hasta = dashos::ahora_us() + maxima;
+    let mut hasta = plataforma::ahora_us() + maxima;
     loop {
         atender(c);
         cerrar_si_lo_piden(c);
@@ -1350,10 +1460,10 @@ fn esperar(c: &mut Caja, t: u32) -> Espera {
         if let Some(p) = c.timer.proximo() {
             hasta = hasta.max(p.saturating_add(maxima));
         }
-        if dashos::ahora_us() > hasta {
+        if plataforma::ahora_us() > hasta {
             return Espera::Plazo;
         }
-        dashos::dormir_us(5_000);
+        plataforma::dormir_us(5_000);
     }
 }
 
@@ -1361,7 +1471,7 @@ fn esperar(c: &mut Caja, t: u32) -> Espera {
 /// pila `a7` de la llamada). `false` si el programa acabó dentro de un despachador 68k.
 /// Quien la llama no puede usar después su referencia de `caja()`: pide otra.
 fn dormir(tics: u32, a7: u32) -> bool {
-    let hasta = dashos::ahora_us() + tics.min(50 * 3600) as u64 * 20_000;
+    let hasta = plataforma::ahora_us() + tics.min(50 * 3600) as u64 * 20_000;
     loop {
         if let Some(c) = caja() {
             atender(c);
@@ -1369,11 +1479,11 @@ fn dormir(tics: u32, a7: u32) -> bool {
         if !atender_boopsi(a7) {
             return false;
         }
-        let ahora = dashos::ahora_us();
+        let ahora = plataforma::ahora_us();
         if ahora >= hasta {
             return true;
         }
-        dashos::dormir_us((hasta - ahora).min(10_000));
+        plataforma::dormir_us((hasta - ahora).min(10_000));
     }
 }
 
@@ -1653,9 +1763,9 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
                     let _ = c.ex.elegir_siguiente();
                 }
             }
-            Fin::Ejecutar { dir, regs, tras } => {
+            Fin::Ejecutar { dir, regs, tras, modo } => {
                 // (Sin referencias de `caja()` a partir de aquí: ver `ejecutar_68k`.)
-                let hecho = ejecutar_68k(dir, &regs, false);
+                let hecho = ejecutar_68k_en(dir, &regs, modo);
                 let Some(c) = caja() else { return C_RECHAZADA };
                 let rr = match hecho {
                     Ok(rr) => {
@@ -1731,7 +1841,7 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
             Fin::Terminar => res = C_ACABAR,
             Fin::Dormir(tics) if multitarea::hay_otras(c) && multitarea::se_puede_cambiar() => {
                 // Duerme aparcada hasta su hora y corre otra (`multitarea.rs`).
-                let hasta = dashos::ahora_us() + tics.min(50 * 3600) as u64 * 20_000;
+                let hasta = plataforma::ahora_us() + tics.min(50 * 3600) as u64 * 20_000;
                 if !multitarea::guardar(c, t, *r, caja_exec::Modo::Volver) {
                     return C_ACABAR;
                 }
@@ -1792,10 +1902,10 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
     multitarea::avisar_reloj(c);
     if res == C_SEGUIR && multitarea::hay_otras(c) && multitarea::se_puede_cambiar() {
         let t = c.ex.tarea_actual();
-        let turno = dashos::ahora_us().saturating_sub(c.inicio_turno) > multitarea::TURNO_US;
+        let turno = plataforma::ahora_us().saturating_sub(c.inicio_turno) > multitarea::TURNO_US;
         let cambiar = ceder || (turno && c.ex.fin_de_turno());
         if turno && !cambiar {
-            c.inicio_turno = dashos::ahora_us();
+            c.inicio_turno = plataforma::ahora_us();
         }
         if cambiar && t != 0 {
             if !multitarea::guardar(c, t, *r, caja_exec::Modo::Volver) {

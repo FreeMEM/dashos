@@ -5,7 +5,6 @@
 //! Devuelve DOSTRUE si quedan más; DOSFALSE con `ERROR_NO_MORE_ENTRIES` al acabar (las de esa última vuelta también
 //! valen). `eac_MatchString` es un patrón de ParsePatternNoCase; `eac_MatchFunc` (un gancho 68k) aún no se llama.
 
-use alloc::vec::Vec;
 
 use crate::errores::*;
 use crate::estructuras::*;
@@ -97,8 +96,7 @@ impl<F: SistemaArchivos> Dos<F> {
                         continue;
                     }
                     if let Some(pt) = &patron {
-                        let (pt, nc) = patrones::de_analizado(pt, true);
-                        if patrones::casa(pt, &n, nc) != Some(true) {
+                        if patrones::casa_analizado(pt, &n, true) != Some(true) {
                             continue;
                         }
                     }
@@ -175,16 +173,11 @@ impl<F: SistemaArchivos> Dos<F> {
     /// ParsePattern y ParsePatternNoCase: 1 si hay comodines, 0 si no, -1 si el patrón está mal o no cabe.
     pub(crate) fn parse_pattern<C: Caja>(c: &mut C, pat: u32, buf: u32, tam: u32, sin_mayusculas: bool) -> R<u32> {
         let p = Self::cadena(c, pat)?;
-        if (tam as i32) <= 0 || p.len() as u64 + 2 > tam as u64 {
-            return Ok(u32::MAX);
-        }
         let r = patrones::tiene_comodines(&p);
-        if r < 0 {
+        let Some(mut v) = patrones::a_marcas(&p, sin_mayusculas).filter(|_| r >= 0) else { return Ok(u32::MAX) };
+        if (tam as i32) <= 0 || v.len() as u64 + 1 > tam as u64 {
             return Ok(u32::MAX);
         }
-        let mut v = Vec::with_capacity(p.len() + 2);
-        v.push(if sin_mayusculas { patrones::MARCA_SIN_MAYUSCULAS } else { patrones::MARCA });
-        v.extend_from_slice(&p);
         v.push(0);
         Self::poner(c, buf, &v)?;
         Ok(r as u32)
@@ -194,8 +187,7 @@ impl<F: SistemaArchivos> Dos<F> {
     pub(crate) fn match_pattern<C: Caja>(c: &mut C, pat: u32, s: u32, sin_mayusculas: bool) -> R<u32> {
         let p = Self::cadena(c, pat)?;
         let s = Self::cadena(c, s)?;
-        let (p, nc) = patrones::de_analizado(&p, sin_mayusculas);
-        match patrones::casa(p, &s, nc) {
+        match patrones::casa_analizado(&p, &s, sin_mayusculas) {
             Some(true) => Ok(DOSTRUE),
             Some(false) => Ok(DOSFALSE),
             None => Err(E::Io(ERROR_BAD_TEMPLATE)),

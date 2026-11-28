@@ -9,6 +9,12 @@ EMU68   ?= ../third_party/Emu68
 # la memoria del 68k sigue en big-endian y el JIT da la vuelta a los bytes en cada acceso (parches 0004-0009 y 0012 de
 # patches/emu68; EMU68_HOST_LE). El kernel la corre en little-endian porque su ELF lo dice (EI_DATA).
 ORDEN   ?= be
+# L3 (docs/CAJA_LINUX_LOOP.md): con LINUX=1, la caja como programa de Linux (`make linux`, `make linux-x86`): siempre
+# little-endian, con plataforma_linux.c, caja_linux.c y entrada_linux.S, y el pegamento sin la opción `dashos`.
+LINUX   ?=
+ifneq ($(LINUX),)
+ORDEN   := le
+endif
 ifeq ($(ORDEN),le)
 B       := build-le
 ENDIAN  := -mlittle-endian
@@ -21,6 +27,9 @@ ENDIAN  := -mbig-endian
 LDEND   := -Wl,-EB
 INC_LE  :=
 RUST_T  := aarch64_be-unknown-none-softfloat
+endif
+ifneq ($(LINUX),)
+B       := build-linux
 endif
 
 # Los registros del 68k viven fijos en registros ARM (x13-x29, v19-v26): mismas opciones que jit-host/Makefile.
@@ -38,6 +47,10 @@ COMMON  := -MMD -MP $(ENDIAN) -ffreestanding -fno-exceptions -fno-unwind-tables 
 	-ffixed-x12 -falign-functions=32 -mno-outline-atomics -fno-builtin \
 	-DEMU68_VERSION_MAJOR=1 -DEMU68_VERSION_MINOR=1 -DDASHOS_HOST=1 -DDASHOS_NATIVE_CALLS=1 \
 	-I$(EMU68)/include -I$(EMU68)/external/capstone/include -I../jit-host/include $(INC_LE) $(CONTEXT_RESERVE)
+ifneq ($(LINUX),)
+# La página 0 en $10000 (parche 0018 de Emu68 y plataforma_linux.c).
+COMMON  += -DDASHOS_PAGINA0=0x10000 -DCAJA_LINUX=1 -ffunction-sections -fdata-sections
+endif
 CFLAGS  := $(COMMON) -std=gnu23 -Wno-error
 ifneq ($(CAJA_INTERACTIVA),)
 CFLAGS  += -DCAJA_INTERACTIVA=$(CAJA_INTERACTIVA)
@@ -52,7 +65,12 @@ MATH := $(basename $(notdir $(wildcard $(EMU68)/src/math/*.c)))
 
 OBJS := $(JIT_C:%=$(B)/%.o) $(JIT_CXX:%=$(B)/%.o) $(MATH:%=$(B)/math_%.o) \
 	$(B)/RegisterAllocator64.o $(B)/ExecutionLoop.o $(B)/emu68_context.o \
-	$(B)/caja.o $(B)/motor_emu68.o $(B)/trampolin_a64.o $(B)/hunk.o $(B)/entrada.o $(B)/programas.o
+	$(B)/motor_emu68.o $(B)/trampolin_a64.o $(B)/hunk.o
+ifneq ($(LINUX),)
+OBJS += $(B)/caja_linux.o $(B)/plataforma_linux.o $(B)/entrada_linux.o $(B)/programas_linux.o
+else
+OBJS += $(B)/caja.o $(B)/plataforma_dashos.o $(B)/entrada.o $(B)/programas.o
+endif
 
 # La pila del ELF (64 KB, la de siempre) solo se usa al empezar: entrada.S pasa enseguida a una por encima de 4 GB.
 all: $(B)/caja-amiga
@@ -73,6 +91,16 @@ $(B)/emu68_context.o: ../jit-host/emu68_context.c | $(B)
 	$(CC) $(CFLAGS) $(M68K_FIXED) -c $< -o $@
 $(B)/caja.o: caja.c | $(B)
 	$(CC) $(CFLAGS) -c $< -o $@
+$(B)/plataforma_dashos.o: plataforma_dashos.c | $(B)
+	$(CC) $(CFLAGS) -c $< -o $@
+$(B)/caja_linux.o: caja_linux.c caja.c | $(B)
+	$(CC) $(CFLAGS) -c $< -o $@
+$(B)/plataforma_linux.o: plataforma_linux.c | $(B)
+	$(CC) $(CFLAGS) -c $< -o $@
+$(B)/entrada_linux.o: entrada_linux.S | $(B)
+	$(CC) $(COMMON) -c $< -o $@
+$(B)/programas_linux.o: programas_linux.S pruebas68k/sistema.bin | $(B)
+	$(CC) $(COMMON) -c $< -o $@
 $(B)/motor_emu68.o: motor_emu68.c | $(B)
 	$(CC) $(CFLAGS) -c $< -o $@
 # K7: los trampolines corren con los registros de la FPU y SIMD del JIT vivos y no los guardan: sin tocarlos.
@@ -149,18 +177,27 @@ build/dash/test_doc_reaction.exe: $(wildcard $(DASH_TESTS)/test_doc_reaction.das
 
 # Las bibliotecas nativas (pegamento/, una staticlib de Rust para aarch64_be-unknown-none-softfloat). Su memcpy (de
 # compiler_builtins, que entra con LTO) se queda dentro: el del C es el de Emu68 (support.c).
-RUST_A := pegamento/target/$(RUST_T)/release/libcaja_pegamento.a
+GC_LINUX := -Wl,--gc-sections
+# En Linux, los segmentos alineados a 64 KB (enlace.ld los alinea a 4 KB): así sirve también con páginas de 16 KB
+# (Asahi) o de 64 KB, sin que código y datos compartan página.
+LD_LINUX = $(if $(LINUX),$(B)/enlace.ld,enlace.ld)
+PAGINA_LINUX := -Wl,-z,max-page-size=65536
+$(B)/enlace.ld: enlace.ld | $(B)
+	sed 's/ALIGN(4096)/ALIGN(65536)/g' $< > $@
+# La de Linux, sin la opción `dashos` y en su propio directorio (no pisa la de DashOS del mismo objetivo).
+RUST_LINUX = $(if $(LINUX),--no-default-features --target-dir target-linux)
+RUST_A := pegamento/$(if $(LINUX),target-linux,target)/$(RUST_T)/release/libcaja_pegamento.a
 $(B)/pegamento.a: FORCE | $(B)
-	cd pegamento && cargo build --release --quiet --target $(RUST_T)
+	cd pegamento && cargo build --release --quiet --target $(RUST_T) $(RUST_LINUX)
 	$(TC)objcopy --localize-symbol=memcpy --localize-symbol=memset --localize-symbol=memmove $(RUST_A) $@.tmp
 	cmp -s $@.tmp $@ || mv $@.tmp $@
 	rm -f $@.tmp
 
 # Un PIE estático (enlace.ld): el kernel lo pone por encima de 128 GB, fuera del alcance del 68k (S28). Solo puede llevar
 # reubicaciones R_AARCH64_RELATIVE (las aplica entrada.S): se comprueba aquí.
-$(B)/caja-amiga: $(OBJS) $(B)/pegamento.a enlace.ld
+$(B)/caja-amiga: $(OBJS) $(B)/pegamento.a $(LD_LINUX)
 	$(CXX) $(ENDIAN) -static-pie -nostdlib -nostartfiles $(LDEND) -Wl,--build-id=none -Wl,-z,noexecstack \
-		-Wl,-z,text -Wl,-T,enlace.ld -Wl,-Map=$(B)/caja-amiga.map -o $@.tmp $(OBJS) $(B)/pegamento.a
+		-Wl,-z,text $(if $(LINUX),$(PAGINA_LINUX)) -Wl,-T,$(LD_LINUX) -Wl,-Map=$(B)/caja-amiga.map $(if $(LINUX),$(GC_LINUX)) -o $@.tmp $(OBJS) $(B)/pegamento.a
 	@if $(TC)readelf -rW $@.tmp | grep -E '^[0-9a-f]{16} ' | grep -v R_AARCH64_RELATIVE; then \
 		echo "La caja lleva reubicaciones que entrada.S no aplica"; rm -f $@.tmp; exit 1; fi
 	mv $@.tmp $@
@@ -177,7 +214,14 @@ pruebas-pc:
 	$(MAKE) -C pruebas_hunk
 
 clean:
-	rm -rf build build-le $(BX) build-pc pegamento/target
+	rm -rf build build-le $(BX) build-pc pegamento/target build-linux build-linux-x86 pegamento/target-linux
+
+# L3: la caja como programa de Linux, en AArch64 (build-linux/caja-amiga) y en x86-64 (build-linux-x86/caja-amiga).
+linux:
+	$(MAKE) LINUX=1 build-linux/caja-amiga
+linux-x86:
+	$(MAKE) LINUX=1 build-linux-x86/caja-amiga
+.PHONY: linux linux-x86
 .PHONY: all clean pruebas-pc FORCE
 FORCE:
 
@@ -188,7 +232,7 @@ FORCE:
 # programas 68k son los de ARM (los de Dash, en build/dash/). RelevoJIT sale de GitHub con el `rev` de
 # pegamento/Cargo.toml (Cargo lo baja; su include/relevo.h se busca con `cargo metadata`). RELEVO_DIR=<ruta> usa un
 # clon local en su lugar.
-BX := build-x86
+BX := $(if $(LINUX),build-linux-x86,build-x86)
 CC_X86 ?= gcc
 MOTOR ?= jit
 ifeq ($(filter $(MOTOR),jit interprete),)
@@ -201,10 +245,14 @@ RELEVO_INC = $(eval RELEVO_INC := $(if $(RELEVO_DIR),$(abspath $(RELEVO_DIR))/in
 	print(next(os.path.dirname(p["manifest_path"]) for p in json.load(sys.stdin)["packages"] if p["name"] == "relevo"))')/include))$(RELEVO_INC)
 CFLAGS_X86 = -MMD -MP -ffreestanding -fno-builtin -fno-stack-protector -fno-exceptions -fno-unwind-tables \
 	-fno-asynchronous-unwind-tables -fpie -O2 -fno-tree-loop-distribute-patterns -std=gnu23 \
-	-Ix86 -I. -I$(EMU68)/include -I$(RELEVO_INC)
-OBJS_X86 := $(BX)/caja.o $(BX)/motor_relevo.o $(BX)/hunk.o $(BX)/soporte.o $(BX)/tlsf.o $(BX)/entrada_x86.o \
-	$(BX)/programas.o
-RUST_A_X86 := pegamento/target/x86_64-unknown-none/release/libcaja_pegamento.a
+	-Ix86 -I. -I$(EMU68)/include -I$(RELEVO_INC) $(if $(LINUX),-DCAJA_LINUX=1 -ffunction-sections -fdata-sections)
+OBJS_X86 := $(BX)/motor_relevo.o $(BX)/hunk.o $(BX)/soporte.o $(BX)/tlsf.o
+ifneq ($(LINUX),)
+OBJS_X86 += $(BX)/caja_linux.o $(BX)/plataforma_linux.o $(BX)/entrada_linux.o $(BX)/programas_linux.o
+else
+OBJS_X86 += $(BX)/caja.o $(BX)/plataforma_dashos.o $(BX)/entrada_x86.o $(BX)/programas.o
+endif
+RUST_A_X86 := pegamento/$(if $(LINUX),target-linux,target)/x86_64-unknown-none/release/libcaja_pegamento.a
 RELEVO_PATCH := $(if $(RELEVO_DIR),--config 'patch."https://github.com/FreeMEM/RelevoJIT".relevo.path="$(abspath $(RELEVO_DIR))"')
 
 x86: $(BX)/caja-amiga
@@ -222,10 +270,14 @@ $(BX)/tlsf.o: $(EMU68)/src/tlsf.c Makefile | $(BX)
 	$(CC_X86) $(CFLAGS_X86) -c $< -o $@
 $(BX)/entrada_x86.o: entrada_x86.S Makefile | $(BX)
 	$(CC_X86) $(CFLAGS_X86) -c $< -o $@
+$(BX)/entrada_linux.o: entrada_linux.S Makefile | $(BX)
+	$(CC_X86) $(CFLAGS_X86) -c $< -o $@
+$(BX)/programas_linux.o: programas_linux.S pruebas68k/sistema.bin | $(BX)
+	$(CC_X86) $(CFLAGS_X86) -c $< -o $@
 $(BX)/programas.o: $(PROGRAMAS_DEPS) | $(BX)
 	$(CC_X86) $(CFLAGS_X86) -c programas.S -o $@
 $(BX)/pegamento.a: FORCE | $(BX)
-	cd pegamento && cargo build --release --quiet --target x86_64-unknown-none $(RELEVO_PATCH)
+	cd pegamento && cargo build --release --quiet --target x86_64-unknown-none $(RELEVO_PATCH) $(RUST_LINUX)
 	objcopy --localize-symbol=memcpy --localize-symbol=memset --localize-symbol=memmove $(RUST_A_X86) $@.tmp
 	cmp -s $@.tmp $@ || mv $@.tmp $@
 	rm -f $@.tmp
@@ -233,7 +285,7 @@ $(BX)/pegamento.a: FORCE | $(BX)
 # Un PIE estático (enlace.ld), como en ARM; solo con reubicaciones R_X86_64_RELATIVE (las aplica entrada_x86.S).
 $(BX)/caja-amiga: $(OBJS_X86) $(BX)/pegamento.a enlace.ld
 	$(CC_X86) -static-pie -nostdlib -nostartfiles -Wl,--build-id=none -Wl,-z,noexecstack -Wl,-z,text \
-		-Wl,-T,enlace.ld -Wl,-Map=$(BX)/caja-amiga.map -o $@.tmp $(OBJS_X86) $(BX)/pegamento.a
+		-Wl,-T,enlace.ld -Wl,-Map=$(BX)/caja-amiga.map $(if $(LINUX),$(GC_LINUX)) -o $@.tmp $(OBJS_X86) $(BX)/pegamento.a
 	@if readelf -rW $@.tmp | grep -E '^[0-9a-f]{16} ' | grep -v R_X86_64_RELATIVE; then \
 		echo "La caja de x86 lleva reubicaciones que entrada_x86.S no aplica"; rm -f $@.tmp; exit 1; fi
 	mv $@.tmp $@

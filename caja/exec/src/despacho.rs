@@ -59,6 +59,17 @@ impl<M: Memoria> Exec<M> {
                 d0(r, v)
             }
             4 => d0(r, 0),
+            // Supervisor(userFunction) está hecho (Destino::Supervisor, el modo 2 de caja_ejecutar_68k) pero no se da
+            // todavía: la prueba de los virus de S28 (residente.c) le pasa una función que acaba en RTS, y el 68k salta
+            // fuera de su memoria y tumba la caja entera. Falta que eso acabe solo el programa (y decidir qué espera
+            // esa prueba). Sin ella, como antes: la función que falta.
+            // CacheControl(cacheBits, cacheMask): las cachés de mentira; devuelve las de antes. Los bits de vaciar
+            // (CACRF_ClearI, CACRF_ClearD) no se guardan.
+            108 => {
+                let antes = self.cacr;
+                self.cacr = (antes & !d[1]) | (d[0] & d[1] & !(1 << 3 | 1 << 11));
+                d0(r, antes)
+            }
             // FindResident(name)(a1): no hay módulos de ROM en la caja.
             16 => d0(r, 0),
             // InitResident(resident, segList)(a1/d1)

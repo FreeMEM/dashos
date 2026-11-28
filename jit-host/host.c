@@ -117,6 +117,10 @@ void kprintf(const char *format, ...)
     va_end(v);
 }
 
+#ifdef DASHOS_PAGINA0
+#include "pagina0.c"
+#endif
+
 /* --- Lo que Emu68 define en start.c y disasm.c --- */
 
 struct M68KState *__m68k_state;
@@ -257,6 +261,88 @@ static uint64_t ahora_ns(void)
     return (uint64_t)t.s * 1000000000ULL + (uint64_t)t.ns;
 }
 
+#ifdef DASHOS_PAGINA0
+/* L1: la página 0 en su copia de $10000 (pagina0.c). ExecBase de mentira en la 4, y algo en la 8 y en la 0. */
+#define PAGINA0_RW 0x3800000000UL
+static const uint16_t prueba_p0[] = {
+    0x2038, 0x0004,                 /*        move.l  4.w,d0          ; desviada al traducir */
+    0x2239, 0x0000, 0x0004,         /*        move.l  $4.l,d1         ; ídem */
+    0x41f8, 0x0004,                 /*        lea     4.w,a0          ; A0 = 4, no la copia */
+    0x2410,                         /*        move.l  (a0),d2         ; por registro: el manejador */
+    0x3628, 0x0002,                 /*        move.w  2(a0),d3 */
+    0x4cd0, 0x0030,                 /*        movem.l (a0),d4-d5      ; un par */
+    0x93c9,                         /*        suba.l  a1,a1 */
+    0x2c11,                         /*        move.l  (a1),d6         ; puntero nulo: 0 */
+    0x2c78, 0x0004,                 /*        movea.l 4.w,a6 */
+    0x45f9, 0x0018, 0x0008,         /*        lea     $180008,a2 */
+    0x48d2, 0x407f,                 /*        movem.l d0-d6/a6,(a2) */
+    0x4e75,                         /*        rts */
+};
+#define P0_VUELTAS 200000
+static const uint16_t bucle_p0_abs[] = {   /* move.l 4.w,d0 en un bucle: sin fallos */
+    0x2e3c, P0_VUELTAS >> 16, P0_VUELTAS & 0xffff, 0x2038, 0x0004, 0x5387, 0x66f8, 0x4e75 };
+static const uint16_t bucle_p0_reg[] = {   /* move.l (a0),d0 con A0 = 4 en un bucle: un fallo cada vez */
+    0x41f8, 0x0004, 0x2e3c, P0_VUELTAS >> 16, P0_VUELTAS & 0xffff, 0x2010, 0x5387, 0x66fa, 0x4e75 };
+static const uint16_t escribe_p0[] = {     /* move.l d0,4.w: fallo del programa */
+    0x21c0, 0x0004, 0x4e75 };
+
+static int prueba_pagina0(struct M68KState *m68k, int escribir)
+{
+    long fd = sys6(SYS_memfd_create, (long)"pagina0", 0, 0, 0, 0, 0);
+    sys6(SYS_ftruncate, fd, 4096, 0, 0, 0, 0);
+    map(PAGINA0_RW, 4096, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd);
+    map(DASHOS_PAGINA0, 4096, PROT_READ, MAP_SHARED | MAP_FIXED, fd);
+    pon32(PAGINA0_RW + 0, 0);
+    pon32(PAGINA0_RW + 4, 0x00C0FFEE);
+    pon32(PAGINA0_RW + 8, 0x12345678);
+    long r = pagina0_instala(DASHOS_PAGINA0);
+    kprintf("[HOST] Prueba P0: página 0 en $%x (sigaction: %d)\n", (unsigned)DASHOS_PAGINA0, (int)r);
+    uintptr_t c = M68K_RAM + 0xA000;
+    if (escribir) {
+        for (size_t i = 0; i < sizeof(escribe_p0) / 2; i++) pon16(c + 2 * i, escribe_p0[i]);
+        prepara(m68k, (uint32_t)c); m68k->CACR = 0x80008000;
+        kprintf("[HOST] El 68k escribe en la dirección 4: tiene que acabar con el código 3\n");
+        flush_out();
+        ejecuta(m68k);
+        kprintf("[HOST] MAL: la escritura en la página 0 no falló\n");
+        return 1;
+    }
+    for (size_t i = 0; i < sizeof(prueba_p0) / 2; i++) pon16(c + 2 * i, prueba_p0[i]);
+    prepara(m68k, (uint32_t)c); m68k->CACR = 0x80008000;
+    flush_out();
+    ejecuta(m68k);
+    static const uint32_t esperado[8] = { 0x00C0FFEE, 0x00C0FFEE, 0x00C0FFEE, 0x0000FFEE, 0x00C0FFEE, 0x12345678, 0,
+                                          0x00C0FFEE };
+    static const char *nombre[8] = { "d0 4.w", "d1 $4.l", "d2 (a0)", "d3 2(a0).w", "d4 movem", "d5 movem", "d6 (0)",
+                                     "a6 4.w" };
+    int mal = 0;
+    for (int i = 0; i < 8; i++) {
+        uint32_t v = lee32(M68K_RESULT + 8 + 4 * i);
+        if (v != esperado[i]) { kprintf("[HOST]   %s = %08x, esperado %08x\n", nombre[i], v, esperado[i]); mal++; }
+    }
+    kprintf("[HOST] P0: %d lecturas por el manejador; %s\n", (int)pagina0_fallos, mal ? "MAL" : "BIEN");
+
+    /* La medida: lo que cuesta una lectura de la página 0 con y sin fallo */
+    const uint16_t *bucles[2] = { bucle_p0_abs, bucle_p0_reg };
+    size_t largos[2] = { sizeof(bucle_p0_abs) / 2, sizeof(bucle_p0_reg) / 2 };
+    for (int b = 0; b < 2; b++) {
+        for (size_t i = 0; i < largos[b]; i++) pon16(c + 0x100 + 0x100 * b + 2 * i, bucles[b][i]);
+        prepara(m68k, (uint32_t)(c + 0x100 + 0x100 * b)); m68k->CACR = 0x80008000;
+        uint64_t f0 = pagina0_fallos, t0 = ahora_ns();
+        ejecuta(m68k);
+        uint64_t t1 = ahora_ns();
+        int bien = m68k->D[0].u32 == 0x00C0FFEE;
+        if (!bien) mal++;
+        /* sin "[" delante: la hora cambia de una vez a otra */
+        kprintf("    medida P0 %s: %d vueltas en %d us, %d fallos (%d ns por vuelta) %s\n",
+                b ? "por registro" : "absoluta", P0_VUELTAS, (int)((t1 - t0) / 1000), (int)(pagina0_fallos - f0),
+                (int)((t1 - t0) / P0_VUELTAS), bien ? "BIEN" : "MAL");
+    }
+    flush_out();
+    return mal ? 1 : 0;
+}
+#endif
+
 /* Carga un fichero en la memoria del 68k; devuelve su tamaño, o -1. */
 static long carga(const char *ruta, uintptr_t donde, size_t max)
 {
@@ -369,6 +455,14 @@ void host_main(uint64_t *pila)
     if (!(llamadas_nativas == 2 && r2 == 17)) fallos++;
     flush_out();
 
+#ifdef DASHOS_PAGINA0
+    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == 'w') {
+        prueba_pagina0(&m68k, 1);
+        flush_out();
+        sys6(SYS_exit_group, 1, 0, 0, 0, 0, 0);
+    }
+    fallos += prueba_pagina0(&m68k, 0);
+#endif
     /* U7: un programa 68k de fuera, con la memoria limpia */
     if (argc > 1) {
         uint8_t *ram = (uint8_t *)M68K_RAM;
