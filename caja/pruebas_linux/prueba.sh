@@ -36,12 +36,17 @@ prueba() {   # cómo lanzar la caja
     s=$(cd "$t" && CAJA_AMIGA_SYS="$t/sys" "$@" "$AQUI/tipo.exe" /no/existe 2>&1); r=$?
     comprueba "tipo.exe: lo que no existe en Linux queda como está" 10 "$s" $r "object not found"
     # Pruebas del oráculo: la salida de FS-UAE con el Kickstart (tools/emu_run.py de Dash), guardada en *.esperado.
-    for p in dosasl patron formato supervisor; do
-        s=$(cd "$t" && CAJA_AMIGA_SYS="$t/sys" "$@" "$AQUI/../pruebas68k/$p.exe" 2>&1); r=$?
+    # Sin la guardia de ficheros (CAJA_AMIGA_PROTEGER=no): en un Amiga no la hay.
+    for p in dosasl patron formato supervisor icono; do
+        s=$(cd "$t" && CAJA_AMIGA_PROTEGER=no CAJA_AMIGA_SYS="$t/sys" "$@" "$AQUI/../pruebas68k/$p.exe" 2>&1); r=$?
         if [ $r = 0 ] && [ "$s" = "$(cat "$AQUI/$p.esperado")" ]; then echo "  BIEN $p.exe: como el oráculo"
         else echo "  MAL  $p.exe (código $r): no es como el oráculo"; printf '%s\n' "$s" | diff "$AQUI/$p.esperado" - | sed 's/^/      /'
             fallos=$((fallos + 1)); fi
     done
+    # Con la guardia y sin terminal a quien preguntar: borrar un icono que ya estaba se niega.
+    s=$(cd "$t" && CAJA_AMIGA_SYS="$t/sys" setsid "$@" "$AQUI/../pruebas68k/icono.exe" < /dev/null 2>&1); r=$?
+    comprueba "icono.exe con la guardia y sin terminal: no borra el icono" 0 "$s" $r "DeleteDiskObject: 0"
+    rm -f "$t/prueba_icono.info"
     s=$(cd "$t" && "$@" no-existe.exe 2>&1); r=$?
     comprueba "un programa que no está" 2 "$s" $r "no se puede leer"
     s=$(cd "$t" && "$@" "$AQUI/../pruebas68k/sistema.s" 2>&1); r=$?

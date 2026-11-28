@@ -585,6 +585,11 @@ impl<F: SistemaArchivos> Dos<F> {
 
     // --- Lo que la caja llama por su cuenta ---
 
+    /// Pone `IoErr` de la tarea en marcha (`pr_Result2`), para las bibliotecas nativas de fuera de dos.
+    pub fn poner_io_err_de_fuera<C: Caja>(&mut self, c: &mut C, v: u32) {
+        self.poner_io_err(c, v)
+    }
+
     /// Una tarea ha acabado (o exec la ha matado): dos suelta sus cerrojos, cierra sus ficheros y libera sus
     /// argumentos. Exec suelta después su memoria.
     pub fn acabar_tarea<C: Caja>(&mut self, c: &mut C, tarea: u32) {

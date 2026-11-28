@@ -22,6 +22,8 @@ mod nr {
     pub const UTIMENSAT: usize = 280;
     pub const RENAMEAT2: usize = 316;
     pub const STATX: usize = 332;
+    pub const READ: usize = 0;
+    pub const WRITE: usize = 1;
     pub const MMAP: usize = 9;
     pub const MUNMAP: usize = 11;
     pub const SOCKET: usize = 41;
@@ -50,6 +52,8 @@ mod nr {
     pub const UTIMENSAT: usize = 88;
     pub const RENAMEAT2: usize = 276;
     pub const STATX: usize = 291;
+    pub const READ: usize = 63;
+    pub const WRITE: usize = 64;
     pub const PPOLL: usize = 73;
     pub const SOCKET: usize = 198;
     pub const CONNECT: usize = 203;
@@ -396,4 +400,12 @@ pub fn entorno(nombre: &[u8]) -> Option<&'static [u8]> {
         }
         Some(core::slice::from_raw_parts(p, n))
     }
+}
+
+pub fn leer_fd(fd: i32, buf: &mut [u8]) -> Result<usize, isize> {
+    res(sys6(nr::READ, fd as usize, buf.as_mut_ptr() as usize, buf.len(), 0, 0, 0))
+}
+
+pub fn escribir_fd(fd: i32, datos: &[u8]) -> Result<usize, isize> {
+    res(sys6(nr::WRITE, fd as usize, datos.as_ptr() as usize, datos.len(), 0, 0, 0))
 }

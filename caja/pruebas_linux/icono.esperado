@@ -1,0 +1,39 @@
+icon.library 1
+FindToolType DONOTWAIT: []
+FindToolType PUBSCREEN: [Workbench]
+FindToolType pubscreen: [Workbench]
+FindToolType COMENTADO: [(nulo)]
+FindToolType (COMENTADO: [1)]
+FindToolType FILETYPE: [text|ascii]
+FindToolType VACIO: []
+FindToolType NOESTA: [(nulo)]
+FindToolType DONOT: [(nulo)]
+MatchToolValue [text|ascii] text: 1
+MatchToolValue [text|ascii] TEXT: 1
+MatchToolValue [text|ascii] ascii: 1
+MatchToolValue [text|ascii] tex: 0
+MatchToolValue [text|ascii] bin: 0
+MatchToolValue [text|ascii] text|ascii: 0
+MatchToolValue [text|ascii] : 0
+MatchToolValue [text] text: 1
+BumpRevision [Fichero]: [Copy_of_Fichero]
+BumpRevision [copy of Fichero]: [Copy_2_of_Fichero]
+BumpRevision [copy 2 of Fichero]: [Copy_3_of_Fichero]
+BumpRevision [copy 9 of F]: [Copy_10_of_F]
+BumpRevision [copy of]: [Copy_of_copy of]
+BumpRevision [copy x of F]: [Copy_of_copy x of F]
+BumpRevision [Un nombre muy muy largo de treinta]: [Copy_of_Un nombre muy muy larg]
+por defecto: magic $E310 version 1 tipo 3 pila 0
+  gadget 54x23 render 1 select 0
+PutDiskObject: 1
+prueba_icono.info existe: 1
+leido: magic $E310 version 1 tipo 3 pila 12345
+  x 33 y 44 herramienta [SYS:Herramienta]
+  tooltype 0: [UNO=1]
+  tooltype 1: [DOS]
+  FindToolType UNO: [1]
+  gadget 54x23 render 1
+DeleteDiskObject: 1
+GetDiskObject tras borrar: 0, IoErr 205
+GetDiskObjectNew de lo que no existe: 0 tipo -1
+FreeFreeList: vuelve la memoria 1

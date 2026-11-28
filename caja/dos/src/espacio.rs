@@ -48,6 +48,44 @@ impl<F: SistemaArchivos> Dos<F> {
         Ok(seg)
     }
 
+    /// Escribe `datos` en un fichero nuevo (o vaciado) por su ruta del Amiga, para las bibliotecas nativas
+    /// (icon.library). Pasa por un búfer en la memoria de la caja, como un Write del 68k.
+    pub fn escribir_fichero<C: Caja>(&mut self, c: &mut C, ruta: &[u8], datos: &[u8]) -> Result<(), u32> {
+        let r = (|| -> R<()> {
+            let fh = self.open(c, ruta, MODE_NEWFILE)? >> 2;
+            let tam = datos.len().max(1) as u32;
+            let buf = match Self::reservar(c, tam) {
+                Ok(b) => b,
+                Err(e) => {
+                    let a = self.fichero(fh)?;
+                    let _ = self.cerrar_fichero(c, a);
+                    return Err(e);
+                }
+            };
+            let escrito = Self::poner(c, buf, datos).and_then(|_| self.write(c, fh, buf, datos.len() as u32));
+            c.liberar(buf, tam);
+            let a = self.fichero(fh)?;
+            let cerrado = self.cerrar_fichero(c, a);
+            match escrito {
+                Ok(n) if n == datos.len() as u32 => cerrado,
+                Ok(_) => Err(E::Io(ERROR_DISK_FULL)),
+                Err(e) => Err(e),
+            }
+        })();
+        r.map_err(|e| match e {
+            E::Io(n) => n,
+            E::Mal(f) => f.codigo(),
+        })
+    }
+
+    /// Borra un fichero (o un cajón vacío) por su ruta del Amiga, para las bibliotecas nativas.
+    pub fn borrar_fichero<C: Caja>(&mut self, c: &mut C, ruta: &[u8]) -> Result<(), u32> {
+        self.delete_file(c, ruta).map_err(|e| match e {
+            E::Io(n) => n,
+            E::Mal(f) => f.codigo(),
+        })
+    }
+
     /// Lee un fichero entero (hasta `max` bytes) por su ruta del Amiga, para la caja (sus ajustes).
     pub fn leer_fichero<C: Caja>(&mut self, c: &mut C, ruta: &[u8], max: u64) -> Result<Vec<u8>, u32> {
         self.leer_entero(c, ruta, max).map_err(|e| match e {

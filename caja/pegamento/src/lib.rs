@@ -37,6 +37,7 @@ mod defensa;
 mod faltan;
 #[cfg(all(target_arch = "x86_64", feature = "dashos"))]
 mod jit;
+mod icono;
 mod mates;
 mod memoria;
 mod multitarea;
@@ -126,6 +127,8 @@ const N_TIMER: u16 = 0x880;
 const N_OPEN_LIBRARY: u16 = 92;
 /// mathieeesingbas.library (`mates.rs`).
 const N_MATES: u16 = 0xD80;
+/// icon.library (`icono.rs`): sus entradas, desde aquí.
+const N_ICONO: u16 = 0xF00;
 const N_RAMLIB_CARGAR: u16 = 0xD00;
 const N_RAMLIB_SOLTAR: u16 = 0xD01;
 /// Las raíces de la caja en el servicio de archivos (`usuario/src/bin/inicio.rs`, S28): la 0, su cajón (leer y
@@ -421,6 +424,10 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         }
     };
     di(&format!("mathieeesingbas.library nativa (Rust): ${:x}", mates_base));
+    match icono::instalar(&mut ex, N_ICONO) {
+        Ok(b) => di(&format!("icon.library nativa (Rust): ${:x}", b)),
+        Err(f) => di(&format!("icon.library no se crea: {:?}", f)),
+    }
     let (capas, teclas) = gr.capas_bases();
     di(&format!("layers.library y keymap.library nativas (Rust): ${:x} y ${:x}", capas, teclas));
     di(&format!("cybergraphics.library y Picasso96API.library nativas (Rust): ${:x} y ${:x}", gr.cgx_base(), gr.p96_base()));
@@ -558,6 +565,12 @@ fn montar_volumenes(ex: &mut Exec<MemoriaCaja>, consola: &mut Consola) -> (caja_
     let cajon = archivos::cajon_de_la_caja();
     let fs = Fs::abrir_en(&cajon).unwrap_or_else(Fs::sin_servicio);
     let mut dos = caja_dos::Dos::nuevo(Guardia::nueva(fs));
+    // La guardia de ficheros (S28) pregunta por la terminal, o no pregunta con CAJA_AMIGA_PROTEGER=no.
+    if preguntador::proteger() {
+        dos.fs.poner_preguntador(alloc::boxed::Box::new(preguntador::PorTerminal));
+    } else {
+        dos.fs.poner_preguntador(alloc::boxed::Box::new(preguntador::Nadie));
+    }
     let mut cd = CajaDos { ex, consola, sistema: false };
     let mut dichos = Vec::new();
     for (nombre, raiz) in [("Linux", archivos::RAIZ_LINUX), ("Caja", archivos::RAIZ_CAJA), ("SYS", archivos::RAIZ_SYS)] {
@@ -1087,6 +1100,11 @@ fn ajena(c: &mut Caja, n: u16, r: &mut Registros) -> Fin {
     }
     if (N_MATES..N_MATES + mates::FUNCIONES.len() as u16).contains(&n) {
         r.d[0] = mates::llamar((n - N_MATES) as usize, r).unwrap_or(0);
+        return Fin::Seguir;
+    }
+    if (N_ICONO..N_ICONO + icono::FUNCIONES.len() as u16).contains(&n) {
+        let rr = *r;
+        r.d[0] = icono::llamar(c, (n - N_ICONO) as usize, &rr);
         return Fin::Seguir;
     }
     if n == N_RAMLIB_CARGAR {
