@@ -191,7 +191,7 @@ pub(crate) fn siguiente(r: &mut Registros, anfitriona: Option<(u32, u32)>) -> Si
             continue;
         }
         // Un gancho de AHI con todas esperando: se ejecuta con la pila de la anfitriona (como BOOPSI).
-        if (c.sonido.hay_gancho() || (c.cias.activo() && c.cias.hay_vencida(&c.ex, dashos::ahora_us())))
+        if (c.sonido.hay_gancho() || (c.cias.activo() && c.cias.hay_vencida(&c.ex, plataforma::ahora_us())))
             && let Some((h, a7)) = anfitriona
             && c.ex.tareas().contains(&h)
         {
