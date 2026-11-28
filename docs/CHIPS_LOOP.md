@@ -600,3 +600,9 @@ de S18).
   - Para K8: el contador hacia atrás vuelve a los chips desde el bucle de Emu68, no desde aquí; lo que haga falta de la
     hora exacta del acceso (las instrucciones del bloque hasta el sitio) puede ir como un dato más en `struct
     trampolin` cuando el traductor lo sepa.
+
+- Unión de K7 en `chips-blitter` (la sesión), con `main` ya traído (PR #16). Solo chocaron el `Makefile` de
+  `pruebas68k` y aquí. Y, pedido por `amiga-en-linux` (la caja como programa de Linux): el decodificador pasa a
+  `caja/fallo_a64_decodifica.h` (`marco_fallo`, `struct acceso`, `decodifica`), sin nada de los chips ni del sistema;
+  `fallo_a64.h` lo incluye. Comprobado: `make -C caja/pruebas_fallo` (83 y 52 instrucciones, 0 fallos, en los dos
+  órdenes), `make -C kernel prueba` BIEN y `make -C kernel caja-x86` BIEN. No repetido tras la unión: `arranque-virt`.

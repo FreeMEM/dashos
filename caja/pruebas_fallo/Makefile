@@ -22,12 +22,12 @@ all: $(B)/prueba_fallo_be $(B)/prueba_trampolin_be
 	@echo "fallo_a64 y trampolin_a64 (little-endian): sin $(CC_LE), no se prueban"
 endif
 
-$(B)/prueba_fallo_be: prueba_fallo.c ../fallo_a64.h ../motor.h | $(B)
+$(B)/prueba_fallo_be: prueba_fallo.c ../fallo_a64.h ../fallo_a64_decodifica.h ../motor.h | $(B)
 	$(CC_BE) $(CFLAGS) prueba_fallo.c -o $@
-$(B)/prueba_fallo_le: prueba_fallo.c ../fallo_a64.h ../motor.h | $(B)
+$(B)/prueba_fallo_le: prueba_fallo.c ../fallo_a64.h ../fallo_a64_decodifica.h ../motor.h | $(B)
 	$(CC_LE) $(CFLAGS) prueba_fallo.c -o $@
 
-T_DEPS := prueba_trampolin.c ../trampolin_a64.c ../trampolin_a64.h ../fallo_a64.h ../motor.h
+T_DEPS := prueba_trampolin.c ../trampolin_a64.c ../trampolin_a64.h ../fallo_a64.h ../fallo_a64_decodifica.h ../motor.h
 $(B)/prueba_trampolin_be: $(T_DEPS) | $(B)
 	$(CC_BE) $(TFLAGS) -c ../trampolin_a64.c -o $(B)/trampolin_a64_be.o
 	$(CC_BE) $(CFLAGS) prueba_trampolin.c $(B)/trampolin_a64_be.o -o $@
