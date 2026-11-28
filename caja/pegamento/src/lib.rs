@@ -668,15 +668,21 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         }
         di(&format!("ramlib: lo que no es nativo se carga de disco; {}", if hechas.is_empty() { String::from("sin cajones") } else { hechas.join(", ") }));
         // Las de los comandos (`C:`, `S:`, `L:`, `LOCALE:`), si el cajón las tiene: Which, Execute y los programas que
-        // abren "C:..." o "LOCALE:..." las dan por hechas.
+        // abren "C:..." o "LOCALE:..." las dan por hechas. Solo en la caja de Linux, que ejecuta los comandos del
+        // usuario: en DashOS, `S:` sobre el cajón de la caja dejaría a un programa escribir su `S:Startup-Sequence`
+        // (la prueba de malware de S28 lo niega).
+        #[cfg(not(feature = "dashos"))]
         let mut comandos = Vec::new();
-        for (nombre, ruta) in [("C", "Caja:C"), ("S", "Caja:S"), ("L", "Caja:L"), ("LOCALE", "Caja:Locale")] {
-            if c.dos.asignar(&mut cd, nombre, ruta).is_ok() {
-                comandos.push(alloc::format!("{}: {}", nombre, ruta));
+        #[cfg(not(feature = "dashos"))]
+        {
+            for (nombre, ruta) in [("C", "Caja:C"), ("S", "Caja:S"), ("L", "Caja:L"), ("LOCALE", "Caja:Locale")] {
+                if c.dos.asignar(&mut cd, nombre, ruta).is_ok() {
+                    comandos.push(alloc::format!("{}: {}", nombre, ruta));
+                }
             }
-        }
-        if !comandos.is_empty() {
-            di(&format!("comandos: {}", comandos.join(", ")));
+            if !comandos.is_empty() {
+                di(&format!("comandos: {}", comandos.join(", ")));
+            }
         }
         // `T:` y `ENV:`, que los programas dan por hechos (en un Amiga, en `RAM:`): en el cajón de la caja, que es lo que
         // tiene para escribir. Sin `T:`, Tachyon no puede dejar ahí las imágenes que decodifica (el logo de su página).
