@@ -43,14 +43,38 @@ void plat_hilo_unir(long h);
 /* Acaba el hilo que llama. */
 __attribute__((noreturn)) void plat_hilo_salir(void);
 
+/* La hora: nanosegundos desde 1970, o 0 si el sistema no la sabe. */
+uint64_t plat_hora_ns(void);
+
+/* Acaba el proceso entero (un pánico de las bibliotecas nativas de Rust). */
+__attribute__((noreturn)) void plat_acabar(int codigo);
+
+/* El código traducido (W^X): `largo` bytes de memoria nueva, para escribir en `rw` y, la misma, para ejecutar en `rx`.
+   Su llave (> 0), o un error (<= 0). */
+long plat_codigo(uintptr_t rw, uintptr_t rx, size_t largo);
+
+/* 1 si el sistema deja proyectar esa memoria para escribir y ejecutar a la vez, en `va` (DashOS no debe dejar; Linux
+   no lo impide y no se comprueba: 0). */
+int plat_codigo_wx(long llave, uintptr_t va);
+
+/* Los fallos de datos del hilo que llama (en ARM, los chips: motor_emu68.c): `atiende` recibe el marco del fallo
+   (fallo_a64_decodifica.h) y devuelve 1 si lo atendió (se sigue con el marco, que puede cambiar) o 0 (el proceso acaba
+   con su aviso). NULL lo quita. 0 si fue bien. */
+struct marco_fallo;
+long plat_fallos(int (*atiende)(struct marco_fallo *m));
+
 /* La página 0 del 68k (4 KB; ExecBase en la dirección 4): se crea proyectada para escribir en `rw` (por encima de los
    4 GB del 68k) y devuelve su llave (> 0), o un error. */
 long plat_pagina0_crear(uintptr_t rw);
 
-/* La deja ver al 68k, de solo lectura (en DashOS, en la dirección 0, con el permiso de página 0): 0 si fue bien. */
+/* La deja ver al 68k, de solo lectura (en DashOS, en la dirección 0, con el permiso de página 0; en Linux, en
+   PAGINA0_VISTA, por encima de vm.mmap_min_addr, y el JIT desvía allí lo que lee el 68k): 0 si fue bien. */
 long plat_pagina0_poner(long llave);
 
 /* 1 si el sistema no deja hacerlo otra vez ni proyectarla en otro sitio de los primeros 64 KB. */
 int plat_pagina0_cerrada(long llave);
+
+/* En Linux, ficheros: lee hasta `max` bytes de `ruta` en `buf`. Lo leído, o un error negativo. */
+long plat_fichero_leer(const char *ruta, void *buf, size_t max);
 
 #endif

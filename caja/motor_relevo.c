@@ -35,6 +35,7 @@
 #include <stdint.h>
 #include "caja.h"
 #include "motor.h"
+#include "plataforma.h"
 #include "relevo.h"
 
 #ifndef MOTOR_JIT
@@ -124,7 +125,8 @@ static uint32_t pagina_leer(void *ctx, uint32_t dir, unsigned largo)
 {
     (void)ctx;
     uint32_t v = 0;
-    for (unsigned i = 0; i < largo; i++) v = v << 8 | *(volatile uint8_t *)(uintptr_t)(dir + i);
+    /* Por su proyección de escribir, que es la misma memoria (en Linux no está en la dirección 0). */
+    for (unsigned i = 0; i < largo; i++) v = v << 8 | *(volatile uint8_t *)(uintptr_t)(PAGINA0_RW + dir + i);
     return v;
 }
 
@@ -265,7 +267,7 @@ static void correr(void)
             pon16(MARCA, 2);
             return;
         }
-        if (st == RELEVO_STOPPED) caja_sc(SC_DORMIR, 1000, 0, 0, 0, 0);
+        if (st == RELEVO_STOPPED) plat_dormir(1000);
     }
 }
 

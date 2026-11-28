@@ -105,7 +105,6 @@ void di(const char *formato, ...)
 #define PILAS    0x0000000300000000UL
 #define PILA_LEN (1UL << 20)
 #define PILA_VIGIA_LEN (64UL << 10)
-#define PAGINA0_RW 0x0000000380000000UL   /* la página 0, para escribirla: por encima de 4 GB, el 68k no llega */
 
 
 volatile uint32_t m68k_ram_fin = M68K_RAM + M68K_RAM_LEN;

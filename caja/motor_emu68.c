@@ -16,6 +16,7 @@
 #include "config.h"
 #include "caja.h"
 #include "motor.h"
+#include "plataforma.h"
 
 /* --- Lo que Emu68 define en start.c y disasm.c, y su salida por la consola de la caja --- */
 
@@ -97,14 +98,13 @@ const char *motor_nombre(void)
 
 int motor_iniciar(void)
 {
-    long jit = caja_sc(SC_MEMORIA_CREAR, JIT_LEN, 0, 0, 0, 0);
-    if (jit <= 0 || caja_sc(SC_MEMORIA_PROYECTAR, jit, JIT_RW, P_ESCRIBIR, 0, 0) != 0
-        || caja_sc(SC_MEMORIA_PROYECTAR, jit, JIT_RX, P_EJECUTAR, 0, 0) != 0) {
+    long jit = plat_codigo(JIT_RW, JIT_RX, JIT_LEN);
+    if (jit <= 0) {
         di("sin memoria para el código traducido\n");
         return 2;
     }
     /* Que la misma dirección no se pueda escribir y ejecutar: el kernel lo rechaza. */
-    if (caja_sc(SC_MEMORIA_PROYECTAR, jit, JIT_RX + JIT_LEN, P_ESCRIBIR | P_EJECUTAR, 0, 0) >= 0) {
+    if (plat_codigo_wx(jit, JIT_RX + JIT_LEN)) {
         di("MAL: el kernel deja escribir y ejecutar a la vez\n");
         return 3;
     }
@@ -163,18 +163,13 @@ uint64_t motor_ciclos(void)
    K7: tras atender el fallo, el sitio se reescribe con un `b` a su trampolín (trampolin_a64.h), y los accesos
    siguientes de ese sitio ya no pasan por el kernel. */
 
-#define SC_FALLO_MANEJADOR 61
-#define SC_REANUDAR        62
 #define CLASE_DATOS_EL0    0x24
 
-/* La pila del manejador: en los datos de la caja, por encima de 4 GB (el 68k no llega). Arriba, el marco. */
-#define PILA_FALLOS (64u << 10)
-static uint8_t pila_fallos[PILA_FALLOS] __attribute__((aligned(16)));
 static int chips_en;
 
 uint64_t chips_fallos;   /* accesos atendidos (para las pruebas y para K7) */
 
-/* Lo llama caja_entrada_fallo con el marco. 1: atendido; 0: no es de los chips (y lo dice, si caía en ellos). */
+/* Lo llama el manejador de fallos de la plataforma (plat_fallos) con el marco. 1: atendido; 0: no es de los chips (y lo dice, si caía en ellos). */
 int chips_fallo(marco_fallo *m);
 __attribute__((used, noipa)) int chips_fallo(marco_fallo *m)
 {
@@ -203,45 +198,6 @@ __attribute__((used, noipa)) int chips_fallo(marco_fallo *m)
     }
     return r > 0;
 }
-
-/* La entrada del manejador (K5): x0 = SP = el marco. Los registros de la FPU y SIMD no van en el marco y el JIT tiene
-   vivos los suyos (v8-v15, la FPU del 68k; v19-v31, el SR, las pilas, el contador...): se guardan todos, con FPCR y
-   FPSR, antes de entrar en C (que puede usar v0-v7 y v16-v18), y se reponen antes de `reanudar`. v20, el contador de
-   instrucciones, sigue como estaba al fallar: motor_ciclos() lo lee dentro. En un asm suelto: GCC no hace `naked` en
-   AArch64. Si no es de los chips, quita el manejador y reanuda igual: la instrucción vuelve a fallar, ya sin
-   manejador, y el kernel termina el proceso como siempre. Si `reanudar` volviera (un marco que no vale), el UDF es un
-   fallo dentro del manejador: también lo termina. */
-void caja_entrada_fallo(void);
-__asm__(
-    ".text\n"
-    ".balign 16\n"
-    ".type caja_entrada_fallo, %function\n"
-    "caja_entrada_fallo:\n"
-    "sub sp, sp, #528\n"
-    "mrs x1, fpcr\n" "mrs x2, fpsr\n" "stp x1, x2, [sp, #0]\n"
-    "stp q0, q1, [sp, #16]\n"    "stp q2, q3, [sp, #48]\n"    "stp q4, q5, [sp, #80]\n"
-    "stp q6, q7, [sp, #112]\n"   "stp q8, q9, [sp, #144]\n"   "stp q10, q11, [sp, #176]\n"
-    "stp q12, q13, [sp, #208]\n" "stp q14, q15, [sp, #240]\n" "stp q16, q17, [sp, #272]\n"
-    "stp q18, q19, [sp, #304]\n" "stp q20, q21, [sp, #336]\n" "stp q22, q23, [sp, #368]\n"
-    "stp q24, q25, [sp, #400]\n" "stp q26, q27, [sp, #432]\n" "stp q28, q29, [sp, #464]\n"
-    "stp q30, q31, [sp, #496]\n"
-    "mov x19, x0\n"
-    "bl chips_fallo\n"
-    "cbnz w0, 1f\n"
-    "mov x0, #0\n" "mov x1, #0\n" "mov x2, #0\n" "mov x8, #61\n" "svc #0\n"   /* fallo_manejador(0) */
-    "1:\n"
-    "ldp x1, x2, [sp, #0]\n" "msr fpcr, x1\n" "msr fpsr, x2\n"
-    "ldp q0, q1, [sp, #16]\n"    "ldp q2, q3, [sp, #48]\n"    "ldp q4, q5, [sp, #80]\n"
-    "ldp q6, q7, [sp, #112]\n"   "ldp q8, q9, [sp, #144]\n"   "ldp q10, q11, [sp, #176]\n"
-    "ldp q12, q13, [sp, #208]\n" "ldp q14, q15, [sp, #240]\n" "ldp q16, q17, [sp, #272]\n"
-    "ldp q18, q19, [sp, #304]\n" "ldp q20, q21, [sp, #336]\n" "ldp q22, q23, [sp, #368]\n"
-    "ldp q24, q25, [sp, #400]\n" "ldp q26, q27, [sp, #432]\n" "ldp q28, q29, [sp, #464]\n"
-    "ldp q30, q31, [sp, #496]\n"
-    "mov x0, x19\n"
-    "mov x8, #62\n"                                               /* reanudar(marco) */
-    "svc #0\n"
-    "udf #0\n"
-    ".size caja_entrada_fallo, . - caja_entrada_fallo\n");
 
 /* --- K8: el contador hacia atrás (motor.h, motor_ipl_chips) --- */
 
@@ -284,8 +240,7 @@ int motor_chips(int encendidos)
         /* La RAM del 68k empieza en M68K_RAM y no tiene huecos: si llega a la primera zona, exec puede tener bloques
            ahí. */
         if (m68k_ram_fin > CHIPS_CIA) return 0;
-        if (caja_sc(SC_FALLO_MANEJADOR, (long)(uintptr_t)caja_entrada_fallo, (long)(uintptr_t)pila_fallos, PILA_FALLOS, 0,
-                    0) != 0) {
+        if (plat_fallos(chips_fallo) != 0) {
             di("chips: el kernel no da el manejador de fallos\n");
             return 0;
         }
@@ -297,7 +252,7 @@ int motor_chips(int encendidos)
     } else {
         /* K7: que no quede nada reescrito (el sitio volvería a los chips apagados sin fallar). */
         trampolines_deshacer();
-        caja_sc(SC_FALLO_MANEJADOR, 0, 0, 0, 0, 0);
+        plat_fallos(0);
         plazo_marca(0);
         dashos_plazo = ~0ULL;
         ipl_chips = 0;

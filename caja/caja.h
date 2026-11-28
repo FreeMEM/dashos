@@ -14,6 +14,11 @@
 #define M68K_RAM     0x00100000UL
 #define M68K_RAM_LEN 0x00400000UL   /* lo de al principio */
 #define M68K_RAM_MAX 0xC0000000UL   /* hasta donde puede crecer, como mucho (deja sitio arriba) */
+/* La página 0, para escribirla: por encima de 4 GB, el 68k no llega. La misma memoria la ve el 68k de solo lectura:
+   en DashOS en la dirección 0; en Linux, que no deja proyectar nada en los primeros 64 KB, en PAGINA0_VISTA
+   (docs/CAJA_LINUX_LOOP.md, L1; en la caja no hay nada entre $1000 y M68K_RAM). */
+#define PAGINA0_RW    0x0000000380000000UL
+#define PAGINA0_VISTA 0x00010000UL
 extern volatile uint32_t m68k_ram_fin;   /* dónde acaba ahora */
 uint32_t caja_ampliar_ram(uint32_t minimo, uint32_t tope);
 #define VECTORES     0x00100000UL   /* VBR: 256 vectores */

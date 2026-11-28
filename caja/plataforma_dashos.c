@@ -114,6 +114,110 @@ void plat_hilo_salir(void)
     for (;;) {}
 }
 
+/* La hora (llamada 39): 0 si el kernel no la sabe. */
+uint64_t plat_hora_ns(void)
+{
+    return (uint64_t)sc(39, 0, 0, 0, 0, 0);
+}
+
+/* Acaba el proceso entero (llamada 44): el resto del sistema sigue. */
+void plat_acabar(int codigo)
+{
+    sc(SC_PROCESO_SALIR, codigo, 0, 0, 0, 0);
+    for (;;) {}
+}
+
+/* El código traducido (X7a): un objeto de memoria proyectado para escribir en `rw` y para ejecutar en `rx`. */
+long plat_codigo(uintptr_t rw, uintptr_t rx, size_t largo)
+{
+    long m = sc(SC_MEMORIA_CREAR, (long)largo, 0, 0, 0, 0);
+    if (m <= 0) return m ? m : -1;
+    if (sc(SC_MEMORIA_PROYECTAR, m, (long)rw, P_ESCRIBIR, 0, 0) != 0 || sc(SC_MEMORIA_PROYECTAR, m, (long)rx, P_EJECUTAR, 0, 0) != 0)
+        return -1;
+    return m;
+}
+
+int plat_codigo_wx(long llave, uintptr_t va)
+{
+    return sc(SC_MEMORIA_PROYECTAR, llave, (long)va, P_ESCRIBIR | P_EJECUTAR, 0, 0) >= 0;
+}
+
+#if defined(__x86_64__)
+/* En x86, RelevoJIT no usa el fallo de página: los chips y la página 0 van por sus páginas del anfitrión. */
+long plat_fallos(int (*atiende)(struct marco_fallo *m))
+{
+    (void)atiende;
+    return -1;
+}
+#else
+/* K5 y K6 (docs/CHIPS_LOOP.md): el manejador de fallos del propio hilo (llamadas 61 y 62, docs/referencia/kernel.md,
+   "Fallos del propio proceso"). El kernel entrega el fallo en caja_entrada_fallo, con su pila y el marco arriba; esta
+   llama a plat_fallo_atiende, y esta a quien puso plat_fallos. */
+#define SC_FALLO_MANEJADOR 61
+#define SC_REANUDAR        62
+
+/* La pila del manejador: en los datos de la caja, por encima de 4 GB (el 68k no llega). Arriba, el marco. */
+#define PILA_FALLOS (64u << 10)
+static uint8_t pila_fallos[PILA_FALLOS] __attribute__((aligned(16)));
+static int (*atiende_fallo)(struct marco_fallo *m);
+
+int plat_fallo_atiende(struct marco_fallo *m);
+__attribute__((used, noipa)) int plat_fallo_atiende(struct marco_fallo *m)
+{
+    return atiende_fallo ? atiende_fallo(m) : 0;
+}
+
+/* La entrada del manejador (K5): x0 = SP = el marco. Los registros de la FPU y SIMD no van en el marco y el JIT tiene
+   vivos los suyos (v8-v15, la FPU del 68k; v19-v31, el SR, las pilas, el contador...): se guardan todos, con FPCR y
+   FPSR, antes de entrar en C (que puede usar v0-v7 y v16-v18), y se reponen antes de `reanudar`. v20, el contador de
+   instrucciones, sigue como estaba al fallar: motor_ciclos() lo lee dentro. En un asm suelto: GCC no hace `naked` en
+   AArch64. Si no es de los chips, quita el manejador y reanuda igual: la instrucción vuelve a fallar, ya sin
+   manejador, y el kernel termina el proceso como siempre. Si `reanudar` volviera (un marco que no vale), el UDF es un
+   fallo dentro del manejador: también lo termina. */
+void caja_entrada_fallo(void);
+__asm__(
+    ".text\n"
+    ".balign 16\n"
+    ".type caja_entrada_fallo, %function\n"
+    "caja_entrada_fallo:\n"
+    "sub sp, sp, #528\n"
+    "mrs x1, fpcr\n" "mrs x2, fpsr\n" "stp x1, x2, [sp, #0]\n"
+    "stp q0, q1, [sp, #16]\n"    "stp q2, q3, [sp, #48]\n"    "stp q4, q5, [sp, #80]\n"
+    "stp q6, q7, [sp, #112]\n"   "stp q8, q9, [sp, #144]\n"   "stp q10, q11, [sp, #176]\n"
+    "stp q12, q13, [sp, #208]\n" "stp q14, q15, [sp, #240]\n" "stp q16, q17, [sp, #272]\n"
+    "stp q18, q19, [sp, #304]\n" "stp q20, q21, [sp, #336]\n" "stp q22, q23, [sp, #368]\n"
+    "stp q24, q25, [sp, #400]\n" "stp q26, q27, [sp, #432]\n" "stp q28, q29, [sp, #464]\n"
+    "stp q30, q31, [sp, #496]\n"
+    "mov x19, x0\n"
+    "bl plat_fallo_atiende\n"
+    "cbnz w0, 1f\n"
+    "mov x0, #0\n" "mov x1, #0\n" "mov x2, #0\n" "mov x8, #61\n" "svc #0\n"   /* fallo_manejador(0) */
+    "1:\n"
+    "ldp x1, x2, [sp, #0]\n" "msr fpcr, x1\n" "msr fpsr, x2\n"
+    "ldp q0, q1, [sp, #16]\n"    "ldp q2, q3, [sp, #48]\n"    "ldp q4, q5, [sp, #80]\n"
+    "ldp q6, q7, [sp, #112]\n"   "ldp q8, q9, [sp, #144]\n"   "ldp q10, q11, [sp, #176]\n"
+    "ldp q12, q13, [sp, #208]\n" "ldp q14, q15, [sp, #240]\n" "ldp q16, q17, [sp, #272]\n"
+    "ldp q18, q19, [sp, #304]\n" "ldp q20, q21, [sp, #336]\n" "ldp q22, q23, [sp, #368]\n"
+    "ldp q24, q25, [sp, #400]\n" "ldp q26, q27, [sp, #432]\n" "ldp q28, q29, [sp, #464]\n"
+    "ldp q30, q31, [sp, #496]\n"
+    "mov x0, x19\n"
+    "mov x8, #62\n"                                               /* reanudar(marco) */
+    "svc #0\n"
+    "udf #0\n"
+    ".size caja_entrada_fallo, . - caja_entrada_fallo\n");
+
+long plat_fallos(int (*atiende)(struct marco_fallo *m))
+{
+    if (!atiende) {
+        long r = sc(SC_FALLO_MANEJADOR, 0, 0, 0, 0, 0);
+        atiende_fallo = 0;
+        return r;
+    }
+    atiende_fallo = atiende;
+    return sc(SC_FALLO_MANEJADOR, (long)(uintptr_t)caja_entrada_fallo, (long)(uintptr_t)pila_fallos, PILA_FALLOS, 0, 0);
+}
+#endif
+
 /* La página 0 (S3): un objeto de una página, escrito por una dirección por encima de 4 GB y proyectado de solo lectura
    en la dirección 0, con el permiso de página 0 (la llave 1, de `inicio`). */
 long plat_pagina0_crear(uintptr_t rw)
