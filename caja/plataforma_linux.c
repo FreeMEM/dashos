@@ -285,7 +285,9 @@ long plat_pagina0_crear(uintptr_t rw)
 {
     long fd = sys(NR_memfd_create, "caja-pagina0", 0, 0);
     if (fd < 0) return fd;
-    long r = sys(NR_ftruncate, fd, 4096, 0);
+    /* 64 KB aunque se usen 4: con páginas de 16 o 64 KB, la proyección de 4 KB llega a una página entera, y lo que
+       pasara del final del fichero daría SIGBUS. */
+    long r = sys(NR_ftruncate, fd, 0x10000, 0);
     if (!r) r = proyectar(rw, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd);
     if (r) {
         sys(NR_close, fd, 0, 0);

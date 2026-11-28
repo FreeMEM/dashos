@@ -178,6 +178,12 @@ build/dash/test_doc_reaction.exe: $(wildcard $(DASH_TESTS)/test_doc_reaction.das
 # Las bibliotecas nativas (pegamento/, una staticlib de Rust para aarch64_be-unknown-none-softfloat). Su memcpy (de
 # compiler_builtins, que entra con LTO) se queda dentro: el del C es el de Emu68 (support.c).
 GC_LINUX := -Wl,--gc-sections
+# En Linux, los segmentos alineados a 64 KB (enlace.ld los alinea a 4 KB): así sirve también con páginas de 16 KB
+# (Asahi) o de 64 KB, sin que código y datos compartan página.
+LD_LINUX = $(if $(LINUX),$(B)/enlace.ld,enlace.ld)
+PAGINA_LINUX := -Wl,-z,max-page-size=65536
+$(B)/enlace.ld: enlace.ld | $(B)
+	sed 's/ALIGN(4096)/ALIGN(65536)/g' $< > $@
 # La de Linux, sin la opción `dashos` y en su propio directorio (no pisa la de DashOS del mismo objetivo).
 RUST_LINUX = $(if $(LINUX),--no-default-features --target-dir target-linux)
 RUST_A := pegamento/$(if $(LINUX),target-linux,target)/$(RUST_T)/release/libcaja_pegamento.a
@@ -189,9 +195,9 @@ $(B)/pegamento.a: FORCE | $(B)
 
 # Un PIE estático (enlace.ld): el kernel lo pone por encima de 128 GB, fuera del alcance del 68k (S28). Solo puede llevar
 # reubicaciones R_AARCH64_RELATIVE (las aplica entrada.S): se comprueba aquí.
-$(B)/caja-amiga: $(OBJS) $(B)/pegamento.a enlace.ld
+$(B)/caja-amiga: $(OBJS) $(B)/pegamento.a $(LD_LINUX)
 	$(CXX) $(ENDIAN) -static-pie -nostdlib -nostartfiles $(LDEND) -Wl,--build-id=none -Wl,-z,noexecstack \
-		-Wl,-z,text -Wl,-T,enlace.ld -Wl,-Map=$(B)/caja-amiga.map $(if $(LINUX),$(GC_LINUX)) -o $@.tmp $(OBJS) $(B)/pegamento.a
+		-Wl,-z,text $(if $(LINUX),$(PAGINA_LINUX)) -Wl,-T,$(LD_LINUX) -Wl,-Map=$(B)/caja-amiga.map $(if $(LINUX),$(GC_LINUX)) -o $@.tmp $(OBJS) $(B)/pegamento.a
 	@if $(TC)readelf -rW $@.tmp | grep -E '^[0-9a-f]{16} ' | grep -v R_AARCH64_RELATIVE; then \
 		echo "La caja lleva reubicaciones que entrada.S no aplica"; rm -f $@.tmp; exit 1; fi
 	mv $@.tmp $@
