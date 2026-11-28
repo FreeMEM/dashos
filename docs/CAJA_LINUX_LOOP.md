@@ -271,6 +271,14 @@ duro, que MUI pone por los tabuladores: eran los cuadrados de MUI-Demo; × ÷ de
 X OpenLibrary" de las escenas (screennotify, bitmap.image, texteditor.gadget...) no son de la caja: son bibliotecas de
 disco que no están instaladas en ese AmigaOS (screennotify, puesta a mano, carga bien).
 
-Pendiente de la caja: `RunCommand`, `SystemTagList` y `Execute` (ejecutar una orden en anidado, con su pila), y la
-ROM ($F80000-$FFFFFF) que leen algunos programas (Directory Opus): con los chips, de dashos-2f.
+Y `RunCommand`, `SystemTagList` y `Execute` (`sistema.c` con `eco.exe`): la orden en anidado, en la tarea que llama,
+con su pila y sus argumentos (`pegamento/src/ordenes.rs` y `Continuacion::DeLaCaja` de exec); con `SYS_Asynch`, en un
+proceso aparte (Forja lanza así una extensión al arrancar: en anidado se quedaba esperando). Y `MakeClass` con su
+tamaño como UWORD (`clase.c`; Directory Opus pone basura en la mitad alta de D0).
+
+Por el camino, arranque-virt BE pilló un fallo mío: las asignaciones `C:`/`S:` sobre `Caja:` dejaban a guion.exe (la
+prueba de malware de S28) escribir `S:Startup-Sequence`. Ahora van solo en la caja de Linux.
+
+Pendiente: el guion de entrada de `Execute` (no hay Shell), y la ROM ($F80000-$FFFFFF) que leen algunos programas
+(Directory Opus): con los chips, de dashos-2f.
 
