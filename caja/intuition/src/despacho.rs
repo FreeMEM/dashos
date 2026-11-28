@@ -17,7 +17,7 @@ macro_rules! filas {
 filas!(G;
     BLTBITMAP = "BltBitMap", BLTTEMPLATE = "BltTemplate", CLEAREOL = "ClearEOL", CLEARSCREEN = "ClearScreen",
     TEXTLENGTH = "TextLength", TEXT = "Text", SETFONT = "SetFont", OPENFONT = "OpenFont", CLOSEFONT = "CloseFont",
-    ADDFONT = "AddFont", REMFONT = "RemFont",
+    ADDFONT = "AddFont", REMFONT = "RemFont", EXTENDFONT = "ExtendFont", STRIPFONT = "StripFont",
     ASKSOFTSTYLE = "AskSoftStyle", SETSOFTSTYLE = "SetSoftStyle", LOADRGB4 = "LoadRGB4",
     INITRASTPORT = "InitRastPort", MOVE = "Move", DRAW = "Draw", RECTFILL = "RectFill", WRITEPIXEL = "WritePixel",
     READPIXEL = "ReadPixel", SETRAST = "SetRast", SCROLLRASTER = "ScrollRaster", SCROLLRASTERBF = "ScrollRasterBF",
@@ -253,6 +253,12 @@ impl<C: Compositor> CajaGrafica<C> {
                 0
             }
             OPENFONT => self.open_font(ex, a[0])?,
+            // ExtendFont(font, fontTags)(a0/a1) y StripFont(font)(a0): graphics.rs.
+            EXTENDFONT => self.extend_font(ex, a[0], a[1])?,
+            STRIPFONT => {
+                self.strip_font(ex, a[0])?;
+                0
+            }
             // AddFont(textFont)(a1): a la lista de fuentes del sistema (la que mira OpenFont); RemFont la quita. Una
             // fuente que no se puede leer entera, o que ya está en la lista, no entra.
             ADDFONT => {

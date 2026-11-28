@@ -61,6 +61,14 @@ pub(crate) struct Estado {
     pub vigilados: Tabla<crate::vigia::Vigilado>,
 }
 
+/// `tf_Message.mn_ReplyPort`, donde va la extensión de una fuente, y `struct TextFontExtension`.
+const TF_REPLYPORT: u32 = 14;
+const TFE_MATCHWORD: u16 = 0x4E1B;
+const TFE_BACKPTR: u32 = 4;
+const TFE_ORIGREPLYPORT: u32 = 8;
+const TFE_TAGS: u32 = 12;
+const TFE_TAMANO: u32 = 24;
+
 /// Lo que se lee de un `RastPort`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct InfoRp {
@@ -166,6 +174,8 @@ impl<C: Compositor> CajaGrafica<C> {
         self.gfx.base = base;
         let topaz = fuente::construir(ex)?;
         self.gfx.topaz = topaz;
+        // Las fuentes de la ROM vienen extendidas (oráculo: ExtendFont de topaz no cambia nada).
+        self.extend_font(ex, topaz, 0)?;
         ex.new_list(base + gfxbase::TEXTFONTS, nt::FONT)?;
         ex.add_tail(base + gfxbase::TEXTFONTS, topaz)?;
         ex.e32(base + gfxbase::DEFAULTFONT, topaz)?;
@@ -1277,6 +1287,73 @@ impl<C: Compositor> CajaGrafica<C> {
         let a = ex.l16(f + tf::TF_ACCESSORS)?;
         ex.e16(f + tf::TF_ACCESSORS, a.saturating_add(1))?;
         Ok(f)
+    }
+
+    /// La extensión de una fuente (`struct TextFontExtension`), si la tiene: va en `tf_Message.mn_ReplyPort`, con su
+    /// marca y un puntero de vuelta a la fuente.
+    fn extension_de<M: Memoria>(&self, ex: &Exec<M>, tf: u32) -> Option<u32> {
+        let e = ex.l32(tf.checked_add(TF_REPLYPORT)?).ok()?;
+        (e != 0 && ex.l16(e).ok()? == TFE_MATCHWORD && ex.l32(e.checked_add(TFE_BACKPTR)?).ok()? == tf).then_some(e)
+    }
+
+    /// `ExtendFont(font, fontTags)`: le pone su extensión si no la tiene. Lo comprobado contra el oráculo
+    /// (`pruebas68k/fuente2.c`): la marca $4E1B, banderas 0, el puntero de vuelta, el `mn_ReplyPort` de antes guardado y
+    /// una copia de las etiquetas; el estilo no cambia. Si ya la tiene, TRUE sin tocar nada.
+    pub fn extend_font<M: Memoria>(&mut self, ex: &mut Exec<M>, tf: u32, tags: u32) -> Result<u32, Fallo> {
+        if tf == 0 {
+            return Ok(0);
+        }
+        ex.tramo(tf, tf::TAMANO)?;
+        if self.extension_de(ex, tf).is_some() {
+            return Ok(1);
+        }
+        // Las etiquetas, copiadas hasta TAG_DONE (como mucho 64).
+        let mut lista = Vec::new();
+        let mut t = tags;
+        while t != 0 && lista.len() < 64 {
+            let (etiqueta, dato) = (ex.l32(t)?, ex.l32(t.wrapping_add(4))?);
+            if etiqueta == 0 {
+                break;
+            }
+            lista.push((etiqueta, dato));
+            let Some(sig) = t.checked_add(8) else { break };
+            t = sig;
+        }
+        let copia = if lista.is_empty() {
+            0
+        } else {
+            let d = ex.reservar((lista.len() as u32 + 1) * 8, memf::CLEAR)?;
+            for (k, (etiqueta, dato)) in lista.iter().enumerate() {
+                ex.e32(d + 8 * k as u32, *etiqueta)?;
+                ex.e32(d + 8 * k as u32 + 4, *dato)?;
+            }
+            d
+        };
+        let e = ex.reservar(TFE_TAMANO, memf::CLEAR)?;
+        ex.e16(e, TFE_MATCHWORD)?;
+        ex.e32(e + TFE_BACKPTR, tf)?;
+        ex.e32(e + TFE_ORIGREPLYPORT, ex.l32(tf + TF_REPLYPORT)?)?;
+        ex.e32(e + TFE_TAGS, copia)?;
+        ex.e32(tf + TF_REPLYPORT, e)?;
+        Ok(1)
+    }
+
+    /// `StripFont(font)`: le quita la extensión (el `mn_ReplyPort` de antes vuelve). Sin extensión, nada.
+    pub fn strip_font<M: Memoria>(&mut self, ex: &mut Exec<M>, tf: u32) -> Result<(), Fallo> {
+        if tf == 0 {
+            return Ok(());
+        }
+        let Some(e) = self.extension_de(ex, tf) else { return Ok(()) };
+        ex.e32(tf + TF_REPLYPORT, ex.l32(e + TFE_ORIGREPLYPORT)?)?;
+        let tags = ex.l32(e + TFE_TAGS)?;
+        if tags != 0 {
+            let mut n = 1;
+            while n < 65 && ex.l32(tags + 8 * (n - 1))? != 0 {
+                n += 1;
+            }
+            ex.soltar(tags, n * 8)?;
+        }
+        ex.soltar(e, TFE_TAMANO)
     }
 
     /// `CloseFont`.

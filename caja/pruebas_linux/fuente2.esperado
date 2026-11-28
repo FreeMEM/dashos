@@ -1,0 +1,11 @@
+sin extender: estilo 0, puerto cambiado 0
+ExtendFont: 1
+extendida: estilo 0, puerto cambiado 1, marca 4E1B banderas 0/0, atras 1, puerto de antes 1, etiquetas 0
+ExtendFont otra vez: 1, la misma extension 1
+StripFont: estilo 0, puerto cambiado 0
+ExtendFont con etiquetas: 1
+con etiquetas: estilo 0, puerto cambiado 1, marca 4E1B banderas 0/0, atras 1, puerto de antes 1, etiquetas 1
+  etiqueta 80000001 = 4B004B
+StripFont otra vez: estilo 0, puerto cambiado 0
+StripFont de una sin extension: estilo 0, puerto cambiado 0
+topaz: ExtendFont 1, puerto cambiado 0
