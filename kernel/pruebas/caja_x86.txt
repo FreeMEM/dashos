@@ -26,7 +26,6 @@ DashOS: arranque por UEFI en x86-64
 # Las tareas de procesos.c (modo a), con la coma flotante extendida guardada al cambiar de tarea.
 ~│   [caja-amiga] procesos: la coma flotante extendida sigue igual tras cambiar de tarea: bien
 ~│   [caja-amiga] procesos: 0 fallos (modo a)
-# La tanda entera, hasta la prueba 9: el 68k escribe en la página 0 y el kernel termina la caja, como en ARM.
-~│   [caja-amiga] el 68k escribe en la dirección 4 (ExecBase), en la página 0 de solo lectura: la caja tiene que morir
-~se termina
-~│   [inicio] caja-amiga acabó: clase 2, código 0
+# La tanda entera, hasta la prueba 9: el programa sale de su memoria y cae el programa, no la caja, como en ARM.
+~│   [caja-amiga] fuera de su memoria: 6 de 6 programas caen y la caja sigue (saludo.exe después: 0): bien
+~│   [inicio] caja-amiga acabó: clase 0, código 0

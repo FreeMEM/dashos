@@ -118,22 +118,27 @@ static void volcar(relevo_regs *r)
 
 /* --- Lo que el anfitrión hace por el 68k --- */
 
-/* La primera página de 64 KB: el acceso se hace de verdad en el proceso, como con Emu68. Los 4 KB de la página 0 se
-   leen (ExecBase en la dirección 4); escribir en ellos, o tocar lo de más arriba (sin proyectar), es un fallo de página
-   y el kernel termina la caja (la prueba 9 de caja.c lo espera). */
+/* La primera página: los 4 KB de la página 0 se leen (ExecBase en la dirección 4), por su proyección de escribir, que
+   es la misma memoria (en Linux no está en la dirección 0); lo que pase de los 4 KB lee 0. Escribir en ella es salir de
+   la memoria del programa: no se escribe y se corta el programa (cae el programa, no la caja; prueba 9 de caja.c). */
 static uint32_t pagina_leer(void *ctx, uint32_t dir, unsigned largo)
 {
     (void)ctx;
     uint32_t v = 0;
-    /* Por su proyección de escribir, que es la misma memoria (en Linux no está en la dirección 0). */
-    for (unsigned i = 0; i < largo; i++) v = v << 8 | *(volatile uint8_t *)(uintptr_t)(PAGINA0_RW + dir + i);
+    for (unsigned i = 0; i < largo; i++)
+        v = v << 8 | (dir + i < 0x1000 ? *(volatile uint8_t *)(uintptr_t)(PAGINA0_RW + dir + i) : 0);
     return v;
 }
 
 static void pagina_escribir(void *ctx, uint32_t dir, uint32_t v, unsigned largo)
 {
     (void)ctx;
-    for (unsigned i = 0; i < largo; i++) *(volatile uint8_t *)(uintptr_t)(dir + i) = (uint8_t)(v >> (8 * (largo - 1 - i)));
+    (void)v;
+    (void)largo;
+    if (!caja_perdido) di("el programa escribe en $%x, en la página 0 de solo lectura: cae\n", dir);
+    caja_perdido = dir | 1;
+    motor_cortar();
+    relevo_request_stop(cpu);
 }
 
 /* K3: las páginas de los chips del Amiga, cada una de 64 KB, como las de RelevoJIT. */
@@ -340,6 +345,8 @@ uint32_t motor_d0(void) { return relevo_get_regs(cpu)->d[0]; }
 
 void motor_cortar(void)
 {
+    /* Con los vectores de la caja, que el programa puede haber cambiado (caja_vectores_del_corte). */
+    caja_vectores_del_corte();
     nmi = 1;
     relevo_set_ipl(cpu, 7);
 }
