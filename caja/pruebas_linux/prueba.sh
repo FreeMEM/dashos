@@ -41,7 +41,7 @@ prueba() {   # cómo lanzar la caja
     mkdir -p "$t/sys/Libs" && cp "$AQUI/../pruebas68k/manual.library" "$t/sys/Libs/"
     # sistema.exe lanza eco.exe del cajón de la prueba.
     cp "$AQUI/../pruebas68k/eco.exe" "$t/"
-    for p in dosasl patron formato supervisor icono dos2 imagen ramlib2 dos3 cx fuente2 notify escala sistema; do
+    for p in dosasl patron formato supervisor icono dos2 imagen ramlib2 dos3 cx fuente2 notify escala sistema clase; do
         s=$(cd "$t" && CAJA_AMIGA_PROTEGER=no CAJA_AMIGA_SYS="$t/sys" "$@" "$AQUI/../pruebas68k/$p.exe" 2>&1); r=$?
         if [ $r = 0 ] && [ "$s" = "$(cat "$AQUI/$p.esperado")" ]; then echo "  BIEN $p.exe: como el oráculo"
         else echo "  MAL  $p.exe (código $r): no es como el oráculo"; printf '%s\n' "$s" | diff "$AQUI/$p.esperado" - | sed 's/^/      /'

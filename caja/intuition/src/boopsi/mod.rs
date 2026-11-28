@@ -885,8 +885,11 @@ fn make_class<P: Puente>(p: &mut P, id: u32, sup_id: u32, sup: u32, tam: u32, _f
     if s == 0 || (!p.partes().1.boopsi.clases.contains_key(&s) && !adoptar_clase(p, s)?) {
         return Ok(0);
     }
+    // El tamaño es un UWORD: la mitad alta de D0 no cuenta (oráculo: pruebas68k/clase.c; Directory Opus 5 la deja con
+    // basura).
+    let tam = tam & 0xFFFF;
     let off = l16(p, s + iclass::INSTOFFSET)? as u32 + l16(p, s + iclass::INSTSIZE)? as u32;
-    if off + tam > 0xFFFF || tam > 0xFFFF {
+    if off + tam > 0xFFFF {
         return Err(Fallo::TamanoMalo { ancho: tam as i32, alto: 0 }.into());
     }
     let (ex, gr) = p.partes();
