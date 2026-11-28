@@ -53,6 +53,14 @@ prueba() {   # cómo lanzar la caja
         if printf '%s\n' "$s" | grep -q "MAL: sigue"; then r=99; fi
         comprueba "perdido.exe $m: sale de su memoria y cae el programa" 3 "$s" $r "el programa acabó por la excepción del 68k"
     done
+    # El ratón, con el compositor de Wayland de mentira (compositor_falso.py; sin tocar el escritorio): un clic en el
+    # gadget de cerrar de ventana.exe le llega como IDCMP_CLOSEWINDOW. El socket, relativo (la ruta de $t es larga).
+    mkdir -p "$t/sys" && echo "hola" > "$t/sys/LEEME.txt"
+    (cd "$t" && timeout 60 python3 "$AQUI/compositor_falso.py" wl.sock ventana.png esperar:0.5 mover:100,80 clic:6,5 > comp.txt 2>&1 &)
+    sleep 0.5
+    s=$(cd "$t" && XDG_RUNTIME_DIR=. WAYLAND_DISPLAY=wl.sock CAJA_AMIGA_SYS="$t/sys" timeout 60 "$@" -v "$AQUI/../pruebas68k/ventana.exe" 2>&1); r=$?
+    comprueba "ventana.exe: un clic de ratón en su gadget de cerrar la cierra" 0 "$s" $r "IDCMP_CLOSEWINDOW recibido"
+    rm -f "$t/wl.sock"
     s=$(cd "$t" && "$@" no-existe.exe 2>&1); r=$?
     comprueba "un programa que no está" 2 "$s" $r "no se puede leer"
     s=$(cd "$t" && "$@" "$AQUI/../pruebas68k/sistema.s" 2>&1); r=$?
