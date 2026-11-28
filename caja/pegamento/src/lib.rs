@@ -47,6 +47,10 @@ mod preguntador;
 mod preguntador;
 mod procesos;
 mod ramlib;
+// Las llamadas al sistema de Linux (los ficheros de linux/archivos.rs).
+#[cfg(not(feature = "dashos"))]
+#[path = "linux/sys.rs"]
+mod sys;
 // Sin la opción `dashos` no hay compositor que dé el tema todavía (L5).
 #[cfg_attr(not(feature = "dashos"), allow(dead_code))]
 mod tema;
@@ -128,7 +132,9 @@ const N_RAMLIB_SOLTAR: u16 = 0xD01;
 /// Las raíces de la caja en el servicio de archivos (`usuario/src/bin/inicio.rs`, S28): la 0, su cajón (leer y
 /// escribir), que es `Caja:`; la 1, el disco para leer, que es `SYS:`. Con una ficha vieja (solo la 0, el disco), `SYS:`
 /// va en la 0.
+#[cfg(feature = "dashos")]
 const RAIZ_CAJA: u32 = 0;
+#[cfg(feature = "dashos")]
 const RAIZ_SYS: u32 = 1;
 /// Negativas de la guardia que se escriben de cada tarea (las demás solo se cuentan).
 const NEGADOS_A_LA_VISTA: u32 = 4;
@@ -136,6 +142,7 @@ const NEGADOS_A_LA_VISTA: u32 = 4;
 const N_INTERRUPCION: u16 = 0xff01;
 /// Llaves de la caja (`kernel/src/inicio.rs`): 1 el permiso de página 0, 2 el canal "ventanas", 3 "archivos".
 const LLAVE_VENTANAS: u32 = 2;
+#[cfg(feature = "dashos")]
 const LLAVE_ARCHIVOS: u32 = 3;
 /// Lo más que una tarea espera en `Wait` sin que llegue nada antes de que la caja la corte.
 const ESPERA_MAXIMA_US: u64 = 60_000_000;
@@ -361,35 +368,8 @@ pub unsafe extern "C" fn caja_rust_arrancar(
             return 0;
         }
     };
-    let fs = Fs::abrir(LLAVE_ARCHIVOS);
-    let hay_fs = fs.is_some();
-    let mut fs = fs.unwrap_or_else(Fs::sin_servicio);
-    let con_cajon = hay_fs && caja_dos::SistemaArchivos::mirar(&mut fs, RAIZ_SYS, "").is_ok();
-    // Con su cajón, lo de solo lectura lo ponen dos, volumen a volumen (la guardia; decisión 8), y el servicio con las
-    // raíces; con una ficha vieja, también el adaptador.
-    fs.solo_lectura = !con_cajon;
-    let servicio = if con_cajon { comprobar_servicio(&mut fs) } else { String::new() };
-    let mut dos = caja_dos::Dos::nuevo(Guardia::nueva(fs));
-    // S28: con su cajón, lo que la guardia no deja cambiar se pregunta al usuario por `sesiones` y `guardian`.
-    if con_cajon {
-        dos.fs.poner_preguntador(alloc::boxed::Box::new(preguntador::PorSesiones));
-    }
-    let mut vol = String::from("sin servicio de archivos");
     let mut consola = Consola::default();
-    if hay_fs {
-        let mut cd = CajaDos { ex: &mut ex, consola: &mut consola, sistema: false };
-        let sys = if con_cajon { RAIZ_SYS } else { RAIZ_CAJA };
-        vol = match dos.montar(&mut cd, "SYS", sys, true) {
-            Ok(()) => String::from("SYS: sobre el servicio de archivos (la raíz de su ficha, de solo lectura)"),
-            Err(e) => format!("SYS: no se monta (error {})", e),
-        };
-        if con_cajon {
-            match dos.montar(&mut cd, "Caja", RAIZ_CAJA, false) {
-                Ok(()) => di(&format!("Caja: su cajón, para escribir; {}", servicio)),
-                Err(e) => di(&format!("Caja: no se monta (error {})", e)),
-            }
-        }
-    }
+    let (dos, vol) = montar_volumenes(&mut ex, &mut consola);
     let comp = CompositorWayland::conectar(LLAVE_VENTANAS);
     let conectado = comp.conectado;
     let gr = match CajaGrafica::instalar(&mut ex, comp, Numeros::default()) {
@@ -521,6 +501,61 @@ pub unsafe extern "C" fn caja_rust_arrancar(
     base
 }
 
+/// Los volúmenes de dos: en DashOS, sobre el servicio de archivos: `SYS:` (el disco, de solo lectura) y `Caja:` (su
+/// cajón). Lo que dice de ellos, para la consola.
+#[cfg(feature = "dashos")]
+fn montar_volumenes(ex: &mut Exec<MemoriaCaja>, consola: &mut Consola) -> (caja_dos::Dos<Guardia<Fs>>, String) {
+    let fs = Fs::abrir(LLAVE_ARCHIVOS);
+    let hay_fs = fs.is_some();
+    let mut fs = fs.unwrap_or_else(Fs::sin_servicio);
+    let con_cajon = hay_fs && caja_dos::SistemaArchivos::mirar(&mut fs, RAIZ_SYS, "").is_ok();
+    // Con su cajón, lo de solo lectura lo ponen dos, volumen a volumen (la guardia; decisión 8), y el servicio con las
+    // raíces; con una ficha vieja, también el adaptador.
+    fs.solo_lectura = !con_cajon;
+    let servicio = if con_cajon { comprobar_servicio(&mut fs) } else { String::new() };
+    let mut dos = caja_dos::Dos::nuevo(Guardia::nueva(fs));
+    // S28: con su cajón, lo que la guardia no deja cambiar se pregunta al usuario por `sesiones` y `guardian`.
+    if con_cajon {
+        dos.fs.poner_preguntador(alloc::boxed::Box::new(preguntador::PorSesiones));
+    }
+    let mut vol = String::from("sin servicio de archivos");
+    if hay_fs {
+        let mut cd = CajaDos { ex, consola, sistema: false };
+        let sys = if con_cajon { RAIZ_SYS } else { RAIZ_CAJA };
+        vol = match dos.montar(&mut cd, "SYS", sys, true) {
+            Ok(()) => String::from("SYS: sobre el servicio de archivos (la raíz de su ficha, de solo lectura)"),
+            Err(e) => format!("SYS: no se monta (error {})", e),
+        };
+        if con_cajon {
+            match dos.montar(&mut cd, "Caja", RAIZ_CAJA, false) {
+                Ok(()) => di(&format!("Caja: su cajón, para escribir; {}", servicio)),
+                Err(e) => di(&format!("Caja: no se monta (error {})", e)),
+            }
+        }
+    }
+    (dos, vol)
+}
+
+/// En Linux (L4, docs/CAJA_LINUX_LOOP.md), sobre sus ficheros (`linux/archivos.rs`): `Linux:` es la raíz de Linux y el
+/// volumen de arranque (el programa empieza en el directorio actual de Linux: `crear_proceso`); `Caja:` y `SYS:`, el
+/// cajón de la caja (`$CAJA_AMIGA_SYS`, o `~/.local/share/caja-amiga`), con `LIBS:`, `T:`, `ENV:`... dentro.
+#[cfg(not(feature = "dashos"))]
+fn montar_volumenes(ex: &mut Exec<MemoriaCaja>, consola: &mut Consola) -> (caja_dos::Dos<Guardia<Fs>>, String) {
+    let cajon = archivos::cajon_de_la_caja();
+    let fs = Fs::abrir_en(&cajon).unwrap_or_else(Fs::sin_servicio);
+    let mut dos = caja_dos::Dos::nuevo(Guardia::nueva(fs));
+    let mut cd = CajaDos { ex, consola, sistema: false };
+    let mut dichos = Vec::new();
+    for (nombre, raiz) in [("Linux", archivos::RAIZ_LINUX), ("Caja", archivos::RAIZ_CAJA), ("SYS", archivos::RAIZ_SYS)] {
+        match dos.montar(&mut cd, nombre, raiz, false) {
+            Ok(()) => dichos.push(format!("{}:", nombre)),
+            Err(e) => dichos.push(format!("{}: no se monta (error {})", nombre, e)),
+        }
+    }
+    dos.poner_arranque("Linux");
+    (dos, format!("{} sobre los ficheros de Linux (Caja: y SYS: en {})", dichos.join(", "), cajon))
+}
+
 /// aviso-cajas: lo soltado por un aviso de memoria baja, si lo hay, al registro y a `sesiones`.
 fn informar_soltado(c: &mut Caja) {
     if let Some(s) = c.ex.tomar_soltado() {
@@ -541,6 +576,7 @@ pub extern "C" fn caja_atender_memoria() {
     recoger_avisos(c);
 }
 
+#[cfg(feature = "dashos")]
 /// Que el servicio niegue escribir en `SYS:` aunque la caja se lo pida (por debajo de la guardia, como lo haría un
 /// programa que se hubiera hecho con la caja): crear, en la raíz 1 (la del disco, de leer). Lo que dice.
 fn comprobar_servicio(fs: &mut Fs) -> String {
@@ -824,6 +860,15 @@ fn crear_proceso(
         if let Ok(l) = c.dos.cerrojo_de_ruta(&mut cd, cajon) {
             c.dos.dar_cerrojo(l, t);
             programa = l;
+        }
+    }
+    // En Linux, el programa empieza en el directorio actual de Linux (en DashOS, en la raíz del volumen de arranque).
+    #[cfg(not(feature = "dashos"))]
+    if let Some(ruta) = archivos::cajon_actual() {
+        let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
+        if let Ok(l) = c.dos.cerrojo_de_ruta(&mut cd, ruta.as_bytes()) {
+            c.dos.dar_cerrojo(l, t);
+            c.ex.mem.escribir32(t + pr::PR_CURRENTDIR, l)?;
         }
     }
     let ex = &mut c.ex;

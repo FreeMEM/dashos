@@ -19,6 +19,20 @@ extern int plat_detalle;   /* plataforma_linux.c: 1, lo que dice la caja sale po
 #define PROGRAMA     0x0000000400000000UL
 #define PROGRAMA_MAX (64UL << 20)
 
+/* El entorno de Linux (tras argv en la pila del arranque), para plat_entorno. */
+static char **entorno;
+
+/* El valor de la variable `nombre` del entorno, o NULL (lo usa pegamento/src/linux/archivos.rs). */
+const char *plat_entorno(const char *nombre)
+{
+    for (char **e = entorno; e && *e; e++) {
+        const char *a = *e, *b = nombre;
+        while (*b && *a == *b) a++, b++;
+        if (!*b && *a == '=') return a + 1;
+    }
+    return NULL;
+}
+
 /* Los argumentos tal como los da el CLI del Amiga: separados por espacios y con "\n" al final. */
 static char linea_args[4096];
 
@@ -44,6 +58,7 @@ int caja_linux_main(void)
     const uintptr_t *sp = (const uintptr_t *)pila_elf;
     int argc = (int)sp[0];
     char **argv = (char **)(sp + 1);
+    entorno = argv + argc + 1;
     int i = 1;
     if (i < argc && argv[i][0] == '-' && argv[i][1] == 'v' && !argv[i][2]) {
         plat_detalle = 1;

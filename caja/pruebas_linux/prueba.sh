@@ -1,0 +1,42 @@
+#!/bin/sh
+# La caja Amiga en Linux (docs/CAJA_LINUX_LOOP.md): sus pruebas, con las dos cajas (make -C caja linux linux-x86): la
+# de x86-64, nativa si el PC lo es, y la de AArch64, con qemu-aarch64 si no lo es. Escribe "BIEN" o "MAL" por cada una
+# y acaba con el número de fallos.
+cd "$(dirname "$0")" || exit 1
+AQUI=$(pwd)
+fallos=0
+
+comprueba() {   # nombre, código esperado, salida, código, texto que tiene que salir
+    if [ "$4" = "$2" ] && printf '%s\n' "$3" | grep -qF -- "$5"; then
+        echo "  BIEN $1"
+    else
+        echo "  MAL  $1 (código $4, esperado $2)"; printf '%s\n' "$3" | sed 's/^/      /'
+        fallos=$((fallos + 1))
+    fi
+}
+
+prueba() {   # cómo lanzar la caja
+    echo "$*"
+    t=$(mktemp -d) || exit 1
+    s=$(cd "$t" && CAJA_AMIGA_SYS="$t/sys" "$@" "$AQUI/../pruebas68k/saludo.exe" 2>&1); r=$?
+    comprueba "saludo.exe (m68k-amigaos-gcc, por la dos.library)" 0 "$s" $r "Write() en Output(): bien"
+    s=$(cd "$t" && mkdir -p sub && echo hola > hola.txt && CAJA_AMIGA_SYS="$t/sys" "$@" "$AQUI/cajones.exe" 2>&1); r=$?
+    comprueba "cajones.exe: crear, escribir, renombrar y borrar" 0 "$s" $r "crear, escribir, renombrar y borrar: bien"
+    comprueba "cajones.exe: el cajón actual es el de Linux" 0 "$s" $r "cajon actual: Linux:${t#/}"
+    comprueba "cajones.exe: lista el cajón" 0 "$s" $r "fichero      5 hola.txt"
+    s=$(cd "$t" && "$@" no-existe.exe 2>&1); r=$?
+    comprueba "un programa que no está" 2 "$s" $r "no se puede leer"
+    s=$(cd "$t" && "$@" "$AQUI/../pruebas68k/sistema.s" 2>&1); r=$?
+    comprueba "algo que no es un ejecutable de AmigaOS" 2 "$s" $r "no es un ejecutable de AmigaOS"
+    rm -rf "$t"
+}
+
+case "$(uname -m)" in
+    x86_64) X86="" ; A64="qemu-aarch64" ;;
+    aarch64) X86="qemu-x86_64" ; A64="" ;;
+    *) X86="qemu-x86_64" ; A64="qemu-aarch64" ;;
+esac
+[ -x ../build-linux-x86/caja-amiga ] && prueba $X86 "$AQUI/../build-linux-x86/caja-amiga"
+[ -x ../build-linux/caja-amiga ] && prueba $A64 "$AQUI/../build-linux/caja-amiga"
+echo "fallos: $fallos"
+exit $fallos
