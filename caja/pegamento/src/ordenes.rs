@@ -7,8 +7,8 @@
 //!   al volver, los de quien llama vuelven como estaban.
 //! - `SystemTagList` y `Execute` cargan la orden por su nombre (o de `C:`); si no existe, lo dice como el Shell y
 //!   devuelve 10 (`Execute`, FALSE). `SYS_Input` y `SYS_Output` cambian la entrada y la salida mientras corre.
-//! - Lo que falta: `SYS_Asynch` (lanzarla aparte; se avisa como "falta"), y el guion de entrada de `Execute` (no hay
-//!   Shell que lo lea).
+//! - `SYS_Asynch`: en un proceso aparte con su CLI (`CreateNewProc`), sin esperar; devuelve 0.
+//! - Lo que falta: el guion de entrada de `Execute` (no hay Shell que lo lea).
 
 use alloc::vec::Vec;
 
@@ -91,6 +91,7 @@ pub(crate) fn system(c: &mut Caja, r: &mut Registros, execute: bool) -> Fin {
     };
     let (orden, resto) = caja_dos::ordenes::partir_orden(&linea);
     let mut entrada_salida = None;
+    let mut asincrona = false;
     if execute {
         if r.d[3] != 0 {
             let (cis, _) = c.dos.entrada_salida(&CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false });
@@ -98,12 +99,7 @@ pub(crate) fn system(c: &mut Caja, r: &mut Registros, execute: bool) -> Fin {
         }
     } else {
         let tags = etiquetas(c, r.d[2]);
-        if tags.iter().any(|&(e, d)| e == SYS_ASYNCH && d != 0) {
-            let q = crate::faltan::quien(c, c.pc_llamada);
-            if let Some(t) = c.faltan.apuntar("dos.library", "SystemTagList con SYS_Asynch (va en anidado)", &q) {
-                crate::di(&t);
-            }
-        }
+        asincrona = tags.iter().any(|&(e, d)| e == SYS_ASYNCH && d != 0);
         let entrada = tags.iter().find(|&&(e, _)| e == SYS_INPUT).map(|&(_, d)| d);
         let salida = tags.iter().find(|&&(e, _)| e == SYS_OUTPUT).map(|&(_, d)| d);
         if entrada.is_some() || salida.is_some() {
@@ -142,8 +138,58 @@ pub(crate) fn system(c: &mut Caja, r: &mut Registros, execute: bool) -> Fin {
         r.d[0] = if execute { 0 } else { u32::MAX };
         return Fin::Seguir;
     }
+    if asincrona {
+        r.d[0] = aparte(c, seg, m, &orden, entrada_salida);
+        let _ = c.ex.free_mem(m, a.len() as u32);
+        return Fin::Seguir;
+    }
     let vuelta = if execute { Vuelta::Cierto } else { Vuelta::Codigo };
     lanzar(c, r, seg, PILA, (m, largo), (m, a.len() as u32), seg, entrada_salida, orden, vuelta)
+}
+
+/// `SYS_Asynch`: la orden ya cargada, en un proceso aparte con su CLI (CreateNewProc, que suelta la lista de segmentos
+/// al acabar). 0 si se creó; -1 si no (y la lista se suelta aquí).
+fn aparte(c: &mut Caja, seg: u32, args: u32, orden: &[u8], entrada_salida: Option<(u32, u32)>) -> u32 {
+    use caja_dos::procesos::*;
+    let mut nombre = orden.to_vec();
+    nombre.push(0);
+    let pn = c.ex.alloc_mem(nombre.len() as u32, memf::PUBLIC | memf::CLEAR).unwrap_or(0);
+    let mut tags = alloc::vec![
+        (NP_SEGLIST, seg),
+        (NP_FREESEGLIST, 1),
+        (NP_ARGUMENTS, args),
+        (NP_CLI, 1),
+        (NP_STACKSIZE, PILA),
+    ];
+    if pn != 0 && c.ex.mem.leer_mut(pn, nombre.len() as u32).map(|b| b.copy_from_slice(&nombre)).is_ok() {
+        tags.push((NP_NAME, pn));
+        tags.push((NP_COMMANDNAME, pn));
+    }
+    if let Some((cis, cos)) = entrada_salida {
+        tags.push((NP_INPUT, cis));
+        tags.push((NP_OUTPUT, cos));
+    }
+    tags.push((0, 0));
+    let largo = tags.len() as u32 * 8;
+    let pt = c.ex.alloc_mem(largo, memf::PUBLIC | memf::CLEAR).unwrap_or(0);
+    let mut hecho = 0;
+    if pt != 0 {
+        for (k, (e, d)) in tags.iter().enumerate() {
+            let _ = c.ex.mem.escribir32(pt + 8 * k as u32, *e);
+            let _ = c.ex.mem.escribir32(pt + 8 * k as u32 + 4, *d);
+        }
+        hecho = crate::procesos::create_new_proc(c, pt).0;
+        let _ = c.ex.free_mem(pt, largo);
+    }
+    if pn != 0 {
+        let _ = c.ex.free_mem(pn, nombre.len() as u32);
+    }
+    if hecho == 0 {
+        let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
+        c.dos.descargar_orden(&mut cd, seg);
+        return u32::MAX;
+    }
+    0
 }
 
 #[allow(clippy::too_many_arguments)]
