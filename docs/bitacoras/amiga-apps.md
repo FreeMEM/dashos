@@ -147,3 +147,14 @@ lista (el bit de cada canal), no en el de la lista del programa: "red" y "sonido
 que "presion" dejó de ser la llave 5 (`aviso.rs` la tenía fija). Ahora se busca por su nombre en la tabla de llaves
 (`dashos::llaves::buscar("presion")`), como ya hacían la red y el sonido. Las 2, 3 y 4 (ventanas, archivos, sesiones)
 no se mueven.
+
+### Pruebas de la tanda (commits c2ca78d3 a ca5e6897)
+
+- `cargo test` de exec (145), dos (87), intuition (168), timer, utility, audiodevice (18), sonido (25), bsdsocket (29) e
+  icono (28): bien; la de mathffp con `rustc --test` (ahora dentro de `make prueba`): bien.
+- `make prueba`: BIEN (cargador hunk y esperado.txt).
+- `make arranque-virt`: todo lo de la caja Amiga bien (147 líneas "bien", ninguna "MAL"). La vuelta entera falló dos
+  veces, cada una en una línea distinta y ajena: "[explorador] ventana 1 en SYS:Programas" y la de los timbres de la
+  prueba de `RAM:` ("llegan 16 timbres" en vez de 63), con la máquina a carga 8-11 (otras QEMU a la vez). Antes, con
+  la llave de "presion" mal, fallaba `memh` (arreglado arriba). No he conseguido una vuelta entera en verde por esos
+  dos fallos de tiempo; lo apunto como no comprobado.

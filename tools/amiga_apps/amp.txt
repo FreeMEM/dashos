@@ -1,5 +1,5 @@
 # AmigaAMP 3 (Aminet, MP3 por AHI): un MP3 hecho aquí (un acorde de 12 s, sin derechos de nadie).
-variable traza-amiga -
+variable traza-amiga AmigaAMP
 cajon AmigaOS:Apps/AmigaAMP3-68k/AmigaAMP3
 lanza AmigaOS:Apps/AmigaAMP3-68k/AmigaAMP3/AmigaAMP AmigaOS:Apps/Mods/acorde.mp3
 ventana AmigaAMP 200

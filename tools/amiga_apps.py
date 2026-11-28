@@ -36,6 +36,15 @@ import demo  # noqa: E402  (Monitor, Qmp y Demo: el teclado, la tableta y la sal
 
 ESCENAS = AQUI / "amiga_apps"
 
+PAGINA = """<html><head><title>DashOS: la caja Amiga</title></head><body>
+<h1>Hola desde DashOS</h1>
+<p>Esta p&aacute;gina la sirve el PC por la red de usuario de QEMU. La pide <b>Tachyon</b>, un navegador de 68k hecho
+en Dash, que corre en la caja Amiga de DashOS con la <i>bsdsocket.library</i> nativa sobre el servicio de red.</p>
+<ul><li>Uno</li><li>Dos</li><li>Tres</li></ul>
+<p><a href="grande.bin">Un fichero de 4 MB</a> para medir la velocidad.</p>
+</body></html>
+"""
+
 
 def preparar(args):
     d = Path(args.dir)
@@ -51,7 +60,7 @@ def preparar(args):
         shutil.copy(lanzador, prog / e)
         lista.append(str((prog / e).resolve()))
     # Las pruebas 68k propias que lanzan las escenas (`lanza PROGDIR:lanzador/cia_prueba.exe`), en git.
-    for p in ["cia_prueba.exe"]:
+    for p in ["cia_prueba.exe", "red_prueba.exe"]:
         shutil.copy(AQUI.parent / "caja" / "pruebas68k" / p, prog / "lanzador" / p)
     # El cajón del lanzador, al final: se copia entero (no se ejecuta).
     lista.append(str((prog / "lanzador").resolve()))
@@ -108,6 +117,11 @@ def shiva(m):
         m.apuntar("sin Shell para el perfil de shiva")
         return
     time.sleep(2)
+    # El foco en el Shell (como guion_dms.py): un clic en su barra, donde lo puso el compositor.
+    v = m.esperar(r"\[compositor\] ventana de [Ss]hell en \((\d+), (\d+)\)", 10)
+    if v:
+        m.clic(int(v[0]) + 120, max(int(v[1]) - 20, 1))
+        time.sleep(1)
     m.teclear("Ajuste tema oscuro", intro=True)
     time.sleep(2)
     m.teclear("Ajuste DMS SYS:Prefs/Presets/DMS/shiva.json GUARDAR", intro=True)
@@ -129,12 +143,23 @@ def correr(args):
     shutil.copy(args.disco, disco)
     inicio = time.time()
     (d / "inicio.txt").write_text(f"{inicio}\n")
+    # Con red: un servidor HTTP en el PC (la caja lo ve en 10.0.2.2, por la red de usuario de QEMU) con una página
+    # sencilla para Tachyon y un fichero de 4 MB para medir la velocidad (red_prueba.exe).
+    web = None
+    if args.red:
+        (d / "web").mkdir()
+        (d / "web" / "index.html").write_text(PAGINA, encoding="latin-1")
+        (d / "web" / "grande.bin").write_bytes(os.urandom(4 << 20))
+        web = subprocess.Popen([sys.executable, "-m", "http.server", "8099", "--bind", "127.0.0.1", "--directory",
+                                str(d / "web")], stdout=subprocess.DEVNULL, stderr=open(d / "web.err", "w"))
     q = subprocess.Popen(qemu(args, d, disco.resolve()), stdout=subprocess.DEVNULL, stderr=open(d / "qemu.err", "w"))
     (d / "qemu.pid").write_text(f"{q.pid}\n")
     m = demo.Demo(d, inicio, ancho, alto)
     try:
         guion(m, args)
     finally:
+        if web is not None:
+            web.terminate()
         if q.poll() is None:
             q.terminate()
             try:

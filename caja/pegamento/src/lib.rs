@@ -1717,7 +1717,7 @@ fn esperar(c: &mut Caja, t: u32) -> Espera {
             let _ = c.ex.elegir_siguiente();
             return Espera::Excepcion;
         }
-        if c.sonido.hay_gancho() {
+        if c.sonido.hay_gancho() || (c.cias.activo() && c.cias.hay_vencida(&c.ex, dashos::ahora_us())) {
             let _ = c.ex.despertar(t);
             let _ = c.ex.elegir_siguiente();
             return Espera::Sonido;

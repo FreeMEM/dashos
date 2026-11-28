@@ -156,6 +156,32 @@ impl Cias {
         }
     }
 
+    /// Si algún temporizador en marcha ya venció (para las esperas de la caja: entonces hay que dar el testigo a una
+    /// tarea y llamar a su interrupción, aunque todas estén esperando). Pone en hora los que acaban de arrancar.
+    pub fn hay_vencida(&mut self, ex: &Exec<MemoriaCaja>, ahora: u64) -> bool {
+        let mut si = false;
+        for cia in 0..2 {
+            for t in 0..2 {
+                if self.vect[cia][t] == 0 || self.mascara[cia] & (1 << t) == 0 {
+                    continue;
+                }
+                let reg = |r: u32| ex.mem.leer8(BASE[cia] + r * PASO).unwrap_or(0);
+                let (lo, cr) = if t == 0 { (TALO, CRA) } else { (TBLO, CRB) };
+                let latch = reg(lo) as u64 | (reg(lo + 1) as u64) << 8;
+                if reg(cr) & 1 == 0 || latch == 0 {
+                    continue;
+                }
+                let p = &mut self.proximo[cia][t];
+                if *p == 0 {
+                    *p = ahora + (latch * 1_000_000 / RELOJ_E).max(100);
+                } else if ahora >= *p {
+                    si = true;
+                }
+            }
+        }
+        si
+    }
+
     /// La siguiente interrupción que toca (su código y sus registros: A1 = `is_Data`, A5 = `is_Code`, A6 = ExecBase),
     /// o `None`. Una cuenta muy atrasada (la caja estuvo parada) no se recupera entera: se sigue desde ahora.
     pub fn vencida(&mut self, ex: &Exec<MemoriaCaja>, ahora: u64) -> Option<(u32, Registros)> {

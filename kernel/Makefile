@@ -615,7 +615,7 @@ AMIGA_APPS_FONDO ?= $(HOME)/recuperar/geosian-7d/dms-bloqueo-capturas/fondo/fuji
 AMIGA_APPS_OPCIONES ?= --shiva
 amiga-apps: usuario catalogos FORCE
 	$(MAKE) -C ../caja B=build-demo CAJA_INTERACTIVA=1
-	$(MAKE) -C ../caja/pruebas68k lanzador.exe cia_prueba.exe
+	$(MAKE) -C ../caja/pruebas68k lanzador.exe cia_prueba.exe red_prueba.exe
 	cd ../archivos/dashfs && cargo build --release --bin dashfs-ar --bin dashfs-volume
 	cd ../archivos/herramientas && cargo build --release
 	rm -rf target/amiga-apps && mkdir -p target/amiga-apps

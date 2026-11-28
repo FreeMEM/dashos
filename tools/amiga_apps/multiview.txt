@@ -1,6 +1,6 @@
 # MultiView (del AmigaOS 3.1 del usuario): la guía de ProTracker 4.1 (AmigaGuide), y otro sin nada (abre el pedidor de
 # ficheros de asl.library nativa).
-variable traza-amiga -
+variable traza-amiga MultiView
 lanza AmigaOS:Apps/Utilities/MultiView AmigaOS:Apps/ProTracker41/ProTracker4.1.guide
 ventana guide 200
 espera 100

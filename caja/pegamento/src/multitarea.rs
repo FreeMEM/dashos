@@ -191,12 +191,22 @@ pub(crate) fn siguiente(r: &mut Registros, anfitriona: Option<(u32, u32)>) -> Si
             continue;
         }
         // Un gancho de AHI con todas esperando: se ejecuta con la pila de la anfitriona (como BOOPSI).
-        if c.sonido.hay_gancho()
+        if (c.sonido.hay_gancho() || (c.cias.activo() && c.cias.hay_vencida(&c.ex, dashos::ahora_us())))
             && let Some((h, a7)) = anfitriona
             && c.ex.tareas().contains(&h)
         {
+            // Como con BOOPSI: con la anfitriona en marcha y su pila; después repite su espera.
+            let dormida = c.dormidas.iter().any(|&(t, _)| t == h);
+            let _ = c.ex.desaparcar(h);
+            let _ = c.ex.despertar(h);
+            let _ = c.ex.poner_en_marcha(h);
             if !crate::sonar(a7) {
                 return Siguiente::Plazo;
+            }
+            let Some(c) = caja() else { return Siguiente::Plazo };
+            if dormida {
+                let _ = c.ex.aparcar(h);
+                let _ = c.ex.elegir_siguiente();
             }
             continue;
         }
