@@ -23,7 +23,7 @@ propio, `third_party/Emu68` del worktree, con los parches de `patches/emu68/`.
   - **ARM (Emu68):** las direcciones del 68k siguen siendo direcciones del proceso. La página 0 va a una copia de
     solo lectura en $10000 (por encima de `mmap_min_addr`, y en la caja no hay nada entre $1000 y $100000). El JIT
     desvía allí, al traducir, las lecturas con dirección absoluta (`move.l 4.w,a6`): parche
-    `0017-pagina0-en-linux.patch`, con `DASHOS_PAGINA0`. Las que llegan por un registro (`move.l (a0),d0` con A0 = 4,
+    `0018-pagina0-en-linux.patch`, con `DASHOS_PAGINA0`. Las que llegan por un registro (`move.l (a0),d0` con A0 = 4,
     o un puntero nulo) dan SIGSEGV, y el manejador las imita sobre la copia con `decodifica()` de `caja/fallo_a64.h`.
     Una escritura en la página 0, o un acceso a lo demás de los primeros 64 KB, es un fallo del programa, como en
     DashOS.
