@@ -264,3 +264,13 @@ los programas; en x86 con RelevoJIT y, algunas, en ARM con Emu68 por qemu):
 Lo que es del motor (la FPU de RelevoJIT) y de los chips en Linux (CIA, la salida de Denise a una ventana) va a quien
 los lleva (dashos-x86, dashos-2f).
 
+Después (mismo día), cada cosa con su prueba del oráculo: StartNotify y EndNotify (`notify.c`, en RAM:), ExtendFont y
+StripFont (`fuente2.c`), ScalerDiv y BitMapScale (`escala.c`; la diskfont de 3.9 escala fuentes), `RAM:` en la caja de
+Linux (el volumen "Ram Disk" sobre `$XDG_RUNTIME_DIR/caja-amiga-ram`) y 24 glifos más en la topaz de la caja (el espacio
+duro, que MUI pone por los tabuladores: eran los cuadrados de MUI-Demo; × ÷ de la Calculator). Muchos "falta:
+X OpenLibrary" de las escenas (screennotify, bitmap.image, texteditor.gadget...) no son de la caja: son bibliotecas de
+disco que no están instaladas en ese AmigaOS (screennotify, puesta a mano, carga bien).
+
+Pendiente de la caja: `RunCommand`, `SystemTagList` y `Execute` (ejecutar una orden en anidado, con su pila), y la
+ROM ($F80000-$FFFFFF) que leen algunos programas (Directory Opus): con los chips, de dashos-2f.
+
