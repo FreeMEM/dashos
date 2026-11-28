@@ -12,8 +12,11 @@ ventana tiene su imagen, la guarda en `png` y hace las acciones, en orden:
     clic:X,Y         mover y un clic del botón izquierdo
     esperar:S        S segundos
     foto:FICHERO     la ventana en ese PNG, como esté
+    fotoultima:FICHERO  la última ventana que se abrió, en ese PNG
+    fotos:PREFIJO    cada ventana en PREFIJO-1.png, PREFIJO-2.png...
 
-Escribe por la salida lo que pasa ("ventana 320x200: Título", "clic en 5,5"...) y acaba cuando el cliente se va.
+Escribe por la salida lo que pasa ("ventana 320x200: Título", "clic en 5,5", "otra ventana 200x100: Título"...) y acaba
+cuando el cliente se va.
 Wayland, de su protocolo (wayland.xml y xdg-shell.xml): los mensajes son objeto (u32), tamaño << 16 | orden (u32) y
 los argumentos; los descriptores van aparte (SCM_RIGHTS).
 """
@@ -143,14 +146,21 @@ def peticion(c, obj, orden, b, fds):
         objetos[struct.unpack_from("<I", b)[0]] = "wl_keyboard"
 
 
-def ventana():
-    """La primera ventana con imagen: (wl_surface, ancho, alto, título) o None."""
+def ventanas():
+    """Las ventanas con imagen, en el orden en que se abrieron: (wl_surface, ancho, alto, título)."""
+    v = []
     for top, xs in top_de.items():
         sup = xdg_de.get(xs)
         b = superficies.get(sup)
         if b in buferes:
-            return sup, buferes[b][2], buferes[b][3], titulos.get(top, "")
-    return None
+            v.append((sup, buferes[b][2], buferes[b][3], titulos.get(top, "")))
+    return v
+
+
+def ventana():
+    """La primera ventana con imagen, o None."""
+    v = ventanas()
+    return v[0] if v else None
 
 
 def main():
@@ -163,6 +173,7 @@ def main():
     s.settimeout(30)
     c, _ = s.accept()
     resto, fds, hecha, dentro = b"", [], False, False
+    vistas = set()
     acciones = list(ACCIONES)
     siguiente = 0.0
     while True:
@@ -182,6 +193,10 @@ def main():
                     break
                 peticion(c, obj, struct.unpack_from("<I", resto, 4)[0] & 0xffff, resto[8:tam], fds)
                 resto = resto[tam:]
+        for w in ventanas()[1:]:
+            if w[0] not in vistas:
+                vistas.add(w[0])
+                decir("otra ventana %dx%d: %s" % (w[1], w[2], w[3]))
         v = ventana()
         if v and not hecha:
             hecha = True
@@ -215,6 +230,15 @@ def main():
             elif que == "foto":
                 png(arg, sup)
                 decir("foto: %s" % arg)
+            elif que == "fotos":
+                for k, w in enumerate(ventanas(), 1):
+                    png("%s-%d.png" % (arg, k), w[0])
+                decir("fotos: %s-*.png" % arg)
+            elif que == "fotoultima":
+                w = ventanas()
+                if w:
+                    png(arg, w[-1][0])
+                decir("foto de la última: %s" % arg)
     decir("el cliente se fue")
 
 

@@ -270,6 +270,7 @@ pub(crate) fn quitar_tarea(c: &mut Caja, t: u32, a_la_fuerza: bool) {
     c.sonido.tarea_muerta(t);
     c.cias.tarea_muerta(t);
     c.asl.tarea_muerta(t);
+    c.cx.tarea_muerta(&mut c.ex, t);
     c.dormidas.retain(|&(x, _)| x != t);
     crate::procesos::al_acabar(c, t);
     let r = if a_la_fuerza { c.ex.matar_tarea(t) } else { c.ex.acabar_hija(t) };

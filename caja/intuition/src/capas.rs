@@ -211,6 +211,25 @@ fn caracter(c: u8, q: u16) -> Option<u8> {
     caracter_por_defecto(evdev_de(c)?, Calificadores { bits: q })
 }
 
+/// La tecla cruda y los calificadores que escriben `ch` con la distribución de la caja (`InvertKeyMap` de
+/// commodities, `MapANSI`): de la tecla más baja a la más alta, sin nada o con Mayúsculas; si no, con Control (los
+/// caracteres de control). Lo comprobado contra el oráculo (`pruebas68k/cx.c`): "5" es la tecla de arriba ($05) y
+/// no la del teclado numérico; el retorno de carro, el Intro del teclado numérico ($43); el salto de línea, Control+J.
+pub fn tecla_de_caracter(ch: u8) -> Option<(u8, u16)> {
+    (0u8..0x68)
+        .flat_map(|c| [(c, 0u16), (c, ie::LSHIFT)])
+        .find(|&(c, q)| caracter(c, q) == Some(ch))
+        .or_else(|| (0u8..0x68).find(|&c| caracter(c, ie::CONTROL) == Some(ch)).map(|c| (c, ie::CONTROL)))
+}
+
+/// Como `tecla_de_caracter`, pero solo en el teclado numérico (`ParseIX` con `numericpad`).
+pub fn tecla_numerica_de_caracter(ch: u8) -> Option<(u8, u16)> {
+    (0u8..0x68)
+        .filter(|&c| evdev_de(c).and_then(crudo).is_some_and(|(_, numerico)| numerico))
+        .flat_map(|c| [(c, 0u16), (c, ie::LSHIFT)])
+        .find(|&(c, q)| caracter(c, q) == Some(ch))
+}
+
 impl<C: Compositor> CajaGrafica<C> {
     pub(crate) fn instalar_capas<M: Memoria>(&mut self, ex: &mut Exec<M>) -> Result<(), Fallo> {
         let n0 = self.numeros.layers;

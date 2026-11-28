@@ -54,6 +54,7 @@ mod sonido;
 mod sonido;
 mod cia;
 mod asl;
+mod comodidades;
 mod memoria;
 mod multitarea;
 mod plataforma;
@@ -158,6 +159,8 @@ const N_SONIDO: u16 = 0x1200;
 const N_CIA: u16 = 0x1400;
 /// asl.library (`asl.rs`): de 0x1480, 10 números.
 const N_ASL: u16 = 0x1480;
+/// commodities.library (`comodidades.rs`): de 0x1500, 35 números.
+const N_CX: u16 = 0x1500;
 const N_RAMLIB_CARGAR: u16 = 0xD00;
 const N_RAMLIB_SOLTAR: u16 = 0xD01;
 /// Las raíces de la caja en el servicio de archivos (`usuario/src/bin/inicio.rs`, S28): la 0, su cajón (leer y
@@ -196,6 +199,7 @@ struct Caja {
     salida: sonido::SalidaCaja,
     cias: cia::Cias,
     asl: asl::Asl,
+    cx: comodidades::Cx,
     disp_faltan: Vec<&'static str>,
     /// La traza de las llamadas nativas (rama amiga-apps): los nombres de las tareas que se trazan, de la variable
     /// global `traza-amiga` (`ENV:traza-amiga`, separados por espacios; `*`, todas), que se relee al lanzar cada
@@ -515,6 +519,14 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         }
     };
     di(&format!("asl.library nativa (Rust): ${:x}, con el pedidor de ficheros de la caja", asl.base));
+    let cx = match comodidades::Cx::instalar(&mut ex, N_CX) {
+        Ok(x) => x,
+        Err(f) => {
+            di(&format!("commodities.library no se crea: {:?}", f));
+            return 0;
+        }
+    };
+    di(&format!("commodities.library nativa (Rust): ${:x} (los objetos, sin sucesos de entrada aún)", cx.base));
     let red = red::RedCaja::nueva();
     di(&format!(
         "bsdsocket.library nativa (Rust): ${:x}, {}",
@@ -576,6 +588,7 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         salida,
         cias,
         asl,
+        cx,
         disp_faltan: Vec::new(),
         traza: Vec::new(),
         dos_base,
@@ -1137,6 +1150,7 @@ pub extern "C" fn caja_tarea_fin(t: u32) -> u32 {
     c.sonido.tarea_muerta(t);
     c.cias.tarea_muerta(t);
     c.asl.tarea_muerta(t);
+    c.cx.tarea_muerta(&mut c.ex, t);
     let _ = c.ex.matar_tarea(t);
     c.ex.ramlib_cortada();
     c.util.tarea_muerta(&c.ex);
@@ -1281,6 +1295,15 @@ fn ajena(c: &mut Caja, n: u16, r: &mut Registros) -> Fin {
         let res = c.asl.llamar(&mut en, n, r);
         c.sucio = true;
         return match res {
+            Ok(a) => de_accion(a),
+            Err(_) => {
+                r.d[0] = 0;
+                Fin::Seguir
+            }
+        };
+    }
+    if c.cx.es_mio(n) {
+        return match c.cx.llamar(&mut c.ex, n, r) {
             Ok(a) => de_accion(a),
             Err(_) => {
                 r.d[0] = 0;
@@ -1536,6 +1559,9 @@ fn recoger_avisos(c: &mut Caja) {
     }
     for f in core::mem::take(&mut c.asl.faltan) {
         faltan.push(("asl.library", f));
+    }
+    for f in core::mem::take(&mut c.cx.faltan) {
+        faltan.push(("commodities.library", f));
     }
     for b in core::mem::take(&mut c.disp_faltan) {
         faltan.push((b, if b == "console.device" { "OpenDevice de una consola (CON:)" } else { "?" }));
@@ -2054,13 +2080,22 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
     }
     c.pc_llamada = c.ex.mem.leer32(r.a[7]).unwrap_or(0);
     if n <= lvo::ULTIMO_DE_EXEC && TRAZA_EXEC.load(core::sync::atomic::Ordering::Relaxed) {
+        let que = lvo::nombre(n);
+        // Lo que se abre, por su nombre (A1).
+        let nombre = if matches!(que, "OpenLibrary" | "OldOpenLibrary" | "OpenDevice" | "OpenResource") {
+            let d = if que == "OpenDevice" { r.a[0] } else { r.a[1] };
+            c.ex.leer_cadena(d).map(|t| format!(" \"{}\"", t)).unwrap_or_default()
+        } else {
+            String::new()
+        };
         di(&format!(
-            "exec {}(d0 ${:x}, d1 ${:x}, a0 ${:x}, a1 ${:x}) desde ${:x}",
-            lvo::nombre(n),
+            "exec {}(d0 ${:x}, d1 ${:x}, a0 ${:x}, a1 ${:x}){} desde ${:x}",
+            que,
             r.d[0],
             r.d[1],
             r.a[0],
             r.a[1],
+            nombre,
             c.pc_llamada
         ));
     }

@@ -34,6 +34,7 @@ pub mod chunky;
 pub mod compositor;
 pub mod escala;
 pub mod estructuras;
+pub mod ix;
 pub mod lienzo;
 pub mod lvo;
 pub mod modos;
@@ -70,7 +71,7 @@ use alloc::vec::Vec;
 use caja_exec::{Exec, Memoria};
 
 pub use boopsi::{Corte68k, Hecho, Puente};
-pub use capas::{KEYMAP, LAYERS};
+pub use capas::{KEYMAP, LAYERS, tecla_de_caracter, tecla_numerica_de_caracter};
 pub use compositor::{Compositor, CompositorDePrueba, Evento, NuevaVentana, Superficie, Tokens};
 pub use fuente::{ALTO as FUENTE_ALTO, ANCHO as FUENTE_ANCHO, BASE as FUENTE_BASE};
 pub use lienzo::{Lienzo, Rect};
