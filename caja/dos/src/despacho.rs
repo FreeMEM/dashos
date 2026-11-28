@@ -222,6 +222,29 @@ impl<F: SistemaArchivos> Dos<F> {
                 self.escribir_en(c, a, &s)?;
                 d0(0)
             }
+            // VFWritef(fh, format, argarray): el formato de BCPL (texto.rs). Devuelve lo escrito (en el Amiga, D0 no
+            // es una cuenta: oráculo, dos3.c).
+            VFWRITEF => {
+                let a = self.fichero(d[1])?;
+                let fmt = Self::cadena(c, d[2])?;
+                let args = d[3];
+                let t = crate::texto::formatear_bcpl(
+                    &fmt,
+                    |k| Self::l32(c, args.wrapping_add(4 * k as u32)).unwrap_or(0),
+                    |p| if p == 0 { Vec::new() } else { Self::cadena(c, p).unwrap_or_default() },
+                );
+                d0(self.escribir_en(c, a, &t)?)
+            }
+            // AddBuffers(name, number): los sistemas de ficheros de la caja no tienen búferes que crecer. Un nombre que
+            // no es un dispositivo da su error (oráculo: ERROR_DEVICE_NOT_MOUNTED); uno que sí, DOSTRUE (sin comprobar).
+            ADD_BUFFERS => {
+                let dp = self.get_device_proc(c, d[1], 0)?;
+                if dp == 0 {
+                    return Err(E::Io(ERROR_DEVICE_NOT_MOUNTED));
+                }
+                self.free_device_proc(c, dp);
+                d0(DOSTRUE)
+            }
             VFPRINTF => {
                 let a = self.fichero(d[1])?;
                 let t = Self::formatear(c, d[2], d[3])?;

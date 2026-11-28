@@ -243,3 +243,123 @@ pub(crate) fn numero(t: &[u8]) -> Option<(i32, usize)> {
     let v = if neg { -v } else { v };
     Some((v.clamp(i32::MIN as i64, i32::MAX as i64) as i32, i))
 }
+
+/// El texto de un formato de BCPL (`VFWritef`; `arg(k)` da el argumento `k`, `cadena(p)` la cadena de C en `p`). Lo
+/// comprobado contra el oráculo (`pruebas68k/dos3.c`, Kickstart 40.68):
+///
+/// - `%N`, el número con signo; `%I<w>`, con signo y a la derecha en `w`; `%U<w>`, sin signo y a la derecha en `w`
+///   (con blancos; si no cabe, entero).
+/// - `%X<w>` y `%O<w>`, en hexadecimal (mayúsculas) y en octal: exactamente `w` cifras, con ceros delante o sin las de
+///   la izquierda.
+/// - `%S`, una cadena de C; `%T<w>`, una cadena a la izquierda en `w` (con blancos; si no cabe, entera); `%C`, un
+///   carácter; `%$`, se salta un argumento; `%%`, el `%`. Otra letra sale tal cual, sin gastar argumento.
+/// - La anchura es una letra: `0`-`9`, o `A`-`Z` para 10 a 35. `*N` no es nada especial.
+pub(crate) fn formatear_bcpl(f: &[u8], arg: impl Fn(usize) -> u32, cadena: impl Fn(u32) -> Vec<u8>) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut k = 0;
+    let mut i = 0;
+    let mut sig = || {
+        k += 1;
+        arg(k - 1)
+    };
+    let anchura = |b: Option<&u8>| -> usize {
+        match b {
+            Some(&c @ b'0'..=b'9') => (c - b'0') as usize,
+            Some(&c) if c.is_ascii_alphabetic() => (c.to_ascii_uppercase() - b'A') as usize + 10,
+            _ => 0,
+        }
+    };
+    let derecha = |out: &mut Vec<u8>, t: &[u8], w: usize| {
+        out.extend(core::iter::repeat_n(b' ', w.saturating_sub(t.len())));
+        out.extend_from_slice(t);
+    };
+    let cifras = |mut v: u32, base: u32, w: usize| -> Vec<u8> {
+        let mut t = alloc::vec![b'0'; w];
+        for d in t.iter_mut().rev() {
+            *d = b"0123456789ABCDEF"[(v % base) as usize];
+            v /= base;
+        }
+        t
+    };
+    while i < f.len() && out.len() < MAX_FORMATO {
+        if f[i] != b'%' {
+            out.push(f[i]);
+            i += 1;
+            continue;
+        }
+        let Some(&letra) = f.get(i + 1) else { break };
+        i += 2;
+        match letra.to_ascii_uppercase() {
+            b'N' => out.extend_from_slice(alloc::format!("{}", sig() as i32).as_bytes()),
+            b'I' | b'U' | b'X' | b'O' | b'T' => {
+                let w = anchura(f.get(i));
+                if i < f.len() {
+                    i += 1;
+                }
+                let v = sig();
+                match letra.to_ascii_uppercase() {
+                    b'I' => derecha(&mut out, alloc::format!("{}", v as i32).as_bytes(), w),
+                    b'U' => derecha(&mut out, alloc::format!("{}", v).as_bytes(), w),
+                    b'X' => out.extend_from_slice(&cifras(v, 16, w)),
+                    b'O' => out.extend_from_slice(&cifras(v, 8, w)),
+                    _ => {
+                        let t = cadena(v);
+                        out.extend_from_slice(&t);
+                        out.extend(core::iter::repeat_n(b' ', w.saturating_sub(t.len())));
+                    }
+                }
+            }
+            b'S' => {
+                let v = sig();
+                out.extend_from_slice(&cadena(v));
+            }
+            b'C' => out.push(sig() as u8),
+            b'$' => {
+                sig();
+            }
+            _ => out.push(letra),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod pruebas_bcpl {
+    use super::*;
+
+    /// Lo que da el oráculo (pruebas68k/dos3.c).
+    #[test]
+    fn como_el_oraculo() {
+        let f = |fmt: &str, a: &[u32]| {
+            let a = a.to_vec();
+            formatear_bcpl(fmt.as_bytes(), |k| a.get(k).copied().unwrap_or(0), |p| match p {
+                1 => b"uno".to_vec(),
+                2 => b"dos".to_vec(),
+                3 => b"ab".to_vec(),
+                4 => b"largo".to_vec(),
+                _ => Vec::new(),
+            })
+        };
+        assert_eq!(f("%N", &[42]), b"42");
+        assert_eq!(f("%N", &[-7i32 as u32]), b"-7");
+        assert_eq!(f("%I5|", &[42]), b"   42|");
+        assert_eq!(f("%I2|", &[12345]), b"12345|");
+        assert_eq!(f("%X4", &[0xBEEF1]), b"EEF1");
+        assert_eq!(f("%XA", &[0x1F]), b"000000001F");
+        assert_eq!(f("%O3", &[8]), b"010");
+        assert_eq!(f("%U4", &[u32::MAX]), b"4294967295");
+        assert_eq!(f("%S y %S", &[1, 2]), b"uno y dos");
+        assert_eq!(f("%T8|", &[3]), b"ab      |");
+        assert_eq!(f("%C%C", &[b'h' as u32, b'i' as u32]), b"hi");
+        assert_eq!(f("%$%N", &[1, 2]), b"2");
+        assert_eq!(f("100%% y %Z", &[3]), b"100% y Z");
+        assert_eq!(f("%N*N", &[5]), b"5*N");
+        assert_eq!(f("%X2", &[0x1F]), b"1F");
+        assert_eq!(f("%I3|", &[-5i32 as u32]), b" -5|");
+        assert_eq!(f("%U6|", &[42]), b"    42|");
+        assert_eq!(f("%T2|", &[4]), b"largo|");
+        assert_eq!(f("%Z%N", &[7, 8]), b"Z7");
+        assert_eq!(f("al final %", &[]), b"al final ");
+    }
+}
+
