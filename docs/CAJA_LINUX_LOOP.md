@@ -49,12 +49,13 @@ propio, `third_party/Emu68` del worktree, con los parches de `patches/emu68/`.
   `caja-amiga [-v] programa [argumentos]`.
 - [x] L4 **Ficheros de Linux** (2026-11-28): `Linux:` (la raíz, de arranque; el programa empieza en el directorio
   actual), `Caja:` y `SYS:` (el cajón de la caja). Pruebas: `caja/pruebas_linux/prueba.sh`.
-- [~] L5 **Ventanas y sonido.** L5a, las ventanas por Wayland (2026-11-28), hecho. Falta comprobar el ratón y el
-  teclado en Linux. El sonido, en espera: la caja de DashOS tampoco saca el de los programas 68k todavía (Paula da
+- [~] L5 **Ventanas y sonido.** L5a, las ventanas por Wayland (2026-11-28), hecho; el teclado, comprobado (con
+  ydotool); el ratón, no. El sonido, en espera: la caja de DashOS tampoco saca el de los programas 68k todavía (Paula da
   muestras y `audio.device` es un programa aparte, sin enganchar; S19 fase 2). Cuando lo tenga, en Linux irá por lo
   que haya (PipeWire o PulseAudio por su socket, sin libc).
-- [ ] L6 **Lo que falta para usarla de verdad**: `Input()` desde la entrada estándar, Ctrl-C (SIGINT), las rutas de
-  Linux en los argumentos (`/home/...` es otra cosa en el Amiga), páginas de 16 KB (Asahi) y medir en un ARM de verdad.
+- [~] L6 **Lo que falta para usarla de verdad.** Hecho: `Input()` desde la entrada estándar, Ctrl-C (SIGINT), las
+  rutas de Linux en los argumentos, `$CAJA_AMIGAOS` y los segmentos a 64 KB (para Asahi; sin probar allí). Falta: medir
+  en un ARM de verdad y probar en un Linux de AArch64 de verdad; el ratón, sin comprobar.
 
 ## Bitácora
 
@@ -144,3 +145,24 @@ verdad; la caja de AArch64 en un Linux de verdad (solo qemu-user).
 Para las capturas de ventanas sin tocar el portapapeles: niri no da la posición de las ventanas en mosaico, así que se
 pone flotante la de la caja (`niri msg action move-window-to-floating --id N` y `move-floating-window -x 200 -y 200`) y
 `grim -g` captura solo su rectángulo.
+
+### 2026-11-28: L6, y programas de AmigaOS 3.9
+
+- **L6a.** `Read(Input())` lee la entrada estándar (de UTF-8 a Latin-1); Ctrl-C llega como `SIGBREAKF_CTRL_C` (al
+  tercero sin atender, la caja acaba con 130). **L6b.** Un argumento que es una ruta absoluta de Linux y existe pasa a
+  `Linux:...`, entre comillas si lleva espacios; lo que el programa escribe y ya es UTF-8 sale tal cual. **L6c.**
+  `$CAJA_AMIGAOS=<carpeta>` monta un AmigaOS del usuario como en DashOS (`montar_amigaos_en`). Los segmentos de la caja
+  de AArch64 van a 64 KB y el memfd de la página 0 mide 64 KB (Asahi: sin probar).
+- `prueba.sh`: 24 BIEN, 0 MAL, en las dos cajas. A mano: `teclas.exe` en niri con ydotool (con `wtype` no vale: sube
+  su propio mapa de teclado, y la caja traduce los códigos estándar sin mirarlo, como en DashOS). Antes de teclear se
+  mira que el foco sea de la caja.
+- **Programas de otros: los comandos de `C:` de un AmigaOS 3.9** (el del usuario, que ya usa la demo de DashOS),
+  con `CAJA_AMIGAOS` o un `SYS:` con enlaces a sus Libs. Van: Version (carga `version.library` de disco), Avail, Type,
+  Assign, Info, MakeDir, Copy y Protect. No van, por huecos de la caja que son también de DashOS (no de Linux):
+  - `dos.library`: `MatchFirst("")` da 205 (en AmigaOS es el cajón actual) y `MatchNext` no está: Dir, List, Search,
+    Delete y Rename (los de patrones). `DateToStr` no está: Date.
+  - `exec.library`: `Supervisor` y `CacheControl` no están: Cpu (en x86 cae después en la dirección $F; en ARM acaba).
+  - `icon.library`: la rechaza ramlib (su `Init` llama a lo privado de exec; hace falta una nativa): Calculator.
+  - Status y Which acaban con 20 (sin mirar).
+- `arranque-virt` (be) con todo hasta L5a: la caja, 158 "bien" y ningún "MAL"; solo faltó el intermitente de
+  "[ram] Ana: avisos hostiles" (el del servicio de archivos, de `X86_LOOP.md`), que no es de la caja.
