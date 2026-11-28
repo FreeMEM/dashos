@@ -1380,8 +1380,9 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] capa.exe acabó con 0, 
 # La memoria del 68k crece según la pidan, hasta el tope (aquí uno de prueba, 48 MB): glotona.c pide sin fin.
 ~│   [caja-amiga] glotona: 0 fallos
-# S3: con los cupos como topes, la para su tope de prueba (48 MB) y no el cupo (antes llegaba a 15).
-~│   [caja-amiga] glotona: 46 MB antes de quedarse sin sitio
+# S3: con los cupos como topes, la para su tope de prueba (48 MB) y no el cupo (antes llegaba a 15). Desde amiga-apps,
+# 6 MB menos: el hueco del chipset ($A00000-$FFFFFF) no se da nunca (exec, HUECO_DEL_CHIPSET).
+~│   [caja-amiga] glotona: 40 MB antes de quedarse sin sitio
 # aviso-cajas: con la memoria del 68k crecida y libre, memh.c pone un manejador de memoria baja (AddMemHandler) y la caja
 # dice a `presion` que tiene algo que soltar; `presion` llena la memoria de DashOS hasta que el kernel avisa, `sesiones`
 # mide lo que tiene cobrado la caja y se lo pide; la caja llama al manejador (suelta su caché de 2 MB) y devuelve lo
