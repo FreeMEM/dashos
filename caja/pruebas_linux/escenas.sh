@@ -21,6 +21,7 @@ if [ -z "$ESCENAS" ]; then
     ESCENAS=$(cd "$RAIZ/tools/amiga_apps" && ls *.txt | sed 's/\.txt$//' | grep -v '^todos$')
 fi
 SEGUNDOS=${ESCENAS_SEGUNDOS:-30}
+# La caja de ARM en un PC: CAJA_X=../build-linux/caja-amiga CAJA_EMU=qemu-aarch64.
 for e in $ESCENAS; do
     t=$(mktemp -d) || exit 1
     cp "$AQUI/../pruebas68k/lanzador.exe" "$t/$e"
@@ -31,7 +32,7 @@ for e in $ESCENAS; do
     cp_pid=$!
     sleep 0.5
     (cd "$t" && XDG_RUNTIME_DIR=. WAYLAND_DISPLAY=wl.sock CAJA_AMIGA_SYS="$t/sys" CAJA_AMIGA_PROTEGER=no \
-        timeout "$SEGUNDOS" "$X" -v "$t/$e" < /dev/null > "$SALIDA/$e-caja.txt" 2>&1)
+        timeout "$SEGUNDOS" $CAJA_EMU "$X" -v "$t/$e" < /dev/null > "$SALIDA/$e-caja.txt" 2>&1)
     r=$?
     sleep 1
     kill $cp_pid 2>/dev/null

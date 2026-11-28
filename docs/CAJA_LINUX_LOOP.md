@@ -246,3 +246,21 @@ Huecos que quedan (de lo visto):
 | MakeLink y los comentarios de fichero (Filenote) en Linux | MakeLink, Filenote |
 | `DoPkt`, workbench.library de disco | Owner, xadList |
 | Los ficheros de Linux sin `x` salen sin la "e" | Which |
+
+Las escenas de amiga-apps en la caja de Linux (`pruebas_linux/escenas.sh`, con `CAJA_AMIGAOS` el AmigaOS del usuario con
+los programas; en x86 con RelevoJIT y, algunas, en ARM con Emu68 por qemu):
+
+| Escena | x86 (RelevoJIT) | ARM (Emu68) |
+|---|---|---|
+| juegos | AMines se juega; AmiMineSweeper (Blitz) pinta en el chipset y no se ve | - |
+| forja, hangar, tachyon | abren sus ventanas (sin red: Tachyon dice el error) | - |
+| amp | no abre en la escena (con el sistema de 3.9 y su datatypes 44.47); a mano, con la 47.3, sí | - |
+| pt (ProTracker) | cae su tarea (error de bus) | lee la CIA-A ($BFE001): la caja de Linux no lleva los chips |
+| dopus | cae (error de bus) | lee $FFFFEC (la ROM) y cae |
+| lw (LightWave) | cae por la excepción 11 (instrucciones de la FPU: RelevoJIT no la tiene) | no cae, pero no abre ventana |
+| octamed | escribe en la página 0 y cae | igual |
+| multiview, modeler, musica, cia, red | sin ventana en el tiempo de la escena | - |
+
+Lo que es del motor (la FPU de RelevoJIT) y de los chips en Linux (CIA, la salida de Denise a una ventana) va a quien
+los lleva (dashos-x86, dashos-2f).
+
