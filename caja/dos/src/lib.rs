@@ -347,6 +347,8 @@ pub struct Dos<F: SistemaArchivos> {
     pub(crate) busquedas: BTreeMap<u32, busqueda::Busqueda>,
     /// Los `DevProc` dados por GetDeviceProc: dirección → (cerrojo que soltar, o 0; el cajón de la asignación).
     pub(crate) devprocs: BTreeMap<u32, (u32, Option<usize>)>,
+    /// Hasta dónde ha leído ReadItem (sin `CSource`) la línea de argumentos de cada tarea.
+    pub(crate) leido_args: BTreeMap<u32, usize>,
     pub(crate) avisos: Vec<Aviso>,
 }
 
@@ -369,6 +371,7 @@ impl<F: SistemaArchivos> Dos<F> {
             fijos: BTreeMap::new(),
             busquedas: BTreeMap::new(),
             devprocs: BTreeMap::new(),
+            leido_args: BTreeMap::new(),
             avisos: Vec::new(),
         }
     }
@@ -603,6 +606,7 @@ impl<F: SistemaArchivos> Dos<F> {
             self.soltar_cerrojo(c, d);
         }
         self.campos.retain(|(t, _), _| *t != tarea);
+        self.leido_args.remove(&tarea);
         self.locales.retain(|(t, _, _), _| *t != tarea);
         // Sus búsquedas: los cerrojos ya se soltaron arriba y el AChain lo suelta exec con su memoria.
         self.busquedas.retain(|_, b| b.dueno != tarea);

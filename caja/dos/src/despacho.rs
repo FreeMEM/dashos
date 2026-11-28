@@ -166,6 +166,16 @@ impl<F: SistemaArchivos> Dos<F> {
                 d0(d[1])
             }
             DATE_TO_STR => d0(self.date_to_str(c, d[1])?),
+            STR_TO_DATE => d0(self.str_to_date(c, d[1])?),
+            READ_ITEM => d0(self.read_item(c, d[1], d[2], d[3])?),
+            // dos no lleva la lista de los CLI: solo conoce el del proceso en marcha, con su pr_TaskNum (1 si es 0).
+            MAX_CLI => d0(self.num_cli(c)),
+            FIND_CLI_PROC => {
+                let n = self.num_cli(c);
+                d0(if n != 0 && d[1] == n { Self::proceso(c).unwrap_or(0) } else { 0 })
+            }
+            // Sin residentes (Resident): no hay ninguno que encontrar.
+            FIND_SEGMENT => d0(0),
             DELAY => {
                 r.d[0] = 0;
                 Ok(if (d[1] as i32) > 0 { Accion::Dormir { tics: d[1] } } else { Accion::Seguir })
@@ -571,6 +581,14 @@ impl<F: SistemaArchivos> Dos<F> {
         self.objetos.remove(&dl);
         c.liberar(dl, doslist::TAMANO);
         Ok(())
+    }
+
+    /// El número del CLI del proceso en marcha (pr_TaskNum, o 1 si es 0), o 0 si no tiene CLI.
+    fn num_cli<C: Caja>(&self, c: &C) -> u32 {
+        if Self::proceso(c).is_none() || self.campo(c, process::PR_CLI) == 0 {
+            return 0;
+        }
+        self.campo(c, process::PR_TASKNUM).max(1)
     }
 
     /// GetProgramName, GetCurrentDirName, GetPrompt: un BSTR del CLI a un búfer. Sin CLI, cadena vacía y DOSFALSE.

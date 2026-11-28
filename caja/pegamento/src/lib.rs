@@ -226,6 +226,10 @@ fn caja() -> Option<&'static mut Caja> {
 }
 
 /// Lo que dice la caja por la consola: "  [caja-amiga] ...".
+/// `CAJA_AMIGA_TRAZA=1` (en Linux): cada llamada a dos.library sale por la consola de la caja, con sus argumentos y lo
+/// que devolvió. Para ver qué espera un programa de otros que no va.
+static TRAZA_DOS: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 pub(crate) fn di(texto: &str) {
     plataforma::decir!("  [caja-amiga] {}", texto);
 }
@@ -482,6 +486,10 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         al_acabar: alloc::collections::BTreeMap::new(),
         chips: None,
     };
+    #[cfg(not(feature = "dashos"))]
+    if sys::entorno(b"CAJA_AMIGA_TRAZA\0").is_some_and(|v| v == b"1") {
+        TRAZA_DOS.store(true, core::sync::atomic::Ordering::Relaxed);
+    }
     // ramlib: lo que no está en memoria, de disco (`ramlib.rs`). Sus asignaciones, a los cajones que haya.
     c.ex.poner_ramlib(N_RAMLIB_CARGAR, N_RAMLIB_SOLTAR);
     {
@@ -493,6 +501,17 @@ pub unsafe extern "C" fn caja_rust_arrancar(
             }
         }
         di(&format!("ramlib: lo que no es nativo se carga de disco; {}", if hechas.is_empty() { String::from("sin cajones") } else { hechas.join(", ") }));
+        // Las de los comandos (`C:`, `S:`, `L:`, `LOCALE:`), si el cajón las tiene: Which, Execute y los programas que
+        // abren "C:..." o "LOCALE:..." las dan por hechas.
+        let mut comandos = Vec::new();
+        for (nombre, ruta) in [("C", "Caja:C"), ("S", "Caja:S"), ("L", "Caja:L"), ("LOCALE", "Caja:Locale")] {
+            if c.dos.asignar(&mut cd, nombre, ruta).is_ok() {
+                comandos.push(alloc::format!("{}: {}", nombre, ruta));
+            }
+        }
+        if !comandos.is_empty() {
+            di(&format!("comandos: {}", comandos.join(", ")));
+        }
         // `T:` y `ENV:`, que los programas dan por hechos (en un Amiga, en `RAM:`): en el cajón de la caja, que es lo que
         // tiene para escribir. Sin `T:`, Tachyon no puede dejar ahí las imágenes que decodifica (el logo de su página).
         let mut temporales = Vec::new();
@@ -1134,7 +1153,19 @@ fn ajena(c: &mut Caja, n: u16, r: &mut Registros) -> Fin {
         }
         let mut rd = caja_dos::Registros { d: r.d, a: r.a };
         let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
+        let antes = rd.d;
         let a = c.dos.llamar(&mut cd, n - N_DOS, &mut rd);
+        if TRAZA_DOS.load(core::sync::atomic::Ordering::Relaxed) {
+            di(&format!(
+                "dos {}(${:x}, ${:x}, ${:x}, ${:x}) = ${:x}",
+                caja_dos::lvo::nombre(n - N_DOS),
+                antes[1],
+                antes[2],
+                antes[3],
+                antes[4],
+                rd.d[0]
+            ));
+        }
         (r.d, r.a) = (rd.d, rd.a);
         return match a {
             caja_dos::Accion::Seguir => Fin::Seguir,

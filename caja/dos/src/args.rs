@@ -36,11 +36,13 @@ fn plantilla(t: &[u8]) -> Option<Vec<Elemento>> {
         return Some(v);
     }
     for parte in t.split(|&b| b == b',') {
-        let mut trozos = parte.split(|&b| b == b'/');
-        let nombres: Vec<Vec<u8>> = trozos.next()?.split(|&b| b == b'=').map(clave_latin1).collect();
-        if nombres.iter().any(|n| n.is_empty()) {
+        // Un elemento del todo vacío ("A,,B") sigue siendo un error de la plantilla (sin comprobar en el oráculo).
+        if parte.is_empty() {
             return None;
         }
+        let mut trozos = parte.split(|&b| b == b'/');
+        let nombres: Vec<Vec<u8>> = trozos.next()?.split(|&b| b == b'=').map(clave_latin1).collect();
+        // Un nombre vacío ("/N" o "=X") vale: no casa con ninguna palabra, solo recibe posicionales (oráculo, dos2).
         let mut e = Elemento { nombres, ..Default::default() };
         for m in trozos {
             match m {
@@ -361,5 +363,130 @@ impl<F: SistemaArchivos> Dos<F> {
         let t = Self::cadena(c, tpl)?;
         let el = plantilla(&t).ok_or(E::Io(ERROR_BAD_TEMPLATE))?;
         Ok(el.iter().position(|e| e.nombres.contains(&k)).map_or(u32::MAX, |i| i as u32))
+    }
+}
+
+/// Lo que devuelve ReadItem (dos/rdargs.h).
+pub(crate) const ITEM_EQUAL: i32 = -2;
+pub(crate) const ITEM_ERROR: i32 = -1;
+pub(crate) const ITEM_NOTHING: i32 = 0;
+pub(crate) const ITEM_UNQUOTED: i32 = 1;
+pub(crate) const ITEM_QUOTED: i32 = 2;
+
+/// De dónde lee ReadItem: una `CSource` o la entrada del proceso.
+pub(crate) trait Fuente {
+    /// El carácter siguiente, o None al final.
+    fn leer(&mut self) -> Option<u8>;
+    /// Devuelve el último carácter leído, para leerlo otra vez.
+    fn devolver(&mut self);
+}
+
+/// Una `CSource`: leer al final no avanza; devolver retrocede uno si `cur` > 0 (aunque lo último fuera el final).
+pub(crate) struct FuenteCs<'a> {
+    pub buf: &'a [u8],
+    pub cur: usize,
+}
+
+impl Fuente for FuenteCs<'_> {
+    fn leer(&mut self) -> Option<u8> {
+        let c = self.buf.get(self.cur).copied();
+        if c.is_some() {
+            self.cur += 1;
+        }
+        c
+    }
+    fn devolver(&mut self) {
+        self.cur = self.cur.saturating_sub(1);
+    }
+}
+
+/// ReadItem: (resultado, palabra). Lo comprobado contra el oráculo (`pruebas68k/dos2.c`, con una `CSource`):
+///
+/// - Salta los blancos. Con una `CSource`, al acabar una palabra en el final del búfer `cur` queda en su última letra
+///   (ver `FuenteCs`), y otra llamada la da otra vez.
+/// - Sin comillas, la palabra acaba en un blanco o un '=' (que se gastan) o en un salto de línea o el final (que se
+///   devuelven): ITEM_UNQUOTED. Un '=' suelto es ITEM_EQUAL. Nada, ITEM_NOTHING.
+/// - Entre comillas, `*"` es la comilla, `*N` el salto de línea y `*E` el escape: ITEM_QUOTED. Sin la comilla del
+///   final, ITEM_ERROR.
+/// - Si no cabe en `max` (con el 0 del final), ITEM_ERROR.
+pub(crate) fn leer_item(f: &mut impl Fuente, max: usize) -> (i32, Vec<u8>) {
+    let mut t = Vec::new();
+    let primero = loop {
+        match f.leer() {
+            Some(b' ' | b'\t') => continue,
+            otro => break otro,
+        }
+    };
+    let r = match primero {
+        None | Some(b'\n') => {
+            f.devolver();
+            ITEM_NOTHING
+        }
+        Some(b'=') => ITEM_EQUAL,
+        Some(b'"') => loop {
+            match f.leer() {
+                None | Some(b'\n') => break ITEM_ERROR,
+                Some(b'"') => break ITEM_QUOTED,
+                Some(b'*') => match f.leer() {
+                    Some(b'N' | b'n') => t.push(b'\n'),
+                    Some(b'E' | b'e') => t.push(0x1B),
+                    Some(x) => t.push(x),
+                    None => break ITEM_ERROR,
+                },
+                Some(x) => t.push(x),
+            }
+        },
+        Some(x) => {
+            t.push(x);
+            loop {
+                match f.leer() {
+                    Some(b' ' | b'\t' | b'=') => break,
+                    None | Some(b'\n') => {
+                        f.devolver();
+                        break;
+                    }
+                    Some(x) => t.push(x),
+                }
+            }
+            ITEM_UNQUOTED
+        }
+    };
+    if t.len() >= max {
+        t.truncate(max.saturating_sub(1));
+        return (ITEM_ERROR, t);
+    }
+    (r, t)
+}
+
+impl<F: SistemaArchivos> Dos<F> {
+    /// ReadItem(buffer, maxchars, csource). Sin `CSource`, de la línea de argumentos del proceso: en el Amiga, el
+    /// shell la deja en el búfer de `Input()`, y de ahí la leen ReadArgs y ReadItem (Execute lee así su fichero).
+    pub(crate) fn read_item<C: Caja>(&mut self, c: &mut C, sal: u32, max: u32, cs: u32) -> R<u32> {
+        let (r, mut t) = if cs == 0 {
+            let a = self.campo(c, process::PR_ARGUMENTS);
+            let linea = if a == 0 { Vec::new() } else { Self::cadena(c, a)? };
+            let t = c.tarea_actual();
+            let cur = self.leido_args.get(&t).copied().unwrap_or(0).min(linea.len());
+            let mut f = FuenteCs { buf: &linea, cur };
+            let r = leer_item(&mut f, max as usize);
+            self.leido_args.insert(t, f.cur);
+            r
+        } else {
+            Self::tramo(c, cs, 12)?;
+            let b = Self::l32(c, cs + rdargs::CS_BUFFER)?;
+            let largo = Self::l32(c, cs + rdargs::CS_LENGTH)?;
+            let cur = Self::l32(c, cs + rdargs::CS_CURCHR)?;
+            let datos = if largo == 0 { Vec::new() } else { Self::bytes(c, b, largo)? };
+            let mut f = FuenteCs { buf: &datos, cur: (cur as usize).min(datos.len()) };
+            let r = leer_item(&mut f, max as usize);
+            Self::e32(c, cs + rdargs::CS_CURCHR, f.cur as u32)?;
+            r
+        };
+        if max > 0 {
+            Self::tramo(c, sal, max)?;
+            t.push(0);
+            Self::poner(c, sal, &t)?;
+        }
+        Ok(r as u32)
     }
 }

@@ -7,6 +7,14 @@
 //! - Con `DTF_SUBST`, la fecha es "Today", "Yesterday" o "Tomorrow" si toca; de 2 a 7 días atrás, el día de la
 //!   semana; si no, la fecha.
 //! - Devuelve DOSTRUE. Cada texto va solo si su puntero no es 0.
+//!
+//! StrToDate, al revés (`pruebas68k/dos2.c`):
+//!
+//! - Lee la fecha de `dat_StrDate` en el formato de `dat_Format` y la hora de `dat_StrTime` ("hh:mm" o "hh:mm:ss").
+//!   Cada parte cambia solo si su puntero no es 0: la fecha, `ds_Days`; la hora, `ds_Minute` y `ds_Tick`.
+//! - Los años de dos cifras: de 78 a 99 son 19xx; de 00 a 77, 20xx.
+//! - Una fecha que no existe (30-Feb) o mal escrita devuelve 0 sin tocar nada. Una hora mala devuelve 0, pero la
+//!   fecha ya leída se queda puesta.
 
 use alloc::format;
 use alloc::string::String;
@@ -61,6 +69,58 @@ pub(crate) fn texto_fecha(dias: i64, formato: u8) -> String {
     }
 }
 
+/// Días desde el 1 de enero de 1978 de (año, mes, día), sin comprobar.
+fn dias_de(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = if m > 2 { m - 3 } else { m + 9 } as i64;
+    let doy = (153 * mp + 2) / 5 + d as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468 - 2922
+}
+
+/// Un número de una o dos cifras.
+fn cifras(t: &[u8]) -> Option<u32> {
+    if t.is_empty() || t.len() > 2 || !t.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    Some(t.iter().fold(0, |n, &b| n * 10 + (b - b'0') as u32))
+}
+
+/// Los días de una fecha escrita en `formato`, o None si está mal o no existe.
+pub(crate) fn fecha_de_texto(t: &[u8], formato: u8) -> Option<i64> {
+    let partes: Vec<&[u8]> = t.split(|&b| b == b'-').collect();
+    let [a, b, c] = partes[..] else { return None };
+    let (d, m, y) = match formato {
+        FORMAT_INT => (cifras(c)?, cifras(b)?, cifras(a)?),
+        FORMAT_USA => (cifras(b)?, cifras(a)?, cifras(c)?),
+        FORMAT_CDN => (cifras(a)?, cifras(b)?, cifras(c)?),
+        _ => {
+            let m = MESES.iter().position(|n| n.as_bytes().eq_ignore_ascii_case(b))? as u32 + 1;
+            (cifras(a)?, m, cifras(c)?)
+        }
+    };
+    let y = if y < 78 { 2000 + y } else { 1900 + y } as i64;
+    if !(1..=12).contains(&m) || d == 0 {
+        return None;
+    }
+    let dias = dias_de(y, m, d);
+    // El día existe si al volver da la misma fecha (30-Feb no).
+    (civil(dias) == (y, m, d)).then_some(dias)
+}
+
+/// (minutos, tics) de una hora "hh:mm" o "hh:mm:ss", o None.
+pub(crate) fn hora_de_texto(t: &[u8]) -> Option<(u32, u32)> {
+    let partes: Vec<&[u8]> = t.split(|&b| b == b':').collect();
+    let (h, m, s) = match partes[..] {
+        [h, m] => (cifras(h)?, cifras(m)?, 0),
+        [h, m, s] => (cifras(h)?, cifras(m)?, cifras(s)?),
+        _ => return None,
+    };
+    (h < 24 && m < 60 && s < 60).then_some((h * 60 + m, s * TICKS_PER_SECOND))
+}
+
 fn dia_de_la_semana(dias: i64) -> &'static str {
     DIAS[dias.rem_euclid(7) as usize]
 }
@@ -103,6 +163,31 @@ impl<F: SistemaArchivos> Dos<F> {
         }
         Ok(DOSTRUE)
     }
+
+    /// StrToDate(datetime).
+    pub(crate) fn str_to_date<C: Caja>(&mut self, c: &mut C, dt: u32) -> R<u32> {
+        Self::tramo(c, dt, datetime::TAMANO)?;
+        let ds = dt + datetime::DAT_STAMP;
+        let formato = Self::l8(c, dt + datetime::DAT_FORMAT)?;
+        let pf = Self::l32(c, dt + datetime::DAT_STRDATE)?;
+        if pf != 0 {
+            match fecha_de_texto(&Self::cadena(c, pf)?, formato) {
+                Some(d) => Self::e32(c, ds + datestamp::DS_DAYS, d as u32)?,
+                None => return Ok(DOSFALSE),
+            }
+        }
+        let ph = Self::l32(c, dt + datetime::DAT_STRTIME)?;
+        if ph != 0 {
+            match hora_de_texto(&Self::cadena(c, ph)?) {
+                Some((m, t)) => {
+                    Self::e32(c, ds + datestamp::DS_MINUTE, m)?;
+                    Self::e32(c, ds + datestamp::DS_TICK, t)?;
+                }
+                None => return Ok(DOSFALSE),
+            }
+        }
+        Ok(DOSTRUE)
+    }
 }
 
 #[cfg(test)]
@@ -128,5 +213,23 @@ mod pruebas {
         // Un 29 de febrero (2000) y el día siguiente.
         assert_eq!(texto_fecha(8094, 1), "00-02-29");
         assert_eq!(texto_fecha(8095, 1), "00-03-01");
+    }
+
+    /// StrToDate, lo que da el oráculo (pruebas68k/dos2.c).
+    #[test]
+    fn al_reves() {
+        assert_eq!(fecha_de_texto(b"02-Mar-97", 0), Some(7000));
+        assert_eq!(fecha_de_texto(b"97-03-02", 1), Some(7000));
+        assert_eq!(fecha_de_texto(b"03-02-97", 2), Some(7000));
+        assert_eq!(fecha_de_texto(b"02-03-97", 3), Some(7000));
+        assert_eq!(fecha_de_texto(b"01-Jan-78", 0), Some(0));
+        assert_eq!(fecha_de_texto(b"31-Dec-13", 0), Some(13148));
+        assert_eq!(fecha_de_texto(b"29-Feb-00", 0), Some(8094));
+        assert_eq!(fecha_de_texto(b"30-Feb-00", 0), None);
+        assert_eq!(fecha_de_texto(b"mal", 0), None);
+        assert_eq!(hora_de_texto(b"12:30:24"), Some((750, 1200)));
+        assert_eq!(hora_de_texto(b"01:02"), Some((62, 0)));
+        assert_eq!(hora_de_texto(b"23:59:59"), Some((1439, 2950)));
+        assert_eq!(hora_de_texto(b"25:00"), None);
     }
 }
