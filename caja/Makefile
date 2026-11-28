@@ -7,7 +7,7 @@ CXX     := $(TC)g++
 EMU68   ?= ../third_party/Emu68
 # U7: `make ORDEN=le` saca la caja en little-endian (build-le/caja-amiga), para las CPU sin big-endian en EL0 (Apple):
 # la memoria del 68k sigue en big-endian y el JIT da la vuelta a los bytes en cada acceso (parches 0004-0009 y 0012 de
-# patches/emu68; EMU68_HOST_LE). El kernel la corre en little-endian porque su ELF lo dice (EI_DATA).
+# la rama dashos de Emu68; EMU68_HOST_LE). El kernel la corre en little-endian porque su ELF lo dice (EI_DATA).
 ORDEN   ?= be
 # L3 (docs/CAJA_LINUX_LOOP.md): con LINUX=1, la caja como programa de Linux (`make linux`, `make linux-x86`): siempre
 # little-endian, con plataforma_linux.c, caja_linux.c y entrada_linux.S, y el pegamento sin la opción `dashos`.

@@ -3,7 +3,7 @@
 //! Desde X7 (la interfaz de motor, caja/motor.h) las funciones nativas reciben `Registros` tal cual; la copia de
 //! Emu68 la convierte su motor (caja/motor_emu68.c). `desde_jit` y `hacia_jit` quedan para las pruebas.
 //!
-//! El parche de la llamada nativa (`patches/emu68/0002-llamada-nativa-linea-a.patch`) llama a
+//! El parche de la llamada nativa ("DashOS 0002" en `third_party/Emu68`) llama a
 //! `dashos_native_call(uint64_t *regs, uint32_t index)` con `regs` apuntando a una copia de x0..x30. Los registros
 //! del 68k viven fijos en registros ARM: D0-D7 en x19-x26, A0-A4 en x13-x17, A5 en x27, A6 en x28 y A7 en x29.
 //! Al volver, el JIT los recarga de esa copia.

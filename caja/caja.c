@@ -6,7 +6,7 @@
     en la dirección 4 (la página 0, de solo lectura, con el permiso de su llave 1). Las bibliotecas son nativas, en
     Rust (pegamento/ enlaza los crates exec, dos e intuition): cada entrada de sus tablas de saltos es
     "$A0FF <número> RTS", y el JIT convierte la línea A en una llamada a dashos_native_call (parche 0002 de
-    patches/emu68), que la pasa a caja_llamada. dos va sobre el servicio de archivos (llave 3) e intuition sobre el
+    Emu68), que la pasa a caja_llamada. dos va sobre el servicio de archivos (llave 3) e intuition sobre el
     compositor por Wayland (llave 2): una ventana Amiga es una ventana del escritorio.
 
     Memoria del proceso (docs/referencia/kernel.md, mapa de direcciones):

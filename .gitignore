@@ -1,4 +1,3 @@
-third_party/Emu68/
 build/
 uefi/target/
 jit-host/build-le/

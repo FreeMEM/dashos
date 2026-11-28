@@ -1,0 +1,4 @@
+[submodule "third_party/Emu68"]
+	path = third_party/Emu68
+	url = https://github.com/FreeMEM/Emu68.git
+	branch = dashos
