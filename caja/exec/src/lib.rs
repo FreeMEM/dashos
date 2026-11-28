@@ -197,6 +197,9 @@ pub enum Continuacion {
     Entrega { id: u32 },
     /// Memoria baja: volvió un manejador (D0, lo que dice); después, la llamada `n` del programa, con su D0 de antes.
     Manejador { n: u16, d0: u32 },
+    /// Volvió código 68k que pidió la caja (no exec; `RunCommand`, `SystemTagList`): D0 tal cual, y la caja sigue con
+    /// lo suyo (`tomar_vuelta_caja`).
+    DeLaCaja { id: u32 },
 }
 
 /// Un trozo de memoria para el reparto: `[inicio, fin)` con sus atributos (`MEMF_CHIP`...).
@@ -370,6 +373,8 @@ pub struct Exec<M: Memoria> {
     pub(crate) n_entrega: u32,
     /// Lo que se reserva ahora es del sistema (código de una biblioteca de disco): `memoria_del_sistema`.
     pub(crate) memoria_del_sistema: bool,
+    /// La última `Continuacion::DeLaCaja` que volvió (`tomar_vuelta_caja`).
+    pub(crate) vuelta_caja: Option<u32>,
     /// Lo que dice `CacheControl` de las cachés: no hay ninguna (el JIT), pero los programas las miran y las cambian.
     pub(crate) cacr: u32,
     /// El aviso de memoria baja de DashOS y los manejadores de los programas (`memoria_baja.rs`).
@@ -410,6 +415,7 @@ impl<M: Memoria> Exec<M> {
             entregas: alloc::collections::BTreeMap::new(),
             n_entrega: 0,
             memoria_del_sistema: false,
+            vuelta_caja: None,
             cacr: CACR_DE_SERIE,
             memoria_baja: memoria_baja::MemoriaBaja::default(),
             bases_propias: BTreeMap::new(),

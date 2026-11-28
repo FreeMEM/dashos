@@ -55,6 +55,7 @@ mod sonido;
 mod cia;
 mod asl;
 mod comodidades;
+mod ordenes;
 mod memoria;
 mod multitarea;
 mod plataforma;
@@ -200,6 +201,9 @@ struct Caja {
     cias: cia::Cias,
     asl: asl::Asl,
     cx: comodidades::Cx,
+    /// Las órdenes de RunCommand y SystemTagList en marcha (`ordenes.rs`).
+    ordenes: Vec<ordenes::Orden>,
+    siguiente_orden: u32,
     disp_faltan: Vec<&'static str>,
     /// La traza de las llamadas nativas (rama amiga-apps): los nombres de las tareas que se trazan, de la variable
     /// global `traza-amiga` (`ENV:traza-amiga`, separados por espacios; `*`, todas), que se relee al lanzar cada
@@ -606,6 +610,8 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         cias,
         asl,
         cx,
+        ordenes: Vec::new(),
+        siguiente_orden: 0,
         disp_faltan: Vec::new(),
         traza: Vec::new(),
         dos_base,
@@ -1416,6 +1422,15 @@ fn ajena(c: &mut Caja, n: u16, r: &mut Registros) -> Fin {
     if c.timer.es_mio(n) {
         let reloj = reloj();
         return de_accion(c.timer.llamar(&mut c.ex, n, r, reloj));
+    }
+    // RunCommand, SystemTagList y Execute ejecutan 68k en anidado: los hace la caja (`ordenes.rs`).
+    if c.ex.ajena(n).map(|(l, _)| l) == Some(c.dos_base) {
+        match n.wrapping_sub(N_DOS) {
+            caja_dos::lvo::RUN_COMMAND => return ordenes::run_command(c, r),
+            caja_dos::lvo::SYSTEM_TAG_LIST => return ordenes::system(c, r, false),
+            caja_dos::lvo::EXECUTE => return ordenes::system(c, r, true),
+            _ => {}
+        }
     }
     if (N_DOS + caja_dos::lvo::PRIMERA..=N_DOS + caja_dos::lvo::ULTIMA).contains(&n)
         && c.ex.ajena(n).map(|(l, _)| l) == Some(c.dos_base)
@@ -2289,6 +2304,10 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
                 // Las llamadas de dentro cambiaron de quién es lo nuevo: otra vez el de esta llamada.
                 c.ex.memoria_del_sistema(de_biblioteca);
                 a = c.ex.continuar(tras, &rr, r);
+                // Una orden de RunCommand o SystemTagList que vuelve: lo suyo (`ordenes.rs`).
+                if let Some(id) = c.ex.tomar_vuelta_caja() {
+                    a = ordenes::acabada(c, id, r);
+                }
                 continue;
             }
             Fin::Bloquear if multitarea::hay_otras(c) && multitarea::se_puede_cambiar() => {

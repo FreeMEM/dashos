@@ -523,7 +523,7 @@ impl<F: SistemaArchivos> Dos<F> {
     }
 
     /// UnLoadSeg(seglist).
-    fn unload_seg<C: Caja>(&mut self, c: &mut C, seg: u32) -> R<()> {
+    pub(crate) fn unload_seg<C: Caja>(&mut self, c: &mut C, seg: u32) -> R<()> {
         if seg == 0 {
             return Ok(());
         }

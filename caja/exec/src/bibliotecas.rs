@@ -87,6 +87,11 @@ impl<M: Memoria> Exec<M> {
 
     /// Termina una llamada que exec pidió a la caja con `Accion::Llamar`. `hecho` son los registros al volver de
     /// ese código; `r`, los de la tarea que llamó a exec.
+    /// La caja: la última `Continuacion::DeLaCaja` que volvió (su id), si la hay; queda borrada.
+    pub fn tomar_vuelta_caja(&mut self) -> Option<u32> {
+        self.vuelta_caja.take()
+    }
+
     pub fn continuar(&mut self, tras: Continuacion, hecho: &Registros, r: &mut Registros) -> Accion {
         let d0 = hecho.d[0];
         r.d[0] = d0;
@@ -120,6 +125,7 @@ impl<M: Memoria> Exec<M> {
             }
             Continuacion::Echada { lib, d0: v } => return self.tras_echar(lib, d0, v, r),
             Continuacion::Valor(v) => r.d[0] = v,
+            Continuacion::DeLaCaja { id } => self.vuelta_caja = Some(id),
             Continuacion::Entrega { id } => return self.entregar_caracter(id, r, hecho.a[3]),
             Continuacion::Manejador { n, d0: antes } => return self.siguiente_manejador(n, antes, d0, r),
             Continuacion::AbrirDispositivo { dev, io } => {

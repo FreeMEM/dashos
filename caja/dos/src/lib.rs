@@ -32,6 +32,7 @@ pub mod hunk;
 pub mod lvo;
 pub mod memfs;
 mod notificar;
+pub mod ordenes;
 pub mod memoria;
 pub mod nombres;
 pub mod procesos;
