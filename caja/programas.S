@@ -29,6 +29,8 @@ prog_\nombre\()_fin:
         programa cgx, "pruebas68k/cgx.exe"
 // K3: los chips del Amiga (los CIA y el haz).
         programa chips, "pruebas68k/chips.exe"
+// K7: lecturas de VPOSR seguidas, para medir lo que cuesta un acceso a los chips (en $138000).
+        programa vposr, "pruebas68k/vposr.bin"
 // S28: los virus de laboratorio (pruebas68k/malware/).
         programa mal_arranque, "pruebas68k/malware/arranque.exe"
         programa mal_enlace, "pruebas68k/malware/enlace.exe"
