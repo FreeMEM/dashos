@@ -96,7 +96,7 @@ int motor_chips(int encendidos);
    en los chips (INTENA, INTREQ, un temporizador... cambian el nivel o el plazo); cada vez guarda el nivel que piden y
    arma el plazo nuevo. Con los chips apagados no se arma: nada cambia ni cuesta.
    - Emu68 (ARM): el plazo, en instrucciones (motor_ciclos / 8), en dashos_plazo; MainLoop lo mira al volver de cada
-     bloque si INTF.CHIPS está a 1 (parche 0017 de patches/emu68). Con INTF.CHIPS a 1, INT64 no es 0, así que los
+     bloque si INTF.CHIPS está a 1 (parche 0017 de Emu68). Con INTF.CHIPS a 1, INT64 no es 0, así que los
      bucles internos de una unidad también vuelven a MainLoop en cada vuelta: con los chips encendidos no se los salta.
    - RelevoJIT (x86): el presupuesto de instrucciones de relevo_run hasta el plazo (con una estimación por lo bajo
      de los ciclos de cada instrucción); si una escritura lo adelanta, relevo_request_stop.

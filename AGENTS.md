@@ -19,7 +19,9 @@ Lee `PLAN.md` antes de empezar. Ahí están las decisiones tomadas, las piezas y
 2. **Nada de código de la ROM en el repositorio.** Ni desensamblados, ni traducciones, ni volcados. Vale también
    para la ROM libre de AROS (S18, S36): su binario se baja al construir la imagen, con su huella comprobada, y
    nunca entra en git; su código no se lee (regla de sala limpia).
-3. **Los cambios en ficheros de Emu68 siguen siendo MPL-2.0.** Lo propio de DashOS va en ficheros aparte.
+3. **Los cambios en ficheros de Emu68 siguen siendo MPL-2.0.** Lo propio de DashOS va en ficheros aparte. Se hacen en
+   la rama `dashos` de la bifurcación (github.com/FreeMEM/Emu68), un commit por cambio ("DashOS 00NN-nombre"), y
+   DashOS mueve el submódulo `third_party/Emu68` a ese commit en el mismo cambio que lo usa.
 4. **Los cambios en Dash los hacen las sesiones de Dash** (`~/Projects/FreeMEMLang`). Aquí solo se usa.
 5. **Cada función de la API llega con su prueba del oráculo.** El mismo binario 68k se ejecuta en FS-UAE con el
    Kickstart real y en DashOS, y las salidas tienen que coincidir.
@@ -67,7 +69,9 @@ las pruebas no valen como oráculo.
   EL0; `CAJA_ORDEN=le` la fuerza (U7, `docs/UEFI_LOOP.md`).
 - `toolchains/`: ficheros de CMake y envoltorios para las toolchains de Bootlin. `toolchains/LEEME.md` explica cómo
   compilar Emu68.
-- `patches/emu68/`: parches sobre Emu68 (MPL). `third_party/Emu68` es un clon que no va en git.
+- `third_party/Emu68`: submódulo de git, la rama `dashos` de la bifurcación de Emu68 (MPL), con nuestros cambios encima
+  de los de Michal. Hasta el 0018 fueron parches en `patches/emu68/` (quitados; están en la historia de git). En un
+  clon o worktree nuevo: `git submodule update --init --recursive`; tras traer `main` o cambiar de rama, otra vez.
 
 ## Lenguajes
 

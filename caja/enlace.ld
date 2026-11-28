@@ -1,6 +1,6 @@
 /* DashOS, H4: la caja Amiga, un PIE estático (ET_DYN). El kernel la carga en una base al azar entre 128 y 256 GB, y su
    pila entre 256 y 384 GB (docs/referencia/kernel.md): nada de la caja queda en los 4 GB bajos, que son del 68k (S3,
-   S28). Emu68 carga las direcciones de sus funciones de C con 64 bits (parche 0014 de patches/emu68). El kernel no
+   S28). Emu68 carga las direcciones de sus funciones de C con 64 bits (parche 0014 de Emu68). El kernel no
    aplica reubicaciones: entrada.S aplica las R_AARCH64_RELATIVE de .rela.dyn antes de nada. Por eso lo que lleva
    punteros (.data.rel.ro, .got) va con los datos, que se pueden escribir. Código, datos de solo lectura y datos, cada
    uno en sus páginas (W^X). */

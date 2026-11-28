@@ -5,9 +5,7 @@ Añaden `-fno-stack-protector -fno-pie -fno-pic -no-pie`, porque Bootlin activa 
 
 Compilar Emu68 para QEMU `virt`:
 
-    git clone https://github.com/michalsc/Emu68.git third_party/Emu68
-    git -C third_party/Emu68 submodule update --init --recursive
-    git -C third_party/Emu68 apply ../../patches/emu68/*.patch
+    git submodule update --init --recursive    # third_party/Emu68, la rama dashos de FreeMEM/Emu68
     cmake -G Ninja -S third_party/Emu68 -B build/emu68-virt -DTARGET=virt \
         -DCMAKE_TOOLCHAIN_FILE=$PWD/toolchains/aarch64be.cmake
     PATH=$PWD/toolchains/bin:$PATH ninja -C build/emu68-virt

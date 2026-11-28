@@ -171,8 +171,8 @@ make -C kernel prueba-virt     # pruebas del kernel en QEMU virt, arrancando por
 make -C kernel arranque-virt   # arranque por UEFI con pantalla, xHCI y NVMe
 ```
 
-Los bancos del JIT necesitan Emu68 en `third_party/Emu68` con los parches de `patches/emu68/` (cómo, en
-`toolchains/LEEME.md` y `docs/PPC_LOOP.md`), y `qemu-aarch64_be`:
+Los bancos del JIT necesitan Emu68 en `third_party/Emu68`, un submódulo (`git submodule update --init --recursive`;
+cómo compilarlo, en `toolchains/LEEME.md` y `docs/PPC_LOOP.md`), y `qemu-aarch64_be`:
 
 ```sh
 make -C jit-host run           # programa 68k en el JIT, en big-endian
@@ -187,7 +187,7 @@ make -C jit-host ORDEN=le run  # lo mismo con la CPU en little-endian (necesita 
 | `usuario/` | Biblioteca de los programas y los servicios: `inicio`, consola, USB, SD, NVMe, xHCI, compositor... |
 | `uefi/` | El programa de UEFI que carga el kernel |
 | `jit-host/` | Bancos de pruebas de los JIT de Emu68 (68k y PowerPC) como programas de Linux |
-| `patches/emu68/` | Nuestros cambios a Emu68 |
+| `third_party/Emu68` | Emu68 con nuestros cambios: submódulo, rama `dashos` de FreeMEM/Emu68 |
 | `toolchains/` | Ficheros de CMake y envoltorios para los compiladores de Bootlin |
 | `tools/` | Guiones para arrancar y comprobar en QEMU |
 | `docs/diseño/` | El diseño, de S0 a S18, y su resumen |

@@ -4,7 +4,7 @@
     ejecuta 68k, el SR y las pilas en registros vectoriales, las interrupciones (INTF) y la coma flotante.
 
     La llamada nativa: el JIT convierte "$A0FF <índice>" en una llamada a dashos_native_call (parche 0002 de
-    patches/emu68) con `regs` apuntando a una copia de x0..x30, donde viven D0-D7 (x19-x26) y A0-A7 (x13-x17, x27-x29);
+    Emu68) con `regs` apuntando a una copia de x0..x30, donde viven D0-D7 (x19-x26) y A0-A7 (x13-x17, x27-x29);
     aquí pasan a motor_regs para caja_nativa y vuelven a la copia, que el JIT recarga al volver.
 */
 
