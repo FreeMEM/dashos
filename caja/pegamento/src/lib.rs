@@ -744,6 +744,13 @@ fn montar_volumenes(ex: &mut Exec<MemoriaCaja>, consola: &mut Consola) -> (caja_
             Err(e) => dichos.push(format!("{}: no se monta (error {})", nombre, e)),
         }
     }
+    // El disco de RAM: el volumen "Ram Disk" y su asignación RAM:, como en el Amiga.
+    if archivos::cajon_ram().is_some() && dos.montar(&mut cd, "Ram Disk", archivos::RAIZ_RAM, false).is_ok() {
+        match dos.asignar(&mut cd, "RAM", "Ram Disk:") {
+            Ok(()) => dichos.push(String::from("Ram Disk: (RAM:)")),
+            Err(e) => dichos.push(format!("RAM: no se asigna (error {})", e)),
+        }
+    }
     dos.poner_arranque("Linux");
     (dos, format!("{} sobre los ficheros de Linux (Caja: y SYS: en {})", dichos.join(", "), cajon))
 }
