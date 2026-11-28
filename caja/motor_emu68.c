@@ -237,7 +237,7 @@ static void plazo_marca(int armado) { __atomic_store_n(&m68k.INTF.CHIPS, (uint8_
 
 /* --- Lo que sale de la memoria del 68k: cae el programa, no la caja --- */
 
-/* Un salto perdido (parche 0019 de Emu68): MainLoop pregunta antes de traducir. Vale la memoria del 68k, en una
+/* Un salto perdido ("DashOS 0019" en el submódulo de Emu68): MainLoop pregunta antes de traducir. Vale la memoria del 68k, en una
    dirección par, y el 0 (por donde acaba un programa). */
 int dashos_pc_valido(uint32_t pc)
 {

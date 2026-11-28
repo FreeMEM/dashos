@@ -192,7 +192,7 @@ Pedido por jefe-dash, en este orden; la decisión, también en `docs/diseño/S28
 
 1. **Cae el programa, no la caja.** Con `Supervisor()` dado, `residente.c` (S28) tumbaba la caja entera en
    `arranque-virt` y `caja-x86`: su código vuelve con RTS y el 68k salta fuera de su memoria. Ahora un programa que sale
-   de su memoria cae solo él: en ARM, el parche 0019 de Emu68 (no traducir un PC fuera de la memoria del 68k: la caja lo
+   de su memoria cae solo él: en ARM, el commit "DashOS 0019" de Emu68 (no traducir un PC fuera de la memoria del 68k: la caja lo
    lleva a `PARADA68K` y lo corta) y el manejador de fallos siempre puesto (los accesos del código traducido: la carga da
    0, el guardado no se hace, se corta); en x86, RelevoJIT ya daba un error de bus, y `pagina_leer` y `pagina_escribir`
    ya no salen de la página 0. Prueba hostil `pruebas68k/perdido.c` (salta, lee, escribe, pila, cero) en la prueba 9 de
@@ -205,8 +205,6 @@ Lo que se vio por el camino: el `DateToStr`, el `ParsePattern` y lo demás de do
 caja entera bien (158 "bien"); falló solo una línea del escritorio ("[sesiones] barra lanza Programas/guarda"), con otra
 sesión corriendo QEMU a la vez.
 
-Pendiente con dashos-2f (2026-11-28): `third_party/Emu68` pasa a ser un submódulo (rama `dashos` de la bifurcación, con
-0016-0018). Cuando llegue a main: en el clon del submódulo, encima de esa rama, un commit "DashOS 0019-pc-fuera-de-memoria"
-con el contenido del parche; en esta rama, el puntero del submódulo a ese commit y fuera `patches/emu68/0019`. Subir el
-commit a la bifurcación, con el sí del usuario (por jefe-dash). El worktree tiene `third_party/Emu68` como clon suelto:
-al traer main hay que cambiarlo (AGENTS.md lo explica).
+Con dashos-2f y jefe-dash (2026-11-28): `third_party/Emu68` es ya un submódulo (la rama `dashos` de la bifurcación, PR
+#19). El 0019 va como commit "DashOS 0019-pc-fuera-de-memoria" (d410ba6, encima de 07d4c94), y esta rama mueve el
+puntero a él; el parche suelto, fuera. El código del submódulo es igual que el del clon con los 19 parches.
