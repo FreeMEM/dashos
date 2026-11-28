@@ -53,6 +53,7 @@ mod gadtools;
 mod graphics;
 mod idcmp;
 mod intuition;
+mod itexto;
 mod marco;
 mod menus;
 mod pantallas;

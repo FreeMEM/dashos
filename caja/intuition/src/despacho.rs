@@ -64,6 +64,7 @@ filas!(I;
     PUBSCREENSTATUS = "PubScreenStatus", LOCKPUBSCREENLIST = "LockPubScreenList",
     UNLOCKPUBSCREENLIST = "UnlockPubScreenList", NEXTPUBSCREEN = "NextPubScreen", SETDEFAULTPUBSCREEN = "SetDefaultPubScreen",
     SETPUBSCREENMODES = "SetPubScreenModes", LOCKIBASE = "LockIBase", UNLOCKIBASE = "UnlockIBase", REPORTMOUSE = "ReportMouse", DOUBLECLICK = "DoubleClick",
+    DRAWIMAGE = "DrawImage", DRAWBORDER = "DrawBorder", PRINTITEXT = "PrintIText",
 );
 
 /// Las funciones que devuelven -1 al fallar.
@@ -520,6 +521,10 @@ impl<C: Compositor> CajaGrafica<C> {
                 ex.e32(w + crate::estructuras::window::FLAGS, f)?;
                 Ok(0)
             }
+            // DrawImage, DrawBorder y PrintIText(rp, x, left, top)(a0/a1/d0/d1): `itexto.rs`.
+            DRAWIMAGE => hecho(self.draw_image(ex, a[0], a[1], d[0] as i32, d[1] as i32)),
+            DRAWBORDER => hecho(self.draw_border(ex, a[0], a[1], d[0] as i32, d[1] as i32)),
+            PRINTITEXT => hecho(self.print_i_text(ex, a[0], a[1], d[0] as i32, d[1] as i32)),
             INTUITEXTLENGTH => {
                 let t = ex.l32(a[0].wrapping_add(12))?;
                 Ok(ex.cadena(t)?.len() as u32 * crate::fuente::ANCHO)

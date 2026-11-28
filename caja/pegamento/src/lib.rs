@@ -227,8 +227,10 @@ fn caja() -> Option<&'static mut Caja> {
 
 /// Lo que dice la caja por la consola: "  [caja-amiga] ...".
 /// `CAJA_AMIGA_TRAZA=1` (en Linux): cada llamada a dos.library sale por la consola de la caja, con sus argumentos y lo
-/// que devolvió. Para ver qué espera un programa de otros que no va.
+/// que devolvió. Con `CAJA_AMIGA_TRAZA=todo`, también las de exec (al entrar, con D0, D1, A0 y A1). Para ver qué
+/// espera un programa de otros que no va.
 static TRAZA_DOS: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static TRAZA_EXEC: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 pub(crate) fn di(texto: &str) {
     plataforma::decir!("  [caja-amiga] {}", texto);
@@ -487,8 +489,13 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         chips: None,
     };
     #[cfg(not(feature = "dashos"))]
-    if sys::entorno(b"CAJA_AMIGA_TRAZA\0").is_some_and(|v| v == b"1") {
-        TRAZA_DOS.store(true, core::sync::atomic::Ordering::Relaxed);
+    match sys::entorno(b"CAJA_AMIGA_TRAZA\0") {
+        Some(b"1") => TRAZA_DOS.store(true, core::sync::atomic::Ordering::Relaxed),
+        Some(b"todo") => {
+            TRAZA_DOS.store(true, core::sync::atomic::Ordering::Relaxed);
+            TRAZA_EXEC.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        _ => {}
     }
     // ramlib: lo que no está en memoria, de disco (`ramlib.rs`). Sus asignaciones, a los cajones que haya.
     c.ex.poner_ramlib(N_RAMLIB_CARGAR, N_RAMLIB_SOLTAR);
@@ -1696,6 +1703,17 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
         return llamada(m, r);
     }
     c.pc_llamada = c.ex.mem.leer32(r.a[7]).unwrap_or(0);
+    if n <= lvo::ULTIMO_DE_EXEC && TRAZA_EXEC.load(core::sync::atomic::Ordering::Relaxed) {
+        di(&format!(
+            "exec {}(d0 ${:x}, d1 ${:x}, a0 ${:x}, a1 ${:x}) desde ${:x}",
+            lvo::nombre(n),
+            r.d[0],
+            r.d[1],
+            r.a[0],
+            r.a[1],
+            c.pc_llamada
+        ));
+    }
     // Lo que reserve código de una biblioteca de disco es del sistema: la biblioteca sigue al acabar la tarea.
     let de_biblioteca = faltan::de_biblioteca(c, c.pc_llamada).is_some();
     c.ex.memoria_del_sistema(de_biblioteca);

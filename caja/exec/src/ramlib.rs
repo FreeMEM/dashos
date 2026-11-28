@@ -244,7 +244,20 @@ impl<M: Memoria> Exec<M> {
     /// Volvió el `InitResident` de una cargada: D0 es la base. Se apunta y se abre por fin; si no hay base, se suelta.
     pub(crate) fn tras_residente(&mut self, a: Apertura, seglist: u32, lib: u32, r: &mut Registros) -> Accion {
         let lista = if a.disp.is_some() { execbase::DEVICELIST } else { execbase::LIBLIST };
-        let en_lista = lib != 0 && self.nodos(self.base + lista).map(|v| v.contains(&lib)).unwrap_or(false);
+        let mut lib = lib;
+        let mut en_lista = lib != 0 && self.nodos(self.base + lista).map(|v| v.contains(&lib)).unwrap_or(false);
+        // Una sin RTF_AUTOINIT que se añadió a mano y devolvió otra cosa (mathieeedoubtrans.library de AmigaOS 3.9
+        // devuelve lo que AddLibrary deja en D0): ramlib la busca por el nombre de su RomTag, que antes de su Init no
+        // estaba en la lista (`tras_carga`), así que es ella (oráculo: pruebas68k/ramlib2.c).
+        if !en_lista
+            && let Ok(Some(rt)) = self.buscar_romtag(seglist)
+            && let Some(n) = self.l32(rt + resident::RT_NAME).ok().and_then(|n| self.cadena(n).ok())
+            && let Ok(otra) = self.find_name(self.base + lista, &n)
+            && otra != 0
+        {
+            lib = otra;
+            en_lista = true;
+        }
         if !en_lista {
             if lib != 0 {
                 self.avisar("InitResident", Fallo::Sospechoso { dir: lib });

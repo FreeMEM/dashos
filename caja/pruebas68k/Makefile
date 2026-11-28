@@ -3,7 +3,7 @@
 A := /opt/amiga/bin/m68k-amigaos-
 HUNK2BIN := ../../jit-host/pruebas68k/hunk2bin.py
 
-all: sistema.bin hola.bin lineaa.bin bucle.bin mala.bin vposr.bin ipl.bin saludo.exe ventana.exe hostil.exe anidado.exe gadtools.exe actualiza.exe boopsi.exe ramlib.exe capa.exe glotona.exe memh.exe procesos.exe ils.exe dtprueba.exe cgx.exe chips.exe blitter.exe copper.exe paula.exe denise.exe sprites.exe cia.exe prueba.library falsa.library miente.library dosasl.exe patron.exe formato.exe supervisor.exe icono.exe perdido.exe dos2.exe
+all: sistema.bin hola.bin lineaa.bin bucle.bin mala.bin vposr.bin ipl.bin saludo.exe ventana.exe hostil.exe anidado.exe gadtools.exe actualiza.exe boopsi.exe ramlib.exe capa.exe glotona.exe memh.exe procesos.exe ils.exe dtprueba.exe cgx.exe chips.exe blitter.exe copper.exe paula.exe denise.exe sprites.exe cia.exe prueba.library falsa.library miente.library dosasl.exe patron.exe formato.exe supervisor.exe icono.exe perdido.exe dos2.exe imagen.exe manual.library ramlib2.exe
 
 sistema.bin: BASE := 0x101600
 hola.bin: BASE := 0x110000
@@ -48,6 +48,11 @@ falsa.library: prueba_lib.c biblioteca_entrada.s
 	$(A)as -m68020 --register-prefix-optional biblioteca_entrada.s -o falsa_entrada.o
 	$(A)gcc $(CFLAGS_VENTANA) -DFALSA falsa_entrada.o prueba_lib.c -o $@ $(LIBGCC)
 	rm -f falsa_entrada.o
+# manual.library: sin RTF_AUTOINIT, se hace y se añade a mano en su Init y devuelve otra cosa que la base (ramlib2.exe).
+manual.library: prueba_lib.c biblioteca_entrada.s
+	$(A)as -m68020 --register-prefix-optional biblioteca_entrada.s -o manual_entrada.o
+	$(A)gcc $(CFLAGS_VENTANA) -DMANUAL manual_entrada.o prueba_lib.c -o $@ $(LIBGCC)
+	rm -f manual_entrada.o
 miente.library: prueba_lib.c biblioteca_entrada.s
 	$(A)as -m68020 --register-prefix-optional biblioteca_entrada.s -o miente_entrada.o
 	$(A)gcc $(CFLAGS_VENTANA) -DVERSION=1 miente_entrada.o prueba_lib.c -o $@ $(LIBGCC)

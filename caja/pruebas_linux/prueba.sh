@@ -37,7 +37,9 @@ prueba() {   # cómo lanzar la caja
     comprueba "tipo.exe: lo que no existe en Linux queda como está" 10 "$s" $r "object not found"
     # Pruebas del oráculo: la salida de FS-UAE con el Kickstart (tools/emu_run.py de Dash), guardada en *.esperado.
     # Sin la guardia de ficheros (CAJA_AMIGA_PROTEGER=no): en un Amiga no la hay.
-    for p in dosasl patron formato supervisor icono dos2; do
+    # ramlib2.exe abre manual.library de LIBS: (el SYS de la prueba).
+    mkdir -p "$t/sys/Libs" && cp "$AQUI/../pruebas68k/manual.library" "$t/sys/Libs/"
+    for p in dosasl patron formato supervisor icono dos2 imagen ramlib2; do
         s=$(cd "$t" && CAJA_AMIGA_PROTEGER=no CAJA_AMIGA_SYS="$t/sys" "$@" "$AQUI/../pruebas68k/$p.exe" 2>&1); r=$?
         if [ $r = 0 ] && [ "$s" = "$(cat "$AQUI/$p.esperado")" ]; then echo "  BIEN $p.exe: como el oráculo"
         else echo "  MAL  $p.exe (código $r): no es como el oráculo"; printf '%s\n' "$s" | diff "$AQUI/$p.esperado" - | sed 's/^/      /'
