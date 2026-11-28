@@ -572,6 +572,22 @@ static int vectores_deshacer(void)
     return n;
 }
 
+/* Al cortar un programa (motor_cortar: el vigilante, o porque salió de su memoria), la caja vuelve a poner sus vectores
+   del 68k: el corte entra por el vector 31 (la interrupción de nivel 7), y un programa puede haberlo cambiado (están en
+   su memoria; residente.c de S28 lo hace) y no dejarse cortar. Solo la tabla (datos; el código de las trampas no, que el
+   JIT puede tener traducido). Lo cambiado cuenta en lo que deshace la caja al acabar el programa. */
+static volatile int vectores_al_cortar;
+void caja_vectores_del_corte(void)
+{
+    for (uint32_t i = 0; i < 256; i++) {
+        uint32_t v = i == 30 ? (uint32_t)INTERRUPCION68K : (uint32_t)(TRAMPAS + 14 * i);
+        if (lee32(VECTORES + 4 * i) != v) {
+            pon32(VECTORES + 4 * i, v);
+            vectores_al_cortar++;
+        }
+    }
+}
+
 /* La pila de supervisor: la de las excepciones y las interrupciones (los programas corren en modo de usuario, como
    las tareas de exec). De AllocMem, una vez. */
 #define SUPER_LEN 16384
@@ -628,7 +644,8 @@ static int ejecuta_tarea(const char *nombre, uint32_t pc, uint32_t a6, uint32_t 
     uint32_t t = caja_tarea_nueva(nombre, largo_de(nombre), 16384, pc, (uint32_t)COMUN, args68k, seglist, &sp);
     if (!t) { if (args68k) caja_free_mem(args68k, largo_args); return -2; }
     int v = arranca(pc, sp, a6, args68k, largo_args - 1);
-    vectores_deshechos = vectores_deshacer();
+    vectores_deshechos = vectores_deshacer() + vectores_al_cortar;
+    vectores_al_cortar = 0;
     if (vectores_deshechos) di("defensa: %d vectores del 68k cambiados por el programa: deshechos\n", vectores_deshechos);
     tarea_pasadas = tarea_al_sistema ? caja_memoria_al_sistema(t) : 0;
     uint32_t s = caja_tarea_fin(t);
@@ -862,6 +879,7 @@ static int prueba_malware(uint32_t execbase, uint32_t sistema)
     int fallos = 0;
     pon32(ZONA_LIBRE, 0);
     pon32(ZONA_LIBRE + 4, 0);
+    pon32(ZONA_LIBRE + 8, 0);
     for (unsigned i = 0; i < sizeof(virus) / sizeof(virus[0]); i++) {
         uint32_t d0 = 0, sobras = 0, entradas = 0, campos = 0;
         int llamadas = 0;
@@ -871,6 +889,16 @@ static int prueba_malware(uint32_t execbase, uint32_t sistema)
         caja_consola_prefijo(NULL, 0);
         caja_defensa(&entradas, &campos);
         int bien = v == -1 && d0 == 0 && sobras == 0 && caja_bloques(0) == sistema;
+        /* residente.exe acaba en Supervisor() con un código que vuelve con RTS: cae el programa (una excepción del
+           68k), su código corrió una vez en supervisor dentro de la caja (no es un logro) y la caja sigue. */
+        int super = virus[i].desde == prog_mal_residente;
+        if (super) {
+            uint32_t veces = lee32(ZONA_LIBRE + 8);
+            bien = v > 0 && caja_bloques(0) == sistema && veces == 1;
+            di("malware: residente: su codigo de Supervisor() corrio %u vez, en supervisor dentro de la caja, y cae el "
+               "programa por el vector %d: %s\n", veces, v, bien ? "bien" : "MAL");
+            d0 = 0;
+        }
         if (virus[i].desde == prog_mal_memoria) {
             uint32_t bajas = 0, ms = 0, trozos = 0;
             int antes = 1;

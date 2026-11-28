@@ -7,7 +7,7 @@
 use crate::lvo::{self, FIN_DE_TAREA, ULTIMO_DE_EXEC};
 use crate::estructuras::execbase;
 use crate::tareas::Espera;
-use crate::{Continuacion, Accion, Exec, Fallo, Memoria, Registros};
+use crate::{Continuacion, Accion, Destino, Exec, Fallo, Memoria, Registros};
 
 fn d0(r: &mut Registros, v: u32) -> Result<Accion, Fallo> {
     r.d[0] = v;
@@ -59,10 +59,9 @@ impl<M: Memoria> Exec<M> {
                 d0(r, v)
             }
             4 => d0(r, 0),
-            // Supervisor(userFunction) está hecho (Destino::Supervisor, el modo 2 de caja_ejecutar_68k) pero no se da
-            // todavía: la prueba de los virus de S28 (residente.c) le pasa una función que acaba en RTS, y el 68k salta
-            // fuera de su memoria y tumba la caja entera. Falta que eso acabe solo el programa (y decidir qué espera
-            // esa prueba). Sin ella, como antes: la función que falta.
+            // Supervisor(userFunction): la función en modo supervisor, hasta su RTE; vuelve con sus registros. Una que
+            // acabe en RTS salta fuera de su memoria y cae el programa, no la caja (residente.c de S28).
+            5 => Ok(Accion::Llamar { destino: Destino::Supervisor(a[5]), regs: *r, tras: Continuacion::Supervisor }),
             // CacheControl(cacheBits, cacheMask): las cachés de mentira; devuelve las de antes. Los bits de vaciar
             // (CACRF_ClearI, CACRF_ClearD) no se guardan.
             108 => {

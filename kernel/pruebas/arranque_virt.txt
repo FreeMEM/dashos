@@ -1271,11 +1271,14 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] malware parche.exe: 0 conseguidos (vector -1), 0 negativas de la guardia (0 preguntas: sin preguntas), 0 avisos del Enforcer; deshecho: 6 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
 ~│   [caja-amiga] malware: residente: ColdCapture, CoolCapture, WarmCapture, KickMemPtr y KickTagPtr en ExecBase: escritos (es la memoria de su caja; nada los usa)
 ~│   [caja-amiga] malware: residente: vectores 4 y 31 del 68k (en $100000) cambiados: si, dentro de su programa
-~│   [caja-amiga] malware: residente: Supervisor() no entra en supervisor (la caja no lo tiene)
 ~│   [caja-amiga] malware: residente: ColdReboot() vuelve sin reiniciar nada
 ~│   [caja-amiga] malware: residente: su codigo residente no corrio nunca
 ~│   [caja-amiga] malware: residente: 0 conseguidos de lo que no se debe
-~│   [caja-amiga] malware residente.exe: 0 conseguidos (vector -1), 0 negativas de la guardia (0 preguntas: sin preguntas), 3 avisos del Enforcer; deshecho: 0 entradas de tablas, 2 grupos de ExecBase, 2 vectores del 68k: bien
+# Supervisor() (jefe-dash, 2026-11-28; S28): su código corre en supervisor, dentro de la caja, y vuelve con RTS: salta
+# fuera de su memoria y cae el programa (el vector, el de cada motor), no la caja.
+~│   [caja-amiga] malware: residente: Supervisor() con un codigo que vuelve con RTS, no con RTE: tiene que caer el programa
+~│   [caja-amiga] malware: residente: su codigo de Supervisor() corrio 1 vez, en supervisor dentro de la caja, y cae el programa por el vector 
+~deshecho: 0 entradas de tablas, 2 grupos de ExecBase, 2 vectores del 68k: bien
 ~│   [caja-amiga] malware: guion: abrir S:Startup-Sequence para escribir: no (IoErr 218)
 ~│   [caja-amiga] malware: guion: crear SYS:S/Startup-Sequence: no (IoErr 214)
 ~│   [caja-amiga] malware: guion: poner su SYS:L/Disk-Validator: no (IoErr 214)

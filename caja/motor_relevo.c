@@ -345,6 +345,8 @@ uint32_t motor_d0(void) { return relevo_get_regs(cpu)->d[0]; }
 
 void motor_cortar(void)
 {
+    /* Con los vectores de la caja, que el programa puede haber cambiado (caja_vectores_del_corte). */
+    caja_vectores_del_corte();
     nmi = 1;
     relevo_set_ipl(cpu, 7);
 }

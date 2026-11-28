@@ -23,6 +23,8 @@ extern volatile uint32_t m68k_ram_fin;   /* dónde acaba ahora */
 /* El programa salió de su memoria (un salto perdido, o leer o escribir donde no hay nada, o en la página 0): la
    dirección (con el bit 0, para que no sea 0), o 0. La caja lo está cortando: cae el programa, no la caja. */
 extern volatile uint32_t caja_perdido;
+/* Antes de cortar un programa, los vectores del 68k de la caja otra vez (caja.c). */
+void caja_vectores_del_corte(void);
 uint32_t caja_ampliar_ram(uint32_t minimo, uint32_t tope);
 #define VECTORES     0x00100000UL   /* VBR: 256 vectores */
 #define TRAMPAS      0x00100400UL   /* una trampa de 14 bytes por vector */

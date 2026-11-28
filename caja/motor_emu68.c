@@ -320,7 +320,14 @@ void motor_zonas(uintptr_t z[MOTOR_ZONAS]) { z[0] = (uintptr_t)&m68k; z[1] = JIT
 uint32_t motor_d0(void) { return m68k.D[0].u32; }
 void motor_volcar(void) { M68K_PrintContext(&m68k); }
 
-void motor_cortar(void) { __atomic_store_n(&m68k.INTF.ARM_err, 1, __ATOMIC_RELEASE); }
+/* Corta el programa (la interrupción de nivel 7): con los vectores y el VBR de la caja, que el programa puede haber
+   cambiado (caja_vectores_del_corte). */
+void motor_cortar(void)
+{
+    caja_vectores_del_corte();
+    m68k.VBR = (uint32_t)VECTORES;
+    __atomic_store_n(&m68k.INTF.ARM_err, 1, __ATOMIC_RELEASE);
+}
 void motor_interrumpir(void) { __atomic_store_n(&m68k.INTF.ARM, 1, __ATOMIC_RELEASE); }
 void motor_interrupcion_atendida(void) { __atomic_store_n(&m68k.INTF.ARM, 0, __ATOMIC_RELEASE); }
 
