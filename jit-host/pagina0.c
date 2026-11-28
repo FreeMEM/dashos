@@ -5,11 +5,19 @@
     la dirección 4. La página 0 (4 KB, de solo lectura, como en la caja de DashOS) vive en PAGINA0_COPIA. El JIT desvía
     allí al traducir las lecturas con dirección absoluta (`move.l 4.w,a6`; DASHOS_PAGINA0 en M68k_EA.c). Las que llegan
     por un registro (`move.l (a0),d0` con A0 = 4, un puntero nulo) dan SIGSEGV: este manejador decodifica la instrucción
-    de A64 (decodifica() de caja/fallo_a64.h), hace la lectura sobre la copia y sigue en la instrucción siguiente. Una
+    de A64 (decodifica() de caja/fallo_a64_decodifica.h), hace la lectura sobre la copia y sigue en la instrucción siguiente. Una
     escritura en la página 0, o un acceso al resto de los primeros 64 KB, es un fallo del programa, como en DashOS.
 */
 #include <stdint.h>
-#include "fallo_a64.h"
+#include "fallo_a64_decodifica.h"
+
+/* Los bytes tal como los vería la instrucción (como el `trozo` de caja/fallo_a64.h, que aquí no hace falta entero). */
+typedef union { uint8_t b[8]; uint16_t h; uint32_t w; uint64_t d; } trozo;
+
+static inline uint64_t trozo_cargar(const trozo *t, unsigned tam)
+{
+    return tam == 1 ? t->b[0] : tam == 2 ? t->h : tam == 4 ? t->w : t->d;
+}
 
 #define SYS_rt_sigaction 134
 #define SIGSEGV 11
@@ -85,7 +93,3 @@ long pagina0_instala(uint64_t copia)
         (void *)manejador, SA_SIGINFO | SA_RESTORER | SA_NODEFER, (void *)restaura, 0 };
     return sys6(SYS_rt_sigaction, SIGSEGV, (long)&sa, 0, 8, 0, 0);
 }
-
-/* Lo que pide fallo_a64.h para los chips; aquí no hay. */
-uint32_t caja_chip_leer(uint32_t dir, unsigned tam, uint64_t hora) { (void)dir; (void)tam; (void)hora; return 0; }
-void caja_chip_escribir(uint32_t dir, uint32_t v, unsigned tam, uint64_t hora) { (void)dir; (void)v; (void)tam; (void)hora; }
