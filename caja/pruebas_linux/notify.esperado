@@ -1,0 +1,19 @@
+StartNotify con senal: 1, nombre completo [...:notif.txt]
+sin cambios: 0
+tras escribir: 1
+tras abrir y cerrar sin escribir: 0
+tras escribir otro fichero: 0
+tras SetProtection: 0
+tras borrarlo: 1
+tras crearlo otra vez: 1
+tras EndNotify: 0
+StartNotify con mensaje de uno que no existe: 1, [...:nuevo.txt]
+sin cambios: ninguno (0)
+al crearlo: clase 40000000 codigo 1234 suyo 1 (1)
+dos cambios seguidos: clase 40000000 codigo 1234 suyo 1 (2)
+StartNotify con NOTIFY_INITIAL y WAIT_REPLY: 1
+el aviso inicial: 1
+cambios sin contestar el primero: ninguno (0)
+tras contestar: clase 40000000 codigo 1234 suyo 1 (2)
+StartNotify de RAM: 1
+un fichero nuevo dentro: clase 40000000 codigo 1234 suyo 1 (1)

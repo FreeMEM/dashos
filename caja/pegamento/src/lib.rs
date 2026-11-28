@@ -363,6 +363,20 @@ impl caja_dos::Caja for CajaDos<'_> {
     fn senales(&mut self, mascara: u32) -> u32 {
         self.ex.set_signal(0, mascara).unwrap_or(0) & mascara
     }
+    fn senalar(&mut self, tarea: u32, senales: u32) {
+        // La tarea despertada correrá cuando le toque (dos no cede aquí).
+        let _ = self.ex.signal(tarea, senales);
+    }
+    fn mandar_mensaje(&mut self, puerto: u32, msg: u32) {
+        let _ = self.ex.put_msg(puerto, msg);
+    }
+    fn reservar_sistema(&mut self, largo: u32) -> u32 {
+        let d = self.ex.alloc_vec(largo, memf::PUBLIC | memf::CLEAR).unwrap_or(0);
+        if d != 0 {
+            self.ex.cambiar_dueno(d - 4, 0);
+        }
+        d
+    }
 }
 
 /// Escribe texto del Amiga (Latin-1) en la consola de la plataforma (UTF-8), por trozos.
@@ -2157,6 +2171,14 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
         }
         di(&format!("{} llama a {}, privada de exec (sin documentar): se acaba el programa", q, lvo::nombre(n)));
         return C_ACABAR;
+    }
+    // ReplyMsg de un aviso de StartNotify (no tiene puerto de vuelta): lo atiende dos, que lo suelta y, si la petición
+    // esperaba la respuesta con cambios pendientes, manda ya el siguiente (como el manejador del Amiga, que corre antes
+    // de que ReplyMsg vuelva).
+    if n <= lvo::ULTIMO_DE_EXEC && lvo::nombre(n) == "ReplyMsg" && c.dos.es_aviso(r.a[1]) {
+        let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
+        c.dos.aviso_contestado(&mut cd, r.a[1]);
+        return C_SEGUIR;
     }
     if n == N_INTERRUPCION {
         // La interrupción de nivel 6 de la caja (caja.c la levanta desde otro hilo): Ctrl-C para el programa.

@@ -45,7 +45,7 @@ impl<F: SistemaArchivos> Dos<F> {
             return Err(e);
         }
         let dueno = c.tarea_actual();
-        self.ficheros.insert(d, Fichero { flujo, dueno, devuelto: None, ultimo: None });
+        self.ficheros.insert(d, Fichero { flujo, dueno, devuelto: None, ultimo: None, cambiado: false });
         Ok(d)
     }
 
@@ -183,7 +183,15 @@ impl<F: SistemaArchivos> Dos<F> {
             return Err(E::Io(ERROR_OBJECT_WRONG_TYPE));
         }
         match self.nuevo_fichero(c, Flujo::Disco { sitio, asa, pos: 0, exclusivo }) {
-            Ok(d) => Ok(d),
+            Ok(d) => {
+                // Crear o vaciar un fichero es cambiarlo (StartNotify avisa al cerrarlo).
+                if modo == MODE_NEWFILE
+                    && let Some(f) = self.ficheros.get_mut(&d)
+                {
+                    f.cambiado = true;
+                }
+                Ok(d)
+            }
             Err(e) => {
                 let _ = self.fs.cerrar(asa);
                 Err(e)
@@ -195,8 +203,11 @@ impl<F: SistemaArchivos> Dos<F> {
     pub(crate) fn cerrar_fichero<C: Caja>(&mut self, c: &mut C, d: u32) -> R<()> {
         let Some(f) = self.ficheros.remove(&d) else { return Ok(()) };
         c.liberar(d, filehandle::TAMANO);
-        if let Flujo::Disco { asa, .. } = f.flujo {
+        if let Flujo::Disco { asa, sitio, .. } = f.flujo {
             self.fs.cerrar(asa).map_err(|e| de_fs(e, Op::Escribir))?;
+            if f.cambiado {
+                self.notificar(c, &sitio);
+            }
         }
         Ok(())
     }
@@ -282,6 +293,11 @@ impl<F: SistemaArchivos> Dos<F> {
                     }
                 }
                 self.poner_pos(d, pos);
+                if hecho > 0
+                    && let Some(f) = self.ficheros.get_mut(&d)
+                {
+                    f.cambiado = true;
+                }
                 if let Some(f) = self.ficheros.get_mut(&d) {
                     f.devuelto = None;
                 }

@@ -31,7 +31,9 @@ impl<F: SistemaArchivos> Dos<F> {
         let (padre, nombre) = self.abrir_padre(&s)?;
         let r = self.fs.borrar(padre, &nombre);
         let _ = self.fs.cerrar(padre);
-        r.map_err(|e| de_fs(e, Op::Borrar))
+        r.map_err(|e| de_fs(e, Op::Borrar))?;
+        self.notificar(c, &s);
+        Ok(())
     }
 
     /// Rename(oldName, newName).

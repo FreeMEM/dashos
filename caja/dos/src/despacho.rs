@@ -166,6 +166,12 @@ impl<F: SistemaArchivos> Dos<F> {
                 d0(d[1])
             }
             DATE_TO_STR => d0(self.date_to_str(c, d[1])?),
+            // StartNotify(notify) y EndNotify(notify): notificar.rs.
+            START_NOTIFY => d0(self.start_notify(c, d[1])?),
+            END_NOTIFY => {
+                self.end_notify(c, d[1]);
+                d0(0)
+            }
             STR_TO_DATE => d0(self.str_to_date(c, d[1])?),
             READ_ITEM => d0(self.read_item(c, d[1], d[2], d[3])?),
             // dos no lleva la lista de los CLI: solo conoce el del proceso en marcha, con su pr_TaskNum (1 si es 0).

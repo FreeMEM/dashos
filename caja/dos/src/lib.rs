@@ -31,6 +31,7 @@ pub mod guardia;
 pub mod hunk;
 pub mod lvo;
 pub mod memfs;
+mod notificar;
 pub mod memoria;
 pub mod nombres;
 pub mod procesos;
@@ -98,6 +99,14 @@ pub trait Caja: Memoria {
     /// `SetSignal(0, mascara)` de exec).
     fn senales(&mut self, _mascara: u32) -> u32 {
         0
+    }
+    /// `Signal`: las señales `senales` a la tarea `tarea` (los avisos de StartNotify).
+    fn senalar(&mut self, _tarea: u32, _senales: u32) {}
+    /// `PutMsg`: el mensaje `msg` al puerto `puerto` (los avisos de StartNotify).
+    fn mandar_mensaje(&mut self, _puerto: u32, _msg: u32) {}
+    /// Como `reservar`, pero del sistema: no se suelta cuando acaba la tarea en marcha (lo que dos da a otro).
+    fn reservar_sistema(&mut self, largo: u32) -> u32 {
+        self.reservar(largo)
     }
 }
 
@@ -283,6 +292,8 @@ pub(crate) struct Fichero {
     pub devuelto: Option<u8>,
     /// El último carácter que dio `FGetC` (para `UnGetC(fh, -1)`).
     pub ultimo: Option<u8>,
+    /// Si se escribió en él (o se creó o vació): al cerrarlo, StartNotify avisa.
+    pub cambiado: bool,
 }
 
 /// Una asignación (`DLT_DIRECTORY`, `DLT_LATE` o `DLT_NONBINDING`).
@@ -349,6 +360,9 @@ pub struct Dos<F: SistemaArchivos> {
     pub(crate) devprocs: BTreeMap<u32, (u32, Option<usize>)>,
     /// Hasta dónde ha leído ReadItem (sin `CSource`) la línea de argumentos de cada tarea.
     pub(crate) leido_args: BTreeMap<u32, usize>,
+    /// Las peticiones de StartNotify y los avisos mandados sin contestar (mensaje, petición).
+    pub(crate) peticiones: Vec<notificar::Peticion>,
+    pub(crate) mensajes_aviso: Vec<(u32, u32)>,
     pub(crate) avisos: Vec<Aviso>,
 }
 
@@ -372,6 +386,8 @@ impl<F: SistemaArchivos> Dos<F> {
             busquedas: BTreeMap::new(),
             devprocs: BTreeMap::new(),
             leido_args: BTreeMap::new(),
+            peticiones: Vec::new(),
+            mensajes_aviso: Vec::new(),
             avisos: Vec::new(),
         }
     }
@@ -607,6 +623,7 @@ impl<F: SistemaArchivos> Dos<F> {
         }
         self.campos.retain(|(t, _), _| *t != tarea);
         self.leido_args.remove(&tarea);
+        self.quitar_peticiones(c, tarea);
         self.locales.retain(|(t, _, _), _| *t != tarea);
         // Sus búsquedas: los cerrojos ya se soltaron arriba y el AChain lo suelta exec con su memoria.
         self.busquedas.retain(|_, b| b.dueno != tarea);
