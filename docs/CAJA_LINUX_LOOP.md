@@ -185,3 +185,22 @@ de probar las bibliotecas: segundos, frente a los 15 minutos de `arranque-virt`.
 - La caja de Linux, en hora local: `/etc/localtime` (TZif y su regla POSIX), sin libc; igual que `localtime_r`.
 - De AmigaOS 3.9 van ya Dir, List, Date, Search, Rename, Delete ALL, Cpu ("68040 68882") y la Calculator. Falta: los
   signos × y ÷ en la letra topaz de la caja (salen como cuadrados).
+
+### 2026-11-28: cae el programa, no la caja; y Supervisor()
+
+Pedido por jefe-dash, en este orden; la decisión, también en `docs/diseño/S28-malware-amiga.md`.
+
+1. **Cae el programa, no la caja.** Con `Supervisor()` dado, `residente.c` (S28) tumbaba la caja entera en
+   `arranque-virt` y `caja-x86`: su código vuelve con RTS y el 68k salta fuera de su memoria. Ahora un programa que sale
+   de su memoria cae solo él: en ARM, el parche 0019 de Emu68 (no traducir un PC fuera de la memoria del 68k: la caja lo
+   lleva a `PARADA68K` y lo corta) y el manejador de fallos siempre puesto (los accesos del código traducido: la carga da
+   0, el guardado no se hace, se corta); en x86, RelevoJIT ya daba un error de bus, y `pagina_leer` y `pagina_escribir`
+   ya no salen de la página 0. Prueba hostil `pruebas68k/perdido.c` (salta, lee, escribe, pila, cero) en la prueba 9 de
+   `caja.c` y en `prueba.sh`. No toca el kernel.
+2. **Supervisor().** Dado. El corte entra por el vector 31, que `residente.c` cambia: antes de cortar, la caja vuelve a
+   poner sus vectores y su VBR (ARM). `residente.c` espera ahora que su código de Supervisor corra una vez, en
+   supervisor dentro de la caja (no es un logro), y que caiga el programa. Cpu de AmigaOS 3.9 va en las dos cajas.
+
+Lo que se vio por el camino: el `DateToStr`, el `ParsePattern` y lo demás de dos y exec pasaron `arranque-virt` BE con la
+caja entera bien (158 "bien"); falló solo una línea del escritorio ("[sesiones] barra lanza Programas/guarda"), con otra
+sesión corriendo QEMU a la vez.
