@@ -18,6 +18,7 @@ filas!(G;
     BLTBITMAP = "BltBitMap", BLTTEMPLATE = "BltTemplate", CLEAREOL = "ClearEOL", CLEARSCREEN = "ClearScreen",
     TEXTLENGTH = "TextLength", TEXT = "Text", SETFONT = "SetFont", OPENFONT = "OpenFont", CLOSEFONT = "CloseFont",
     ADDFONT = "AddFont", REMFONT = "RemFont", EXTENDFONT = "ExtendFont", STRIPFONT = "StripFont",
+    BITMAPSCALE = "BitMapScale", SCALERDIV = "ScalerDiv",
     ASKSOFTSTYLE = "AskSoftStyle", SETSOFTSTYLE = "SetSoftStyle", LOADRGB4 = "LoadRGB4",
     INITRASTPORT = "InitRastPort", MOVE = "Move", DRAW = "Draw", RECTFILL = "RectFill", WRITEPIXEL = "WritePixel",
     READPIXEL = "ReadPixel", SETRAST = "SetRast", SCROLLRASTER = "ScrollRaster", SCROLLRASTERBF = "ScrollRasterBF",
@@ -253,6 +254,12 @@ impl<C: Compositor> CajaGrafica<C> {
                 0
             }
             OPENFONT => self.open_font(ex, a[0])?,
+            // BitMapScale(bitScaleArgs)(a0) y ScalerDiv(factor, numerator, denominator)(d0/d1/d2): graphics.rs.
+            BITMAPSCALE => {
+                self.bit_map_scale(ex, a[0])?;
+                0
+            }
+            SCALERDIV => crate::graphics::scaler_div(d[0], d[1], d[2]),
             // ExtendFont(font, fontTags)(a0/a1) y StripFont(font)(a0): graphics.rs.
             EXTENDFONT => self.extend_font(ex, a[0], a[1])?,
             STRIPFONT => {

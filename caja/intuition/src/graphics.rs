@@ -61,6 +61,20 @@ pub(crate) struct Estado {
     pub vigilados: Tabla<crate::vigia::Vigilado>,
 }
 
+/// `struct BitScaleArgs` (`graphics/scale.h`).
+const BSA_TAMANO: u32 = 48;
+
+/// `ScalerDiv(factor, numerator, denominator)`: `factor · numerator / denominator` redondeado (las mitades hacia
+/// arriba), y al menos 1 si `factor` no es 0 (oráculo: `pruebas68k/escala.c`).
+pub(crate) fn scaler_div(factor: u32, num: u32, den: u32) -> u32 {
+    let (factor, num, den) = (factor & 0xFFFF, num & 0xFFFF, den & 0xFFFF);
+    if den == 0 {
+        return 0;
+    }
+    let r = ((factor as u64 * num as u64 + (den / 2) as u64) / den as u64) as u32;
+    if r == 0 && factor != 0 { 1 } else { r }
+}
+
 /// `tf_Message.mn_ReplyPort`, donde va la extensión de una fuente, y `struct TextFontExtension`.
 const TF_REPLYPORT: u32 = 14;
 const TFE_MATCHWORD: u16 = 0x4E1B;
@@ -796,6 +810,53 @@ impl<C: Compositor> CajaGrafica<C> {
         mascara: u8,
     ) -> Result<u32, Fallo> {
         self.copiar(ex, origen, xs, ys, destino, xd, yd, ancho, alto, m, mascara, None, None, None)
+    }
+
+    /// `BitMapScale(bitScaleArgs)`: un rectángulo de un mapa, escalado en otro por `XDestFactor/XSrcFactor` y
+    /// `YDestFactor/YSrcFactor`. Lo comprobado contra el oráculo (`pruebas68k/escala.c`): el tamaño de destino es el de
+    /// `ScalerDiv` (y queda en `bsa_DestWidth` y `bsa_DestHeight`); el punto de origen `k` ocupa en destino desde
+    /// `redondeo(k · destino / origen)` hasta el del siguiente (con las mitades hacia arriba), así que al ampliar se
+    /// repite y al reducir se salta. Copia las plumas tal cual. Como mucho 4096 x 4096.
+    pub fn bit_map_scale<M: Memoria>(&mut self, ex: &mut Exec<M>, a: u32) -> Result<(), Fallo> {
+        ex.tramo(a, BSA_TAMANO)?;
+        let w = |k: u32| ex.l16(a + k);
+        let (sx, sy, sw, sh) = (w(0)? as i32, w(2)? as i32, w(4)? as u32, w(6)? as u32);
+        let (xs, ys) = (w(8)? as u32, w(10)? as u32);
+        let (dx, dy) = (w(12)? as i32, w(14)? as i32);
+        let (xd, yd) = (w(20)? as u32, w(22)? as u32);
+        let (origen, destino) = (ex.l32(a + 24)?, ex.l32(a + 28)?);
+        if xs == 0 || ys == 0 {
+            return Err(Fallo::TamanoMalo { ancho: xs as i32, alto: ys as i32 });
+        }
+        let dw = scaler_div(sw, xd, xs);
+        let dh = scaler_div(sh, yd, ys);
+        ex.e16(a + 16, dw as u16)?;
+        ex.e16(a + 18, dh as u16)?;
+        if sw == 0 || sh == 0 || dw > 4096 || dh > 4096 {
+            return Ok(());
+        }
+        // Dónde empieza en destino el punto `k` de origen.
+        let pos = |k: u32, f_d: u32, f_s: u32| ((k as u64 * f_d as u64 + (f_s / 2) as u64) / f_s as u64) as i32;
+        // Las columnas de destino de cada columna de origen.
+        let mut columnas = Vec::new();
+        for k in 0..sw {
+            for x in pos(k, xd, xs)..pos(k + 1, xd, xs).min(dw as i32) {
+                columnas.push((k as i32, x));
+            }
+        }
+        for k in 0..sh {
+            let (y0, y1) = (pos(k, yd, ys), pos(k + 1, yd, ys).min(dh as i32));
+            if y0 >= y1 {
+                continue;
+            }
+            for &(c, x) in &columnas {
+                self.copiar(ex, origen, sx + c, sy + k as i32, destino, dx + x, dy + y0, 1, 1, 0xC0, 0xFF, None, None, None)?;
+            }
+            for y in y0 + 1..y1 {
+                self.copiar(ex, destino, dx, dy + y0, destino, dx, dy + y, dw as i32, 1, 0xC0, 0xFF, None, None, None)?;
+            }
+        }
+        Ok(())
     }
 
     /// `ClipBlit` y `BltBitMapRastPort` (con `origen_rp` = 0 y `origen` el mapa).

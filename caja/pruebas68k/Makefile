@@ -3,7 +3,7 @@
 A := /opt/amiga/bin/m68k-amigaos-
 HUNK2BIN := ../../jit-host/pruebas68k/hunk2bin.py
 
-all: sistema.bin hola.bin lineaa.bin bucle.bin mala.bin vposr.bin ipl.bin saludo.exe ventana.exe hostil.exe anidado.exe gadtools.exe actualiza.exe boopsi.exe ramlib.exe capa.exe glotona.exe memh.exe procesos.exe ils.exe dtprueba.exe cgx.exe chips.exe blitter.exe copper.exe paula.exe denise.exe sprites.exe cia.exe prueba.library falsa.library miente.library dosasl.exe patron.exe formato.exe supervisor.exe icono.exe perdido.exe dos2.exe imagen.exe manual.library ramlib2.exe dos3.exe cx.exe fuente2.exe notify.exe
+all: sistema.bin hola.bin lineaa.bin bucle.bin mala.bin vposr.bin ipl.bin saludo.exe ventana.exe hostil.exe anidado.exe gadtools.exe actualiza.exe boopsi.exe ramlib.exe capa.exe glotona.exe memh.exe procesos.exe ils.exe dtprueba.exe cgx.exe chips.exe blitter.exe copper.exe paula.exe denise.exe sprites.exe cia.exe prueba.library falsa.library miente.library dosasl.exe patron.exe formato.exe supervisor.exe icono.exe perdido.exe dos2.exe imagen.exe manual.library ramlib2.exe dos3.exe cx.exe fuente2.exe notify.exe escala.exe
 
 sistema.bin: BASE := 0x101600
 hola.bin: BASE := 0x110000
