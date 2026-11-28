@@ -297,18 +297,18 @@ impl caja_dos::Caja for CajaDos<'_> {
     }
 }
 
-/// Escribe texto del Amiga (Latin-1) en la consola de DashOS (UTF-8), por trozos.
+/// Escribe texto del Amiga (Latin-1) en la consola de la plataforma (UTF-8), por trozos.
 fn escribir_latin1(datos: &[u8]) {
     let mut s = String::new();
     for &b in datos {
         s.push(b as char);
         if s.len() >= 200 {
-            plataforma::escribir(&s);
+            plataforma::consola(&s);
             s.clear();
         }
     }
     if !s.is_empty() {
-        plataforma::escribir(&s);
+        plataforma::consola(&s);
     }
 }
 

@@ -14,8 +14,10 @@ pub trait Plataforma {
     fn hora_ns() -> u64;
     /// Duerme el hilo que llama.
     fn dormir_us(us: u64);
-    /// Escribe en la consola (UTF-8).
+    /// Escribe en la consola lo que dice la caja (UTF-8).
     fn escribir(texto: &str);
+    /// Escribe lo que escriben los programas por la dos.library (UTF-8; en Linux, la salida estándar).
+    fn consola(texto: &str);
     /// Acaba el proceso entero tras un pánico de las bibliotecas nativas.
     fn acabar() -> !;
 }
@@ -37,6 +39,9 @@ impl Plataforma for Dashos {
     fn escribir(texto: &str) {
         dashos::escribir(texto)
     }
+    fn consola(texto: &str) {
+        dashos::escribir(texto)
+    }
     fn acabar() -> ! {
         // Se acaba el proceso entero (llamada 44): el resto del sistema sigue.
         dashos::llamada(44, [101, 0, 0, 0, 0]);
@@ -56,6 +61,7 @@ unsafe extern "C" {
     fn plat_hora_ns() -> u64;
     fn plat_dormir(us: u64);
     fn plat_escribir(s: *const u8, n: usize) -> isize;
+    fn plat_consola(s: *const u8, n: usize) -> isize;
     fn plat_acabar(codigo: i32) -> !;
 }
 
@@ -74,19 +80,28 @@ impl Plataforma for Linux {
         unsafe { plat_dormir(us) }
     }
     fn escribir(texto: &str) {
-        let mut resto = texto.as_bytes();
-        while !resto.is_empty() {
-            // SEGURIDAD: `resto` es memoria válida de `resto.len()` bytes mientras dura la llamada.
-            let n = unsafe { plat_escribir(resto.as_ptr(), resto.len()) };
-            if n <= 0 {
-                return;
-            }
-            resto = &resto[(n as usize).min(resto.len())..];
-        }
+        todo(texto, plat_escribir)
+    }
+    fn consola(texto: &str) {
+        todo(texto, plat_consola)
     }
     fn acabar() -> ! {
         // SEGURIDAD: un número; no vuelve.
         unsafe { plat_acabar(101) }
+    }
+}
+
+/// Escribe todo `texto` con `f` (plat_escribir o plat_consola), que puede escribir menos de lo pedido.
+#[cfg(not(feature = "dashos"))]
+fn todo(texto: &str, f: unsafe extern "C" fn(*const u8, usize) -> isize) {
+    let mut resto = texto.as_bytes();
+    while !resto.is_empty() {
+        // SEGURIDAD: `resto` es memoria válida de `resto.len()` bytes mientras dura la llamada.
+        let n = unsafe { f(resto.as_ptr(), resto.len()) };
+        if n <= 0 {
+            return;
+        }
+        resto = &resto[(n as usize).min(resto.len())..];
     }
 }
 
@@ -107,6 +122,10 @@ pub fn dormir_us(us: u64) {
 
 pub fn escribir(texto: &str) {
     Sistema::escribir(texto)
+}
+
+pub fn consola(texto: &str) {
+    Sistema::consola(texto)
 }
 
 pub fn acabar() -> ! {

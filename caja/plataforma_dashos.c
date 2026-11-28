@@ -71,6 +71,16 @@ long plat_escribir(const char *s, size_t n)
     return sc(SC_ESCRIBIR, (long)s, (long)n, 0, 0, 0);
 }
 
+long plat_consola(const char *s, size_t n)
+{
+    return sc(SC_ESCRIBIR, (long)s, (long)n, 0, 0, 0);
+}
+
+long plat_error(const char *s, size_t n)
+{
+    return sc(SC_ESCRIBIR, (long)s, (long)n, 0, 0, 0);
+}
+
 void plat_dormir(uint64_t us)
 {
     sc(SC_DORMIR, (long)us, 0, 0, 0, 0);

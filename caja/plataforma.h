@@ -15,8 +15,14 @@
 /* Lo primero de caja_main, antes de que hable nadie (en DashOS x86-64, la frecuencia del TSC para Rust). */
 void plat_iniciar(void);
 
-/* Escribe en la consola; lo escrito (puede ser menos de `n`), o un error negativo. */
+/* Escribe en la consola lo que dice la caja; lo escrito (puede ser menos de `n`), o un error negativo. */
 long plat_escribir(const char *s, size_t n);
+
+/* Lo que escriben los programas por la dos.library (en Linux, la salida estándar; en DashOS, la consola). */
+long plat_consola(const char *s, size_t n);
+
+/* Los errores que la caja tiene que decir siempre (en Linux, la salida de errores; en DashOS, la consola). */
+long plat_error(const char *s, size_t n);
 
 /* El reloj monótono, en microsegundos. */
 uint64_t plat_ahora_us(void);
