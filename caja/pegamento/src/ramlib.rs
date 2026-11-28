@@ -62,8 +62,18 @@ pub(super) fn montar_amigaos<F: caja_dos::SistemaArchivos>(dos: &mut caja_dos::D
     if carpeta.is_empty() || carpeta.contains(':') || carpeta.split('/').any(|p| p == ".." || p == ".") || carpeta.len() > 200 {
         return format!("AmigaOS del usuario: \"{}\" no vale (una carpeta del disco)", carpeta);
     }
-    let ruta = format!("SYS:{}", carpeta);
-    if let Err(e) = dos.asignar(cd, "AmigaOS", &ruta) {
+    montar_amigaos_en(dos, cd, &format!("SYS:{}", carpeta), " (solo leer)")
+}
+
+/// `AmigaOS:` en `ruta` (un camino de dos), con sus cajones detrás de las asignaciones de la caja. Lo que se dice (con
+/// `nota` tras la ruta).
+pub(super) fn montar_amigaos_en<F: caja_dos::SistemaArchivos>(
+    dos: &mut caja_dos::Dos<F>,
+    cd: &mut CajaDos,
+    ruta: &str,
+    nota: &str,
+) -> alloc::string::String {
+    if let Err(e) = dos.asignar(cd, "AmigaOS", ruta) {
         return format!("AmigaOS del usuario: {} no se monta (error {})", ruta, e);
     }
     let mut hechas = Vec::new();
@@ -81,7 +91,7 @@ pub(super) fn montar_amigaos<F: caja_dos::SistemaArchivos>(dos: &mut caja_dos::D
             hechas.push(format!("{}: {}", nombre, destino));
         }
     }
-    format!("AmigaOS del usuario en {} (solo leer), detrás de lo nativo: {}", ruta, hechas.join(", "))
+    format!("AmigaOS del usuario en {}{}, detrás de lo nativo: {}", ruta, nota, hechas.join(", "))
 }
 
 /// Cuántas cargas se dicen por la consola (las demás solo se cuentan).

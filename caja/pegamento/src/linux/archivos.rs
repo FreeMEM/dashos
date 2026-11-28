@@ -287,3 +287,12 @@ pub fn cajon_de_la_caja() -> String {
     }
     r
 }
+
+/// `$CAJA_AMIGAOS`, una carpeta absoluta de Linux con un AmigaOS, como camino de dos ("Linux:...").
+pub fn amigaos_de_linux() -> Option<String> {
+    let c = entorno(b"CAJA_AMIGAOS\0")?.trim_end_matches('/');
+    let resto = c.strip_prefix('/')?;
+    let mut r = String::from("Linux:");
+    r.push_str(resto);
+    Some(r)
+}

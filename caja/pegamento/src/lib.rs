@@ -498,6 +498,11 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         di(&format!("temporales: {}", temporales.join(", ")));
         // El AmigaOS del usuario, si lo dio (`SYS:C/Prefs/amigaos`): detrás de lo nativo y de la caja.
         di(&ramlib::montar_amigaos(&mut c.dos, &mut cd));
+        // En Linux, también el de `$CAJA_AMIGAOS` (una carpeta de Linux con un AmigaOS: Libs, Classes, Devs...).
+        #[cfg(not(feature = "dashos"))]
+        if let Some(ruta) = archivos::amigaos_de_linux() {
+            di(&ramlib::montar_amigaos_en(&mut c.dos, &mut cd, &ruta, ""));
+        }
     }
     c.n_waittof = c.gr.numero_graphics("WaitTOF").unwrap_or(0);
     decir_compositor(&mut c);
