@@ -25,6 +25,11 @@
       de los chips) pasan a ser del anfitrión, como la primera: anfitrion_leer y anfitrion_escribir mandan los accesos
       a caja_chip_leer y caja_chip_escribir con la hora de relevo_cycles (los ciclos de 68000 que cuenta el intérprete;
       el JIT los estima). Apagados, vuelven a no tener nada.
+    - K8: el contador hacia atrás de los chips (motor.h, motor_ipl_chips): con ellos encendidos, cada relevo_run lleva
+      de presupuesto las instrucciones que caben hasta el plazo (por lo bajo); al llegar, correr() pone los chips al
+      día y arma el plazo siguiente. Tras una escritura en los chips, también; si el plazo se adelanta,
+      relevo_request_stop corta la corrida y correr() vuelve a calcular el presupuesto. El nivel que piden no se
+      entrega: relevo_set_ipl sigue siendo solo de la caja (6 y 7).
 */
 
 #include <stdint.h>
@@ -39,6 +44,27 @@
 static relevo_cpu *cpu;
 static volatile int nmi;    /* se pidió cortar: el nivel se queda en 7 hasta el programa siguiente */
 static int chips;           /* K3: los chips del Amiga, encendidos (motor_chips) */
+
+/* K8: el plazo de los chips (en la hora del motor: relevo_cycles), el nivel que piden, cuántas veces se llegó al plazo y
+   la hora hasta la que se calculó el presupuesto de la corrida en curso. */
+static uint64_t plazo = UINT64_MAX;
+static unsigned ipl_chips;
+static uint64_t plazos_chips;
+static uint64_t fin_corrida = UINT64_MAX;
+/* Para el presupuesto: los ciclos de una instrucción, por lo bajo (las más cortas del 68000 son de 4; la media, más
+   de 8). Con más ciclos, la corrida acaba antes del plazo y correr() da otra; si una tanda de instrucciones largas
+   (MULU, DIVU...) pasa de esta media, el plazo llega algo tarde. */
+#define CICLOS_POR_INSTRUCCION_MIN 16
+
+static void chips_rearmar(uint64_t hora)
+{
+    struct caja_plazo p = caja_chips_plazo(hora);
+    ipl_chips = p.ipl;
+    plazo = p.siguiente;
+}
+
+unsigned motor_ipl_chips(void) { return ipl_chips; }
+uint64_t motor_plazos_chips(void) { return plazos_chips; }
 
 const char *motor_nombre(void)
 {
@@ -121,8 +147,15 @@ static uint32_t anfitrion_leer(void *ctx, uint32_t dir, unsigned largo)
 
 static void anfitrion_escribir(void *ctx, uint32_t dir, uint32_t v, unsigned largo)
 {
-    if (dir < RELEVO_PAGE_SIZE) pagina_escribir(ctx, dir, v, largo);
-    else caja_chip_escribir(dir, v, largo, relevo_cycles(cpu));
+    if (dir < RELEVO_PAGE_SIZE) {
+        pagina_escribir(ctx, dir, v, largo);
+        return;
+    }
+    uint64_t hora = relevo_cycles(cpu);
+    caja_chip_escribir(dir, v, largo, hora);
+    /* K8: una escritura puede cambiar el nivel o adelantar el plazo (INTENA, un temporizador...). */
+    chips_rearmar(hora);
+    if (plazo < fin_corrida) relevo_request_stop(cpu);
 }
 
 static relevo_trap_result linea_a(void *ctx, relevo_cpu *c, uint16_t op)
@@ -197,6 +230,13 @@ int motor_chips(int encendidos)
     /* Lo traducido con las páginas de antes no vale. */
     relevo_invalidate_all(cpu);
     chips = encendidos;
+    /* K8: el contador hacia atrás, armado o no. */
+    plazos_chips = 0;
+    if (encendidos) chips_rearmar(relevo_cycles(cpu));
+    else {
+        plazo = UINT64_MAX;
+        ipl_chips = 0;
+    }
     return 1;
 }
 
@@ -204,7 +244,20 @@ int motor_chips(int encendidos)
 static void correr(void)
 {
     for (;;) {
-        relevo_status st = relevo_run(cpu, 1u << 22);
+        uint64_t presupuesto = 1u << 22;
+        if (chips) {
+            /* K8: el contador hacia atrás. */
+            uint64_t ahora = relevo_cycles(cpu);
+            if (ahora >= plazo) {
+                plazos_chips++;
+                chips_rearmar(ahora);
+            }
+            uint64_t n = plazo > ahora ? (plazo - ahora) / CICLOS_POR_INSTRUCCION_MIN : 0;
+            if (n == 0) n = 1;
+            if (n < presupuesto) presupuesto = n;
+            fin_corrida = plazo;
+        }
+        relevo_status st = relevo_run(cpu, presupuesto);
         if (st == RELEVO_EXIT_PC_ZERO) return;
         if (st == RELEVO_HALTED || st == RELEVO_BAD_NESTING) {
             di("RelevoJIT: el 68k se paró (%u)\n", (unsigned)st);
@@ -256,6 +309,8 @@ void motor_anidado(uint32_t pc, motor_regs *m, uint32_t sr, uint32_t usp, uint32
     correr();
     for (int i = 0; i < 8; i++) { m->d[i] = r->d[i]; m->a[i] = r->a[i]; }
     *r = antes;
+    /* K8: la corrida de fuera tiene el presupuesto de antes; que lo vuelva a calcular con el plazo de ahora. */
+    if (chips) relevo_request_stop(cpu);
 }
 
 uint32_t motor_sr(void) { return relevo_get_regs(cpu)->sr; }

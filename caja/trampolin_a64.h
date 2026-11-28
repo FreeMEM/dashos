@@ -63,5 +63,8 @@ int trampolin_poner(uint64_t sitio, uint32_t ins, const struct acceso *a);
 void trampolines_deshacer(void);
 /* ¿Está `pc` (proyección de ejecutar) en la zona de los trampolines? */
 int en_trampolines(uint64_t pc);
+/* K8: tras una escritura en los chips, a su hora: los pone al día y vuelve a armar el plazo del contador hacia atrás
+   (motor_emu68.c; sin tocar la FPU ni SIMD). */
+void chips_rearmar(uint64_t hora);
 
 #endif

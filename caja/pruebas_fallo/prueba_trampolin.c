@@ -35,6 +35,9 @@ void caja_chip_escribir(uint32_t dir, uint32_t valor, unsigned tam, uint64_t hor
     for (unsigned k = 0; k < tam; k++) sombra[dir - BASE + k] = (uint8_t)(valor >> (8 * (tam - 1 - k)));
 }
 uint64_t motor_ciclos(void) { return 0; }
+/* K8: tras cada escritura en los chips por un trampolín (y solo entonces), el plazo se vuelve a armar. */
+static uint64_t rearmados;
+void chips_rearmar(uint64_t hora) { (void)hora; rearmados++; }
 #pragma GCC pop_options
 
 /* El arnés: x0 = r (uint64_t[160]): r[1..8] = x1-x8, r[9] = x30, r[10] = NZCV, q0-q31 de r[16..79] a la entrada y en
@@ -146,6 +149,11 @@ int main(void)
     static uint64_t ref[160], tra[160];
     unsigned n = (unsigned)(tabla_fin - tabla) / 4, mal = 0;
     uint64_t chips_antes = chips_tramp_accesos, ram_antes = chips_tramp_ram;
+    unsigned escrituras = 0;
+    for (unsigned k = 0; k < n; k++) {
+        marco_fallo m0; memset(&m0, 0, sizeof m0); struct acceso a0;
+        if (decodifica(lee_ins(tabla + 4 * k), &m0, &a0) && a0.escribe) escrituras++;
+    }
     for (int vuelta = 0; vuelta < 20; vuelta++)
     for (unsigned k = 0; k < n; k++) {
         uint32_t ins = lee_ins(tabla + 4 * k);
@@ -169,6 +177,12 @@ int main(void)
     if (chips_tramp_accesos - chips_antes != 20ull * n || chips_tramp_ram - ram_antes != 20ull * n) {
         printf("cuentas: %llu por los chips y %llu por la RAM (esperaba %u de cada)\n",
                (unsigned long long)(chips_tramp_accesos - chips_antes), (unsigned long long)(chips_tramp_ram - ram_antes), 20 * n);
+        mal++;
+    }
+
+    if (escrituras == 0 || rearmados != 20ull * escrituras) {
+        printf("K8: el plazo se rearmó %llu veces (esperaba %u: tras cada escritura en los chips)\n",
+               (unsigned long long)rearmados, 20 * escrituras);
         mal++;
     }
 

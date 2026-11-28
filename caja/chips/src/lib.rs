@@ -205,6 +205,16 @@ const LACE: u16 = 0x0004;
 /// `DMACON`: los bits que se escriben (0-10). `BBUSY` (14) y `BZERO` (13) son de solo lectura.
 const DMACON_ESCRIBIBLES: u16 = 0x07FF;
 
+/// Lo que [`Chips::plazo`] da al motor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Plazo {
+    /// El nivel de interrupción que piden los chips (0 a 6): el de los bits de `INTREQ` habilitados en `INTENA`, con
+    /// `INTEN`; el más alto si hay varios.
+    pub ipl: u8,
+    /// La hora (en ciclos de 68000) en que el motor tiene que volver: la del siguiente suceso.
+    pub siguiente: u64,
+}
+
 /// Los chips: los dos CIA, el haz y las interrupciones de Agnus y Paula.
 #[derive(Clone, Debug)]
 pub struct Chips {
@@ -601,6 +611,16 @@ impl Chips {
         if self.cia_b.irq() {
             self.intreq |= int::EXTER;
         }
+    }
+
+    /// K8 (`docs/CHIPS_LOOP.md`): pone todo al día hasta `hora` (como [`Chips::avanzar`]) y dice lo que necesita el
+    /// motor para su contador hacia atrás: el nivel que piden ([`Chips::ipl`]) y la hora del siguiente suceso
+    /// ([`Chips::siguiente_suceso`], siempre posterior a [`Chips::hora`]). El motor vuelve aquí cuando llega a esa
+    /// hora y tras escribir en los chips (una escritura puede cambiar las dos cosas: `INTENA`, `INTREQ`, un
+    /// temporizador, `BLTSIZE`...).
+    pub fn plazo(&mut self, hora: u64) -> Plazo {
+        self.avanzar(hora);
+        Plazo { ipl: self.ipl(), siguiente: self.siguiente_suceso() }
     }
 
     /// El nivel de interrupción que piden los chips al 68000 (0 a 6), según `INTENA` e `INTREQ`.

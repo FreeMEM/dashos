@@ -1,8 +1,9 @@
 /*
     DashOS, K7 (docs/CHIPS_LOOP.md): los trampolines de la instrucción reescrita (trampolin_a64.h). Se compila con
     -mgeneral-regs-only: ni esto ni lo que llama (caja_chip_leer y caja_chip_escribir, Rust softfloat; motor_ciclos,
-    que solo lee v20) toca los registros de la FPU y SIMD, que el código traducido tiene vivos. Sin memcpy ni memset
-    (el de la caja es C normal y puede usar SIMD): se comprueba con objdump (docs/CHIPS_LOOP.md, K7).
+    que solo lee v20; chips_rearmar, K8, también general-regs-only) toca los registros de la FPU y SIMD, que el código
+    traducido tiene vivos. Sin memcpy ni memset (el de la caja es C normal y puede usar SIMD): se comprueba con
+    objdump (docs/CHIPS_LOOP.md, K7).
 */
 #include "trampolin_a64.h"
 
@@ -126,7 +127,9 @@ __attribute__((used, noipa)) int caja_trampolin_c(marco_fallo *m, struct trampol
     t->ram_seguidas = 0;
     uint64_t pc = m->pc;
     m->far = a.dir;
-    chips_atiende(m, t->ins, motor_ciclos(), &a);
+    uint64_t hora = motor_ciclos();
+    chips_atiende(m, t->ins, hora, &a);
+    if (a.escribe) chips_rearmar(hora);   /* K8: una escritura puede cambiar el nivel o el plazo */
     m->pc = pc;
     chips_tramp_accesos++;
     return 1;

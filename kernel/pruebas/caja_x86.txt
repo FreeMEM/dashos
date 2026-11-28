@@ -20,6 +20,9 @@ DashOS: arranque por UEFI en x86-64
 ~│   [caja-amiga] chips: INTREQ: SOFT sube con SET y baja con CLR: bien
 ~│   [caja-amiga] chips: 0 fallos
 ~│   [caja-amiga] chips.exe acabó con 0 (vector -1), 
+# K8: el contador hacia atrás de los chips: ipl.bin habilita VERTB y da vueltas sin tocarlos; el motor vuelve a ellos en
+# cada fin de cuadro y deja preparado el nivel 3, sin entregarlo (en la caja nativa, el 6 y el 7 son de la caja).
+~│   [caja-amiga] chips: contador hacia atrás (K8): bien
 # Las tareas de procesos.c (modo a), con la coma flotante extendida guardada al cambiar de tarea.
 ~│   [caja-amiga] procesos: la coma flotante extendida sigue igual tras cambiar de tarea: bien
 ~│   [caja-amiga] procesos: 0 fallos (modo a)

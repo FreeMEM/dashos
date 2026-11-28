@@ -84,7 +84,7 @@ S18 es del 2026-11-08 y piensa solo en Emu68. Desde entonces:
 - [x] K7 **Reescritura (ARM).** Tras el primer fallo en un sitio, la instrucción pasa a un `bl` a un trampolín
   (S18, "Los siguientes: la instrucción reescrita"). Se mide el coste por acceso, con fallo y con trampolín, en QEMU
   (solo para comparar; los tiempos de verdad, en la Pi).
-- [ ] K8 **Contador hacia atrás e interrupciones.** El motor vuelve a los chips cuando llega la hora del siguiente
+- [x] K8 **Contador hacia atrás e interrupciones.** El motor vuelve a los chips cuando llega la hora del siguiente
   suceso, y los chips ponen el `IPL`. En la caja nativa, los niveles 6 y 7 ya los usa la caja: aquí solo se dejan
   preparados para la máquina entera (fase 2), sin entregarlos todavía.
 
@@ -671,3 +671,64 @@ de S18).
   la prueba `direcciones_de_nadie` (el registro sin imitar pasa a ser `DSKPTH`, con los espejos de B5), el `Makefile`
   de `pruebas68k` y aquí. Comprobado: `cargo test` (todas, con los oráculos de la imagen y de `CLXDAT`), `cargo
   clippy --all-targets` sin avisos y `make -C kernel caja-x86` BIEN.
+
+- K8 hecho (papel de implementador; rama `chips-k8`, sale de `chips-blitter` d2383bb9; fuentes: el Hardware Reference
+  Manual, capítulo 7, para el mapa de niveles; Emu68 para `MainLoop` y el traductor; `relevo.h` de RelevoJIT).
+  - Los chips: `Chips::plazo(hora)` pone todo al día y da `Plazo { ipl, siguiente }` (el nivel de `ipl()` y la hora de
+    `siguiente_suceso()`). El pegamento: `caja_chips_plazo(hora)` (`chips.rs`), con la hora del motor; apagados,
+    `{ UINT64_MAX, 0 }`. En `motor.h`: `struct caja_plazo`, `caja_chips_plazo`, `motor_ipl_chips()` y
+    `motor_plazos_chips()` (cuántas veces llegó al plazo, para las pruebas), con lo que hará la fase 2 con el nivel.
+  - Emu68 (ARM): parche nuevo `patches/emu68/0017-plazo-de-los-chips.patch`. Un byte libre de `INTF`, `INTF.CHIPS`:
+    con él a 1, `INT64` no es 0, y `MainLoop`, que ya mira `INT64` entre bloques, compara el contador de instrucciones
+    (v20) con `dashos_plazo` y, al llegar, guarda el contexto, llama a `dashos_plazo_llegado` (`motor_emu68.c`: pone
+    los chips al día, guarda el nivel y arma el plazo siguiente, en instrucciones: la hora / 8 por arriba) y lo vuelve
+    a cargar. Las dos, débiles en el parche (jit-host no las define). Con `INTF.CHIPS` a 1, los bucles internos de una
+    unidad (que Emu68 repite mientras `INT64` sea 0) vuelven a `MainLoop` en cada vuelta: un bucle que no toca los
+    chips no se salta el plazo. Apagados, `INTF.CHIPS` a 0 y nada cambia: ni una instrucción más. `motor_arrancar`
+    pone `INT64` a 0 y vuelve a poner `INTF.CHIPS` si están encendidos. Tras cada escritura en los chips (por el fallo
+    y por el trampolín), `chips_rearmar` (con `target("general-regs-only")`: corre con la FPU y SIMD del JIT vivas;
+    comprobado con objdump que ni ella ni `caja_chips_plazo` las tocan).
+  - Lo que se vio en `arranque-virt`: la primera versión del gancho mataba la caja (salto a 0) en el bucle de
+    `ipl.bin`. `MainLoop` reutiliza x12 (`ARMCode`) si la PC no cambió, y Rust (los chips) no respeta x12 como el C de
+    la caja (`-ffixed-x12`). Tras el gancho, `LastPC` pasa a "ninguna" y la unidad se vuelve a buscar.
+  - RelevoJIT (x86): sin tocar RelevoJIT. Con los chips encendidos, `correr()` da a cada `relevo_run` de presupuesto
+    las instrucciones hasta el plazo (los ciclos que faltan / 16: la corrida acaba antes y se da otra; solo una tanda de
+    instrucciones de más de 16 ciclos de media llega tarde). Al volver, si llegó, pone los chips al día y arma el
+    siguiente. Tras una escritura en los chips, también; si el plazo se adelanta, `relevo_request_stop` y `correr()`
+    vuelve a calcular. Tras una corrida anidada (`motor_anidado`), otra parada, para que la de fuera recalcule.
+    Apagados, el presupuesto de siempre.
+  - El nivel no se entrega: `relevo_set_ipl` sigue siendo solo de la caja (6 y 7) y en Emu68 `MainLoop` no lo suma.
+  - Prueba nueva en la caja: `caja/pruebas68k/ipl.s` (`ipl.bin`, en `$138000`, como `vposr.bin`) borra `INTREQ`,
+    pone `INTENA` a `$C020` y da 50.000 vueltas sin tocar los chips; con argumentos, acaba quitando `INTEN`. La caja lo
+    lanza dos veces con los chips encendidos tras `chips.exe` (en ARM y en x86): sin argumentos, el nivel preparado
+    tiene que ser 3 tras 3 plazos o más; con uno, 0 (lo recalcula la escritura); apagados, 0. Línea nueva en
+    `arranque_virt.txt` y `caja_x86.txt`. No es para el oráculo (en un Amiga, con `INTEN`, `VERTB` llegaría al 68k).
+  - Pruebas en Rust: `caja/chips/tests/plazo.rs` (10): el nivel de las 16.384 combinaciones de `INTREQ` con tres
+    `INTENA` y sin `INTEN`, el mapa bit a bit, el plazo sin nada (fin de cuadro), un motor de mentira (8 ciclos por
+    instrucción, bloques de 1 a 256) que solo vuelve en el plazo y ve el nivel 3 en el primer bloque tras cada fin de
+    cuadro, `VERTB` sin habilitar, el temporizador A del CIA-A (nivel 2) y el B del CIA-B (nivel 6), escribir `INTENA`
+    o `INTREQ` cambia el nivel enseguida, una escritura adelanta el plazo, una hora anterior no cambia nada. Y en
+    `pruebas_fallo/prueba_trampolin.c`: el plazo se rearma tras cada escritura en los chips por el trampolín y solo
+    entonces (380 en 20 vueltas; con el fallo metido a propósito, 660).
+  - La copia de Emu68: `third_party/Emu68` de este worktree era un enlace al clon de `.worktrees/chips`, que comparten
+    otros worktrees; para no cambiarles nada se sustituyó por una copia (es la base más 0001-0016, comprobado con
+    `git archive` y los parches) y se le aplicó el 0017. Quien construya con un clon propio tiene que aplicar el 0017.
+  - Comprobado: `cargo test` en `caja/chips` (todas, 10 nuevas) y `cargo clippy --all-targets` sin avisos; el
+    pegamento compila (no tiene pruebas; su clippy, con stable para `aarch64-unknown-none`, no da nada en `chips.rs`,
+    sí avisos y errores de antes en `lib.rs`, `compositor.rs` y `faltan.rs`; el nightly no tiene clippy);
+    `make -C caja/pruebas_fallo` (K6 y K7, BE y LE, 0 fallos, con la cuenta nueva); `make -C kernel prueba` (BIEN);
+    `make -C kernel caja-x86` (BIEN: 4 plazos, nivel 3; quitando `INTEN`, 0); `make -C kernel arranque-virt` con la
+    caja big-endian (BIEN, tras el arreglo de x12: 5 plazos, nivel 3; la línea de K7 también); con `CAJA_ORDEN=le`,
+    dos vueltas con las líneas de la caja bien (5 plazos, nivel 3, y K7) y un fallo lejos de ella en cada una: en la
+    primera, el segundo arranque tras reiniciar; en la segunda, la comprobación del sonido (el tono de 600 Hz sin
+    nivel y chasquidos). No se repitió más. Con objdump: `chips_rearmar` y `caja_chips_plazo` sin registros de la FPU
+    ni SIMD.
+  - No comprobado: la Pi de verdad; el coste con los chips encendidos de que los bucles internos de Emu68 vuelvan a
+    `MainLoop` en cada vuelta (sin medir); que el plazo llegue a tiempo en x86 con instrucciones largas; un programa
+    que escriba en los chips desde una corrida anidada (el camino de `motor_anidado` con los chips encendidos).
+  - Toca `caja/caja.c`, `caja/programas.S` y `caja/Makefile` (regla 9: avisar a `dashos-aarch64`).
+  - Para la fase 2: entregar el nivel (en Emu68, otro cambio en `MainLoop`: sin PiStorm no mira `INTF.IPL`; en
+    RelevoJIT, `relevo_set_ipl` con el más alto entre el de los chips y el de la caja); que la hora corra con el 68k en
+    `STOP` (hoy no corre: ni Emu68 ni RelevoJIT avanzan el contador); bajar el tope del bloque en la máquina entera; y
+    la hora exacta del acceso dentro del bloque (K7, "Para K8").
+

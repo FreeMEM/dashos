@@ -188,7 +188,8 @@ __attribute__((used, noipa)) int chips_fallo(marco_fallo *m)
     uint32_t ins = p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
     struct acceso a;
     uint64_t sitio = m->pc;
-    int r = chips_atiende(m, ins, motor_ciclos(), &a);
+    uint64_t hora = motor_ciclos();
+    int r = chips_atiende(m, ins, hora, &a);
     if (r == 0)
         di("chips: no sé decodificar la instrucción %08x (en %p, acceso a %08x)\n", ins, (void *)m->pc,
            (uint32_t)m->far);
@@ -197,6 +198,7 @@ __attribute__((used, noipa)) int chips_fallo(marco_fallo *m)
            a.tam * a.pares, (void *)a.dir);
     else {
         chips_fallos++;
+        if (a.escribe) chips_rearmar(hora);   /* K8 */
         trampolin_poner(sitio, ins, &a);
     }
     return r > 0;
@@ -241,8 +243,39 @@ __asm__(
     "udf #0\n"
     ".size caja_entrada_fallo, . - caja_entrada_fallo\n");
 
+/* --- K8: el contador hacia atrás (motor.h, motor_ipl_chips) --- */
+
+/* El plazo, en instrucciones del contador de Emu68 (la hora del motor / CICLOS_POR_INSTRUCCION, por arriba). Lo mira
+   MainLoop al volver de cada bloque mientras INTF.CHIPS esté a 1 (parche 0017; las dos, débiles allí). */
+uint64_t dashos_plazo = ~0ULL;
+static volatile unsigned ipl_chips;
+static uint64_t plazos_chips;
+
+/* Pone los chips al día a la hora `hora` y arma el plazo siguiente. La llaman también los trampolines (tras una
+   escritura): sin tocar los registros de la FPU y SIMD, que el código traducido tiene vivos (como trampolin_a64.c). */
+__attribute__((target("general-regs-only"))) void chips_rearmar(uint64_t hora)
+{
+    struct caja_plazo p = caja_chips_plazo(hora);
+    ipl_chips = p.ipl;
+    dashos_plazo = p.siguiente == ~0ULL ? ~0ULL : p.siguiente / CICLOS_POR_INSTRUCCION
+        + (p.siguiente % CICLOS_POR_INSTRUCCION != 0);
+}
+
+/* Desde MainLoop, con el contexto guardado: el contador llegó al plazo. */
+void dashos_plazo_llegado(void)
+{
+    plazos_chips++;
+    chips_rearmar(motor_ciclos());
+}
+
+unsigned motor_ipl_chips(void) { return ipl_chips; }
+uint64_t motor_plazos_chips(void) { return plazos_chips; }
+
+/* El plazo armado: INTF.CHIPS a 1 hace que MainLoop lo mire (INT64 deja de ser 0). */
+static void plazo_marca(int armado) { __atomic_store_n(&m68k.INTF.CHIPS, (uint8_t)armado, __ATOMIC_RELEASE); }
+
 /* K2 y K6: encendidos, el manejador de fallos del hilo de la caja (el que ejecuta el 68k) atiende las dos zonas;
-   apagados, se quita. Sin chips, un acceso ahí acaba como siempre. */
+   apagados, se quita. Sin chips, un acceso ahí acaba como siempre. K8: y el contador hacia atrás, armado o no. */
 int motor_chips(int encendidos)
 {
     encendidos = encendidos != 0;
@@ -258,10 +291,16 @@ int motor_chips(int encendidos)
         }
         chips_fallos = chips_tramp_accesos = chips_tramp_ram = 0;
         chips_reescritos = chips_deshechos = 0;
+        plazos_chips = 0;
+        chips_rearmar(motor_ciclos());
+        plazo_marca(1);
     } else {
         /* K7: que no quede nada reescrito (el sitio volvería a los chips apagados sin fallar). */
         trampolines_deshacer();
         caja_sc(SC_FALLO_MANEJADOR, 0, 0, 0, 0, 0);
+        plazo_marca(0);
+        dashos_plazo = ~0ULL;
+        ipl_chips = 0;
     }
     chips_en = encendidos;
     return 1;
@@ -439,6 +478,7 @@ __attribute__((noipa)) void motor_arrancar(uint32_t pc, uint32_t a7, uint32_t a6
     nativas = 0;
     m68k.CACR = 0x80008000;
     m68k.INT64 = 0;
+    plazo_marca(chips_en);    /* K8: el plazo de los chips sigue armado si están encendidos */
     __asm__ volatile("mov " CTX_LAST_PC_ASM ", %w0" ::"r"(0xffffffff));
     __asm__ volatile("mov " CTX_POINTER_ASM ", %0" ::"r"(&m68k));
     /* x29 lo guarda el asm: GCC no lo hace aunque esté en la lista (ver main_loop_anidado). */

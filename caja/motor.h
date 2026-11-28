@@ -29,6 +29,12 @@ void caja_nativa(motor_regs *r, uint32_t indice);
    (chips.rs, sobre caja/chips). Lo que no se imita lee 0 y no escribe. */
 uint32_t caja_chip_leer(uint32_t dir, unsigned tam, uint64_t hora);
 void caja_chip_escribir(uint32_t dir, uint32_t valor, unsigned tam, uint64_t hora);
+/* K8: pone los chips al día hasta `hora` (la del motor) y dice cuándo tiene que volver el motor (la hora del siguiente
+   suceso de los chips: fin de cuadro, un temporizador de un CIA, el fin del blit...; siempre posterior a `hora`) y el
+   nivel de interrupción que piden (0 a 6: los bits de INTREQ habilitados en INTENA, con INTEN, con el mapa de niveles
+   del Amiga). Con los chips apagados, { UINT64_MAX, 0 }. La da pegamento/ (chips.rs). */
+struct caja_plazo { uint64_t siguiente; uint32_t ipl; };
+struct caja_plazo caja_chips_plazo(uint64_t hora);
 
 /* --- Lo que el motor da a la caja --- */
 
@@ -85,6 +91,25 @@ uint64_t motor_ciclos(void);
    no hace nada para encenderlos: el mismo binario corre en un Amiga de verdad (K4). Más adelante, una marca del
    programa. */
 int motor_chips(int encendidos);
+/* K8: el contador hacia atrás. Con los chips encendidos, el motor vuelve a ellos (caja_chips_plazo) cuando su hora
+   llega al plazo que le dieron, entre bloques traducidos (como mira las interrupciones), y tras cada escritura del 68k
+   en los chips (INTENA, INTREQ, un temporizador... cambian el nivel o el plazo); cada vez guarda el nivel que piden y
+   arma el plazo nuevo. Con los chips apagados no se arma: nada cambia ni cuesta.
+   - Emu68 (ARM): el plazo, en instrucciones (motor_ciclos / 8), en dashos_plazo; MainLoop lo mira al volver de cada
+     bloque si INTF.CHIPS está a 1 (parche 0017 de patches/emu68). Con INTF.CHIPS a 1, INT64 no es 0, así que los
+     bucles internos de una unidad también vuelven a MainLoop en cada vuelta: con los chips encendidos no se los salta.
+   - RelevoJIT (x86): el presupuesto de instrucciones de relevo_run hasta el plazo (con una estimación por lo bajo
+     de los ciclos de cada instrucción); si una escritura lo adelanta, relevo_request_stop.
+   El nivel NO se entrega al 68k: en la caja nativa los niveles 6 y 7 son de la caja (motor_interrumpir, la de la caja,
+   y motor_cortar, la NMI) y exec es nativo, sin vectores de nivel 1 a 6 que atender. motor_ipl_chips() lo da para las
+   pruebas (caja.c, ipl.bin) y para la fase 2 de S18 (la máquina entera, con el Kickstart o la ROM de AROS en el 68k):
+   allí el motor lo entregará como el IPL del 68000, el más alto entre el de los chips y el suyo: en Emu68, en el nivel
+   que calcula MainLoop (otro cambio en el parche 0017: sin PiStorm, MainLoop no usa INTF.IPL); en RelevoJIT, con relevo_set_ipl, sin
+   pisar el 6 y el 7 de la caja mientras la caja los use. Y tendrá que mirar el plazo también con el 68k en STOP
+   (hoy, en STOP, la hora no corre) y acortar los bloques (S18, "La exactitud de las interrupciones"). */
+unsigned motor_ipl_chips(void);
+/* K8: cuántas veces ha llegado el contador a su plazo desde que se encendieron los chips (para las pruebas). */
+uint64_t motor_plazos_chips(void);
 /* Escribe los registros del 68k en la consola (cuando una prueba sale mal). */
 void motor_volcar(void);
 /* La coma flotante del 68k para pegamento/ (multitarea), en 13 u64: FPSR, FPIAR y FPCR en v[8..10]. FP0-FP7 en

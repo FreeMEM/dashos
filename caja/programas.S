@@ -31,6 +31,8 @@ prog_\nombre\()_fin:
         programa chips, "pruebas68k/chips.exe"
 // K7: lecturas de VPOSR seguidas, para medir lo que cuesta un acceso a los chips (en $138000).
         programa vposr, "pruebas68k/vposr.bin"
+// K8: vueltas sin tocar los chips con VERTB habilitado, para el contador hacia atrás (también en $138000).
+        programa ipl, "pruebas68k/ipl.bin"
 // S28: los virus de laboratorio (pruebas68k/malware/).
         programa mal_arranque, "pruebas68k/malware/arranque.exe"
         programa mal_enlace, "pruebas68k/malware/enlace.exe"

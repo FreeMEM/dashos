@@ -100,7 +100,7 @@ DASH_EXES := build/dash/hola.exe build/dash/texto.exe build/dash/texto_gcc.exe b
 	build/dash/interp.exe build/dash/listas.exe build/dash/ctrl_c.exe build/dash/ctrl_c_gcc.exe build/dash/ctrl_c_for.exe \
 	build/dash/trap_ilegal.exe build/dash/trap_divcero.exe build/dash/test_gadtools.exe \
 	build/dash/test_reaction.exe build/dash/test_doc_reaction.exe
-PROGRAMAS_DEPS := programas.S pruebas68k/sistema.bin pruebas68k/hola.bin pruebas68k/lineaa.bin pruebas68k/bucle.bin pruebas68k/mala.bin pruebas68k/saludo.exe pruebas68k/ventana.exe pruebas68k/hostil.exe pruebas68k/anidado.exe pruebas68k/gadtools.exe pruebas68k/boopsi.exe pruebas68k/ramlib.exe pruebas68k/capa.exe pruebas68k/glotona.exe pruebas68k/memh.exe pruebas68k/procesos.exe pruebas68k/actualiza.exe pruebas68k/ils.exe pruebas68k/dtprueba.exe pruebas68k/cgx.exe pruebas68k/chips.exe pruebas68k/vposr.bin $(MALWARE) $(DASH_EXES)
+PROGRAMAS_DEPS := programas.S pruebas68k/sistema.bin pruebas68k/hola.bin pruebas68k/lineaa.bin pruebas68k/bucle.bin pruebas68k/mala.bin pruebas68k/saludo.exe pruebas68k/ventana.exe pruebas68k/hostil.exe pruebas68k/anidado.exe pruebas68k/gadtools.exe pruebas68k/boopsi.exe pruebas68k/ramlib.exe pruebas68k/capa.exe pruebas68k/glotona.exe pruebas68k/memh.exe pruebas68k/procesos.exe pruebas68k/actualiza.exe pruebas68k/ils.exe pruebas68k/dtprueba.exe pruebas68k/cgx.exe pruebas68k/chips.exe pruebas68k/vposr.bin pruebas68k/ipl.bin $(MALWARE) $(DASH_EXES)
 $(B)/programas.o: $(PROGRAMAS_DEPS) | $(B)
 	$(CC) $(COMMON) -c $< -o $@
 

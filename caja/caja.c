@@ -525,6 +525,7 @@ extern const uint8_t prog_dtprueba[], prog_dtprueba_fin[];
 extern const uint8_t prog_cgx[], prog_cgx_fin[];
 extern const uint8_t prog_chips[], prog_chips_fin[];
 extern const uint8_t prog_vposr[], prog_vposr_fin[];
+extern const uint8_t prog_ipl[], prog_ipl_fin[];
 #if !defined(__x86_64__)
 /* K7: lo que cuenta Emu68 de los accesos a los chips (motor_emu68.c y trampolin_a64.h). */
 extern uint64_t chips_fallos, chips_tramp_accesos, chips_tramp_ram;
@@ -1114,6 +1115,29 @@ int caja_main(void)
             di("chips.exe acabó con %d (vector %d), %d llamadas nativas, en %u ms, %u accesos a nadie: %s\n", (int)d0, v,
                llamadas, (uint32_t)((t1 - t0) / 1000), nadie, bien ? "bien" : "MAL");
             if (!bien) { motor_volcar(); fallos++; }
+            /* K8: el contador hacia atrás. ipl.bin habilita VERTB en INTENA y da vueltas sin tocar los chips: solo el
+               contador del motor los pone al día. Al acabar, el nivel preparado (que no se entrega) es el 3, tras
+               varios plazos (uno por cuadro: dura unos 6); con un argumento, su última escritura quita INTEN y el nivel
+               vuelve a 0 sin esperar al plazo. Con los chips apagados, 0. */
+            {
+                unsigned nivel[2] = { 9, 9 };
+                uint64_t plazos[2] = { 0, 0 };
+                int hecho = 1;
+                for (int k = 0; k < 2 && hecho; k++) {
+                    if (!chips(1, 0)) { hecho = 0; break; }
+                    tarea_args = k ? "x" : "";
+                    v = ejecuta("ipl", prog_ipl, prog_ipl_fin, 0x00138000);
+                    tarea_args = NULL;
+                    nivel[k] = motor_ipl_chips();
+                    plazos[k] = motor_plazos_chips();
+                    chips(0, 0);
+                    if (v != -1 || d0_final != 0 || motor_ipl_chips() != 0) hecho = 0;
+                }
+                bien = hecho && nivel[0] == 3 && plazos[0] >= 3 && nivel[1] == 0 && plazos[1] >= 3;
+                di("chips: contador hacia atrás (K8): %s: %u plazos y nivel %u preparado (VERTB); quitando INTEN, %u y %u\n",
+                   bien ? "bien" : "MAL", (uint32_t)plazos[0], nivel[0], (uint32_t)plazos[1], nivel[1]);
+                if (!bien) fallos++;
+            }
 #if !defined(__x86_64__)
             /* K7: lo que cuesta un acceso a los chips en Emu68, por el fallo (K6) y con la instrucción reescrita (el
                trampolín). vposr.bin lee VPOSR mil veces por cada carácter de sus argumentos: sin ninguno (lo que cuesta

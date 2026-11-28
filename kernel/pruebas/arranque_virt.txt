@@ -1213,6 +1213,9 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] chips: INTREQ: SOFT sube con SET y baja con CLR: bien
 ~│   [caja-amiga] chips: 0 fallos
 ~│   [caja-amiga] chips.exe acabó con 0 (vector -1), 
+# K8: el contador hacia atrás de los chips: ipl.bin habilita VERTB y da vueltas sin tocarlos; el motor vuelve a ellos en
+# cada fin de cuadro y deja preparado el nivel 3, sin entregarlo (en la caja nativa, el 6 y el 7 son de la caja).
+~│   [caja-amiga] chips: contador hacia atrás (K8): bien
 #[arm: K7, lo que cuesta una lectura de los chips en Emu68, por el fallo y con la instrucción reescrita (el trampolín)
 ~│   [caja-amiga] chips: coste de una lectura de VPOSR (K7, QEMU): bien
 #]
