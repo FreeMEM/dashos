@@ -40,10 +40,9 @@ struct sigcontexto {
 };
 #define UC_MCONTEXT 176
 
-__attribute__((naked)) static void restaura(void)
-{
-    __asm__ volatile("mov x8, #139\n svc #0");   /* rt_sigreturn */
-}
+/* El regreso de la señal (rt_sigreturn), sin prólogo que mueva sp: en ensamblador suelto. */
+void pagina0_restaura(void);
+__asm__(".text\n.balign 4\npagina0_restaura:\n mov x8, #139\n svc #0\n");
 
 static void manejador(int sig, void *info, void *uc)
 {
@@ -90,6 +89,6 @@ long pagina0_instala(uint64_t copia)
 {
     pagina0_copia = copia;
     struct { void *h; unsigned long flags; void *restorer; uint64_t mask; } sa = {
-        (void *)manejador, SA_SIGINFO | SA_RESTORER | SA_NODEFER, (void *)restaura, 0 };
+        (void *)manejador, SA_SIGINFO | SA_RESTORER | SA_NODEFER, (void *)pagina0_restaura, 0 };
     return sys6(SYS_rt_sigaction, SIGSEGV, (long)&sa, 0, 8, 0, 0);
 }
