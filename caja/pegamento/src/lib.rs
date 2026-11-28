@@ -27,11 +27,12 @@ mod aviso;
 #[path = "linux/aviso.rs"]
 mod aviso;
 mod chips;
+mod compositor;
 #[cfg(feature = "dashos")]
-mod compositor;
+mod transporte;
 #[cfg(not(feature = "dashos"))]
-#[path = "linux/compositor.rs"]
-mod compositor;
+#[path = "linux/transporte.rs"]
+mod transporte;
 mod defensa;
 mod faltan;
 #[cfg(all(target_arch = "x86_64", feature = "dashos"))]
@@ -51,8 +52,6 @@ mod ramlib;
 #[cfg(not(feature = "dashos"))]
 #[path = "linux/sys.rs"]
 mod sys;
-// Sin la opción `dashos` no hay compositor que dé el tema todavía (L5).
-#[cfg_attr(not(feature = "dashos"), allow(dead_code))]
 mod tema;
 
 /// S28: lo que comparten la caja, `sesiones` y `guardian` para preguntar por los ficheros protegidos.

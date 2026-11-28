@@ -22,6 +22,14 @@ mod nr {
     pub const UTIMENSAT: usize = 280;
     pub const RENAMEAT2: usize = 316;
     pub const STATX: usize = 332;
+    pub const MMAP: usize = 9;
+    pub const MUNMAP: usize = 11;
+    pub const SOCKET: usize = 41;
+    pub const CONNECT: usize = 42;
+    pub const SENDMSG: usize = 46;
+    pub const RECVMSG: usize = 47;
+    pub const PPOLL: usize = 271;
+    pub const MEMFD_CREATE: usize = 319;
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -42,6 +50,14 @@ mod nr {
     pub const UTIMENSAT: usize = 88;
     pub const RENAMEAT2: usize = 276;
     pub const STATX: usize = 291;
+    pub const PPOLL: usize = 73;
+    pub const SOCKET: usize = 198;
+    pub const CONNECT: usize = 203;
+    pub const SENDMSG: usize = 211;
+    pub const RECVMSG: usize = 212;
+    pub const MUNMAP: usize = 215;
+    pub const MMAP: usize = 222;
+    pub const MEMFD_CREATE: usize = 279;
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -215,4 +231,169 @@ pub fn fstatfs(fd: i32) -> Result<(u64, u64, u64), isize> {
     let mut b = [0u64; 15];
     res(sys6(nr::FSTATFS, fd as usize, b.as_mut_ptr() as usize, 0, 0, 0, 0))?;
     Ok((b[1], b[2], b[4]))
+}
+
+// --- El socket de Wayland y la memoria compartida (linux/transporte.rs) ---
+
+const AF_UNIX: usize = 1;
+const SOCK_STREAM: usize = 1;
+const SOCK_CLOEXEC: usize = 0o2000000;
+const MSG_NOSIGNAL: usize = 0x4000;
+const MSG_CMSG_CLOEXEC: usize = 0x40000000;
+const SOL_SOCKET: i32 = 1;
+const SCM_RIGHTS: i32 = 1;
+const POLLIN: i16 = 1;
+pub const EAGAIN: isize = 11;
+pub const EINTR: isize = 4;
+
+/// Un socket de Unix conectado a `camino`.
+pub fn conectar_unix(camino: &[u8]) -> Result<i32, isize> {
+    if camino.len() >= 108 {
+        return Err(ENAMETOOLONG);
+    }
+    let fd = res(sys6(nr::SOCKET, AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, 0, 0, 0))? as i32;
+    // struct sockaddr_un: sun_family (u16) y sun_path (108 bytes).
+    let mut dir = [0u8; 110];
+    dir[0..2].copy_from_slice(&(AF_UNIX as u16).to_ne_bytes());
+    dir[2..2 + camino.len()].copy_from_slice(camino);
+    if let Err(e) = res(sys6(nr::CONNECT, fd as usize, dir.as_ptr() as usize, 2 + camino.len() + 1, 0, 0, 0)) {
+        close(fd);
+        return Err(e);
+    }
+    Ok(fd)
+}
+
+/// Lo más de descriptores que van o vienen con un mensaje.
+pub const MAX_FDS: usize = 28;
+
+#[repr(C)]
+struct Iovec {
+    base: usize,
+    largo: usize,
+}
+
+#[repr(C)]
+struct Msghdr {
+    nombre: usize,
+    nombre_largo: u32,
+    iov: *const Iovec,
+    iov_n: usize,
+    control: usize,
+    control_largo: usize,
+    flags: i32,
+}
+
+/// El control de un mensaje con descriptores: cmsghdr (largo u64, nivel i32, tipo i32) y los descriptores.
+#[repr(C, align(8))]
+struct Control {
+    largo: u64,
+    nivel: i32,
+    tipo: i32,
+    fds: [i32; MAX_FDS],
+}
+
+/// Manda `bytes` por `fd`, con los descriptores `fds` (van con el primer byte). Lo que mandó.
+pub fn sendmsg(fd: i32, bytes: &[u8], fds: &[i32]) -> Result<usize, isize> {
+    let iov = Iovec { base: bytes.as_ptr() as usize, largo: bytes.len() };
+    let mut c = Control { largo: 0, nivel: SOL_SOCKET, tipo: SCM_RIGHTS, fds: [0; MAX_FDS] };
+    let n = fds.len().min(MAX_FDS);
+    c.fds[..n].copy_from_slice(&fds[..n]);
+    c.largo = (16 + 4 * n) as u64;
+    let m = Msghdr {
+        nombre: 0,
+        nombre_largo: 0,
+        iov: &iov,
+        iov_n: 1,
+        control: if n > 0 { &c as *const Control as usize } else { 0 },
+        control_largo: if n > 0 { (16 + 4 * n).next_multiple_of(8) } else { 0 },
+        flags: 0,
+    };
+    res(sys6(nr::SENDMSG, fd as usize, &m as *const Msghdr as usize, MSG_NOSIGNAL, 0, 0, 0))
+}
+
+/// Recibe en `buf` lo que haya por `fd`, y los descriptores que vengan en `fds`: (bytes, descriptores).
+pub fn recvmsg(fd: i32, buf: &mut [u8], fds: &mut [i32; MAX_FDS]) -> Result<(usize, usize), isize> {
+    let iov = Iovec { base: buf.as_mut_ptr() as usize, largo: buf.len() };
+    let mut c = Control { largo: 0, nivel: 0, tipo: 0, fds: [-1; MAX_FDS] };
+    let mut m = Msghdr {
+        nombre: 0,
+        nombre_largo: 0,
+        iov: &iov,
+        iov_n: 1,
+        control: &mut c as *mut Control as usize,
+        control_largo: core::mem::size_of::<Control>(),
+        flags: 0,
+    };
+    let n = res(sys6(nr::RECVMSG, fd as usize, &mut m as *mut Msghdr as usize, MSG_CMSG_CLOEXEC, 0, 0, 0))?;
+    let mut k = 0;
+    if m.control_largo >= 16 && c.nivel == SOL_SOCKET && c.tipo == SCM_RIGHTS {
+        k = ((c.largo as usize).saturating_sub(16) / 4).min(MAX_FDS);
+        fds[..k].copy_from_slice(&c.fds[..k]);
+    }
+    Ok((n, k))
+}
+
+/// Espera hasta `ms` milisegundos a que haya algo que leer en `fd`. `true` si lo hay.
+pub fn esperar_lectura(fd: i32, ms: u64) -> Result<bool, isize> {
+    #[repr(C)]
+    struct Pollfd {
+        fd: i32,
+        eventos: i16,
+        devueltos: i16,
+    }
+    let mut p = Pollfd { fd, eventos: POLLIN, devueltos: 0 };
+    let t: [i64; 2] = [(ms / 1000) as i64, ((ms % 1000) * 1_000_000) as i64];
+    let n = res(sys6(nr::PPOLL, &mut p as *mut Pollfd as usize, 1, t.as_ptr() as usize, 0, 8, 0))?;
+    Ok(n > 0)
+}
+
+/// Un memfd de `tam` bytes, proyectado para escribir en `va` (ahí o nada). Su descriptor.
+pub fn memoria_compartida(tam: usize, va: usize) -> Result<i32, isize> {
+    const PROT_RW: usize = 3;
+    const MAP_SHARED: usize = 1;
+    const MAP_FIXED_NOREPLACE: usize = 0x100000;
+    let nombre = b"caja-ventana\0";
+    let fd = res(sys6(nr::MEMFD_CREATE, nombre.as_ptr() as usize, 1, 0, 0, 0, 0))? as i32; // MFD_CLOEXEC
+    let r = ftruncate(fd, tam as u64).and_then(|_| res(sys6(nr::MMAP, va, tam, PROT_RW, MAP_SHARED | MAP_FIXED_NOREPLACE, fd as usize, 0)));
+    match r {
+        Ok(d) if d == va => Ok(fd),
+        Ok(d) => {
+            sys6(nr::MUNMAP, d, tam, 0, 0, 0, 0);
+            close(fd);
+            Err(EEXIST)
+        }
+        Err(e) => {
+            close(fd);
+            Err(e)
+        }
+    }
+}
+
+pub fn munmap(va: usize, tam: usize) {
+    sys6(nr::MUNMAP, va, tam, 0, 0, 0, 0);
+}
+
+unsafe extern "C" {
+    /// caja_linux.c: el valor de una variable del entorno de Linux, o NULL.
+    fn plat_entorno(nombre: *const u8) -> *const u8;
+}
+
+/// El valor de la variable del entorno `nombre` (terminado en 0).
+pub fn entorno(nombre: &[u8]) -> Option<&'static [u8]> {
+    if nombre.last() != Some(&0) {
+        return None;
+    }
+    // SEGURIDAD: `nombre` termina en 0; lo devuelto es del entorno del proceso (en la pila del arranque, para
+    // siempre), terminado en 0.
+    unsafe {
+        let p = plat_entorno(nombre.as_ptr());
+        if p.is_null() {
+            return None;
+        }
+        let mut n = 0;
+        while *p.add(n) != 0 {
+            n += 1;
+        }
+        Some(core::slice::from_raw_parts(p, n))
+    }
 }

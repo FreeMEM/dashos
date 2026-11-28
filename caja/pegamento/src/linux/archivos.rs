@@ -268,25 +268,8 @@ pub fn cajon_actual() -> Option<String> {
     Some(r)
 }
 
-unsafe extern "C" {
-    /// caja_linux.c: el valor de una variable del entorno de Linux, o NULL.
-    fn plat_entorno(nombre: *const u8) -> *const u8;
-}
-
 fn entorno(nombre: &[u8]) -> Option<&'static str> {
-    // SEGURIDAD: `nombre` termina en 0; lo devuelto es del entorno del proceso (en su pila, para siempre), terminado
-    // en 0.
-    unsafe {
-        let p = plat_entorno(nombre.as_ptr());
-        if p.is_null() {
-            return None;
-        }
-        let mut n = 0;
-        while *p.add(n) != 0 {
-            n += 1;
-        }
-        core::str::from_utf8(core::slice::from_raw_parts(p, n)).ok()
-    }
+    sys::entorno(nombre).and_then(|b| core::str::from_utf8(b).ok())
 }
 
 /// El cajón de la caja: `$CAJA_AMIGA_SYS`, o `~/.local/share/caja-amiga` (con lo que falte del camino, creado).
