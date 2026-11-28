@@ -166,3 +166,22 @@ pone flotante la de la caja (`niri msg action move-window-to-floating --id N` y 
   - Status y Which acaban con 20 (sin mirar).
 - `arranque-virt` (be) con todo hasta L5a: la caja, 158 "bien" y ningún "MAL"; solo faltó el intermitente de
   "[ram] Ana: avisos hostiles" (el del servicio de archivos, de `X86_LOOP.md`), que no es de la caja.
+
+### 2026-11-28: los huecos de dos y exec, e icon.library (pedido por jefe-dash: nadie lleva dos ni exec)
+
+Todo comprobado contra el oráculo (FS-UAE con el Kickstart 40.68, `tools/emu_run.py` de Dash): pruebas nuevas en
+`pruebas68k/` (`dosasl.c`, `patron.c`, `formato.c`, `supervisor.c`, `icono.c`), cuya salida guarda
+`pruebas_linux/*.esperado` y compara `prueba.sh` (36 BIEN en las dos cajas). La caja de Linux es la forma más rápida
+de probar las bibliotecas: segundos, frente a los 15 minutos de `arranque-virt`.
+
+- dos: `MatchFirst("")` (el cajón actual, con el nombre vacío) y `APF_DODIR`/`APF_DIDDIR` (entrar en los cajones:
+  dentro sale todo, case o no); `DateToStr` (los cuatro formatos y `DTF_SUBST`); `ParsePattern` con el patrón
+  analizado de AmigaOS (las marcas `P_*`: Search lo arma a mano y Rename usa el búfer como nombre); `GetDeviceProc`
+  mínimo (Delete). exec y dos: `%x` en mayúsculas en `RawDoFmt` y `VPrintf`.
+- exec: `Supervisor` (la función en modo supervisor hasta su `RTE`: `caja_ejecutar_68k` con el modo 2, un marco de
+  formato 0) y `CacheControl` (un CACR de mentira).
+- icon.library nativa V40 (`pegamento/src/icono.rs`). La guardia de ficheros (S28) pregunta en Linux por `/dev/tty`;
+  sin terminal, niega; `CAJA_AMIGA_PROTEGER=no` la quita.
+- La caja de Linux, en hora local: `/etc/localtime` (TZif y su regla POSIX), sin libc; igual que `localtime_r`.
+- De AmigaOS 3.9 van ya Dir, List, Date, Search, Rename, Delete ALL, Cpu ("68040 68882") y la Calculator. Falta: los
+  signos × y ÷ en la letra topaz de la caja (salen como cuadrados).
