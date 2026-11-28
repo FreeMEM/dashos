@@ -48,7 +48,9 @@ static inline int64_t extiende(uint64_t v, unsigned bits) { return (int64_t)(v <
    (FMOVE a un registro de los chips): esas, y las demás, devuelven 0 (ARM DDI 0487, C4.1.66 a C4.1.68). */
 static inline int decodifica(uint32_t i, const marco_fallo *m, struct acceso *a)
 {
-    *a = (struct acceso){ .pares = 1, .rt = i & 31, .rn = (i >> 5) & 31, .estado = -1 };
+    /* Campo a campo: una estructura literal puede ser una llamada a memset, que en la caja usa SIMD (K7). */
+    a->escribe = 0; a->tam = 0; a->pares = 1; a->rt = i & 31; a->rt2 = 0; a->rn = (i >> 5) & 31; a->signo = 0;
+    a->x = 0; a->dir = 0; a->actualiza = 0; a->base_nueva = 0; a->estado = -1;
     uint64_t base = reg_base(m, a->rn);
     unsigned size = i >> 30;
 

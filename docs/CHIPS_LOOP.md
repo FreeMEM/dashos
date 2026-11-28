@@ -81,7 +81,7 @@ S18 es del 2026-11-08 y piensa solo en Emu68. Desde entonces:
   `$DF0000`-`$DFFFFF`. El manejador de K5 decodifica el `ldr`/`str` de A64 (tamaño, registro, dirección y
   actualización de la base), llama a K2 y sigue tras la instrucción. La hora sale del contador de instrucciones de
   Emu68 por un coste medio: es aproximada hasta que el traductor sume ciclos. `chips.exe` pasa en `arranque-virt`.
-- [ ] K7 **Reescritura (ARM).** Tras el primer fallo en un sitio, la instrucción pasa a un `bl` a un trampolín
+- [x] K7 **Reescritura (ARM).** Tras el primer fallo en un sitio, la instrucción pasa a un `bl` a un trampolín
   (S18, "Los siguientes: la instrucción reescrita"). Se mide el coste por acceso, con fallo y con trampolín, en QEMU
   (solo para comparar; los tiempos de verdad, en la Pi).
 - [ ] K8 **Contador hacia atrás e interrupciones.** El motor vuelve a los chips cuando llega la hora del siguiente
@@ -241,3 +241,87 @@ de S18).
   - Toca `caja/caja.c` solo en dos comentarios (regla 9: avisar a `dashos-aarch64`). No toca `caja/programas.S` ni
     `caja/Makefile`: `fallo_a64.h` es una cabecera. Toca `kernel/Makefile` (la línea de `pruebas_fallo`) y `caja/motor.h`
     (el comentario de `motor_chips`).
+
+### 2026-11-28
+
+- K7 hecho (papel de implementador; fuentes: el manual de ARMv8-A para las codificaciones de `b`, `blr`, LDR literal,
+  STR/LDR con pre y post-índice, `dc cvau`/`ic ivau` y NZCV; el código de DashOS y el de Emu68: `M68k_Translator.c`,
+  sobre todo `M68K_VerifyUnit`, `M68K_GetTranslationUnit` y dónde suelta las unidades; `support.c` para la limpieza de
+  cachés desde EL0). Rama `chips-k7`. No toca Emu68 (ni parche nuevo).
+  - El trampolín: uno por sitio, de 64 bytes, en los últimos 64 KB del código traducido (`JIT_LEN`; el tlsf del JIT
+    se queda con el resto), así que a menos de 128 MB de cualquier sitio. El sitio pasa a `b trampolín` y el trampolín
+    vuelve con `b sitio + 4`: x30 no se pisa fuera. Dentro, guarda x30 en la pila (`str x30, [sp, #-16]!`), salta por
+    x30 a una rutina común (`ldr x30, literal; blr x30`: la común está en el texto de la caja, lejos) y al volver
+    repone x30. La común (`caja_trampolin_comun`, asm en `caja/trampolin_a64.c`) arma un marco como el de K5 (x0-x30,
+    SP, NZCV), llama a `caja_trampolin_c` y lo repone todo, NZCV incluido, con lo que cambió del acceso (el registro
+    destino, la base con pre o post-índice, x30 si era el destino). Diseño en la cabecera de `caja/trampolin_a64.h`.
+  - Los registros de la FPU y SIMD no se guardan: `trampolin_a64.c` se compila con `-mgeneral-regs-only`, los chips
+    son Rust softfloat y `motor_ciclos` solo lee v20. El Makefile de la caja falla si `trampolin_a64.o` llama a
+    `memset`/`memcpy` (el de la caja es C normal y puede usar SIMD). Por eso `decodifica` (`fallo_a64.h`) ya no llena
+    `struct acceso` con una estructura literal: con musl salía un `memset` que pisaba q0 (lo vio la prueba nueva).
+  - La hora: `motor_ciclos()` dentro del trampolín, como en K6 (v20 sigue como estaba). Lo de "cuántas instrucciones
+    van en el bloque hasta ese acceso" de S18 queda para cuando el traductor cuente ciclos.
+  - Qué se reescribe: todos los sitios que fallan en los chips, con dirección fija o no (en el código traducido toda
+    dirección va por registro, no se distingue), con el camino doble: si la dirección no cae entera en una zona de los
+    chips, el trampolín vuelve a +20, donde está la instrucción original con los registros como estaban, y hace el
+    acceso normal (si cruza a algo sin proyectar, falla ahí y K6 lo trata como siempre). Un sitio que va 1.024 veces
+    seguidas a otra cosa vuelve a su instrucción (deja de pagar el rodeo); si vuelve a los chips, falla y se reescribe
+    otra vez. No se reescriben las exclusivas (LDXR/STXR: el monitor exclusivo no sobrevive al rodeo; siguen por el
+    fallo) ni las de base SP (el trampolín usa la pila).
+  - Las unidades que se sueltan: Emu68 las suelta en muchos sitios (`M68K_VerifyUnit` con su CRC del código 68k, sin
+    sitio en `M68K_GetTranslationUnit`, CINV/CPUSH en `M68k_LINEF.c`, `M68k_LINE4.c`, `motor_olvidar`). En vez de
+    tocarlos todos, un trampolín es de un sitio solo mientras ese sitio salta a él: "deshacer" mira, para cada uno, si
+    la palabra del sitio es exactamente `b <ese trampolín>`; si lo es, pone la instrucción original y limpia la caché;
+    si no (la memoria ya es de otra unidad), no la toca. Emu68 nunca emite un salto a la zona de los trampolines y los
+    datos de control del tlsf no pueden valer `0x14xxxxxx` (punteros por debajo de 4 MB y tamaños), así que no hay
+    confusión posible. Los trampolines se reparten seguidos; cuando se acaban los 1.024, se deshace todo y se empieza
+    de nuevo (las unidades vivas vuelven a fallar una vez por sitio). Un trampolín no se reutiliza mientras alguien lo
+    ejecuta: solo se reparten en el manejador de fallos, y dentro de un trampolín no corre código 68k. El CRC de
+    `M68K_VerifyUnit` es del código 68k, no del ARM: reescribir no invalida la unidad (el riesgo de la sección 9 de
+    S18 no se da).
+  - Se deshace todo en `motor_olvidar` (antes de soltar las unidades; también desde una llamada nativa, donde la unidad
+    fijada sigue viva y su sitio vuelve a la instrucción original, que es correcto) y en `motor_chips(0)`: con los
+    chips apagados no queda nada reescrito. `motor_chips(1)` pone las cuentas a 0.
+  - Escritura del código: por `JIT_RW`, y `dc cvau` + `dsb ish` + `ic ivau` (en `JIT_RX`) + `dsb ish` + `isb`, como
+    Emu68; primero el trampolín entero y después la palabra del sitio. Las instrucciones, siempre en little-endian; los
+    dos literales (la común y la descripción), en el orden de la caja.
+  - Prueba nueva en el PC: `caja/pruebas_fallo/prueba_trampolin.c` (la lanza el mismo Makefile, y con él `make -C
+    kernel prueba`). Un arnés pone x1-x8, x30, NZCV y q0-q31 al azar y ejecuta una instrucción en su sitio: primero la
+    original, después reescrita por `trampolin_poner`. 52 formas (las de K6 sin las exclusivas, y cinco con x30), 20
+    vueltas, con la base en los chips (la de verdad sobre memoria en `$BF0000`, el trampolín sobre la sombra) y en la
+    RAM (las dos sobre la misma memoria, por el camino normal); registros, NZCV, memoria y q0-q31 tienen que acabar
+    iguales. Además: deshacer devuelve el sitio, 1.024 vueltas a la RAM también, y no se reescriben una exclusiva ni
+    una de base SP. En big-endian y en little-endian. Con fallos metidos a propósito: sin reponer NZCV, 1.972 errores;
+    con x30 cambiado, 1.040.
+  - La medida: `caja/pruebas68k/vposr.s` (`vposr.bin`, en `$138000`) lee VPOSR mil veces por cada carácter de sus
+    argumentos. La caja (ARM) lo lanza tres veces con los chips encendidos: sin argumentos (lo que cuesta lanzarlo, que
+    se resta), 10.000 lecturas sin reescribir (`chips_reescribe` = 0) y 100.000 reescribiendo. Comprueba las cuentas:
+    10.000 fallos y 0 trampolines; luego tantos fallos como sitios reescritos (16: Emu68 desenrolla el bucle) y el
+    resto por el trampolín, y 0 por el camino normal. En QEMU (TCG, en este PC; solo para comparar):
+
+    | caja | por el fallo | reescrita | chips.exe |
+    |---|---|---|---|
+    | big-endian | 22.662 ns | 299 ns | 24 ms (K6: 0,4-0,6 s) |
+    | little-endian | 31.365 ns | 353 ns | 30 ms (K6: 0,6-2,2 s) |
+
+    Unas 75-90 veces menos por acceso. Lanzar el programa, de 0,8 a 1,5 ms. En la primera vuelta en little-endian
+    (la que falló lejos), 24.895 y 309 ns. Los tiempos de verdad, en la Pi.
+  - Comprobado: `make -C caja/pruebas_fallo` (K6 y K7, BE y LE, 0 fallos); `make -C kernel prueba` (BIEN);
+    `make -C kernel arranque-virt` con la caja big-endian (BIEN a la primera, con la línea nueva de K7); con
+    `CAJA_ORDEN=le`, BIEN a la segunda (la primera, con las líneas de los chips bien, falló lejos de la caja: el
+    explorador no ordenó "por Tamano" a tiempo; sin mirar, apuntado por si se repite); `make -C kernel caja-x86` (BIEN). Con objdump: ni `trampolin_a64.o` ni
+    `motor_ciclos` usan registros de la FPU o SIMD.
+    Nota: la vuelta en big-endian aceptaba hasta 16 sitios reescritos en `vposr`; después se aflojó a 64 (salen 16, el
+    desenrollado de Emu68) y con eso corrió la de little-endian.
+  - No comprobado: la Pi de verdad (ni los tiempos ni la coherencia de cachés en una A72 real); un sitio que alterna
+    chips y RAM en un programa de verdad (solo la prueba del PC); que se llenen los 1.024 trampolines (no pasa en las
+    pruebas); el camino de una unidad soltada por Emu68 con su sitio reescrito y la memoria reutilizada (el argumento
+    de arriba, sin prueba propia).
+  - Toca `caja/caja.c` (la medida K7 tras `chips.exe`, solo en ARM, y las declaraciones de las cuentas y de
+    `prog_vposr`), `caja/programas.S` (`vposr.bin`) y `caja/Makefile` (`trampolin_a64.o` con `-mgeneral-regs-only` y
+    su comprobación, y `vposr.bin` en `PROGRAMAS_DEPS`). Regla 9: avisar a `dashos-aarch64`. También
+    `caja/fallo_a64.h` (sin `memset`), `caja/motor.h` (comentario), `caja/pruebas68k/Makefile`, `caja/pruebas_fallo/` y
+    `kernel/pruebas/arranque_virt.txt` (la línea de K7, en un bloque `#[arm`).
+  - Para K8: el contador hacia atrás vuelve a los chips desde el bucle de Emu68, no desde aquí; lo que haga falta de la
+    hora exacta del acceso (las instrucciones del bloque hasta el sitio) puede ir como un dato más en `struct
+    trampolin` cuando el traductor lo sepa.

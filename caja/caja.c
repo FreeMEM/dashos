@@ -524,6 +524,13 @@ extern const uint8_t prog_ils[], prog_ils_fin[];
 extern const uint8_t prog_dtprueba[], prog_dtprueba_fin[];
 extern const uint8_t prog_cgx[], prog_cgx_fin[];
 extern const uint8_t prog_chips[], prog_chips_fin[];
+extern const uint8_t prog_vposr[], prog_vposr_fin[];
+#if !defined(__x86_64__)
+/* K7: lo que cuenta Emu68 de los accesos a los chips (motor_emu68.c y trampolin_a64.h). */
+extern uint64_t chips_fallos, chips_tramp_accesos, chips_tramp_ram;
+extern uint32_t chips_reescritos;
+extern int chips_reescribe;
+#endif
 extern const uint8_t prog_dash_test_reaction[], prog_dash_test_reaction_fin[];
 extern const uint8_t prog_dash_test_doc_reaction[], prog_dash_test_doc_reaction_fin[];
 extern const uint8_t prog_dash_ctrl_c[], prog_dash_ctrl_c_fin[];
@@ -1107,6 +1114,44 @@ int caja_main(void)
             di("chips.exe acabó con %d (vector %d), %d llamadas nativas, en %u ms, %u accesos a nadie: %s\n", (int)d0, v,
                llamadas, (uint32_t)((t1 - t0) / 1000), nadie, bien ? "bien" : "MAL");
             if (!bien) { motor_volcar(); fallos++; }
+#if !defined(__x86_64__)
+            /* K7: lo que cuesta un acceso a los chips en Emu68, por el fallo (K6) y con la instrucción reescrita (el
+               trampolín). vposr.bin lee VPOSR mil veces por cada carácter de sus argumentos: sin ninguno (lo que cuesta
+               lanzarlo, que se resta), 10.000 lecturas sin reescribir y 100.000 reescribiendo. Las cuentas tienen que
+               cuadrar; los tiempos, en QEMU, solo sirven para comparar (los de verdad, en la Pi). */
+            {
+                static char args[101];
+                static const uint32_t miles[3] = { 0, 10, 100 };
+                uint64_t us[3] = { 0, 0, 0 }, f[3] = { 0, 0, 0 }, tr[3] = { 0, 0, 0 }, ram = 0;
+                uint32_t re[3] = { 0, 0, 0 };
+                int hecho = 1;
+                for (int k = 0; k < 3 && hecho; k++) {
+                    for (uint32_t j = 0; j < miles[k]; j++) args[j] = 'x';
+                    args[miles[k]] = 0;
+                    if (!chips(1, 0)) { hecho = 0; break; }
+                    chips_reescribe = k == 2;
+                    tarea_args = args;
+                    t0 = ahora_us();
+                    v = ejecuta("vposr", prog_vposr, prog_vposr_fin, 0x00138000);
+                    t1 = ahora_us();
+                    tarea_args = NULL;
+                    us[k] = t1 - t0;
+                    f[k] = chips_fallos; tr[k] = chips_tramp_accesos; re[k] = chips_reescritos; ram += chips_tramp_ram;
+                    chips(0, 0);
+                    if (v != -1 || d0_final != 0) hecho = 0;
+                }
+                chips_reescribe = 1;
+                bien = hecho && f[0] == 0 && tr[0] == 0 && f[1] == 10000 && tr[1] == 0 && re[1] == 0 && f[2] >= 1
+                    && f[2] <= 64 && re[2] == f[2] && f[2] + tr[2] == 100000 && ram == 0;
+                uint64_t ns_fallo = us[1] > us[0] ? (us[1] - us[0]) * 1000 / 10000 : 0;
+                uint64_t ns_tramp = us[2] > us[0] ? (us[2] - us[0]) * 1000 / 100000 : 0;
+                di("chips: coste de una lectura de VPOSR (K7, QEMU): %s: por el fallo, %u ns (10000 fallos: %u); "
+                   "reescrita, %u ns (100000 lecturas: %u fallos en %u sitios y %u por el trampolín); lanzarlo, %u us\n",
+                   bien ? "bien" : "MAL", (uint32_t)ns_fallo, (uint32_t)f[1], (uint32_t)ns_tramp, (uint32_t)f[2], re[2],
+                   (uint32_t)tr[2], (uint32_t)us[0]);
+                if (!bien) fallos++;
+            }
+#endif
         } else {
             di("chips: sin chips en este motor\n");
         }
