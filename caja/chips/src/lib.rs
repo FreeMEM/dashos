@@ -1,6 +1,6 @@
 //! Los chips del Amiga para la caja (S18, fase 1): los dos CIA 8520, un Agnus mínimo y el reloj. PAL y OCS. Y,
-//! adelantados de la fase 2, el Blitter ([`blitter`]), el Copper ([`copper`]) y los planos de imagen con Denise
-//! ([`denise`]), y de la fase 4, el audio de Paula ([`paula`]).
+//! adelantados de la fase 2, el Blitter ([`blitter`]), el Copper ([`copper`]), los planos de imagen con Denise
+//! ([`denise`]) y los sprites con sus choques ([`sprites`]), y de la fase 4, el audio de Paula ([`paula`]).
 //!
 //! Escrito desde el Amiga Hardware Reference Manual y la hoja de datos del MOS 8520; el Copper, también desde el de
 //! vAmiga (MPL-2.0, ver [`copper`]). No se ha leído código de UAE, WinUAE, FS-UAE, Amiberry ni AROS. No sabe nada del
@@ -67,6 +67,7 @@ pub mod copper;
 pub mod denise;
 pub mod memoria;
 pub mod paula;
+pub mod sprites;
 
 use blitter::Blitter;
 use cia::Cia;
@@ -74,6 +75,7 @@ use copper::Copper;
 use denise::Planos;
 pub use memoria::{MemoriaChip, SinMemoria};
 use paula::Paula;
+use sprites::Sprites;
 
 /// Ciclos del 68000 por segundo en un Amiga PAL (7,09379 MHz).
 pub const RELOJ_CPU_PAL: u64 = 7_093_790;
@@ -147,6 +149,7 @@ pub mod dma {
     pub const BPLEN: u16 = 0x0100;
     pub const COPEN: u16 = 0x0080;
     pub const BLTEN: u16 = 0x0040;
+    pub const SPREN: u16 = 0x0020;
     pub const AUD3EN: u16 = 0x0008;
     pub const AUD2EN: u16 = 0x0004;
     pub const AUD1EN: u16 = 0x0002;
@@ -205,6 +208,8 @@ pub struct Chips {
     paula: Paula,
     /// El DMA de planos y Denise.
     planos: Planos,
+    /// El DMA de sprites, los sprites de Denise y los choques.
+    sprites: Sprites,
     /// Accesos a direcciones sin nada que se imite: leen 0 y no escriben.
     pub accesos_a_nadie: u64,
     /// La última de esas direcciones.
@@ -237,6 +242,7 @@ impl Chips {
             blitter: Blitter::default(),
             paula: Paula::default(),
             planos: Planos::default(),
+            sprites: Sprites::default(),
             accesos_a_nadie: 0,
             ultimo_a_nadie: 0,
         }
@@ -503,6 +509,10 @@ impl Chips {
     /// Lee `tam` bytes (1, 2 o 4) en `dir` a la hora `hora`, con el Copper y el DMA de audio al día en `mem`.
     pub fn leer_con(&mut self, dir: u32, tam: u8, hora: u64, mem: &mut dyn MemoriaChip) -> u32 {
         self.avanzar_con(hora, mem);
+        if Self::custom(dir) == Some(sprites::reg::CLXDAT) {
+            // Los choques se ven al traducir la línea: antes, lo que ya se ve.
+            self.antes_de_cambiar_imagen(mem);
+        }
         match tam {
             1 => u32::from(self.leer8(dir)),
             2 => u32::from(self.leer16(dir)),
@@ -618,6 +628,7 @@ impl Chips {
             custom::INTENAR => self.intena,
             custom::INTREQR => self.intreq,
             paula::reg::ADKCONR => self.paula.adkcon(),
+            sprites::reg::CLXDAT => self.leer_clxdat(),
             _ => {
                 self.nadie(dir);
                 0
@@ -679,6 +690,7 @@ impl Chips {
             // Duda: el bit 14 de INTREQ no tiene uso; aquí se guarda como en INTENA. Comprobar qué lee INTREQR.
             custom::INTREQ => set_clr(&mut self.intreq, v, 0x7FFF),
             _ if self.escribir_planos(off, v, mem) => {}
+            _ if self.escribir_sprites(off, v, mem) => {}
             _ if self.escribir_copper(off, v) => {}
             _ => self.nadie(dir),
         }

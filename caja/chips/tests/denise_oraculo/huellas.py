@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-"""B4: las huellas de las capturas de FS-UAE de captura.sh, para tests/denise_oraculo.rs.
+"""B4: las huellas de las capturas de FS-UAE de captura.sh, para tests/denise_oraculo.rs. B6: también las de
+sprites.exe, para tests/sprites_oraculo.rs.
 
     python3 -I huellas.py DIR > huellas.txt
+    python3 -I huellas.py DIR sprites > sprites_huellas.txt
+
+Con sprites, los modos son las escenas de caja/pruebas68k/sprites_escenas.h que se quedan quietas (segundos > 0);
+las de solo choques no salen en la captura.
 
 Toma las capturas "full" de DIR (752 x 572) en orden. Cada modo de denise.exe se queda quieto unos segundos: las
 capturas seguidas que son iguales son un modo (las de en medio, con el mapa a medio dibujar, no se repiten). Los
@@ -20,8 +25,15 @@ from pathlib import Path
 from PIL import Image
 
 aqui = Path(__file__).resolve().parent
-modos = [l for l in (aqui / "../../../pruebas68k/denise_modos.h").read_text().splitlines() if l.startswith("MODO(")]
-bplcon0 = [int(re.match(r"MODO\((\w+)", l).group(1), 0) for l in modos]
+programa = sys.argv[2] if len(sys.argv) > 2 else "denise"
+if programa == "sprites":
+    lineas = (aqui / "../../../pruebas68k/sprites_escenas.h").read_text().splitlines()
+    modos = [l for l in lineas if l.startswith("ESCENA(") and int(l.rstrip(")").split(",")[-1], 0) > 0]
+    etiqueta = "escena"
+else:
+    modos = [l for l in (aqui / "../../../pruebas68k/denise_modos.h").read_text().splitlines() if l.startswith("MODO(")]
+    etiqueta = "modo"
+bplcon0 = [int(re.match(r"\w+\((\w+)", l).group(1), 0) for l in modos]
 ehb = [(c >> 12 & 7) == 6 and not c & 0x0C00 for c in bplcon0]
 
 capturas = sorted(Path(sys.argv[1]).glob("fs-uae-full-*.png"))
@@ -37,16 +49,22 @@ def de_denise(datos):
     i = (2 * (0x30 - 26) * 752 + 2) * 3
     return datos[i:i + 3] == bytes([0x00, 0xAA, 0x55])
 
-estables = [g for g in grupos if len(g[1]) >= 2 and de_denise(g[0])][:len(modos)]
+# sprites.exe apaga los planos mientras dibuja el mapa de la escena siguiente: esas capturas son solo borde (un
+# color) y no cuentan.
+def solo_borde(datos):
+    return programa == "sprites" and len({datos[i:i + 3] for i in range(0, len(datos), 3 * 101)}) == 1
+
+estables = [g for g in grupos if len(g[1]) >= 2 and de_denise(g[0]) and not solo_borde(g[0])][:len(modos)]
 assert len(estables) == len(modos), f"{len(estables)} modos estables de {len(modos)}"
 
 def ocs(w):
     return w if w % 17 == 0 else ((2 * w + 1) // 17 >> 1) * 17
 
 ANCHO, ALTO = 752, 286
-print("# B4: huellas de las capturas de FS-UAE (huellas.py): modo, línea, FNV-1a de 32 bits de la línea (R, G, B).")
+b = "B6" if programa == "sprites" else "B4"
+print(f"# {b}: huellas de las capturas de FS-UAE (huellas.py): {etiqueta}, línea, FNV-1a de 32 bits de la línea (R, G, B).")
 for n, (datos, nombres) in enumerate(estables):
-    print(f"# modo {n + 1}: {len(nombres)} capturas iguales ({nombres[0]}...)")
+    print(f"# {etiqueta} {n + 1}: {len(nombres)} capturas iguales ({nombres[0]}...)")
     assert len(datos) == ANCHO * 2 * ALTO * 3
     for y in range(ALTO):
         fila = datos[2 * y * ANCHO * 3:(2 * y + 1) * ANCHO * 3]

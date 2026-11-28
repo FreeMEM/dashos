@@ -3,7 +3,7 @@
 A := /opt/amiga/bin/m68k-amigaos-
 HUNK2BIN := ../../jit-host/pruebas68k/hunk2bin.py
 
-all: sistema.bin hola.bin lineaa.bin bucle.bin mala.bin saludo.exe ventana.exe hostil.exe anidado.exe gadtools.exe actualiza.exe boopsi.exe ramlib.exe capa.exe glotona.exe memh.exe procesos.exe ils.exe dtprueba.exe cgx.exe chips.exe blitter.exe copper.exe paula.exe denise.exe prueba.library falsa.library miente.library
+all: sistema.bin hola.bin lineaa.bin bucle.bin mala.bin saludo.exe ventana.exe hostil.exe anidado.exe gadtools.exe actualiza.exe boopsi.exe ramlib.exe capa.exe glotona.exe memh.exe procesos.exe ils.exe dtprueba.exe cgx.exe chips.exe blitter.exe copper.exe paula.exe denise.exe sprites.exe prueba.library falsa.library miente.library
 
 sistema.bin: BASE := 0x101600
 hola.bin: BASE := 0x110000
@@ -56,3 +56,6 @@ blitter.exe: blitter_casos.h
 
 # B4: denise.exe lee sus modos de denise_modos.h (también los lee la prueba de Rust de ../chips).
 denise.exe: denise_modos.h
+
+# B6: sprites.exe lee sus escenas de sprites_escenas.h (también las lee la prueba de Rust de ../chips).
+sprites.exe: sprites_escenas.h

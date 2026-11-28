@@ -253,8 +253,8 @@ fn direcciones_de_nadie() {
     let mut c = Chips::nuevo();
     assert_eq!(c.leer(0xDFF180, 2, 0), 0, "COLOR00 es de solo escritura: se guarda, pero no se lee");
     assert_eq!(c.accesos_a_nadie, 1);
-    c.escribir(0xDFF140, 0x0F00, 2, 0);
-    assert_eq!(c.accesos_a_nadie, 2, "SPR0POS no se imita (aún no hay sprites)");
+    c.escribir(0xDFF020, 0x0001, 2, 0);
+    assert_eq!(c.accesos_a_nadie, 2, "DSKPTH no se imita (aún no hay disco)");
     assert_eq!(c.leer(0xBFE003, 1, 0), 0, "espejo del CIA-A");
     assert_eq!(c.leer(0xBFC001, 1, 0), 0);
     // Fuera de los chips, uno de 2 bytes son dos de 1.

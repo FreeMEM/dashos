@@ -40,7 +40,9 @@
 //!   primer `BPL1DAT` de la línea) se ve `COLOR00`.
 //! - **El entrelazado.** Cada cuadro es un campo, de 313 líneas (`LOF`) o de 312; la imagen da las líneas del campo
 //!   y dice cuál era. Juntar los dos campos es cosa de quien la muestra.
-//! - **Los sprites**, todavía no: su sitio está en [`Chips::traducir`], tras el color de los planos.
+//! - **Los sprites** y los choques, en [`crate::sprites`]: sus ciclos de DMA van con los de los planos (en las
+//!   líneas con planos, los que empiezan antes se comen los últimos de los sprites) y Denise los pone al traducir,
+//!   encima o debajo de los campos según `BPLCON2`.
 //!
 //! # La imagen
 //!
@@ -62,9 +64,9 @@
 //! # El tiempo
 //!
 //! Con pereza, como lo demás: los ciclos de color de la línea se hacen al poner los chips al día y, antes de cada
-//! escritura que cambia la imagen (un color, `BPLCON0`, `BPLCON2`, la ventana), Denise traduce a colores lo que ya
-//! se ve con los registros de antes. Un cambio en el ciclo `h` vale desde la posición `2h`: así salen las barras del
-//! Copper y los cambios de color a mitad de línea.
+//! escritura que cambia la imagen (un color, `BPLCON0`, `BPLCON2`, la ventana, `CLXCON`) o de leer `CLXDAT`, Denise
+//! traduce a colores lo que ya se ve con los registros de antes. Un cambio en el ciclo `h` vale desde la posición
+//! `2h`: así salen las barras del Copper y los cambios de color a mitad de línea.
 //!
 //! # Dudas
 //!
@@ -78,6 +80,7 @@
 //! - El robo de ciclos a la CPU no se imita.
 
 use crate::memoria::MemoriaChip;
+use crate::sprites::PRIMERA_LINEA;
 use crate::{CICLOS_POR_COLOR, CICLOS_POR_LINEA, COLOR_POR_LINEA, Chips, custom, dma};
 
 /// La chip RAM que ven los punteros de planos: 512 KB de OCS.
@@ -231,11 +234,11 @@ pub struct Planos {
     ham: u16,
     // --- La línea en curso ---
     /// Su número en el cuadro.
-    linea: u64,
+    pub(crate) linea: u64,
     /// El siguiente ciclo de color por hacer.
-    h: u64,
+    pub(crate) h: u64,
     /// Si ya se miró al empezarla (el biestable vertical, el búfer limpio).
-    empezada: bool,
+    pub(crate) empezada: bool,
     /// Los bits de los planos de cada posición (en píxeles de alta).
     bits: [u8; POSICIONES],
     /// Los colores de las posiciones ya traducidas.
@@ -423,14 +426,21 @@ impl Chips {
         p.primer_dat = POSICIONES;
         p.ham = self.colores[0];
         p.empezada = true;
+        self.sprites_empezar_linea();
     }
 
     /// Hace los ciclos de color de la línea en curso hasta `hasta` (sin incluirlo): Denise dibuja lo que tiene
     /// armado y Agnus lee los planos.
     fn ciclos(&mut self, hasta: u64, video: bool, mem: &mut dyn MemoriaChip) {
         let dma = self.dma_planos();
+        let sprites = self.sprites_activos();
         if !(video || self.planos.ddf.corre || dma && self.planos.bpv) {
-            // Sin imagen y sin DMA, no pasa nada que se note.
+            // Sin imagen y sin DMA de planos, solo los sprites (sus ciclos no los quitan los planos).
+            if sprites {
+                for h in self.planos.h.max(0x15)..hasta.min(0x34) {
+                    self.sprites_ciclo(h, false, false, mem);
+                }
+            }
             self.planos.ddf = Ddf::default();
             self.planos.h = hasta;
             return;
@@ -442,6 +452,12 @@ impl Chips {
             let mut ddf = self.planos.ddf;
             let leido = ddf.paso(h, &self.planos, self.bplcon0, dma);
             self.planos.ddf = ddf;
+            if sprites && h & 1 == 1 {
+                // OCS: los planos se quedan el ciclo de sprites anterior al primero suyo, y los siguientes.
+                let p = &self.planos;
+                let empiezan = dma && p.bpv && u64::from(p.ddfstrt) == h + 1 && h + 1 >= SHW;
+                self.sprites_ciclo(h, p.ddf.corre || empiezan, video, mem);
+            }
             if let Some((n, modulo)) = leido {
                 let p = &mut self.planos;
                 if video {
@@ -493,8 +509,8 @@ impl Chips {
         }
     }
 
-    /// Antes de un cambio que afecta a la imagen (colores, `BPLCON0`, `BPLCON2`, la ventana): Denise traduce con lo
-    /// de antes lo que ya se ve, hasta la posición del haz.
+    /// Antes de un cambio que afecta a la imagen (colores, `BPLCON0`, `BPLCON2`, la ventana, `CLXCON`) o de leer
+    /// `CLXDAT`: Denise traduce con lo de antes lo que ya se ve, hasta la posición del haz.
     pub(crate) fn antes_de_cambiar_imagen(&mut self, mem: &mut dyn MemoriaChip) {
         if !mem.quiere_video() || !self.planos.empezada {
             return;
@@ -506,14 +522,20 @@ impl Chips {
         self.traducir(hasta);
     }
 
-    /// Traduce a colores las posiciones de la línea hasta `hasta`, con los registros de ahora.
+    /// Traduce a colores las posiciones de la línea hasta `hasta`, con los registros de ahora: los planos, los
+    /// sprites encima o debajo según `BPLCON2`, y los choques.
     fn traducir(&mut self, hasta: usize) {
         let c0 = self.bplcon0;
         let ham = c0 & con0::HAM != 0;
         let dpf = c0 & con0::DPF != 0;
         let pf2pri = self.bplcon2 & PF2PRI != 0;
+        // Cuántas parejas de sprites tiene delante cada campo (más de 4: todas).
+        let delante1 = (self.bplcon2 & 7).min(4) as u8;
+        let delante2 = (self.bplcon2 >> 3 & 7).min(4) as u8;
         let colores = self.colores;
         let p = &mut self.planos;
+        let s = &mut self.sprites;
+        let visible = p.linea >= PRIMERA_LINEA;
         let hstrt = usize::from(p.diwstrt & 0xFF);
         let hstop = usize::from(p.diwstop & 0xFF) | 0x100;
         for pos in p.traducido..hasta {
@@ -528,13 +550,21 @@ impl Chips {
                     p.hflop = false;
                 }
             }
-            if !p.hflop || pos < p.primer_dat {
+            let hay = s.paso(pos, visible);
+            let recorte = pos >= p.primer_dat;
+            // Choques entre sprites: en cada píxel de baja, desde el primer BPL1DAT.
+            let pixel_sprite = hay && pos % 2 == 0;
+            if pixel_sprite && recorte {
+                s.choques_sprites();
+            }
+            if !p.hflop || !recorte {
                 p.ham = colores[0];
                 p.pixeles[pos] = rgb(colores[0]);
                 continue;
             }
             let d = p.bits[pos];
-            let color = if ham {
+            // El color de los campos y cuántas parejas de sprites tiene delante el que se ve.
+            let (color, delante) = if ham {
                 let v = u16::from(d & 0xF);
                 p.ham = match d >> 4 & 3 {
                     0 => colores[usize::from(d & 0xF)],
@@ -542,25 +572,30 @@ impl Chips {
                     2 => (p.ham & 0x0FF) | v << 8,
                     _ => (p.ham & 0xF0F) | v << 4,
                 };
-                p.ham
+                (p.ham, if d != 0 { delante2 } else { 4 })
             } else if dpf {
                 let i1 = (d & 1) | (d >> 1 & 2) | (d >> 2 & 4);
                 let i2 = (d >> 1 & 1) | (d >> 2 & 2) | (d >> 3 & 4);
-                let i = if i1 != 0 && (i2 == 0 || !pf2pri) {
-                    i1
+                if i1 != 0 && (i2 == 0 || !pf2pri) {
+                    (colores[usize::from(i1)], delante1)
                 } else if i2 != 0 {
-                    i2 + 8
+                    (colores[usize::from(i2 + 8)], delante2)
                 } else {
-                    0
-                };
-                colores[usize::from(i)]
+                    (colores[0], 4)
+                }
             } else if d >= 32 {
                 // EHB: el color a media luz.
-                colores[usize::from(d - 32)] >> 1 & 0x777
+                (colores[usize::from(d - 32)] >> 1 & 0x777, delante2)
             } else {
-                colores[usize::from(d)]
+                (colores[usize::from(d)], if d != 0 { delante2 } else { 4 })
             };
-            // Aquí irán los sprites, con su prioridad frente a los campos (BPLCON2).
+            let color = match s.elegido() {
+                Some((par, i)) if hay && par < delante => colores[i],
+                _ => color,
+            };
+            if visible {
+                s.choques_campos(d, dpf, pixel_sprite);
+            }
             p.pixeles[pos] = rgb(color);
         }
         p.traducido = p.traducido.max(hasta);
@@ -577,6 +612,11 @@ impl Chips {
             let desde = 2 * X0;
             mem.linea_de_video((linea - V0) as usize, &self.planos.pixeles[desde..desde + ANCHO]);
         }
+    }
+
+    /// Si los planos están al día con el haz y la línea en curso ha empezado (lo que se escribe ahora cae en ella).
+    pub(crate) fn haz_en_planos(&self) -> bool {
+        self.planos.empezada && self.haz_en(self.hora) == (self.planos.linea, self.planos.h)
     }
 
     /// Si Agnus usa para los planos el ciclo de color que empieza ahora (y no lo puede usar el Copper).
