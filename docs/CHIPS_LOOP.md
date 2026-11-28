@@ -81,10 +81,10 @@ S18 es del 2026-11-08 y piensa solo en Emu68. Desde entonces:
   `$DF0000`-`$DFFFFF`. El manejador de K5 decodifica el `ldr`/`str` de A64 (tamaño, registro, dirección y
   actualización de la base), llama a K2 y sigue tras la instrucción. La hora sale del contador de instrucciones de
   Emu68 por un coste medio: es aproximada hasta que el traductor sume ciclos. `chips.exe` pasa en `arranque-virt`.
-- [ ] K7 **Reescritura (ARM).** Tras el primer fallo en un sitio, la instrucción pasa a un `bl` a un trampolín
+- [x] K7 **Reescritura (ARM).** Tras el primer fallo en un sitio, la instrucción pasa a un `bl` a un trampolín
   (S18, "Los siguientes: la instrucción reescrita"). Se mide el coste por acceso, con fallo y con trampolín, en QEMU
   (solo para comparar; los tiempos de verdad, en la Pi).
-- [ ] K8 **Contador hacia atrás e interrupciones.** El motor vuelve a los chips cuando llega la hora del siguiente
+- [x] K8 **Contador hacia atrás e interrupciones.** El motor vuelve a los chips cuando llega la hora del siguiente
   suceso, y los chips ponen el `IPL`. En la caja nativa, los niveles 6 y 7 ya los usa la caja: aquí solo se dejan
   preparados para la máquina entera (fase 2), sin entregarlos todavía.
 
@@ -116,6 +116,16 @@ de S18).
   con los cambios a mitad de línea en su sitio. La imagen (752 x 286, `0x00RRGGBB`) la recibe quien da la chip RAM
   (`MemoriaChip::linea_de_video`, `ConPantalla`). Oráculo: `caja/pruebas68k/denise.c` con `denise_modos.h`, contra
   capturas de FS-UAE.
+- [x] B5 **Los CIA completos.** Las dudas de K1 resueltas con medidas en FS-UAE (`caja/pruebas68k/cia.c`, A1200 y
+  A500) y vAmiga; el registro serie en los dos sentidos; el teclado del Amiga en el del CIA-A (`src/teclado.rs`,
+  `Chips::tecla`), con su saludo y la resincronía; los puertos (`Chips::ovl`, `led`, `fuego`, `disco_senales`,
+  `disco_lineas`) y `Chips::tras_el_arranque`. Pruebas: `caja/chips/tests/cia.rs`.
+- [x] B6 **Los sprites y los choques.** `caja/chips/src/sprites.rs`: el DMA de sprites de Agnus (`SPRxPT`, las
+  palabras de control y de datos en sus ciclos, `VSTART`/`VSTOP` con sus bits altos, el fin de la lista, varios
+  sprites por canal, `SPREN`, los ciclos que se comen los planos con `DDFSTRT` temprano) y Denise (los 8 sprites,
+  unidos, `SH0`, armar y desarmar, el modo a mano, prioridades con `BPLCON2` con un campo y con dos, solo dentro de
+  la ventana), y los choques (`CLXCON`, `CLXDAT`). Oráculo: `caja/pruebas68k/sprites.c` con `sprites_escenas.h`,
+  contra capturas de FS-UAE y su `CLXDAT`.
 
 ## Bloqueos
 
@@ -442,3 +452,291 @@ de S18).
   - Toca `caja/caja.c` solo en dos comentarios (regla 9: avisar a `dashos-aarch64`). No toca `caja/programas.S` ni
     `caja/Makefile`: `fallo_a64.h` es una cabecera. Toca `kernel/Makefile` (la línea de `pruebas_fallo`) y `caja/motor.h`
     (el comentario de `motor_chips`).
+
+- B5 hecho (papel de implementador; rama `chips-cia`, sale de `chips-blitter`): los CIA completos.
+  - Fuentes: el Hardware Reference Manual (el apéndice F y el teclado) y la hoja de datos del 8520, de memoria; vAmiga
+    (`Core/Components/CIA`, `Core/Peripherals/Keyboard`, y de mirada `Memory.cpp`, `PaulaRegs.cpp`, `AgnusEvents.cpp`
+    y el Blitter; MPL-2.0, cabeceras revisadas), del que salen la tubería de arranque de los temporizadores, la alarma
+    por flanco, el registro serie en salida y el saludo del teclado, reescritos con el aviso MPL en `cia.rs` y
+    `teclado.rs`. Nada de UAE, WinUAE, FS-UAE (su código), Amiberry ni AROS.
+  - El oráculo: `caja/pruebas68k/cia.c` (`cia.exe` en git, no va en la caja) mide con `Disable` y escribe lo que ve.
+    Pide a `ciab.resource` los temporizadores del CIA-B (libres con el Kickstart 3.1); las alarmas de los dos CIA las
+    tiene el sistema, así que usa la del CIA-B sin pedirla y al acabar la deja poco después del TOD. Se pasó en FS-UAE
+    con el A1200 (`--machine a1200`, 68020) y con el A500 (Kickstart 3.1 r40.63 del A500 en `DASH_KICKSTART_A500`,
+    compilado aparte con `-m68000`, fuera de git): el A500 es OCS y su 68000 va exacto al ciclo.
+  - Las dudas, una a una (lo medido manda donde no coincide con vAmiga):
+    - **Retraso de START y de la carga**: medido leyendo el contador cada 2 pulsos E tras arrancar, ocho veces en fases
+      distintas. Con `START` empieza a bajar en el 3.º o el 4.º pulso según la fase; con `LOAD` y `START`, igual; con
+      el byte alto en una vez, en el 4.º (A500; en el A1200 un pulso más). Se toma vAmiga: 2, 3 y 3 pulsos de espera
+      (cabe en lo medido). Con `LOAD` en marcha, FS-UAE carga al momento y sigue bajando (vAmiga espera): manda la
+      medida (en el A1200 baja uno menos). Tras desbordar en continuo espera un pulso (periodo `latch + 1`, como antes). Al parar, no baja más
+      (vAmiga baja dos; la medida no lo distingue). La cascada (B cuenta desbordes del A) espera un desborde al
+      arrancar.
+    - **VSYNC y HSYNC**: `VERTB` al principio de la línea 0. El TOD del CIA-A cambia entre la línea 4 (ciclo `$D3`) y
+      la 5 (ciclo `$0B`) en el A1200, y entre la 4 (`$C8`) y la 5 (`$25`) en el A500: ahora cuenta al empezar la línea 5
+      (`LINEA_VSYNC`), también para su alarma en `siguiente_suceso`. El del CIA-B cambia entre el ciclo `$DE` (A500:
+      `$CD`) de una línea y el `$0C` de la siguiente: se queda al empezar cada línea. vAmiga los pone en (5, 84) y en el
+      ciclo `$66`, con las lecturas retrasadas.
+    - **Alarma del TOD**: por flanco. Escribir el TOD igual a la alarma la hace saltar; escribir la alarma igual al
+      TOD, no (A500 y A1200; vAmiga sí). Escribir el byte alto para el TOD hasta el bajo; el del medio no lo para (medido).
+      Tras el reinicio el TOD está parado y a 0 (vAmiga; no se puede medir, el Kickstart ya lo puso en marcha).
+    - **Registro `$B`**: se lee `$00` en los dos CIA (vAmiga, `$FF`).
+    - **Espejos en `$BFxxxx`**: A500 como vAmiga: el bit 12 a 0 elige el CIA-A y el 13 el CIA-B, los dos a la vez si
+      los dos están a 0; los bits 0-7 no cuentan; una escritura de 1 byte llega al CIA elegido sea par o impar; uno de
+      2 bytes da el alto al B y el bajo al A; la mitad sin CIA se lee `$FF` (de 1 byte, lo que quedó en el bus: `$00`
+      o `$21`; aquí `$FF`). Con el A1200, FS-UAE no elige ninguno con los dos bits a 0: aquí se sigue al A500 (OCS).
+      Leer la mitad que no se toma también lee el registro (el ICR se borra).
+    - **INTREQ desde los CIA**: por nivel (medido: `EXTER` sigue a 1 tras borrarlo sin leer el ICR); como estaba.
+    - **`BZERO` tras el arranque**: 0, como vAmiga; no se puede medir desde un programa (en FS-UAE se lee 0 tras el
+      arranque, pero el Kickstart ya ha hecho blits).
+    - **Bit 14 de INTREQR**: se guarda y se lee (medido: `$4040`); como estaba, y como vAmiga.
+    - De paso: el bit 7 de CRA no existe y se lee 0 (medido); el de CRB, sí. El pin CNT y las entradas de los puertos
+      quedan como estaban (sin "Duda:"): CNT alto y quieto, entradas a 1.
+  - El registro serie: en entrada, cada flanco de subida de CNT mete el nivel de SP y con 8 pasa a `SDR` y sube `SP`;
+    en salida, cada desborde del temporizador A es medio bit y `SP` sube en el 16.º desborde contando el que carga el
+    byte (FS-UAE: 132-135 pulsos E con latch 7, más cerca de eso que del 15.º de vAmiga). Cambiar de sentido lo
+    vacía. PA0 y PA1 del CIA-B no van a SP y CNT (vAmiga sí; FS-UAE no: con ellos en salida no entra nada).
+  - El teclado (`src/teclado.rs`): cada código girado e invertido, bit a bit (60 µs por bit, el flanco a los 40), el
+    saludo es el CIA-A con el registro serie en salida al menos 85 µs (se cambia con `teclado_saludo_minimo`; vAmiga
+    acepta 1 µs), sin saludo en 143 ms resincroniza (un 1 cada 143 ms) y después manda `$F9` y el código perdido; al
+    encender espera un segundo a un saludo (como vAmiga) y si no resincroniza, y con el saludo manda `$FD` y `$FE`;
+    pila de 10 y `$FA` si se llena. No hace `$78` (reinicio), `$FC` ni las teclas pulsadas al encender entre `$FD` y
+    `$FE`. Solo se prueba en Rust: en FS-UAE no se pulsan teclas desde el programa.
+  - Los puertos: `Chips::ovl` y `led` (CIA-A PA0 y PA1, por los pines: sin `DDRA` la ROM tapa el 0),
+    `fuego(puerto, pulsado)` (PA6 y PA7), `disco_senales(cambio, protegido, pista0, listo)` (PA2-PA5) y
+    `disco_lineas()` (los pines de PB del CIA-B, con `paso`, `hacia_dentro`, `cara_arriba`, `elegida(x)` y `motor`).
+  - `Chips::tras_el_arranque`: los puertos como los deja el Kickstart (medido), los TOD en marcha y el teclado
+    sincronizado. Lo usa `pegamento/src/chips.rs` en vez de `Chips::nuevo`, porque en la caja no hay Kickstart que
+    ponga en marcha los TOD (`chips.exe` mira el del CIA-A).
+  - Comprobado: `cargo test` (20 pruebas nuevas en `tests/cia.rs`: cada duda con lo medido, el registro serie en los
+    dos sentidos, el teclado con saludo, sin él, con uno corto, al encender y con la pila llena, y los puertos; las de
+    `tests/chips.rs` puestas al día con los tiempos nuevos), `cargo clippy --all-targets` sin avisos, compila sin `std`
+    para `x86_64-unknown-none` y `aarch64-unknown-none-softfloat` (`-Zbuild-std=core`), y `make -C kernel caja-x86`
+    (BIEN; `chips.exe` igual: TA tras 16 líneas, TOD +1 y +5, 0 fallos).
+  - No comprobado: el teclado contra un Amiga o un emulador (solo en Rust); el retraso de los temporizadores al ciclo
+    (FS-UAE da dos valores según la fase del reloj E; aquí no hay fase: cada acceso cae en un pulso entero); los tiempos del registro serie en salida, solo con un
+    latch; un Amiga de verdad.
+
+
+- Unión de B5 en `chips-blitter` (la sesión), sobre B1-B4. Conflictos: la cabecera de `lib.rs`, la prueba
+  `direcciones_de_nadie` (B4 usaba `SPR0POS` como registro sin imitar; quedan los espejos nuevos de B5 con
+  `SPR0POS`, hasta que lleguen los sprites), el `Makefile` de `pruebas68k` y aquí. Comprobado: `cargo test` (todas)
+  y `cargo clippy --all-targets` sin avisos; `make -C kernel caja-x86` BIEN.
+
+### 2026-11-28
+
+- K7 hecho (papel de implementador; fuentes: el manual de ARMv8-A para las codificaciones de `b`, `blr`, LDR literal,
+  STR/LDR con pre y post-índice, `dc cvau`/`ic ivau` y NZCV; el código de DashOS y el de Emu68: `M68k_Translator.c`,
+  sobre todo `M68K_VerifyUnit`, `M68K_GetTranslationUnit` y dónde suelta las unidades; `support.c` para la limpieza de
+  cachés desde EL0). Rama `chips-k7`. No toca Emu68 (ni parche nuevo).
+  - El trampolín: uno por sitio, de 64 bytes, en los últimos 64 KB del código traducido (`JIT_LEN`; el tlsf del JIT
+    se queda con el resto), así que a menos de 128 MB de cualquier sitio. El sitio pasa a `b trampolín` y el trampolín
+    vuelve con `b sitio + 4`: x30 no se pisa fuera. Dentro, guarda x30 en la pila (`str x30, [sp, #-16]!`), salta por
+    x30 a una rutina común (`ldr x30, literal; blr x30`: la común está en el texto de la caja, lejos) y al volver
+    repone x30. La común (`caja_trampolin_comun`, asm en `caja/trampolin_a64.c`) arma un marco como el de K5 (x0-x30,
+    SP, NZCV), llama a `caja_trampolin_c` y lo repone todo, NZCV incluido, con lo que cambió del acceso (el registro
+    destino, la base con pre o post-índice, x30 si era el destino). Diseño en la cabecera de `caja/trampolin_a64.h`.
+  - Los registros de la FPU y SIMD no se guardan: `trampolin_a64.c` se compila con `-mgeneral-regs-only`, los chips
+    son Rust softfloat y `motor_ciclos` solo lee v20. El Makefile de la caja falla si `trampolin_a64.o` llama a
+    `memset`/`memcpy` (el de la caja es C normal y puede usar SIMD). Por eso `decodifica` (`fallo_a64.h`) ya no llena
+    `struct acceso` con una estructura literal: con musl salía un `memset` que pisaba q0 (lo vio la prueba nueva).
+  - La hora: `motor_ciclos()` dentro del trampolín, como en K6 (v20 sigue como estaba). Lo de "cuántas instrucciones
+    van en el bloque hasta ese acceso" de S18 queda para cuando el traductor cuente ciclos.
+  - Qué se reescribe: todos los sitios que fallan en los chips, con dirección fija o no (en el código traducido toda
+    dirección va por registro, no se distingue), con el camino doble: si la dirección no cae entera en una zona de los
+    chips, el trampolín vuelve a +20, donde está la instrucción original con los registros como estaban, y hace el
+    acceso normal (si cruza a algo sin proyectar, falla ahí y K6 lo trata como siempre). Un sitio que va 1.024 veces
+    seguidas a otra cosa vuelve a su instrucción (deja de pagar el rodeo); si vuelve a los chips, falla y se reescribe
+    otra vez. No se reescriben las exclusivas (LDXR/STXR: el monitor exclusivo no sobrevive al rodeo; siguen por el
+    fallo) ni las de base SP (el trampolín usa la pila).
+  - Las unidades que se sueltan: Emu68 las suelta en muchos sitios (`M68K_VerifyUnit` con su CRC del código 68k, sin
+    sitio en `M68K_GetTranslationUnit`, CINV/CPUSH en `M68k_LINEF.c`, `M68k_LINE4.c`, `motor_olvidar`). En vez de
+    tocarlos todos, un trampolín es de un sitio solo mientras ese sitio salta a él: "deshacer" mira, para cada uno, si
+    la palabra del sitio es exactamente `b <ese trampolín>`; si lo es, pone la instrucción original y limpia la caché;
+    si no (la memoria ya es de otra unidad), no la toca. Emu68 nunca emite un salto a la zona de los trampolines y los
+    datos de control del tlsf no pueden valer `0x14xxxxxx` (punteros por debajo de 4 MB y tamaños), así que no hay
+    confusión posible. Los trampolines se reparten seguidos; cuando se acaban los 1.024, se deshace todo y se empieza
+    de nuevo (las unidades vivas vuelven a fallar una vez por sitio). Un trampolín no se reutiliza mientras alguien lo
+    ejecuta: solo se reparten en el manejador de fallos, y dentro de un trampolín no corre código 68k. El CRC de
+    `M68K_VerifyUnit` es del código 68k, no del ARM: reescribir no invalida la unidad (el riesgo de la sección 9 de
+    S18 no se da).
+  - Se deshace todo en `motor_olvidar` (antes de soltar las unidades; también desde una llamada nativa, donde la unidad
+    fijada sigue viva y su sitio vuelve a la instrucción original, que es correcto) y en `motor_chips(0)`: con los
+    chips apagados no queda nada reescrito. `motor_chips(1)` pone las cuentas a 0.
+  - Escritura del código: por `JIT_RW`, y `dc cvau` + `dsb ish` + `ic ivau` (en `JIT_RX`) + `dsb ish` + `isb`, como
+    Emu68; primero el trampolín entero y después la palabra del sitio. Las instrucciones, siempre en little-endian; los
+    dos literales (la común y la descripción), en el orden de la caja.
+  - Prueba nueva en el PC: `caja/pruebas_fallo/prueba_trampolin.c` (la lanza el mismo Makefile, y con él `make -C
+    kernel prueba`). Un arnés pone x1-x8, x30, NZCV y q0-q31 al azar y ejecuta una instrucción en su sitio: primero la
+    original, después reescrita por `trampolin_poner`. 52 formas (las de K6 sin las exclusivas, y cinco con x30), 20
+    vueltas, con la base en los chips (la de verdad sobre memoria en `$BF0000`, el trampolín sobre la sombra) y en la
+    RAM (las dos sobre la misma memoria, por el camino normal); registros, NZCV, memoria y q0-q31 tienen que acabar
+    iguales. Además: deshacer devuelve el sitio, 1.024 vueltas a la RAM también, y no se reescriben una exclusiva ni
+    una de base SP. En big-endian y en little-endian. Con fallos metidos a propósito: sin reponer NZCV, 1.972 errores;
+    con x30 cambiado, 1.040.
+  - La medida: `caja/pruebas68k/vposr.s` (`vposr.bin`, en `$138000`) lee VPOSR mil veces por cada carácter de sus
+    argumentos. La caja (ARM) lo lanza tres veces con los chips encendidos: sin argumentos (lo que cuesta lanzarlo, que
+    se resta), 10.000 lecturas sin reescribir (`chips_reescribe` = 0) y 100.000 reescribiendo. Comprueba las cuentas:
+    10.000 fallos y 0 trampolines; luego tantos fallos como sitios reescritos (16: Emu68 desenrolla el bucle) y el
+    resto por el trampolín, y 0 por el camino normal. En QEMU (TCG, en este PC; solo para comparar):
+
+    | caja | por el fallo | reescrita | chips.exe |
+    |---|---|---|---|
+    | big-endian | 22.662 ns | 299 ns | 24 ms (K6: 0,4-0,6 s) |
+    | little-endian | 31.365 ns | 353 ns | 30 ms (K6: 0,6-2,2 s) |
+
+    Unas 75-90 veces menos por acceso. Lanzar el programa, de 0,8 a 1,5 ms. En la primera vuelta en little-endian
+    (la que falló lejos), 24.895 y 309 ns. Los tiempos de verdad, en la Pi.
+  - Comprobado: `make -C caja/pruebas_fallo` (K6 y K7, BE y LE, 0 fallos); `make -C kernel prueba` (BIEN);
+    `make -C kernel arranque-virt` con la caja big-endian (BIEN a la primera, con la línea nueva de K7); con
+    `CAJA_ORDEN=le`, BIEN a la segunda (la primera, con las líneas de los chips bien, falló lejos de la caja: el
+    explorador no ordenó "por Tamano" a tiempo; sin mirar, apuntado por si se repite); `make -C kernel caja-x86` (BIEN). Con objdump: ni `trampolin_a64.o` ni
+    `motor_ciclos` usan registros de la FPU o SIMD.
+    Nota: la vuelta en big-endian aceptaba hasta 16 sitios reescritos en `vposr`; después se aflojó a 64 (salen 16, el
+    desenrollado de Emu68) y con eso corrió la de little-endian.
+  - No comprobado: la Pi de verdad (ni los tiempos ni la coherencia de cachés en una A72 real); un sitio que alterna
+    chips y RAM en un programa de verdad (solo la prueba del PC); que se llenen los 1.024 trampolines (no pasa en las
+    pruebas); el camino de una unidad soltada por Emu68 con su sitio reescrito y la memoria reutilizada (el argumento
+    de arriba, sin prueba propia).
+  - Toca `caja/caja.c` (la medida K7 tras `chips.exe`, solo en ARM, y las declaraciones de las cuentas y de
+    `prog_vposr`), `caja/programas.S` (`vposr.bin`) y `caja/Makefile` (`trampolin_a64.o` con `-mgeneral-regs-only` y
+    su comprobación, y `vposr.bin` en `PROGRAMAS_DEPS`). Regla 9: avisar a `dashos-aarch64`. También
+    `caja/fallo_a64.h` (sin `memset`), `caja/motor.h` (comentario), `caja/pruebas68k/Makefile`, `caja/pruebas_fallo/` y
+    `kernel/pruebas/arranque_virt.txt` (la línea de K7, en un bloque `#[arm`).
+  - Para K8: el contador hacia atrás vuelve a los chips desde el bucle de Emu68, no desde aquí; lo que haga falta de la
+    hora exacta del acceso (las instrucciones del bloque hasta el sitio) puede ir como un dato más en `struct
+    trampolin` cuando el traductor lo sepa.
+
+- Unión de K7 en `chips-blitter` (la sesión), con `main` ya traído (PR #16). Solo chocaron el `Makefile` de
+  `pruebas68k` y aquí. Y, pedido por `amiga-en-linux` (la caja como programa de Linux): el decodificador pasa a
+  `caja/fallo_a64_decodifica.h` (`marco_fallo`, `struct acceso`, `decodifica`), sin nada de los chips ni del sistema;
+  `fallo_a64.h` lo incluye. Comprobado: `make -C caja/pruebas_fallo` (83 y 52 instrucciones, 0 fallos, en los dos
+  órdenes), `make -C kernel prueba` BIEN y `make -C kernel caja-x86` BIEN. No repetido tras la unión: `arranque-virt`.
+
+### 2026-11-28
+
+- B6 hecho (papel de implementador; rama `chips-sprites`, sale de `chips-blitter`): los sprites y los choques de OCS.
+  - Fuentes: el Hardware Reference Manual (capítulos 4 y 7), de memoria, y vAmiga (`Core/Components/Agnus`:
+    `Agnus.cpp`, `AgnusRegs.cpp`, `AgnusDma.cpp`, `Sequencer/SequencerDas.cpp` y `SequencerBpl.cpp`;
+    `Core/Components/Denise`: `Denise.cpp`, `Denise.h`, `DeniseRegs.cpp`; cabeceras MPL-2.0 revisadas): los ciclos
+    de cada sprite (`$15 + 4n` y el siguiente), qué lee Agnus según `VSTART`/`VSTOP`, la lectura del control en la
+    línea 25, el ciclo que se comen los planos (OCS: desde el anterior al primero suyo), el retraso con que Denise ve
+    cada registro, el primer píxel en `HSTART + 1`, el recorte desde el primer `BPL1DAT`, el orden de prioridad y los
+    choques. Reescrito en Rust, con el aviso MPL y el origen en la cabecera de `sprites.rs`. Nada de UAE, WinUAE,
+    FS-UAE (su código), Amiberry ni AROS.
+  - Cómo es: los ciclos de sprites van en el bucle de ciclos de `denise.rs` (sin imagen y sin planos, solo los de
+    `$15` a `$33`). Lo que llega a Denise (del DMA, del 68k o del Copper) se apunta con la posición en que lo ve (hasta
+    128 por línea) y se aplica al traducir la línea; los sprites se mezclan en `traducir` con la prioridad de
+    `BPLCON2` (con un campo, `PF2P`; con dos, el del campo que se ve) y allí mismo se calculan los choques. Leer
+    `CLXDAT` y escribir `CLXCON` traducen antes lo que ya se ve. `lib.rs`: el módulo, el campo `sprites`, `SPREN` en
+    `dma`, `CLXDAT` en las lecturas y `escribir_sprites` en las escrituras. Sin DMA de sprites antes de la línea 25
+    (del manual; vAmiga leería en la línea 0 tras una lista acabada).
+  - Oráculo: `caja/pruebas68k/sprites.c` (`sprites.exe` en git) pone, con `Disable`, 22 escenas de
+    `sprites_escenas.h`: seis quietas cuatro segundos para la captura (baja con 3 planos y `BPLCON2` 0 abajo; `PF2P`
+    1 y 3; campos dobles con `PF1P`/`PF2P` y `PF2PRI`; alta con 4 planos; `DDFSTRT = $28`, que se come los sprites 5,
+    6 y 7; HAM6) con los ocho sprites, uno reutilizado tres veces (una en la línea siguiente al `VSTOP`), dos unidos,
+    `SH0`, sprites que cruzan los cuatro bordes, el Copper moviendo el sprite 1 a mitad de línea (sale dos veces) y el
+    sprite 5 a mano (armado por el Copper en la línea `$B0`, desarmado en la `$C0`); y 16 de solo choques (bandas de
+    planos con `CLXCON` que miran cada campo, con uno y dos campos; choques entre grupos con y sin `ENSP`; el sprite 6
+    solo fuera de la ventana; sin sprites). En cada escena lee `CLXDAT` de un cuadro entero y lo escribe por la
+    consola. Capturas con `captura.sh DIR sprites 55` (ahora con el programa y el número de capturas como
+    argumentos, la salida en `DIR/salida.txt` y `uae_collision_level=full`) y `huellas.py DIR sprites` (ahora salta
+    las capturas de solo borde); en git, `tests/denise_oraculo/sprites_huellas.txt` (26 KB) y
+    `sprites_clxdat.txt`. `tests/sprites_oraculo.rs`: **las seis imágenes iguales, píxel a píxel**, y **`CLXDAT`
+    igual en las 22 escenas**, con una excepción a la vista: con `CLXCON` sin ningún `ENBP`, FS-UAE da siempre los
+    bits 1-8 (también sin ningún sprite, escena 20), y en esas 17 escenas la prueba no compara esos bits.
+  - Lo que se vio: el FS-UAE de serie no da nunca el bit 0 (campo con campo): hace falta `uae_collision_level=full`.
+    Con un campo, un sprite sobre un píxel que choca con el campo 1 y no con el 2 no da el bit del 1; con campos
+    dobles, sí (escenas 7 y 8; como vAmiga). Los sprites que cruzan el borde se cortan justo en la ventana.
+  - Comprobado: `cargo test` (20 pruebas nuevas en `tests/sprites.rs`: un sprite y lo que lee Agnus, `SH0`, los
+    colores de cada pareja y los ocho en una línea, reutilizar el canal, unidos, el menor delante, prioridad con un
+    campo y con dos, HAM y EHB debajo, solo dentro de la ventana, sin planos no se ven, sin `SPREN`, `DDFSTRT`
+    temprano con y sin planos en la línea, el modo a mano por el 68k, el Copper moviendo un sprite, choques entre
+    sprites y con los campos, `CLXDAT` al encender; y los dos del oráculo; `direcciones_de_nadie` prueba ahora
+    `DSKPTH`), `cargo clippy --all-targets` sin avisos, que compila sin `std` para `x86_64-unknown-none` y
+    `aarch64-unknown-none-softfloat` (`-Zbuild-std=core`), y `make -C kernel caja-x86` (BIEN).
+  - No comprobado: el oráculo es un A1200 (Lisa y Alice), no OCS: no se probó lo que cambia entre los dos (el segundo
+    ciclo del sprite 6 con `DDFSTRT = $30`, el del 4 con `$28`). Los bits 1-8 de `CLXDAT` con `CLXCON` sin `ENBP`
+    quedan sin decidir (FS-UAE frente al manual y vAmiga). Los bits altos de `VSTART`/`VSTOP` sí salen en el oráculo
+    (el sprite 7 de la línea `$118` a la `$136`). No se probaron en el oráculo: sprites con entrelazado, el 68k
+    escribiendo los registros de sprites, `CLXDAT` leído a mitad de cuadro, ni las escrituras que vAmiga
+    pierde. Sin imagen no hay choques. La caja aún no da chip RAM ni recibe la imagen.
+  - Dudas, en la cabecera de `sprites.rs`: la regla de OCS de los ciclos perdidos; la rareza del campo 1 con un
+    campo; los bits 1-8 con `CLXCON` sin `ENBP`; sin imagen no hay choques; los unidos chocan con sus propios bits;
+    Agnus ve `POS`/`CTL` enseguida; los registros de desplazamiento se vacían en cada línea; `PF1P`/`PF2P` mayor que
+    4; más de 128 cambios de sprites en una línea.
+
+
+- Unión de B6 en `chips-blitter` (la sesión), sobre B1-B5 y K7. Conflictos: la cabecera de `lib.rs`, los módulos,
+  la prueba `direcciones_de_nadie` (el registro sin imitar pasa a ser `DSKPTH`, con los espejos de B5), el `Makefile`
+  de `pruebas68k` y aquí. Comprobado: `cargo test` (todas, con los oráculos de la imagen y de `CLXDAT`), `cargo
+  clippy --all-targets` sin avisos y `make -C kernel caja-x86` BIEN.
+
+- K8 hecho (papel de implementador; rama `chips-k8`, sale de `chips-blitter` d2383bb9; fuentes: el Hardware Reference
+  Manual, capítulo 7, para el mapa de niveles; Emu68 para `MainLoop` y el traductor; `relevo.h` de RelevoJIT).
+  - Los chips: `Chips::plazo(hora)` pone todo al día y da `Plazo { ipl, siguiente }` (el nivel de `ipl()` y la hora de
+    `siguiente_suceso()`). El pegamento: `caja_chips_plazo(hora)` (`chips.rs`), con la hora del motor; apagados,
+    `{ UINT64_MAX, 0 }`. En `motor.h`: `struct caja_plazo`, `caja_chips_plazo`, `motor_ipl_chips()` y
+    `motor_plazos_chips()` (cuántas veces llegó al plazo, para las pruebas), con lo que hará la fase 2 con el nivel.
+  - Emu68 (ARM): parche nuevo `patches/emu68/0017-plazo-de-los-chips.patch`. Un byte libre de `INTF`, `INTF.CHIPS`:
+    con él a 1, `INT64` no es 0, y `MainLoop`, que ya mira `INT64` entre bloques, compara el contador de instrucciones
+    (v20) con `dashos_plazo` y, al llegar, guarda el contexto, llama a `dashos_plazo_llegado` (`motor_emu68.c`: pone
+    los chips al día, guarda el nivel y arma el plazo siguiente, en instrucciones: la hora / 8 por arriba) y lo vuelve
+    a cargar. Las dos, débiles en el parche (jit-host no las define). Con `INTF.CHIPS` a 1, los bucles internos de una
+    unidad (que Emu68 repite mientras `INT64` sea 0) vuelven a `MainLoop` en cada vuelta: un bucle que no toca los
+    chips no se salta el plazo. Apagados, `INTF.CHIPS` a 0 y nada cambia: ni una instrucción más. `motor_arrancar`
+    pone `INT64` a 0 y vuelve a poner `INTF.CHIPS` si están encendidos. Tras cada escritura en los chips (por el fallo
+    y por el trampolín), `chips_rearmar` (con `target("general-regs-only")`: corre con la FPU y SIMD del JIT vivas;
+    comprobado con objdump que ni ella ni `caja_chips_plazo` las tocan).
+  - Lo que se vio en `arranque-virt`: la primera versión del gancho mataba la caja (salto a 0) en el bucle de
+    `ipl.bin`. `MainLoop` reutiliza x12 (`ARMCode`) si la PC no cambió, y Rust (los chips) no respeta x12 como el C de
+    la caja (`-ffixed-x12`). Tras el gancho, `LastPC` pasa a "ninguna" y la unidad se vuelve a buscar.
+  - RelevoJIT (x86): sin tocar RelevoJIT. Con los chips encendidos, `correr()` da a cada `relevo_run` de presupuesto
+    las instrucciones hasta el plazo (los ciclos que faltan / 16: la corrida acaba antes y se da otra; solo una tanda de
+    instrucciones de más de 16 ciclos de media llega tarde). Al volver, si llegó, pone los chips al día y arma el
+    siguiente. Tras una escritura en los chips, también; si el plazo se adelanta, `relevo_request_stop` y `correr()`
+    vuelve a calcular. Tras una corrida anidada (`motor_anidado`), otra parada, para que la de fuera recalcule.
+    Apagados, el presupuesto de siempre.
+  - El nivel no se entrega: `relevo_set_ipl` sigue siendo solo de la caja (6 y 7) y en Emu68 `MainLoop` no lo suma.
+  - Prueba nueva en la caja: `caja/pruebas68k/ipl.s` (`ipl.bin`, en `$138000`, como `vposr.bin`) borra `INTREQ`,
+    pone `INTENA` a `$C020` y da 50.000 vueltas sin tocar los chips; con argumentos, acaba quitando `INTEN`. La caja lo
+    lanza dos veces con los chips encendidos tras `chips.exe` (en ARM y en x86): sin argumentos, el nivel preparado
+    tiene que ser 3 tras 3 plazos o más; con uno, 0 (lo recalcula la escritura); apagados, 0. Línea nueva en
+    `arranque_virt.txt` y `caja_x86.txt`. No es para el oráculo (en un Amiga, con `INTEN`, `VERTB` llegaría al 68k).
+  - Pruebas en Rust: `caja/chips/tests/plazo.rs` (10): el nivel de las 16.384 combinaciones de `INTREQ` con tres
+    `INTENA` y sin `INTEN`, el mapa bit a bit, el plazo sin nada (fin de cuadro), un motor de mentira (8 ciclos por
+    instrucción, bloques de 1 a 256) que solo vuelve en el plazo y ve el nivel 3 en el primer bloque tras cada fin de
+    cuadro, `VERTB` sin habilitar, el temporizador A del CIA-A (nivel 2) y el B del CIA-B (nivel 6), escribir `INTENA`
+    o `INTREQ` cambia el nivel enseguida, una escritura adelanta el plazo, una hora anterior no cambia nada. Y en
+    `pruebas_fallo/prueba_trampolin.c`: el plazo se rearma tras cada escritura en los chips por el trampolín y solo
+    entonces (380 en 20 vueltas; con el fallo metido a propósito, 660).
+  - La copia de Emu68: `third_party/Emu68` de este worktree era un enlace al clon de `.worktrees/chips`, que comparten
+    otros worktrees; para no cambiarles nada se sustituyó por una copia (es la base más 0001-0016, comprobado con
+    `git archive` y los parches) y se le aplicó el 0017. Quien construya con un clon propio tiene que aplicar el 0017.
+  - Comprobado: `cargo test` en `caja/chips` (todas, 10 nuevas) y `cargo clippy --all-targets` sin avisos; el
+    pegamento compila (no tiene pruebas; su clippy, con stable para `aarch64-unknown-none`, no da nada en `chips.rs`,
+    sí avisos y errores de antes en `lib.rs`, `compositor.rs` y `faltan.rs`; el nightly no tiene clippy);
+    `make -C caja/pruebas_fallo` (K6 y K7, BE y LE, 0 fallos, con la cuenta nueva); `make -C kernel prueba` (BIEN);
+    `make -C kernel caja-x86` (BIEN: 4 plazos, nivel 3; quitando `INTEN`, 0); `make -C kernel arranque-virt` con la
+    caja big-endian (BIEN, tras el arreglo de x12: 5 plazos, nivel 3; la línea de K7 también); con `CAJA_ORDEN=le`,
+    dos vueltas con las líneas de la caja bien (5 plazos, nivel 3, y K7) y un fallo lejos de ella en cada una: en la
+    primera, el segundo arranque tras reiniciar; en la segunda, la comprobación del sonido (el tono de 600 Hz sin
+    nivel y chasquidos). No se repitió más. Con objdump: `chips_rearmar` y `caja_chips_plazo` sin registros de la FPU
+    ni SIMD.
+  - No comprobado: la Pi de verdad; el coste con los chips encendidos de que los bucles internos de Emu68 vuelvan a
+    `MainLoop` en cada vuelta (sin medir); que el plazo llegue a tiempo en x86 con instrucciones largas; un programa
+    que escriba en los chips desde una corrida anidada (el camino de `motor_anidado` con los chips encendidos).
+  - Toca `caja/caja.c`, `caja/programas.S` y `caja/Makefile` (regla 9: avisar a `dashos-aarch64`).
+  - Para la fase 2: entregar el nivel (en Emu68, otro cambio en `MainLoop`: sin PiStorm no mira `INTF.IPL`; en
+    RelevoJIT, `relevo_set_ipl` con el más alto entre el de los chips y el de la caja); que la hora corra con el 68k en
+    `STOP` (hoy no corre: ni Emu68 ni RelevoJIT avanzan el contador); bajar el tope del bloque en la máquina entera; y
+    la hora exacta del acceso dentro del bloque (K7, "Para K8").
+
+
+- Revisión de K8 (la sesión): el diff, el parche 0017 (el byte `CHIPS` cabe en los 8 de `INT64`; con él a 0 no
+  cambia nada) y el trampolín (`chips_rearmar` sin FPU ni SIMD; el pegamento es softfloat). Repetidas todas en
+  `chips-k8`: `cargo test` en `caja/chips`, `make -C caja/pruebas_fallo` (0 fallos), `make -C kernel prueba` BIEN,
+  `make -C kernel caja-x86` BIEN, `arranque-virt` con `CAJA_ORDEN=le` BIEN entero (también el sonido y el
+  reinicio, que fallaron antes), y en big-endian todas las líneas de la caja bien (chips, K7 y K8: 5 plazos, nivel 3)
+  y un solo `FALTA`, el del selector de guardar, intermitente y conocido, lejos de los chips. **La fase 1 queda
+  cerrada.** `chips-blitter` avanza hasta `chips-k8`.

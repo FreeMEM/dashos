@@ -89,6 +89,11 @@ const char *motor_nombre(void)
 #define JIT_RW   0x0000000100000000UL
 #define JIT_RX   (JIT_RW | 0x0000001000000000UL)
 #define JIT_LEN  (4UL << 20)
+/* K7: los trampolines de la instrucción reescrita, en los últimos 64 KB del código traducido (fuera del tlsf del JIT):
+   así quedan a menos de 128 MB de cualquier sitio, el alcance de un `b`. */
+#include "trampolin_a64.h"
+#define TRAMP_RW (JIT_RW + JIT_LEN - TRAMPOLINES_ZONA)
+#define TRAMP_RX (JIT_RX + JIT_LEN - TRAMPOLINES_ZONA)
 
 int motor_iniciar(void)
 {
@@ -103,7 +108,8 @@ int motor_iniciar(void)
         di("MAL: el kernel deja escribir y ejecutar a la vez\n");
         return 3;
     }
-    jit_tlsf = tlsf_init_with_memory((void *)JIT_RW, JIT_LEN);
+    jit_tlsf = tlsf_init_with_memory((void *)JIT_RW, JIT_LEN - TRAMPOLINES_ZONA);
+    trampolines_iniciar(TRAMP_RW, TRAMP_RX);
 
     uint64_t ctr;
     __asm__ volatile("mrs %0, CTR_EL0" : "=r"(ctr));
@@ -152,8 +158,10 @@ uint64_t motor_ciclos(void)
 
    Lo que no es suyo (un fallo fuera del código traducido, fuera de las dos zonas, o una instrucción que no sabe
    decodificar) acaba como sin chips: quita el manejador y reanuda en la misma instrucción, que vuelve a fallar y el
-   kernel termina el proceso con su aviso de siempre. Antes lo dice con di(). */
-#include "fallo_a64.h"
+   kernel termina el proceso con su aviso de siempre. Antes lo dice con di().
+
+   K7: tras atender el fallo, el sitio se reescribe con un `b` a su trampolín (trampolin_a64.h), y los accesos
+   siguientes de ese sitio ya no pasan por el kernel. */
 
 #define SC_FALLO_MANEJADOR 61
 #define SC_REANUDAR        62
@@ -179,15 +187,20 @@ __attribute__((used, noipa)) int chips_fallo(marco_fallo *m)
     const volatile uint8_t *p = (const volatile uint8_t *)m->pc;
     uint32_t ins = p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
     struct acceso a;
-    int r = chips_atiende(m, ins, motor_ciclos(), &a);
+    uint64_t sitio = m->pc;
+    uint64_t hora = motor_ciclos();
+    int r = chips_atiende(m, ins, hora, &a);
     if (r == 0)
         di("chips: no sé decodificar la instrucción %08x (en %p, acceso a %08x)\n", ins, (void *)m->pc,
            (uint32_t)m->far);
     else if (r < 0)
         di("chips: la instrucción %08x (en %p) toca %u bytes en %p: no caben en los chips\n", ins, (void *)m->pc,
            a.tam * a.pares, (void *)a.dir);
-    else
+    else {
         chips_fallos++;
+        if (a.escribe) chips_rearmar(hora);   /* K8 */
+        trampolin_poner(sitio, ins, &a);
+    }
     return r > 0;
 }
 
@@ -230,8 +243,39 @@ __asm__(
     "udf #0\n"
     ".size caja_entrada_fallo, . - caja_entrada_fallo\n");
 
+/* --- K8: el contador hacia atrás (motor.h, motor_ipl_chips) --- */
+
+/* El plazo, en instrucciones del contador de Emu68 (la hora del motor / CICLOS_POR_INSTRUCCION, por arriba). Lo mira
+   MainLoop al volver de cada bloque mientras INTF.CHIPS esté a 1 (parche 0017; las dos, débiles allí). */
+uint64_t dashos_plazo = ~0ULL;
+static volatile unsigned ipl_chips;
+static uint64_t plazos_chips;
+
+/* Pone los chips al día a la hora `hora` y arma el plazo siguiente. La llaman también los trampolines (tras una
+   escritura): sin tocar los registros de la FPU y SIMD, que el código traducido tiene vivos (como trampolin_a64.c). */
+__attribute__((target("general-regs-only"))) void chips_rearmar(uint64_t hora)
+{
+    struct caja_plazo p = caja_chips_plazo(hora);
+    ipl_chips = p.ipl;
+    dashos_plazo = p.siguiente == ~0ULL ? ~0ULL : p.siguiente / CICLOS_POR_INSTRUCCION
+        + (p.siguiente % CICLOS_POR_INSTRUCCION != 0);
+}
+
+/* Desde MainLoop, con el contexto guardado: el contador llegó al plazo. */
+void dashos_plazo_llegado(void)
+{
+    plazos_chips++;
+    chips_rearmar(motor_ciclos());
+}
+
+unsigned motor_ipl_chips(void) { return ipl_chips; }
+uint64_t motor_plazos_chips(void) { return plazos_chips; }
+
+/* El plazo armado: INTF.CHIPS a 1 hace que MainLoop lo mire (INT64 deja de ser 0). */
+static void plazo_marca(int armado) { __atomic_store_n(&m68k.INTF.CHIPS, (uint8_t)armado, __ATOMIC_RELEASE); }
+
 /* K2 y K6: encendidos, el manejador de fallos del hilo de la caja (el que ejecuta el 68k) atiende las dos zonas;
-   apagados, se quita. Sin chips, un acceso ahí acaba como siempre. */
+   apagados, se quita. Sin chips, un acceso ahí acaba como siempre. K8: y el contador hacia atrás, armado o no. */
 int motor_chips(int encendidos)
 {
     encendidos = encendidos != 0;
@@ -245,9 +289,18 @@ int motor_chips(int encendidos)
             di("chips: el kernel no da el manejador de fallos\n");
             return 0;
         }
-        chips_fallos = 0;
+        chips_fallos = chips_tramp_accesos = chips_tramp_ram = 0;
+        chips_reescritos = chips_deshechos = 0;
+        plazos_chips = 0;
+        chips_rearmar(motor_ciclos());
+        plazo_marca(1);
     } else {
+        /* K7: que no quede nada reescrito (el sitio volvería a los chips apagados sin fallar). */
+        trampolines_deshacer();
         caja_sc(SC_FALLO_MANEJADOR, 0, 0, 0, 0, 0);
+        plazo_marca(0);
+        dashos_plazo = ~0ULL;
+        ipl_chips = 0;
     }
     chips_en = encendidos;
     return 1;
@@ -425,6 +478,7 @@ __attribute__((noipa)) void motor_arrancar(uint32_t pc, uint32_t a7, uint32_t a6
     nativas = 0;
     m68k.CACR = 0x80008000;
     m68k.INT64 = 0;
+    plazo_marca(chips_en);    /* K8: el plazo de los chips sigue armado si están encendidos */
     __asm__ volatile("mov " CTX_LAST_PC_ASM ", %w0" ::"r"(0xffffffff));
     __asm__ volatile("mov " CTX_POINTER_ASM ", %0" ::"r"(&m68k));
     /* x29 lo guarda el asm: GCC no lo hace aunque esté en la lista (ver main_loop_anidado). */
@@ -445,6 +499,9 @@ __attribute__((noipa)) void motor_arrancar(uint32_t pc, uint32_t a7, uint32_t a6
 void motor_olvidar(void)
 {
     jit_generacion++;
+    /* K7: antes de soltar las unidades, sus sitios reescritos vuelven a su instrucción (también los de las unidades
+       fijadas, que siguen vivas: si vuelven a los chips, fallan y se reescriben otra vez). */
+    trampolines_deshacer();
     struct Node *n;
     while ((n = REMTAIL(&LRU)) != NULL) {
         struct M68KTranslationUnit *u =

@@ -52,7 +52,7 @@ MATH := $(basename $(notdir $(wildcard $(EMU68)/src/math/*.c)))
 
 OBJS := $(JIT_C:%=$(B)/%.o) $(JIT_CXX:%=$(B)/%.o) $(MATH:%=$(B)/math_%.o) \
 	$(B)/RegisterAllocator64.o $(B)/ExecutionLoop.o $(B)/emu68_context.o \
-	$(B)/caja.o $(B)/motor_emu68.o $(B)/hunk.o $(B)/entrada.o $(B)/programas.o
+	$(B)/caja.o $(B)/motor_emu68.o $(B)/trampolin_a64.o $(B)/hunk.o $(B)/entrada.o $(B)/programas.o
 
 # La pila del ELF (64 KB, la de siempre) solo se usa al empezar: entrada.S pasa enseguida a una por encima de 4 GB.
 all: $(B)/caja-amiga
@@ -75,6 +75,11 @@ $(B)/caja.o: caja.c | $(B)
 	$(CC) $(CFLAGS) -c $< -o $@
 $(B)/motor_emu68.o: motor_emu68.c | $(B)
 	$(CC) $(CFLAGS) -c $< -o $@
+# K7: los trampolines corren con los registros de la FPU y SIMD del JIT vivos y no los guardan: sin tocarlos.
+$(B)/trampolin_a64.o: trampolin_a64.c | $(B)
+	$(CC) $(CFLAGS) -mgeneral-regs-only -c $< -o $@
+	@if $(TC)objdump -dr $@ | grep -E 'R_AARCH64_(CALL|JUMP)26[[:space:]]+(memset|memcpy|memmove)'; then \
+		echo "trampolin_a64.o llama a memset o memcpy, que pueden usar SIMD"; rm -f $@; exit 1; fi
 $(B)/hunk.o: hunk.c | $(B)
 	$(CC) $(CFLAGS) -c $< -o $@
 $(B)/entrada.o: entrada.S | $(B)
@@ -95,7 +100,7 @@ DASH_EXES := build/dash/hola.exe build/dash/texto.exe build/dash/texto_gcc.exe b
 	build/dash/interp.exe build/dash/listas.exe build/dash/ctrl_c.exe build/dash/ctrl_c_gcc.exe build/dash/ctrl_c_for.exe \
 	build/dash/trap_ilegal.exe build/dash/trap_divcero.exe build/dash/test_gadtools.exe \
 	build/dash/test_reaction.exe build/dash/test_doc_reaction.exe
-PROGRAMAS_DEPS := programas.S pruebas68k/sistema.bin pruebas68k/hola.bin pruebas68k/lineaa.bin pruebas68k/bucle.bin pruebas68k/mala.bin pruebas68k/saludo.exe pruebas68k/ventana.exe pruebas68k/hostil.exe pruebas68k/anidado.exe pruebas68k/gadtools.exe pruebas68k/boopsi.exe pruebas68k/ramlib.exe pruebas68k/capa.exe pruebas68k/glotona.exe pruebas68k/memh.exe pruebas68k/procesos.exe pruebas68k/actualiza.exe pruebas68k/ils.exe pruebas68k/dtprueba.exe pruebas68k/cgx.exe pruebas68k/chips.exe $(MALWARE) $(DASH_EXES)
+PROGRAMAS_DEPS := programas.S pruebas68k/sistema.bin pruebas68k/hola.bin pruebas68k/lineaa.bin pruebas68k/bucle.bin pruebas68k/mala.bin pruebas68k/saludo.exe pruebas68k/ventana.exe pruebas68k/hostil.exe pruebas68k/anidado.exe pruebas68k/gadtools.exe pruebas68k/boopsi.exe pruebas68k/ramlib.exe pruebas68k/capa.exe pruebas68k/glotona.exe pruebas68k/memh.exe pruebas68k/procesos.exe pruebas68k/actualiza.exe pruebas68k/ils.exe pruebas68k/dtprueba.exe pruebas68k/cgx.exe pruebas68k/chips.exe pruebas68k/vposr.bin pruebas68k/ipl.bin $(MALWARE) $(DASH_EXES)
 $(B)/programas.o: $(PROGRAMAS_DEPS) | $(B)
 	$(CC) $(COMMON) -c $< -o $@
 

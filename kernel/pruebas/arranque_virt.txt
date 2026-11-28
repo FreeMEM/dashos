@@ -1213,6 +1213,12 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] chips: INTREQ: SOFT sube con SET y baja con CLR: bien
 ~│   [caja-amiga] chips: 0 fallos
 ~│   [caja-amiga] chips.exe acabó con 0 (vector -1), 
+# K8: el contador hacia atrás de los chips: ipl.bin habilita VERTB y da vueltas sin tocarlos; el motor vuelve a ellos en
+# cada fin de cuadro y deja preparado el nivel 3, sin entregarlo (en la caja nativa, el 6 y el 7 son de la caja).
+~│   [caja-amiga] chips: contador hacia atrás (K8): bien
+#[arm: K7, lo que cuesta una lectura de los chips en Emu68, por el fallo y con la instrucción reescrita (el trampolín)
+~│   [caja-amiga] chips: coste de una lectura de VPOSR (K7, QEMU): bien
+#]
 ~│   [caja-amiga] hunk hostil: 9216 cortes y 21000 mutaciones de saludo.exe (1000 con AllocMem)
 # H5: una ventana Amiga en el escritorio. ventana.exe lee SYS:LEEME.txt por dos.library (el servicio de archivos
 # debajo), abre una ventana con OpenWindowTags, dibuja fuera (nada) y dentro (rectángulos, líneas, texto) y espera; el
