@@ -42,6 +42,7 @@
 #define NR_clock_gettime 228
 #define NR_exit_group    231
 #define NR_openat        257
+#define NR_faccessat     269
 #define NR_memfd_create  319
 
 static long sys6(long n, long a, long b, long c, long d, long e, long f)
@@ -55,6 +56,7 @@ static long sys6(long n, long a, long b, long c, long d, long e, long f)
 }
 #else
 #define NR_openat        56
+#define NR_faccessat     48
 #define NR_close         57
 #define NR_read          63
 #define NR_write         64
@@ -389,6 +391,12 @@ long plat_fichero_leer(const char *ruta, void *buf, size_t max)
     }
     sys(NR_close, fd, 0, 0);
     return (long)hecho;
+}
+
+/* 1 si `ruta` existe (sin mirar permisos). */
+int plat_existe(const char *ruta)
+{
+    return sys6(NR_faccessat, AT_FDCWD, (long)ruta, 0, 0, 0, 0) == 0;
 }
 
 /* --- Los fallos (SIGSEGV) --- */

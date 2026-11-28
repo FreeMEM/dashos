@@ -43,6 +43,42 @@ static void error(const char *a, const char *b)
     plat_error("\n", 1);
 }
 
+/* Pone en linea_args, desde `n`, el argumento `a` tal como lo ve el CLI del Amiga, y devuelve dónde acaba: una ruta
+   absoluta de Linux que existe pasa a "Linux:..." (en el Amiga, "/" al principio es el cajón de arriba); con espacios
+   o vacío, entre comillas (las de dentro, como *" de ReadArgs); y de UTF-8 a Latin-1 (lo que no cabe, '?'). Lo que no
+   quepa en la línea se corta. */
+static size_t poner_arg(size_t n, const char *a)
+{
+    const size_t max = sizeof linea_args - 2;   /* sitio para "\n" y el 0 */
+    int comillas = !*a;
+    for (const char *p = a; *p; p++)
+        if (*p == ' ' || *p == '\t' || *p == '"') comillas = 1;
+#define PON(c) do { if (n < max) linea_args[n++] = (char)(c); } while (0)
+    if (comillas) PON('"');
+    if (a[0] == '/' && plat_existe(a)) {
+        for (const char *p = "Linux:"; *p; p++) PON(*p);
+        a++;
+    }
+    for (const unsigned char *p = (const unsigned char *)a; *p; ) {
+        unsigned c = *p;
+        if (c < 0x80) {
+            if (c == '"' && comillas) PON('*');
+            PON(c);
+            p++;
+        } else if ((c == 0xC2 || c == 0xC3) && (p[1] & 0xC0) == 0x80) {
+            PON(((c & 0x1F) << 6) | (p[1] & 0x3F));
+            p += 2;
+        } else {
+            PON('?');
+            p++;
+            while ((*p & 0xC0) == 0x80) p++;
+        }
+    }
+    if (comillas) PON('"');
+#undef PON
+    return n;
+}
+
 /* El nombre del programa para exec: lo que va tras la última barra. */
 static const char *nombre_de(const char *ruta)
 {
@@ -87,7 +123,7 @@ int caja_linux_main(void)
     const char *ruta = argv[i++];
     size_t n = 0;
     for (; i < argc; i++) {
-        for (const char *p = argv[i]; *p && n + 2 < sizeof linea_args; p++) linea_args[n++] = *p;
+        n = poner_arg(n, argv[i]);
         if (i + 1 < argc && n + 2 < sizeof linea_args) linea_args[n++] = ' ';
     }
     linea_args[n++] = '\n';

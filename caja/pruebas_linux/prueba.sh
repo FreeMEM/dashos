@@ -29,6 +29,12 @@ prueba() {   # cómo lanzar la caja
     comprueba "consola.exe: cuenta los bytes en Latin-1" 0 "$s" $r "20 bytes leidos"
     s=$(cd "$t" && { CAJA_AMIGA_SYS="$t/sys" "$@" "$AQUI/consola.exe" espera & p=$!; sleep 2; kill -INT $p; wait $p; } 2>&1); r=$?
     comprueba "consola.exe espera: Ctrl-C llega como SIGBREAKF_CTRL_C" 5 "$s" $r "***Break"
+    mkdir -p "$t/con espacio" && printf 'texto con ñ\n' > "$t/con espacio/año.txt"
+    s=$(cd / && CAJA_AMIGA_SYS="$t/sys" "$@" "$AQUI/tipo.exe" "$t/con espacio/año.txt" 2>&1); r=$?
+    comprueba "tipo.exe: una ruta absoluta de Linux pasa a Linux:, con comillas" 0 "$s" $r "args: [\"Linux:${t#/}/con espacio/año.txt\"]"
+    comprueba "tipo.exe: el texto UTF-8 del fichero sale tal cual" 0 "$s" $r "texto con ñ"
+    s=$(cd "$t" && CAJA_AMIGA_SYS="$t/sys" "$@" "$AQUI/tipo.exe" /no/existe 2>&1); r=$?
+    comprueba "tipo.exe: lo que no existe en Linux queda como está" 10 "$s" $r "object not found"
     s=$(cd "$t" && "$@" no-existe.exe 2>&1); r=$?
     comprueba "un programa que no está" 2 "$s" $r "no se puede leer"
     s=$(cd "$t" && "$@" "$AQUI/../pruebas68k/sistema.s" 2>&1); r=$?

@@ -86,6 +86,9 @@ long plat_consola_leer(char *s, size_t n);
 /* En Linux, Ctrl-C en la terminal (SIGINT): llama a `f` desde el manejador de la señal. */
 long plat_al_interrumpir(void (*f)(void));
 
+/* En Linux: 1 si `ruta` existe. */
+int plat_existe(const char *ruta);
+
 /* En Linux, ficheros: lee hasta `max` bytes de `ruta` en `buf`. Lo leído, o un error negativo. */
 long plat_fichero_leer(const char *ruta, void *buf, size_t max);
 

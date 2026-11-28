@@ -308,6 +308,13 @@ impl caja_dos::Caja for CajaDos<'_> {
 
 /// Escribe texto del Amiga (Latin-1) en la consola de la plataforma (UTF-8), por trozos.
 fn escribir_latin1(datos: &[u8]) {
+    // En Linux, lo que ya es UTF-8 va tal cual: el texto de un fichero de Linux que el programa copia a la salida (Type)
+    // no sale doble codificado. El Latin-1 de los programas casi nunca forma UTF-8 válido fuera del ASCII.
+    #[cfg(not(feature = "dashos"))]
+    if let Ok(s) = core::str::from_utf8(datos) {
+        plataforma::consola(s);
+        return;
+    }
     let mut s = String::new();
     for &b in datos {
         s.push(b as char);

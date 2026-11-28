@@ -4,7 +4,7 @@ A := /opt/amiga/bin/m68k-amigaos-
 CFLAGS_68K := -m68020 -O2 -ffreestanding -fno-builtin -nostdlib -nostartfiles -fomit-frame-pointer -Wall
 LIBGCC = -L$(dir $(shell $(A)gcc -m68020 -print-libgcc-file-name)) -lgcc
 
-all: cajones.exe consola.exe
+all: cajones.exe consola.exe tipo.exe
 
 %.exe: entrada.s %.c
 	$(A)as -m68020 --register-prefix-optional entrada.s -o entrada.o
