@@ -732,3 +732,11 @@ de S18).
     `STOP` (hoy no corre: ni Emu68 ni RelevoJIT avanzan el contador); bajar el tope del bloque en la máquina entera; y
     la hora exacta del acceso dentro del bloque (K7, "Para K8").
 
+
+- Revisión de K8 (la sesión): el diff, el parche 0017 (el byte `CHIPS` cabe en los 8 de `INT64`; con él a 0 no
+  cambia nada) y el trampolín (`chips_rearmar` sin FPU ni SIMD; el pegamento es softfloat). Repetidas todas en
+  `chips-k8`: `cargo test` en `caja/chips`, `make -C caja/pruebas_fallo` (0 fallos), `make -C kernel prueba` BIEN,
+  `make -C kernel caja-x86` BIEN, `arranque-virt` con `CAJA_ORDEN=le` BIEN entero (también el sonido y el
+  reinicio, que fallaron antes), y en big-endian todas las líneas de la caja bien (chips, K7 y K8: 5 plazos, nivel 3)
+  y un solo `FALTA`, el del selector de guardar, intermitente y conocido, lejos de los chips. **La fase 1 queda
+  cerrada.** `chips-blitter` avanza hasta `chips-k8`.
