@@ -1251,9 +1251,10 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] malware: arranque: vaciar Caja:Discos/disco.adf (MODE_NEWFILE): no (IoErr 223)
 ~│   [caja-amiga] malware: arranque: 0 conseguidos de lo que no se debe
 ~│   [caja-amiga] malware arranque.exe: 0 conseguidos (vector -1), 5 negativas de la guardia (1 preguntas: el usuario dice no), 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
-~│   [caja-amiga] malware: enlace: SYS:Programas/hola empieza por $7f454c46: no es un ejecutable de AmigaOS
+# El %lx de VPrintf, en mayúsculas, como en AmigaOS (el oráculo: caja/pruebas68k/formato.c).
+~│   [caja-amiga] malware: enlace: SYS:Programas/hola empieza por $7F454C46: no es un ejecutable de AmigaOS
 ~│   [caja-amiga] malware: enlace: pegarse al final de SYS:Programas/hola: no (IoErr 214)
-~│   [caja-amiga] malware: enlace: Caja:C/saludo empieza por $000003f3: un ejecutable de AmigaOS
+~│   [caja-amiga] malware: enlace: Caja:C/saludo empieza por $000003F3: un ejecutable de AmigaOS
 ~│   [caja-amiga] malware: enlace: pegarse al final de Caja:C/saludo: no (IoErr 223)
 ~│   [caja-amiga] malware: enlace: escribirse al principio de Caja:C/saludo: no (IoErr 223)
 ~│   [caja-amiga] malware: enlace: vaciar y reescribir Caja:C/saludo (MODE_NEWFILE): no (IoErr 223)
