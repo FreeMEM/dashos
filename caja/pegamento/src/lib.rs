@@ -298,6 +298,9 @@ impl caja_dos::Caja for CajaDos<'_> {
         escribir_latin1(&v);
         datos.len()
     }
+    fn consola_leer(&mut self, buf: &mut [u8]) -> usize {
+        plataforma::leer_consola(buf)
+    }
     fn senales(&mut self, mascara: u32) -> u32 {
         self.ex.set_signal(0, mascara).unwrap_or(0) & mascara
     }

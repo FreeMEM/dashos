@@ -80,6 +80,12 @@ long plat_pagina0_poner(long llave);
 /* 1 si el sistema no deja hacerlo otra vez ni proyectarla en otro sitio de los primeros 64 KB. */
 int plat_pagina0_cerrada(long llave);
 
+/* En Linux, lo que lee el programa de la consola (la entrada estándar): lo leído, 0 al final, o un error. */
+long plat_consola_leer(char *s, size_t n);
+
+/* En Linux, Ctrl-C en la terminal (SIGINT): llama a `f` desde el manejador de la señal. */
+long plat_al_interrumpir(void (*f)(void));
+
 /* En Linux, ficheros: lee hasta `max` bytes de `ruta` en `buf`. Lo leído, o un error negativo. */
 long plat_fichero_leer(const char *ruta, void *buf, size_t max);
 

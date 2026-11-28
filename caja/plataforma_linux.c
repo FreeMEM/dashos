@@ -139,6 +139,14 @@ long plat_error(const char *s, size_t n)
     return sys(NR_write, 2, s, n);
 }
 
+/* Lo que lee el programa de la consola: de la entrada estándar. */
+long plat_consola_leer(char *s, size_t n)
+{
+    long r;
+    do r = sys(NR_read, 0, s, n); while (r == -4);   /* EINTR (un Ctrl-C mientras espera) */
+    return r;
+}
+
 /* Lo que escribe el programa por la dos.library: a la salida estándar. */
 long plat_consola(const char *s, size_t n)
 {
@@ -521,6 +529,26 @@ __asm__(".text\n.balign 16\nplat_restaura:\n mov $15, %eax\n syscall\n ud2\n");
 #else
 __asm__(".text\n.balign 16\nplat_restaura:\n mov x8, #139\n svc #0\n udf #0\n");
 #endif
+
+#define SIGINT 2
+static void (*al_interrumpir)(void);
+
+static void manejador_sigint(int sig, void *info, void *uc)
+{
+    (void)sig;
+    (void)info;
+    (void)uc;
+    if (al_interrumpir) al_interrumpir();
+}
+
+/* Ctrl-C en la terminal (SIGINT): llama a `f` (en el hilo que lo reciba, como un manejador de señal). */
+long plat_al_interrumpir(void (*f)(void))
+{
+    al_interrumpir = f;
+    struct { void *h; unsigned long flags; void *restorer; uint64_t mask; } sa = {
+        (void *)manejador_sigint, SA_SIGINFO | SA_RESTORER, (void *)plat_restaura, 0 };
+    return sys6(NR_rt_sigaction, SIGINT, (long)&sa, 0, 8, 0, 0);
+}
 
 static long instalar_manejador(void)
 {

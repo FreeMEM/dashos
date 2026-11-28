@@ -24,6 +24,11 @@ prueba() {   # cómo lanzar la caja
     comprueba "cajones.exe: crear, escribir, renombrar y borrar" 0 "$s" $r "crear, escribir, renombrar y borrar: bien"
     comprueba "cajones.exe: el cajón actual es el de Linux" 0 "$s" $r "cajon actual: Linux:${t#/}"
     comprueba "cajones.exe: lista el cajón" 0 "$s" $r "fichero      5 hola.txt"
+    s=$(cd "$t" && printf 'hola, caja\nañoranza\n' | CAJA_AMIGA_SYS="$t/sys" "$@" "$AQUI/consola.exe" 2>&1); r=$?
+    comprueba "consola.exe: lee la entrada estándar (UTF-8 a Latin-1 y vuelta)" 0 "$s" $r "AÑORANZA"
+    comprueba "consola.exe: cuenta los bytes en Latin-1" 0 "$s" $r "20 bytes leidos"
+    s=$(cd "$t" && { CAJA_AMIGA_SYS="$t/sys" "$@" "$AQUI/consola.exe" espera & p=$!; sleep 2; kill -INT $p; wait $p; } 2>&1); r=$?
+    comprueba "consola.exe espera: Ctrl-C llega como SIGBREAKF_CTRL_C" 5 "$s" $r "***Break"
     s=$(cd "$t" && "$@" no-existe.exe 2>&1); r=$?
     comprueba "un programa que no está" 2 "$s" $r "no se puede leer"
     s=$(cd "$t" && "$@" "$AQUI/../pruebas68k/sistema.s" 2>&1); r=$?

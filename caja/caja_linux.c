@@ -52,6 +52,21 @@ static const char *nombre_de(const char *ruta)
     return n;
 }
 
+/* Ctrl-C en la terminal: SIGBREAKF_CTRL_C al programa, como en el CLI del Amiga (caja_tomar_ctrl_c, lo recoge el
+   pegamento). Si no lo atiende, al tercero se acaba la caja. */
+static volatile int interrupciones;
+
+static void al_ctrl_c(void)
+{
+    if (++interrupciones >= 3) {
+        static const char m[] = "\ncaja-amiga: el programa no atiende Ctrl-C; se acaba\n";
+        plat_error(m, sizeof m - 1);
+        plat_acabar(130);
+    }
+    __atomic_store_n(&ctrl_c_pendiente, 1, __ATOMIC_RELEASE);
+    motor_interrumpir();
+}
+
 int caja_linux_main(void)
 {
     /* Lo que dejó Linux en la pila al arrancar: argc y argv. */
@@ -129,6 +144,8 @@ int caja_linux_main(void)
         error("caja-amiga: la página 0 no se puede poner", 0);
         return 4;
     }
+
+    plat_al_interrumpir(al_ctrl_c);
 
     /* El reloj de los turnos (varias tareas), con su pila: para siempre. */
     static uint8_t *pila_reloj;

@@ -18,6 +18,9 @@ pub trait Plataforma {
     fn escribir(texto: &str);
     /// Escribe lo que escriben los programas por la dos.library (UTF-8; en Linux, la salida estándar).
     fn consola(texto: &str);
+    /// Lee de la consola lo que escriban al programa (Latin-1, como lo ve el Amiga); 0 es el final. En DashOS, de
+    /// momento, nada.
+    fn leer_consola(buf: &mut [u8]) -> usize;
     /// Acaba el proceso entero tras un pánico de las bibliotecas nativas.
     fn acabar() -> !;
 }
@@ -42,6 +45,9 @@ impl Plataforma for Dashos {
     fn consola(texto: &str) {
         dashos::escribir(texto)
     }
+    fn leer_consola(_buf: &mut [u8]) -> usize {
+        0
+    }
     fn acabar() -> ! {
         // Se acaba el proceso entero (llamada 44): el resto del sistema sigue.
         dashos::llamada(44, [101, 0, 0, 0, 0]);
@@ -62,6 +68,7 @@ unsafe extern "C" {
     fn plat_dormir(us: u64);
     fn plat_escribir(s: *const u8, n: usize) -> isize;
     fn plat_consola(s: *const u8, n: usize) -> isize;
+    fn plat_consola_leer(s: *mut u8, n: usize) -> isize;
     fn plat_acabar(codigo: i32) -> !;
 }
 
@@ -85,10 +92,39 @@ impl Plataforma for Linux {
     fn consola(texto: &str) {
         todo(texto, plat_consola)
     }
+    fn leer_consola(buf: &mut [u8]) -> usize {
+        // SEGURIDAD: `buf` es memoria válida para escribir `buf.len()` bytes.
+        let n = unsafe { plat_consola_leer(buf.as_mut_ptr(), buf.len()) };
+        if n <= 0 {
+            return 0;
+        }
+        latin1_de_utf8(&mut buf[..n as usize])
+    }
     fn acabar() -> ! {
         // SEGURIDAD: un número; no vuelve.
         unsafe { plat_acabar(101) }
     }
+}
+
+/// Pasa a Latin-1, en el sitio, lo leído en UTF-8: lo que no cabe en Latin-1 queda como '?'. Devuelve el largo nuevo.
+#[cfg(not(feature = "dashos"))]
+fn latin1_de_utf8(b: &mut [u8]) -> usize {
+    let (mut i, mut j) = (0, 0);
+    while i < b.len() {
+        let c = b[i];
+        let (v, largo) = match c {
+            0x00..=0x7F => (c, 1),
+            0xC2 | 0xC3 if i + 1 < b.len() && b[i + 1] & 0xC0 == 0x80 => (((c & 0x1F) << 6) | (b[i + 1] & 0x3F), 2),
+            0xC0..=0xDF => (b'?', 2),
+            0xE0..=0xEF => (b'?', 3),
+            0xF0..=0xF7 => (b'?', 4),
+            _ => (b'?', 1),
+        };
+        b[j] = v;
+        j += 1;
+        i += largo;
+    }
+    j
 }
 
 /// Escribe todo `texto` con `f` (plat_escribir o plat_consola), que puede escribir menos de lo pedido.
@@ -126,6 +162,10 @@ pub fn escribir(texto: &str) {
 
 pub fn consola(texto: &str) {
     Sistema::consola(texto)
+}
+
+pub fn leer_consola(buf: &mut [u8]) -> usize {
+    Sistema::leer_consola(buf)
 }
 
 pub fn acabar() -> ! {
