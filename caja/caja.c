@@ -38,50 +38,13 @@
 #include "config.h"
 #include "caja.h"
 #include "hunk.h"
+#include "plataforma.h"
 
-/* --- Llamadas al sistema de DashOS (docs/referencia/kernel.md) --- */
+/* --- Lo que la caja pide al sistema: plataforma.h (L2, docs/CAJA_LINUX_LOOP.md) --- */
 
-#if defined(__x86_64__)
-/* x86-64 (X7): rax el número; rdi, rsi, rdx, r10 y r8 los argumentos; el resultado en rax (syscall pisa rcx y r11). */
-long caja_sc(long n, long a, long b, long c, long d, long e)
-{
-    register long r10 __asm__("r10") = d;
-    register long r8 __asm__("r8") = e;
-    long r = n;
-    __asm__ volatile("syscall" : "+a"(r), "+D"(a), "+S"(b), "+d"(c), "+r"(r10), "+r"(r8) :: "rcx", "r11", "memory");
-    return r;
-}
-#else
-long caja_sc(long n, long a, long b, long c, long d, long e)
-{
-    register long x8 __asm__("x8") = n;
-    register long x0 __asm__("x0") = a;
-    register long x1 __asm__("x1") = b;
-    register long x2 __asm__("x2") = c;
-    register long x3 __asm__("x3") = d;
-    register long x4 __asm__("x4") = e;
-    __asm__ volatile("svc #0" : "+r"(x0), "+r"(x1) : "r"(x8), "r"(x2), "r"(x3), "r"(x4) : "memory");
-    return x0;
-}
-#endif
-#define sc caja_sc
-
-#define LLAVE_PAGINA0 1   /* la llave 1 de la caja: el permiso de página 0 que le da `inicio` */
+#define ahora_us plat_ahora_us
 
 #if defined(__x86_64__)
-/* La frecuencia del TSC: la da el kernel en rdi al arrancar (entrada_x86.S la guarda aquí). */
-uint64_t caja_frecuencia_tsc;
-/* Y la de la biblioteca de Rust (dashos::FRECUENCIA), que no arranca por su `programa!` (pegamento/). */
-void caja_rust_frecuencia(uint64_t f);
-
-static uint64_t ahora_us(void)
-{
-    uint32_t bajo, alto;
-    __asm__ volatile("lfence; rdtsc" : "=a"(bajo), "=d"(alto));
-    uint64_t t = (uint64_t)alto << 32 | bajo, f = caja_frecuencia_tsc;
-    return f ? t / f * 1000000 + t % f * 1000000 / f : 0;
-}
-
 static inline uintptr_t pila_de_ahora(void)
 {
     uintptr_t sp;
@@ -89,13 +52,6 @@ static inline uintptr_t pila_de_ahora(void)
     return sp;
 }
 #else
-static uint64_t ahora_us(void)
-{
-    uint64_t t, f;
-    __asm__ volatile("isb; mrs %0, cntvct_el0; mrs %1, cntfrq_el0" : "=r"(t), "=r"(f));
-    return f ? t / f * 1000000 + t % f * 1000000 / f : 0;   /* sin división de 128 bits (no hay libgcc) */
-}
-
 static inline uintptr_t pila_de_ahora(void)
 {
     uintptr_t sp;
@@ -113,7 +69,7 @@ static void vaciar(void)
 {
     int hecho = 0;
     while (hecho < largo) {
-        long n = sc(SC_ESCRIBIR, (long)(linea + hecho), largo - hecho, 0, 0, 0);
+        long n = plat_escribir(linea + hecho, (size_t)(largo - hecho));
         if (n <= 0) break;
         hecho += (int)n;
     }
@@ -157,10 +113,7 @@ volatile uint32_t m68k_ram_fin = M68K_RAM + M68K_RAM_LEN;
 /* Un objeto de memoria nuevo, proyectado en `va`. Devuelve su llave, o un error negativo. */
 static long proyecta(uintptr_t va, size_t len, int permisos)
 {
-    long m = sc(SC_MEMORIA_CREAR, (long)len, 0, 0, 0, 0);
-    if (m <= 0) return m ? m : -1;
-    long r = sc(SC_MEMORIA_PROYECTAR, m, (long)va, permisos, 0, 0);
-    return r ? r : m;
+    return plat_memoria(va, len, permisos);
 }
 
 /* La memoria del 68k crece (lo pide exec cuando un AllocMem no cabe): `memoria_crear` reserva entera la memoria del
@@ -227,8 +180,7 @@ uint32_t caja_encoger_ram(uint32_t desde)
     __atomic_store_n(&m68k_ram_fin, (uint32_t)fin, __ATOMIC_RELEASE);
     while (n_crecidos > n) {
         n_crecidos--;
-        sc(SC_MEMORIA_QUITAR, (long)crecidos[n_crecidos].va, 0, 0, 0, 0);
-        sc(SC_CERRAR, crecidos[n_crecidos].llave, 0, 0, 0, 0);
+        plat_memoria_quitar((uintptr_t)crecidos[n_crecidos].va, crecidos[n_crecidos].llave);
     }
     return (uint32_t)fin;
 }
@@ -476,7 +428,7 @@ void caja_turnos(int si) { turnos_activos = si; }
 static void reloj_turnos(uint64_t us)
 {
     for (;;) {
-        sc(SC_DORMIR, (long)us, 0, 0, 0, 0);
+        plat_dormir(us);
         if (turnos_activos) motor_interrumpir();
     }
 }
@@ -786,10 +738,9 @@ static int chips(int encendidos, uint32_t *nadie)
    traducido mira INT64 en cada vuelta y vuelve a MainLoop, que salta al vector 31: su trampa acaba el programa. */
 static void vigila(uint64_t us)
 {
-    sc(SC_DORMIR, (long)us, 0, 0, 0, 0);
+    plat_dormir(us);
     motor_cortar();
-    sc(SC_SALIR, 0, 0, 0, 0, 0);
-    for (;;) {}
+    plat_hilo_salir();
 }
 
 /* --- S28: los virus de laboratorio (pruebas68k/malware/, docs/diseño/S28-malware-amiga.md) --- */
@@ -862,9 +813,9 @@ static uint32_t caja_fuera_del_68k(uint32_t *bajas, int *antes, uint32_t *ms, ui
         if (p >= M68K_RAM && p < m68k_ram_fin)
             continue;
         ++*trozos;
-        de_mas += sc(SC_ESPERAR, (long)p, 0x5A5A5A5A, 1, 0, 0) != E_ARGUMENTO;
+        de_mas += plat_hay_memoria(p);
     }
-    *antes = sc(SC_ESPERAR, 0x70000000L, 0x5A5A5A5A, 1, 0, 0) != E_ARGUMENTO;
+    *antes = plat_hay_memoria(0x70000000UL);
     *ms = (uint32_t)((ahora_us() - t0) / 1000);
     return de_mas;
 }
@@ -968,7 +919,7 @@ int caja_tomar_cerrar(void) { return __atomic_exchange_n(&cerrar_pendiente, 0, _
 static void manda_ctrl_c(uint64_t us)
 {
     if (us) {
-        sc(SC_DORMIR, (long)us, 0, 0, 0, 0);
+        plat_dormir(us);
         /* Solo si su programa sigue: si no, el Ctrl-C quedaba pendiente y llegaba al siguiente (al de después de
            GadTools, test_reaction, que acababa con "***Break"). */
         if (!ctrl_c_corriendo) ;
@@ -978,19 +929,16 @@ static void manda_ctrl_c(uint64_t us)
             motor_interrumpir();
         }
     }
-    for (int i = 0; i < 100 && ctrl_c_corriendo; i++) sc(SC_DORMIR, 100000, 0, 0, 0, 0);
+    for (int i = 0; i < 100 && ctrl_c_corriendo; i++) plat_dormir(100000);
     if (ctrl_c_corriendo) motor_cortar();
-    sc(SC_SALIR, 0, 0, 0, 0, 0);
-    for (;;) {}
+    plat_hilo_salir();
 }
 
 /* --- Principal --- */
 
 int caja_main(void)
 {
-#if defined(__x86_64__)
-    caja_rust_frecuencia(caja_frecuencia_tsc);
-#endif
+    plat_iniciar();
     di("%s (H4; X7: la interfaz de motor)\n", motor_nombre());
     if (proyecta(M68K_RAM, M68K_RAM_LEN, P_ESCRIBIR) <= 0 || proyecta(MONTON, MONTON_LEN, P_ESCRIBIR) <= 0
         || proyecta(MONTON_RUST, MONTON_RUST_LEN, P_ESCRIBIR) <= 0) {
@@ -1007,9 +955,9 @@ int caja_main(void)
     /* La página 0 (S3): un objeto de una página, escrito por una dirección por encima de 4 GB y proyectado de solo
        lectura en la dirección 0, con el permiso de página 0 (la llave 1, de `inicio`). Exec escribe ExecBase en la
        dirección 4 por la proyección de escribir; después se proyecta en 0. */
-    long p0 = sc(SC_MEMORIA_CREAR, 4096, 0, 0, 0, 0);
-    long r0 = p0 > 0 ? sc(SC_MEMORIA_PROYECTAR, p0, (long)PAGINA0_RW, P_ESCRIBIR, 0, 0) : -1;
-    if (r0 != 0) {
+    long p0 = plat_pagina0_crear(PAGINA0_RW);
+    long r0;
+    if (p0 <= 0) {
         di("sin memoria para la página 0\n");
         return 4;
     }
@@ -1026,10 +974,9 @@ int caja_main(void)
     super_tope = super + SUPER_LEN;
     pon32(SUPER_BAJO, super + 512);
     caja_poner_trampa((uint32_t)TRAMPA_DEFECTO);
-    r0 = sc(SC_PAGINA_CERO, LLAVE_PAGINA0, p0, 0, 0, 0);
+    r0 = plat_pagina0_poner(p0);
     /* La caja la lee (EL0 puede leerla); otra vez, o en el resto de los primeros 64 KB, el kernel no deja. */
-    int pagina0 = r0 == 0 && lee32(4) == execbase && sc(SC_PAGINA_CERO, LLAVE_PAGINA0, p0, 0, 0, 0) < 0
-        && sc(SC_MEMORIA_PROYECTAR, p0, 0x1000, P_LEER, 0, 0) < 0 && sc(SC_MEMORIA_PROYECTAR, p0, 0, P_LEER, 0, 0) < 0;
+    int pagina0 = r0 == 0 && lee32(4) == execbase && plat_pagina0_cerrada(p0);
     di("página 0: ExecBase en la dirección 4 ($%x), solo de lectura; otra vez o en los primeros 64 KB, rechazada: %s\n",
        pagina0 ? lee32(4) : 0, pagina0 ? "bien" : "MAL");
     if (!pagina0) { di("página 0: la llamada 49 dio %d\n", (int)r0); fallos++; }
@@ -1066,9 +1013,9 @@ int caja_main(void)
     static uint8_t *pila_reloj;
     pila_reloj = (uint8_t *)(PILAS + PILA_LEN + 0x30000);
     if (proyecta((uintptr_t)pila_reloj, PILA_VIGIA_LEN, P_ESCRIBIR) <= 0
-        || sc(SC_HILO_CREAR, (long)reloj_turnos, (long)(pila_reloj + PILA_VIGIA_LEN), 20000, 0, 0) < 0)
+        || plat_hilo_crear(reloj_turnos, (uintptr_t)(pila_reloj + PILA_VIGIA_LEN), 20000) < 0)
         di("sin el reloj de los turnos: una tarea que no llama a nada no soltará el testigo\n");
-    long hilo = sc(SC_HILO_CREAR, (long)vigila, (long)(pila_vigia + PILA_VIGIA_LEN), 300000, 0, 0);
+    long hilo = plat_hilo_crear(vigila, (uintptr_t)(pila_vigia + PILA_VIGIA_LEN), 300000);
     if (hilo < 0) {
         di("no se pudo crear el vigilante: %d\n", (int)hilo);
         return 5;
@@ -1076,7 +1023,7 @@ int caja_main(void)
     t0 = ahora_us();
     v = ejecuta("bucle", prog_bucle, prog_bucle_fin, 0x00130000);
     t1 = ahora_us();
-    sc(SC_HILO_UNIR, hilo, 0, 0, 0, 0);
+    plat_hilo_unir(hilo);
     bien = v == 31 && d0_final > 1000;
     di("bucle sin fin: cortado por el vigilante a los %u ms tras %u vueltas (vector %d): %s\n",
        (uint32_t)((t1 - t0) / 1000), d0_final, v, bien ? "bien" : "MAL");
@@ -1330,7 +1277,7 @@ int caja_main(void)
             uint32_t adt_largo = 0;
             if (caja_fichero_de_dos("AmigaOS:C/AddDataTypes", &adt, &adt_largo)) {
                 ctrl_c_corriendo = 1;
-                long h = sc(SC_HILO_CREAR, (long)manda_ctrl_c, (long)(pila_vigia + PILA_VIGIA_LEN), 20000L * 1000, 0, 0);
+                long h = plat_hilo_crear(manda_ctrl_c, (uintptr_t)(pila_vigia + PILA_VIGIA_LEN), 20000L * 1000);
                 tarea_args = "REFRESH QUIET\n";
                 tarea_al_sistema = 1;
                 t0 = ahora_us();
@@ -1339,7 +1286,7 @@ int caja_main(void)
                 tarea_args = 0;
                 tarea_al_sistema = 0;
                 ctrl_c_corriendo = 0;
-                if (h >= 0) sc(SC_HILO_UNIR, h, 0, 0, 0, 0);
+                if (h >= 0) plat_hilo_unir(h);
                 di("AddDataTypes REFRESH acabó con %d (vector %d), %d llamadas nativas, en %u ms, %u avisos, %u bloques pasan al sistema\n",
                    (int)d0, v, llamadas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), tarea_pasadas);
                 sistema = caja_bloques(0);
@@ -1417,14 +1364,13 @@ int caja_main(void)
             if (!caja_programa_de_disco(i, pnom, sizeof(pnom), &pdat, &plar)) break;
             ctrl_c_corriendo = 1;
             cerrar_en_vez = 1;
-            long h = sc(SC_HILO_CREAR, (long)manda_ctrl_c, (long)(pila_vigia + PILA_VIGIA_LEN),
-                        (long)(CAJA_INTERACTIVA ? 30000 : 6000) * 1000, 0, 0);
+            long h = plat_hilo_crear(manda_ctrl_c, (uintptr_t)(pila_vigia + PILA_VIGIA_LEN), (long)(CAJA_INTERACTIVA ? 30000 : 6000) * 1000);
             t0 = ahora_us();
             v = ejecuta_hunk(pnom, pdat, plar, execbase, &d0, &llamadas, &sobras);
             t1 = ahora_us();
             ctrl_c_corriendo = 0;
             cerrar_en_vez = 0;
-            if (h >= 0) sc(SC_HILO_UNIR, h, 0, 0, 0, 0);
+            if (h >= 0) plat_hilo_unir(h);
             di("programa del usuario %s acabó con %d (vector %d), %d llamadas nativas, en %u ms, %u avisos, %u bloques sin soltar\n",
                pnom, (int)d0, v, llamadas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras);
             sistema = caja_bloques(0);
@@ -1490,15 +1436,14 @@ int caja_main(void)
             }
             ctrl_c_corriendo = 1;
             cerrar_en_vez = dash2[i].ctrl_c < 0;
-            long h = sc(SC_HILO_CREAR, (long)manda_ctrl_c, (long)(pila_vigia + PILA_VIGIA_LEN),
-                        (long)(dash2[i].ctrl_c < 0 ? -dash2[i].ctrl_c : dash2[i].ctrl_c) * 1000, 0, 0);
+            long h = plat_hilo_crear(manda_ctrl_c, (uintptr_t)(pila_vigia + PILA_VIGIA_LEN), (long)(dash2[i].ctrl_c < 0 ? -dash2[i].ctrl_c : dash2[i].ctrl_c) * 1000);
             caja_consola_prefijo(prefijo, sizeof(prefijo) - 1);
             t0 = ahora_us();
             v = ejecuta_hunk(dash2[i].nombre, dash2[i].desde, n, execbase, &d0, &llamadas, &sobras);
             t1 = ahora_us();
             caja_consola_prefijo(NULL, 0);
             ctrl_c_corriendo = 0;
-            if (h >= 0) sc(SC_HILO_UNIR, h, 0, 0, 0, 0);
+            if (h >= 0) plat_hilo_unir(h);
             uint32_t hechas = 0, no = 0, exc = 0;
             caja_cuentas_anidadas(&hechas, &no, &exc);
             bien = v == -1 && (d0 == dash2[i].d0 || d0 == dash2[i].otro) && caja_avisos() == 0 && sobras == 0 && caja_bloques(0) == sistema;
@@ -1518,13 +1463,13 @@ int caja_main(void)
         for (unsigned i = 0; i < sizeof(proc) / sizeof(proc[0]); i++) {
             ctrl_c_corriendo = 1;
             cerrar_en_vez = 0;
-            long hv = sc(SC_HILO_CREAR, (long)manda_ctrl_c, (long)(pila_vigia + PILA_VIGIA_LEN), 0, 0, 0);
+            long hv = plat_hilo_crear(manda_ctrl_c, (uintptr_t)(pila_vigia + PILA_VIGIA_LEN), 0);
             t0 = ahora_us();
             v = ejecuta_hunk(proc[i].nombre, prog_procesos, (size_t)(prog_procesos_fin - prog_procesos), execbase, &d0,
                              &llamadas, &sobras);
             t1 = ahora_us();
             ctrl_c_corriendo = 0;
-            if (hv >= 0) sc(SC_HILO_UNIR, hv, 0, 0, 0, 0);
+            if (hv >= 0) plat_hilo_unir(hv);
             uint32_t cambios = 0, acabadas = 0, aparcadas = 0;
             caja_cuentas_tareas(&cambios, &acabadas, &aparcadas);
             bien = v == proc[i].vector && (v != -1 || d0 == 0) && caja_bloques(0) == sistema && anidado == 0

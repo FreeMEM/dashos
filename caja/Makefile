@@ -52,7 +52,7 @@ MATH := $(basename $(notdir $(wildcard $(EMU68)/src/math/*.c)))
 
 OBJS := $(JIT_C:%=$(B)/%.o) $(JIT_CXX:%=$(B)/%.o) $(MATH:%=$(B)/math_%.o) \
 	$(B)/RegisterAllocator64.o $(B)/ExecutionLoop.o $(B)/emu68_context.o \
-	$(B)/caja.o $(B)/motor_emu68.o $(B)/trampolin_a64.o $(B)/hunk.o $(B)/entrada.o $(B)/programas.o
+	$(B)/caja.o $(B)/plataforma_dashos.o $(B)/motor_emu68.o $(B)/trampolin_a64.o $(B)/hunk.o $(B)/entrada.o $(B)/programas.o
 
 # La pila del ELF (64 KB, la de siempre) solo se usa al empezar: entrada.S pasa enseguida a una por encima de 4 GB.
 all: $(B)/caja-amiga
@@ -72,6 +72,8 @@ $(B)/math_%.o: $(EMU68)/src/math/%.c | $(B)
 $(B)/emu68_context.o: ../jit-host/emu68_context.c | $(B)
 	$(CC) $(CFLAGS) $(M68K_FIXED) -c $< -o $@
 $(B)/caja.o: caja.c | $(B)
+	$(CC) $(CFLAGS) -c $< -o $@
+$(B)/plataforma_dashos.o: plataforma_dashos.c | $(B)
 	$(CC) $(CFLAGS) -c $< -o $@
 $(B)/motor_emu68.o: motor_emu68.c | $(B)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -202,7 +204,7 @@ RELEVO_INC = $(eval RELEVO_INC := $(if $(RELEVO_DIR),$(abspath $(RELEVO_DIR))/in
 CFLAGS_X86 = -MMD -MP -ffreestanding -fno-builtin -fno-stack-protector -fno-exceptions -fno-unwind-tables \
 	-fno-asynchronous-unwind-tables -fpie -O2 -fno-tree-loop-distribute-patterns -std=gnu23 \
 	-Ix86 -I. -I$(EMU68)/include -I$(RELEVO_INC)
-OBJS_X86 := $(BX)/caja.o $(BX)/motor_relevo.o $(BX)/hunk.o $(BX)/soporte.o $(BX)/tlsf.o $(BX)/entrada_x86.o \
+OBJS_X86 := $(BX)/caja.o $(BX)/plataforma_dashos.o $(BX)/motor_relevo.o $(BX)/hunk.o $(BX)/soporte.o $(BX)/tlsf.o $(BX)/entrada_x86.o \
 	$(BX)/programas.o
 RUST_A_X86 := pegamento/target/x86_64-unknown-none/release/libcaja_pegamento.a
 RELEVO_PATCH := $(if $(RELEVO_DIR),--config 'patch."https://github.com/FreeMEM/RelevoJIT".relevo.path="$(abspath $(RELEVO_DIR))"')

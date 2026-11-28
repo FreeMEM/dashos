@@ -27,11 +27,14 @@ propio, `third_party/Emu68` del worktree, con los parches de `patches/emu68/`.
     o un puntero nulo) dan SIGSEGV, y el manejador las imita sobre la copia con `decodifica()` de `caja/fallo_a64.h`.
     Una escritura en la página 0, o un acceso a lo demás de los primeros 64 KB, es un fallo del programa, como en
     DashOS.
-  - **x86 (RelevoJIT):** ya suma la base por diseño (`[base + dirección]`, `relevo_config.memory`). En DashOS la caja
-    usa base 0 (`RELEVO_OPT_BASE_ZERO`); en Linux, la base es una reserva de 4 GB en cualquier sitio y la página 0
-    puede ir en `base + 0`. Sin cambios en el JIT.
-  - **Las bibliotecas nativas** pasan todas por `MemoriaCaja::sitio` (`pegamento/src/memoria.rs`): ahí se suma la
-    base (x86) y se manda la página 0 a su copia (ARM).
+  - **x86 (RelevoJIT):** sabe sumar una base (`[base + dirección]`, `relevo_config.memory`), pero no hace falta: en
+    Linux se queda como en DashOS, con base 0 (`RELEVO_OPT_BASE_ZERO`) y las direcciones del 68k como direcciones del
+    proceso. La página 0 ya es una página "del anfitrión" en `motor_relevo.c` (cada acceso llama a `pagina_leer`):
+    en Linux, `pagina_leer` lee la copia de $10000 en vez de la dirección 0. Es una línea en `motor_relevo.c`, para
+    después de K8. Sin cambios en el JIT.
+  - **Las bibliotecas nativas** pasan todas por `MemoriaCaja::sitio` (`pegamento/src/memoria.rs`), que ya lee y
+    escribe la página 0 por su proyección de escribir (por encima de 4 GB). No cambian.
+  - Así, en las dos arquitecturas, el C de la caja sigue usando las direcciones del 68k como punteros.
   - **El programa de Linux no puede vivir en los 4 GB bajos** (los usa el 68k): se enlaza por encima, como la caja de
     DashOS, y lo que pida al sistema (montones, pilas, el código traducido) va también arriba, con `MAP_FIXED_NOREPLACE`.
 
@@ -39,7 +42,8 @@ propio, `third_party/Emu68` del worktree, con los parches de `patches/emu68/`.
 
 - [x] L1 **El escollo de la página 0** (2026-11-28). Probado en `jit-host` (`make ORDEN=le PAGINA0=1 run`, también en
   big-endian): ver la bitácora.
-- [ ] L2 **La capa de plataforma en la caja de DashOS.** Sacar de `caja.c` lo de DashOS (las llamadas al kernel con
+- [~] L2 **La capa de plataforma en la caja de DashOS.** L2a (el C de `caja.c`) hecho;
+  L2b, el trait de Rust en `pegamento/`; L2c, `motor_emu68.c` y `motor_relevo.c` (siguen con `caja_sc`), tras K8. Sacar de `caja.c` lo de DashOS (las llamadas al kernel con
   `svc #0`, la memoria, los fallos) a `plataforma.h` + `plataforma_dashos.c`, y lo del crate `dashos` de `pegamento/`
   (archivos, compositor, aviso, preguntador, multitarea) a un trait. Cambio mecánico: `caja-x86`, `arranque-virt` y
   `arranque-virt CAJA_ORDEN=le` tienen que seguir pasando. Antes de tocar `caja.c`, `pegamento/` o `caja/Makefile`,
@@ -86,3 +90,23 @@ Acuerdos para L2 (2026-11-28):
 
 Pendiente de L1: `FALLO_INC` apunta a `caja/`, pero `caja/fallo_a64.h` aún no está en main (llega con union-chips,
 de dashos-2f). Hasta entonces, `make PAGINA0=1 FALLO_INC=<dir con fallo_a64.h y un motor.h>`.
+
+### 2026-11-28: L2a, la capa de plataforma en C
+
+Rama traída a `origin/main` con union-chips (786eb010). `jit-host` con `PAGINA0=1` compila ya con el
+`caja/fallo_a64.h` de main y P0 sigue bien.
+
+- `caja/plataforma.h`: la interfaz (consola, reloj, dormir, memoria, hilos, la página 0 y `plat_hay_memoria` para la
+  comprobación de S28). `caja/plataforma_dashos.c`: `caja_sc` y todo lo que llamaba al kernel desde `caja.c`, sin
+  cambiar el orden de las llamadas. `caja.c` ya no tiene ninguna llamada al kernel; `motor_emu68.c` y
+  `motor_relevo.c` siguen con `caja_sc` (declarada en `caja.h`) hasta K8.
+- Compila en ARM (be y le) y en x86. Pruebas: `caja-x86` BIEN; `arranque-virt CAJA_ORDEN=le` BIEN entero (155
+  "bien" de la caja, el sonido sin chasquidos); `arranque-virt` (be) BIEN salvo el sonido (89 chasquidos, con el PC
+  a carga 4-6, como en REVISION_LOOP del 12/11); la caja, igual: 155 "bien", ningún "MAL".
+- Ojo para la próxima vez: no editar el árbol mientras corre una prueba que compila desde él. La primera referencia
+  de `arranque-virt` sobre main se mezcló con el cambio a medias y no vale.
+- dashos-2f ha separado el decodificador en `caja/fallo_a64_decodifica.h` (rama chips-blitter, d2383bb9, sin subir).
+  Cuando llegue a main, `jit-host/pagina0.c` lo incluye a él y deja de definir los `caja_chip_*` de mentira. K7 toca
+  también `caja.c` (la medida tras chips.exe), `programas.S` y `caja/Makefile` (`trampolin_a64.o`): habrá choque
+  pequeño con L2a al unir. En Linux, el marco de la señal guarda y repone los registros q, así que el manejador de
+  SIGSEGV puede usar la FPU.
