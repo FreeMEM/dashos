@@ -204,3 +204,9 @@ Pedido por jefe-dash, en este orden; la decisión, también en `docs/diseño/S28
 Lo que se vio por el camino: el `DateToStr`, el `ParsePattern` y lo demás de dos y exec pasaron `arranque-virt` BE con la
 caja entera bien (158 "bien"); falló solo una línea del escritorio ("[sesiones] barra lanza Programas/guarda"), con otra
 sesión corriendo QEMU a la vez.
+
+Pendiente con dashos-2f (2026-11-28): `third_party/Emu68` pasa a ser un submódulo (rama `dashos` de la bifurcación, con
+0016-0018). Cuando llegue a main: en el clon del submódulo, encima de esa rama, un commit "DashOS 0019-pc-fuera-de-memoria"
+con el contenido del parche; en esta rama, el puntero del submódulo a ese commit y fuera `patches/emu68/0019`. Subir el
+commit a la bifurcación, con el sí del usuario (por jefe-dash). El worktree tiene `third_party/Emu68` como clon suelto:
+al traer main hay que cambiarlo (AGENTS.md lo explica).
