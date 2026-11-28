@@ -120,6 +120,12 @@ de S18).
   A500) y vAmiga; el registro serie en los dos sentidos; el teclado del Amiga en el del CIA-A (`src/teclado.rs`,
   `Chips::tecla`), con su saludo y la resincronía; los puertos (`Chips::ovl`, `led`, `fuego`, `disco_senales`,
   `disco_lineas`) y `Chips::tras_el_arranque`. Pruebas: `caja/chips/tests/cia.rs`.
+- [x] B6 **Los sprites y los choques.** `caja/chips/src/sprites.rs`: el DMA de sprites de Agnus (`SPRxPT`, las
+  palabras de control y de datos en sus ciclos, `VSTART`/`VSTOP` con sus bits altos, el fin de la lista, varios
+  sprites por canal, `SPREN`, los ciclos que se comen los planos con `DDFSTRT` temprano) y Denise (los 8 sprites,
+  unidos, `SH0`, armar y desarmar, el modo a mano, prioridades con `BPLCON2` con un campo y con dos, solo dentro de
+  la ventana), y los choques (`CLXCON`, `CLXDAT`). Oráculo: `caja/pruebas68k/sprites.c` con `sprites_escenas.h`,
+  contra capturas de FS-UAE y su `CLXDAT`.
 
 ## Bloqueos
 
@@ -606,3 +612,62 @@ de S18).
   `caja/fallo_a64_decodifica.h` (`marco_fallo`, `struct acceso`, `decodifica`), sin nada de los chips ni del sistema;
   `fallo_a64.h` lo incluye. Comprobado: `make -C caja/pruebas_fallo` (83 y 52 instrucciones, 0 fallos, en los dos
   órdenes), `make -C kernel prueba` BIEN y `make -C kernel caja-x86` BIEN. No repetido tras la unión: `arranque-virt`.
+
+### 2026-11-28
+
+- B6 hecho (papel de implementador; rama `chips-sprites`, sale de `chips-blitter`): los sprites y los choques de OCS.
+  - Fuentes: el Hardware Reference Manual (capítulos 4 y 7), de memoria, y vAmiga (`Core/Components/Agnus`:
+    `Agnus.cpp`, `AgnusRegs.cpp`, `AgnusDma.cpp`, `Sequencer/SequencerDas.cpp` y `SequencerBpl.cpp`;
+    `Core/Components/Denise`: `Denise.cpp`, `Denise.h`, `DeniseRegs.cpp`; cabeceras MPL-2.0 revisadas): los ciclos
+    de cada sprite (`$15 + 4n` y el siguiente), qué lee Agnus según `VSTART`/`VSTOP`, la lectura del control en la
+    línea 25, el ciclo que se comen los planos (OCS: desde el anterior al primero suyo), el retraso con que Denise ve
+    cada registro, el primer píxel en `HSTART + 1`, el recorte desde el primer `BPL1DAT`, el orden de prioridad y los
+    choques. Reescrito en Rust, con el aviso MPL y el origen en la cabecera de `sprites.rs`. Nada de UAE, WinUAE,
+    FS-UAE (su código), Amiberry ni AROS.
+  - Cómo es: los ciclos de sprites van en el bucle de ciclos de `denise.rs` (sin imagen y sin planos, solo los de
+    `$15` a `$33`). Lo que llega a Denise (del DMA, del 68k o del Copper) se apunta con la posición en que lo ve (hasta
+    128 por línea) y se aplica al traducir la línea; los sprites se mezclan en `traducir` con la prioridad de
+    `BPLCON2` (con un campo, `PF2P`; con dos, el del campo que se ve) y allí mismo se calculan los choques. Leer
+    `CLXDAT` y escribir `CLXCON` traducen antes lo que ya se ve. `lib.rs`: el módulo, el campo `sprites`, `SPREN` en
+    `dma`, `CLXDAT` en las lecturas y `escribir_sprites` en las escrituras. Sin DMA de sprites antes de la línea 25
+    (del manual; vAmiga leería en la línea 0 tras una lista acabada).
+  - Oráculo: `caja/pruebas68k/sprites.c` (`sprites.exe` en git) pone, con `Disable`, 22 escenas de
+    `sprites_escenas.h`: seis quietas cuatro segundos para la captura (baja con 3 planos y `BPLCON2` 0 abajo; `PF2P`
+    1 y 3; campos dobles con `PF1P`/`PF2P` y `PF2PRI`; alta con 4 planos; `DDFSTRT = $28`, que se come los sprites 5,
+    6 y 7; HAM6) con los ocho sprites, uno reutilizado tres veces (una en la línea siguiente al `VSTOP`), dos unidos,
+    `SH0`, sprites que cruzan los cuatro bordes, el Copper moviendo el sprite 1 a mitad de línea (sale dos veces) y el
+    sprite 5 a mano (armado por el Copper en la línea `$B0`, desarmado en la `$C0`); y 16 de solo choques (bandas de
+    planos con `CLXCON` que miran cada campo, con uno y dos campos; choques entre grupos con y sin `ENSP`; el sprite 6
+    solo fuera de la ventana; sin sprites). En cada escena lee `CLXDAT` de un cuadro entero y lo escribe por la
+    consola. Capturas con `captura.sh DIR sprites 55` (ahora con el programa y el número de capturas como
+    argumentos, la salida en `DIR/salida.txt` y `uae_collision_level=full`) y `huellas.py DIR sprites` (ahora salta
+    las capturas de solo borde); en git, `tests/denise_oraculo/sprites_huellas.txt` (26 KB) y
+    `sprites_clxdat.txt`. `tests/sprites_oraculo.rs`: **las seis imágenes iguales, píxel a píxel**, y **`CLXDAT`
+    igual en las 22 escenas**, con una excepción a la vista: con `CLXCON` sin ningún `ENBP`, FS-UAE da siempre los
+    bits 1-8 (también sin ningún sprite, escena 20), y en esas 17 escenas la prueba no compara esos bits.
+  - Lo que se vio: el FS-UAE de serie no da nunca el bit 0 (campo con campo): hace falta `uae_collision_level=full`.
+    Con un campo, un sprite sobre un píxel que choca con el campo 1 y no con el 2 no da el bit del 1; con campos
+    dobles, sí (escenas 7 y 8; como vAmiga). Los sprites que cruzan el borde se cortan justo en la ventana.
+  - Comprobado: `cargo test` (20 pruebas nuevas en `tests/sprites.rs`: un sprite y lo que lee Agnus, `SH0`, los
+    colores de cada pareja y los ocho en una línea, reutilizar el canal, unidos, el menor delante, prioridad con un
+    campo y con dos, HAM y EHB debajo, solo dentro de la ventana, sin planos no se ven, sin `SPREN`, `DDFSTRT`
+    temprano con y sin planos en la línea, el modo a mano por el 68k, el Copper moviendo un sprite, choques entre
+    sprites y con los campos, `CLXDAT` al encender; y los dos del oráculo; `direcciones_de_nadie` prueba ahora
+    `DSKPTH`), `cargo clippy --all-targets` sin avisos, que compila sin `std` para `x86_64-unknown-none` y
+    `aarch64-unknown-none-softfloat` (`-Zbuild-std=core`), y `make -C kernel caja-x86` (BIEN).
+  - No comprobado: el oráculo es un A1200 (Lisa y Alice), no OCS: no se probó lo que cambia entre los dos (el segundo
+    ciclo del sprite 6 con `DDFSTRT = $30`, el del 4 con `$28`). Los bits 1-8 de `CLXDAT` con `CLXCON` sin `ENBP`
+    quedan sin decidir (FS-UAE frente al manual y vAmiga). Los bits altos de `VSTART`/`VSTOP` sí salen en el oráculo
+    (el sprite 7 de la línea `$118` a la `$136`). No se probaron en el oráculo: sprites con entrelazado, el 68k
+    escribiendo los registros de sprites, `CLXDAT` leído a mitad de cuadro, ni las escrituras que vAmiga
+    pierde. Sin imagen no hay choques. La caja aún no da chip RAM ni recibe la imagen.
+  - Dudas, en la cabecera de `sprites.rs`: la regla de OCS de los ciclos perdidos; la rareza del campo 1 con un
+    campo; los bits 1-8 con `CLXCON` sin `ENBP`; sin imagen no hay choques; los unidos chocan con sus propios bits;
+    Agnus ve `POS`/`CTL` enseguida; los registros de desplazamiento se vacían en cada línea; `PF1P`/`PF2P` mayor que
+    4; más de 128 cambios de sprites en una línea.
+
+
+- Unión de B6 en `chips-blitter` (la sesión), sobre B1-B5 y K7. Conflictos: la cabecera de `lib.rs`, los módulos,
+  la prueba `direcciones_de_nadie` (el registro sin imitar pasa a ser `DSKPTH`, con los espejos de B5), el `Makefile`
+  de `pruebas68k` y aquí. Comprobado: `cargo test` (todas, con los oráculos de la imagen y de `CLXDAT`), `cargo
+  clippy --all-targets` sin avisos y `make -C kernel caja-x86` BIEN.
