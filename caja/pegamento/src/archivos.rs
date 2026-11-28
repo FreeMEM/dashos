@@ -24,6 +24,9 @@ struct Respuesta {
     c: u64,
 }
 
+/// El sistema de archivos de dos en la caja de DashOS (en la de Linux, `linux/archivos.rs`).
+pub type Fs = FsDashos;
+
 /// La sesión de la caja con el servicio de archivos. Sin servicio (no hay llave, o no contesta), todo da
 /// `ErrorDelDisco`: los programas ven que el volumen no está.
 pub struct FsDashos {

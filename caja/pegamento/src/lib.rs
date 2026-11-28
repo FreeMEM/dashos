@@ -16,23 +16,43 @@
 
 extern crate alloc;
 
+#[cfg(feature = "dashos")]
 mod archivos;
+#[cfg(not(feature = "dashos"))]
+#[path = "linux/archivos.rs"]
+mod archivos;
+#[cfg(feature = "dashos")]
+mod aviso;
+#[cfg(not(feature = "dashos"))]
+#[path = "linux/aviso.rs"]
 mod aviso;
 mod chips;
+#[cfg(feature = "dashos")]
+mod compositor;
+#[cfg(not(feature = "dashos"))]
+#[path = "linux/compositor.rs"]
 mod compositor;
 mod defensa;
 mod faltan;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "dashos"))]
 mod jit;
 mod mates;
 mod memoria;
 mod multitarea;
+mod plataforma;
+#[cfg(feature = "dashos")]
+mod preguntador;
+#[cfg(not(feature = "dashos"))]
+#[path = "linux/preguntador.rs"]
 mod preguntador;
 mod procesos;
 mod ramlib;
+// Sin la opción `dashos` no hay compositor que dé el tema todavía (L5).
+#[cfg_attr(not(feature = "dashos"), allow(dead_code))]
 mod tema;
 
 /// S28: lo que comparten la caja, `sesiones` y `guardian` para preguntar por los ficheros protegidos.
+#[cfg(feature = "dashos")]
 #[path = "../../../usuario/src/preguntas_ficheros.rs"]
 #[allow(dead_code)]
 mod pf;
@@ -49,7 +69,7 @@ use caja_intuition::{CajaGrafica, Numeros};
 use caja_timer::{Reloj, Temporizador};
 use caja_utility::Utilidad;
 
-use archivos::FsDashos;
+use archivos::Fs;
 use caja_dos::guardia::Guardia;
 use defensa::{Deshecho, Foto};
 use compositor::CompositorWayland;
@@ -86,10 +106,8 @@ static MONTON: Monton = Monton;
 
 #[panic_handler]
 fn panico(info: &core::panic::PanicInfo) -> ! {
-    dashos::println!("  [caja-amiga] pánico en las bibliotecas nativas: {}", info);
-    // Se acaba el proceso entero (llamada 44): el resto del sistema sigue.
-    dashos::llamada(44, [101, 0, 0, 0, 0]);
-    loop {}
+    plataforma::decir!("  [caja-amiga] pánico en las bibliotecas nativas: {}", info);
+    plataforma::acabar()
 }
 
 // --- El estado de la caja ---
@@ -127,7 +145,7 @@ const AVISOS_A_LA_VISTA: u32 = 6;
 struct Caja {
     ex: Exec<MemoriaCaja>,
     consola: Consola,
-    dos: caja_dos::Dos<Guardia<FsDashos>>,
+    dos: caja_dos::Dos<Guardia<Fs>>,
     gr: CajaGrafica<CompositorWayland>,
     util: Utilidad,
     timer: Temporizador,
@@ -200,7 +218,7 @@ fn caja() -> Option<&'static mut Caja> {
 
 /// Lo que dice la caja por la consola: "  [caja-amiga] ...".
 pub(crate) fn di(texto: &str) {
-    dashos::println!("  [caja-amiga] {}", texto);
+    plataforma::decir!("  [caja-amiga] {}", texto);
 }
 
 // --- dos sobre exec: la memoria y lo que dos pide a la caja ---
@@ -247,10 +265,10 @@ impl caja_dos::Caja for CajaDos<'_> {
         self.ex.tarea_actual()
     }
     fn hora(&self) -> (u64, u32) {
-        let ns = dashos::hora_ns();
+        let ns = plataforma::hora_ns();
         if ns == 0 {
             // Sin reloj de la hora (la Pi 4, QEMU sin RTC): el 1 de enero de 1978 más lo que lleva encendida.
-            let us = dashos::ahora_us();
+            let us = plataforma::ahora_us();
             return (DE_1970_A_1978 + us / 1_000_000, (us % 1_000_000) as u32);
         }
         (ns / 1_000_000_000, ((ns % 1_000_000_000) / 1000) as u32)
@@ -285,12 +303,12 @@ fn escribir_latin1(datos: &[u8]) {
     for &b in datos {
         s.push(b as char);
         if s.len() >= 200 {
-            dashos::escribir(&s);
+            plataforma::escribir(&s);
             s.clear();
         }
     }
     if !s.is_empty() {
-        dashos::escribir(&s);
+        plataforma::escribir(&s);
     }
 }
 
@@ -300,7 +318,7 @@ use relevo as _;
 
 /// X7, x86: la frecuencia del TSC que el kernel dio a la caja al arrancar (entrada_x86.S), para `dashos::ahora_us`: la
 /// caja no arranca por `programa!`, que es quien la guarda en los programas de Rust.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "dashos"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn caja_rust_frecuencia(f: u64) {
     dashos::FRECUENCIA.store(f, core::sync::atomic::Ordering::Relaxed);
@@ -343,9 +361,9 @@ pub unsafe extern "C" fn caja_rust_arrancar(
             return 0;
         }
     };
-    let fs = FsDashos::abrir(LLAVE_ARCHIVOS);
+    let fs = Fs::abrir(LLAVE_ARCHIVOS);
     let hay_fs = fs.is_some();
-    let mut fs = fs.unwrap_or_else(FsDashos::sin_servicio);
+    let mut fs = fs.unwrap_or_else(Fs::sin_servicio);
     let con_cajon = hay_fs && caja_dos::SistemaArchivos::mirar(&mut fs, RAIZ_SYS, "").is_ok();
     // Con su cajón, lo de solo lectura lo ponen dos, volumen a volumen (la guardia; decisión 8), y el servicio con las
     // raíces; con una ficha vieja, también el adaptador.
@@ -525,7 +543,7 @@ pub extern "C" fn caja_atender_memoria() {
 
 /// Que el servicio niegue escribir en `SYS:` aunque la caja se lo pida (por debajo de la guardia, como lo haría un
 /// programa que se hubiera hecho con la caja): crear, en la raíz 1 (la del disco, de leer). Lo que dice.
-fn comprobar_servicio(fs: &mut FsDashos) -> String {
+fn comprobar_servicio(fs: &mut Fs) -> String {
     use caja_dos::SistemaArchivos;
     match fs.crear(RAIZ_SYS, "caja-prueba-de-escritura", false) {
         Err(e) => format!("el servicio niega escribir en SYS: aunque la caja lo pida ({:?}): bien", e),
@@ -730,7 +748,7 @@ pub unsafe extern "C" fn caja_tarea_nueva(
     match crear_proceso(c, nombre, pila, pc, vuelta, args, seglist) {
         Ok((t, s)) => {
             c.principal = t;
-            c.inicio_turno = dashos::ahora_us();
+            c.inicio_turno = plataforma::ahora_us();
             // SEGURIDAD: lo garantiza quien llama.
             unsafe { *sp = s };
             t
@@ -1255,8 +1273,8 @@ fn poner_hora(c: &mut Caja) {
 /// El reloj de timer.device: el de DashOS, y la hora desde 1978 (sin reloj de la hora, el 1 de enero de 1978 más lo
 /// que lleva encendida, como `CajaDos::hora`).
 fn reloj() -> Reloj {
-    let monotono_us = dashos::ahora_us();
-    let ns = dashos::hora_ns();
+    let monotono_us = plataforma::ahora_us();
+    let ns = plataforma::hora_ns();
     let sistema_us = if ns == 0 { monotono_us } else { (ns / 1000).saturating_sub(DE_1970_A_1978 * 1_000_000) };
     Reloj { monotono_us, sistema_us }
 }
@@ -1323,7 +1341,7 @@ fn para_ctrl_c(c: &Caja, t: u32) -> u32 {
 fn esperar(c: &mut Caja, t: u32) -> Espera {
     let _ = c.ex.elegir_siguiente();
     let maxima = espera_maxima();
-    let mut hasta = dashos::ahora_us() + maxima;
+    let mut hasta = plataforma::ahora_us() + maxima;
     loop {
         atender(c);
         cerrar_si_lo_piden(c);
@@ -1350,10 +1368,10 @@ fn esperar(c: &mut Caja, t: u32) -> Espera {
         if let Some(p) = c.timer.proximo() {
             hasta = hasta.max(p.saturating_add(maxima));
         }
-        if dashos::ahora_us() > hasta {
+        if plataforma::ahora_us() > hasta {
             return Espera::Plazo;
         }
-        dashos::dormir_us(5_000);
+        plataforma::dormir_us(5_000);
     }
 }
 
@@ -1361,7 +1379,7 @@ fn esperar(c: &mut Caja, t: u32) -> Espera {
 /// pila `a7` de la llamada). `false` si el programa acabó dentro de un despachador 68k.
 /// Quien la llama no puede usar después su referencia de `caja()`: pide otra.
 fn dormir(tics: u32, a7: u32) -> bool {
-    let hasta = dashos::ahora_us() + tics.min(50 * 3600) as u64 * 20_000;
+    let hasta = plataforma::ahora_us() + tics.min(50 * 3600) as u64 * 20_000;
     loop {
         if let Some(c) = caja() {
             atender(c);
@@ -1369,11 +1387,11 @@ fn dormir(tics: u32, a7: u32) -> bool {
         if !atender_boopsi(a7) {
             return false;
         }
-        let ahora = dashos::ahora_us();
+        let ahora = plataforma::ahora_us();
         if ahora >= hasta {
             return true;
         }
-        dashos::dormir_us((hasta - ahora).min(10_000));
+        plataforma::dormir_us((hasta - ahora).min(10_000));
     }
 }
 
@@ -1731,7 +1749,7 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
             Fin::Terminar => res = C_ACABAR,
             Fin::Dormir(tics) if multitarea::hay_otras(c) && multitarea::se_puede_cambiar() => {
                 // Duerme aparcada hasta su hora y corre otra (`multitarea.rs`).
-                let hasta = dashos::ahora_us() + tics.min(50 * 3600) as u64 * 20_000;
+                let hasta = plataforma::ahora_us() + tics.min(50 * 3600) as u64 * 20_000;
                 if !multitarea::guardar(c, t, *r, caja_exec::Modo::Volver) {
                     return C_ACABAR;
                 }
@@ -1792,10 +1810,10 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
     multitarea::avisar_reloj(c);
     if res == C_SEGUIR && multitarea::hay_otras(c) && multitarea::se_puede_cambiar() {
         let t = c.ex.tarea_actual();
-        let turno = dashos::ahora_us().saturating_sub(c.inicio_turno) > multitarea::TURNO_US;
+        let turno = plataforma::ahora_us().saturating_sub(c.inicio_turno) > multitarea::TURNO_US;
         let cambiar = ceder || (turno && c.ex.fin_de_turno());
         if turno && !cambiar {
-            c.inicio_turno = dashos::ahora_us();
+            c.inicio_turno = plataforma::ahora_us();
         }
         if cambiar && t != 0 {
             if !multitarea::guardar(c, t, *r, caja_exec::Modo::Volver) {

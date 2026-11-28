@@ -14,7 +14,7 @@ use alloc::vec::Vec;
 
 use caja_exec::{Contexto, Memoria, Modo, Registros};
 
-use crate::{Caja, caja, di};
+use crate::{Caja, caja, di, plataforma};
 
 unsafe extern "C" {
     fn caja_modo_usuario() -> i32;
@@ -58,7 +58,7 @@ pub(crate) fn turno_por_reloj(r: &mut Registros, usp: u32, pc: u32, sr: u32, rtr
     if !hay_otras(c) || !c.ex.interrupciones_activas() {
         return false;
     }
-    let ahora = dashos::ahora_us();
+    let ahora = plataforma::ahora_us();
     if ahora.saturating_sub(c.inicio_turno) <= TURNO_US {
         return false;
     }
@@ -137,7 +137,7 @@ pub(crate) enum Siguiente {
 /// hay que hacer con ella dentro de la espera (los gadgets BOOPSI, como antes con una sola tarea).
 pub(crate) fn siguiente(r: &mut Registros, anfitriona: Option<(u32, u32)>) -> Siguiente {
     let maxima = crate::espera_maxima();
-    let mut hasta = dashos::ahora_us() + maxima;
+    let mut hasta = plataforma::ahora_us() + maxima;
     loop {
         let Some(c) = caja() else { return Siguiente::Plazo };
         despertar_dormidas(c);
@@ -146,7 +146,7 @@ pub(crate) fn siguiente(r: &mut Registros, anfitriona: Option<(u32, u32)>) -> Si
                 Ok(ctx) => {
                     *r = ctx.regs;
                     fp_poner(&ctx);
-                    c.inicio_turno = dashos::ahora_us();
+                    c.inicio_turno = plataforma::ahora_us();
                     c.cambios += 1;
                     return Siguiente::Lista;
                 }
@@ -200,12 +200,12 @@ pub(crate) fn siguiente(r: &mut Registros, anfitriona: Option<(u32, u32)>) -> Si
         if let Some(p) = proximo {
             hasta = hasta.max(p.saturating_add(maxima));
         }
-        let ahora = dashos::ahora_us();
+        let ahora = plataforma::ahora_us();
         if ahora > hasta {
             return Siguiente::Plazo;
         }
         let espera = proximo.map_or(5_000, |p| p.saturating_sub(ahora).clamp(500, 5_000));
-        dashos::dormir_us(espera);
+        plataforma::dormir_us(espera);
     }
 }
 
@@ -214,7 +214,7 @@ pub(crate) fn despertar_dormidas(c: &mut Caja) {
     if c.dormidas.is_empty() {
         return;
     }
-    let ahora = dashos::ahora_us();
+    let ahora = plataforma::ahora_us();
     let listas: Vec<u32> = c.dormidas.iter().filter(|&&(_, d)| d <= ahora).map(|&(t, _)| t).collect();
     if listas.is_empty() {
         return;
