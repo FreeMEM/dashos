@@ -37,7 +37,7 @@ fn con_stuff_char_y_sin_proc() {
         let mut r = Registros::default();
         (r.a[0], r.a[1], r.a[2], r.a[3]) = (f, d, proc, buf);
         assert_eq!(llamar(&mut e, "RawDoFmt", &mut r), Accion::Seguir);
-        assert_eq!(texto(&e, buf), "Fish have 2 eyes; -1 40000 00ab Fish |    Fi| ! abc 100% %y");
+        assert_eq!(texto(&e, buf), "Fish have 2 eyes; -1 40000 00AB Fish |    Fi| ! abc 100% %y");
         assert_eq!(r.d[0], d + 28, "el final de los datos");
     }
     assert!(e.tomar_avisos().is_empty());

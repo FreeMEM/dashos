@@ -16,6 +16,7 @@ const AP_BUF: u32 = 280;
 const AN_LOCK: u32 = 8;
 const APF_ITSWILD: u8 = 2;
 const APF_DODIR: u8 = 4;
+const APF_DIDDIR: u8 = 8;
 const APF_DIRCHANGED: u8 = 64;
 
 /// Un AnchorPath con `largo` bytes de ap_Buf.
@@ -179,7 +180,7 @@ fn hostil() {
     assert_eq!(b.llamar(lvo::MATCH_FIRST, &[p, ap]), 0);
     b.llamar(lvo::MATCH_END, &[ap]);
     b.llamar(lvo::MATCH_END, &[ap]);
-    // APF_DODIR: no entra en cajones, se avisa una vez y la búsqueda sigue.
+    // APF_DODIR sobre un fichero: no entra en nada y la búsqueda sigue.
     assert_eq!(b.llamar(lvo::MATCH_FIRST, &[p, ap]), 0);
     let f = b.caja.mem.leer8(ap + AP_FLAGS).unwrap();
     b.caja.mem.escribir8(ap + AP_FLAGS, f | APF_DODIR);
@@ -208,7 +209,6 @@ fn hostil() {
     }
     b.limpio(0, 1);
     let avisos = b.avisos();
-    assert!(avisos.iter().any(|a| a.funcion == "MatchNext"), "{avisos:?}");
     assert!(avisos.iter().any(|a| a.funcion == "MatchFirst"), "{avisos:?}");
 }
 
@@ -225,4 +225,82 @@ fn la_tarea_acaba_sin_match_end() {
     assert_eq!(b.dos.cerrojos_abiertos(), 0);
     assert_eq!(b.dos.fs.abiertas(), 0);
     b.sin_faltas();
+}
+
+/// Recorre `patron` entrando en todos los cajones (como Dir ALL): (nombre, DIDDIR, ap_Buf) de cada uno, y el código
+/// del final. Comprueba que `ap_Last` lleva el cerrojo del cajón donde está lo dado.
+fn recorrer(b: &mut Banco, patron: &str) -> (Vec<(String, bool, String)>, u32) {
+    let ap = anchor(b, 128);
+    let p = b.cad(patron);
+    let mut v = Vec::new();
+    let mut r = b.llamar(lvo::MATCH_FIRST, &[p, ap]);
+    while r == 0 {
+        let f = b.caja.mem.leer8(ap + AP_FLAGS).unwrap();
+        let didir = f & APF_DIDDIR != 0;
+        v.push((b.nombre_fib(ap + AP_INFO), didir, b.cadena_en(ap + AP_BUF)));
+        assert!(v.len() < 100, "no acaba");
+        let cajon = b.l32(ap + AP_INFO + 4) as i32 > 0;
+        if didir {
+            b.caja.mem.escribir8(ap + AP_FLAGS, f & !APF_DIDDIR);
+        } else if cajon {
+            b.caja.mem.escribir8(ap + AP_FLAGS, f | APF_DODIR);
+        }
+        r = b.llamar(lvo::MATCH_NEXT, &[ap]);
+        if r == 0 && b.caja.mem.leer8(ap + AP_FLAGS).unwrap() & APF_DIDDIR == 0 && v.len() > 1 {
+            let ach = b.l32(ap + AP_LAST);
+            assert_ne!(b.l32(ach + AN_LOCK), 0, "ap_Last con su cerrojo");
+        }
+    }
+    b.llamar(lvo::MATCH_END, &[ap]);
+    (v, r)
+}
+
+fn t(n: &str, d: bool, buf: &str) -> (String, bool, String) {
+    (n.to_string(), d, buf.to_string())
+}
+
+/// Lo que da el oráculo (pruebas68k/dosasl.c en FS-UAE con el Kickstart): al entrar en un cajón, todo lo de dentro
+/// y, al salir, el cajón otra vez con APF_DIDDIR.
+#[test]
+fn entrar_en_cajones() {
+    let mut b = Banco::nuevo();
+    b.dos.fs.fs.poner(b.work, "pdir/sub/c.txt", b"123");
+    let (v, r) = recorrer(&mut b, "Work:pdir");
+    assert_eq!(r, ERROR_NO_MORE_ENTRIES);
+    assert_eq!(
+        v,
+        [
+            t("pdir", false, "Work:pdir"),
+            t("sub", false, "Work:pdir/sub"),
+            t("c.txt", false, "Work:pdir/sub/c.txt"),
+            t("sub", true, "Work:pdir/sub"),
+            t("pdir", true, "Work:pdir"),
+        ]
+    );
+    // Con comodines, dentro sale todo, case o no (sub no casa con p#?).
+    b.dos.fs.fs.poner(b.work, "pdir/pz.txt", b"12");
+    b.dos.fs.fs.borrar_por_fuera(b.work, "pdir/sub/c.txt");
+    let (v, r) = recorrer(&mut b, "Work:p#?");
+    assert_eq!(r, ERROR_NO_MORE_ENTRIES);
+    let mut dentro: Vec<_> = v[1..].iter().filter(|x| !x.1).map(|x| x.0.clone()).collect();
+    dentro.sort();
+    assert_eq!(v[0], t("pdir", false, "Work:pdir"));
+    assert_eq!(dentro, ["pz.txt", "sub"]);
+    assert!(v.contains(&t("sub", true, "Work:pdir/sub")) && v.last() == Some(&t("pdir", true, "Work:pdir")), "{v:?}");
+    b.limpio(0, 1);
+}
+
+/// El patrón vacío es el cajón actual (aquí, la raíz del volumen de arranque), con el nombre vacío (el oráculo);
+/// MatchNext sin APF_DODIR acaba ahí.
+#[test]
+fn patron_vacio() {
+    let mut b = Banco::nuevo();
+    let (v, r) = buscar(&mut b, "");
+    assert_eq!(r, ERROR_NO_MORE_ENTRIES);
+    assert_eq!(v, [(String::new(), String::new())]);
+    let (v, _) = recorrer(&mut b, "");
+    assert_eq!(v.first(), Some(&t("", false, "")));
+    assert_eq!(v.last(), Some(&t("", true, "")));
+    assert!(v.contains(&t("Startup-Sequence", false, "S/Startup-Sequence")), "{v:?}");
+    b.limpio(0, 1);
 }

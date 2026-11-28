@@ -190,7 +190,7 @@ fn vprintf() {
         assert_eq!(n as usize, s.len());
         s
     };
-    assert_eq!(pr(&mut b, "%d|%u|%x", &[0xFF, 0xFE, 0, 7, 0, 255]), "-2|7|ff");
+    assert_eq!(pr(&mut b, "%d|%u|%x", &[0xFF, 0xFE, 0, 7, 0, 255]), "-2|7|FF");
     assert_eq!(pr(&mut b, "%ld %lX", &[0xFF, 0xFF, 0xFF, 0xFE, 0, 0, 0xBE, 0xEF]), "-2 BEEF");
     assert_eq!(
         pr(&mut b, "[%5ld][%-5ld][%05ld]", &[0, 0, 0, 42, 0, 0, 0, 42, 0xFF, 0xFF, 0xFF, 0xFF]),

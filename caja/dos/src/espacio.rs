@@ -779,4 +779,77 @@ impl<F: SistemaArchivos> Dos<F> {
             .find(|(_, t, n)| Self::tipo_en_marcas(*t, marcas) && k.as_ref().is_none_or(|k| clave_latin1(n) == *k))
             .map(|(d, _, _)| *d)
     }
+
+    // --- GetDeviceProc y FreeDeviceProc ---
+
+    /// GetDeviceProc(name, dp): el "manejador" de lo que nombra `name`. En la caja no hay procesos manejadores (dos
+    /// lleva los volúmenes): `dvp_Port` es el puerto de mentira del volumen (el de su `DosList`, que no contesta
+    /// paquetes) y `dvp_DevNode` su `DosList`. `dvp_Lock`: con una asignación, un cerrojo de su cajón (lo suelta
+    /// FreeDeviceProc: `DVPF_UNLOCK` y `DVPF_ASSIGN`); con un nombre sin `:`, el cajón actual (no se suelta); con un
+    /// volumen, 0. Con `dp` de una asignación múltiple, el cajón siguiente (y `dp` se suelta); al acabar, 0 y
+    /// ERROR_NO_MORE_ENTRIES. Así funcionan los programas que solo miran a qué volumen va un nombre (Delete de
+    /// AmigaOS 3.9); los que manden paquetes al puerto no tendrán respuesta.
+    pub(crate) fn get_device_proc<C: Caja>(&mut self, c: &mut C, nombre: u32, dp: u32) -> R<u32> {
+        const DVPF_UNLOCK: u32 = 1;
+        const DVPF_ASSIGN: u32 = 2;
+        let n = Self::cadena(c, nombre)?;
+        let siguiente = match self.devprocs.get(&dp) {
+            Some(&(_, Some(k))) => k + 1,
+            Some(&(_, None)) => {
+                self.free_device_proc(c, dp);
+                return Err(E::Io(ERROR_NO_MORE_ENTRIES));
+            }
+            None => 0,
+        };
+        if dp != 0 {
+            self.free_device_proc(c, dp);
+        }
+        let (vol, cerrojo, banderas, asignacion) = match n.iter().position(|&b| b == b':') {
+            None => {
+                let l = self.campo(c, process::PR_CURRENTDIR);
+                (self.sitio_de_cerrojo(l)?.vol, l, 0, None)
+            }
+            Some(0) => (self.sitio_de_cerrojo(self.campo(c, process::PR_CURRENTDIR))?.vol, 0, 0, None),
+            Some(i) => match self.nombres.get(&clave_latin1(&n[..i])) {
+                Some(Nombre::Volumen(v)) => (*v, 0, 0, None),
+                Some(Nombre::Asignacion(_)) => {
+                    let sitios = self.sitios(c, &n[..=i])?;
+                    let Some(s) = sitios.get(siguiente).cloned() else {
+                        return Err(E::Io(if siguiente > 0 { ERROR_NO_MORE_ENTRIES } else { ERROR_OBJECT_NOT_FOUND }));
+                    };
+                    let (asa, d) = self.abrir_sitio(&s).map_err(|e| de_fs(e, Op::Leer))?;
+                    let vol = s.vol;
+                    let l = self.nuevo_cerrojo(c, s, asa, false, d.tipo == crate::fs::Tipo::Cajon)? >> 2;
+                    (vol, l, DVPF_UNLOCK | DVPF_ASSIGN, Some(siguiente))
+                }
+                None => return Err(E::Io(ERROR_DEVICE_NOT_MOUNTED)),
+            },
+        };
+        let (puerto, doslist) = self.volumenes.get(vol).map_or((0, 0), |v| (v.puerto, v.doslist));
+        let d = match Self::reservar(c, 16) {
+            Ok(d) => d,
+            Err(e) => {
+                if banderas & DVPF_UNLOCK != 0 {
+                    let _ = self.unlock(c, cerrojo);
+                }
+                return Err(e);
+            }
+        };
+        Self::e32(c, d, puerto)?;
+        Self::e32(c, d + 4, cerrojo)?;
+        Self::e32(c, d + 8, banderas)?;
+        Self::e32(c, d + 12, doslist)?;
+        self.devprocs.insert(d, (if banderas & DVPF_UNLOCK != 0 { cerrojo } else { 0 }, asignacion));
+        Ok(d)
+    }
+
+    /// FreeDeviceProc(dp): suelta lo que dio GetDeviceProc (y su cerrojo, si era suyo). Con otra cosa, nada.
+    pub(crate) fn free_device_proc<C: Caja>(&mut self, c: &mut C, dp: u32) {
+        if let Some((l, _)) = self.devprocs.remove(&dp) {
+            if l != 0 {
+                let _ = self.unlock(c, l);
+            }
+            c.liberar(dp, 16);
+        }
+    }
 }

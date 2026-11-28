@@ -35,6 +35,13 @@ prueba() {   # cómo lanzar la caja
     comprueba "tipo.exe: el texto UTF-8 del fichero sale tal cual" 0 "$s" $r "texto con ñ"
     s=$(cd "$t" && CAJA_AMIGA_SYS="$t/sys" "$@" "$AQUI/tipo.exe" /no/existe 2>&1); r=$?
     comprueba "tipo.exe: lo que no existe en Linux queda como está" 10 "$s" $r "object not found"
+    # Pruebas del oráculo: la salida de FS-UAE con el Kickstart (tools/emu_run.py de Dash), guardada en *.esperado.
+    for p in dosasl patron formato; do
+        s=$(cd "$t" && CAJA_AMIGA_SYS="$t/sys" "$@" "$AQUI/../pruebas68k/$p.exe" 2>&1); r=$?
+        if [ $r = 0 ] && [ "$s" = "$(cat "$AQUI/$p.esperado")" ]; then echo "  BIEN $p.exe: como el oráculo"
+        else echo "  MAL  $p.exe (código $r): no es como el oráculo"; printf '%s\n' "$s" | diff "$AQUI/$p.esperado" - | sed 's/^/      /'
+            fallos=$((fallos + 1)); fi
+    done
     s=$(cd "$t" && "$@" no-existe.exe 2>&1); r=$?
     comprueba "un programa que no está" 2 "$s" $r "no se puede leer"
     s=$(cd "$t" && "$@" "$AQUI/../pruebas68k/sistema.s" 2>&1); r=$?

@@ -1,0 +1,57 @@
+== "" en pdir
+MatchFirst:  (cajon) buf []
+MatchNext: 232
+== 
+MatchFirst:  (cajon) buf []
+MatchNext: sub (cajon) buf [sub]
+MatchNext: c.txt (fichero) buf [sub/c.txt]
+MatchNext: sub (cajon) DIDDIR buf [sub]
+MatchNext:  (cajon) DIDDIR buf []
+MatchNext: 232
+== pdir
+MatchFirst: pdir (cajon) buf [pdir]
+MatchNext: sub (cajon) buf [pdir/sub]
+MatchNext: c.txt (fichero) buf [pdir/sub/c.txt]
+MatchNext: sub (cajon) DIDDIR buf [pdir/sub]
+MatchNext: pdir (cajon) DIDDIR buf [pdir]
+MatchNext: 232
+== pdir (solo el primer cajon)
+MatchFirst: pdir (cajon) buf [pdir]
+MatchNext: sub (cajon) buf [pdir/sub]
+MatchNext: pdir (cajon) DIDDIR buf [pdir]
+MatchNext: 232
+== p#?
+MatchFirst: pdir (cajon) ITSWILD buf [pdir]
+MatchNext: sub (cajon) ITSWILD buf [pdir/sub]
+MatchNext: c.txt (fichero) ITSWILD buf [pdir/sub/c.txt]
+MatchNext: sub (cajon) DIDDIR ITSWILD buf [pdir/sub]
+MatchNext: pdir (cajon) DIDDIR ITSWILD buf [pdir]
+MatchNext: 232
+DateToStr 7000/750/1234 formato 0: 1 [Sunday] [02-Mar-97] [12:30:24]
+DateToStr 7000/750/1234 formato 1: 1 [Sunday] [97-03-02] [12:30:24]
+DateToStr 7000/750/1234 formato 2: 1 [Sunday] [03-02-97] [12:30:24]
+DateToStr 7000/750/1234 formato 3: 1 [Sunday] [02-03-97] [12:30:24]
+DateToStr 0/0/0 formato 0: 1 [Sunday] [01-Jan-78] [00:00:00]
+DateToStr 13148/1439/2999 formato 1: 1 [Tuesday] [13-12-31] [23:59:59]
+DateToStr 1461/61/49 formato 2: 1 [Friday] [01-01-82] [01:01:00]
+DateToStr 7000/750/1234 formato 4: 1 [Sunday] [02-Mar-97] [12:30:24]
+DateToStr 7000/750/1234 formato 9: 1 [Sunday] [02-Mar-97] [12:30:24]
+DateToStr DTF_SUBST hoy-9: fecha
+DateToStr DTF_SUBST hoy-8: fecha
+DateToStr DTF_SUBST hoy-7: dia de la semana
+DateToStr DTF_SUBST hoy-6: dia de la semana
+DateToStr DTF_SUBST hoy-5: dia de la semana
+DateToStr DTF_SUBST hoy-4: dia de la semana
+DateToStr DTF_SUBST hoy-3: dia de la semana
+DateToStr DTF_SUBST hoy-2: dia de la semana
+DateToStr DTF_SUBST hoy-1: Yesterday
+DateToStr DTF_SUBST hoy+0: Today
+DateToStr DTF_SUBST hoy+1: Tomorrow
+DateToStr DTF_SUBST hoy+2: fecha
+DateToStr DTF_SUBST hoy+3: fecha
+DateToStr DTF_SUBST hoy+4: fecha
+DateToStr DTF_SUBST hoy+5: fecha
+DateToStr DTF_SUBST hoy+6: fecha
+DateToStr DTF_SUBST hoy+7: fecha
+DateToStr DTF_SUBST hoy+8: fecha
+DateToStr DTF_SUBST hoy+9: fecha

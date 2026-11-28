@@ -58,9 +58,9 @@ fn patrones() {
     assert!(casa(&mut b, "#?.INFO", "x.info", true));
     assert!(casa(&mut b, "[a-c]", "B", true));
     assert!(casa(&mut b, "ñ", "Ñ", true));
-    // Si lleva comodines o no.
+    // Si lleva comodines o no (como el oráculo: la comilla cuenta, `%` no; `*` es una letra).
     let buf = b.hueco(64);
-    for (p, r) in [("hola", 0), ("ho#?la", 1), ("h'?", 0), ("a|b", 1), ("(a", -1), ("[a", -1), ("#", -1), ("'", -1)] {
+    for (p, r) in [("hola", 0), ("ho#?la", 1), ("h'?", 1), ("%", 0), ("a%b", 0), ("*", 0), ("a|b", 1), ("(a", -1), ("[a", -1), ("#", -1), ("'", -1)] {
         let pp = b.cad(p);
         assert_eq!(b.llamar(lvo::PARSE_PATTERN, &[pp, buf, 64]) as i32, r, "{p}");
     }
@@ -144,4 +144,47 @@ fn exall() {
     b.unlock(l);
     b.llamar(lvo::FREE_DOS_OBJECT, &[dos_obj::DOS_EXALLCONTROL, ctl]);
     b.limpio(0, 1);
+}
+
+/// Lo que deja ParsePattern en el búfer, byte a byte, como el oráculo (pruebas68k/patron.c en FS-UAE con el
+/// Kickstart).
+#[test]
+fn analizado_como_el_oraculo() {
+    let mut b = Banco::nuevo();
+    let buf = b.hueco(128);
+    for (p, nc, esperado) in [
+        ("abc", false, &[0x61, 0x62, 0x63][..]),
+        ("aBc", true, &[0x41, 0x42, 0x43]),
+        ("a?c", false, &[0x61, 0x81, 0x63]),
+        ("#?", false, &[0x80]),
+        ("*", false, &[0x2A]),
+        ("(ab|cd|e)", false, &[0x82, 0x61, 0x62, 0x83, 0x63, 0x64, 0x83, 0x65, 0x84]),
+        ("~(x)", true, &[0x85, 0x82, 0x58, 0x84, 0x86]),
+        ("~x", false, &[0x85, 0x78, 0x86]),
+        ("[a-c]", true, &[0x88, 0x41, 0x2D, 0x43, 0x88]),
+        ("[~a-c]", false, &[0x87, 0x61, 0x2D, 0x63, 0x88]),
+        ("#a", false, &[0x89, 0x61, 0x8A]),
+        ("#(ab)", false, &[0x89, 0x82, 0x61, 0x62, 0x84, 0x8A]),
+        ("'?", false, &[0x3F]),
+        ("a'#b", false, &[0x61, 0x23, 0x62]),
+        ("a%b", false, &[0x61, 0x62]),
+        ("~(#?.info)", false, &[0x85, 0x82, 0x80, 0x2E, 0x69, 0x6E, 0x66, 0x6F, 0x84, 0x86]),
+        ("", false, &[]),
+    ] {
+        let pp = b.cad(p);
+        let n = if nc { lvo::PARSE_PATTERN_NO_CASE } else { lvo::PARSE_PATTERN };
+        b.llamar(n, &[pp, buf, 100]);
+        let got: Vec<u8> = (0..=esperado.len() as u32).map(|i| b.caja.mem.leer8(buf + i).unwrap()).collect();
+        let mut e = esperado.to_vec();
+        e.push(0);
+        assert_eq!(got, e, "{p}");
+    }
+    // Un patrón armado a mano, como Search: P_ANY "QUERIDO" P_ANY, sin distinguir mayúsculas.
+    let hecho = b.hueco(16);
+    for (i, &c) in [0x80u8, b'Q', b'U', b'E', b'R', b'I', b'D', b'O', 0x80, 0].iter().enumerate() {
+        b.caja.mem.escribir8(hecho + i as u32, c).unwrap();
+    }
+    let linea = b.cad("Querido Amiga:");
+    assert_ne!(b.llamar(lvo::MATCH_PATTERN_NO_CASE, &[hecho, linea]), 0);
+    assert_eq!(b.llamar(lvo::MATCH_PATTERN, &[hecho, linea]), 0);
 }

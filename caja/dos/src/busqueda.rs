@@ -5,8 +5,13 @@
 //! si `ap_Strlen` lo pide, la ruta entera en `ap_Buf`. Lo demás (el patrón, los cajones de una asignación múltiple que
 //! quedan) lo guarda dos aparte, por la dirección del `AnchorPath`.
 //!
-//! Lo que no hay aún: comodines fuera del último trozo (`#?/Libs/x`), entrar en los cajones (`APF_DODIR`) y cortar con
-//! `ap_BreakBits`. Los dos primeros se apuntan como función que falta.
+//! El patrón vacío es el cajón actual (con el nombre vacío en `ap_Info`, como en AmigaOS); un patrón que acaba en `:` o
+//! `/`, ese cajón. Con `APF_DODIR` puesto, MatchNext entra en el cajón que acaba de dar: un `AChain` hijo (en
+//! `ap_Last`, con el cerrojo del cajón) y todo lo que hay dentro, case o no con el patrón; al acabar, el cajón otra vez,
+//! con `APF_DIDDIR`, y se sigue donde se iba. Lo comprobado contra el oráculo: `pruebas68k/dosasl.c`.
+//!
+//! Lo que no hay aún: comodines fuera del último trozo (`#?/Libs/x`, se apunta como función que falta) y cortar con
+//! `ap_BreakBits`.
 
 use alloc::vec::Vec;
 
@@ -30,6 +35,8 @@ pub mod anchor {
 
 /// `struct AChain`.
 pub mod achain {
+    pub const AN_CHILD: u32 = 0;
+    pub const AN_PARENT: u32 = 4;
     pub const AN_LOCK: u32 = 8;
     pub const AN_INFO: u32 = 12;
     pub const AN_FLAGS: u32 = 272;
@@ -42,6 +49,31 @@ pub mod apf {
     pub const DODIR: u8 = 1 << 2;
     pub const DIDDIR: u8 = 1 << 3;
     pub const DIRCHANGED: u8 = 1 << 6;
+}
+
+/// Los cajones en que se ha entrado con `APF_DODIR`, uno dentro de otro, como mucho.
+const MAX_NIVELES: usize = 32;
+/// Lo que mide el `AChain` de un cajón en que se entra (sin `an_String`).
+const LARGO_HIJO: u32 = (achain::AN_STRING + 1 + 3) & !3;
+
+/// Un cajón en que se ha entrado con `APF_DODIR`.
+struct Nivel {
+    /// Su cerrojo (BPTR), también en `an_Lock` de su `AChain`.
+    cerrojo: u32,
+    achain: u32,
+    /// Su ruta, para `ap_Buf` (la de lo de dentro va detrás).
+    ruta: Vec<u8>,
+    /// Su `FileInfoBlock` tal como se dio, para darlo otra vez al salir (con `APF_DIDDIR`).
+    fib: Vec<u8>,
+}
+
+/// Lo último que se dio, por si se pide entrar en ello.
+#[derive(Clone)]
+struct Dado {
+    /// El sitio del objeto.
+    sitio: Sitio,
+    ruta: Vec<u8>,
+    cajon: bool,
 }
 
 /// Búsquedas abiertas a la vez (todas las tareas juntas).
@@ -63,8 +95,10 @@ pub(crate) struct Busqueda {
     /// ellos con CurrentDir).
     cerrojo: u32,
     viejos: Vec<u32>,
-    /// Ya se avisó de `APF_DODIR`.
-    avisado_dodir: bool,
+    /// El patrón no tiene último trozo (vacío, o acaba en `:` o `/`): lo que se da es el cajón mismo.
+    mismo: bool,
+    niveles: Vec<Nivel>,
+    dado: Option<Dado>,
     pub(crate) dueno: u32,
 }
 
@@ -113,6 +147,7 @@ impl<F: SistemaArchivos> Dos<F> {
             _ => return Err(E::Io(ERROR_BAD_TEMPLATE)),
         };
         let sitios = self.sitios(c, cajon)?;
+        let mismo = ultimo.is_empty();
         let largo = (achain::AN_STRING + ultimo.len() as u32 + 1 + 3) & !3;
         let ach = Self::reservar(c, largo)?;
         Self::poner(c, ach + achain::AN_STRING, &ultimo)?;
@@ -133,12 +168,20 @@ impl<F: SistemaArchivos> Dos<F> {
                 i: 0,
                 cerrojo: 0,
                 viejos: Vec::new(),
-                avisado_dodir: false,
+                mismo,
+                niveles: Vec::new(),
+                dado: None,
                 dueno: c.tarea_actual(),
             },
         );
         // Si falla, la búsqueda queda hasta MatchEnd (o hasta que acabe la tarea), como pide AmigaOS.
-        if comodines { self.siguiente(c, ap) } else { self.uno_solo(c, ap) }
+        if mismo {
+            self.el_cajon(c, ap)
+        } else if comodines {
+            self.siguiente(c, ap)
+        } else {
+            self.uno_solo(c, ap)
+        }
     }
 
     /// MatchNext(anchor).
@@ -148,24 +191,129 @@ impl<F: SistemaArchivos> Dos<F> {
             return Err(E::Io(ERROR_NO_MORE_ENTRIES));
         };
         let banderas = Self::l8(c, ap + anchor::AP_FLAGS)?;
+        Self::e8(c, ap + anchor::AP_FLAGS, banderas & !(apf::DODIR | apf::DIDDIR | apf::DIRCHANGED))?;
         if banderas & apf::DODIR != 0 {
-            Self::e8(c, ap + anchor::AP_FLAGS, banderas & !(apf::DODIR | apf::DIRCHANGED))?;
-            if !b.avisado_dodir {
-                b.avisado_dodir = true;
-                self.avisar(c, "MatchNext", Fallo::NoImplementada { n: lvo::MATCH_NEXT });
+            if let Some(d) = b.dado.take().filter(|d| d.cajon) {
+                self.entrar(c, ap, d)?;
             }
-        } else {
-            Self::e8(c, ap + anchor::AP_FLAGS, banderas & !apf::DIRCHANGED)?;
         }
-        if !self.busquedas[&ap].comodines {
+        if !self.busquedas[&ap].niveles.is_empty() {
+            return self.siguiente_dentro(c, ap);
+        }
+        let b = &self.busquedas[&ap];
+        if !b.comodines || b.mismo {
             return Err(E::Io(ERROR_NO_MORE_ENTRIES));
         }
         self.siguiente(c, ap)
     }
 
+    /// Lo que se da con un patrón sin último trozo: el cajón mismo, con el nombre vacío.
+    fn el_cajon<C: Caja>(&mut self, c: &mut C, ap: u32) -> R<()> {
+        if !self.abrir_cajon(c, ap)? {
+            return Err(E::Io(ERROR_OBJECT_NOT_FOUND));
+        }
+        let (l, ach, ruta) = {
+            let b = &self.busquedas[&ap];
+            let mut ruta = b.prefijo.clone();
+            if ruta.len() > 1 && ruta.last() == Some(&b'/') {
+                ruta.pop();
+            }
+            (b.cerrojo, b.achain, ruta)
+        };
+        let fib = ach + achain::AN_INFO;
+        let mut info = Self::bytes(c, fib, fib::TAMANO)?;
+        info[fib::FIB_FILENAME as usize] = 0;
+        Self::poner(c, ap + anchor::AP_INFO, &info)?;
+        let sitio = self.sitio_de_cerrojo(l)?;
+        self.busquedas.get_mut(&ap).unwrap().dado = Some(Dado { sitio, ruta: ruta.clone(), cajon: true });
+        self.poner_buf(c, ap, &ruta)
+    }
+
+    /// Entra en el cajón `d` (lo último que se dio): su cerrojo en un `AChain` hijo, que pasa a `ap_Last`.
+    fn entrar<C: Caja>(&mut self, c: &mut C, ap: u32, d: Dado) -> R<()> {
+        if self.busquedas[&ap].niveles.len() >= MAX_NIVELES {
+            return Err(E::Io(ERROR_TOO_MANY_LEVELS));
+        }
+        let (asa, datos) = self.abrir_sitio(&d.sitio).map_err(|e| de_fs(e, Op::Leer))?;
+        if datos.tipo != Tipo::Cajon {
+            let _ = self.fs.cerrar(asa);
+            return Ok(());
+        }
+        let l = self.nuevo_cerrojo(c, d.sitio.clone(), asa, false, true)? >> 2;
+        let hijo = match Self::reservar(c, LARGO_HIJO) {
+            Ok(h) => h,
+            Err(e) => {
+                let _ = self.unlock(c, l);
+                return Err(e);
+            }
+        };
+        let padre = self.busquedas[&ap].niveles.last().map_or(self.busquedas[&ap].achain, |n| n.achain);
+        let fib = Self::bytes(c, ap + anchor::AP_INFO, fib::TAMANO)?;
+        let r = (|| -> R<()> {
+            Self::e32(c, hijo + achain::AN_CHILD, 0)?;
+            Self::e32(c, hijo + achain::AN_PARENT, padre)?;
+            Self::e32(c, hijo + achain::AN_LOCK, l)?;
+            Self::e8(c, hijo + achain::AN_FLAGS, 0)?;
+            Self::e8(c, hijo + achain::AN_STRING, 0)?;
+            self.examine(c, l, hijo + achain::AN_INFO)?;
+            Self::e32(c, padre + achain::AN_CHILD, hijo)?;
+            Self::e32(c, ap + anchor::AP_LAST, hijo)?;
+            let f = Self::l8(c, ap + anchor::AP_FLAGS)?;
+            Self::e8(c, ap + anchor::AP_FLAGS, f | apf::DIRCHANGED)
+        })();
+        if let Err(e) = r {
+            let _ = Self::e32(c, padre + achain::AN_CHILD, 0);
+            c.liberar(hijo, LARGO_HIJO);
+            let _ = self.unlock(c, l);
+            return Err(e);
+        }
+        self.busquedas.get_mut(&ap).unwrap().niveles.push(Nivel { cerrojo: l, achain: hijo, ruta: d.ruta, fib });
+        Ok(())
+    }
+
+    /// Lo siguiente del cajón en que se está; si no queda nada, sale de él y lo da otra vez, con `APF_DIDDIR`.
+    fn siguiente_dentro<C: Caja>(&mut self, c: &mut C, ap: u32) -> R<()> {
+        let (l, hijo) = {
+            let n = self.busquedas[&ap].niveles.last().unwrap();
+            (n.cerrojo, n.achain)
+        };
+        let fib = hijo + achain::AN_INFO;
+        match self.ex_next(c, l, fib) {
+            Ok(()) => {
+                let nombre = Self::nombre_fib(c, fib)?;
+                let info = Self::bytes(c, fib, fib::TAMANO)?;
+                Self::poner(c, ap + anchor::AP_INFO, &info)?;
+                let cajon = Self::l32(c, fib + fib::FIB_DIRENTRYTYPE)? as i32 > 0;
+                let mut sitio = self.sitio_de_cerrojo(l)?;
+                sitio.camino.push(nombres::a_utf8(&nombre));
+                let ruta = unir(&self.busquedas[&ap].niveles.last().unwrap().ruta, &nombre);
+                self.busquedas.get_mut(&ap).unwrap().dado = Some(Dado { sitio, ruta: ruta.clone(), cajon });
+                self.poner_buf(c, ap, &ruta)
+            }
+            Err(E::Io(ERROR_NO_MORE_ENTRIES)) => {
+                let n = self.busquedas.get_mut(&ap).unwrap().niveles.pop().unwrap();
+                let padre = self.busquedas[&ap].niveles.last().map_or(self.busquedas[&ap].achain, |n| n.achain);
+                let _ = self.unlock(c, n.cerrojo);
+                c.liberar(n.achain, LARGO_HIJO);
+                Self::e32(c, padre + achain::AN_CHILD, 0)?;
+                Self::e32(c, ap + anchor::AP_LAST, padre)?;
+                Self::poner(c, ap + anchor::AP_INFO, &n.fib)?;
+                let f = Self::l8(c, ap + anchor::AP_FLAGS)?;
+                Self::e8(c, ap + anchor::AP_FLAGS, f | apf::DIDDIR | apf::DIRCHANGED)?;
+                self.busquedas.get_mut(&ap).unwrap().dado = None;
+                self.poner_buf(c, ap, &n.ruta)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// MatchEnd(anchor): suelta el AChain y los cerrojos. Con un AnchorPath sin búsqueda, nada.
     pub(crate) fn match_end<C: Caja>(&mut self, c: &mut C, ap: u32) {
         let Some(b) = self.busquedas.remove(&ap) else { return };
+        for n in b.niveles.iter().rev() {
+            let _ = self.unlock(c, n.cerrojo);
+            c.liberar(n.achain, LARGO_HIJO);
+        }
         for l in b.viejos.iter().copied().chain(core::iter::once(b.cerrojo)).filter(|&l| l != 0) {
             let _ = self.unlock(c, l);
         }
@@ -274,14 +422,24 @@ impl<F: SistemaArchivos> Dos<F> {
         let info = Self::bytes(c, fib, fib::TAMANO)?;
         Self::poner(c, ap + anchor::AP_INFO, &info)?;
         Self::e8(c, self.busquedas[&ap].achain + achain::AN_FLAGS, 0)?;
+        let mut ruta = self.busquedas[&ap].prefijo.clone();
+        ruta.extend_from_slice(nombre);
+        let cajon = Self::l32(c, fib + fib::FIB_DIRENTRYTYPE)? as i32 > 0;
+        let mut sitio = self.sitio_de_cerrojo(self.busquedas[&ap].cerrojo)?;
+        sitio.camino.push(nombres::a_utf8(nombre));
+        self.busquedas.get_mut(&ap).unwrap().dado = Some(Dado { sitio, ruta: ruta.clone(), cajon });
+        self.poner_buf(c, ap, &ruta)
+    }
+
+    /// `ruta` en `ap_Buf`, si `ap_Strlen` lo pide (cortada y ERROR_BUFFER_OVERFLOW si no cabe).
+    fn poner_buf<C: Caja>(&mut self, c: &mut C, ap: u32, ruta: &[u8]) -> R<()> {
         let tam = Self::l16(c, ap + anchor::AP_STRLEN)? as i16;
         if tam <= 0 {
             return Ok(());
         }
         let tam = tam as u32;
         Self::tramo(c, ap + anchor::AP_BUF, tam)?;
-        let mut ruta = self.busquedas[&ap].prefijo.clone();
-        ruta.extend_from_slice(nombre);
+        let mut ruta = ruta.to_vec();
         if ruta.len() as u32 + 1 > tam {
             ruta.truncate(tam as usize - 1);
             ruta.push(0);
@@ -296,4 +454,14 @@ impl<F: SistemaArchivos> Dos<F> {
         let n = Self::bytes(c, fib + fib::FIB_FILENAME, fib::LARGO_NOMBRE)?;
         Ok(n[..n.iter().position(|&b| b == 0).unwrap_or(n.len())].to_vec())
     }
+}
+
+/// La ruta de `nombre` dentro del cajón de ruta `cajon`: "cajon/nombre"; tras un volumen o nada, sin `/`.
+fn unir(cajon: &[u8], nombre: &[u8]) -> Vec<u8> {
+    let mut r = cajon.to_vec();
+    if !r.is_empty() && !matches!(r.last(), Some(b':') | Some(b'/')) {
+        r.push(b'/');
+    }
+    r.extend_from_slice(nombre);
+    r
 }

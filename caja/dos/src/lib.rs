@@ -42,6 +42,7 @@ mod cambios;
 mod cerrojos;
 mod despacho;
 mod espacio;
+mod fechas;
 pub mod exall;
 mod ficheros;
 mod patrones;
@@ -344,6 +345,8 @@ pub struct Dos<F: SistemaArchivos> {
     pub(crate) fijos: BTreeMap<u32, u32>,
     /// Búsquedas de MatchFirst en marcha, por la dirección de su `AnchorPath`.
     pub(crate) busquedas: BTreeMap<u32, busqueda::Busqueda>,
+    /// Los `DevProc` dados por GetDeviceProc: dirección → (cerrojo que soltar, o 0; el cajón de la asignación).
+    pub(crate) devprocs: BTreeMap<u32, (u32, Option<usize>)>,
     pub(crate) avisos: Vec<Aviso>,
 }
 
@@ -365,6 +368,7 @@ impl<F: SistemaArchivos> Dos<F> {
             puerto_consola: 0,
             fijos: BTreeMap::new(),
             busquedas: BTreeMap::new(),
+            devprocs: BTreeMap::new(),
             avisos: Vec::new(),
         }
     }

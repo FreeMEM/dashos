@@ -172,7 +172,8 @@ impl<F: SistemaArchivos> Dos<F> {
                     alloc::format!("{v}").into_bytes()
                 }
                 b'u' | b'U' => alloc::format!("{}", leer(c, largo)?).into_bytes(),
-                b'x' => alloc::format!("{:x}", leer(c, largo)?).into_bytes(),
+                // %x en mayúsculas, como en AmigaOS (el oráculo: pruebas68k/formato.c).
+                b'x' => alloc::format!("{:X}", leer(c, largo)?).into_bytes(),
                 b'X' => alloc::format!("{:X}", leer(c, largo)?).into_bytes(),
                 b'c' => alloc::vec![leer(c, largo)? as u8],
                 b's' => {
