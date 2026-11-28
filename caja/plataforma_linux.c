@@ -167,9 +167,187 @@ uint64_t plat_ahora_us(void)
     return reloj(CLOCK_MONOTONIC) / 1000;
 }
 
+/* --- La hora local: la zona de /etc/localtime (TZif), sin libc --- */
+
+/* El fichero TZif entero (los de zoneinfo miden unos pocos KB). */
+static uint8_t tz[65536];
+static long tz_largo = -1;
+/* Las transiciones de la tabla de 64 bits (o la de 32 si no hay otra): instantes, tipo de cada una y los tipos
+   (desfase de 32 bits, horario de verano, abreviatura: 6 bytes cada uno). La regla POSIX del final, para lo que
+   pasa de la última transición. */
+static const uint8_t *tz_instantes, *tz_tipos, *tz_info;
+static uint32_t tz_n, tz_ntipos;
+static int tz_ancho;   /* 8 en la tabla de 64 bits, 4 en la de 32 */
+static char tz_regla[128];
+
+static uint32_t be32(const uint8_t *p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
+
+static int64_t instante(uint32_t i)
+{
+    const uint8_t *p = tz_instantes + (size_t)i * tz_ancho;
+    return tz_ancho == 8 ? (int64_t)((uint64_t)be32(p) << 32 | be32(p + 4)) : (int64_t)(int32_t)be32(p);
+}
+
+/* Las cuentas de la cabecera de un bloque TZif en `p`, y lo que mide ese bloque con instantes de `ancho` bytes. */
+static long bloque(const uint8_t *p, long resto, int ancho, uint32_t c[6])
+{
+    if (resto < 44 || p[0] != 'T' || p[1] != 'Z' || p[2] != 'i' || p[3] != 'f') return -1;
+    for (int i = 0; i < 6; i++) c[i] = be32(p + 20 + 4 * i);
+    /* isutcnt, isstdcnt, leapcnt, timecnt, typecnt, charcnt */
+    long largo = 44 + (long)c[3] * ancho + c[3] + (long)c[4] * 6 + c[5] + (long)c[2] * (ancho + 4) + c[1] + c[0];
+    return largo <= resto ? largo : -1;
+}
+
+static void tz_leer(void)
+{
+    tz_largo = plat_fichero_leer("/etc/localtime", tz, sizeof tz - 1);
+    if (tz_largo <= 0) return;
+    uint32_t c[6];
+    long l1 = bloque(tz, tz_largo, 4, c);
+    if (l1 < 0) { tz_largo = 0; return; }
+    const uint8_t *b = tz;
+    tz_ancho = 4;
+    if (tz[4] >= '2') {
+        long l2 = bloque(tz + l1, tz_largo - l1, 8, c);
+        if (l2 > 0) {
+            b = tz + l1;
+            tz_ancho = 8;
+            /* La regla, entre dos saltos de línea tras el bloque de 64 bits. */
+            const uint8_t *r = b + l2, *fin = tz + tz_largo;
+            if (r < fin && *r == '\n') {
+                size_t n = 0;
+                for (r++; r < fin && *r != '\n' && n + 1 < sizeof tz_regla; r++) tz_regla[n++] = (char)*r;
+                tz_regla[n] = 0;
+            }
+        } else
+            bloque(tz, tz_largo, 4, c);
+    }
+    tz_n = c[3];
+    tz_ntipos = c[4];
+    tz_instantes = b + 44;
+    tz_tipos = tz_instantes + (size_t)tz_n * tz_ancho;
+    tz_info = tz_tipos + tz_n;
+}
+
+static int64_t dias_desde_1970(int64_t y, int64_t m, int64_t d)
+{
+    y -= m <= 2;
+    int64_t era = (y >= 0 ? y : y - 399) / 400, yoe = y - era * 400;
+    int64_t doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    return era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468;
+}
+
+static int bisiesto(int64_t y) { return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0; }
+
+/* Un desfase POSIX ("-1", "+5:30", "3"): los segundos, con el signo de POSIX (positivo al oeste). */
+static const char *desfase_posix(const char *p, long *s)
+{
+    int signo = 1;
+    if (*p == '+' || *p == '-') signo = *p++ == '-' ? -1 : 1;
+    long v = 0, parte = 0;
+    for (int k = 0; k < 3; k++) {
+        parte = 0;
+        while (*p >= '0' && *p <= '9') parte = parte * 10 + (*p++ - '0');
+        v = v * 60 + parte;
+        if (*p != ':') {
+            for (int j = k; j < 2; j++) v *= 60;
+            break;
+        }
+        p++;
+    }
+    *s = signo * v;
+    return p;
+}
+
+static const char *nombre_posix(const char *p)
+{
+    if (*p == '<') {
+        while (*p && *p != '>') p++;
+        return *p ? p + 1 : p;
+    }
+    while ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z')) p++;
+    return p;
+}
+
+/* El instante UTC de una regla "Mm.w.d[/hora]" del año `y`, con el desfase local `local` (segundos al este). */
+static const char *regla_m(const char *p, int64_t y, long local, int64_t *t)
+{
+    if (*p != 'M') return 0;
+    long m = 0, w = 0, d = 0, hora = 7200;
+    p++;
+    while (*p >= '0' && *p <= '9') m = m * 10 + (*p++ - '0');
+    if (*p++ != '.') return 0;
+    while (*p >= '0' && *p <= '9') w = w * 10 + (*p++ - '0');
+    if (*p++ != '.') return 0;
+    while (*p >= '0' && *p <= '9') d = d * 10 + (*p++ - '0');
+    if (*p == '/') p = desfase_posix(p + 1, &hora);
+    static const int dias_mes[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    if (m < 1 || m > 12) return 0;
+    int64_t primero = dias_desde_1970(y, m, 1);
+    int64_t dsem = (primero + 4) % 7;   /* el 1 de enero de 1970 fue jueves */
+    if (dsem < 0) dsem += 7;
+    int64_t dia = 1 + (d - dsem + 7) % 7 + (w - 1) * 7;
+    int64_t largo = dias_mes[m - 1] + (m == 2 && bisiesto(y));
+    while (dia > largo) dia -= 7;
+    *t = (primero + dia - 1) * 86400 + hora - local;
+    return p;
+}
+
+/* Lo que hay que sumar a UTC para la hora local en `t` según una regla POSIX ("CET-1CEST,M3.5.0,M10.5.0/3"). */
+static long desfase_regla(const char *r, int64_t t)
+{
+    long std, dst;
+    const char *p = nombre_posix(r);
+    if (p == r) return 0;
+    p = desfase_posix(p, &std);
+    std = -std;
+    if (!*p) return std;
+    const char *q = nombre_posix(p);
+    if (q == p) return std;
+    p = q;
+    dst = std + 3600;
+    if (*p && *p != ',') {
+        p = desfase_posix(p, &dst);
+        dst = -dst;
+    }
+    if (*p++ != ',') return std;
+    int64_t y = 1970 + t / 31556952, ini, fin;
+    for (int k = 0; k < 2; k++) {   /* el año de `t`, por si la cuenta aproximada se pasa */
+        int64_t dias = t / 86400;
+        if (dias_desde_1970(y, 1, 1) > dias) y--;
+        else if (dias_desde_1970(y + 1, 1, 1) <= dias) y++;
+    }
+    const char *e = regla_m(p, y, std, &ini);
+    if (!e || *e != ',' || !regla_m(e + 1, y, dst, &fin)) return std;
+    int verano = ini < fin ? (t >= ini && t < fin) : (t >= ini || t < fin);
+    return verano ? dst : std;
+}
+
+long plat_desfase_utc(int64_t t)
+{
+    if (tz_largo < 0) tz_leer();
+    if (tz_largo <= 0 || !tz_ntipos) return 0;
+    if (tz_n && t >= instante(tz_n - 1) && tz_regla[0]) return desfase_regla(tz_regla, t);
+    uint32_t tipo = 0;
+    if (tz_n && t >= instante(0)) {
+        uint32_t a = 0, b = tz_n - 1;   /* la última transición <= t */
+        while (a < b) {
+            uint32_t m = (a + b + 1) / 2;
+            if (instante(m) <= t) a = m;
+            else b = m - 1;
+        }
+        tipo = tz_tipos[a];
+    } else if (!tz_n && tz_regla[0])
+        return desfase_regla(tz_regla, t);
+    if (tipo >= tz_ntipos) return 0;
+    return (long)(int32_t)be32(tz_info + 6 * tipo);
+}
+
+/* La hora del Amiga es la local: la de UTC con el desfase de la zona de Linux. */
 uint64_t plat_hora_ns(void)
 {
-    return reloj(CLOCK_REALTIME);
+    uint64_t ns = reloj(CLOCK_REALTIME);
+    return ns + (uint64_t)((int64_t)plat_desfase_utc((int64_t)(ns / 1000000000)) * 1000000000);
 }
 
 void plat_dormir(uint64_t us)

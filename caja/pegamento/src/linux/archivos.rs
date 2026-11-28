@@ -53,13 +53,24 @@ fn camino(s: &str) -> Result<Camino, ErrorFs> {
     Camino::de(s).ok_or(ErrorFs::MalFormado)
 }
 
+unsafe extern "C" {
+    /// plataforma_linux.c: lo que hay que sumar a UTC (segundos) para la hora local en el instante `t`.
+    fn plat_desfase_utc(t: i64) -> isize;
+}
+
+/// La hora local de un instante UTC (segundos desde 1970): el Amiga no sabe de zonas, todo va en hora local.
+fn local(t: i64) -> i64 {
+    // SEGURIDAD: un número.
+    t + unsafe { plat_desfase_utc(t) } as i64
+}
+
 fn datos_de(e: &sys::Estado) -> Datos {
     let tipo = match e.modo & 0o170000 {
         0o040000 => Tipo::Cajon,
         0o120000 => Tipo::Enlace,
         _ => Tipo::Fichero,
     };
-    Datos { tamano: e.tamano, fecha: e.mtime.max(0) as u64, modo: e.modo & 0o7777, tipo, amiga: 0 }
+    Datos { tamano: e.tamano, fecha: local(e.mtime).max(0) as u64, modo: e.modo & 0o7777, tipo, amiga: 0 }
 }
 
 impl FsLinux {
@@ -253,7 +264,10 @@ impl SistemaArchivos for FsLinux {
     }
 
     fn fechar(&mut self, asa: Asa, fecha: u64) -> Result<(), ErrorFs> {
-        sys::fechar(self.fd(asa)?, fecha).map(|_| ()).map_err(error)
+        // De la hora local a UTC: el desfase del instante (en el cambio de hora puede errar en una hora).
+        let t = fecha as i64;
+        let utc = t - (local(t) - t);
+        sys::fechar(self.fd(asa)?, utc.max(0) as u64).map(|_| ()).map_err(error)
     }
 }
 
