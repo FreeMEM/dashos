@@ -1,0 +1,11 @@
+# LightWave 5.0r (copia del usuario): las asignaciones de su "Assign LightWave" y Layout con FPU.
+variable traza-amiga -
+asigna Toaster: AmigaOS:Apps/LightWave
+asigna VT35: AmigaOS:Apps/LightWave
+asigna 3D: AmigaOS:Apps/LightWave/3D
+asigna newtek: AmigaOS:Apps/LightWave
+asigna hiip: AmigaOS:Apps/LightWave/Programs/Hiip_Support
+cajon AmigaOS:Apps/LightWave
+lanza AmigaOS:Apps/LightWave/Lightwave.fp
+espera 200
+marca captura lightwave

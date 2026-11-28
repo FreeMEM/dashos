@@ -131,6 +131,69 @@ impl<C: Compositor> CajaGrafica<C> {
         lineas.truncate(MAX_LINEAS);
         let mut nombres: Vec<Vec<u8>> = botones_t.split(|&b| b == b'|').map(|l| l.iter().take(32).copied().collect()).collect();
         nombres.truncate(8);
+        self.abrir_requester(ex, t, titulo, lineas, nombres)
+    }
+
+    /// `AutoRequest(window, body, posText, negText, pFlag, nFlag, width, height)` (a0/a1/a2/a3/d0/d1/d2/d3), el
+    /// requester de antes de V36: el texto es una cadena de `IntuiText` (una línea cada una) y los botones, `posText`
+    /// (si lo hay) y `negText`. Devuelve 1 por el positivo y 0 por el negativo. Como `EasyRequestArgs`: la ventana
+    /// del requester, por el tema; `pFlag`, `nFlag` (IDCMP que lo contestan solos), el tamaño y la ventana se ignoran
+    /// (la ventana se ajusta a su texto).
+    pub(crate) fn auto_request<M: Memoria>(&mut self, ex: &mut Exec<M>, r: &mut Registros) -> Accion {
+        let t = ex.tarea_actual();
+        match self.auto_request_paso(ex, t, r.a[1], r.a[2], r.a[3]) {
+            Ok(Some(v)) => {
+                r.d[0] = v;
+                Accion::Seguir
+            }
+            Ok(None) => Accion::Bloquear,
+            Err(f) => {
+                self.avisar(ex, "AutoRequest", f);
+                self.cerrar_requester(ex, t);
+                r.d[0] = 0;
+                Accion::Seguir
+            }
+        }
+    }
+
+    fn auto_request_paso<M: Memoria>(&mut self, ex: &mut Exec<M>, t: u32, cuerpo: u32, si: u32, no: u32) -> Result<Option<u32>, Fallo> {
+        if let Some(q) = self.requesters.iter().position(|q| q.tarea == t) {
+            if let Some(v) = self.requesters[q].resultado {
+                self.cerrar_requester(ex, t);
+                return Ok(Some(v));
+            }
+            ex.set_signal(0, SIGF_SINGLE)?;
+            ex.wait(SIGF_SINGLE)?;
+            return Ok(None);
+        }
+        // Las líneas: el texto de cada IntuiText (it_IText en +12, it_NextText en +16), como mucho MAX_LINEAS.
+        let texto = |ex: &Exec<M>, it: u32| -> Result<Vec<u8>, Fallo> {
+            ex.tramo(it, 20)?;
+            let c = ex.l32(it + 12)?;
+            Ok(if c == 0 { Vec::new() } else { ex.cadena(c)?.into_iter().take(MAX_LARGO).collect() })
+        };
+        let mut lineas = Vec::new();
+        let mut it = cuerpo;
+        while it != 0 && lineas.len() < MAX_LINEAS {
+            lineas.push(texto(ex, it)?);
+            it = ex.l32(it + 16)?;
+        }
+        let mut nombres = Vec::new();
+        if si != 0 {
+            nombres.push(texto(ex, si)?.into_iter().take(32).collect());
+        }
+        nombres.push(if no != 0 { texto(ex, no)?.into_iter().take(32).collect() } else { b"OK".to_vec() });
+        self.abrir_requester(ex, t, b"System Request".to_vec(), lineas, nombres)
+    }
+
+    fn abrir_requester<M: Memoria>(
+        &mut self,
+        ex: &mut Exec<M>,
+        t: u32,
+        titulo: Vec<u8>,
+        lineas: Vec<Vec<u8>>,
+        nombres: Vec<Vec<u8>>,
+    ) -> Result<Option<u32>, Fallo> {
         // El tamaño: el texto más ancho o los botones, con márgenes; los bordes de la ventana, los de intuition.
         let (fw, fa) = (fuente::ANCHO as i32, fuente::ALTO as i32);
         let ancho_texto = lineas.iter().map(|l| l.len() as i32 * fw).max().unwrap_or(0);
@@ -273,5 +336,108 @@ impl<C: Compositor> CajaGrafica<C> {
     /// La tarea murió con un requester abierto (su ventana la cierra intuition con las demás).
     pub(crate) fn requesters_tarea_muerta<M: Memoria>(&mut self, ex: &mut Exec<M>, t: u32) {
         self.cerrar_requester(ex, t);
+    }
+}
+
+/// `struct Preferences` (`intuition/preferences.h`): su tamaño y los campos que se rellenan (desplazamientos sacados
+/// con `offsetof` del compilador del 68k sobre el NDK 3.2).
+mod prefs {
+    pub const TAMANO: u32 = 232;
+    pub const FONTHEIGHT: u32 = 0;
+    pub const BAUDRATE: u32 = 2;
+    pub const KEYRPTSPEED: u32 = 4;
+    pub const KEYRPTDELAY: u32 = 12;
+    pub const DOUBLECLICK: u32 = 20;
+    pub const POINTERTICKS: u32 = 108;
+    pub const COLOR0: u32 = 110;
+    pub const COLOR17: u32 = 102;
+    pub const WB_WIDTH: u32 = 226;
+    pub const WB_HEIGHT: u32 = 228;
+    pub const WB_DEPTH: u32 = 230;
+}
+
+impl<C: Compositor> CajaGrafica<C> {
+    /// `GetPrefs` y `GetDefPrefs(buffer, size)` (a0/d0): los ajustes de intuition de serie (la letra de 8, el doble
+    /// clic de DashOS, la repetición de las teclas, los colores del Workbench de 2.0 y el tamaño del Workbench de la
+    /// caja), hasta `size` bytes. Devuelve el búfer.
+    pub(crate) fn get_prefs<M: Memoria>(&mut self, ex: &mut Exec<M>, buf: u32, size: u32) -> Result<u32, Fallo> {
+        let n = size.min(prefs::TAMANO);
+        if buf == 0 || n == 0 {
+            return Ok(buf);
+        }
+        ex.tramo(buf, n)?;
+        let mut p = alloc::vec![0u8; prefs::TAMANO as usize];
+        let pon16 = |p: &mut Vec<u8>, d: u32, v: u16| p[d as usize..d as usize + 2].copy_from_slice(&v.to_be_bytes());
+        let pon32 = |p: &mut Vec<u8>, d: u32, v: u32| p[d as usize..d as usize + 4].copy_from_slice(&v.to_be_bytes());
+        p[prefs::FONTHEIGHT as usize] = 8;
+        pon16(&mut p, prefs::BAUDRATE, 5);
+        pon32(&mut p, prefs::KEYRPTSPEED + 4, 40_000);
+        pon32(&mut p, prefs::KEYRPTDELAY + 4, 500_000);
+        pon32(&mut p, prefs::DOUBLECLICK + 4, crate::DOBLE_CLIC_US as u32);
+        pon16(&mut p, prefs::POINTERTICKS, 1);
+        for (i, c) in [0x0AAAu16, 0x0000, 0x0FFF, 0x068B].into_iter().enumerate() {
+            pon16(&mut p, prefs::COLOR0 + 2 * i as u32, c);
+        }
+        for (i, c) in [0x0E44u16, 0x0000, 0x0EEC].into_iter().enumerate() {
+            pon16(&mut p, prefs::COLOR17 + 2 * i as u32, c);
+        }
+        let wb = self.workbench();
+        let (an, al) = (ex.l16(wb + 12).unwrap_or(640), ex.l16(wb + 14).unwrap_or(256));
+        pon16(&mut p, prefs::WB_WIDTH, an);
+        pon16(&mut p, prefs::WB_HEIGHT, al);
+        p[prefs::WB_DEPTH as usize] = 2;
+        for (i, b) in p[..n as usize].iter().enumerate() {
+            ex.e8(buf + i as u32, *b)?;
+        }
+        Ok(buf)
+    }
+}
+
+
+impl<C: Compositor> CajaGrafica<C> {
+    /// `DisplayAlert(alertNumber, string, height)` (d0/a0/d1) y `TimedDisplayAlert` (con un plazo en a1, que no se
+    /// mira): la alerta del Amiga, en un requester (no hay pantalla de alerta roja: sería quitarle la pantalla a todo
+    /// el escritorio). El texto son trozos (`WORD x`, `BYTE y`, el texto y un byte que dice si sigue otro); "Seguir"
+    /// es el botón izquierdo del ratón (TRUE) y "Cancelar" el derecho (FALSE). Una alerta sin salida
+    /// (`DEADEND_ALERT`, el bit 31) solo tiene "Cancelar" y da FALSE. Como mucho 20 trozos.
+    pub(crate) fn display_alert<M: Memoria>(&mut self, ex: &mut Exec<M>, r: &mut Registros) -> Accion {
+        let t = ex.tarea_actual();
+        let res = (|| -> Result<Option<u32>, Fallo> {
+            if let Some(q) = self.requesters.iter().position(|q| q.tarea == t) {
+                if let Some(v) = self.requesters[q].resultado {
+                    self.cerrar_requester(ex, t);
+                    return Ok(Some(v));
+                }
+                ex.set_signal(0, SIGF_SINGLE)?;
+                ex.wait(SIGF_SINGLE)?;
+                return Ok(None);
+            }
+            let mut lineas = Vec::new();
+            let mut p = r.a[0];
+            while p != 0 && lineas.len() < MAX_LINEAS {
+                ex.tramo(p, 4)?;
+                let texto: Vec<u8> = ex.cadena(p + 3)?.into_iter().take(MAX_LARGO).collect();
+                let sigue = ex.l8(p + 3 + texto.len() as u32 + 1)?;
+                p = if sigue != 0 { p + 3 + texto.len() as u32 + 2 } else { 0 };
+                lineas.push(texto);
+            }
+            let sin_salida = r.d[0] & 0x8000_0000 != 0;
+            let botones = if sin_salida { alloc::vec![b"Cancelar".to_vec()] } else { alloc::vec![b"Seguir".to_vec(), b"Cancelar".to_vec()] };
+            let titulo = alloc::format!("Alerta {:08X}", r.d[0]).into_bytes();
+            self.abrir_requester(ex, t, titulo, lineas, botones)
+        })();
+        match res {
+            Ok(Some(v)) => {
+                r.d[0] = v;
+                Accion::Seguir
+            }
+            Ok(None) => Accion::Bloquear,
+            Err(f) => {
+                self.avisar(ex, "DisplayAlert", f);
+                self.cerrar_requester(ex, t);
+                r.d[0] = 0;
+                Accion::Seguir
+            }
+        }
     }
 }

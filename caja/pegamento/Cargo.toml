@@ -19,6 +19,12 @@ caja_utility = { package = "dashos-caja-utility", path = "../utility" }
 caja_timer = { package = "dashos-caja-timer", path = "../timer" }
 # K2: los chips del Amiga (los CIA, un Agnus mínimo y el reloj), para el motor (chips.rs).
 caja_chips = { package = "dashos-caja-chips", path = "../chips" }
+# icon.library y workbench.library nativas (de la rama amiga-apps).
+caja_icono = { package = "dashos-caja-icono", path = "../icono" }
+# bsdsocket.library nativa: en DashOS, sobre su servicio de red (`red.rs`); en Linux, sin red aún (`linux/red.rs`).
+caja_bsdsocket = { package = "dashos-caja-bsdsocket", path = "../bsdsocket" }
+# ahi.device, la biblioteca de AHI y audio.device nativos: en DashOS, por su servicio de sonido (`sonido.rs`).
+caja_sonido = { package = "dashos-caja-sonido", path = "../sonido" }
 # Sin la opción `dashos`, la caja como programa de Linux (docs/CAJA_LINUX_LOOP.md): sin el crate de DashOS.
 dashos = { package = "dashos-usuario", path = "../../usuario", default-features = false, optional = true }
 wayland = { package = "dashos-wayland", path = "../../wayland" }

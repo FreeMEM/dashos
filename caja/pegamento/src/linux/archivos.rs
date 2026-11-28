@@ -20,6 +20,9 @@ pub type Fs = FsLinux;
 pub const RAIZ_CAJA: Asa = 0;
 pub const RAIZ_LINUX: Asa = 1;
 pub const RAIZ_SYS: Asa = 2;
+/// `Ram Disk:` (`RAM:`): en `$XDG_RUNTIME_DIR/caja-amiga-ram`, que es memoria (tmpfs) y se borra al cerrar la sesión,
+/// como el disco de RAM del Amiga al apagarlo. Compartido por las cajas de esa sesión.
+pub const RAIZ_RAM: Asa = 3;
 const RAICES: usize = 16;
 /// Entradas por página de `listar`.
 const POR_PAGINA: usize = 32;
@@ -89,6 +92,12 @@ impl FsLinux {
         fs.raices[RAIZ_CAJA as usize] = dir(caja);
         fs.raices[RAIZ_LINUX as usize] = dir("/");
         fs.raices[RAIZ_SYS as usize] = dir(caja);
+        if let Some(ram) = cajon_ram() {
+            if let Some(c) = Camino::de(&ram) {
+                let _ = sys::mkdirat(sys::AT_FDCWD, &c, 0o700);
+            }
+            fs.raices[RAIZ_RAM as usize] = dir(&ram);
+        }
         if fs.raices.iter().all(|r| r.is_none()) { None } else { Some(fs) }
     }
 
@@ -280,6 +289,14 @@ pub fn cajon_actual() -> Option<String> {
     let mut r = String::from("Linux:");
     r.push_str(s);
     Some(r)
+}
+
+/// El cajón de Linux de `Ram Disk:`, si hay `$XDG_RUNTIME_DIR`.
+pub fn cajon_ram() -> Option<String> {
+    let r = entorno(b"XDG_RUNTIME_DIR\0").filter(|r| r.starts_with('/'))?;
+    let mut s = String::from(r.trim_end_matches('/'));
+    s.push_str("/caja-amiga-ram");
+    Some(s)
 }
 
 fn entorno(nombre: &[u8]) -> Option<&'static str> {

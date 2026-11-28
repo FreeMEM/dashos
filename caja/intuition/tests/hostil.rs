@@ -270,8 +270,8 @@ fn funciones_que_faltan() {
     let mut c = caja();
     assert_eq!(g(&mut c, "Flood", &[1, 2, 3], &[0, 0]), 0);
     assert!(matches!(ultimo(&c), Fallo::NoImplementada { .. }));
-    assert_eq!(i(&mut c, "AutoRequest", &[], &[0x2000]), 0);
-    assert_eq!(c.1.avisos().last().unwrap().funcion, "AutoRequest");
+    assert_eq!(i(&mut c, "SetPrefs", &[], &[0x2000]), 0);
+    assert_eq!(c.1.avisos().last().unwrap().funcion, "SetPrefs");
 }
 
 /// Un generador sencillo (xorshift) para las llamadas al azar.

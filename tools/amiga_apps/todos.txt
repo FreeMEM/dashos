@@ -1,0 +1,12 @@
+# Varios programas Amiga a la vez junto a nativos de DashOS (el explorador): Tachyon con Aminet, Forja, AMines y la
+# guía de ProTracker en MultiView.
+variable traza-amiga -
+asigna AmiSSL: AmigaOS:AmiSSL
+asignaadd LIBS: AmigaOS:AmiSSL/Libs
+marca abre explorador
+lanza AmigaOS:Apps/Tachyon/Tachyon http://aminet.net/
+lanza AmigaOS:Apps/Forja/Forja
+lanza AmigaOS:Apps/AMines12/AMines
+lanza AmigaOS:Apps/Utilities/MultiView AmigaOS:Apps/ProTracker41/ProTracker4.1.guide
+espera 220
+marca captura todos

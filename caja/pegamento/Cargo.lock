@@ -12,6 +12,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashos-audiodevice"
+version = "0.0.1"
+
+[[package]]
+name = "dashos-caja-bsdsocket"
+version = "0.0.1"
+dependencies = [
+ "dashos-caja-exec",
+]
+
+[[package]]
 name = "dashos-caja-chips"
 version = "0.0.1"
 
@@ -24,6 +35,15 @@ name = "dashos-caja-exec"
 version = "0.0.1"
 
 [[package]]
+name = "dashos-caja-icono"
+version = "0.0.1"
+dependencies = [
+ "dashos-caja-dos",
+ "dashos-caja-exec",
+ "dashos-kit",
+]
+
+[[package]]
 name = "dashos-caja-intuition"
 version = "0.0.1"
 dependencies = [
@@ -34,16 +54,27 @@ dependencies = [
 name = "dashos-caja-pegamento"
 version = "0.0.1"
 dependencies = [
+ "dashos-caja-bsdsocket",
  "dashos-caja-chips",
  "dashos-caja-dos",
  "dashos-caja-exec",
+ "dashos-caja-icono",
  "dashos-caja-intuition",
+ "dashos-caja-sonido",
  "dashos-caja-timer",
  "dashos-caja-utility",
  "dashos-kit",
  "dashos-usuario",
  "dashos-wayland",
  "relevo",
+]
+
+[[package]]
+name = "dashos-caja-sonido"
+version = "0.0.1"
+dependencies = [
+ "dashos-audiodevice",
+ "dashos-caja-exec",
 ]
 
 [[package]]

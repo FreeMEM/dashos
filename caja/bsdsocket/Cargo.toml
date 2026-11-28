@@ -1,0 +1,13 @@
+[package]
+name = "dashos-caja-bsdsocket"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "bsdsocket.library nativa de la caja Amiga (S4): la interfaz AmiTCP 4 (y lo más usado de Roadshow) sobre el servicio de red de DashOS"
+
+[lib]
+name = "caja_bsdsocket"
+path = "src/lib.rs"
+
+[dependencies]
+caja_exec = { package = "dashos-caja-exec", path = "../exec" }

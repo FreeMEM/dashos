@@ -1,0 +1,6 @@
+# Tachyon (del usuario) con una página local (la del servidor del PC).
+variable traza-amiga -
+lanza AmigaOS:Apps/Tachyon/Tachyon http://10.0.2.2:8099/
+ventana Tachyon 300
+espera 100
+marca captura tachyon-local

@@ -91,6 +91,8 @@ fn ficheros_hostiles() {
         mal(&[0x3F3, 0, 1, 0, 0, 2, 0x3E9, 2, 0x4E75_4E75, 0, 0x3EC, 1, 7, 0, 0, 0x3F2]),
         mal(&[0x3F3, 0, 1, 0, 0, 2, 0x3E9, 2, 0x4E75_4E75, 0, 0x3EC, 1, 0, 400, 0, 0x3F2]),
         mal(&[0x3F3, 0, 1, 0, 0, 1, 0x3E9, 1, 0, 0x3F2, 0x3E9, 1, 0, 0x3F2]),
+        // Un hunk de más que empieza sin el HUNK_END del anterior: sigue siendo uno de más.
+        mal(&[0x3F3, 0, 1, 0, 0, 1, 0x3E9, 1, 0, 0x3E9, 1, 0, 0x3F2]),
         mal(&[0x3F3, 1, 0x41414141, 0, 1, 0, 0, 1]),
         mal(&[0x3F3, 0, 5000, 0, 4999]),
         mal(&[0x3F3, 0, 1, 0, 0, 1, 0x3F5]),
@@ -110,4 +112,21 @@ fn ficheros_hostiles() {
     let p = seg << 2;
     c.escribir32(p, seg).unwrap();
     assert!(hunk::segmentos(&c, seg).len() <= 1024);
+}
+
+/// Dos hunks seguidos sin el HUNK_END del primero (los ejecutables comprimidos, como OctaMED SoundStudio): cargan, y el
+/// segundo, más corto en el fichero que en la cabecera, sale entero (lo de más, como lo dé la reserva).
+#[test]
+fn hunk_sin_end_entre_dos() {
+    let v: Vec<u32> = vec![0x3F3, 0, 2, 0, 1, 1, 4, 0x3E9, 1, 0x4E75_4E75, 0x3E9, 2, 0x1234_5678, 0x9ABC_DEF0, 0x3F2];
+    let f: Vec<u8> = v.iter().flat_map(|x| x.to_be_bytes()).collect();
+    let mut c = CajaPrueba::nueva();
+    let seg = hunk::cargar(&mut c, &f).expect("carga");
+    let segs = hunk::segmentos(&c, seg);
+    assert_eq!(segs.len(), 2);
+    assert_eq!(c.leer32(segs[0].0), Some(0x4E75_4E75));
+    assert_eq!(c.leer32(segs[1].0 + 4), Some(0x9ABC_DEF0));
+    assert!(segs[1].1 >= 16);
+    hunk::descargar(&mut c, seg);
+    assert!(c.vivos.is_empty());
 }

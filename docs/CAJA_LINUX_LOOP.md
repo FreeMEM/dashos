@@ -208,3 +208,77 @@ sesión corriendo QEMU a la vez.
 Con dashos-2f y jefe-dash (2026-11-28): `third_party/Emu68` es ya un submódulo (la rama `dashos` de la bifurcación, PR
 #19). El 0019 va como commit "DashOS 0019-pc-fuera-de-memoria" (d410ba6, encima de 07d4c94), y esta rama mueve el
 puntero a él; el parche suelto, fuera. El código del submódulo es igual que el del clon con los 19 parches.
+
+### 2026-11-28: el ratón, más programas de otros, y amiga-apps traída
+
+Pedido por jefe-dash: el ratón en las ventanas de Wayland y más programas de 68k de otros (los C: de 3.9, MUI y un
+juego de sistema), apuntando los huecos. Después, llevar a main la rama `amiga-apps` (del 18-nov, parada, de otra línea).
+
+- **El ratón**: `pruebas_linux/compositor_falso.py`, un compositor de Wayland de mentira para las pruebas (no toca el
+  escritorio): clics, fotos de la primera ventana, de la última o de todas, y aviso de cada ventana nueva.
+- **Los C: de 3.9** (barrido de 38 órdenes): dos con StrToDate, ReadItem (con `CSource` y desde la línea de
+  argumentos), MaxCli, FindCliProc, FindSegment, ReadArgs con nombres vacíos, VFWritef (los formatos de BCPL) y
+  AddBuffers; las asignaciones `C:`, `S:`, `L:` y `LOCALE:`. Oráculo: `dos2.c` y `dos3.c`. Van Break, Setdate, Status,
+  Wait, Eval, Version de una biblioteca y los de antes.
+- **Un juego de sistema**: AMines (1992) se juega (DrawImage, DrawBorder y PrintIText; oráculo `imagen.c`).
+- **MUI**: commodities.library nativa (`comodidades.rs`; oráculo `cx.c`). MUI 5 arranca: MUI-Demo y AmigaAMP 3 abren sus
+  ventanas y atienden los clics. ramlib busca por nombre una biblioteca que se añade a mano y devuelve otra base desde
+  su `Init` (la mathieeedoubtrans de 3.9; oráculo `ramlib2.c`).
+- **Para cazar huecos**: `CAJA_AMIGA_TRAZA=1` (las llamadas a dos), `=todo` (también exec, con el nombre de lo que se
+  abre); y la de amiga-apps, `ENV:traza-amiga` (por tarea, todas las bibliotecas).
+- **amiga-apps**: su trabajo sin guardar, en un commit en su rama; sus 9 commits, en la rama `amiga-main` con cherry-pick.
+  DrawImage y PrintIText, los de esta rama (los suyos no daban lo del oráculo); icon.library, la suya (con
+  workbench.library), arreglada para el oráculo `icono.c`. Su red (bsdsocket) y su sonido (AHI y audio.device) van por
+  servicios de DashOS: en Linux, sin servicio de momento (`linux/red.rs`, `linux/sonido.rs`). asl, CIA, console/input y
+  mathffp valen en las dos.
+
+Huecos que quedan (de lo visto):
+
+| Hueco | Lo pide |
+|---|---|
+| La red de la caja de Linux (bsdsocket sobre zócalos de Linux) | Tachyon, Hangar |
+| El sonido de la caja de Linux (espera a S19) | AmigaAMP, ProTracker |
+| Los sucesos de entrada por commodities (las teclas de los filtros) | MUI (su tecla de mostrar), Exchange |
+| La datatypes.library 44.47 de 3.9 no abre (su `Open` falla sin llamar a nada); la 47.3 de 3.2 sí | AmigaAMP con el sistema de 3.9 |
+| Las secuencias de escape de MUI en los textos salen como cuadrados | MUI-Demo |
+| ExtendFont, StartNotify, screennotify.library | diskfont de 3.9, AmigaAMP, MUI |
+| Un Shell que lea `cli_CurrentInput` (Execute deja allí el guion) | Execute |
+| MakeLink y los comentarios de fichero (Filenote) en Linux | MakeLink, Filenote |
+| `DoPkt`, workbench.library de disco | Owner, xadList |
+| Los ficheros de Linux sin `x` salen sin la "e" | Which |
+
+Las escenas de amiga-apps en la caja de Linux (`pruebas_linux/escenas.sh`, con `CAJA_AMIGAOS` el AmigaOS del usuario con
+los programas; en x86 con RelevoJIT y, algunas, en ARM con Emu68 por qemu):
+
+| Escena | x86 (RelevoJIT) | ARM (Emu68) |
+|---|---|---|
+| juegos | AMines se juega; AmiMineSweeper (Blitz) pinta en el chipset y no se ve | - |
+| forja, hangar, tachyon | abren sus ventanas (sin red: Tachyon dice el error) | - |
+| amp | no abre en la escena (con el sistema de 3.9 y su datatypes 44.47); a mano, con la 47.3, sí | - |
+| pt (ProTracker) | cae su tarea (error de bus) | lee la CIA-A ($BFE001): la caja de Linux no lleva los chips |
+| dopus | cae (error de bus) | lee $FFFFEC (la ROM) y cae |
+| lw (LightWave) | cae por la excepción 11 (instrucciones de la FPU: RelevoJIT no la tiene) | no cae, pero no abre ventana |
+| octamed | escribe en la página 0 y cae | igual |
+| multiview, modeler, musica, cia, red | sin ventana en el tiempo de la escena | - |
+
+Lo que es del motor (la FPU de RelevoJIT) y de los chips en Linux (CIA, la salida de Denise a una ventana) va a quien
+los lleva (dashos-x86, dashos-2f).
+
+Después (mismo día), cada cosa con su prueba del oráculo: StartNotify y EndNotify (`notify.c`, en RAM:), ExtendFont y
+StripFont (`fuente2.c`), ScalerDiv y BitMapScale (`escala.c`; la diskfont de 3.9 escala fuentes), `RAM:` en la caja de
+Linux (el volumen "Ram Disk" sobre `$XDG_RUNTIME_DIR/caja-amiga-ram`) y 24 glifos más en la topaz de la caja (el espacio
+duro, que MUI pone por los tabuladores: eran los cuadrados de MUI-Demo; × ÷ de la Calculator). Muchos "falta:
+X OpenLibrary" de las escenas (screennotify, bitmap.image, texteditor.gadget...) no son de la caja: son bibliotecas de
+disco que no están instaladas en ese AmigaOS (screennotify, puesta a mano, carga bien).
+
+Y `RunCommand`, `SystemTagList` y `Execute` (`sistema.c` con `eco.exe`): la orden en anidado, en la tarea que llama,
+con su pila y sus argumentos (`pegamento/src/ordenes.rs` y `Continuacion::DeLaCaja` de exec); con `SYS_Asynch`, en un
+proceso aparte (Forja lanza así una extensión al arrancar: en anidado se quedaba esperando). Y `MakeClass` con su
+tamaño como UWORD (`clase.c`; Directory Opus pone basura en la mitad alta de D0).
+
+Por el camino, arranque-virt BE pilló un fallo mío: las asignaciones `C:`/`S:` sobre `Caja:` dejaban a guion.exe (la
+prueba de malware de S28) escribir `S:Startup-Sequence`. Ahora van solo en la caja de Linux.
+
+Pendiente: el guion de entrada de `Execute` (no hay Shell), y la ROM ($F80000-$FFFFFF) que leen algunos programas
+(Directory Opus): con los chips, de dashos-2f.
+

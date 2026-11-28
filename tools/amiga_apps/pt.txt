@@ -1,0 +1,6 @@
+# ProTracker 4.1 (Aminet) con el módulo de Aminet: que abra y que suene (por AHI).
+variable traza-amiga -
+cajon AmigaOS:Apps/ProTracker41
+lanza AmigaOS:Apps/ProTracker41/ProTracker41
+espera 150
+marca captura protracker

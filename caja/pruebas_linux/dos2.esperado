@@ -1,0 +1,25 @@
+ReadArgs [/N,SEC=SECS/S,MIN=MINS/S,UNTIL/K] [5]: 5 0 0 [-]
+ReadArgs [/N,SEC=SECS/S,MIN=MINS/S,UNTIL/K] [5 MIN]: 5 0 -1 [-]
+ReadArgs [/N,SEC=SECS/S,MIN=MINS/S,UNTIL/K] [7 SECS]: 7 -1 0 [-]
+ReadArgs [/N,SEC=SECS/S,MIN=MINS/S,UNTIL/K] [UNTIL 10:30]: -1 0 0 [10:30]
+ReadArgs [/N,SEC=SECS/S,MIN=MINS/S,UNTIL/K] []: -1 0 0 [-]
+ReadArgs [NOMBRE/A,=X/S] [hola]: 1752132705 0 0 [-]
+StrToDate [02-Mar-97] [12:30:24] formato 0: 1: 7000/750/1200
+StrToDate [97-03-02] [-] formato 1: 1: 7000/-1/-1
+StrToDate [03-02-97] [01:02] formato 2: 1: 7000/62/0
+StrToDate [02-03-97] [-] formato 3: 1: 7000/-1/-1
+StrToDate [-] [23:59:59] formato 0: 1: -1/1439/2950
+StrToDate [01-Jan-78] [00:00:00] formato 0: 1: 0/0/0
+StrToDate [31-Dec-13] [-] formato 0: 1: 13148/-1/-1
+StrToDate [29-Feb-00] [-] formato 0: 1: 8094/-1/-1
+StrToDate [30-Feb-00] [-] formato 0: 0: -1/-1/-1
+StrToDate [mal] [-] formato 0: 0: -1/-1/-1
+StrToDate [02-Mar-97] [25:00] formato 0: 0: 7000/-1/-1
+MaxCli >= 1: 1; su CLI esta entre ellos: 1; FindCliProc(0) 0, FindCliProc(1000) 0
+FindSegment("Dir", 0, 0): 0; ("NoExiste", 0, 1): 0
+ReadItem [uno dos tres]: 1[uno] 1[dos] 1[tres] 1[s] 1[s] 1[s] fin en 11
+ReadItem [  "con espacio" = fin]: 2[con espacio] -2[] fin en 17
+ReadItem [a=b]: 1[a] 1[b] 1[b] 1[b] 1[b] 1[b] fin en 2
+ReadItem ["*"escape*N" x]: 2["escape
+] 1[x] 1[x] 1[x] 1[x] 1[x] fin en 13
+ReadItem []: 0[] fin en 0

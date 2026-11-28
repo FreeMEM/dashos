@@ -67,6 +67,22 @@ pub const ADIOERR_CHANNELSTOLEN: i8 = -12;
 /// Quién es una petición: la dirección de su `IOAudio`, o lo que use quien llama.
 pub type Id = u64;
 
+/// La memoria de quien usa el corazón (la del 68k, en la caja): las muestras que no se copian se leen de ahí en cada
+/// mezcla, porque el programa puede cambiarlas mientras suenan. `false` si `[dir, dir + buf.len())` no se puede leer:
+/// entonces suena silencio.
+pub trait Memoria {
+    fn leer(&self, dir: u32, buf: &mut [u8]) -> bool;
+}
+
+/// Sin memoria de fuera: todo lo que se lea de ella es silencio.
+pub struct SinMemoria;
+
+impl Memoria for SinMemoria {
+    fn leer(&self, _dir: u32, _buf: &mut [u8]) -> bool {
+        false
+    }
+}
+
 /// Una petición, con los campos de `IOAudio` que usa cada orden.
 #[derive(Clone, Debug, Default)]
 pub struct Peticion {
@@ -85,6 +101,9 @@ pub struct Peticion {
     pub volumen: u16,
     /// 0: sin fin.
     pub ciclos: u16,
+    /// Las muestras de `CMD_WRITE` en la memoria de quien llama (dirección y bytes), que se leen al mezclar
+    /// (`mezclar_con`); sin esto, las de `datos`, copiadas.
+    pub fuera: Option<(u32, u32)>,
 }
 
 /// Lo que vuelve a un programa.
@@ -96,9 +115,34 @@ pub enum Aviso {
     Empieza { id: Id },
 }
 
+/// Las muestras de una escritura: copiadas, o en la memoria de quien llama (dirección y bytes).
+enum Datos {
+    Propios(Vec<i8>),
+    Fuera(u32, u32),
+}
+
+impl Datos {
+    fn largo(&self) -> usize {
+        match self {
+            Datos::Propios(v) => v.len(),
+            Datos::Fuera(_, l) => *l as usize,
+        }
+    }
+
+    fn muestra(&self, i: usize, mem: &dyn Memoria) -> i8 {
+        match self {
+            Datos::Propios(v) => v[i],
+            Datos::Fuera(d, _) => {
+                let mut b = [0u8; 1];
+                if mem.leer(d.wrapping_add(i as u32), &mut b) { b[0] as i8 } else { 0 }
+            }
+        }
+    }
+}
+
 struct Escritura {
     id: Id,
-    datos: Vec<i8>,
+    datos: Datos,
     pervol: Option<(u16, u16)>,
     ciclos: u16,
     mensaje: bool,
@@ -138,7 +182,11 @@ pub struct AudioDevice {
     siguiente_llave: u16,
     reloj: u64,
     frecuencia: u32,
-    avisos: Vec<Aviso>,
+    /// Lo que ha vuelto, con el cuadro en que pasó (los mezclados hasta entonces; ver `avisos_con_cuadro`).
+    avisos: Vec<(Aviso, u64)>,
+    mezclados: u64,
+    /// El cuadro de lo que pase ahora: `mezclados` fuera de la mezcla, y el que se mezcla (contado entero) dentro.
+    cuadro: u64,
 }
 
 fn hecha(id: Id, error: i8, unidad: u8, llave: u16) -> Aviso {
@@ -155,6 +203,8 @@ impl AudioDevice {
             reloj,
             frecuencia,
             avisos: Vec::new(),
+            mezclados: 0,
+            cuadro: 0,
         };
         for c in &mut d.canales {
             c.periodo = PERIODO_MINIMO;
@@ -164,7 +214,22 @@ impl AudioDevice {
 
     /// Lo que ha vuelto desde la última vez, en orden.
     pub fn avisos(&mut self) -> Vec<Aviso> {
+        core::mem::take(&mut self.avisos).into_iter().map(|(a, _)| a).collect()
+    }
+
+    /// Como `avisos`, con el cuadro en que pasó cada uno: los mezclados hasta él (incluido el que lo causó). Así
+    /// quien mezcla en trozos sabe cuándo suena el final de una escritura, no solo en qué trozo.
+    pub fn avisos_con_cuadro(&mut self) -> Vec<(Aviso, u64)> {
         core::mem::take(&mut self.avisos)
+    }
+
+    /// Los cuadros mezclados desde que se creó.
+    pub fn mezclados(&self) -> u64 {
+        self.mezclados
+    }
+
+    fn avisar(&mut self, a: Aviso) {
+        self.avisos.push((a, self.cuadro));
     }
 
     /// Los canales de `unidad` que tiene `llave`.
@@ -179,30 +244,34 @@ impl AudioDevice {
         match p.orden {
             ADCMD_ALLOCATE => self.asignar(p),
             CMD_WRITE => {
-                let Some(i) = canales().next() else { return self.avisos.push(hecha(p.id, ADIOERR_NOALLOCATION, 0, p.llave)) };
-                if p.datos.len() < 2 {
-                    return self.avisos.push(hecha(p.id, IOERR_BADLENGTH, 1 << i, p.llave));
+                let Some(i) = canales().next() else { return self.avisar(hecha(p.id, ADIOERR_NOALLOCATION, 0, p.llave)) };
+                let datos = match p.fuera {
+                    Some((d, l)) => Datos::Fuera(d, l),
+                    None => Datos::Propios(p.datos),
+                };
+                if datos.largo() < 2 {
+                    return self.avisar(hecha(p.id, IOERR_BADLENGTH, 1 << i, p.llave));
                 }
                 let pervol = (p.banderas & ADIOF_PERVOL != 0).then_some((p.periodo, p.volumen));
-                let e = Escritura { id: p.id, datos: p.datos, pervol, ciclos: p.ciclos, mensaje: p.banderas & ADIOF_WRITEMESSAGE != 0 };
+                let e = Escritura { id: p.id, datos, pervol, ciclos: p.ciclos, mensaje: p.banderas & ADIOF_WRITEMESSAGE != 0 };
                 self.canales[i].cola.push_back(e);
                 self.empezar(i);
             }
             _ if suyos == 0 && p.orden != CMD_UPDATE && p.orden != CMD_CLEAR => {
-                self.avisos.push(hecha(p.id, ADIOERR_NOALLOCATION, 0, p.llave))
+                self.avisar(hecha(p.id, ADIOERR_NOALLOCATION, 0, p.llave))
             }
             ADCMD_FREE => {
                 for i in canales() {
                     self.soltar(i);
                 }
-                self.avisos.push(hecha(p.id, 0, suyos, p.llave));
+                self.avisar(hecha(p.id, 0, suyos, p.llave));
                 self.repartir();
             }
             ADCMD_SETPREC => {
                 for i in canales() {
                     self.canales[i].prec = p.prec;
                 }
-                self.avisos.push(hecha(p.id, 0, suyos, p.llave));
+                self.avisar(hecha(p.id, 0, suyos, p.llave));
                 self.repartir();
             }
             ADCMD_LOCK => {
@@ -233,14 +302,14 @@ impl AudioDevice {
                 }
                 // Con varios canales sincronizados, vuelve con el primero que acabe su ciclo.
                 if !espera {
-                    self.avisos.push(hecha(p.id, 0, suyos, p.llave));
+                    self.avisar(hecha(p.id, 0, suyos, p.llave));
                 }
             }
             CMD_STOP | CMD_START => {
                 for i in canales() {
                     self.canales[i].parado = p.orden == CMD_STOP;
                 }
-                self.avisos.push(hecha(p.id, 0, suyos, p.llave));
+                self.avisar(hecha(p.id, 0, suyos, p.llave));
             }
             CMD_FLUSH | CMD_RESET => {
                 for i in canales() {
@@ -252,14 +321,14 @@ impl AudioDevice {
                         c.volumen = 0;
                     }
                 }
-                self.avisos.push(hecha(p.id, 0, suyos, p.llave));
+                self.avisar(hecha(p.id, 0, suyos, p.llave));
             }
             CMD_READ => {
                 // El original pone en `ioa_Data` la escritura que suena: quien llama la saca de `sonando`.
-                self.avisos.push(hecha(p.id, 0, suyos, p.llave));
+                self.avisar(hecha(p.id, 0, suyos, p.llave));
             }
-            CMD_UPDATE | CMD_CLEAR => self.avisos.push(hecha(p.id, 0, suyos, p.llave)),
-            _ => self.avisos.push(hecha(p.id, IOERR_NOCMD, 0, p.llave)),
+            CMD_UPDATE | CMD_CLEAR => self.avisar(hecha(p.id, 0, suyos, p.llave)),
+            _ => self.avisar(hecha(p.id, IOERR_NOCMD, 0, p.llave)),
         }
     }
 
@@ -277,7 +346,7 @@ impl AudioDevice {
     pub fn abortar(&mut self, id: Id) {
         if let Some(k) = self.esperando.iter().position(|p| p.id == id) {
             let p = self.esperando.remove(k).unwrap();
-            self.avisos.push(hecha(id, IOERR_ABORTED, 0, p.llave));
+            self.avisar(hecha(id, IOERR_ABORTED, 0, p.llave));
             return;
         }
         for i in 0..4 {
@@ -289,7 +358,7 @@ impl AudioDevice {
             let c = &mut self.canales[i];
             if let Some(k) = c.cola.iter().position(|e| e.id == id) {
                 c.cola.remove(k);
-                self.avisos.push(hecha(id, IOERR_ABORTED, 1 << i, llave));
+                self.avisar(hecha(id, IOERR_ABORTED, 1 << i, llave));
                 return;
             }
             if c.cerrojo == Some(id) {
@@ -300,13 +369,13 @@ impl AudioDevice {
                         unidad |= 1 << j;
                     }
                 }
-                self.avisos.push(hecha(id, IOERR_ABORTED, unidad, llave));
+                self.avisar(hecha(id, IOERR_ABORTED, unidad, llave));
                 return;
             }
             let c = &mut self.canales[i];
             if let Some(k) = c.al_final.iter().position(|a| matches!(a, AlFinal::Esperar(x) | AlFinal::Acabar(x) | AlFinal::PerVol(x, ..) if *x == id)) {
                 c.al_final.remove(k);
-                self.avisos.push(hecha(id, IOERR_ABORTED, 1 << i, llave));
+                self.avisar(hecha(id, IOERR_ABORTED, 1 << i, llave));
                 return;
             }
         }
@@ -324,7 +393,7 @@ impl AudioDevice {
         let combinaciones: Vec<u8> = p.datos.iter().map(|&c| c as u8 & 0xf).collect();
         let Some(&comb) = combinaciones.iter().find(|&&c| self.se_puede(c, p.prec)) else {
             if p.banderas & ADIOF_NOWAIT != 0 {
-                return self.avisos.push(hecha(p.id, ADIOERR_ALLOCFAILED, 0, p.llave));
+                return self.avisar(hecha(p.id, ADIOERR_ALLOCFAILED, 0, p.llave));
             }
             return self.esperando.push_back(p);
         };
@@ -340,7 +409,7 @@ impl AudioDevice {
                 self.canales[i].pedido = true;
             }
             if p.banderas & ADIOF_NOWAIT != 0 {
-                return self.avisos.push(hecha(p.id, ADIOERR_ALLOCFAILED, 0, p.llave));
+                return self.avisar(hecha(p.id, ADIOERR_ALLOCFAILED, 0, p.llave));
             }
             return self.esperando.push_back(p);
         }
@@ -362,7 +431,7 @@ impl AudioDevice {
             c.pedido = false;
             c.parado = false;
         }
-        self.avisos.push(hecha(p.id, 0, comb, p.llave));
+        self.avisar(hecha(p.id, 0, comb, p.llave));
     }
 
     /// Vuelve el cerrojo del canal `i` (y de los demás canales con la misma petición).
@@ -376,7 +445,7 @@ impl AudioDevice {
                 unidad |= 1 << j;
             }
         }
-        self.avisos.push(hecha(id, ADIOERR_CHANNELSTOLEN, unidad, llave));
+        self.avisar(hecha(id, ADIOERR_CHANNELSTOLEN, unidad, llave));
     }
 
     /// Vuelve a mirar las asignaciones que esperan, en orden.
@@ -392,7 +461,7 @@ impl AudioDevice {
         self.vaciar(i, IOERR_ABORTED);
         if let Some(id) = self.canales[i].cerrojo.take() {
             let llave = self.canales[i].llave;
-            self.avisos.push(hecha(id, 0, 1 << i, llave));
+            self.avisar(hecha(id, 0, 1 << i, llave));
         }
         let c = &mut self.canales[i];
         c.llave = 0;
@@ -411,7 +480,7 @@ impl AudioDevice {
         c.pos = 0;
         c.hechos = 0;
         for id in ids {
-            self.avisos.push(hecha(id, error, 1 << i, llave));
+            self.avisar(hecha(id, error, 1 << i, llave));
         }
     }
 
@@ -419,7 +488,7 @@ impl AudioDevice {
     fn acabar_actual(&mut self, i: usize, error: i8) {
         let llave = self.canales[i].llave;
         if let Some(e) = self.canales[i].actual.take() {
-            self.avisos.push(hecha(e.id, error, 1 << i, llave));
+            self.avisar(hecha(e.id, error, 1 << i, llave));
         }
         self.canales[i].pos = 0;
         self.canales[i].hechos = 0;
@@ -437,11 +506,12 @@ impl AudioDevice {
             c.periodo = per;
             c.volumen = vol;
         }
-        if e.mensaje {
-            self.avisos.push(Aviso::Empieza { id: e.id });
-        }
         c.hechos = 0;
+        let (mensaje, id) = (e.mensaje, e.id);
         c.actual = Some(e);
+        if mensaje {
+            self.avisar(Aviso::Empieza { id });
+        }
     }
 
     /// El final de un ciclo del canal `i`: lo que esperaba, y si la escritura acabó, la siguiente.
@@ -450,15 +520,15 @@ impl AudioDevice {
         let mut acabar = false;
         for a in core::mem::take(&mut self.canales[i].al_final) {
             match a {
-                AlFinal::Esperar(id) => self.avisos.push(hecha(id, 0, 1 << i, llave)),
+                AlFinal::Esperar(id) => self.avisar(hecha(id, 0, 1 << i, llave)),
                 AlFinal::Acabar(id) => {
                     acabar = true;
-                    self.avisos.push(hecha(id, 0, 1 << i, llave));
+                    self.avisar(hecha(id, 0, 1 << i, llave));
                 }
                 AlFinal::PerVol(id, per, vol) => {
                     self.canales[i].periodo = per;
                     self.canales[i].volumen = vol;
-                    self.avisos.push(hecha(id, 0, 1 << i, llave));
+                    self.avisar(hecha(id, 0, 1 << i, llave));
                 }
             }
         }
@@ -474,25 +544,33 @@ impl AudioDevice {
 
     /// Genera `salida.len()` cuadros estéreo de 16 bits a la frecuencia de la salida.
     pub fn mezclar(&mut self, salida: &mut [[i16; 2]]) {
+        self.mezclar_con(salida, &SinMemoria)
+    }
+
+    /// Como `mezclar`, leyendo de `mem` las escrituras con `fuera`.
+    pub fn mezclar_con(&mut self, salida: &mut [[i16; 2]], mem: &dyn Memoria) {
         for cuadro in salida.iter_mut() {
+            self.cuadro = self.mezclados + 1;
             let mut lados = [0i32; 2];
             for i in 0..4 {
                 let lado = if i == 0 || i == 3 { 0 } else { 1 };
-                lados[lado] += self.muestra(i);
+                lados[lado] += self.muestra(i, mem);
             }
+            self.mezclados += 1;
+            self.cuadro = self.mezclados;
             // Cada canal da ±8.192 (128 × 64); dos por lado llenan los 16 bits.
             *cuadro = lados.map(|v| (v * 2).clamp(i16::MIN as i32, i16::MAX as i32) as i16);
         }
     }
 
     /// La muestra del canal `i` para este cuadro, y avanza.
-    fn muestra(&mut self, i: usize) -> i32 {
+    fn muestra(&mut self, i: usize, mem: &dyn Memoria) -> i32 {
         let c = &self.canales[i];
         if c.parado {
             return 0;
         }
         let Some(e) = &c.actual else { return 0 };
-        let v = e.datos[(c.pos >> 32) as usize] as i32 * c.volumen.min(64) as i32;
+        let v = e.datos.muestra((c.pos >> 32) as usize, mem) as i32 * c.volumen.min(64) as i32;
         // Avanza: (reloj / período) muestras por segundo, en cuadros de la salida.
         let periodo = c.periodo.max(PERIODO_MINIMO) as u64;
         let paso = (self.reloj << 32) / (periodo * self.frecuencia as u64);
@@ -502,7 +580,7 @@ impl AudioDevice {
         loop {
             let c = &mut self.canales[i];
             let Some(e) = &c.actual else { break };
-            let largo = e.datos.len() as u64;
+            let largo = e.datos.largo() as u64;
             if (c.pos >> 32) < largo {
                 break;
             }

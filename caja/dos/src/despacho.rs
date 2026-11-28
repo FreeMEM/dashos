@@ -166,6 +166,22 @@ impl<F: SistemaArchivos> Dos<F> {
                 d0(d[1])
             }
             DATE_TO_STR => d0(self.date_to_str(c, d[1])?),
+            // StartNotify(notify) y EndNotify(notify): notificar.rs.
+            START_NOTIFY => d0(self.start_notify(c, d[1])?),
+            END_NOTIFY => {
+                self.end_notify(c, d[1]);
+                d0(0)
+            }
+            STR_TO_DATE => d0(self.str_to_date(c, d[1])?),
+            READ_ITEM => d0(self.read_item(c, d[1], d[2], d[3])?),
+            // dos no lleva la lista de los CLI: solo conoce el del proceso en marcha, con su pr_TaskNum (1 si es 0).
+            MAX_CLI => d0(self.num_cli(c)),
+            FIND_CLI_PROC => {
+                let n = self.num_cli(c);
+                d0(if n != 0 && d[1] == n { Self::proceso(c).unwrap_or(0) } else { 0 })
+            }
+            // Sin residentes (Resident): no hay ninguno que encontrar.
+            FIND_SEGMENT => d0(0),
             DELAY => {
                 r.d[0] = 0;
                 Ok(if (d[1] as i32) > 0 { Accion::Dormir { tics: d[1] } } else { Accion::Seguir })
@@ -211,6 +227,29 @@ impl<F: SistemaArchivos> Dos<F> {
                 let s = Self::cadena(c, d[2])?;
                 self.escribir_en(c, a, &s)?;
                 d0(0)
+            }
+            // VFWritef(fh, format, argarray): el formato de BCPL (texto.rs). Devuelve lo escrito (en el Amiga, D0 no
+            // es una cuenta: oráculo, dos3.c).
+            VFWRITEF => {
+                let a = self.fichero(d[1])?;
+                let fmt = Self::cadena(c, d[2])?;
+                let args = d[3];
+                let t = crate::texto::formatear_bcpl(
+                    &fmt,
+                    |k| Self::l32(c, args.wrapping_add(4 * k as u32)).unwrap_or(0),
+                    |p| if p == 0 { Vec::new() } else { Self::cadena(c, p).unwrap_or_default() },
+                );
+                d0(self.escribir_en(c, a, &t)?)
+            }
+            // AddBuffers(name, number): los sistemas de ficheros de la caja no tienen búferes que crecer. Un nombre que
+            // no es un dispositivo da su error (oráculo: ERROR_DEVICE_NOT_MOUNTED); uno que sí, DOSTRUE (sin comprobar).
+            ADD_BUFFERS => {
+                let dp = self.get_device_proc(c, d[1], 0)?;
+                if dp == 0 {
+                    return Err(E::Io(ERROR_DEVICE_NOT_MOUNTED));
+                }
+                self.free_device_proc(c, dp);
+                d0(DOSTRUE)
             }
             VFPRINTF => {
                 let a = self.fichero(d[1])?;
@@ -484,7 +523,7 @@ impl<F: SistemaArchivos> Dos<F> {
     }
 
     /// UnLoadSeg(seglist).
-    fn unload_seg<C: Caja>(&mut self, c: &mut C, seg: u32) -> R<()> {
+    pub(crate) fn unload_seg<C: Caja>(&mut self, c: &mut C, seg: u32) -> R<()> {
         if seg == 0 {
             return Ok(());
         }
@@ -571,6 +610,14 @@ impl<F: SistemaArchivos> Dos<F> {
         self.objetos.remove(&dl);
         c.liberar(dl, doslist::TAMANO);
         Ok(())
+    }
+
+    /// El número del CLI del proceso en marcha (pr_TaskNum, o 1 si es 0), o 0 si no tiene CLI.
+    fn num_cli<C: Caja>(&self, c: &C) -> u32 {
+        if Self::proceso(c).is_none() || self.campo(c, process::PR_CLI) == 0 {
+            return 0;
+        }
+        self.campo(c, process::PR_TASKNUM).max(1)
     }
 
     /// GetProgramName, GetCurrentDirName, GetPrompt: un BSTR del CLI a un búfer. Sin CLI, cadena vacía y DOSFALSE.

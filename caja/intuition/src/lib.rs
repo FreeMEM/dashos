@@ -34,6 +34,7 @@ pub mod chunky;
 pub mod compositor;
 pub mod escala;
 pub mod estructuras;
+pub mod ix;
 pub mod lienzo;
 pub mod lvo;
 pub mod modos;
@@ -53,11 +54,14 @@ mod gadtools;
 mod graphics;
 mod idcmp;
 mod intuition;
+mod itexto;
 mod marco;
 mod menus;
 mod pantallas;
 mod publicas;
 mod requester;
+mod pedidor;
+pub use pedidor::AccionAsl;
 mod tema;
 mod vigia;
 
@@ -67,7 +71,7 @@ use alloc::vec::Vec;
 use caja_exec::{Exec, Memoria};
 
 pub use boopsi::{Corte68k, Hecho, Puente};
-pub use capas::{KEYMAP, LAYERS};
+pub use capas::{KEYMAP, LAYERS, tecla_de_caracter, tecla_numerica_de_caracter};
 pub use compositor::{Compositor, CompositorDePrueba, Evento, NuevaVentana, Superficie, Tokens};
 pub use fuente::{ALTO as FUENTE_ALTO, ANCHO as FUENTE_ANCHO, BASE as FUENTE_BASE};
 pub use lienzo::{Lienzo, Rect};
@@ -171,6 +175,10 @@ pub struct CajaGrafica<C: Compositor> {
     /// Los requesters de `EasyRequestArgs` abiertos (uno por tarea) y sus títulos (ventana, cadena, largo).
     requesters: Vec<requester::Requester>,
     requester_titulos: Vec<(u32, u32, u32)>,
+    /// Los pedidores de ficheros de asl.library nativa (`pedidor.rs`), uno por tarea.
+    pedidores: Vec<pedidor::Pedidor>,
+    /// Los requesters clásicos puestos con `Request` (ventana, requester): la ventana no atiende al ratón dentro.
+    bloqueos: Vec<(u32, u32)>,
     avisos: Vec<Aviso>,
 }
 
@@ -193,6 +201,8 @@ impl<C: Compositor> CajaGrafica<C> {
             version_tema: 0,
             requesters: Vec::new(),
             requester_titulos: Vec::new(),
+            pedidores: Vec::new(),
+            bloqueos: Vec::new(),
             avisos: Vec::new(),
         };
         c.instalar_graphics(ex)?;

@@ -17,8 +17,12 @@ use dashos::protocolo::sesiones as s;
 
 use crate::preguntador::LLAVE_SESIONES;
 
-/// La llave 5 de la caja, en las imágenes de prueba: el canal "presion" (`usuario/src/bin/presion.rs`).
-const LLAVE_PRESION: u32 = 5;
+/// El canal "presion" de la caja, en las imágenes de prueba (`usuario/src/bin/presion.rs`): por su nombre en la tabla
+/// de llaves (era la 5; con los canales "red" y "sonido", que nombran antes otros servicios, su número cambia: `inicio`
+/// da las llaves de los canales en el orden en que se nombraron por primera vez).
+fn llave_presion() -> u32 {
+    dashos::llaves::buscar("presion").unwrap_or(5)
+}
 /// Lo más que se espera a que `sesiones` conteste al apuntarse.
 const ESPERA_US: u64 = 10_000_000;
 
@@ -111,5 +115,5 @@ pub fn informar(s_: Soltado, ram: u32) {
 /// Para la prueba (`caja.c`): dice a `presion` que la caja tiene algo que soltar. Verdadero si hay a quién decírselo.
 #[unsafe(no_mangle)]
 pub extern "C" fn caja_presion_listo() -> i32 {
-    (OYE.load(Ordering::Acquire) && dashos::canal_escribir(LLAVE_PRESION, b"caja-amiga", &[]) == 0) as i32
+    (OYE.load(Ordering::Acquire) && dashos::canal_escribir(llave_presion(), b"caja-amiga", &[]) == 0) as i32
 }

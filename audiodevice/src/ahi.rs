@@ -21,6 +21,8 @@ use alloc::collections::VecDeque;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::{Memoria, SinMemoria};
+
 /// 1,0 en coma fija 16.16 (`Fixed` de AHI).
 pub const UNO: u32 = 0x10000;
 /// "Ningún sonido": el canal se calla al acabar la vuelta (o ya, con `AHISF_IMM`).
@@ -43,11 +45,39 @@ pub enum ErrorAhi {
     Fuera,
 }
 
-/// Unas muestras cargadas: mono o estéreo, en 16 bits.
+/// Unas muestras cargadas: mono o estéreo, en 16 bits; o en la memoria de quien llama, con su tipo AHI, que se leen
+/// en cada mezcla (`mezclar_con`): `largo` cuadros desde `dir`.
 #[derive(Clone)]
 pub enum Muestras {
     Mono(Vec<i16>),
     Estereo(Vec<[i16; 2]>),
+    Fuera { tipo: u32, dir: u32, largo: usize },
+}
+
+/// Los bytes de un cuadro de cada tipo AHI (`AHI_SampleFrameSize`), o `None` si el tipo no se toca.
+pub fn tamano_cuadro(tipo: u32) -> Option<u32> {
+    match tipo {
+        AHIST_M8S => Some(1),
+        AHIST_M16S | AHIST_S8S => Some(2),
+        AHIST_S16S | AHIST_M32S => Some(4),
+        AHIST_S32S => Some(8),
+        _ => None,
+    }
+}
+
+/// Un cuadro de bytes del Amiga (big-endian) de un tipo AHI, en 16 bits.
+fn de_bytes(tipo: u32, c: &[u8]) -> [i32; 2] {
+    let be16 = |c: &[u8]| i16::from_be_bytes([c[0], c[1]]) as i32;
+    let be32 = |c: &[u8]| i32::from_be_bytes([c[0], c[1], c[2], c[3]]) >> 16;
+    match tipo {
+        AHIST_M8S => [(c[0] as i8 as i32) << 8; 2],
+        AHIST_S8S => [(c[0] as i8 as i32) << 8, (c[1] as i8 as i32) << 8],
+        AHIST_M16S => [be16(c); 2],
+        AHIST_S16S => [be16(&c[0..2]), be16(&c[2..4])],
+        AHIST_M32S => [be32(c); 2],
+        AHIST_S32S => [be32(&c[0..4]), be32(&c[4..8])],
+        _ => [0, 0],
+    }
 }
 
 impl Muestras {
@@ -66,17 +96,34 @@ impl Muestras {
         })
     }
 
+    /// En la memoria de quien llama: `largo` cuadros de `tipo` desde `dir`, sin copiarlos.
+    pub fn fuera(tipo: u32, dir: u32, largo: usize) -> Result<Muestras, ErrorAhi> {
+        tamano_cuadro(tipo).ok_or(ErrorAhi::TipoMalo)?;
+        Ok(Muestras::Fuera { tipo, dir, largo })
+    }
+
     pub fn largo(&self) -> usize {
         match self {
             Muestras::Mono(m) => m.len(),
             Muestras::Estereo(m) => m.len(),
+            Muestras::Fuera { largo, .. } => *largo,
         }
     }
 
-    fn cuadro(&self, i: usize) -> [i32; 2] {
+    fn cuadro(&self, i: usize, mem: &dyn Memoria) -> [i32; 2] {
         match self {
             Muestras::Mono(m) => [m[i] as i32; 2],
             Muestras::Estereo(m) => [m[i][0] as i32, m[i][1] as i32],
+            Muestras::Fuera { tipo, dir, .. } => {
+                let n = tamano_cuadro(*tipo).unwrap_or(1);
+                let d = *dir as u64 + i as u64 * n as u64;
+                let mut b = [0u8; 8];
+                let b = &mut b[..n as usize];
+                if d > u32::MAX as u64 || !mem.leer(d as u32, b) {
+                    return [0, 0];
+                }
+                de_bytes(*tipo, b)
+            }
         }
     }
 }
@@ -225,6 +272,11 @@ impl Ahi {
 
     /// Mezcla `salida.len()` cuadros estéreo a la frecuencia de mezcla.
     pub fn mezclar(&mut self, salida: &mut [[i16; 2]]) {
+        self.mezclar_con(salida, &SinMemoria)
+    }
+
+    /// Como `mezclar`, leyendo de `mem` los sonidos `Muestras::Fuera`.
+    pub fn mezclar_con(&mut self, salida: &mut [[i16; 2]], mem: &dyn Memoria) {
         for cuadro in salida.iter_mut() {
             if !self.tocando {
                 *cuadro = [0, 0];
@@ -240,7 +292,7 @@ impl Ahi {
             }
             let mut lados = [0i64; 2];
             for k in 0..self.canales.len() {
-                let [i, d] = self.muestra(k);
+                let [i, d] = self.muestra(k, mem);
                 lados[0] += i;
                 lados[1] += d;
             }
@@ -248,7 +300,7 @@ impl Ahi {
         }
     }
 
-    fn muestra(&mut self, k: usize) -> [i64; 2] {
+    fn muestra(&mut self, k: usize, mem: &dyn Memoria) -> [i64; 2] {
         let c = &self.canales[k];
         let Some(t) = c.actual else { return [0, 0] };
         if c.frecuencia == 0 {
@@ -260,8 +312,8 @@ impl Ahi {
         let i = (c.pos >> 32) as i64;
         let fr = (c.pos & 0xffff_ffff) as i64;
         let indice = |i: i64| if t.largo >= 0 { t.desde as i64 + i } else { t.desde as i64 - i } as usize;
-        let a = m.cuadro(indice(i));
-        let b = if ((i + 1) as u64) < n { m.cuadro(indice(i + 1)) } else { a };
+        let a = m.cuadro(indice(i), mem);
+        let b = if ((i + 1) as u64) < n { m.cuadro(indice(i + 1), mem) } else { a };
         let v = |x: i32, y: i32| (x as i64 * ((1i64 << 32) - fr) + y as i64 * fr) >> 32;
         let s = [v(a[0], b[0]), v(a[1], b[1])];
         let vol = c.volumen as i64;
@@ -313,19 +365,33 @@ pub struct AhiDevice {
     colas: Vec<VecDeque<EscrituraAhi>>,
     /// La posición en la escritura de delante de cada unidad, en coma fija 32.32.
     pos: Vec<u64>,
-    hechas: Vec<u64>,
+    /// Las que acabaron, con los cuadros mezclados hasta su último (incluido).
+    hechas: Vec<(u64, u64)>,
+    /// Cuadros mezclados desde el principio.
+    mezclados: u64,
 }
 
 impl AhiDevice {
     pub fn nuevo(mezcla: u32, unidades: u16) -> AhiDevice {
         let mut colas = Vec::new();
         colas.resize_with(unidades as usize, VecDeque::new);
-        AhiDevice { mezcla, colas, pos: vec![0; unidades as usize], hechas: Vec::new() }
+        AhiDevice { mezcla, colas, pos: vec![0; unidades as usize], hechas: Vec::new(), mezclados: 0 }
     }
 
     /// Las escrituras que acabaron de sonar (o se abortaron) desde la última vez: `ReplyMsg`, en orden.
     pub fn hechas(&mut self) -> Vec<u64> {
+        core::mem::take(&mut self.hechas).into_iter().map(|(id, _)| id).collect()
+    }
+
+    /// Como `hechas`, con el cuadro en que acabó cada una: los mezclados hasta su último cuadro (incluido; ver
+    /// `mezclados`). Así quien mezcla en trozos sabe cuándo suena el final, no solo en qué trozo.
+    pub fn hechas_con_cuadro(&mut self) -> Vec<(u64, u64)> {
         core::mem::take(&mut self.hechas)
+    }
+
+    /// Los cuadros mezclados desde que se creó.
+    pub fn mezclados(&self) -> u64 {
+        self.mezclados
     }
 
     /// `CMD_WRITE` en la unidad `u`.
@@ -346,7 +412,7 @@ impl AhiDevice {
                 if k == 0 {
                     self.pos[u] = 0;
                 }
-                self.hechas.push(id);
+                self.hechas.push((id, self.mezclados));
                 return;
             }
         }
@@ -361,6 +427,7 @@ impl AhiDevice {
                 lados[1] += d;
             }
             *cuadro = lados.map(|v| v.clamp(i16::MIN as i64, i16::MAX as i64) as i16);
+            self.mezclados += 1;
         }
     }
 
@@ -371,11 +438,11 @@ impl AhiDevice {
         let i = (pos >> 32) as usize;
         let fr = (pos & 0xffff_ffff) as i64;
         // Interpola con la siguiente muestra: de esta escritura o, al final, de la que va detrás.
-        let a = e.muestras.cuadro(i);
+        let a = e.muestras.cuadro(i, &SinMemoria);
         let b = if (i as u64 + 1) < n {
-            e.muestras.cuadro(i + 1)
+            e.muestras.cuadro(i + 1, &SinMemoria)
         } else {
-            self.colas[u].get(1).map_or(a, |s| s.muestras.cuadro(0))
+            self.colas[u].get(1).map_or(a, |s| s.muestras.cuadro(0, &SinMemoria))
         };
         let v = |x: i32, y: i32| (x as i64 * ((1i64 << 32) - fr) + y as i64 * fr) >> 32;
         let s = [v(a[0], b[0]), v(a[1], b[1])];
@@ -392,7 +459,7 @@ impl AhiDevice {
             let sobra = self.pos[u] - (n << 32);
             let f = e.frecuencia as u64;
             let e = self.colas[u].pop_front().unwrap();
-            self.hechas.push(e.id);
+            self.hechas.push((e.id, self.mezclados + 1));
             self.pos[u] = match self.colas[u].front() {
                 Some(sig) => ((sobra as u128 * sig.frecuencia as u128) / f as u128) as u64,
                 None => 0,

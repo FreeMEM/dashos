@@ -349,3 +349,50 @@ fn easy_request() {
     assert_eq!(c.1.llamar(&mut c.0, n, &mut r), caja_exec::Accion::Seguir);
     assert!(c.1.ventanas().is_empty());
 }
+
+#[test]
+fn auto_request() {
+    let mut c = caja();
+    // Dos líneas de texto (IntuiText encadenados), "Reintentar" y "Cancelar".
+    let it = |c: &mut Caja, texto: &str, sig: u32| {
+        let d = reservar(c, 20);
+        let t = cadena(c, texto);
+        e32(c, d + 12, t);
+        e32(c, d + 16, sig);
+        d
+    };
+    let l2 = it(&mut c, "en la unidad DF0:", 0);
+    let cuerpo = it(&mut c, "Inserta el disco", l2);
+    let (si, no) = (it(&mut c, "Reintentar", 0), it(&mut c, "Cancelar", 0));
+    let n = c.1.numero_intuition("AutoRequest").unwrap();
+    let mut r = regs(&[0, 0, 320, 80], &[0, cuerpo, si, no]);
+    assert_eq!(c.1.llamar(&mut c.0, n, &mut r), caja_exec::Accion::Bloquear);
+    let w = *c.1.ventanas().last().unwrap();
+    // Un clic en el botón de la izquierda ("Reintentar"): devuelve 1.
+    let ancho = l16(&c, w + win::WIDTH) as i32;
+    let alto = l16(&c, w + win::HEIGHT) as i32;
+    let s = c.1.superficie(w).unwrap();
+    c.1.comp.meter(s, Evento::Raton { x: ancho / 2 - 30, y: alto - 12 });
+    c.1.comp.meter(s, Evento::Boton { boton: BTN_LEFT, pulsado: true });
+    c.1.comp.meter(s, Evento::Boton { boton: BTN_LEFT, pulsado: false });
+    c.1.atender(&mut c.0);
+    let mut r = regs(&[0, 0, 320, 80], &[0, cuerpo, si, no]);
+    assert_eq!(c.1.llamar(&mut c.0, n, &mut r), caja_exec::Accion::Seguir);
+    assert_eq!(r.d[0], 1);
+    assert!(c.1.ventanas().is_empty());
+    // Hostil: un cuerpo fuera de la memoria, o en la página 0: 0 y un aviso, sin ventana; una cadena en círculo no
+    // cuelga (se corta en MAX_LINEAS).
+    for malo in [8u32, 0xFFFF_FFF0] {
+        let mut r = regs(&[], &[0, malo, si, no]);
+        assert_eq!(c.1.llamar(&mut c.0, n, &mut r), caja_exec::Accion::Seguir);
+        assert_eq!(r.d[0], 0);
+    }
+    assert!(c.1.ventanas().is_empty());
+    e32(&mut c, l2 + 16, cuerpo);
+    let mut r = regs(&[], &[0, cuerpo, 0, 0]);
+    assert_eq!(c.1.llamar(&mut c.0, n, &mut r), caja_exec::Accion::Bloquear);
+    assert_eq!(c.1.ventanas().len(), 1);
+    let t = c.2;
+    c.1.tarea_muerta(&mut c.0, t);
+    assert!(c.1.ventanas().is_empty());
+}

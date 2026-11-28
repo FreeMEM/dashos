@@ -1,0 +1,7 @@
+# Directory Opus 5 (APL): su asignación y el programa.
+variable traza-amiga *
+asigna DOpus5: AmigaOS:Apps/DOpus5
+lanza DOpus5:DirectoryOpus
+ventana Opus 300
+espera 200
+marca captura dopus

@@ -1,0 +1,72 @@
+CxBroker: 1, error 0, tipo 6, CxObjError 0
+CxBroker repetido: 0, error 2
+aviso al primero: 1 tipo 64 id 25
+y nada mas en el otro puerto: 1
+CxBroker version 99: 1, error 0
+CxBroker sin error: 1
+CxFilter bueno: 1, tipo 1, error 0
+CxFilter malo: 1, tipo 1, error 4
+CxSender: 1, tipo 3
+CxTranslate: 1, tipo 5
+CxSignal: 1, tipo 4
+tras enganchar: error del broker 0, del filtro 0
+enganchar NULL: error del broker 2
+ClearCxObjError: 0
+enganchar el filtro malo: error del broker 0
+SetCxObjPri: 0, 5
+ActivateCxObj: 0, 0, 2, 2
+CxObjType(NULL) 0, CxObjError(NULL) 1
+SetFilter bueno: error 0
+SetFilter malo: error 4
+sin mensajes en el puerto: 1
+ParseIX [ctrl alt x]: 0 v170 clase 1 codigo 32/FFFF cualif 38/73FF igual 4
+ParseIX [lshift f1]: 0 v170 clase 1 codigo 50/FFFF cualif 1/73FF igual 0
+ParseIX [rawkey control a]: 0 v170 clase 1 codigo 20/FFFF cualif 8/73FF igual 0
+ParseIX [-repeat lcommand j]: 0 v170 clase 1 codigo 26/FFFF cualif 40/71FF igual 0
+ParseIX [help]: 0 v170 clase 1 codigo 5F/FFFF cualif 0/73FF igual 0
+ParseIX [upstroke a]: 0 v170 clase 1 codigo A0/FFFF cualif 0/73FF igual 0
+ParseIX [-upstroke a]: 0 v170 clase 1 codigo 20/FF7F cualif 0/73FF igual 0
+ParseIX [shift caps tab]: 0 v170 clase 1 codigo 42/FFFF cualif 7/73FF igual 3
+ParseIX [alt esc]: 0 v170 clase 1 codigo 45/FFFF cualif 30/73FF igual 4
+ParseIX [numericpad 5]: 0 v170 clase 1 codigo 2E/FFFF cualif 100/73FF igual 0
+ParseIX [rawmouse leftbutton]: 0 v170 clase 2 codigo 0/FFFF cualif 4000/73FF igual 0
+ParseIX [rawmouse mouse_leftpress]: 0 v170 clase 2 codigo 68/FFFF cualif 0/73FF igual 0
+ParseIX [diskinserted]: 0 v170 clase 16 codigo 0/FFFF cualif 0/73FF igual 0
+ParseIX [newprefs]: 0 v170 clase 14 codigo 0/FFFF cualif 0/73FF igual 0
+ParseIX [rawkey 0x40]: -1 v170 clase 1 codigo 0/FFFF cualif 0/73FF igual 0
+ParseIX [rawkey space]: 0 v170 clase 1 codigo 40/FFFF cualif 0/73FF igual 0
+ParseIX [A]: 0 v170 clase 1 codigo 20/FFFF cualif 1/73FF igual 0
+ParseIX [CTRL ALT X]: 0 v170 clase 1 codigo 32/FFFF cualif 39/73FF igual 4
+ParseIX []: -2 v170 clase 1 codigo FFFF/FFFF cualif 0/73FF igual 0
+ParseIX [bogus]: -1 v170 clase 1 codigo 0/FFFF cualif 0/73FF igual 0
+ParseIX [ctrl]: 0 v170 clase 1 codigo 0/FFFF cualif 8/73FF igual 0
+ParseIX [ctrl alt]: 0 v170 clase 1 codigo 0/FFFF cualif 38/73FF igual 4
+ParseIX [f11]: 0 v170 clase 1 codigo 4B/FFFF cualif 0/73FF igual 0
+ParseIX [rbutton midbutton f10]: 0 v170 clase 1 codigo 59/FFFF cualif 3000/73FF igual 0
+ParseIX [relativemouse up]: 0 v170 clase 1 codigo 4C/FFFF cualif 8000/73FF igual 0
+MatchIX ctrl alt x, cualif 18: 1
+MatchIX ctrl alt x, cualif 28: 1
+MatchIX ctrl alt x, cualif 38: 1
+MatchIX ctrl alt x, cualif 8: 0
+MatchIX ctrl alt x, cualif 218: 0
+MatchIX ctrl alt x, cualif 19: 0
+MatchIX ctrl alt x, cualif 8018: 1
+MatchIX ctrl alt x, cualif 418: 1
+MatchIX con la tecla soltada: 0
+MatchIX con otra clase: 0
+ParseIX [-upstroke shift a]: -1 v170 clase 1 codigo 0/FF7F cualif 0/73FF igual 0
+MatchIX shift -upstroke a, soltada con rshift: 1
+MatchIX shift -upstroke a, sin shift: 0
+InvertKeyMap 120: 1 clase 1 codigo 32 cualif 0
+InvertKeyMap 88: 1 clase 1 codigo 32 cualif 1
+InvertKeyMap 53: 1 clase 1 codigo 5 cualif 0
+InvertKeyMap 97: 1 clase 1 codigo 20 cualif 0
+InvertKeyMap 33: 1 clase 1 codigo 1 cualif 1
+InvertKeyMap 126: 1 clase 1 codigo 0 cualif 1
+InvertKeyMap 32: 1 clase 1 codigo 40 cualif 0
+InvertKeyMap 10: 1 clase 1 codigo 26 cualif 8
+InvertKeyMap 13: 1 clase 1 codigo 43 cualif 0
+InvertKeyMap 9: 1 clase 1 codigo 42 cualif 0
+InvertKeyMap 27: 1 clase 1 codigo 45 cualif 0
+InvertKeyMap 127: 1 clase 1 codigo 46 cualif 0
+InvertKeyMap 1: 1 clase 1 codigo 20 cualif 8

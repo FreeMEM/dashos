@@ -1,0 +1,8 @@
+# HippoPlayer 2.67 (Aminet; módulos por Paula o AHI) con el módulo de Aminet.
+variable traza-amiga -
+cajon AmigaOS:Apps/hippoplayerupdate
+lanza AmigaOS:Apps/hippoplayerupdate/HiP AmigaOS:Apps/Mods/mod.Elysium
+espera 50
+marca captura hippoplayer-0
+espera 100
+marca captura hippoplayer

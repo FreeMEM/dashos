@@ -132,6 +132,8 @@ prueba: $(PRUEBAS) catalogos
 	cd ../usuario && rustc --edition 2024 --test src/zona.rs -o target/zona_pruebas && ./target/zona_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/vigilancia.rs -o target/vigilancia_pruebas && ./target/vigilancia_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/protocolo/archivos.rs -o target/protocolo_archivos_pruebas && ./target/protocolo_archivos_pruebas -q
+	@# Rama amiga-apps: mathffp.library nativa de la caja Amiga (la coma flotante rápida de Motorola).
+	mkdir -p ../caja/pegamento/target && cd ../caja/pegamento && rustc --edition 2024 --test src/ffp.rs -o target/ffp_pruebas && ./target/ffp_pruebas -q
 	@# S35, paso 2: virtio por mensajes entre virtio-red y el servicio de un dominio (mensajes malos, colas fuera de la ventana).
 	cd ../usuario && rustc --edition 2024 --test src/protocolo/virtio_msg.rs -o target/virtio_msg_pruebas && ./target/virtio_msg_pruebas -q
 	@# S35, paso 2 con USB: el protocolo del aparato prestado entre el xHCI y el servicio del dominio.
@@ -598,6 +600,33 @@ demo: usuario catalogos FORCE
 	$(OBJCOPY) -O binary $(ELF) $(VIRT_DEMO)
 	cd ../uefi && DASHOS_PANTALLA=$(DEMO_PANTALLA) DASHOS_NUCLEO=$(abspath $(VIRT_DEMO)) cargo build --release
 	python3 ../tools/demo.py grabar --efi ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi --disco target/demo/disco-arch.img --pantalla $(DEMO_PANTALLA) --dir $(DEMO_DIR) --guion $(DEMO_GUION)
+
+# Rama amiga-apps (docs/bitacoras/amiga-apps.md): programas Amiga de verdad (ProTracker, Directory Opus, LightWave,
+# Tachyon...) en la caja Amiga, instalados en una copia del AmigaOS del usuario (AMIGA_APPS_SISTEMA, fuera de git).
+# La imagen de la demo (`uso` y la caja de las capturas), sin el disco de la caja Linux. Cada escena
+# (tools/amiga_apps/<escena>.txt) es una copia de caja/pruebas68k/lanzador.exe que arranca sus programas; el guion
+# (`tools/amiga_apps.py`) entra como Ana, contesta a la guardia y saca las capturas que piden las escenas. Con
+# AMIGA_APPS_RED=--red, red de verdad por la red de usuario de QEMU (solo a mano: las pruebas no salen a Internet).
+AMIGA_APPS_SISTEMA ?= $(HOME)/.cache/dash-emu/sys32mui-apps
+AMIGA_APPS_ESCENAS ?= pt,dopus,lw,tachyon,forja,hangar
+AMIGA_APPS_PANTALLA ?= 1920x1080
+AMIGA_APPS_DIR ?= $(HOME)/recuperar/geosian-7d/amiga-apps/vuelta
+AMIGA_APPS_FONDO ?= $(HOME)/recuperar/geosian-7d/dms-bloqueo-capturas/fondo/fuji-256.png
+AMIGA_APPS_OPCIONES ?= --shiva
+amiga-apps: usuario catalogos FORCE
+	$(MAKE) -C ../caja B=build-demo CAJA_INTERACTIVA=1
+	$(MAKE) -C ../caja/pruebas68k lanzador.exe cia_prueba.exe red_prueba.exe
+	cd ../archivos/dashfs && cargo build --release --bin dashfs-ar --bin dashfs-volume
+	cd ../archivos/herramientas && cargo build --release
+	rm -rf target/amiga-apps && mkdir -p target/amiga-apps
+	python3 ../tools/amiga_apps.py preparar --escenas "$(AMIGA_APPS_ESCENAS)" --dir target/amiga-apps
+	DASHOS_AMIGAOS="$(AMIGA_APPS_SISTEMA)" DASHOS_PROGRAMAS_AMIGA="$$(cat target/amiga-apps/programas.txt)" DASHOS_FONDO_EXTRA="$(AMIGA_APPS_FONDO)" DASHOS_PREFS="apariencia=oscuro fondo;fondo=$(notdir $(AMIGA_APPS_FONDO))" python3 ../tools/disco_archivos.py target/amiga-apps/nvme.img $(DASHFS_AR)
+	# La imagen de la demo lleva la caja Linux (`linux`); aquí sin su núcleo: no arranca y no estorba.
+	mkdir -p target/linux && : > target/linux/Image && : > target/linux/initrd
+	cargo build $(CARGO_PERFIL) --features virt,uso,linux,demo
+	$(OBJCOPY) -O binary $(ELF) $(VIRT_DEMO)
+	cd ../uefi && DASHOS_PANTALLA=$(AMIGA_APPS_PANTALLA) DASHOS_NUCLEO=$(abspath $(VIRT_DEMO)) cargo build --release
+	python3 ../tools/amiga_apps.py correr --efi ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi --disco target/amiga-apps/nvme.img --pantalla $(AMIGA_APPS_PANTALLA) --dir $(AMIGA_APPS_DIR) $(AMIGA_APPS_OPCIONES) $(AMIGA_APPS_RED)
 
 # Los cortes del sonido con los cuatro núcleos ocupados (S19, A6): la imagen de virt con cuatro programas de carga,
 # sin disco ni USB. Mide; el WAV se comprueba, pero un fallo de la comprobación no para la orden.

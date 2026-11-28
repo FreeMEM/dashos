@@ -337,10 +337,12 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Linux, y `sin-maquina` llegaba tarde a su pregunta).
     // Con `uso`, fuera de momento: aún corre sus programas de prueba (los virus de laboratorio preguntan uno tras otro).
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
-    ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &["ventanas", "archivos", "sesiones", "presion"]),
+    // Rama amiga-apps: y "red" (bsdsocket.library nativa, S13) y "sonido" (ahi.device y audio.device nativos, S19);
+    // la caja las busca por su nombre en su tabla de llaves.
+    ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &["ventanas", "archivos", "sesiones", "presion", "red", "sonido"]),
     // La demo (`make demo`): la caja Amiga en la imagen de usar, sin "presion" (es de una prueba: nadie lo sirve aquí).
     #[cfg(feature = "demo")]
-    ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &["ventanas", "archivos", "sesiones"]),
+    ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &["ventanas", "archivos", "sesiones", "red", "sonido"]),
     // S29: malware de laboratorio (`docs/diseño/S29-malware-linux-y-dashos.md`): un programa cualquiera con ventanas
     // que intenta llenar la memoria, capturar la pantalla, hacerse pasar por la caja Linux y escuchar las teclas y el
     // portapapeles de los demás mientras el guion teclea contraseñas. Al final, para no cambiar las marcas de los de antes.

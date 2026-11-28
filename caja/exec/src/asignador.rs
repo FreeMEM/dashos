@@ -22,6 +22,13 @@ pub(crate) struct Trozo {
     pub(crate) enlace: u32,
 }
 
+/// Las direcciones del chipset y la ROM de un Amiga: las CIA ($A0_0000-$BF_FFFF), la RAM lenta y los registros del
+/// chipset ($C0_0000-$DF_FFFF), la autoconfiguración y la ROM ($E0_0000-$FF_FFFF). La memoria de la caja que crece
+/// hasta ahí se reserva para el sistema (`reservar_chipset`).
+pub const HUECO_DEL_CHIPSET: (u32, u32) = (0x00A0_0000, 0x0100_0000);
+/// El dueño de la reserva del hueco del chipset (no es una tarea: las tareas son direcciones pares de la memoria).
+pub const DUENO_CHIPSET: u32 = 0xFFFF_FFFF;
+
 impl<M: Memoria> Exec<M> {
     /// Recorre los trozos libres de un `MemHeader`, comprobando que están en orden y dentro de él.
     pub(crate) fn trozos(&self, mh: u32, mut f: impl FnMut(&Trozo) -> bool) -> Result<(), Fallo> {
@@ -32,7 +39,9 @@ impl<M: Memoria> Exec<M> {
         let mut fin_anterior = abajo;
         let mut vueltas = 0;
         while c != 0 {
-            let largo = self.l32(c + memchunk::MC_BYTES)?;
+            // Un enlace basura cerca de $FFFFFFFF (lo dejó un programa) es una lista rota, no un desbordamiento.
+            let Some(dl) = c.checked_add(memchunk::MC_BYTES) else { return Err(Fallo::ListaRota { dir: c }) };
+            let largo = self.l32(dl)?;
             let bien = c % 8 == 0
                 && c >= fin_anterior
                 && largo != 0
@@ -181,8 +190,12 @@ impl<M: Memoria> Exec<M> {
         }
         // No cabe: si la memoria puede crecer (la caja la pide a trozos), la región de arriba crece y se prueba otra
         // vez. La chip no crece.
-        if dir == 0 && atr & memf::CHIP == 0 && let Some(mh) = self.crecer(largo)? {
+        // Si lo crecido cae en el hueco del chipset (reservado), no basta: se crece otra vez, ya por encima.
+        let mut veces = 0;
+        while dir == 0 && atr & memf::CHIP == 0 && veces < 4 {
+            let Some(mh) = self.crecer(largo)? else { break };
             dir = self.allocate(mh, largo, req & memf::REVERSE != 0)?;
+            veces += 1;
         }
         if dir == 0 {
             return Ok(0);
@@ -198,7 +211,22 @@ impl<M: Memoria> Exec<M> {
     /// (la de arriba): su `MH_UPPER` sube y el tramo nuevo entra en su lista de libres, junto al trozo libre de su
     /// final si lo hay (así cabe algo más grande que lo nuevo). Devuelve esa región, o `None`.
     fn crecer(&mut self, largo: u32) -> Result<Option<u32>, Fallo> {
-        let Some((antes, despues)) = self.mem.ampliar(largo) else { return Ok(None) };
+        self.crecer_con(largo, true)
+    }
+
+    /// `crecer`; con `saltar`, si lo nuevo acaba dentro del hueco del chipset, sigue hasta pasarlo.
+    fn crecer_con(&mut self, largo: u32, saltar: bool) -> Result<Option<u32>, Fallo> {
+        let Some((antes, mut despues)) = self.mem.ampliar(largo) else { return Ok(None) };
+        // Si lo nuevo acaba dentro del hueco del chipset (que se reserva), se pide de una vez lo que falta para
+        // pasarlo y que quepa `largo` por encima.
+        let (h0, h1) = HUECO_DEL_CHIPSET;
+        if saltar && despues > h0 && despues < h1 {
+            if let Some((a2, d2)) = self.mem.ampliar((h1 - despues).saturating_add(largo)) {
+                if a2 == despues {
+                    despues = d2;
+                }
+            }
+        }
         let (antes, despues) = ((antes + 7) & !7, despues & !7);
         if despues <= antes {
             return Ok(None);
@@ -215,7 +243,48 @@ impl<M: Memoria> Exec<M> {
             r.1 = despues;
         }
         self.deallocate(mh, antes, despues - antes)?;
+        self.reservar_chipset(antes, despues)?;
         Ok(Some(mh))
+    }
+
+    /// Lo crecido que cae en las direcciones del chipset y la ROM de un Amiga (`HUECO_DEL_CHIPSET`) se reserva para
+    /// el sistema en cuanto existe y no se da nunca: un programa que escribe en los registros de la CIA o de Paula
+    /// (ProTracker, OctaMED) escribe ahí, en memoria de nadie, en vez de estropear la de otro. Y quien imite esos
+    /// chips (una CIA, S18) puede leer ahí lo que escribió como si fueran sus registros.
+    fn reservar_chipset(&mut self, antes: u32, despues: u32) -> Result<(), Fallo> {
+        let (h0, h1) = HUECO_DEL_CHIPSET;
+        let (a, b) = (antes.max(h0), despues.min(h1));
+        if a >= b {
+            return Ok(());
+        }
+        let sistema = self.memoria_del_sistema;
+        self.memoria_del_sistema = true;
+        let r = self.alloc_abs(b - a, a);
+        self.memoria_del_sistema = sistema;
+        // De un dueño propio, que no es ni el sistema (0) ni ninguna tarea: no cuenta como memoria del sistema que se
+        // haya quedado (las pruebas de la caja la cuentan) y nadie la suelta al acabar.
+        if let Ok(d) = r
+            && d != 0
+        {
+            self.cambiar_dueno(d, DUENO_CHIPSET);
+        }
+        r.map(|_| ())
+    }
+
+    /// Que la memoria de la caja llegue al menos hasta `dir` (creciendo lo que haga falta, con el tope de siempre).
+    /// Lo usan los recursos de la CIA: sus registros (`$BFD000`, `$BFE001`) tienen que existir, reservados, antes de
+    /// que el programa escriba en ellos. Verdad si llega.
+    pub fn cubrir_hasta(&mut self, dir: u32) -> Result<bool, Fallo> {
+        for _ in 0..8 {
+            let fin = self.regiones.iter().map(|r| r.1).max().unwrap_or(0);
+            if fin >= dir {
+                return Ok(true);
+            }
+            if self.crecer_con(dir - fin, false)?.is_none() {
+                return Ok(false);
+            }
+        }
+        Ok(self.regiones.iter().map(|r| r.1).max().unwrap_or(0) >= dir)
     }
 
     /// De quién es la memoria que se reserva ahora: de la tarea en marcha o, mientras corre código de una biblioteca

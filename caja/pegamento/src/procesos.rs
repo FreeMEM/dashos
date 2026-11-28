@@ -53,6 +53,7 @@ pub(crate) fn create_new_proc(c: &mut Caja, tags: u32) -> (u32, bool) {
             return (0, false);
         }
     };
+    crate::releer_traza(c);
     crear(c, p)
 }
 

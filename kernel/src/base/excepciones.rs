@@ -169,6 +169,18 @@ fn tratar(marco: &mut Marco, tipo: u64) {
             "Proceso: excepción de clase {:#x} en {:#x} (FAR {:#x}); se termina",
             clase, marco.elr, marco.far
         );
+        // Sus registros, para averiguar qué hacía (en la caja Amiga, x18 es el PC del 68k al empezar el bloque
+        // traducido y x13-x17, x19-x29, sus registros: `third_party/Emu68/include/M68k.h`).
+        let x = &marco.x;
+        kprintln!(
+            "  x0-x7 {:x} {:x} {:x} {:x} {:x} {:x} {:x} {:x}; x8-x15 {:x} {:x} {:x} {:x} {:x} {:x} {:x} {:x}",
+            x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7], x[8], x[9], x[10], x[11], x[12], x[13], x[14], x[15]
+        );
+        kprintln!(
+            "  x16-x23 {:x} {:x} {:x} {:x} {:x} {:x} {:x} {:x}; x24-x30 {:x} {:x} {:x} {:x} {:x} {:x} {:x}; sp {:x}",
+            x[16], x[17], x[18], x[19], x[20], x[21], x[22], x[23], x[24], x[25], x[26], x[27], x[28], x[29], x[30],
+            marco.sp_el0
+        );
         crate::planificador::terminar_actual(crate::objetos::Fin::Fallo);
     }
 

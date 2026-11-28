@@ -268,11 +268,13 @@ fn hostiles() {
     let rc = p.c.1.clase_publica("rootclass").unwrap();
     assert_eq!(ib(&mut p, "FreeClass", &[], &[rc]), 0);
     assert_eq!(ib(&mut p, "FreeClass", &[], &[basura]), 0);
-    // MakeClass con una superclase que no existe, o un tamaño absurdo.
+    // MakeClass con una superclase que no existe. El tamaño es un UWORD: $FFFF0000 es 0 (oráculo, pruebas68k/clase.c).
     let s = cadena(&mut p.c, "noexiste.class");
     assert_eq!(ib(&mut p, "MakeClass", &[4, 0], &[0, s, 0]), 0);
     assert_eq!(ib(&mut p, "MakeClass", &[4, 0], &[0, 0, basura]), 0);
-    assert_eq!(ib(&mut p, "MakeClass", &[0xFFFF_0000, 0], &[0, 0, rc]), 0);
+    let cl = ib(&mut p, "MakeClass", &[0xFFFF_0000, 0], &[0, 0, rc]);
+    assert_ne!(cl, 0);
+    assert_eq!(ib(&mut p, "FreeClass", &[], &[cl]), 1);
     // NextObject de una lista vacía y de un puntero malo.
     assert_eq!(ib(&mut p, "NextObject", &[], &[st]), 0);
     dispose(&mut p, g);

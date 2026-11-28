@@ -1,0 +1,5 @@
+MakeClass(tam A): 1, InstSize 10, InstOffset 0
+MakeClass(tam 30000A): 1, InstSize 10, InstOffset 0
+MakeClass(tam FFFF): 1, InstSize 65535, InstOffset 0
+MakeClass(tam 10000): 1, InstSize 0, InstOffset 0
+MakeClass(tam 0): 1, InstSize 0, InstOffset 0

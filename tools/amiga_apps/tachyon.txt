@@ -1,0 +1,10 @@
+# Tachyon (del usuario): una página de verdad por la red (Aminet, por HTTP).
+variable traza-amiga -
+asigna AmiSSL: AmigaOS:AmiSSL
+asignaadd LIBS: AmigaOS:AmiSSL/Libs
+lanza AmigaOS:Apps/Tachyon/Tachyon http://aminet.net/
+ventana Tachyon 300
+espera 120
+marca captura tachyon-aminet
+espera 120
+marca captura tachyon-aminet-2

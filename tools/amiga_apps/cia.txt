@@ -1,0 +1,4 @@
+# La prueba de ciab.resource y del temporizador A de la CIA-B imitado (caja/pruebas68k/cia_prueba.c).
+variable traza-amiga -
+lanza PROGDIR:lanzador/cia_prueba.exe
+hasta 50

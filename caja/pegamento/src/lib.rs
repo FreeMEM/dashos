@@ -37,8 +37,25 @@ mod defensa;
 mod faltan;
 #[cfg(all(target_arch = "x86_64", feature = "dashos"))]
 mod jit;
-mod icono;
 mod mates;
+mod ffp;
+mod dispositivos;
+mod iconos;
+// La red y el sonido van por servicios de DashOS; en Linux, de momento, sin servicio (la caja dice que no los hay).
+#[cfg(feature = "dashos")]
+mod red;
+#[cfg(not(feature = "dashos"))]
+#[path = "linux/red.rs"]
+mod red;
+#[cfg(feature = "dashos")]
+mod sonido;
+#[cfg(not(feature = "dashos"))]
+#[path = "linux/sonido.rs"]
+mod sonido;
+mod cia;
+mod asl;
+mod comodidades;
+mod ordenes;
 mod memoria;
 mod multitarea;
 mod plataforma;
@@ -127,8 +144,24 @@ const N_TIMER: u16 = 0x880;
 const N_OPEN_LIBRARY: u16 = 92;
 /// mathieeesingbas.library (`mates.rs`).
 const N_MATES: u16 = 0xD80;
-/// icon.library (`icono.rs`): sus entradas, desde aquí.
-const N_ICONO: u16 = 0xF00;
+/// Las bibliotecas nativas de la rama amiga-apps, desde 0x1000 (cybergraphics y Picasso96 llegan a 0xE7F):
+/// mathffp.library (`ffp.rs`).
+const N_FFP: u16 = 0x1000;
+/// console.device y input.device (`dispositivos.rs`).
+const N_CONSOLA: u16 = 0x1020;
+const N_ENTRADA: u16 = 0x1040;
+/// icon.library y workbench.library (`caja/icono`, `iconos.rs`): de 0x1300, 49 números.
+const N_ICONO: u16 = 0x1300;
+/// bsdsocket.library (`caja/bsdsocket`, `red.rs`): de 0x1100, 135 números.
+const N_BSD: u16 = 0x1100;
+/// ahi.device, AHI y audio.device (`caja/sonido`, `sonido.rs`): de 0x1200, 29 números.
+const N_SONIDO: u16 = 0x1200;
+/// ciaa.resource y ciab.resource (`cia.rs`): de 0x1400, 8 números.
+const N_CIA: u16 = 0x1400;
+/// asl.library (`asl.rs`): de 0x1480, 10 números.
+const N_ASL: u16 = 0x1480;
+/// commodities.library (`comodidades.rs`): de 0x1500, 35 números.
+const N_CX: u16 = 0x1500;
 const N_RAMLIB_CARGAR: u16 = 0xD00;
 const N_RAMLIB_SOLTAR: u16 = 0xD01;
 /// Las raíces de la caja en el servicio de archivos (`usuario/src/bin/inicio.rs`, S28): la 0, su cajón (leer y
@@ -158,6 +191,24 @@ struct Caja {
     gr: CajaGrafica<CompositorWayland>,
     util: Utilidad,
     timer: Temporizador,
+    /// console.device e input.device (`dispositivos.rs`), y lo que no hicieron.
+    disp: dispositivos::Dispositivos,
+    iconos: caja_icono::Iconos,
+    bsd: caja_bsdsocket::Bsdsocket,
+    red: red::RedCaja,
+    sonido: caja_sonido::Sonido,
+    salida: sonido::SalidaCaja,
+    cias: cia::Cias,
+    asl: asl::Asl,
+    cx: comodidades::Cx,
+    /// Las órdenes de RunCommand y SystemTagList en marcha (`ordenes.rs`).
+    ordenes: Vec<ordenes::Orden>,
+    siguiente_orden: u32,
+    disp_faltan: Vec<&'static str>,
+    /// La traza de las llamadas nativas (rama amiga-apps): los nombres de las tareas que se trazan, de la variable
+    /// global `traza-amiga` (`ENV:traza-amiga`, separados por espacios; `*`, todas), que se relee al lanzar cada
+    /// programa y cada proceso nuevo. Vacía, no cuesta más que mirar si está vacía.
+    traza: Vec<Vec<u8>>,
     dos_base: u32,
     /// Hay dibujo sin mandar al compositor.
     sucio: bool,
@@ -179,6 +230,9 @@ struct Caja {
     excepciones: u32,
     /// Los procesos nuevos van sin consola (`caja_sin_consola`).
     sin_consola: bool,
+    /// El cajón del programa que se va a lanzar (`PROGDIR:`), cuando el nombre de la tarea no lo lleva: el de la caja de
+    /// Linux, que da el nombre corto del fichero (`caja_programa_cajon`). Se gasta al crear su proceso.
+    cajon_programa: Option<Vec<u8>>,
     /// El número nativo de `WaitTOF`: espera un cuadro (20 ms) atendiendo al compositor, como el Amiga espera al
     /// barrido vertical. Los bucles que leen eventos sin esperar (`GT_GetIMsg` y `WaitTOF`) los reciben así.
     n_waittof: u16,
@@ -226,6 +280,12 @@ fn caja() -> Option<&'static mut Caja> {
 }
 
 /// Lo que dice la caja por la consola: "  [caja-amiga] ...".
+/// `CAJA_AMIGA_TRAZA=1` (en Linux): cada llamada a dos.library sale por la consola de la caja, con sus argumentos y lo
+/// que devolvió. Con `CAJA_AMIGA_TRAZA=todo`, también las de exec (al entrar, con D0, D1, A0 y A1). Para ver qué
+/// espera un programa de otros que no va.
+static TRAZA_DOS: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static TRAZA_EXEC: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 pub(crate) fn di(texto: &str) {
     plataforma::decir!("  [caja-amiga] {}", texto);
 }
@@ -307,6 +367,20 @@ impl caja_dos::Caja for CajaDos<'_> {
     fn senales(&mut self, mascara: u32) -> u32 {
         self.ex.set_signal(0, mascara).unwrap_or(0) & mascara
     }
+    fn senalar(&mut self, tarea: u32, senales: u32) {
+        // La tarea despertada correrá cuando le toque (dos no cede aquí).
+        let _ = self.ex.signal(tarea, senales);
+    }
+    fn mandar_mensaje(&mut self, puerto: u32, msg: u32) {
+        let _ = self.ex.put_msg(puerto, msg);
+    }
+    fn reservar_sistema(&mut self, largo: u32) -> u32 {
+        let d = self.ex.alloc_vec(largo, memf::PUBLIC | memf::CLEAR).unwrap_or(0);
+        if d != 0 {
+            self.ex.cambiar_dueno(d - 4, 0);
+        }
+        d
+    }
 }
 
 /// Escribe texto del Amiga (Latin-1) en la consola de la plataforma (UTF-8), por trozos.
@@ -380,6 +454,9 @@ pub unsafe extern "C" fn caja_rust_arrancar(
             return 0;
         }
     };
+    if let Err(f) = poner_raiz_de_dos(&mut ex, dos_base) {
+        di(&format!("dos.library: sin RootNode ({:?})", f));
+    }
     let mut consola = Consola::default();
     let (dos, vol) = montar_volumenes(&mut ex, &mut consola);
     let comp = CompositorWayland::conectar(LLAVE_VENTANAS);
@@ -405,6 +482,78 @@ pub unsafe extern "C" fn caja_rust_arrancar(
             return 0;
         }
     };
+    let disp = match dispositivos::Dispositivos::instalar(&mut ex, N_CONSOLA, N_ENTRADA) {
+        Ok(d) => d,
+        Err(f) => {
+            di(&format!("console.device e input.device no se crean: {:?}", f));
+            return 0;
+        }
+    };
+    di(&format!("console.device e input.device nativos (Rust): ${:x} y ${:x}", disp.consola, disp.entrada));
+    let iconos = match caja_icono::Iconos::instalar(&mut ex, N_ICONO) {
+        Ok(i) => i,
+        Err(f) => {
+            di(&format!("icon.library y workbench.library no se crean: {:?}", f));
+            return 0;
+        }
+    };
+    di("icon.library y workbench.library nativas (Rust)");
+    let bsd = match caja_bsdsocket::Bsdsocket::instalar(&mut ex, N_BSD) {
+        Ok(b) => b,
+        Err(f) => {
+            di(&format!("bsdsocket.library no se crea: {:?}", f));
+            return 0;
+        }
+    };
+    let son = match caja_sonido::Sonido::instalar(&mut ex, N_SONIDO) {
+        Ok(s) => s,
+        Err(f) => {
+            di(&format!("ahi.device y audio.device no se crean: {:?}", f));
+            return 0;
+        }
+    };
+    let salida = sonido::SalidaCaja::nueva();
+    di(&format!(
+        "ahi.device y audio.device nativos (Rust): ${:x} y ${:x}, {}",
+        son.base_ahi(),
+        son.base_audio(),
+        if salida.hay_servicio() { "por el servicio de sonido" } else { "sin la llave del sonido: callados" }
+    ));
+    let cias = match cia::Cias::instalar(&mut ex, N_CIA) {
+        Ok(c) => c,
+        Err(f) => {
+            di(&format!("ciaa.resource y ciab.resource no se crean: {:?}", f));
+            return 0;
+        }
+    };
+    di(&format!(
+        "ciaa.resource y ciab.resource nativos (Rust): ${:x} y ${:x} ({}), sus temporizadores leídos de donde los escribe el programa",
+        cias.bases[0],
+        cias.bases[1],
+        cia::FUNCIONES.join(", ")
+    ));
+    let asl = match asl::Asl::instalar(&mut ex, N_ASL) {
+        Ok(a) => a,
+        Err(f) => {
+            di(&format!("asl.library no se crea: {:?}", f));
+            return 0;
+        }
+    };
+    di(&format!("asl.library nativa (Rust): ${:x}, con el pedidor de ficheros de la caja", asl.base));
+    let cx = match comodidades::Cx::instalar(&mut ex, N_CX) {
+        Ok(x) => x,
+        Err(f) => {
+            di(&format!("commodities.library no se crea: {:?}", f));
+            return 0;
+        }
+    };
+    di(&format!("commodities.library nativa (Rust): ${:x} (los objetos, sin sucesos de entrada aún)", cx.base));
+    let red = red::RedCaja::nueva();
+    di(&format!(
+        "bsdsocket.library nativa (Rust): ${:x}, {}",
+        bsd.base(),
+        if red.hay_servicio() { "sobre el servicio de red" } else { "sin la llave de la red: no hay red" }
+    ));
     let (an, al) = caja_intuition::Compositor::tamano_escritorio(&gr.comp);
     let base = ex.base();
     di(&format!(
@@ -424,9 +573,11 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         }
     };
     di(&format!("mathieeesingbas.library nativa (Rust): ${:x}", mates_base));
-    match icono::instalar(&mut ex, N_ICONO) {
-        Ok(b) => di(&format!("icon.library nativa (Rust): ${:x}", b)),
-        Err(f) => di(&format!("icon.library no se crea: {:?}", f)),
+    let nums: Vec<u16> = (0..ffp::FUNCIONES.len() as u16).map(|i| N_FFP + i).collect();
+    let cc: Vec<u16> = ffp::CON_CC.iter().map(|&i| N_FFP + i as u16).collect();
+    match ex.crear_biblioteca_nativa_con_cc("mathffp.library", 40, 1, &nums, 34, &cc) {
+        Ok(b) => di(&format!("mathffp.library nativa (Rust): ${:x}", b)),
+        Err(f) => di(&format!("mathffp.library no se crea: {:?}", f)),
     }
     let (capas, teclas) = gr.capas_bases();
     di(&format!("layers.library y keymap.library nativas (Rust): ${:x} y ${:x}", capas, teclas));
@@ -450,6 +601,19 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         gr,
         util,
         timer,
+        disp,
+        iconos,
+        bsd,
+        red,
+        sonido: son,
+        salida,
+        cias,
+        asl,
+        cx,
+        ordenes: Vec::new(),
+        siguiente_orden: 0,
+        disp_faltan: Vec::new(),
+        traza: Vec::new(),
         dos_base,
         sucio: false,
         avisos: 0,
@@ -464,6 +628,7 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         excepciones: 0,
         n_waittof: 0,
         sin_consola: false,
+        cajon_programa: None,
         ramlib_cargas: 0,
         ramlib_soltadas: 0,
         ramlib_dichas: 0,
@@ -482,6 +647,15 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         al_acabar: alloc::collections::BTreeMap::new(),
         chips: None,
     };
+    #[cfg(not(feature = "dashos"))]
+    match sys::entorno(b"CAJA_AMIGA_TRAZA\0") {
+        Some(b"1") => TRAZA_DOS.store(true, core::sync::atomic::Ordering::Relaxed),
+        Some(b"todo") => {
+            TRAZA_DOS.store(true, core::sync::atomic::Ordering::Relaxed);
+            TRAZA_EXEC.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        _ => {}
+    }
     // ramlib: lo que no está en memoria, de disco (`ramlib.rs`). Sus asignaciones, a los cajones que haya.
     c.ex.poner_ramlib(N_RAMLIB_CARGAR, N_RAMLIB_SOLTAR);
     {
@@ -493,6 +667,23 @@ pub unsafe extern "C" fn caja_rust_arrancar(
             }
         }
         di(&format!("ramlib: lo que no es nativo se carga de disco; {}", if hechas.is_empty() { String::from("sin cajones") } else { hechas.join(", ") }));
+        // Las de los comandos (`C:`, `S:`, `L:`, `LOCALE:`), si el cajón las tiene: Which, Execute y los programas que
+        // abren "C:..." o "LOCALE:..." las dan por hechas. Solo en la caja de Linux, que ejecuta los comandos del
+        // usuario: en DashOS, `S:` sobre el cajón de la caja dejaría a un programa escribir su `S:Startup-Sequence`
+        // (la prueba de malware de S28 lo niega).
+        #[cfg(not(feature = "dashos"))]
+        let mut comandos = Vec::new();
+        #[cfg(not(feature = "dashos"))]
+        {
+            for (nombre, ruta) in [("C", "Caja:C"), ("S", "Caja:S"), ("L", "Caja:L"), ("LOCALE", "Caja:Locale")] {
+                if c.dos.asignar(&mut cd, nombre, ruta).is_ok() {
+                    comandos.push(alloc::format!("{}: {}", nombre, ruta));
+                }
+            }
+            if !comandos.is_empty() {
+                di(&format!("comandos: {}", comandos.join(", ")));
+            }
+        }
         // `T:` y `ENV:`, que los programas dan por hechos (en un Amiga, en `RAM:`): en el cajón de la caja, que es lo que
         // tiene para escribir. Sin `T:`, Tachyon no puede dejar ahí las imágenes que decodifica (el logo de su página).
         let mut temporales = Vec::new();
@@ -579,6 +770,13 @@ fn montar_volumenes(ex: &mut Exec<MemoriaCaja>, consola: &mut Consola) -> (caja_
             Err(e) => dichos.push(format!("{}: no se monta (error {})", nombre, e)),
         }
     }
+    // El disco de RAM: el volumen "Ram Disk" y su asignación RAM:, como en el Amiga.
+    if archivos::cajon_ram().is_some() && dos.montar(&mut cd, "Ram Disk", archivos::RAIZ_RAM, false).is_ok() {
+        match dos.asignar(&mut cd, "RAM", "Ram Disk:") {
+            Ok(()) => dichos.push(String::from("Ram Disk: (RAM:)")),
+            Err(e) => dichos.push(format!("RAM: no se asigna (error {})", e)),
+        }
+    }
     dos.poner_arranque("Linux");
     (dos, format!("{} sobre los ficheros de Linux (Caja: y SYS: en {})", dichos.join(", "), cajon))
 }
@@ -651,6 +849,7 @@ pub extern "C" fn caja_programa_de_disco(i: u32, nombre: *mut u8, max: u32, dato
     let ruta = ruta.to_vec();
     let Ok(v) = c.dos.leer_fichero(&mut cd, &ruta, 16 << 20) else { return 0 };
     c.programa = v;
+    releer_traza(c);
     if nombre.is_null() || datos.is_null() || largo.is_null() || max == 0 {
         return 0;
     }
@@ -823,6 +1022,33 @@ pub unsafe extern "C" fn caja_tarea_nueva(
     }
 }
 
+/// La caja de Linux: el fichero de Linux del programa que va a lanzar (`ruta`, tal como se dio: absoluto o desde el
+/// directorio actual), para su `PROGDIR:` (en Linux, el nombre de la tarea es el corto).
+///
+/// # Safety
+/// `ruta` tiene que apuntar a `largo` bytes.
+#[cfg(not(feature = "dashos"))]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn caja_programa_cajon(ruta: *const u8, largo: usize) {
+    let Some(c) = caja() else { return };
+    // SEGURIDAD: lo garantiza quien llama (caja_linux.c, con argv).
+    let ruta = unsafe { core::slice::from_raw_parts(ruta, largo) };
+    let Ok(ruta) = core::str::from_utf8(ruta) else { return };
+    let cajon = match ruta.rfind('/') {
+        Some(0) => "/",
+        Some(i) => &ruta[..i],
+        None => ".",
+    };
+    c.cajon_programa = if let Some(abs) = cajon.strip_prefix('/') {
+        Some(format!("Linux:{}", abs).into_bytes())
+    } else {
+        archivos::cajon_actual().map(|cwd| {
+            let rel = cajon.trim_start_matches("./");
+            if rel == "." || rel.is_empty() { cwd.into_bytes() } else { format!("{}/{}", cwd, rel).into_bytes() }
+        })
+    };
+}
+
 /// La CLI de un proceso (`struct CommandLineInterface`) y sus tres BSTR, en un solo bloque: la CLI, el nombre del
 /// programa (`cli_CommandName`), el directorio (`cli_SetName`) y el indicador (`cli_Prompt`).
 const CLI_NOMBRE: u32 = 64;
@@ -881,8 +1107,15 @@ fn crear_proceso(
     // El cajón del programa (`pr_HomeDir`, `PROGDIR:`), si viene de disco con su ruta (los del usuario: Tachyon busca
     // ahí sus iconos). El cerrojo es de la tarea: dos lo suelta cuando acaba.
     let mut programa = 0;
-    if let Some(i) = nombre.iter().rposition(|&b| b == b'/' || b == b':') {
-        let cajon = if nombre[i] == b':' { &nombre[..=i] } else { &nombre[..i] };
+    let dado = c.cajon_programa.take();
+    let cajon = match &dado {
+        Some(v) => Some(v.as_slice()),
+        None => nombre
+            .iter()
+            .rposition(|&b| b == b'/' || b == b':')
+            .map(|i| if nombre[i] == b':' { &nombre[..=i] } else { &nombre[..i] }),
+    };
+    if let Some(cajon) = cajon {
         let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
         if let Ok(l) = c.dos.cerrojo_de_ruta(&mut cd, cajon) {
             c.dos.dar_cerrojo(l, t);
@@ -982,6 +1215,13 @@ pub extern "C" fn caja_tarea_fin(t: u32) -> u32 {
     let cli = c.ex.mem.leer32(t + caja_dos::estructuras::process::PR_CLI).unwrap_or(0) << 2;
     let bloques = c.ex.bloques_de(t).iter().filter(|(d, _)| *d != t && *d != pila && *d != cli).count() as u32;
     c.timer.tarea_muerta(t);
+    c.disp.tarea_muerta(t);
+    c.iconos.tarea_muerta(t);
+    c.bsd.tarea_muerta(&mut c.ex, &mut c.red, t);
+    c.sonido.tarea_muerta(t);
+    c.cias.tarea_muerta(t);
+    c.asl.tarea_muerta(t);
+    c.cx.tarea_muerta(&mut c.ex, t);
     let _ = c.ex.matar_tarea(t);
     c.ex.ramlib_cortada();
     c.util.tarea_muerta(&c.ex);
@@ -1102,9 +1342,8 @@ fn ajena(c: &mut Caja, n: u16, r: &mut Registros) -> Fin {
         r.d[0] = mates::llamar((n - N_MATES) as usize, r).unwrap_or(0);
         return Fin::Seguir;
     }
-    if (N_ICONO..N_ICONO + icono::FUNCIONES.len() as u16).contains(&n) {
-        let rr = *r;
-        r.d[0] = icono::llamar(c, (n - N_ICONO) as usize, &rr);
+    if (N_FFP..N_FFP + ffp::FUNCIONES.len() as u16).contains(&n) {
+        r.d[0] = ffp::llamar((n - N_FFP) as usize, r.d[0], r.d[1]);
         return Fin::Seguir;
     }
     if n == N_RAMLIB_CARGAR {
@@ -1115,9 +1354,89 @@ fn ajena(c: &mut Caja, n: u16, r: &mut Registros) -> Fin {
         ramlib::soltar(c, r.d[1]);
         return Fin::Seguir;
     }
+    if c.asl.es_mio(n) {
+        let (an, al) = caja_intuition::Compositor::tamano_escritorio(&c.gr.comp);
+        let mut en = asl::EntornoAsl {
+            ex: &mut c.ex,
+            gr: &mut c.gr,
+            dos: &mut c.dos,
+            consola: &mut c.consola,
+            modo: (caja_intuition::cgx::MODO_CAJA, an as u32, al as u32),
+        };
+        let res = c.asl.llamar(&mut en, n, r);
+        c.sucio = true;
+        return match res {
+            Ok(a) => de_accion(a),
+            Err(_) => {
+                r.d[0] = 0;
+                Fin::Seguir
+            }
+        };
+    }
+    if c.cx.es_mio(n) {
+        return match c.cx.llamar(&mut c.ex, n, r) {
+            Ok(a) => de_accion(a),
+            Err(_) => {
+                r.d[0] = 0;
+                Fin::Seguir
+            }
+        };
+    }
+    if c.cias.es_mio(n) {
+        let res = c.cias.llamar(&mut c.ex, n, r);
+        multitarea::avisar_reloj(c);
+        if res.is_err() {
+            c.disp_faltan.push("cia.resource");
+        }
+        return Fin::Seguir;
+    }
+    if c.sonido.es_mio(n) {
+        let a = c.sonido.llamar(&mut c.ex, n, r);
+        multitarea::avisar_reloj(c);
+        return de_accion(a);
+    }
+    if c.bsd.es_mio(n) {
+        let a = c.bsd.llamar(&mut c.ex, &mut c.red, n, r, plataforma::ahora_us());
+        return de_accion(a);
+    }
+    if c.iconos.es_mio(n) {
+        let mut en = iconos::EntornoCaja { dos: &mut c.dos, consola: &mut c.consola, gr: &mut c.gr };
+        let a = c.iconos.llamar(&mut c.ex, n, r, &mut en);
+        c.sucio = true;
+        return de_accion(a);
+    }
+    if c.disp.es_mio(n) {
+        if c.disp.es_raw_key_convert(n) {
+            // RawKeyConvert = MapRawKey de keymap, con los mismos registros: su número, de la tabla de keymap.
+            let teclas = c.gr.capas_bases().1;
+            if let Ok(m) = c.ex.mem.leer16(teclas.wrapping_sub(42) + 2) {
+                if m != n {
+                    return ajena(c, m, r);
+                }
+            }
+            r.d[0] = u32::MAX;
+            return Fin::Seguir;
+        }
+        return match c.disp.llamar(&mut c.ex, n, r) {
+            Ok(a) => de_accion(a),
+            Err(_) => {
+                c.disp_faltan.push(if n < N_ENTRADA { "console.device" } else { "input.device" });
+                Fin::Seguir
+            }
+        };
+    }
     if c.timer.es_mio(n) {
         let reloj = reloj();
         return de_accion(c.timer.llamar(&mut c.ex, n, r, reloj));
+    }
+    // RunCommand, SystemTagList y Execute ejecutan 68k en anidado: los hace la caja (`ordenes.rs`).
+    if c.ex.ajena(n).map(|(l, _)| l) == Some(c.dos_base) {
+        match n.wrapping_sub(N_DOS) {
+            caja_dos::lvo::RUN_COMMAND => return ordenes::run_command(c, r),
+            caja_dos::lvo::SYSTEM_TAG_LIST => return ordenes::system(c, r, false),
+            caja_dos::lvo::EXECUTE => return ordenes::system(c, r, true),
+            _ => {}
+        }
     }
     if (N_DOS + caja_dos::lvo::PRIMERA..=N_DOS + caja_dos::lvo::ULTIMA).contains(&n)
         && c.ex.ajena(n).map(|(l, _)| l) == Some(c.dos_base)
@@ -1134,7 +1453,19 @@ fn ajena(c: &mut Caja, n: u16, r: &mut Registros) -> Fin {
         }
         let mut rd = caja_dos::Registros { d: r.d, a: r.a };
         let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
+        let antes = rd.d;
         let a = c.dos.llamar(&mut cd, n - N_DOS, &mut rd);
+        if TRAZA_DOS.load(core::sync::atomic::Ordering::Relaxed) {
+            di(&format!(
+                "dos {}(${:x}, ${:x}, ${:x}, ${:x}) = ${:x}",
+                caja_dos::lvo::nombre(n - N_DOS),
+                antes[1],
+                antes[2],
+                antes[3],
+                antes[4],
+                rd.d[0]
+            ));
+        }
         (r.d, r.a) = (rd.d, rd.a);
         return match a {
             caja_dos::Accion::Seguir => Fin::Seguir,
@@ -1306,6 +1637,36 @@ fn recoger_avisos(c: &mut Caja) {
         }
         textos.push(format!("{} (utility): {:?}", a.funcion, a.fallo));
     }
+    for f in core::mem::take(&mut c.asl.faltan) {
+        faltan.push(("asl.library", f));
+    }
+    for f in core::mem::take(&mut c.cx.faltan) {
+        faltan.push(("commodities.library", f));
+    }
+    for b in core::mem::take(&mut c.disp_faltan) {
+        faltan.push((b, if b == "console.device" { "OpenDevice de una consola (CON:)" } else { "?" }));
+    }
+    for a in c.sonido.tomar_avisos() {
+        if matches!(a.fallo, caja_exec::Fallo::NoImplementada { .. }) {
+            faltan.push(("ahi.device/audio.device", a.funcion));
+        }
+        textos.push(format!("{} (sonido): {:?}", a.funcion, a.fallo));
+    }
+    for a in c.bsd.tomar_avisos() {
+        if matches!(a.fallo, caja_exec::Fallo::NoImplementada { .. }) {
+            faltan.push(("bsdsocket.library", a.funcion));
+        }
+        textos.push(format!("{} (bsdsocket): {:?}", a.funcion, a.fallo));
+    }
+    for l in c.bsd.tomar_registro() {
+        di(&format!("syslog: {}", l));
+    }
+    for a in c.iconos.tomar_avisos() {
+        if matches!(a.fallo, caja_exec::Fallo::NoImplementada { .. }) {
+            faltan.push(("icon.library/workbench.library", a.funcion));
+        }
+        textos.push(format!("{} (icon/workbench): {:?}", a.funcion, a.fallo));
+    }
     for a in c.timer.tomar_avisos() {
         if matches!(a.fallo, caja_exec::Fallo::NoImplementada { .. }) {
             faltan.push(("timer.device", a.funcion));
@@ -1376,11 +1737,18 @@ fn revisar_temporizador(c: &mut Caja) {
     if c.timer.pendientes() > 0 {
         let _ = c.timer.vencidos(&mut c.ex, reloj());
     }
+    // Y la red (bsdsocket): las tareas que esperan algo que ya llegó, listas (cuesta nada sin esperas).
+    if c.bsd.hay_esperas() {
+        c.bsd.atender(&mut c.ex, &mut c.red, plataforma::ahora_us());
+    }
 }
 
 /// Atiende al compositor: sus eventos pasan a mensajes IDCMP y lo dibujado se manda; y a timer.device.
 fn atender(c: &mut Caja) {
     revisar_temporizador(c);
+    if c.sonido.activo() {
+        let _ = c.sonido.atender(&mut c.ex, &mut c.salida, plataforma::ahora_us(), false);
+    }
     poner_hora(c);
     c.gr.atender(&mut c.ex);
     // El tope de la memoria del 68k, del ajuste de las cajas (si cambió en el centro de control, el nuevo).
@@ -1398,6 +1766,8 @@ enum Espera {
     /// Hay eventos de gadgets BOOPSI que atender (con el puente, fuera de aquí).
     Boopsi,
     Excepcion,
+    /// Un gancho de AHI (el jugador de un reproductor, el fin de una vuelta) que ejecutar con la pila de la tarea.
+    Sonido,
     Plazo,
 }
 
@@ -1453,12 +1823,21 @@ fn esperar(c: &mut Caja, t: u32) -> Espera {
             let _ = c.ex.elegir_siguiente();
             return Espera::Excepcion;
         }
+        if c.sonido.hay_gancho() || (c.cias.activo() && c.cias.hay_vencida(&c.ex, plataforma::ahora_us())) {
+            let _ = c.ex.despertar(t);
+            let _ = c.ex.elegir_siguiente();
+            return Espera::Sonido;
+        }
         if c.ex.elegir_siguiente() == Some(t) {
             return Espera::Lista;
         }
         // Con una espera de timer.device en marcha, algo la va a despertar: el plazo cuenta desde que venza.
         if let Some(p) = c.timer.proximo() {
             hasta = hasta.max(p.saturating_add(maxima));
+        }
+        // Con una espera de la red (un recv, un accept, un WaitSelect), lo que llegue la despierta: no se corta.
+        if c.bsd.hay_esperas() {
+            hasta = hasta.max(plataforma::ahora_us().saturating_add(maxima));
         }
         if plataforma::ahora_us() > hasta {
             return Espera::Plazo;
@@ -1476,7 +1855,7 @@ fn dormir(tics: u32, a7: u32) -> bool {
         if let Some(c) = caja() {
             atender(c);
         }
-        if !atender_boopsi(a7) {
+        if !atender_boopsi(a7) || !sonar(a7) {
             return false;
         }
         let ahora = plataforma::ahora_us();
@@ -1609,6 +1988,47 @@ impl caja_intuition::Puente for PuenteCaja {
 /// Lo de BOOPSI que quedó en la cola al atender al compositor (clics y repintados de sus gadgets), con la pila de
 /// la llamada en curso. `false` si el programa acabó dentro de un despachador 68k.
 /// Quien la llama no puede tener viva ninguna referencia de `caja()`.
+/// El sonido (`caja/sonido`): mezcla lo que toque y ejecuta los ganchos de AHI que pida (el jugador de un
+/// reproductor a su ritmo, el fin de una vuelta de un sonido), con la pila `a7` (debajo de lo de la tarea, como una
+/// interrupción). Como mucho 64 ganchos seguidos. `false` si el programa acabó dentro de uno.
+fn sonar(a7: u32) -> bool {
+    // Los temporizadores de las CIA (`cia.rs`) que hayan vencido: su interrupción, como en el Amiga.
+    for _ in 0..8 {
+        let Some(c) = caja() else { return true };
+        if !c.cias.activo() {
+            break;
+        }
+        let Some((codigo, mut regs)) = c.cias.vencida(&c.ex, plataforma::ahora_us()) else { break };
+        regs.a[7] = a7;
+        // (Sin referencias de `caja()` a partir de aquí: ver `ejecutar_68k`.)
+        let hecho = ejecutar_68k(codigo, &regs, false);
+        let Some(c) = caja() else { return true };
+        match hecho {
+            Ok(_) => c.anidadas += 1,
+            Err(ANIDADA_ACABADO) => return false,
+            Err(_) => c.anidadas_no += 1,
+        }
+    }
+    for _ in 0..64 {
+        let Some(c) = caja() else { return true };
+        if !c.sonido.activo() {
+            return true;
+        }
+        let Some(g) = c.sonido.atender(&mut c.ex, &mut c.salida, plataforma::ahora_us(), true) else { return true };
+        let regs = g.registros(a7);
+        // (Sin referencias de `caja()` a partir de aquí: ver `ejecutar_68k`.)
+        let hecho = ejecutar_68k(g.entrada, &regs, false);
+        let Some(c) = caja() else { return true };
+        c.sonido.gancho_hecho();
+        match hecho {
+            Ok(_) => c.anidadas += 1,
+            Err(ANIDADA_ACABADO) => return false,
+            Err(_) => c.anidadas_no += 1,
+        }
+    }
+    true
+}
+
 fn atender_boopsi(a7: u32) -> bool {
     let pendiente = caja().is_some_and(|c| c.gr.boopsi_pendiente());
     if !pendiente {
@@ -1638,7 +2058,77 @@ pub unsafe extern "C" fn caja_llamada(regs: *mut Registros, n: u32) -> i32 {
     // SEGURIDAD: lo garantiza quien llama (caja_nativa, con los del motor); sin copiarlos: es la llamada de cada
     // función nativa, y la copia se notaba en los cambios de tarea.
     let r = unsafe { &mut *regs };
-    llamada(n as u16, r)
+    let n = n as u16;
+    // La traza de `ENV:traza-amiga` (las tareas que se nombran ahí).
+    let quien = caja().and_then(|c| {
+        let q = trazada(c)?;
+        trazar_llamada(c, &q, n, r);
+        Some(q)
+    });
+    let res = llamada(n, r);
+    if let Some(q) = quien {
+        di(&format!("traza {}: = {:x} (a0={:x})", q, r.d[0], r.a[0]));
+    }
+    res
+}
+
+/// `DosLibrary->dl_Root` (`dos/dosextens.h`): la `RootNode` (56 bytes) con su `rn_Info` (una `DosInfo` de 36 bytes)
+/// y `rn_CliList` (una `MinList` vacía), en memoria del sistema. Directory Opus (y la biblioteca de C de SAS/C con
+/// los comodines) pone `RNF_WILDSTAR` en `rn_Flags` al arrancar: con `dl_Root` a 0 escribía en la dirección $34 y la
+/// caja entera caía. La lista de dispositivos de verdad la da `LockDosList` (`di_DevInfo` queda a 0: quien la recorra
+/// a mano la ve vacía).
+fn poner_raiz_de_dos(ex: &mut Exec<MemoriaCaja>, dos_base: u32) -> Result<(), caja_exec::Fallo> {
+    const DL_ROOT: u32 = 34;
+    const RN_INFO: u32 = 24;
+    const RN_CLILIST: u32 = 32;
+    let raiz = ex.alloc_mem(56, memf::PUBLIC | memf::CLEAR)?;
+    let info = ex.alloc_mem(36, memf::PUBLIC | memf::CLEAR)?;
+    if raiz == 0 || info == 0 {
+        return Err(caja_exec::Fallo::PunteroNulo);
+    }
+    ex.mem.escribir32(raiz + RN_INFO, info >> 2)?;
+    // MinList vacía: mlh_Head = &mlh_Tail, mlh_Tail = 0, mlh_TailPred = &mlh_Head.
+    ex.mem.escribir32(raiz + RN_CLILIST, raiz + RN_CLILIST + 4)?;
+    ex.mem.escribir32(raiz + RN_CLILIST + 8, raiz + RN_CLILIST)?;
+    ex.mem.escribir32(dos_base + DL_ROOT, raiz)
+}
+
+/// Relee qué tareas se trazan (`ENV:traza-amiga`).
+pub(crate) fn releer_traza(c: &mut Caja) {
+    let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: true };
+    c.traza = match c.dos.leer_fichero(&mut cd, b"ENV:traza-amiga", 1024) {
+        Ok(v) => v.split(|b| b.is_ascii_whitespace() || *b == b',').filter(|x| !x.is_empty()).take(16).map(|x| x.to_vec()).collect(),
+        Err(_) => Vec::new(),
+    };
+}
+
+/// Si se traza la tarea en marcha: su nombre.
+fn trazada(c: &Caja) -> Option<String> {
+    if c.traza.is_empty() {
+        return None;
+    }
+    let t = c.ex.tarea_actual();
+    let n = c.ex.mem.leer32(t.wrapping_add(10)).ok().filter(|&d| d != 0)?;
+    let nombre = c.ex.leer_cadena(n).ok()?;
+    let corto = nombre.rsplit(['/', ':']).next().unwrap_or(&nombre);
+    c.traza.iter().any(|x| x.as_slice() == corto.as_bytes() || x == b"*").then(|| String::from(corto))
+}
+
+/// Una línea de la traza: la llamada `n` con sus registros (biblioteca y LVO, o el nombre si es de exec).
+fn trazar_llamada(c: &Caja, quien: &str, n: u16, r: &Registros) {
+    let que = if n <= lvo::ULTIMO_DE_EXEC {
+        String::from(lvo::nombre(n))
+    } else if let Some((lib, desp)) = c.ex.ajena(n) {
+        let nom = c.ex.mem.leer32(lib + 10).ok().and_then(|d| c.ex.leer_cadena(d).ok()).unwrap_or_default();
+        format!("{} {}", nom, desp)
+    } else {
+        format!("nativa ${:x}", n)
+    };
+    let vuelta = c.ex.mem.leer32(r.a[7]).unwrap_or(0);
+    di(&format!(
+        "traza {}: {} d0={:x} d1={:x} d2={:x} a0={:x} a1={:x} a2={:x} a6={:x} (desde ${:x})",
+        quien, que, r.d[0], r.d[1], r.d[2], r.a[0], r.a[1], r.a[2], r.a[6], vuelta
+    ));
 }
 
 /// Lo primero de la función `n`: la de exec, o `Ajena` (la sigue `avanzar`).
@@ -1647,6 +2137,10 @@ fn primera(c: &mut Caja, n: u16, r: &mut Registros) -> Accion {
 }
 
 fn llamada(n: u16, r: &mut Registros) -> i32 {
+    // El sonido, en cada llamada nativa (nada si no suena nada): mezcla y, si toca, los ganchos de AHI.
+    if caja().is_some_and(|c| c.sonido.activo() || c.cias.activo()) && !sonar(r.a[7]) {
+        return C_ACABAR;
+    }
     let Some(c) = caja() else { return C_RECHAZADA };
     revisar_temporizador(c);
     multitarea::despertar_dormidas(c);
@@ -1665,6 +2159,26 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
         return llamada(m, r);
     }
     c.pc_llamada = c.ex.mem.leer32(r.a[7]).unwrap_or(0);
+    if n <= lvo::ULTIMO_DE_EXEC && TRAZA_EXEC.load(core::sync::atomic::Ordering::Relaxed) {
+        let que = lvo::nombre(n);
+        // Lo que se abre, por su nombre (A1).
+        let nombre = if matches!(que, "OpenLibrary" | "OldOpenLibrary" | "OpenDevice" | "OpenResource") {
+            let d = if que == "OpenDevice" { r.a[0] } else { r.a[1] };
+            c.ex.leer_cadena(d).map(|t| format!(" \"{}\"", t)).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        di(&format!(
+            "exec {}(d0 ${:x}, d1 ${:x}, a0 ${:x}, a1 ${:x}){} desde ${:x}",
+            que,
+            r.d[0],
+            r.d[1],
+            r.a[0],
+            r.a[1],
+            nombre,
+            c.pc_llamada
+        ));
+    }
     // Lo que reserve código de una biblioteca de disco es del sistema: la biblioteca sigue al acabar la tarea.
     let de_biblioteca = faltan::de_biblioteca(c, c.pc_llamada).is_some();
     c.ex.memoria_del_sistema(de_biblioteca);
@@ -1678,6 +2192,14 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
         }
         di(&format!("{} llama a {}, privada de exec (sin documentar): se acaba el programa", q, lvo::nombre(n)));
         return C_ACABAR;
+    }
+    // ReplyMsg de un aviso de StartNotify (no tiene puerto de vuelta): lo atiende dos, que lo suelta y, si la petición
+    // esperaba la respuesta con cambios pendientes, manda ya el siguiente (como el manejador del Amiga, que corre antes
+    // de que ReplyMsg vuelva).
+    if n <= lvo::ULTIMO_DE_EXEC && lvo::nombre(n) == "ReplyMsg" && c.dos.es_aviso(r.a[1]) {
+        let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
+        c.dos.aviso_contestado(&mut cd, r.a[1]);
+        return C_SEGUIR;
     }
     if n == N_INTERRUPCION {
         // La interrupción de nivel 6 de la caja (caja.c la levanta desde otro hilo): Ctrl-C para el programa.
@@ -1788,6 +2310,10 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
                 // Las llamadas de dentro cambiaron de quién es lo nuevo: otra vez el de esta llamada.
                 c.ex.memoria_del_sistema(de_biblioteca);
                 a = c.ex.continuar(tras, &rr, r);
+                // Una orden de RunCommand o SystemTagList que vuelve: lo suyo (`ordenes.rs`).
+                if let Some(id) = c.ex.tomar_vuelta_caja() {
+                    a = ordenes::acabada(c, id, r);
+                }
                 continue;
             }
             Fin::Bloquear if multitarea::hay_otras(c) && multitarea::se_puede_cambiar() => {
@@ -1814,6 +2340,15 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
                 Espera::Boopsi => {
                     // Un clic en un gadget BOOPSI (su clase puede ser de 68k): se atiende y la espera se repite.
                     if !atender_boopsi(antes.a[7]) {
+                        return C_ACABAR;
+                    }
+                    let Some(c) = caja() else { return C_RECHAZADA };
+                    *r = antes;
+                    a = primera(c, n, r);
+                    continue;
+                }
+                Espera::Sonido => {
+                    if !sonar(antes.a[7]) {
                         return C_ACABAR;
                     }
                     let Some(c) = caja() else { return C_RECHAZADA };

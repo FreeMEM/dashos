@@ -61,6 +61,28 @@ pub(crate) struct Estado {
     pub vigilados: Tabla<crate::vigia::Vigilado>,
 }
 
+/// `struct BitScaleArgs` (`graphics/scale.h`).
+const BSA_TAMANO: u32 = 48;
+
+/// `ScalerDiv(factor, numerator, denominator)`: `factor · numerator / denominator` redondeado (las mitades hacia
+/// arriba), y al menos 1 si `factor` no es 0 (oráculo: `pruebas68k/escala.c`).
+pub(crate) fn scaler_div(factor: u32, num: u32, den: u32) -> u32 {
+    let (factor, num, den) = (factor & 0xFFFF, num & 0xFFFF, den & 0xFFFF);
+    if den == 0 {
+        return 0;
+    }
+    let r = ((factor as u64 * num as u64 + (den / 2) as u64) / den as u64) as u32;
+    if r == 0 && factor != 0 { 1 } else { r }
+}
+
+/// `tf_Message.mn_ReplyPort`, donde va la extensión de una fuente, y `struct TextFontExtension`.
+const TF_REPLYPORT: u32 = 14;
+const TFE_MATCHWORD: u16 = 0x4E1B;
+const TFE_BACKPTR: u32 = 4;
+const TFE_ORIGREPLYPORT: u32 = 8;
+const TFE_TAGS: u32 = 12;
+const TFE_TAMANO: u32 = 24;
+
 /// Lo que se lee de un `RastPort`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct InfoRp {
@@ -104,7 +126,7 @@ impl Mapa {
 }
 
 /// Una fuente leída de su `struct TextFont`.
-struct Fuente {
+pub(crate) struct Fuente {
     alto: u32,
     ancho: u32,
     base: u32,
@@ -166,6 +188,8 @@ impl<C: Compositor> CajaGrafica<C> {
         self.gfx.base = base;
         let topaz = fuente::construir(ex)?;
         self.gfx.topaz = topaz;
+        // Las fuentes de la ROM vienen extendidas (oráculo: ExtendFont de topaz no cambia nada).
+        self.extend_font(ex, topaz, 0)?;
         ex.new_list(base + gfxbase::TEXTFONTS, nt::FONT)?;
         ex.add_tail(base + gfxbase::TEXTFONTS, topaz)?;
         ex.e32(base + gfxbase::DEFAULTFONT, topaz)?;
@@ -788,6 +812,53 @@ impl<C: Compositor> CajaGrafica<C> {
         self.copiar(ex, origen, xs, ys, destino, xd, yd, ancho, alto, m, mascara, None, None, None)
     }
 
+    /// `BitMapScale(bitScaleArgs)`: un rectángulo de un mapa, escalado en otro por `XDestFactor/XSrcFactor` y
+    /// `YDestFactor/YSrcFactor`. Lo comprobado contra el oráculo (`pruebas68k/escala.c`): el tamaño de destino es el de
+    /// `ScalerDiv` (y queda en `bsa_DestWidth` y `bsa_DestHeight`); el punto de origen `k` ocupa en destino desde
+    /// `redondeo(k · destino / origen)` hasta el del siguiente (con las mitades hacia arriba), así que al ampliar se
+    /// repite y al reducir se salta. Copia las plumas tal cual. Como mucho 4096 x 4096.
+    pub fn bit_map_scale<M: Memoria>(&mut self, ex: &mut Exec<M>, a: u32) -> Result<(), Fallo> {
+        ex.tramo(a, BSA_TAMANO)?;
+        let w = |k: u32| ex.l16(a + k);
+        let (sx, sy, sw, sh) = (w(0)? as i32, w(2)? as i32, w(4)? as u32, w(6)? as u32);
+        let (xs, ys) = (w(8)? as u32, w(10)? as u32);
+        let (dx, dy) = (w(12)? as i32, w(14)? as i32);
+        let (xd, yd) = (w(20)? as u32, w(22)? as u32);
+        let (origen, destino) = (ex.l32(a + 24)?, ex.l32(a + 28)?);
+        if xs == 0 || ys == 0 {
+            return Err(Fallo::TamanoMalo { ancho: xs as i32, alto: ys as i32 });
+        }
+        let dw = scaler_div(sw, xd, xs);
+        let dh = scaler_div(sh, yd, ys);
+        ex.e16(a + 16, dw as u16)?;
+        ex.e16(a + 18, dh as u16)?;
+        if sw == 0 || sh == 0 || dw > 4096 || dh > 4096 {
+            return Ok(());
+        }
+        // Dónde empieza en destino el punto `k` de origen.
+        let pos = |k: u32, f_d: u32, f_s: u32| ((k as u64 * f_d as u64 + (f_s / 2) as u64) / f_s as u64) as i32;
+        // Las columnas de destino de cada columna de origen.
+        let mut columnas = Vec::new();
+        for k in 0..sw {
+            for x in pos(k, xd, xs)..pos(k + 1, xd, xs).min(dw as i32) {
+                columnas.push((k as i32, x));
+            }
+        }
+        for k in 0..sh {
+            let (y0, y1) = (pos(k, yd, ys), pos(k + 1, yd, ys).min(dh as i32));
+            if y0 >= y1 {
+                continue;
+            }
+            for &(c, x) in &columnas {
+                self.copiar(ex, origen, sx + c, sy + k as i32, destino, dx + x, dy + y0, 1, 1, 0xC0, 0xFF, None, None, None)?;
+            }
+            for y in y0 + 1..y1 {
+                self.copiar(ex, destino, dx, dy + y0, destino, dx, dy + y, dw as i32, 1, 0xC0, 0xFF, None, None, None)?;
+            }
+        }
+        Ok(())
+    }
+
     /// `ClipBlit` y `BltBitMapRastPort` (con `origen_rp` = 0 y `origen` el mapa).
     #[allow(clippy::too_many_arguments)]
     pub fn clip_blit<M: Memoria>(
@@ -933,7 +1004,7 @@ impl<C: Compositor> CajaGrafica<C> {
 
     // --- Texto y fuentes ---
 
-    fn leer_fuente<M: Memoria>(&self, ex: &Exec<M>, f: u32) -> Result<Fuente, Fallo> {
+    pub(crate) fn leer_fuente<M: Memoria>(&self, ex: &Exec<M>, f: u32) -> Result<Fuente, Fallo> {
         if f == 0 {
             return Err(Fallo::FuenteMala { dir: 0 });
         }
@@ -1277,6 +1348,73 @@ impl<C: Compositor> CajaGrafica<C> {
         let a = ex.l16(f + tf::TF_ACCESSORS)?;
         ex.e16(f + tf::TF_ACCESSORS, a.saturating_add(1))?;
         Ok(f)
+    }
+
+    /// La extensión de una fuente (`struct TextFontExtension`), si la tiene: va en `tf_Message.mn_ReplyPort`, con su
+    /// marca y un puntero de vuelta a la fuente.
+    fn extension_de<M: Memoria>(&self, ex: &Exec<M>, tf: u32) -> Option<u32> {
+        let e = ex.l32(tf.checked_add(TF_REPLYPORT)?).ok()?;
+        (e != 0 && ex.l16(e).ok()? == TFE_MATCHWORD && ex.l32(e.checked_add(TFE_BACKPTR)?).ok()? == tf).then_some(e)
+    }
+
+    /// `ExtendFont(font, fontTags)`: le pone su extensión si no la tiene. Lo comprobado contra el oráculo
+    /// (`pruebas68k/fuente2.c`): la marca $4E1B, banderas 0, el puntero de vuelta, el `mn_ReplyPort` de antes guardado y
+    /// una copia de las etiquetas; el estilo no cambia. Si ya la tiene, TRUE sin tocar nada.
+    pub fn extend_font<M: Memoria>(&mut self, ex: &mut Exec<M>, tf: u32, tags: u32) -> Result<u32, Fallo> {
+        if tf == 0 {
+            return Ok(0);
+        }
+        ex.tramo(tf, tf::TAMANO)?;
+        if self.extension_de(ex, tf).is_some() {
+            return Ok(1);
+        }
+        // Las etiquetas, copiadas hasta TAG_DONE (como mucho 64).
+        let mut lista = Vec::new();
+        let mut t = tags;
+        while t != 0 && lista.len() < 64 {
+            let (etiqueta, dato) = (ex.l32(t)?, ex.l32(t.wrapping_add(4))?);
+            if etiqueta == 0 {
+                break;
+            }
+            lista.push((etiqueta, dato));
+            let Some(sig) = t.checked_add(8) else { break };
+            t = sig;
+        }
+        let copia = if lista.is_empty() {
+            0
+        } else {
+            let d = ex.reservar((lista.len() as u32 + 1) * 8, memf::CLEAR)?;
+            for (k, (etiqueta, dato)) in lista.iter().enumerate() {
+                ex.e32(d + 8 * k as u32, *etiqueta)?;
+                ex.e32(d + 8 * k as u32 + 4, *dato)?;
+            }
+            d
+        };
+        let e = ex.reservar(TFE_TAMANO, memf::CLEAR)?;
+        ex.e16(e, TFE_MATCHWORD)?;
+        ex.e32(e + TFE_BACKPTR, tf)?;
+        ex.e32(e + TFE_ORIGREPLYPORT, ex.l32(tf + TF_REPLYPORT)?)?;
+        ex.e32(e + TFE_TAGS, copia)?;
+        ex.e32(tf + TF_REPLYPORT, e)?;
+        Ok(1)
+    }
+
+    /// `StripFont(font)`: le quita la extensión (el `mn_ReplyPort` de antes vuelve). Sin extensión, nada.
+    pub fn strip_font<M: Memoria>(&mut self, ex: &mut Exec<M>, tf: u32) -> Result<(), Fallo> {
+        if tf == 0 {
+            return Ok(());
+        }
+        let Some(e) = self.extension_de(ex, tf) else { return Ok(()) };
+        ex.e32(tf + TF_REPLYPORT, ex.l32(e + TFE_ORIGREPLYPORT)?)?;
+        let tags = ex.l32(e + TFE_TAGS)?;
+        if tags != 0 {
+            let mut n = 1;
+            while n < 65 && ex.l32(tags + 8 * (n - 1))? != 0 {
+                n += 1;
+            }
+            ex.soltar(tags, n * 8)?;
+        }
+        ex.soltar(e, TFE_TAMANO)
     }
 
     /// `CloseFont`.

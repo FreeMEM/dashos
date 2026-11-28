@@ -1,0 +1,21 @@
+antes: mis argumentos [
+]
+  eco: GetArgStr 21 [uno "dos tres" cuatro]
+  eco: ReadArgs [uno] [dos tres] [cuatro]
+SystemTagList: 7
+despues: mis argumentos [
+]
+  eco: GetArgStr 0 []
+  eco: ReadArgs
+SystemTagList sin argumentos: 7
+noexiste.exe: Unknown command
+noexiste.exe failed returncode 10
+SystemTagList de una que no existe: 10
+  eco: GetArgStr 11 [por Execute]
+  eco: ReadArgs [por] [Execute]
+Execute: -1
+  eco: GetArgStr 14 [con RunCommand]
+  eco: ReadArgs [con] [RunCommand]
+RunCommand: 7
+al final: mis argumentos [
+]

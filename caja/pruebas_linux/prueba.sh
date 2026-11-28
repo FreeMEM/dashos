@@ -37,7 +37,11 @@ prueba() {   # cómo lanzar la caja
     comprueba "tipo.exe: lo que no existe en Linux queda como está" 10 "$s" $r "object not found"
     # Pruebas del oráculo: la salida de FS-UAE con el Kickstart (tools/emu_run.py de Dash), guardada en *.esperado.
     # Sin la guardia de ficheros (CAJA_AMIGA_PROTEGER=no): en un Amiga no la hay.
-    for p in dosasl patron formato supervisor icono; do
+    # ramlib2.exe abre manual.library de LIBS: (el SYS de la prueba).
+    mkdir -p "$t/sys/Libs" && cp "$AQUI/../pruebas68k/manual.library" "$t/sys/Libs/"
+    # sistema.exe lanza eco.exe del cajón de la prueba.
+    cp "$AQUI/../pruebas68k/eco.exe" "$t/"
+    for p in dosasl patron formato supervisor icono dos2 imagen ramlib2 dos3 cx fuente2 notify escala sistema clase; do
         s=$(cd "$t" && CAJA_AMIGA_PROTEGER=no CAJA_AMIGA_SYS="$t/sys" "$@" "$AQUI/../pruebas68k/$p.exe" 2>&1); r=$?
         if [ $r = 0 ] && [ "$s" = "$(cat "$AQUI/$p.esperado")" ]; then echo "  BIEN $p.exe: como el oráculo"
         else echo "  MAL  $p.exe (código $r): no es como el oráculo"; printf '%s\n' "$s" | diff "$AQUI/$p.esperado" - | sed 's/^/      /'
@@ -53,6 +57,14 @@ prueba() {   # cómo lanzar la caja
         if printf '%s\n' "$s" | grep -q "MAL: sigue"; then r=99; fi
         comprueba "perdido.exe $m: sale de su memoria y cae el programa" 3 "$s" $r "el programa acabó por la excepción del 68k"
     done
+    # El ratón, con el compositor de Wayland de mentira (compositor_falso.py; sin tocar el escritorio): un clic en el
+    # gadget de cerrar de ventana.exe le llega como IDCMP_CLOSEWINDOW. El socket, relativo (la ruta de $t es larga).
+    mkdir -p "$t/sys" && echo "hola" > "$t/sys/LEEME.txt"
+    (cd "$t" && timeout 60 python3 "$AQUI/compositor_falso.py" wl.sock ventana.png esperar:0.5 mover:100,80 clic:6,5 > comp.txt 2>&1 &)
+    sleep 0.5
+    s=$(cd "$t" && XDG_RUNTIME_DIR=. WAYLAND_DISPLAY=wl.sock CAJA_AMIGA_SYS="$t/sys" timeout 60 "$@" -v "$AQUI/../pruebas68k/ventana.exe" 2>&1); r=$?
+    comprueba "ventana.exe: un clic de ratón en su gadget de cerrar la cierra" 0 "$s" $r "IDCMP_CLOSEWINDOW recibido"
+    rm -f "$t/wl.sock"
     s=$(cd "$t" && "$@" no-existe.exe 2>&1); r=$?
     comprueba "un programa que no está" 2 "$s" $r "no se puede leer"
     s=$(cd "$t" && "$@" "$AQUI/../pruebas68k/sistema.s" 2>&1); r=$?

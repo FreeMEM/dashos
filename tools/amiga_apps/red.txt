@@ -1,0 +1,7 @@
+# La velocidad de la red de la caja (bsdsocket.library nativa): 4 MB del servidor del PC (10.0.2.2:8099) y la página de
+# Aminet por su nombre (DNS de verdad).
+variable traza-amiga -
+lanza PROGDIR:lanzador/red_prueba.exe 10.0.2.2 8099 /grande.bin
+hasta 250
+lanza PROGDIR:lanzador/red_prueba.exe aminet.net 80 /
+hasta 100
