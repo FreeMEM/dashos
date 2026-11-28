@@ -108,6 +108,7 @@ void di(const char *formato, ...)
 
 
 volatile uint32_t m68k_ram_fin = M68K_RAM + M68K_RAM_LEN;
+volatile uint32_t caja_perdido;
 
 /* Un objeto de memoria nuevo, proyectado en `va`. Devuelve su llave, o un error negativo. */
 static long proyecta(uintptr_t va, size_t len, int permisos)
@@ -289,6 +290,12 @@ static volatile int ctrl_c_pendiente;
 
 void caja_nativa(motor_regs *regs, uint32_t index)
 {
+    /* Un programa que salió de su memoria se está cortando: lo que pida mientras tanto no se hace (que no siga como si
+       nada hasta que llegue el corte, entre dos bloques). */
+    if (caja_perdido && index != N_VUELTA && index != N_INTERRUPCION && index != N_CAIDA) {
+        motor_cortar();
+        return;
+    }
     if (index == N_VUELTA) {
         /* Vuelve el nivel de dentro. Con la pila donde se le dejó, bien; más abajo (dejó algo en ella), se acepta: la
            de fuera está intacta. Más arriba, ha deshecho marcos de fuera (un longjmp, otro nivel): se corta. Sin
@@ -469,6 +476,7 @@ extern const uint8_t prog_lineaa[], prog_lineaa_fin[];
 extern const uint8_t prog_bucle[], prog_bucle_fin[];
 extern const uint8_t prog_mala[], prog_mala_fin[];
 extern const uint8_t prog_saludo[], prog_saludo_fin[];
+extern const uint8_t prog_perdido[], prog_perdido_fin[];
 extern const uint8_t prog_ventana[], prog_ventana_fin[];
 extern const uint8_t prog_hostil[], prog_hostil_fin[];
 extern const uint8_t prog_dash_hola[], prog_dash_hola_fin[];
@@ -523,6 +531,7 @@ static uint8_t vectores_foto[(COMUN + 16 - VECTORES) + (SUPER_BAJO - SISTEMA68K)
 static int vectores_deshechos;
 static void prepara_vectores(void)
 {
+    pon16(PARADA68K, 0x60fe);   /* bra.s PARADA68K */
     for (uint32_t i = 0; i < 256; i++) {
         uintptr_t t = TRAMPAS + 14 * i;
         pon32(VECTORES + 4 * i, (uint32_t)t);
@@ -580,6 +589,7 @@ static int arranca(uint32_t pc, uint32_t a7, uint32_t a6, uint32_t a0, uint32_t 
     pon16(MARCA, 0xffff);
     anidado = 0;
     programa_acabado = 0;
+    caja_perdido = 0;
     motor_arrancar(pc, a7, a6, a0, d0, super_tope, VECTORES);
     d0_final = motor_d0();
     uint16_t marca = lee16(MARCA);
@@ -1514,10 +1524,37 @@ int caja_main(void)
 
     if (fallos) return 10 + fallos;
 
-    /* 9. Hostil: el 68k escribe en la dirección 4, en la página 0 de solo lectura. El kernel termina la caja (sin el
-       Enforcer, que aún no está: ver la bitácora); si sigue viva, mal. */
-    di("el 68k escribe en la dirección 4 (ExecBase), en la página 0 de solo lectura: la caja tiene que morir\n");
-    v = ejecuta("mala", prog_mala, prog_mala_fin, 0x00140000);
-    di("MAL: la caja sigue viva (vector %d)\n", v);
-    return 20;
+    /* 9. Hostil: el programa sale de su memoria, y cae el programa, no la caja (jefe-dash, 2026-11-28; antes el kernel
+       terminaba la caja). mala.bin escribe en la dirección 4, en la página 0 de solo lectura, y perdido.exe salta,
+       lee, escribe, deja la pila y escribe en la página 0 fuera de la memoria del 68k. Cada uno cae por una
+       excepción del 68k (2, el error de bus de RelevoJIT; 31, el corte de la caja: motor_emu68.c, dashos_pc_perdido
+       y perdido_fallo, y la página 0 de motor_relevo.c) y, después, saludo.exe va como siempre. */
+    {
+        static const char *modos[] = { "salta", "lee", "escribe", "pila", "cero" };
+        int caen = 0, total = 0;
+        v = ejecuta("mala", prog_mala, prog_mala_fin, 0x00140000);
+        total++;
+        if (v > 0) caen++;
+        di("fuera de su memoria: mala.bin (página 0) cae por el vector %d\n", v);
+        for (unsigned i = 0; i < sizeof modos / sizeof modos[0]; i++) {
+            uint32_t d0 = 0, sobras = 0;
+            int llamadas = 0;
+            tarea_args = modos[i];
+            v = ejecuta_hunk("perdido.exe", prog_perdido, (size_t)(prog_perdido_fin - prog_perdido), execbase, &d0,
+                             &llamadas, &sobras);
+            tarea_args = NULL;
+            total++;
+            if (v > 0) caen++;
+            di("fuera de su memoria: perdido.exe %s cae por el vector %d\n", modos[i], v);
+        }
+        uint32_t d0 = 0, sobras = 0;
+        int llamadas = 0;
+        v = ejecuta_hunk("saludo.exe", prog_saludo, (size_t)(prog_saludo_fin - prog_saludo), execbase, &d0, &llamadas,
+                         &sobras);
+        bien = caen == total && v == -1 && d0 == 0;
+        di("fuera de su memoria: %d de %d programas caen y la caja sigue (saludo.exe después: %d): %s\n", caen, total,
+           (int)d0, bien ? "bien" : "MAL");
+        if (!bien) return 30;
+    }
+    return 0;
 }

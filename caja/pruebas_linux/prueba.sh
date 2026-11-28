@@ -47,6 +47,12 @@ prueba() {   # cómo lanzar la caja
     s=$(cd "$t" && CAJA_AMIGA_SYS="$t/sys" setsid "$@" "$AQUI/../pruebas68k/icono.exe" < /dev/null 2>&1); r=$?
     comprueba "icono.exe con la guardia y sin terminal: no borra el icono" 0 "$s" $r "DeleteDiskObject: 0"
     rm -f "$t/prueba_icono.info"
+    # Hostil: el programa sale de su memoria; cae el programa (una excepción del 68k), no la caja.
+    for m in salta lee escribe pila cero; do
+        s=$(cd "$t" && CAJA_AMIGA_SYS="$t/sys" "$@" "$AQUI/../pruebas68k/perdido.exe" $m 2>&1); r=$?
+        if printf '%s\n' "$s" | grep -q "MAL: sigue"; then r=99; fi
+        comprueba "perdido.exe $m: sale de su memoria y cae el programa" 3 "$s" $r "el programa acabó por la excepción del 68k"
+    done
     s=$(cd "$t" && "$@" no-existe.exe 2>&1); r=$?
     comprueba "un programa que no está" 2 "$s" $r "no se puede leer"
     s=$(cd "$t" && "$@" "$AQUI/../pruebas68k/sistema.s" 2>&1); r=$?

@@ -96,6 +96,8 @@ const char *motor_nombre(void)
 #define TRAMP_RW (JIT_RW + JIT_LEN - TRAMPOLINES_ZONA)
 #define TRAMP_RX (JIT_RX + JIT_LEN - TRAMPOLINES_ZONA)
 
+static int caja_fallo(struct marco_fallo *m);   /* (más abajo, con los chips) */
+
 int motor_iniciar(void)
 {
     long jit = plat_codigo(JIT_RW, JIT_RX, JIT_LEN);
@@ -110,6 +112,9 @@ int motor_iniciar(void)
     }
     jit_tlsf = tlsf_init_with_memory((void *)JIT_RW, JIT_LEN - TRAMPOLINES_ZONA);
     trampolines_iniciar(TRAMP_RW, TRAMP_RX);
+    /* Lo que sale de la memoria del 68k (y los chips, cuando se encienden) lo atiende el manejador de fallos. */
+    if (plat_fallos(caja_fallo) != 0)
+        di("sin manejador de fallos: un programa que salga de su memoria acabará con la caja\n");
 
     uint64_t ctr;
     __asm__ volatile("mrs %0, CTR_EL0" : "=r"(ctr));
@@ -230,8 +235,63 @@ uint64_t motor_plazos_chips(void) { return plazos_chips; }
 /* El plazo armado: INTF.CHIPS a 1 hace que MainLoop lo mire (INT64 deja de ser 0). */
 static void plazo_marca(int armado) { __atomic_store_n(&m68k.INTF.CHIPS, (uint8_t)armado, __ATOMIC_RELEASE); }
 
-/* K2 y K6: encendidos, el manejador de fallos del hilo de la caja (el que ejecuta el 68k) atiende las dos zonas;
-   apagados, se quita. Sin chips, un acceso ahí acaba como siempre. K8: y el contador hacia atrás, armado o no. */
+/* --- Lo que sale de la memoria del 68k: cae el programa, no la caja --- */
+
+/* Un salto perdido (parche 0019 de Emu68): MainLoop pregunta antes de traducir. Vale la memoria del 68k, en una
+   dirección par, y el 0 (por donde acaba un programa). */
+int dashos_pc_valido(uint32_t pc)
+{
+    return pc == 0 || (!(pc & 1) && en_ram68k(pc, 2));
+}
+
+/* Si no vale, el 68k va a PARADA68K (un BRA.S a sí mismo) mientras la caja corta el programa. */
+uint32_t dashos_pc_perdido(uint32_t pc)
+{
+    if (!caja_perdido) di("el programa salta a $%x, fuera de su memoria: cae\n", pc);
+    caja_perdido = pc | 1;
+    motor_cortar();
+    return (uint32_t)PARADA68K;
+}
+
+/* Un acceso del código traducido a donde no hay nada en los 4 GB del 68k (fuera de su memoria, o una escritura en la
+   página 0): la carga da 0, el guardado no se hace, se sigue en la instrucción siguiente y se corta el programa. Lo
+   demás (fuera del código traducido, por encima de 4 GB, una instrucción que no se sabe decodificar) no es suyo. */
+static int perdido_fallo(marco_fallo *m)
+{
+    if (((m->esr >> 26) & 0x3f) != CLASE_DATOS_EL0 || m->far >= 0x100000000ULL) return 0;
+    if (m->pc < JIT_RX || m->pc >= JIT_RX + JIT_LEN || (m->pc & 3)) return 0;
+    const volatile uint8_t *p = (const volatile uint8_t *)m->pc;
+    uint32_t ins = p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+    struct acceso a;
+    if (!decodifica(ins, m, &a)) return 0;
+    if (!a.escribe) {
+        unsigned regs[2] = { a.rt, a.rt2 };
+        for (int k = 0; k < a.pares; k++)
+            if (regs[k] != 31) m->x[regs[k]] = 0;
+    }
+    if (a.actualiza) {
+        if (a.rn == 31) m->sp = a.base_nueva;
+        else m->x[a.rn] = a.base_nueva;
+    }
+    if (a.estado >= 0 && a.estado != 31) m->x[a.estado] = 0;
+    m->pc += 4;
+    if (!caja_perdido)
+        di("el programa %s $%x, fuera de su memoria: cae\n", a.escribe ? "escribe en" : "lee de", (uint32_t)m->far);
+    caja_perdido = (uint32_t)m->far | 1;
+    motor_cortar();
+    return 1;
+}
+
+/* El manejador de fallos del hilo de la caja, siempre puesto (motor_iniciar): los chips, si están encendidos, y lo
+   que sale de la memoria del 68k. */
+static int caja_fallo(struct marco_fallo *m)
+{
+    if (chips_en && chips_fallo(m)) return 1;
+    return perdido_fallo(m);
+}
+
+/* K2 y K6: encendidos, el manejador de fallos del hilo de la caja atiende las dos zonas; apagados, no (un acceso ahí
+   es salir de la memoria del 68k: cae el programa). K8: y el contador hacia atrás, armado o no. */
 int motor_chips(int encendidos)
 {
     encendidos = encendidos != 0;
@@ -240,10 +300,6 @@ int motor_chips(int encendidos)
         /* La RAM del 68k empieza en M68K_RAM y no tiene huecos: si llega a la primera zona, exec puede tener bloques
            ahí. */
         if (m68k_ram_fin > CHIPS_CIA) return 0;
-        if (plat_fallos(chips_fallo) != 0) {
-            di("chips: el kernel no da el manejador de fallos\n");
-            return 0;
-        }
         chips_fallos = chips_tramp_accesos = chips_tramp_ram = 0;
         chips_reescritos = chips_deshechos = 0;
         plazos_chips = 0;
@@ -252,7 +308,6 @@ int motor_chips(int encendidos)
     } else {
         /* K7: que no quede nada reescrito (el sitio volvería a los chips apagados sin fallar). */
         trampolines_deshacer();
-        plat_fallos(0);
         plazo_marca(0);
         dashos_plazo = ~0ULL;
         ipl_chips = 0;

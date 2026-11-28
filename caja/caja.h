@@ -20,6 +20,9 @@
 #define PAGINA0_RW    0x0000000380000000UL
 #define PAGINA0_VISTA 0x00010000UL
 extern volatile uint32_t m68k_ram_fin;   /* dónde acaba ahora */
+/* El programa salió de su memoria (un salto perdido, o leer o escribir donde no hay nada, o en la página 0): la
+   dirección (con el bit 0, para que no sea 0), o 0. La caja lo está cortando: cae el programa, no la caja. */
+extern volatile uint32_t caja_perdido;
 uint32_t caja_ampliar_ram(uint32_t minimo, uint32_t tope);
 #define VECTORES     0x00100000UL   /* VBR: 256 vectores */
 #define TRAMPAS      0x00100400UL   /* una trampa de 14 bytes por vector */
@@ -40,6 +43,9 @@ uint32_t caja_ampliar_ram(uint32_t minimo, uint32_t tope);
 #define SUPER_BAJO      (SISTEMA68K + 0x7c)   /* el límite de la pila de supervisor (lo mira el despacho) */
 #define CAIDA68K        (SISTEMA68K + 0x80)   /* tras trampa_defecto: acaba el programa, o sigue otra tarea */
 #define FIN_SISTEMA68K  (SISTEMA68K + 0xa0)
+/* Un BRA.S a sí mismo (prepara_vectores): adonde va el 68k de un programa que salió de su memoria mientras la caja lo
+   corta (la interrupción de nivel 7). */
+#define PARADA68K       FIN_SISTEMA68K
 #define RTS_SUELTO      (VUELTA_ANIDADA + 4)  /* un RTS (el de la vuelta anidada) */
 #define RTR_SUELTO      (SISTEMA68K + 0x9c)   /* un RTR: retoma una tarea que perdió el testigo por su turno */
 #define CAMBIO          (MARCA + 2)           /* 1: caida cambió de tarea (RTE en vez de COMUN) */

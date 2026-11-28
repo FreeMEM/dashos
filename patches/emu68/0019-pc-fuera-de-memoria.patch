@@ -1,0 +1,46 @@
+From: DashOS
+Subject: [PATCH] Un PC fuera de la memoria del 68k no se traduce
+
+DashOS: antes de traducir, MainLoop pregunta a dashos_pc_valido (caja/motor_emu68.c) si el PC es memoria del 68k.
+Si no lo es (un salto perdido del programa), dashos_pc_perdido da otro PC, donde la caja corta el programa: asi el
+traductor no lee en el anfitrion lo que no hay, y cae el programa y no la caja. Las dos, debiles: sin ellas (jit-host)
+se traduce todo, como siempre.
+
+---
+diff --git a/src/ExecutionLoop.c b/src/ExecutionLoop.c
+--- a/src/ExecutionLoop.c
++++ b/src/ExecutionLoop.c
+@@ -25,6 +25,11 @@
+    a 0 (los chips apagados) no cuesta nada. Las dos, débiles: quien no las define (jit-host) se queda sin plazo. */
+ __attribute__((weak)) uint64_t dashos_plazo = ~0ULL;
+ __attribute__((weak)) void dashos_plazo_llegado(void) { dashos_plazo = ~0ULL; }
++/* DashOS: un PC fuera de la memoria del 68k (un salto perdido) no se traduce, que leería en el anfitrión lo que no hay.
++   Antes de traducir, dashos_pc_valido; si no vale, dashos_pc_perdido da otro (la caja corta el programa allí). Débiles:
++   quien no las define (jit-host) traduce todo, como siempre. */
++__attribute__((weak)) int dashos_pc_valido(uint32_t pc) { (void)pc; return 1; }
++__attribute__((weak)) uint32_t dashos_pc_perdido(uint32_t pc) { return pc; }
+ #endif
+ extern uint32_t EPOCH;
+ 
+@@ -502,6 +507,10 @@
+                 /* If we are that far there was no JIT unit found */
+                 M68K_SaveContext(ctx);
+ 
++#ifdef DASHOS_HOST
++                if (!dashos_pc_valido(getCTX()->PC))
++                    getCTX()->PC = dashos_pc_perdido(getCTX()->PC);
++#endif
+                 uint32_t copyPC = getCTX()->PC;
+ 
+                 /* Perform search without testing Epoch */
+@@ -555,6 +564,10 @@
+ 
+             /* Save context since C code will be called */
+             M68K_SaveContext(ctx);
++#ifdef DASHOS_HOST
++            if (!dashos_pc_valido(getCTX()->PC))
++                getCTX()->PC = dashos_pc_perdido(getCTX()->PC);
++#endif
+ 
+             /* Find the unit */
+             node = FindUnitNoLRU();

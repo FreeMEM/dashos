@@ -14,6 +14,7 @@ prog_\nombre\()_fin:
         programa bucle, "pruebas68k/bucle.bin"
         programa mala, "pruebas68k/mala.bin"
         programa saludo, "pruebas68k/saludo.exe"
+        programa perdido, "pruebas68k/perdido.exe"
         programa ventana, "pruebas68k/ventana.exe"
         programa hostil, "pruebas68k/hostil.exe"
         programa anidado, "pruebas68k/anidado.exe"
