@@ -1067,7 +1067,8 @@ enum Fin {
     Rechazada,
     /// Exec pide ejecutar código 68k antes de acabar (una función parcheada, el `Open` de una biblioteca 68k...):
     /// la caja lo ejecuta anidado y sigue con `tras`.
-    Ejecutar { dir: u32, regs: Registros, tras: caja_exec::Continuacion },
+    /// `modo`: el de `caja_ejecutar_68k` (0, el de quien llama; 2, supervisor hasta un RTE).
+    Ejecutar { dir: u32, regs: Registros, tras: caja_exec::Continuacion, modo: i32 },
 }
 
 /// Lo que devuelve `caja_llamada` a caja.c.
@@ -1160,7 +1161,10 @@ fn avanzar(c: &mut Caja, n: u16, r: &mut Registros, mut a: Accion) -> Fin {
                 if regs.a[7] == 0 {
                     regs.a[7] = r.a[7];
                 }
-                return Fin::Ejecutar { dir, regs, tras };
+                return Fin::Ejecutar { dir, regs, tras, modo: MODO_DE_QUIEN_LLAMA };
+            }
+            Accion::Llamar { destino: Destino::Supervisor(dir), regs, tras } => {
+                return Fin::Ejecutar { dir, regs, tras, modo: MODO_SUPERVISOR };
             }
             Accion::Ajena => return ajena(c, n, r),
             _ => break,
@@ -1176,11 +1180,22 @@ fn avanzar(c: &mut Caja, n: u16, r: &mut Registros, mut a: Accion) -> Fin {
 /// Quien la llama no puede tener viva ninguna referencia de `caja()`: el 68k de dentro llama a funciones nativas, que
 /// toman la suya. Después, otra con `caja()`.
 fn ejecutar_68k(dir: u32, regs: &Registros, usuario: bool) -> Result<Registros, i32> {
+    ejecutar_68k_en(dir, regs, if usuario { MODO_USUARIO } else { MODO_DE_QUIEN_LLAMA })
+}
+
+/// Los modos de `caja_ejecutar_68k` (caja.c).
+const MODO_DE_QUIEN_LLAMA: i32 = 0;
+const MODO_USUARIO: i32 = 1;
+/// En modo supervisor, con su pila, hasta un RTE (`Supervisor` de exec).
+const MODO_SUPERVISOR: i32 = 2;
+
+/// Como `ejecutar_68k`, en el modo `modo`.
+fn ejecutar_68k_en(dir: u32, regs: &Registros, modo: i32) -> Result<Registros, i32> {
     let mut v = [0u32; 16];
     v[..8].copy_from_slice(&regs.d);
     v[8..].copy_from_slice(&regs.a);
     // SEGURIDAD: `v` son 16 u32 nuestros; caja.c los lee y los escribe y no los guarda. Lo de `caja()`, arriba.
-    let e = unsafe { caja_ejecutar_68k(dir, v.as_mut_ptr(), usuario as i32) };
+    let e = unsafe { caja_ejecutar_68k(dir, v.as_mut_ptr(), modo) };
     if e != 0 {
         return Err(e);
     }
@@ -1730,9 +1745,9 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
                     let _ = c.ex.elegir_siguiente();
                 }
             }
-            Fin::Ejecutar { dir, regs, tras } => {
+            Fin::Ejecutar { dir, regs, tras, modo } => {
                 // (Sin referencias de `caja()` a partir de aquí: ver `ejecutar_68k`.)
-                let hecho = ejecutar_68k(dir, &regs, false);
+                let hecho = ejecutar_68k_en(dir, &regs, modo);
                 let Some(c) = caja() else { return C_RECHAZADA };
                 let rr = match hecho {
                     Ok(rr) => {

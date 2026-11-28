@@ -387,11 +387,25 @@ int caja_ejecutar_68k(uint32_t pc, uint32_t *r, int usuario)
     uint32_t sr = motor_sr(), usp, isp, msp;
     motor_pilas(&usp, &isp, &msp);
     uint32_t a7 = r[15];
-    if (usuario && (sr & SR_S)) { a7 = usp; sr &= ~(SR_S | SR_M); }
-    a7 = (a7 - 4) & ~1u;
+    /* usuario: 1, en modo de usuario y su pila; 2 (Supervisor de exec), en modo supervisor y su pila, hasta un RTE:
+       la vuelta va en un marco de excepción de formato 0 (SR, PC y la palabra de formato), con el SR de supervisor
+       que tenga, para que el RTE siga en modo supervisor hasta la vuelta. */
+    int super = usuario == 2;
+    if (usuario == 1 && (sr & SR_S)) { a7 = usp; sr &= ~(SR_S | SR_M); }
+    if (super) {
+        if (!(sr & SR_S)) a7 = isp;
+        sr = (sr | SR_S) & ~SR_M;
+    }
+    uint32_t marco = super ? 8 : 4;
+    a7 = (a7 - marco) & ~1u;
     /* Sitio en la pila para la vuelta y algo más: si no, no se ejecuta (el 68k escribiría fuera de su memoria). */
-    if (a7 < M68K_RAM + 256 || !en_ram68k(a7, 4)) return ANIDADA_PILA;
-    pon32(a7, (uint32_t)VUELTA_ANIDADA);
+    if (a7 < M68K_RAM + 256 || !en_ram68k(a7, marco)) return ANIDADA_PILA;
+    if (super) {
+        pon16(a7, (uint16_t)sr);
+        pon32(a7 + 2, (uint32_t)VUELTA_ANIDADA);
+        pon16(a7 + 6, 0);
+    } else
+        pon32(a7, (uint32_t)VUELTA_ANIDADA);
 
     motor_regs regs;
     for (int i = 0; i < 8; i++) { regs.d[i] = r[i]; regs.a[i] = r[8 + i]; }
@@ -402,7 +416,7 @@ int caja_ejecutar_68k(uint32_t pc, uint32_t *r, int usuario)
     int n = ++anidado;
     dueno_nivel[n] = dueno;
     vuelto[n] = 0;
-    a7_esperado[n] = a7 + 4;
+    a7_esperado[n] = a7 + marco;
     motor_anidado(pc, &regs, sr, usp, isp, msp);
     anidado = n - 1;
     /* Cerrado este nivel, la dueña del de debajo puede estar aparcada en su vuelta: ya puede seguir. */

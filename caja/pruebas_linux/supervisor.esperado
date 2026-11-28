@@ -1,0 +1,5 @@
+Supervisor 0: D0 $1234, S dentro 1
+Supervisor 1: D0 $1234, S dentro 1
+Supervisor 2: D0 $1234, S dentro 1
+CacheControl: igual 1, sin EnableI 1, otra vez igual 1, y vuelve 1
+el programa sigue

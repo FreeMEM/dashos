@@ -103,6 +103,11 @@ impl<M: Memoria> Exec<M> {
             }
             Continuacion::CerrarBiblioteca { lib } => return self.tras_cerrar(lib, d0, r),
             Continuacion::IniciarBiblioteca | Continuacion::Devolver => {}
+            Continuacion::Supervisor => {
+                let a7 = r.a[7];
+                *r = *hecho;
+                r.a[7] = a7;
+            }
             Continuacion::Cargada(a) => return self.tras_carga(a, d0, r),
             Continuacion::Fallida(a) => return self.apertura_fallida(&a, r),
             Continuacion::Residente { a, seglist } => return self.tras_residente(a, seglist, d0, r),

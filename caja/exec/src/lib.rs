@@ -156,6 +156,9 @@ pub enum Destino {
     Codigo68k(u32),
     /// Una función nativa de otra biblioteca de la caja.
     Nativa(u16),
+    /// Código 68k en esa dirección, en modo supervisor, hasta su `RTE` (`Supervisor`): la caja le deja en la pila de
+    /// supervisor un marco de excepción que vuelve a ella.
+    Supervisor(u32),
 }
 
 /// Lo que queda por hacer cuando vuelve una llamada pedida con `Accion::Llamar`.
@@ -169,6 +172,8 @@ pub enum Continuacion {
     IniciarBiblioteca,
     /// Pasar D0 tal cual.
     Devolver,
+    /// Volvió la función de `Supervisor`: todos los registros como los dejó, salvo A7 (la pila de quien llamó).
+    Supervisor,
     /// Volvió el `Open` de un dispositivo (`OpenDevice`): su error está en `io_Error`.
     AbrirDispositivo { dev: u32, io: u32 },
     /// Volvió el `Close` de un dispositivo.
@@ -202,6 +207,10 @@ pub struct Region {
     pub prioridad: i8,
     pub nombre: &'static str,
 }
+
+/// Las cachés que dice tener la caja al arrancar (`CacheControl`): las de instrucciones y datos de un 68040, encendidas
+/// (`CACRF_EnableI`, `CACRF_EnableD`, `CACRF_CopyBack`).
+pub const CACR_DE_SERIE: u32 = 1 | 1 << 8 | 1 << 31;
 
 /// Cómo arrancar exec.
 #[derive(Clone, Debug)]
@@ -360,6 +369,8 @@ pub struct Exec<M: Memoria> {
     pub(crate) n_entrega: u32,
     /// Lo que se reserva ahora es del sistema (código de una biblioteca de disco): `memoria_del_sistema`.
     pub(crate) memoria_del_sistema: bool,
+    /// Lo que dice `CacheControl` de las cachés: no hay ninguna (el JIT), pero los programas las miran y las cambian.
+    pub(crate) cacr: u32,
     /// El aviso de memoria baja de DashOS y los manejadores de los programas (`memoria_baja.rs`).
     pub(crate) memoria_baja: memoria_baja::MemoriaBaja,
 }
@@ -395,6 +406,7 @@ impl<M: Memoria> Exec<M> {
             entregas: alloc::collections::BTreeMap::new(),
             n_entrega: 0,
             memoria_del_sistema: false,
+            cacr: CACR_DE_SERIE,
             memoria_baja: memoria_baja::MemoriaBaja::default(),
         };
         // La zona del sistema tiene que existir entera, fuera de la página 0.

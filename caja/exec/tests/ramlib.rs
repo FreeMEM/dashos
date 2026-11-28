@@ -164,6 +164,7 @@ impl Caja {
                     }
                     _ => panic!("68k en ${d:x} que la prueba no sabe ejecutar"),
                 },
+                Destino::Supervisor(d) => panic!("supervisor en ${d:x}: la prueba no lo pide"),
             }
             a = self.e.continuar(tras, &rr, r);
         }

@@ -7,7 +7,7 @@
 use crate::lvo::{self, FIN_DE_TAREA, ULTIMO_DE_EXEC};
 use crate::estructuras::execbase;
 use crate::tareas::Espera;
-use crate::{Continuacion, Accion, Exec, Fallo, Memoria, Registros};
+use crate::{Continuacion, Accion, Destino, Exec, Fallo, Memoria, Registros};
 
 fn d0(r: &mut Registros, v: u32) -> Result<Accion, Fallo> {
     r.d[0] = v;
@@ -59,6 +59,15 @@ impl<M: Memoria> Exec<M> {
                 d0(r, v)
             }
             4 => d0(r, 0),
+            // Supervisor(userFunction): la función en modo supervisor, hasta su RTE; vuelve con sus registros.
+            5 => Ok(Accion::Llamar { destino: Destino::Supervisor(a[5]), regs: *r, tras: Continuacion::Supervisor }),
+            // CacheControl(cacheBits, cacheMask): las cachés de mentira; devuelve las de antes. Los bits de vaciar
+            // (CACRF_ClearI, CACRF_ClearD) no se guardan.
+            108 => {
+                let antes = self.cacr;
+                self.cacr = (antes & !d[1]) | (d[0] & d[1] & !(1 << 3 | 1 << 11));
+                d0(r, antes)
+            }
             // FindResident(name)(a1): no hay módulos de ROM en la caja.
             16 => d0(r, 0),
             // InitResident(resident, segList)(a1/d1)
