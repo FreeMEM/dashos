@@ -226,6 +226,9 @@ struct Caja {
     excepciones: u32,
     /// Los procesos nuevos van sin consola (`caja_sin_consola`).
     sin_consola: bool,
+    /// El cajón del programa que se va a lanzar (`PROGDIR:`), cuando el nombre de la tarea no lo lleva: el de la caja de
+    /// Linux, que da el nombre corto del fichero (`caja_programa_cajon`). Se gasta al crear su proceso.
+    cajon_programa: Option<Vec<u8>>,
     /// El número nativo de `WaitTOF`: espera un cuadro (20 ms) atendiendo al compositor, como el Amiga espera al
     /// barrido vertical. Los bucles que leen eventos sin esperar (`GT_GetIMsg` y `WaitTOF`) los reciben así.
     n_waittof: u16,
@@ -605,6 +608,7 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         excepciones: 0,
         n_waittof: 0,
         sin_consola: false,
+        cajon_programa: None,
         ramlib_cargas: 0,
         ramlib_soltadas: 0,
         ramlib_dichas: 0,
@@ -985,6 +989,33 @@ pub unsafe extern "C" fn caja_tarea_nueva(
     }
 }
 
+/// La caja de Linux: el fichero de Linux del programa que va a lanzar (`ruta`, tal como se dio: absoluto o desde el
+/// directorio actual), para su `PROGDIR:` (en Linux, el nombre de la tarea es el corto).
+///
+/// # Safety
+/// `ruta` tiene que apuntar a `largo` bytes.
+#[cfg(not(feature = "dashos"))]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn caja_programa_cajon(ruta: *const u8, largo: usize) {
+    let Some(c) = caja() else { return };
+    // SEGURIDAD: lo garantiza quien llama (caja_linux.c, con argv).
+    let ruta = unsafe { core::slice::from_raw_parts(ruta, largo) };
+    let Ok(ruta) = core::str::from_utf8(ruta) else { return };
+    let cajon = match ruta.rfind('/') {
+        Some(0) => "/",
+        Some(i) => &ruta[..i],
+        None => ".",
+    };
+    c.cajon_programa = if let Some(abs) = cajon.strip_prefix('/') {
+        Some(format!("Linux:{}", abs).into_bytes())
+    } else {
+        archivos::cajon_actual().map(|cwd| {
+            let rel = cajon.trim_start_matches("./");
+            if rel == "." || rel.is_empty() { cwd.into_bytes() } else { format!("{}/{}", cwd, rel).into_bytes() }
+        })
+    };
+}
+
 /// La CLI de un proceso (`struct CommandLineInterface`) y sus tres BSTR, en un solo bloque: la CLI, el nombre del
 /// programa (`cli_CommandName`), el directorio (`cli_SetName`) y el indicador (`cli_Prompt`).
 const CLI_NOMBRE: u32 = 64;
@@ -1043,8 +1074,15 @@ fn crear_proceso(
     // El cajón del programa (`pr_HomeDir`, `PROGDIR:`), si viene de disco con su ruta (los del usuario: Tachyon busca
     // ahí sus iconos). El cerrojo es de la tarea: dos lo suelta cuando acaba.
     let mut programa = 0;
-    if let Some(i) = nombre.iter().rposition(|&b| b == b'/' || b == b':') {
-        let cajon = if nombre[i] == b':' { &nombre[..=i] } else { &nombre[..i] };
+    let dado = c.cajon_programa.take();
+    let cajon = match &dado {
+        Some(v) => Some(v.as_slice()),
+        None => nombre
+            .iter()
+            .rposition(|&b| b == b'/' || b == b':')
+            .map(|i| if nombre[i] == b':' { &nombre[..=i] } else { &nombre[..i] }),
+    };
+    if let Some(cajon) = cajon {
         let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
         if let Ok(l) = c.dos.cerrojo_de_ruta(&mut cd, cajon) {
             c.dos.dar_cerrojo(l, t);

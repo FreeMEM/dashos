@@ -19,6 +19,9 @@ extern int plat_detalle;   /* plataforma_linux.c: 1, lo que dice la caja sale po
 #define PROGRAMA     0x0000000400000000UL
 #define PROGRAMA_MAX (64UL << 20)
 
+/* El cajón del programa para su PROGDIR: (pegamento, solo en Linux: aquí el nombre de la tarea es el corto). */
+void caja_programa_cajon(const char *ruta, size_t largo);
+
 /* El entorno de Linux (tras argv en la pila del arranque), para plat_entorno. */
 static char **entorno;
 
@@ -193,6 +196,7 @@ int caja_linux_main(void)
     uint32_t d0 = 0, sobras = 0;
     int llamadas = 0;
     tarea_args = linea_args;
+    caja_programa_cajon(ruta, largo_de(ruta));
     int v = ejecuta_hunk(nombre_de(ruta), (const uint8_t *)PROGRAMA, (size_t)largo, execbase, &d0, &llamadas, &sobras);
     tarea_args = NULL;
     if (v == -3) {
